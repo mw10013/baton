@@ -15,26 +15,29 @@ import { Repository } from "@/lib/Repository";
 
 const LIMIT = 25;
 
-const sessionSearchSchema = Schema.Struct({
+const shopSessionSearchSchema = Schema.Struct({
   after: Schema.optional(Schema.NonEmptyString),
   before: Schema.optional(Schema.NonEmptyString),
   filter: Schema.optional(Schema.Trim),
 });
 
-const getSessionRedactedPage = createServerFn({ method: "GET" })
-  .validator(Schema.toStandardSchemaV1(sessionSearchSchema))
+const getShopSessionRedactedPage = createServerFn({ method: "GET" })
+  .validator(Schema.toStandardSchemaV1(shopSessionSearchSchema))
   .middleware([adminServerFnMiddleware])
   .handler(({ data, context: { runEffect } }) =>
     runEffect(
       Effect.gen(function* () {
         const repo = yield* Repository;
-        return yield* repo.getSessionRedactedPage({ ...data, limit: LIMIT });
+        return yield* repo.getShopSessionRedactedPage({
+          ...data,
+          limit: LIMIT,
+        });
       }),
     ),
   );
 
 export const Route = createFileRoute("/admin/shops")({
-  validateSearch: Schema.toStandardSchemaV1(sessionSearchSchema),
+  validateSearch: Schema.toStandardSchemaV1(shopSessionSearchSchema),
   loaderDeps: ({ search }) => ({
     after: search.after,
     before: search.before,
@@ -48,10 +51,10 @@ export const Route = createFileRoute("/admin/shops")({
           to: "/admin/shops",
           search: { after: deps.after, filter: deps.filter },
         });
-      const result = await getSessionRedactedPage({ data: deps });
+      const result = await getShopSessionRedactedPage({ data: deps });
       if (
         (deps.after !== undefined || deps.before !== undefined) &&
-        result.sessions.length === 0
+        result.shopSessions.length === 0
       )
         // eslint-disable-next-line @typescript-eslint/only-throw-error
         throw redirect({
@@ -136,47 +139,51 @@ function RouteComponent() {
               <s-table-header>Refresh token</s-table-header>
             </s-table-header-row>
             <s-table-body>
-              {page.sessions.map((session) => (
-                <s-table-row key={session.shop} id={session.shop}>
+              {page.shopSessions.map((shopSession) => (
+                <s-table-row key={shopSession.shop} id={shopSession.shop}>
                   <s-table-cell>
                     <s-link
                       onClick={() =>
                         void router.navigate({
                           to: "/admin/shop/$shop",
-                          params: { shop: session.shop },
+                          params: { shop: shopSession.shop },
                         })
                       }
                     >
-                      {session.shop}
+                      {shopSession.shop}
                     </s-link>
                   </s-table-cell>
-                  <s-table-cell>{session.shopAgentId}</s-table-cell>
-                  <s-table-cell>{session.shopGid}</s-table-cell>
-                  <s-table-cell>{session.scope ?? ""}</s-table-cell>
+                  <s-table-cell>{shopSession.shopAgentId}</s-table-cell>
+                  <s-table-cell>{shopSession.shopGid}</s-table-cell>
+                  <s-table-cell>{shopSession.scope ?? ""}</s-table-cell>
                   <s-table-cell>
-                    {formatDateTime(session.accessTokenExpiresAt)}
+                    {formatDateTime(shopSession.accessTokenExpiresAt)}
                   </s-table-cell>
                   <s-table-cell>
-                    {formatDateTime(session.refreshTokenExpiresAt)}
+                    {formatDateTime(shopSession.refreshTokenExpiresAt)}
                   </s-table-cell>
                   <s-table-cell>
-                    <PlanCache plan={Domain.adminShopPlanCache(session, now)} />
+                    <PlanCache
+                      plan={Domain.adminShopPlanCache(shopSession, now)}
+                    />
                   </s-table-cell>
                   <s-table-cell>
-                    {formatDateTime(session.planHandleExpiresAt)}
+                    {formatDateTime(shopSession.planHandleExpiresAt)}
                   </s-table-cell>
                   <s-table-cell>
                     <s-badge
-                      tone={session.hasAccessToken ? "success" : "critical"}
+                      tone={shopSession.hasAccessToken ? "success" : "critical"}
                     >
-                      {session.hasAccessToken ? "Present" : "Missing"}
+                      {shopSession.hasAccessToken ? "Present" : "Missing"}
                     </s-badge>
                   </s-table-cell>
                   <s-table-cell>
                     <s-badge
-                      tone={session.hasRefreshToken ? "success" : "critical"}
+                      tone={
+                        shopSession.hasRefreshToken ? "success" : "critical"
+                      }
                     >
-                      {session.hasRefreshToken ? "Present" : "Missing"}
+                      {shopSession.hasRefreshToken ? "Present" : "Missing"}
                     </s-badge>
                   </s-table-cell>
                 </s-table-row>
@@ -185,7 +192,7 @@ function RouteComponent() {
           </s-table>
         </ClientOnly>
       </s-section>
-      {page.sessions.length === 0 && (
+      {page.shopSessions.length === 0 && (
         <s-banner tone="info">No sessions.</s-banner>
       )}
     </s-page>

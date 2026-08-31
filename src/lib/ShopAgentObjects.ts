@@ -35,7 +35,7 @@ const NamespacesResponse = Schema.Struct({
  * `hasStoredData` are ALL optional in the contract.
  *
  * - `id` — deliberately tightened to required here: it is the join key against
- *   `Session.shopAgentId`, so a row without it is useless to us.
+ *   `ShopSession.shopAgentId`, so a row without it is useless to us.
  * - `name` — spec: "Name of the Durable Object instance, if created via
  *   idFromName()". Absent for DOs addressed by `idFromString`/`newUniqueId`,
  *   which is why prod orphan rows typically carry no name.

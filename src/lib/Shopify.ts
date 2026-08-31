@@ -112,17 +112,17 @@ interface ShopifyService {
     },
     Schema.SchemaError | ShopifyError | ResponseError
   >;
-  readonly storeSession: (
+  readonly storeShopSession: (
     session: ShopifyApi.Session,
     shopGid: Domain.ShopGid,
   ) => Effect.Effect<void, SqlError.SqlError | ShopifyError>;
-  readonly deleteSessionByShop: (
-    shop: Domain.Session["shop"],
+  readonly deleteShopSession: (
+    shop: Domain.ShopSession["shop"],
   ) => Effect.Effect<void, SqlError.SqlError>;
-  readonly updateSessionScope: ({
+  readonly updateShopSessionScope: ({
     shop,
     scope,
-  }: Pick<Domain.Session, "shop" | "scope">) => Effect.Effect<
+  }: Pick<Domain.ShopSession, "shop" | "scope">) => Effect.Effect<
     void,
     SqlError.SqlError
   >;
@@ -137,7 +137,7 @@ interface ShopifyService {
     },
     ShopifyError
   >;
-  readonly refreshSession: (
+  readonly refreshShopSession: (
     shop: Domain.Shop,
     refreshToken: string,
   ) => Effect.Effect<
@@ -155,14 +155,14 @@ interface ShopifyService {
     | ShopifyError
     | RefreshTokenExpiredError
   >;
-  readonly loadSessionByShop: (shop: Domain.Shop) => Effect.Effect<
+  readonly loadShopSession: (shop: Domain.Shop) => Effect.Effect<
     Option.Option<{
       readonly session: ShopifyApi.Session;
       readonly shopGid: Domain.ShopGid;
     }>,
     SqlError.SqlError | RepositoryError | ShopifyError
   >;
-  readonly refreshSessionIfExpired: (
+  readonly refreshShopSessionIfExpired: (
     session: ShopifyApi.Session,
   ) => Effect.Effect<
     ShopifyApi.Session,
@@ -172,7 +172,7 @@ interface ShopifyService {
     | OfflineSessionInvalidError
     | RefreshTokenExpiredError
   >;
-  readonly ensureSession: (
+  readonly ensureShopSession: (
     shop: Domain.Shop,
   ) => Effect.Effect<
     ShopifyApi.Session,
@@ -184,7 +184,7 @@ interface ShopifyService {
     | RefreshTokenExpiredError
   >;
   readonly sessionIdFromShop: (
-    shop: Domain.Session["shop"],
+    shop: Domain.ShopSession["shop"],
   ) => Effect.Effect<Domain.SessionId, ShopifyError>;
 }
 
@@ -509,7 +509,7 @@ export class Shopify extends Context.Service<Shopify, ShopifyService>()(
       const env = yield* CloudflareEnv;
       const config = yield* shopifyConfig;
       const shopify = makeShopifyApi(config);
-      const storeSession = Effect.fn("Shopify.storeSession")(function* (
+      const storeShopSession = Effect.fn("Shopify.storeShopSession")(function* (
         session: ShopifyApi.Session,
         shopGid: Domain.ShopGid,
       ) {
@@ -522,8 +522,8 @@ export class Shopify extends Context.Service<Shopify, ShopifyService>()(
           "Invalid refresh token expiry",
         );
         yield* decodeShopify(
-          Domain.Session,
-          "Invalid session payload",
+          Domain.ShopSession,
+          "Invalid shop session payload",
         )({
           shop: session.shop,
           shopGid,
@@ -535,7 +535,7 @@ export class Shopify extends Context.Service<Shopify, ShopifyService>()(
           refreshTokenExpiresAt,
           planHandle: null,
           planHandleExpiresAt: null,
-        }).pipe(Effect.flatMap(repository.upsertSession));
+        }).pipe(Effect.flatMap(repository.upsertShopSession));
       });
 
       /**
@@ -570,7 +570,7 @@ export class Shopify extends Context.Service<Shopify, ShopifyService>()(
                   session.accessToken = undefined;
                   yield* Effect.ignore(
                     Schema.decodeUnknownEffect(Domain.Shop)(session.shop).pipe(
-                      Effect.flatMap(repository.clearSessionAccessToken),
+                      Effect.flatMap(repository.clearShopSessionAccessToken),
                     ),
                   );
                 })
@@ -608,15 +608,19 @@ export class Shopify extends Context.Service<Shopify, ShopifyService>()(
         )(data)).shop.id;
       });
 
-      const deleteSessionByShop = Effect.fn("Shopify.deleteSessionByShop")(
-        (shop: Domain.Session["shop"]) => repository.deleteSessionByShop(shop),
+      const deleteShopSession = Effect.fn("Shopify.deleteShopSession")(
+        (shop: Domain.ShopSession["shop"]) =>
+          repository.deleteShopSession(shop),
       );
 
-      const updateSessionScope = Effect.fn("Shopify.updateSessionScope")(
-        function* ({ shop, scope }: Pick<Domain.Session, "shop" | "scope">) {
-          yield* repository.updateSessionScope(shop, scope);
-        },
-      );
+      const updateShopSessionScope = Effect.fn(
+        "Shopify.updateShopSessionScope",
+      )(function* ({
+        shop,
+        scope,
+      }: Pick<Domain.ShopSession, "shop" | "scope">) {
+        yield* repository.updateShopSessionScope(shop, scope);
+      });
 
       /**
        * Rotates the offline session via the `refresh_token` grant. Partitions
@@ -628,47 +632,46 @@ export class Shopify extends Context.Service<Shopify, ShopifyService>()(
        * exhausted transient (network/`5xx`/`429` that never recovers) escapes as
        * `ShopifyError`; the caller's outer retry (Flow resend) is the backstop.
        */
-      const refreshSession = Effect.fn("Shopify.refreshSession")(function* (
-        shop: Domain.Shop,
-        refreshToken: string,
-      ) {
-        const { session } = yield* tryShopifyPromise(() =>
-          shopify.auth.refreshToken({ shop, refreshToken }),
-        ).pipe(
-          Effect.retry({
-            while: isTransientRefreshError,
-            times: REFRESH_TOKEN_TRANSIENT_RETRIES,
-            schedule: Schedule.exponential("500 millis").pipe(
-              Schedule.jittered,
+      const refreshShopSession = Effect.fn("Shopify.refreshShopSession")(
+        function* (shop: Domain.Shop, refreshToken: string) {
+          const { session } = yield* tryShopifyPromise(() =>
+            shopify.auth.refreshToken({ shop, refreshToken }),
+          ).pipe(
+            Effect.retry({
+              while: isTransientRefreshError,
+              times: REFRESH_TOKEN_TRANSIENT_RETRIES,
+              schedule: Schedule.exponential("500 millis").pipe(
+                Schedule.jittered,
+              ),
+            }),
+            Effect.catchIf(isRefreshTokenRejected, (error) =>
+              Effect.fail(
+                new RefreshTokenRejectedError({
+                  shop,
+                  refreshToken,
+                  cause: error.cause,
+                }),
+              ),
             ),
-          }),
-          Effect.catchIf(isRefreshTokenRejected, (error) =>
-            Effect.fail(
-              new RefreshTokenRejectedError({
-                shop,
-                refreshToken,
-                cause: error.cause,
-              }),
-            ),
-          ),
-        );
-        const accessTokenExpiresAt = yield* encodeSessionExpiry(
-          session.expires,
-          "Invalid refreshed access token expiry",
-        );
-        const refreshTokenExpiresAt = yield* encodeSessionExpiry(
-          session.refreshTokenExpires,
-          "Invalid refreshed refresh token expiry",
-        );
-        yield* repository.updateSessionTokens({
-          shop,
-          accessToken: session.accessToken ?? null,
-          accessTokenExpiresAt,
-          refreshToken: session.refreshToken ?? null,
-          refreshTokenExpiresAt,
-        });
-        return session;
-      });
+          );
+          const accessTokenExpiresAt = yield* encodeSessionExpiry(
+            session.expires,
+            "Invalid refreshed access token expiry",
+          );
+          const refreshTokenExpiresAt = yield* encodeSessionExpiry(
+            session.refreshTokenExpires,
+            "Invalid refreshed refresh token expiry",
+          );
+          yield* repository.updateShopSessionTokens({
+            shop,
+            accessToken: session.accessToken ?? null,
+            accessTokenExpiresAt,
+            refreshToken: session.refreshToken ?? null,
+            refreshTokenExpiresAt,
+          });
+          return session;
+        },
+      );
 
       /**
        * Loads the offline session for a shop and rehydrates it into a library
@@ -681,42 +684,40 @@ export class Shopify extends Context.Service<Shopify, ShopifyService>()(
        * (it also rides along as an ignored extra property on the rehydrated
        * `Session`). A row that fails to rehydrate is treated as absent.
        */
-      const loadSessionByShop = Effect.fn("Shopify.loadSessionByShop")(
-        function* (shop: Domain.Shop) {
-          const stored = yield* repository.findSessionByShop(shop);
-          if (Option.isNone(stored)) return Option.none();
-          const id = yield* sessionIdFromShop(shop);
-          const expires = yield* decodeSessionExpiry(
-            stored.value.accessTokenExpiresAt,
-            "Invalid stored access token expiry",
-          );
-          const refreshTokenExpires = yield* decodeSessionExpiry(
-            stored.value.refreshTokenExpiresAt,
-            "Invalid stored refresh token expiry",
-          );
-          return yield* tryShopify(
-            () =>
-              new ShopifyApi.Session({
-                id,
-                shop: stored.value.shop,
-                state: "",
-                isOnline: false,
-                scope: stored.value.scope ?? undefined,
-                expires: expires ?? undefined,
-                accessToken: stored.value.accessToken ?? undefined,
-                refreshToken: stored.value.refreshToken ?? undefined,
-                refreshTokenExpires: refreshTokenExpires ?? undefined,
-              }),
-          ).pipe(
-            Effect.map((session) =>
-              Option.some({ session, shopGid: stored.value.shopGid }),
-            ),
-            Effect.catchTag("ShopifyError", () =>
-              Effect.succeed(Option.none()),
-            ),
-          );
-        },
-      );
+      const loadShopSession = Effect.fn("Shopify.loadShopSession")(function* (
+        shop: Domain.Shop,
+      ) {
+        const stored = yield* repository.findShopSession(shop);
+        if (Option.isNone(stored)) return Option.none();
+        const id = yield* sessionIdFromShop(shop);
+        const expires = yield* decodeSessionExpiry(
+          stored.value.accessTokenExpiresAt,
+          "Invalid stored access token expiry",
+        );
+        const refreshTokenExpires = yield* decodeSessionExpiry(
+          stored.value.refreshTokenExpiresAt,
+          "Invalid stored refresh token expiry",
+        );
+        return yield* tryShopify(
+          () =>
+            new ShopifyApi.Session({
+              id,
+              shop: stored.value.shop,
+              state: "",
+              isOnline: false,
+              scope: stored.value.scope ?? undefined,
+              expires: expires ?? undefined,
+              accessToken: stored.value.accessToken ?? undefined,
+              refreshToken: stored.value.refreshToken ?? undefined,
+              refreshTokenExpires: refreshTokenExpires ?? undefined,
+            }),
+        ).pipe(
+          Effect.map((session) =>
+            Option.some({ session, shopGid: stored.value.shopGid }),
+          ),
+          Effect.catchTag("ShopifyError", () => Effect.succeed(Option.none())),
+        );
+      });
 
       /**
        * Handles Shopify rejecting a one-time refresh token by checking whether this
@@ -737,7 +738,7 @@ export class Shopify extends Context.Service<Shopify, ShopifyService>()(
           cause: unknown = null,
         ) {
           const loadWinner = Effect.gen(function* () {
-            const loaded = yield* loadSessionByShop(shop);
+            const loaded = yield* loadShopSession(shop);
             if (Option.isNone(loaded))
               return yield* Effect.fail(
                 new ShopifyError({
@@ -792,17 +793,17 @@ export class Shopify extends Context.Service<Shopify, ShopifyService>()(
        * merchant must re-launch the app) — both proactively, by comparing
        * `refreshTokenExpires` against the clock, and reactively, when the grant
        * rejects the refresh token and `recoverRefreshRace` finds no winner (see
-       * `refreshSession` and `isRefreshTokenRejected`).
+       * `refreshShopSession` and `isRefreshTokenRejected`).
        *
-       * Together with `loadSessionByShop`, this replaces the Shopify template's
+       * Together with `loadShopSession`, this replaces the Shopify template's
        * single `ensureValidOfflineSession(params, shop)` helper
        * (refs/shopify-app-js/packages/apps/shopify-app-react-router/src/server/helpers/ensure-valid-offline-session.ts),
        * split so the load is pure and the refresh state machine owns the
        * `refreshTokenExpires` guard. The template's `ensureOfflineTokenIsNotExpired`
        * does not check `refreshTokenExpires` before refreshing.
        */
-      const refreshSessionIfExpired = Effect.fn(
-        "Shopify.refreshSessionIfExpired",
+      const refreshShopSessionIfExpired = Effect.fn(
+        "Shopify.refreshShopSessionIfExpired",
       )(function* (session: ShopifyApi.Session) {
         if (
           session.accessToken &&
@@ -830,7 +831,7 @@ export class Shopify extends Context.Service<Shopify, ShopifyService>()(
               cause: null,
             }),
           );
-        return yield* refreshSession(shop, session.refreshToken).pipe(
+        return yield* refreshShopSession(shop, session.refreshToken).pipe(
           Effect.catchTag("RefreshTokenRejectedError", (error) =>
             recoverRefreshRace(shop, error.refreshToken, error.cause),
           ),
@@ -845,20 +846,22 @@ export class Shopify extends Context.Service<Shopify, ShopifyService>()(
        * Fails with `ShopifyError` when no offline session exists for the shop, and
        * with `RefreshTokenExpiredError` when the access token is expired and the
        * refresh token has passed its 90-day window. When an offline session exists
-       * but its access token is expiring, `refreshSessionIfExpired` refreshes
+       * but its access token is expiring, `refreshShopSessionIfExpired` refreshes
        * it in place first.
        *
        * Deviates from the template's `unauthenticated.admin(shop)` contract by
        * returning only the session instead of an admin context.
        */
-      const ensureSession = Effect.fn("Shopify.ensureSession")(function* (
-        shop: Domain.Shop,
-      ) {
-        const loaded = yield* loadSessionByShop(shop);
-        if (Option.isNone(loaded))
-          return yield* Effect.fail(new OfflineSessionNotFoundError({ shop }));
-        return yield* refreshSessionIfExpired(loaded.value.session);
-      });
+      const ensureShopSession = Effect.fn("Shopify.ensureShopSession")(
+        function* (shop: Domain.Shop) {
+          const loaded = yield* loadShopSession(shop);
+          if (Option.isNone(loaded))
+            return yield* Effect.fail(
+              new OfflineSessionNotFoundError({ shop }),
+            );
+          return yield* refreshShopSessionIfExpired(loaded.value.session);
+        },
+      );
 
       /**
        * Returns a Response with Shopify document headers applied when needed.
@@ -913,7 +916,7 @@ export class Shopify extends Context.Service<Shopify, ShopifyService>()(
        * session and returned it as `session?`. Webhook authenticity is HMAC-based
        * and independent of OAuth session state, and no handler in this app
        * consumed that session, so validation no longer touches D1 or the token
-       * grant. Handlers that need Admin API access call `ensureSession(shop)`
+       * grant. Handlers that need Admin API access call `ensureShopSession(shop)`
        * explicitly — webhooks are triggers, not a data feed, so such handlers
        * re-query Shopify for current state
        * (refs/shopify-docs/docs/apps/build/webhooks.md reconciliation).
@@ -1283,7 +1286,7 @@ export class Shopify extends Context.Service<Shopify, ShopifyService>()(
         sessionShop: Domain.Shop,
         sessionToken: string,
       ) {
-        const existing = yield* loadSessionByShop(sessionShop);
+        const existing = yield* loadShopSession(sessionShop);
         if (
           Option.isSome(existing) &&
           existing.value.session.isActive(
@@ -1316,7 +1319,7 @@ export class Shopify extends Context.Service<Shopify, ShopifyService>()(
         const shopGid = Option.isSome(existing)
           ? existing.value.shopGid
           : yield* fetchShopGid(exchanged.session);
-        yield* storeSession(exchanged.session, shopGid);
+        yield* storeShopSession(exchanged.session, shopGid);
         return { session: exchanged.session, shopGid } as const;
       });
 
@@ -1352,7 +1355,7 @@ export class Shopify extends Context.Service<Shopify, ShopifyService>()(
       });
 
       const sessionIdFromShop = Effect.fn("Shopify.sessionIdFromShop")(
-        function* (shop: Domain.Session["shop"]) {
+        function* (shop: Domain.ShopSession["shop"]) {
           return yield* decodeShopify(
             Domain.SessionId,
             "Invalid session id",
@@ -1431,15 +1434,15 @@ export class Shopify extends Context.Service<Shopify, ShopifyService>()(
         withShopifyDocumentHeaders,
         validateWebhook,
         authenticateFlowAction,
-        storeSession,
-        deleteSessionByShop,
-        updateSessionScope,
+        storeShopSession,
+        deleteShopSession,
+        updateShopSessionScope,
         graphql,
-        refreshSession,
+        refreshShopSession,
         recoverRefreshRace,
-        loadSessionByShop,
-        refreshSessionIfExpired,
-        ensureSession,
+        loadShopSession,
+        refreshShopSessionIfExpired,
+        ensureShopSession,
         sessionIdFromShop,
       });
     }),

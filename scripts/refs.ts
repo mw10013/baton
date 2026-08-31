@@ -23,6 +23,7 @@ import {
   HttpClientResponse,
 } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+
 import * as ShopifyDocs from "./refs-shopify-docs.ts";
 
 interface VersionSource {
@@ -229,7 +230,11 @@ const REFS: readonly Ref[] = [
       listing: "maker-production-view",
       site: {
         origin: "https://fleartex.com",
-        paths: ["/", "/maker-production-view/support/", "/maker-production-view/privacy/"],
+        paths: [
+          "/",
+          "/maker-production-view/support/",
+          "/maker-production-view/privacy/",
+        ],
       },
     },
     optIn: true,
@@ -249,7 +254,10 @@ const REFS: readonly Ref[] = [
     name: "benchcue",
     competitor: {
       listing: "maker-card",
-      site: { origin: "https://maker-card.revertcreations.com", sitemap: "/sitemap.xml" },
+      site: {
+        origin: "https://maker-card.revertcreations.com",
+        sitemap: "/sitemap.xml",
+      },
     },
     optIn: true,
   },
@@ -287,7 +295,9 @@ const StampJson = Schema.fromJsonString(Stamp, { space: 2 });
 const Manifest = Schema.fromJsonString(
   Schema.Struct({
     dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-    devDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    devDependencies: Schema.optional(
+      Schema.Record(Schema.String, Schema.String),
+    ),
   }),
 );
 
@@ -301,7 +311,11 @@ const readManifest = Effect.fn(function* (manifestPath: string) {
   const fs = yield* FileSystem.FileSystem;
   const text = yield* fs
     .readFileString(manifestPath)
-    .pipe(Effect.mapError(() => new RefsError({ reason: `no package.json at ${manifestPath}` })));
+    .pipe(
+      Effect.mapError(
+        () => new RefsError({ reason: `no package.json at ${manifestPath}` }),
+      ),
+    );
   return yield* Schema.decodeEffect(Manifest)(text);
 });
 
@@ -317,10 +331,16 @@ const assertExact = (version: string, source: VersionSource) =>
 const resolveVersion = Effect.fn(function* (source: VersionSource) {
   const path = yield* Path.Path;
   const root = yield* repoRoot;
-  const manifest = yield* readManifest(path.join(root, source.from, "package.json"));
-  const version = manifest.dependencies?.[source.dep] ?? manifest.devDependencies?.[source.dep];
+  const manifest = yield* readManifest(
+    path.join(root, source.from, "package.json"),
+  );
+  const version =
+    manifest.dependencies?.[source.dep] ??
+    manifest.devDependencies?.[source.dep];
   if (version === undefined)
-    return yield* new RefsError({ reason: `${source.dep} is not a dependency of ${source.from}` });
+    return yield* new RefsError({
+      reason: `${source.dep} is not a dependency of ${source.from}`,
+    });
   return yield* assertExact(version, source);
 });
 
@@ -343,15 +363,19 @@ const resolve = Effect.fn(function* (ref: Ref) {
   // hand-edited date would only be a note to self wearing a pin's clothing, marking every
   // ref that shared it stale on edit. The target names the source instead, `version` stays
   // unset, and each ref ages independently off its own `fetchedAt`.
-  if (ref.competitor) return { ref, target: `${APP_STORE_ORIGIN}/${ref.competitor.listing}` };
-  if (ref.pin) return { ref, target: (ref.tag ?? "{v}").replace("{v}", ref.pin) };
+  if (ref.competitor)
+    return { ref, target: `${APP_STORE_ORIGIN}/${ref.competitor.listing}` };
+  if (ref.pin)
+    return { ref, target: (ref.tag ?? "{v}").replace("{v}", ref.pin) };
   if (!ref.version || !(ref.tag ?? ref.npm))
     return yield* new RefsError({
       reason: `${ref.name} needs a branch, a pin, or a version plus a tag or npm package`,
     });
   const version = yield* resolveVersion(ref.version).pipe(
     Effect.mapError((error) =>
-      error instanceof RefsError ? error : new RefsError({ reason: error.message }),
+      error instanceof RefsError
+        ? error
+        : new RefsError({ reason: error.message }),
     ),
   );
   return {
@@ -374,12 +398,20 @@ const readStamp = Effect.fn(function* (name: string) {
 });
 
 /** Download the ref's tarball and extract it into staging. */
-const downloadInto = Effect.fn(function* (staging: string, ref: Ref, target: string) {
+const downloadInto = Effect.fn(function* (
+  staging: string,
+  ref: Ref,
+  target: string,
+) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const tarball = ref.private
-    ? ChildProcess.make("gh", ["api", `repos/${ref.repo ?? ""}/tarball/${target}`], {
-        stderr: "inherit",
-      })
+    ? ChildProcess.make(
+        "gh",
+        ["api", `repos/${ref.repo ?? ""}/tarball/${target}`],
+        {
+          stderr: "inherit",
+        },
+      )
     : // GitHub's archive URLs are namespaced by git ref type, so a branch lives under
       // refs/heads and a tag under refs/tags; using the wrong one is a plain 404. npm
       // registry tarballs carry a `package/` prefix, so the same strip-components works.
@@ -400,10 +432,14 @@ const downloadInto = Effect.fn(function* (staging: string, ref: Ref, target: str
   yield* Effect.scoped(
     Effect.gen(function* () {
       const download = yield* spawner.spawn(tarball);
-      const extract = ChildProcess.make("tar", ["-xz", "-C", staging, "--strip-components=1"], {
-        stderr: "inherit",
-        stdin: download.stdout,
-      });
+      const extract = ChildProcess.make(
+        "tar",
+        ["-xz", "-C", staging, "--strip-components=1"],
+        {
+          stderr: "inherit",
+          stdin: download.stdout,
+        },
+      );
       const tarExit = yield* spawner.exitCode(extract);
       const downloadExit = yield* download.exitCode;
       if (downloadExit !== 0 || tarExit !== 0) {
@@ -416,7 +452,11 @@ const downloadInto = Effect.fn(function* (staging: string, ref: Ref, target: str
 });
 
 /** Fill staging with the ref's content: a docs fetch or a tarball download. */
-const fillStaging = Effect.fn(function* (staging: string, ref: Ref, target: string) {
+const fillStaging = Effect.fn(function* (
+  staging: string,
+  ref: Ref,
+  target: string,
+) {
   if (ref.shopifyDocs)
     return yield* ShopifyDocs.downloadInto(staging).pipe(
       Effect.mapError((error) => new RefsError({ reason: error.message })),
@@ -943,12 +983,19 @@ const sourceKind = (ref: Ref) => {
   return "pin";
 };
 
-const fetchRef = Effect.fn(function* ({ ref, source, target, version }: Resolved) {
+const fetchRef = Effect.fn(function* ({
+  ref,
+  source,
+  target,
+  version,
+}: Resolved) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const root = yield* repoRoot;
 
-  const label = source ? `${target}  (${source})` : `${target} (${sourceKind(ref)})`;
+  const label = source
+    ? `${target}  (${source})`
+    : `${target} (${sourceKind(ref)})`;
   yield* Console.log(`${ref.name}: ${label}`);
 
   // Fill a temp dir first so a failed fetch leaves the existing ref intact.
@@ -973,7 +1020,9 @@ const fetchRef = Effect.fn(function* ({ ref, source, target, version }: Resolved
     yield* fs.rename(staging, refDir);
     yield* Console.log(`  -> refs/${ref.name}`);
   }).pipe(
-    Effect.onError(() => fs.remove(staging, { recursive: true, force: true }).pipe(Effect.ignore)),
+    Effect.onError(() =>
+      fs.remove(staging, { recursive: true, force: true }).pipe(Effect.ignore),
+    ),
   );
 });
 
@@ -982,12 +1031,18 @@ const checkRefs = Effect.gen(function* () {
   let stale = 0;
   for (const ref of REFS) {
     const resolved = yield* Effect.result(resolve(ref));
-    const stamp = Result.isSuccess(resolved) ? yield* readStamp(ref.name) : undefined;
+    const stamp = Result.isSuccess(resolved)
+      ? yield* readStamp(ref.name)
+      : undefined;
     if (Result.isFailure(resolved)) {
-      yield* Console.log(`${ref.name.padEnd(NAME_COL)} ERROR  ${resolved.failure.message}`);
+      yield* Console.log(
+        `${ref.name.padEnd(NAME_COL)} ERROR  ${resolved.failure.message}`,
+      );
       stale++;
     } else if (stamp === undefined) {
-      yield* Console.log(`${ref.name.padEnd(NAME_COL)} MISSING  want ${resolved.success.target}`);
+      yield* Console.log(
+        `${ref.name.padEnd(NAME_COL)} MISSING  want ${resolved.success.target}`,
+      );
       stale++;
     } else if (stamp.resolved !== resolved.success.target) {
       yield* Console.log(
@@ -997,12 +1052,16 @@ const checkRefs = Effect.gen(function* () {
     } else if (resolved.success.version === undefined) {
       // No resolved version means a branch, pin, docs, or competitor ref, whose target
       // names itself rather than a package.json pin, so age is all there is to report.
-      const days = Math.floor((Date.now() - Date.parse(stamp.fetchedAt)) / 86_400_000);
+      const days = Math.floor(
+        (Date.now() - Date.parse(stamp.fetchedAt)) / 86_400_000,
+      );
       yield* Console.log(
         `${ref.name.padEnd(NAME_COL)} ${resolved.success.target}  fetched ${days === 0 ? "today" : `${String(days)}d ago`}`,
       );
     } else {
-      yield* Console.log(`${ref.name.padEnd(NAME_COL)} ok  ${resolved.success.version}`);
+      yield* Console.log(
+        `${ref.name.padEnd(NAME_COL)} ok  ${resolved.success.version}`,
+      );
     }
   }
   return stale;
@@ -1057,10 +1116,15 @@ const fetchCommand = Command.make(
     }
   }),
 ).pipe(
-  Command.withDescription("Download refs into refs/, pinned to the workspace versions"),
+  Command.withDescription(
+    "Download refs into refs/, pinned to the workspace versions",
+  ),
   Command.withExamples([
     { command: "refs fetch tan-router", description: "Fetch one ref" },
-    { command: "refs fetch --all", description: "Fetch every ref except the opt-in ones" },
+    {
+      command: "refs fetch --all",
+      description: "Fetch every ref except the opt-in ones",
+    },
     {
       command: "refs fetch shopify-docs",
       description: "Fetch an opt-in ref (minutes, not seconds)",
@@ -1080,7 +1144,11 @@ const checkCommand = Command.make(
       });
     }
   }),
-).pipe(Command.withDescription("Report refs that drifted from the pins; exit 1 if any"));
+).pipe(
+  Command.withDescription(
+    "Report refs that drifted from the pins; exit 1 if any",
+  ),
+);
 
 const listCommand = Command.make(
   "list",
@@ -1096,5 +1164,8 @@ const refsCommand = Command.make("refs").pipe(
 );
 
 NodeRuntime.runMain(
-  refsCommand.pipe(Command.run({ version: "0.0.0" }), Effect.provide(NodeServices.layer)),
+  refsCommand.pipe(
+    Command.run({ version: "0.0.0" }),
+    Effect.provide(NodeServices.layer),
+  ),
 );

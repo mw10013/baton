@@ -18,7 +18,7 @@ export const Route = createFileRoute("/webhooks/app/scopes_update")({
               const payload = yield* Schema.decodeUnknownEffect(
                 ScopesUpdatePayload,
               )(result.payload);
-              yield* shopify.updateSessionScope({
+              yield* shopify.updateShopSessionScope({
                 shop: result.shop,
                 scope: payload.current.toString(),
               });

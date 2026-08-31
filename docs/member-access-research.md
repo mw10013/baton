@@ -3,6 +3,7 @@
 Research only, not a spec. How people who are **not** the shop owner (and the owner, outside Shopify admin) get at a shop's Baton data. `docs/Baton — Development Spike.md` is rough guidance; we deliberately diverge on multi-shop membership (see below).
 
 References:
+
 - `refs/better-auth` (v1.7.2 docs/source; `better-auth@1.7.2` already in `package.json`, zero imports in `src/` yet). Doc paths below relative to `refs/better-auth/docs/content/docs/`.
 - `refs/tceas` — TanStack Start + Cloudflare + Effect + Better Auth 1.7.0 reference app. **Primary pattern source.** Not to be followed slavishly; its tenancy model (auto-provisioned personal orgs) differs from Baton's (org = installed shop).
 
@@ -12,7 +13,7 @@ Decisions taken (2026-08-31, with mw):
 - Member area lives at **`/shop/$shop/*`** ("shop" — identifiable, easy to debug); page header/label uses the **shop name** for now.
 - **Rename Shopify's D1 `Session` table → `ShopSession`** so better-auth keeps PascalCase `User`/`Session`/`Account`/`Verification`.
 - **`/admin` operator console moves onto better-auth too** (magic link + `role=admin` via `ADMIN_EMAILS` bootstrap), **sequenced after member auth lands**; retires `AdminAuth` password + sealed cookie.
-- **No explicit invite-accept step**: owner adds an email → `Member` row exists → person logs in; the magic link proving email ownership *is* acceptance. No invitation table/status.
+- **No explicit invite-accept step**: owner adds an email → `Member` row exists → person logs in; the magic link proving email ownership _is_ acceptance. No invitation table/status.
 - **Owner self-adds** their own email in the member list (role `owner`); no install-time auto-provisioning.
 - `Member.shop` **FK to `ShopSession(shop)` with `on delete cascade`** — uninstall tears down memberships via referential integrity.
 - Uninstall = **full shop teardown** (ShopSession row, members via cascade, ShopAgent DO destroyed). Reinstall starts fresh; members re-added. `User` rows persist but are inert (invite-only gate requires a `Member` row).
@@ -30,12 +31,12 @@ Decisions taken (2026-08-31, with mw):
 
 ## Surfaces + naming
 
-| Surface | Routes | Who | Auth |
-| --- | --- | --- | --- |
-| Public | `/`, `/privacy`, help later | anyone | none |
-| Embedded app | `/app/*` | owner inside Shopify admin | token exchange (`src/lib/Shopify.ts:1281`); 3-layer guard (`src/worker.ts:235-243`, `src/routes/app.tsx:146-149`, `shopifyServerFnMiddleware`) |
-| Operator console | `/admin/*` | us | password + sealed cookie (`src/lib/AdminAuth.ts`) |
-| **Member area (new)** | `/shop/$shop/*` | invited members incl. owner | Better Auth magic link |
+| Surface               | Routes                      | Who                         | Auth                                                                                                                                           |
+| --------------------- | --------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Public                | `/`, `/privacy`, help later | anyone                      | none                                                                                                                                           |
+| Embedded app          | `/app/*`                    | owner inside Shopify admin  | token exchange (`src/lib/Shopify.ts:1281`); 3-layer guard (`src/worker.ts:235-243`, `src/routes/app.tsx:146-149`, `shopifyServerFnMiddleware`) |
+| Operator console      | `/admin/*`                  | us                          | password + sealed cookie (`src/lib/AdminAuth.ts`)                                                                                              |
+| **Member area (new)** | `/shop/$shop/*`             | invited members incl. owner | Better Auth magic link                                                                                                                         |
 
 Naming: audience is no-code merchants + their workers — avoid "portal". Owner tells worker "go to baton.mw10013.com, log in". Route prefix decided: **`/shop/$shop/*`** (identifiable in URLs/logs, easy to debug; distinct from operator `/admin/shop/$shop`). Page label: the shop name, for now. Deployment mirrors bang/modeo: `baton.mw10013.com` subdomain of `mw10013.com`; email sender would follow tceas's `mail.` pattern (`noreply@mail.mw10013.com` in `refs/tceas/wrangler.jsonc:56-61` — sender pinned via `allowed_sender_addresses`).
 
@@ -61,6 +62,7 @@ User-role taxonomy once admin migrates onto better-auth: `User.role = "admin"` =
   > "better-auth's own route inserts the `Organization` and owner `Member` rows as two separate statements — no transaction on D1, so a failure between them orphans an `Organization` row. Here both inserts ride one atomic D1 batch (`D1Client.batch`) instead."
 
   Plus a partial unique index backstop (`refs/tceas/migrations/0001_init.sql:73-79`) because "better-auth's organizationLimit is a count-then-insert check with no transaction on D1".
+
 - Cost it accepted, documented: manual re-implementation "MUST be kept in sync with how better-auth writes these rows — track refs/better-auth/.../crud-org.ts on upgrades"; invitation-accept never implemented; `sendInvitationEmail` is a log stub.
 - The real gap is confirmed in `refs/tceas/docs/effect-sql-d1-vs-bare-d1.md:25`: the Effect D1 driver **does** support atomic `batch`; better-auth is what never batches (its adapter detects D1 and just sets `transaction = false`).
 - Authorization is **doubled anyway**: every org-scoped request re-validates `Repository.findMemberRole({ userId, organizationId })` server-side against the URL param before the plugin's own check ever runs (`refs/tceas/src/routes/app.$organizationId.tsx:36-87`). `session.activeOrganizationId` is "never read for authorization — it survives only as the login-time redirect hint" (`refs/tceas/src/lib/Auth.ts:256-264`).
@@ -68,7 +70,7 @@ User-role taxonomy once admin migrates onto better-auth: `User.role = "admin"` =
 ### Baton's tenancy is different — and that tips the scale
 
 1. **Baton already has a tenant table.** `Session` keyed by shop domain (`migrations/0001_init.sql`), created at install. An `Organization` row 1:1 with it is pure ceremony plus a linkage decision (slug vs additionalFields) that buys nothing.
-2. **The plugin's endpoint authorization assumes callers with better-auth sessions.** Baton's member management originates in the embedded app under a *Shopify* session — every plugin call would be a server-side bypass with explicit orgId, i.e. we'd use the plugin as a table schema, not as an authorization layer.
+2. **The plugin's endpoint authorization assumes callers with better-auth sessions.** Baton's member management originates in the embedded app under a _Shopify_ session — every plugin call would be a server-side bypass with explicit orgId, i.e. we'd use the plugin as a table schema, not as an authorization layer.
 3. **D1 atomicity.** Plugin writes (accept-invitation = update invitation + insert member) are non-atomic on D1. Our own writes ride one `d1.batch` — the exact reason tceas bypassed org creation, generalized.
 4. **The per-request check we need is app-owned regardless** (tceas's `findMemberRole` pattern). Rolling our own removes the redundant second checker and the upgrade-sync burden.
 5. **Multi-shop membership is just rows** in our table; `listShops(userId)` is one query. No `activeOrganizationId`, no org switcher machinery — tceas itself made org switching pure navigation with "no server call, no D1 write" (`refs/tceas/src/routes/app.$organizationId.tsx:106-137`).
@@ -119,14 +121,14 @@ Baton today: single session-wrapped client (`src/worker.ts:170-176`) + bookmark 
 ## Email, demo mode, testing (adopt all three)
 
 - **Cloudflare Email Sending** native `send_email` binding — no SES/Resend/API key. `refs/tceas/wrangler.jsonc:56-61`; `Email` service wraps `binding.send(...)` with `EmailError` carrying CF's string codes (`refs/tceas/src/lib/Email.ts:17-84`). Local dev: miniflare writes simulated emails to `.wrangler/tmp/email/**`; body echoed into log annotations only when `ENVIRONMENT === "local"` (gated on a wrangler var, deliberately not on the `DEMO_MODE` secret). Onboard `mail.mw10013.com` subdomain (avoids root DMARC issues; ~3k emails/mo included — `refs/tceas/docs/cloudflare-email-service-research.md`).
-- **KV demo mode**: exactly one key shape, `demo:magicLink:${email}` → full clickable URL, TTL = token TTL (300s) (`refs/tceas/src/lib/Auth.ts:26,146-158`). Real mode skips the KV write entirely so the URL is never persisted. Demo mode changes *delivery only* — the token flow runs unchanged; login UI renders the link (`refs/tceas/src/routes/login.tsx:41-63`). Per-email key so concurrent tests don't clobber.
+- **KV demo mode**: exactly one key shape, `demo:magicLink:${email}` → full clickable URL, TTL = token TTL (300s) (`refs/tceas/src/lib/Auth.ts:26,146-158`). Real mode skips the KV write entirely so the URL is never persisted. Demo mode changes _delivery only_ — the token flow runs unchanged; login UI renders the link (`refs/tceas/src/routes/login.tsx:41-63`). Per-email key so concurrent tests don't clobber.
 - **Tests**: integration tests read the URL from KV and feed it to `auth.handler(new Request(url, { redirect: "manual" }))`, harvesting cookies (`refs/tceas/test/integration/auth.test.ts:42-63`; `DEMO_MODE: "true"` bound in miniflare). E2E auto-detects: demo link visible → click it, else scrape `.wrangler/tmp/email/*/email-text/*.txt` by mtime (`refs/tceas/e2e/auth.ts:30-68`). `pnpm magic-link` script prints/opens newest simulated link. Seed/reset as one primitive behind `POST /api/e2e/seed`, 404 outside local.
 - Rate-limit the sign-in server fn like `/admin/login` (`env.ADMIN_LOGIN_LIMITER` pattern, `src/routes/admin.login.tsx:33-40`); note tceas turns better-auth's own `rateLimit` off (in-memory, meaningless across isolates).
 
 ## Login flow from the homepage; multi-shop
 
 1. `/` gets a "Log in" button (tceas: header sign-in → `/login`, `refs/tceas/src/routes/index.tsx:28-45`). Public homepage keeps its app-marketing role — that's fine; one button.
-2. `/login`: email form → server fn → `auth.api.signInMagicLink` → "Check your email" (demo mode: renders link). Invite-only gate runs *before* send: reject emails with no `Member` row (+ `databaseHooks.user.create.before` returning `false` as authoritative backstop covering all paths — `concepts/database.mdx:855`).
+2. `/login`: email form → server fn → `auth.api.signInMagicLink` → "Check your email" (demo mode: renders link). Invite-only gate runs _before_ send: reject emails with no `Member` row (+ `databaseHooks.user.create.before` returning `false` as authoritative backstop covering all paths — `concepts/database.mdx:855`).
 3. Link → `GET /api/auth/magic-link/verify` (sole public auth route) → cookie → redirect `/login-callback`.
 4. `/login-callback` (invisible on success, tceas `refs/tceas/src/routes/login-callback.tsx:29-56`): query `Member` rows for user → **one shop → straight to `/work/$shop`; several → shop picker**. No active-shop session state; shop is URL state from here on. Multiple tabs on different shops just works.
 5. Guard on `/work/$shop/*`: `beforeLoad` + `memberServerFnMiddleware` (mirroring `src/lib/AdminServerFnMiddleware.ts:7-17`): `getSession` → `findMemberRole(userId, shop)` against the URL param → inject `{ user, shop, role, runEffect }`. This is tceas's two-layer posture minus the redundant plugin layer.
@@ -141,18 +143,18 @@ Member management stays in the **embedded app** (owner is already authenticated 
 
 Conceptually settled: `ShopSession` **is** the tenant. The teardown seam already exists and is well-built: `/webhooks/app/uninstalled` (`src/routes/webhooks.app.uninstalled.ts:35-51`) does `shopify.deleteSessionByShop(shop)` (deliberately unconditional — replica-lag-safe, retry-idempotent, see its JSDoc) + `destroyShopAgent(shop)` (`deleteAll()` so storage stops billing; destroy errors propagate so Shopify retries). Member auth adds nothing to this handler: the `Member` cascade rides the existing session delete via FK.
 
-1. Delete the `ShopSession` row → `Member` rows cascade (FK). Better-auth `User` rows persist — inert by design: the sign-in gate checks `Member` rows, so a user with zero memberships can't get a magic link, and `disableSignUp` blocks re-creation paths. A user with memberships in *other* shops keeps those untouched — this is why multi-shop membership and cascade play nicely.
+1. Delete the `ShopSession` row → `Member` rows cascade (FK). Better-auth `User` rows persist — inert by design: the sign-in gate checks `Member` rows, so a user with zero memberships can't get a magic link, and `disableSignUp` blocks re-creation paths. A user with memberships in _other_ shops keeps those untouched — this is why multi-shop membership and cascade play nicely.
 2. Destroy the ShopAgent DO. Rehydration guard: see below.
 3. Reinstall = fresh start: new ShopSession row, empty DO, owner re-adds members. No "magic re-linkup" — with multi-shop users and cascaded rows there's nothing safe to resurrect, and re-adding emails is cheap.
 
 ### DO deletion guard — recommendation
 
-**A destroyed DO cannot be prevented from rehydrating** — any later `getByName(shop)` wakes a fresh, empty object whose constructor re-runs migrations. A tombstone inside the DO is impossible (`deleteAll()` would wipe it; a rehydrated DO is indistinguishable from a never-created one). So "stays deleted" cannot be a DO-side property; it must be an *edge* property: **no user-facing path may address a DO for a shop without first proving a D1 row exists.** Concretely:
+**A destroyed DO cannot be prevented from rehydrating** — any later `getByName(shop)` wakes a fresh, empty object whose constructor re-runs migrations. A tombstone inside the DO is impossible (`deleteAll()` would wipe it; a rehydrated DO is indistinguishable from a never-created one). So "stays deleted" cannot be a DO-side property; it must be an _edge_ property: **no user-facing path may address a DO for a shop without first proving a D1 row exists.** Concretely:
 
-- **WebSocket path — already guarded.** `authorizeShopAgentRequest` (`src/worker.ts:306-354`) resolves session + plan *before* the DO wakes; post-uninstall there's no ShopSession row → 401/403, DO never touched. Member-area sockets add a cookie-session branch there: better-auth `getSession` + `Member` row for the URL shop.
+- **WebSocket path — already guarded.** `authorizeShopAgentRequest` (`src/worker.ts:306-354`) resolves session + plan _before_ the DO wakes; post-uninstall there's no ShopSession row → 401/403, DO never touched. Member-area sockets add a cookie-session branch there: better-auth `getSession` + `Member` row for the URL shop.
 - **Embedded server fns — already guarded transitively.** Everything behind `shopifyServerFnMiddleware` re-runs `authenticateAdmin`, which needs the D1 session/token exchange; post-uninstall it fails before any `ShopAgentClient` call.
 - **Member-area server fns — guarded by construction.** `memberServerFnMiddleware` asserts the `Member` row, whose FK to `ShopSession` makes membership itself proof of install. No extra check needed.
-- **Operator console (`/admin/*`) — deliberately unguarded.** Inspecting is how orphans are found; note that `getAdminSnapshot` on a destroyed shop *revives* it as an empty orphan — accept this, the orphan console (`/admin/orphan-shop-agent-objects`) is the janitor.
+- **Operator console (`/admin/*`) — deliberately unguarded.** Inspecting is how orphans are found; note that `getAdminSnapshot` on a destroyed shop _revives_ it as an empty orphan — accept this, the orphan console (`/admin/orphan-shop-agent-objects`) is the janitor.
 - **Residual leak, accepted:** a request authenticated pre-uninstall racing the webhook can revive an empty DO after `destroyShopAgent`. Cost is one empty DO (pennies), visible in the orphan console, deletable there. Not a correctness issue — no user path can reach it afterward.
 
 **Do not** add a per-wake D1 existence check inside the ShopAgent constructor for now (self-healing "no ShopSession → deleteAll + abort"). It would cost a D1 read on every cold start, insta-kill orphans the operator console is trying to inspect, and defends only the raced-revival case above, which is already benign. Revisit only if orphan volume ever becomes real.
@@ -170,7 +172,7 @@ Sign-in gate composition changes slightly: allowed = email has a `Member` row **
 
 ## Audit trail — deferred, with a lean
 
-Deferred (decided direction, not built). When it comes: per-shop **work activity** (job state changes with actor + timestamp — which the spike already requires) lives in **ShopAgent SQLite**; that activity log *is* the audit seed, no separate machinery. Cross-shop **auth events** (sign-ins, member add/remove) would belong in D1 if ever needed — a member's login isn't shop-scoped, so the DO is the wrong home for it. Don't build either until a screen needs it.
+Deferred (decided direction, not built). When it comes: per-shop **work activity** (job state changes with actor + timestamp — which the spike already requires) lives in **ShopAgent SQLite**; that activity log _is_ the audit seed, no separate machinery. Cross-shop **auth events** (sign-ins, member add/remove) would belong in D1 if ever needed — a member's login isn't shop-scoped, so the DO is the wrong home for it. Don't build either until a screen needs it.
 
 ## Migrations + drift protection
 

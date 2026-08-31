@@ -132,7 +132,7 @@ export const ActiveSubscription = Schema.Struct({
 });
 export type ActiveSubscription = typeof ActiveSubscription.Type;
 
-export const Session = Schema.Struct({
+export const ShopSession = Schema.Struct({
   shop: Shop,
   shopGid: ShopGid,
   shopAgentId: ShopAgentId,
@@ -145,7 +145,7 @@ export const Session = Schema.Struct({
    * Cached plan handle and the instant that cache entry stops being fresh.
    *
    * `planHandle` is `Schema.String`, deliberately not {@link PlanHandle}: this
-   * schema decodes every `Session` row on the authentication path, so a stored
+   * schema decodes every `ShopSession` row on the authentication path, so a stored
    * handle that falls outside the allowlist — after a catalog change, a rename,
    * or a rollback — must degrade to a cache miss, never to a row that fails to
    * decode and takes admin authentication down with it. Validation happens when
@@ -159,24 +159,24 @@ export const Session = Schema.Struct({
   planHandle: Schema.NullOr(Schema.String),
   planHandleExpiresAt: Schema.NullOr(Schema.Number),
 });
-export type Session = typeof Session.Type;
+export type ShopSession = typeof ShopSession.Type;
 
-export const SessionRedacted = Schema.Struct({
-  ...Struct.omit(Session.fields, ["accessToken", "refreshToken"]),
+export const ShopSessionRedacted = Schema.Struct({
+  ...Struct.omit(ShopSession.fields, ["accessToken", "refreshToken"]),
   hasAccessToken: SqliteBoolean,
   hasRefreshToken: SqliteBoolean,
 });
-export type SessionRedacted = typeof SessionRedacted.Type;
+export type ShopSessionRedacted = typeof ShopSessionRedacted.Type;
 
-export const SessionRedactedPage = Schema.Struct({
-  sessions: Schema.Array(SessionRedacted),
+export const ShopSessionRedactedPage = Schema.Struct({
+  shopSessions: Schema.Array(ShopSessionRedacted),
   limit: Schema.Number,
   startCursor: Schema.NullOr(Schema.String),
   endCursor: Schema.NullOr(Schema.String),
   hasPreviousPage: Schema.Boolean,
   hasNextPage: Schema.Boolean,
 });
-export type SessionRedactedPage = typeof SessionRedactedPage.Type;
+export type ShopSessionRedactedPage = typeof ShopSessionRedactedPage.Type;
 
 /**
  * The demo counter the skeleton's home page reads and bumps.
@@ -235,7 +235,7 @@ export type AdminShopAgentSnapshot = typeof AdminShopAgentSnapshot.Type;
  * where "never fetched", "expired an hour ago", and "handle this build no
  * longer recognizes" have three different remedies.
  *
- * `Unrecognized` is the case the `Session.planHandle` column exists in its
+ * `Unrecognized` is the case the `ShopSession.planHandle` column exists in its
  * `Schema.String` form to survive, so the admin page shows the stored string
  * rather than hiding it behind a decode failure.
  */
@@ -254,7 +254,7 @@ export const adminShopPlanCache = (
   {
     planHandle,
     planHandleExpiresAt,
-  }: Pick<SessionRedacted, "planHandle" | "planHandleExpiresAt">,
+  }: Pick<ShopSessionRedacted, "planHandle" | "planHandleExpiresAt">,
   now: number,
 ): AdminShopPlanCache => {
   if (planHandleExpiresAt === null)
@@ -299,7 +299,7 @@ export type AdminShopLoaderData =
   | { readonly _tag: "NotFound" }
   | {
       readonly _tag: "Found";
-      readonly session: SessionRedacted;
+      readonly shopSession: ShopSessionRedacted;
       readonly plan: AdminShopPlanCache;
       readonly entitlements: Entitlements | null;
       readonly derivedShopAgentId: string;

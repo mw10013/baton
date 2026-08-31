@@ -145,9 +145,9 @@ const makeRunEffect = (env: Env, storage: DurableObjectStorage) => {
  * `ShopifyAdmin.layerNoDeps` closes over a concrete session at build time, and
  * `ManagedRuntime` memoizes what it builds — so a runtime-level `ShopifyAdmin`
  * would pin whichever offline token was live when the Durable Object was
- * constructed and keep using it after `Shopify.refreshSessionIfExpired` had
+ * constructed and keep using it after `Shopify.refreshShopSessionIfExpired` had
  * rotated it, on an instance that lives for hours. Built per call instead, from
- * the session `ensureSession` just returned. `Shopify` and `Env`, the stack's
+ * the session `ensureShopSession` just returned. `Shopify` and `Env`, the stack's
  * other requirements, are ambient and resolve from the runtime.
  */
 const shopifyAdminLayer = (session: ShopifyApi.Session) =>
@@ -334,7 +334,7 @@ export class ShopAgent extends Agent {
 
   /**
    * Reads the shop back out of the Shopify Admin API from inside the object,
-   * using the offline session `ensureSession` resolves (and refreshes) from D1.
+   * using the offline session `ensureShopSession` resolves (and refreshes) from D1.
    *
    * Not `@callable()`: it spends a Shopify API call, so it stays on the
    * `ShopAgentClient` path where the Worker has already authenticated the
@@ -345,7 +345,7 @@ export class ShopAgent extends Agent {
     return this.runEffect(
       Effect.gen(function* () {
         const shop = yield* Schema.decodeUnknownEffect(Domain.Shop)(name);
-        const session = yield* (yield* Shopify).ensureSession(shop);
+        const session = yield* (yield* Shopify).ensureShopSession(shop);
         const { shop: info } = yield* ShopifyAdmin.pipe(
           Effect.flatMap((admin) =>
             admin.graphqlDecode(ShopInfoResponse, shopInfoQuery),

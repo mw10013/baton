@@ -14,7 +14,7 @@ CLI: **4.7.0**, the current `latest`, installed via the `shopify/shopify` homebr
 
 ## TL;DR
 
-bang *did* solve this, and the fix is **`web_directories = ["."]` in the app configs that are NOT the active one** (`shopify.app.staging.toml`, `shopify.app.production.toml`) while `shopify.app.toml` stays untouched. That is not a style choice — it is load-bearing, and it is the only reason bang works. Putting `["."]` in the active config (baton's single `shopify.app.toml`) suppresses the error but **loads zero webs**, so `shopify app dev` would start no dev process at all.
+bang _did_ solve this, and the fix is **`web_directories = ["."]` in the app configs that are NOT the active one** (`shopify.app.staging.toml`, `shopify.app.production.toml`) while `shopify.app.toml` stays untouched. That is not a style choice — it is load-bearing, and it is the only reason bang works. Putting `["."]` in the active config (baton's single `shopify.app.toml`) suppresses the error but **loads zero webs**, so `shopify app dev` would start no dev process at all.
 
 baton has only one app config, which is exactly why it can't reproduce bang's fix as-is.
 
@@ -26,21 +26,26 @@ Two separate steps, and the fix exploits the gap between them.
 `refs/shopify-cli/packages/app/src/cli/models/project/project.ts:66-74`
 
 ```ts
-const allWebDirs = new Set<string>()
+const allWebDirs = new Set<string>();
 for (const appConfig of appConfigFiles) {
-  const dirs = appConfig.content.web_directories
-  if (Array.isArray(dirs)) for (const dir of dirs) allWebDirs.add(dir as string)
+  const dirs = appConfig.content.web_directories;
+  if (Array.isArray(dirs))
+    for (const dir of dirs) allWebDirs.add(dir as string);
 }
-const webConfigFiles = await discoverWebFiles(directory, allWebDirs.size > 0 ? [...allWebDirs] : undefined, errors)
+const webConfigFiles = await discoverWebFiles(
+  directory,
+  allWebDirs.size > 0 ? [...allWebDirs] : undefined,
+  errors,
+);
 ```
 
 `project.ts:202`:
 
 ```ts
-const dirs = webDirectories ?? ['**']
-const patterns = dirs.map((dir) => joinPath(directory, dir, WEB_TOML))
-patterns.push(`!${joinPath(directory, NODE_MODULES_EXCLUDE)}`)
-const paths = await glob(patterns)
+const dirs = webDirectories ?? ["**"];
+const patterns = dirs.map((dir) => joinPath(directory, dir, WEB_TOML));
+patterns.push(`!${joinPath(directory, NODE_MODULES_EXCLUDE)}`);
+const paths = await glob(patterns);
 ```
 
 - `glob` is fast-glob (`cli-kit/src/public/node/fs.ts:580`) with default options → **follows symlinks**, ignores `.gitignore`.
@@ -53,30 +58,35 @@ const paths = await glob(patterns)
 `config-selection.ts:99-113`
 
 ```ts
-const globPatterns = (configDirs as string[]).map((dir) => `${dir}/shopify.web.toml`)
+const globPatterns = (configDirs as string[]).map(
+  (dir) => `${dir}/shopify.web.toml`,
+);
 return project.webConfigFiles.filter((file) => {
-  const relPath = relativePath(project.directory, file.path).replace(/\\/g, '/')
-  return globPatterns.some((pattern) => matchGlob(relPath, pattern))
-})
+  const relPath = relativePath(project.directory, file.path).replace(
+    /\\/g,
+    "/",
+  );
+  return globPatterns.some((pattern) => matchGlob(relPath, pattern));
+});
 ```
 
 Raw string concat, no `joinPath`. `matchGlob` is minimatch (pinned `9.0.9`, `cli-kit/package.json:149`) and `minimatch("shopify.web.toml", "./shopify.web.toml") === false` (verified on 9.0.9 and 3.1.2). But the filter runs **only when the active config itself declares `web_directories`** — otherwise it returns `project.webConfigFiles` untouched (`config-selection.ts:100-103`).
 
-So: `["."]` in a *sibling* config narrows discovery; the active config, silent on `web_directories`, keeps everything discovery found. Error gone, web intact.
+So: `["."]` in a _sibling_ config narrows discovery; the active config, silent on `web_directories`, keeps everything discovery found. Error gone, web intact.
 
 ## Verified behaviour (real CLI runs against this repo)
 
 `shopify app info` prints DIRECTORY COMPONENTS from `app.webs` (`services/info.ts:201`), so an empty section means zero webs loaded. `shopify app build` with a temporary `build = "echo WEB_BUILD_RAN"` in `shopify.web.toml` was used as a second, independent probe. All edits reverted; `git status` clean.
 
-| Setup (CLI 4.7.0) | Conflict error | Web loaded |
-| --- | --- | --- |
-| baton, no `web_directories` | **yes** | — |
-| baton, `web_directories = ["."]` in the only/active config | no | **NO** (empty DIRECTORY COMPONENTS; `WEB_BUILD_RAN` never printed) |
-| baton, `refs/bang/shopify.web.toml` renamed away | no | yes |
-| baton, web toml moved to `web/` + `web_directories = ["web"]` | no | yes |
-| **baton + a second config (`shopify.app.staging.toml`) carrying `["."]`, active `shopify.app.toml` untouched** | no | **yes** — `📂 baton /` |
-| bang, `shopify app info` (active = `shopify.app.production.toml`, has `["."]`) | no | no webs (filter drops it) |
-| bang, `shopify app info --config shopify.app.toml` (no `web_directories`) | no | yes — `📂 bang /` + all extensions |
+| Setup (CLI 4.7.0)                                                                                              | Conflict error | Web loaded                                                         |
+| -------------------------------------------------------------------------------------------------------------- | -------------- | ------------------------------------------------------------------ |
+| baton, no `web_directories`                                                                                    | **yes**        | —                                                                  |
+| baton, `web_directories = ["."]` in the only/active config                                                     | no             | **NO** (empty DIRECTORY COMPONENTS; `WEB_BUILD_RAN` never printed) |
+| baton, `refs/bang/shopify.web.toml` renamed away                                                               | no             | yes                                                                |
+| baton, web toml moved to `web/` + `web_directories = ["web"]`                                                  | no             | yes                                                                |
+| **baton + a second config (`shopify.app.staging.toml`) carrying `["."]`, active `shopify.app.toml` untouched** | no             | **yes** — `📂 baton /`                                             |
+| bang, `shopify app info` (active = `shopify.app.production.toml`, has `["."]`)                                 | no             | no webs (filter drops it)                                          |
+| bang, `shopify app info --config shopify.app.toml` (no `web_directories`)                                      | no             | yes — `📂 bang /` + all extensions                                 |
 
 Repos carrying the trick today: `bang/shopify.app.staging.toml:8`, `bang/shopify.app.production.toml:9`, `motio/shopify.app.staging.toml:9`, `tanstack-cloudflare-effect-shopify-qr/shopify.app.staging.toml:7` — never in a `shopify.app.toml`.
 
@@ -84,12 +94,12 @@ Repos carrying the trick today: `bang/shopify.app.staging.toml:8`, `bang/shopify
 
 `web_directories` was added in CLI **3.27.0** (`refs/shopify-cli/packages/app/CHANGELOG.md:1988`) and used to work in the obvious way. Bisected with `npx @shopify/cli@<v> app info` on baton with `["."]` in the only config:
 
-| CLI | released | web loaded with `["."]` in the only config |
-| --- | --- | --- |
-| 3.90.0 | 2026-01-29 | yes |
-| 3.92.0 | 2026-03-11 | yes |
-| 3.94.0 | 2026-04-24 | **no** |
-| 3.94.3 / 4.2.0 / 4.5.2 / 4.7.0 | — | **no** |
+| CLI                            | released   | web loaded with `["."]` in the only config |
+| ------------------------------ | ---------- | ------------------------------------------ |
+| 3.90.0                         | 2026-01-29 | yes                                        |
+| 3.92.0                         | 2026-03-11 | yes                                        |
+| 3.94.0                         | 2026-04-24 | **no**                                     |
+| 3.94.3 / 4.2.0 / 4.5.2 / 4.7.0 | —          | **no**                                     |
 
 The `Project` + `config-selection` layer (which added the second, `joinPath`-less filter) landed between 3.92.0 and 3.94.0. bang was scaffolded 2026-05-02, i.e. already on the broken side — its configs survive only because the `["."]` sits in non-active files.
 

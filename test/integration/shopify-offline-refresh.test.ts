@@ -74,19 +74,22 @@ const makeSession = (
     ...overrides,
   });
 
-describe("Shopify.storeSession", () => {
+describe("Shopify.storeShopSession", () => {
   it.effect("rejects invalid expiry dates", () =>
     Effect.gen(function* () {
       const shopify = yield* Shopify;
       const error = yield* Effect.flip(
-        shopify.storeSession(makeSession({ expires: new Date(NaN) }), shopGid),
+        shopify.storeShopSession(
+          makeSession({ expires: new Date(NaN) }),
+          shopGid,
+        ),
       );
       assertInstanceOf(error, ShopifyError);
     }).pipe(Effect.provide(shopifyTestLayer())),
   );
 });
 
-describe("Shopify.refreshSessionIfExpired", () => {
+describe("Shopify.refreshShopSessionIfExpired", () => {
   it.effect(
     "(a) returns the session unchanged when the access token is still valid",
     () =>
@@ -97,7 +100,7 @@ describe("Shopify.refreshSessionIfExpired", () => {
           refreshToken: "shprt_current",
           refreshTokenExpires: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
         });
-        const result = yield* shopify.refreshSessionIfExpired(session);
+        const result = yield* shopify.refreshShopSessionIfExpired(session);
         strictEqual(result, session);
         strictEqual(result.accessToken, "shpat_current");
       }).pipe(Effect.provide(shopifyTestLayer())),
@@ -114,7 +117,7 @@ describe("Shopify.refreshSessionIfExpired", () => {
           refreshTokenExpires: new Date(0),
         });
         const error = yield* Effect.flip(
-          shopify.refreshSessionIfExpired(session),
+          shopify.refreshShopSessionIfExpired(session),
         );
         assertInstanceOf(error, RefreshTokenExpiredError);
         strictEqual(error.shop, shop);
@@ -137,7 +140,7 @@ describe("Shopify.refreshSessionIfExpired", () => {
           refreshTokenExpiresAt - REFRESH_TOKEN_EXPIRY_BUFFER_MS,
         );
         const error = yield* Effect.flip(
-          shopify.refreshSessionIfExpired(session),
+          shopify.refreshShopSessionIfExpired(session),
         );
         assertInstanceOf(error, RefreshTokenExpiredError);
         strictEqual(error.refreshTokenExpiresAt, refreshTokenExpiresAt);
@@ -155,7 +158,7 @@ describe("Shopify.refreshSessionIfExpired", () => {
           refreshToken: "shprt_winner",
           refreshTokenExpires: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
         });
-        yield* shopify.storeSession(winner, shopGid);
+        yield* shopify.storeShopSession(winner, shopGid);
         const result = yield* shopify.recoverRefreshRace(shop, "shprt_loser");
         strictEqual(result.accessToken, "shpat_winner");
         strictEqual(result.refreshToken, "shprt_winner");
@@ -167,7 +170,7 @@ describe("Shopify.refreshSessionIfExpired", () => {
     () =>
       Effect.gen(function* () {
         const shopify = yield* Shopify;
-        yield* shopify.storeSession(
+        yield* shopify.storeShopSession(
           makeSession({
             expires: new Date(0),
             refreshToken: "shprt_loser",
@@ -202,12 +205,12 @@ describe("Shopify.refreshSessionIfExpired", () => {
   );
 });
 
-describe("Repository.updateSessionTokens", () => {
+describe("Repository.updateShopSessionTokens", () => {
   it.effect("rotates token columns and preserves immutable shop identity", () =>
     Effect.gen(function* () {
       const shopify = yield* Shopify;
       const repository = yield* Repository;
-      yield* shopify.storeSession(
+      yield* shopify.storeShopSession(
         makeSession({
           accessToken: "shpat_old",
           refreshToken: "shprt_old",
@@ -217,14 +220,14 @@ describe("Repository.updateSessionTokens", () => {
         }),
         shopGid,
       );
-      yield* repository.updateSessionTokens({
+      yield* repository.updateShopSessionTokens({
         shop,
         accessToken: "shpat_new",
         accessTokenExpiresAt: 3000,
         refreshToken: "shprt_new",
         refreshTokenExpiresAt: 4000,
       });
-      const record = Option.getOrThrow(yield* shopify.loadSessionByShop(shop));
+      const record = Option.getOrThrow(yield* shopify.loadShopSession(shop));
       strictEqual(record.session.accessToken, "shpat_new");
       strictEqual(record.session.refreshToken, "shprt_new");
       strictEqual(record.session.expires?.getTime(), 3000);
@@ -236,12 +239,12 @@ describe("Repository.updateSessionTokens", () => {
   );
 });
 
-describe("Shopify.refreshSession", () => {
+describe("Shopify.refreshShopSession", () => {
   it.live("rotates and persists tokens on a successful grant", () =>
     Effect.gen(function* () {
       const shopify = yield* Shopify;
       const stub = stubRefreshGrant(() => jsonResponse(200, accessTokenBody()));
-      yield* shopify.storeSession(
+      yield* shopify.storeShopSession(
         makeSession({
           accessToken: "shpat_old",
           refreshToken: "shprt_old",
@@ -251,11 +254,11 @@ describe("Shopify.refreshSession", () => {
         shopGid,
       );
       const session = yield* shopify
-        .refreshSession(shop, "shprt_old")
+        .refreshShopSession(shop, "shprt_old")
         .pipe(Effect.ensuring(stub.restore));
       strictEqual(session.accessToken, "shpat_new");
       strictEqual(stub.refreshTokens[0], "shprt_old");
-      const record = Option.getOrThrow(yield* shopify.loadSessionByShop(shop));
+      const record = Option.getOrThrow(yield* shopify.loadShopSession(shop));
       strictEqual(record.session.accessToken, "shpat_new");
       strictEqual(record.session.refreshToken, "shprt_new");
     }).pipe(Effect.provide(shopifyTestLayer())),
@@ -273,7 +276,7 @@ describe("Shopify.refreshSession", () => {
           }),
         );
         const error = yield* Effect.flip(
-          shopify.refreshSession(shop, "shprt_dead"),
+          shopify.refreshShopSession(shop, "shprt_dead"),
         ).pipe(Effect.ensuring(stub.restore));
         assertTrue(Predicate.isTagged(error, "RefreshTokenRejectedError"));
         strictEqual(stub.refreshTokens.length, 1);
@@ -289,7 +292,7 @@ describe("Shopify.refreshSession", () => {
           jsonResponse(400, { error: "invalid_subject_token" }),
         );
         const error = yield* Effect.flip(
-          shopify.refreshSession(shop, "shprt_dead"),
+          shopify.refreshShopSession(shop, "shprt_dead"),
         ).pipe(Effect.ensuring(stub.restore));
         assertTrue(Predicate.isTagged(error, "RefreshTokenRejectedError"));
       }).pipe(Effect.provide(shopifyTestLayer())),
@@ -304,7 +307,7 @@ describe("Shopify.refreshSession", () => {
           : jsonResponse(200, accessTokenBody()),
       );
       const session = yield* shopify
-        .refreshSession(shop, "shprt_current")
+        .refreshShopSession(shop, "shprt_current")
         .pipe(Effect.ensuring(stub.restore));
       strictEqual(session.accessToken, "shpat_new");
       strictEqual(stub.refreshTokens.length, 2);
@@ -322,7 +325,7 @@ describe("Shopify.refreshSession", () => {
           : jsonResponse(200, accessTokenBody()),
       );
       const session = yield* shopify
-        .refreshSession(shop, "shprt_current")
+        .refreshShopSession(shop, "shprt_current")
         .pipe(Effect.ensuring(stub.restore));
       strictEqual(session.accessToken, "shpat_new");
       strictEqual(stub.refreshTokens.length, 2);
@@ -336,14 +339,14 @@ describe("Shopify.refreshSession", () => {
         jsonResponse(429, { errors: "throttled" }),
       );
       const error = yield* Effect.flip(
-        shopify.refreshSession(shop, "shprt_current"),
+        shopify.refreshShopSession(shop, "shprt_current"),
       ).pipe(Effect.ensuring(stub.restore));
       assertInstanceOf(error, ShopifyError);
     }).pipe(Effect.provide(shopifyTestLayer())),
   );
 });
 
-describe("Shopify.refreshSessionIfExpired rejection recovery", () => {
+describe("Shopify.refreshShopSessionIfExpired rejection recovery", () => {
   const expiredLoser = () =>
     makeSession({
       accessToken: "shpat_expired",
@@ -355,7 +358,7 @@ describe("Shopify.refreshSessionIfExpired rejection recovery", () => {
   it.live("adopts the winner session when a refresh race was lost", () =>
     Effect.gen(function* () {
       const shopify = yield* Shopify;
-      yield* shopify.storeSession(
+      yield* shopify.storeShopSession(
         makeSession({
           accessToken: "shpat_winner",
           expires: new Date(Date.now() + 60 * 60 * 1000),
@@ -371,7 +374,7 @@ describe("Shopify.refreshSessionIfExpired rejection recovery", () => {
         }),
       );
       const result = yield* shopify
-        .refreshSessionIfExpired(expiredLoser())
+        .refreshShopSessionIfExpired(expiredLoser())
         .pipe(Effect.ensuring(stub.restore));
       strictEqual(result.accessToken, "shpat_winner");
       strictEqual(result.refreshToken, "shprt_winner");
@@ -383,7 +386,7 @@ describe("Shopify.refreshSessionIfExpired rejection recovery", () => {
     () =>
       Effect.gen(function* () {
         const shopify = yield* Shopify;
-        yield* shopify.storeSession(expiredLoser(), shopGid);
+        yield* shopify.storeShopSession(expiredLoser(), shopGid);
         const stub = stubRefreshGrant(() =>
           jsonResponse(401, {
             error: "invalid_request",
@@ -391,7 +394,7 @@ describe("Shopify.refreshSessionIfExpired rejection recovery", () => {
           }),
         );
         const error = yield* Effect.flip(
-          shopify.refreshSessionIfExpired(expiredLoser()),
+          shopify.refreshShopSessionIfExpired(expiredLoser()),
         ).pipe(Effect.ensuring(stub.restore));
         assertInstanceOf(error, RefreshTokenExpiredError);
         strictEqual(error.refreshTokenExpiresAt, null);

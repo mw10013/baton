@@ -22,10 +22,10 @@ const shopGid = Schema.decodeUnknownSync(Domain.ShopGid)(
   "gid://shopify/Shop/1",
 );
 
-const session = (
+const shopSession = (
   planHandle: string | null,
   planHandleExpiresAt: number | null,
-): Omit<Domain.Session, "planHandle" | "planHandleExpiresAt"> & {
+): Omit<Domain.ShopSession, "planHandle" | "planHandleExpiresAt"> & {
   readonly planHandle?: string | null;
   readonly planHandleExpiresAt?: number | null;
 } => ({
@@ -41,11 +41,11 @@ const session = (
   planHandleExpiresAt,
 });
 
-const seedSession = (planHandle: string | null, expiresAt: number | null) =>
+const seedShopSession = (planHandle: string | null, expiresAt: number | null) =>
   Effect.gen(function* () {
     const repository = yield* Repository;
-    yield* repository.upsertSession(session(planHandle, expiresAt));
-    yield* repository.updateSessionPlan({
+    yield* repository.upsertShopSession(shopSession(planHandle, expiresAt));
+    yield* repository.updateShopSessionPlan({
       shop,
       planHandle,
       planHandleExpiresAt: expiresAt,
@@ -94,7 +94,7 @@ const failedActiveSubscription = () =>
     }),
   );
 
-afterEach(() => env.D1.exec("delete from Session"));
+afterEach(() => env.D1.exec("delete from ShopSession"));
 
 describe("SubscriptionPlan", () => {
   it.effect(
@@ -112,13 +112,13 @@ describe("SubscriptionPlan", () => {
           activeSubscription,
           Effect.gen(function* () {
             const plan = yield* SubscriptionPlan;
-            yield* seedSession("baton-pro-test", 2000);
+            yield* seedShopSession("baton-pro-test", 2000);
             assert.deepStrictEqual(yield* plan.resolve(shop), {
               _tag: "Subscribed",
               handle: "baton-pro-test",
               plan: "pro",
             });
-            yield* seedSession(null, 2000);
+            yield* seedShopSession(null, 2000);
             assert.deepStrictEqual(yield* plan.resolve(shop), {
               _tag: "Unsubscribed",
             });
@@ -175,7 +175,7 @@ describe("SubscriptionPlan", () => {
               [null, null],
               ["retired-plan", 2000],
             ] as const) {
-              yield* seedSession(handle, expiresAt);
+              yield* seedShopSession(handle, expiresAt);
               assert.deepStrictEqual(yield* plan.resolve(shop), {
                 _tag: "Subscribed",
                 handle: "baton-basic",
@@ -183,7 +183,7 @@ describe("SubscriptionPlan", () => {
               });
             }
             const stored = Option.getOrThrow(
-              yield* (yield* Repository).findSessionByShop(shop),
+              yield* (yield* Repository).findShopSession(shop),
             );
             assert.strictEqual(stored.planHandle, "baton-basic");
             assert.strictEqual(stored.planHandleExpiresAt, 86_401_000);
@@ -205,12 +205,12 @@ describe("SubscriptionPlan", () => {
         activeSubscription,
         Effect.gen(function* () {
           const plan = yield* SubscriptionPlan;
-          yield* seedSession("baton-pro", 2000);
+          yield* seedShopSession("baton-pro", 2000);
           assert.deepStrictEqual(yield* plan.refresh(shop), {
             _tag: "Unsubscribed",
           });
           const stored = Option.getOrThrow(
-            yield* (yield* Repository).findSessionByShop(shop),
+            yield* (yield* Repository).findShopSession(shop),
           );
           assert.strictEqual(stored.planHandle, null);
           assert.strictEqual(stored.planHandleExpiresAt, 86_401_000);
@@ -226,10 +226,10 @@ describe("SubscriptionPlan", () => {
       yield* run(
         activeProAtFutureBoundary,
         Effect.gen(function* () {
-          yield* seedSession(null, null);
+          yield* seedShopSession(null, null);
           yield* (yield* SubscriptionPlan).resolve(shop);
           const stored = Option.getOrThrow(
-            yield* (yield* Repository).findSessionByShop(shop),
+            yield* (yield* Repository).findShopSession(shop),
           );
           assert.strictEqual(stored.planHandleExpiresAt, 901_000);
         }),
@@ -243,10 +243,10 @@ describe("SubscriptionPlan", () => {
       yield* run(
         activeProAtPastBoundary,
         Effect.gen(function* () {
-          yield* seedSession(null, null);
+          yield* seedShopSession(null, null);
           yield* (yield* SubscriptionPlan).resolve(shop);
           const stored = Option.getOrThrow(
-            yield* (yield* Repository).findSessionByShop(shop),
+            yield* (yield* Repository).findShopSession(shop),
           );
           assert.strictEqual(stored.planHandleExpiresAt, 87_400_000);
         }),
@@ -262,13 +262,13 @@ describe("SubscriptionPlan", () => {
         yield* run(
           failedActiveSubscription,
           Effect.gen(function* () {
-            yield* seedSession("baton-pro", 1000);
+            yield* seedShopSession("baton-pro", 1000);
             const error = yield* Effect.flip(
               (yield* SubscriptionPlan).resolve(shop),
             );
             assert.instanceOf(error, SubscriptionPlanError);
             const stored = Option.getOrThrow(
-              yield* (yield* Repository).findSessionByShop(shop),
+              yield* (yield* Repository).findShopSession(shop),
             );
             assert.strictEqual(stored.planHandle, "baton-pro");
             assert.strictEqual(stored.planHandleExpiresAt, 1000);

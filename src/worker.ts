@@ -99,7 +99,7 @@ const makeAppLayer = (
  * - **Interactive SSR** — a top-level document load that can't carry a request
  *   header: fall back to `"first-unconstrained"` (serve the first query from any,
  *   possibly stale, replica) for the latency win. Safe because D1 holds only
- *   `Session`, self-healing auth plumbing — a stale read degrades to at worst a
+ *   `ShopSession`, self-healing auth plumbing — a stale read degrades to at worst a
  *   redundant token exchange, never wrong data or a security hole — and SSR
  *   reseeds a fresh bookmark each load.
  * - **Background / server-to-server** — webhooks (`/webhooks/*`, `isBackground`),

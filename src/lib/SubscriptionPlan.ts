@@ -121,17 +121,17 @@ const decodePlanHandle = Schema.decodeUnknownOption(Domain.PlanHandle);
  * absence of any contract.
  */
 const cachedStatus = (
-  session: Domain.Session,
+  shopSession: Domain.ShopSession,
   now: number,
 ): Option.Option<Domain.PlanStatus> => {
   if (
-    session.planHandleExpiresAt === null ||
-    now >= session.planHandleExpiresAt
+    shopSession.planHandleExpiresAt === null ||
+    now >= shopSession.planHandleExpiresAt
   )
     return Option.none();
-  return session.planHandle === null
+  return shopSession.planHandle === null
     ? Option.some(Unsubscribed)
-    : Option.map(decodePlanHandle(session.planHandle), subscribed);
+    : Option.map(decodePlanHandle(shopSession.planHandle), subscribed);
 };
 
 export class SubscriptionPlan extends Context.Service<
@@ -140,7 +140,7 @@ export class SubscriptionPlan extends Context.Service<
     /**
      * The shop's plan, from cache when fresh and from Shopify when not.
      *
-     * A shop with no `Session` row resolves to `Unsubscribed` without touching
+     * A shop with no `ShopSession` row resolves to `Unsubscribed` without touching
      * Shopify: uninstall deletes the row, so its absence means the app is not
      * installed, which grants no more access than an absent contract does.
      */
@@ -204,13 +204,13 @@ export class SubscriptionPlan extends Context.Service<
         new SubscriptionPlanError({ message, cause });
 
       const revalidate = Effect.fn("SubscriptionPlan.revalidate")(function* (
-        session: Domain.Session,
+        shopSession: Domain.ShopSession,
       ) {
         const active = yield* shopifyPartner
-          .activeSubscription(session.shopGid)
+          .activeSubscription(shopSession.shopGid)
           .pipe(
             Effect.mapError(
-              planError(`Plan revalidation failed for ${session.shop}`),
+              planError(`Plan revalidation failed for ${shopSession.shop}`),
             ),
           );
         const now = yield* Clock.currentTimeMillis;
@@ -219,8 +219,8 @@ export class SubscriptionPlan extends Context.Service<
           onSome: ({ handle }) => handle,
         });
         yield* repository
-          .updateSessionPlan({
-            shop: session.shop,
+          .updateShopSessionPlan({
+            shop: shopSession.shop,
             planHandle: handle,
             planHandleExpiresAt: planHandleExpiresAt(
               now,
@@ -232,46 +232,46 @@ export class SubscriptionPlan extends Context.Service<
           })
           .pipe(
             Effect.mapError(
-              planError(`Plan cache write failed for ${session.shop}`),
+              planError(`Plan cache write failed for ${shopSession.shop}`),
             ),
           );
         yield* Effect.logDebug(
-          `SubscriptionPlan.revalidate: shop=${session.shop} handle=${handle ?? "none"}`,
-        ).pipe(Effect.annotateLogs({ shop: session.shop, handle }));
+          `SubscriptionPlan.revalidate: shop=${shopSession.shop} handle=${handle ?? "none"}`,
+        ).pipe(Effect.annotateLogs({ shop: shopSession.shop, handle }));
         return Option.match(active, {
           onNone: () => Unsubscribed,
           onSome: ({ handle }) => subscribed(handle),
         });
       });
 
-      const findSession = (shop: Domain.Shop) =>
+      const findShopSession = (shop: Domain.Shop) =>
         repository
-          .findSessionByShop(shop)
+          .findShopSession(shop)
           .pipe(
-            Effect.mapError(planError(`Session lookup failed for ${shop}`)),
+            Effect.mapError(planError(`ShopSession lookup failed for ${shop}`)),
           );
 
       const resolve = Effect.fn("SubscriptionPlan.resolve")(function* (
         shop: Domain.Shop,
       ) {
-        const session = yield* findSession(shop);
-        if (Option.isNone(session)) return Unsubscribed;
+        const shopSession = yield* findShopSession(shop);
+        if (Option.isNone(shopSession)) return Unsubscribed;
         const cached = cachedStatus(
-          session.value,
+          shopSession.value,
           yield* Clock.currentTimeMillis,
         );
         return Option.isSome(cached)
           ? cached.value
-          : yield* revalidate(session.value);
+          : yield* revalidate(shopSession.value);
       });
 
       const refresh = Effect.fn("SubscriptionPlan.refresh")(function* (
         shop: Domain.Shop,
       ) {
-        const session = yield* findSession(shop);
-        return Option.isNone(session)
+        const shopSession = yield* findShopSession(shop);
+        return Option.isNone(shopSession)
           ? Unsubscribed
-          : yield* revalidate(session.value);
+          : yield* revalidate(shopSession.value);
       });
 
       return SubscriptionPlan.of({ resolve, refresh });

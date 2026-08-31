@@ -34,21 +34,24 @@ const decodeRepository =
 export class Repository extends Context.Service<
   Repository,
   {
-    readonly findSessionByShop: (
-      shop: Domain.Session["shop"],
+    readonly findShopSession: (
+      shop: Domain.ShopSession["shop"],
     ) => Effect.Effect<
-      Option.Option<Domain.Session>,
+      Option.Option<Domain.ShopSession>,
       SqlError.SqlError | RepositoryError
     >;
-    readonly upsertSession: (
-      session: Omit<Domain.Session, "planHandle" | "planHandleExpiresAt">,
+    readonly upsertShopSession: (
+      shopSession: Omit<
+        Domain.ShopSession,
+        "planHandle" | "planHandleExpiresAt"
+      >,
     ) => Effect.Effect<void, SqlError.SqlError>;
-    readonly clearSessionAccessToken: (
-      shop: Domain.Session["shop"],
+    readonly clearShopSessionAccessToken: (
+      shop: Domain.ShopSession["shop"],
     ) => Effect.Effect<void, SqlError.SqlError>;
-    readonly updateSessionTokens: (
-      session: Pick<
-        Domain.Session,
+    readonly updateShopSessionTokens: (
+      shopSession: Pick<
+        Domain.ShopSession,
         | "shop"
         | "accessToken"
         | "accessTokenExpiresAt"
@@ -60,51 +63,51 @@ export class Repository extends Context.Service<
      * Writes the revalidated plan cache entry, and nothing else.
      *
      * Deliberately its own statement rather than columns folded into
-     * `upsertSession`: D1 bills index B-tree writes as `rows_written`, and
-     * `upsertSession` runs on the hot authentication path where every extra
+     * `upsertShopSession`: D1 bills index B-tree writes as `rows_written`, and
+     * `upsertShopSession` runs on the hot authentication path where every extra
      * column in a `SET` list is billed on every token re-exchange. Plan
      * revalidation happens on the order of once per shop per day, so it pays
      * for its own narrow update instead of taxing the path that does not.
      */
-    readonly updateSessionPlan: (
-      session: Pick<
-        Domain.Session,
+    readonly updateShopSessionPlan: (
+      shopSession: Pick<
+        Domain.ShopSession,
         "shop" | "planHandle" | "planHandleExpiresAt"
       >,
     ) => Effect.Effect<void, SqlError.SqlError>;
-    readonly deleteSessionByShop: (
-      shop: Domain.Session["shop"],
+    readonly deleteShopSession: (
+      shop: Domain.ShopSession["shop"],
     ) => Effect.Effect<void, SqlError.SqlError>;
-    readonly updateSessionScope: (
-      shop: Domain.Session["shop"],
-      scope: Domain.Session["scope"],
+    readonly updateShopSessionScope: (
+      shop: Domain.ShopSession["shop"],
+      scope: Domain.ShopSession["scope"],
     ) => Effect.Effect<void, SqlError.SqlError>;
     /**
-     * One session row with both tokens projected away in SQL.
+     * One shop session row with both tokens projected away in SQL.
      *
-     * Deliberately not `findSessionByShop` with the fields dropped afterwards:
+     * Deliberately not `findShopSession` with the fields dropped afterwards:
      * the caller is a route loader, whose result is serialized to the browser,
      * and the only way a live access token cannot reach that payload is for it
-     * never to leave D1. Same projection as {@link getSessionRedactedPage}.
+     * never to leave D1. Same projection as {@link getShopSessionRedactedPage}.
      */
-    readonly findSessionRedactedByShop: (
-      shop: Domain.Session["shop"],
+    readonly findShopSessionRedacted: (
+      shop: Domain.ShopSession["shop"],
     ) => Effect.Effect<
-      Option.Option<Domain.SessionRedacted>,
+      Option.Option<Domain.ShopSessionRedacted>,
       SqlError.SqlError | RepositoryError
     >;
-    readonly getSessionRedactedPage: (params: {
+    readonly getShopSessionRedactedPage: (params: {
       readonly after?: string;
       readonly before?: string;
       readonly filter?: string;
       readonly limit: number;
     }) => Effect.Effect<
-      Domain.SessionRedactedPage,
+      Domain.ShopSessionRedactedPage,
       SqlError.SqlError | RepositoryError
     >;
     /**
-     * Anti-joins the given REST object ids against `Session.shopAgentId` and
-     * returns the subset with no matching session (the orphans). Ids are passed
+     * Anti-joins the given REST object ids against `ShopSession.shopAgentId` and
+     * returns the subset with no matching row (the orphans). Ids are passed
      * as one `json_each` JSON-array parameter to stay within D1's 100-bound-param
      * cap. Pure diff: callers decide which ids to pass — the orphan page excludes
      * ids with no stored data, so only storage-billing ids reach the join.
@@ -123,14 +126,15 @@ export class Repository extends Context.Service<
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      const findSessionByShop = Effect.fn("Repository.findSessionByShop")(
-        function* (shop: Domain.Session["shop"]) {
-          const rows = yield* sql`select * from Session where shop = ${shop}`;
+      const findShopSession = Effect.fn("Repository.findShopSession")(
+        function* (shop: Domain.ShopSession["shop"]) {
+          const rows =
+            yield* sql`select * from ShopSession where shop = ${shop}`;
           if (rows[0] === undefined) return Option.none();
           return Option.some(
             yield* decodeRepository(
-              Domain.Session,
-              "Invalid Session row",
+              Domain.ShopSession,
+              "Invalid ShopSession row",
             )(rows[0]),
           );
         },
@@ -153,14 +157,18 @@ export class Repository extends Context.Service<
        * `SET` list for the same billing reason, and the parameter type omits
        * them so that stays true: re-authentication must not disturb a cached
        * plan, and a fresh insert leaves them null, which reads as never
-       * fetched. `updateSessionPlan` owns those columns.
+       * fetched. `updateShopSessionPlan` owns those columns.
        */
-      const upsertSession = Effect.fn("Repository.upsertSession")(function* (
-        session: Omit<Domain.Session, "planHandle" | "planHandleExpiresAt">,
-      ) {
-        yield* sql`
-          insert into Session (shop, shopGid, shopAgentId, scope, accessTokenExpiresAt, accessToken, refreshToken, refreshTokenExpiresAt)
-          values (${session.shop}, ${session.shopGid}, ${session.shopAgentId}, ${session.scope}, ${session.accessTokenExpiresAt}, ${session.accessToken}, ${session.refreshToken}, ${session.refreshTokenExpiresAt})
+      const upsertShopSession = Effect.fn("Repository.upsertShopSession")(
+        function* (
+          shopSession: Omit<
+            Domain.ShopSession,
+            "planHandle" | "planHandleExpiresAt"
+          >,
+        ) {
+          yield* sql`
+          insert into ShopSession (shop, shopGid, shopAgentId, scope, accessTokenExpiresAt, accessToken, refreshToken, refreshTokenExpiresAt)
+          values (${shopSession.shop}, ${shopSession.shopGid}, ${shopSession.shopAgentId}, ${shopSession.scope}, ${shopSession.accessTokenExpiresAt}, ${shopSession.accessToken}, ${shopSession.refreshToken}, ${shopSession.refreshTokenExpiresAt})
           on conflict(shop) do update set
             shopGid = excluded.shopGid,
             scope = excluded.scope,
@@ -169,83 +177,84 @@ export class Repository extends Context.Service<
             refreshToken = excluded.refreshToken,
             refreshTokenExpiresAt = excluded.refreshTokenExpiresAt
         `;
+        },
+      );
+
+      const clearShopSessionAccessToken = Effect.fn(
+        "Repository.clearShopSessionAccessToken",
+      )(function* (shop: Domain.ShopSession["shop"]) {
+        yield* sql`update ShopSession set accessToken = null where shop = ${shop}`;
       });
 
-      const clearSessionAccessToken = Effect.fn(
-        "Repository.clearSessionAccessToken",
-      )(function* (shop: Domain.Session["shop"]) {
-        yield* sql`update Session set accessToken = null where shop = ${shop}`;
+      const updateShopSessionTokens = Effect.fn(
+        "Repository.updateShopSessionTokens",
+      )(function* (
+        shopSession: Pick<
+          Domain.ShopSession,
+          | "shop"
+          | "accessToken"
+          | "accessTokenExpiresAt"
+          | "refreshToken"
+          | "refreshTokenExpiresAt"
+        >,
+      ) {
+        yield* sql`
+            update ShopSession set
+              accessToken = ${shopSession.accessToken},
+              accessTokenExpiresAt = ${shopSession.accessTokenExpiresAt},
+              refreshToken = ${shopSession.refreshToken},
+              refreshTokenExpiresAt = ${shopSession.refreshTokenExpiresAt}
+            where shop = ${shopSession.shop}
+          `;
       });
 
-      const updateSessionTokens = Effect.fn("Repository.updateSessionTokens")(
-        function* (
-          session: Pick<
-            Domain.Session,
-            | "shop"
-            | "accessToken"
-            | "accessTokenExpiresAt"
-            | "refreshToken"
-            | "refreshTokenExpiresAt"
-          >,
-        ) {
-          yield* sql`
-            update Session set
-              accessToken = ${session.accessToken},
-              accessTokenExpiresAt = ${session.accessTokenExpiresAt},
-              refreshToken = ${session.refreshToken},
-              refreshTokenExpiresAt = ${session.refreshTokenExpiresAt}
-            where shop = ${session.shop}
+      const updateShopSessionPlan = Effect.fn(
+        "Repository.updateShopSessionPlan",
+      )(function* (
+        shopSession: Pick<
+          Domain.ShopSession,
+          "shop" | "planHandle" | "planHandleExpiresAt"
+        >,
+      ) {
+        yield* sql`
+            update ShopSession set
+              planHandle = ${shopSession.planHandle},
+              planHandleExpiresAt = ${shopSession.planHandleExpiresAt}
+            where shop = ${shopSession.shop}
           `;
+      });
+
+      const deleteShopSession = Effect.fn("Repository.deleteShopSession")(
+        function* (shop: Domain.ShopSession["shop"]) {
+          yield* sql`delete from ShopSession where shop = ${shop}`;
         },
       );
 
-      const updateSessionPlan = Effect.fn("Repository.updateSessionPlan")(
-        function* (
-          session: Pick<
-            Domain.Session,
-            "shop" | "planHandle" | "planHandleExpiresAt"
-          >,
-        ) {
-          yield* sql`
-            update Session set
-              planHandle = ${session.planHandle},
-              planHandleExpiresAt = ${session.planHandleExpiresAt}
-            where shop = ${session.shop}
-          `;
-        },
-      );
+      const updateShopSessionScope = Effect.fn(
+        "Repository.updateShopSessionScope",
+      )(function* (
+        shop: Domain.ShopSession["shop"],
+        scope: Domain.ShopSession["scope"],
+      ) {
+        yield* sql`update ShopSession set scope = ${scope} where shop = ${shop}`;
+      });
 
-      const deleteSessionByShop = Effect.fn("Repository.deleteSessionByShop")(
-        function* (shop: Domain.Session["shop"]) {
-          yield* sql`delete from Session where shop = ${shop}`;
-        },
-      );
-
-      const updateSessionScope = Effect.fn("Repository.updateSessionScope")(
-        function* (
-          shop: Domain.Session["shop"],
-          scope: Domain.Session["scope"],
-        ) {
-          yield* sql`update Session set scope = ${scope} where shop = ${shop}`;
-        },
-      );
-
-      const findSessionRedactedByShop = Effect.fn(
-        "Repository.findSessionRedactedByShop",
-      )(function* (shop: Domain.Session["shop"]) {
+      const findShopSessionRedacted = Effect.fn(
+        "Repository.findShopSessionRedacted",
+      )(function* (shop: Domain.ShopSession["shop"]) {
         const rows = yield* sql`
           select shop, shopGid, shopAgentId, scope, accessTokenExpiresAt, refreshTokenExpiresAt,
             planHandle, planHandleExpiresAt,
             (accessToken is not null) as hasAccessToken,
             (refreshToken is not null) as hasRefreshToken
-          from Session
+          from ShopSession
           where shop = ${shop}
         `;
         if (rows[0] === undefined) return Option.none();
         return Option.some(
           yield* decodeRepository(
-            Domain.SessionRedacted,
-            "Invalid Session row",
+            Domain.ShopSessionRedacted,
+            "Invalid ShopSession row",
           )(rows[0]),
         );
       });
@@ -260,8 +269,8 @@ export class Repository extends Context.Service<
        * typed into it act as wildcards — accepted for this internal admin
        * search rather than paying an escaping story.
        */
-      const getSessionRedactedPage = Effect.fn(
-        "Repository.getSessionRedactedPage",
+      const getShopSessionRedactedPage = Effect.fn(
+        "Repository.getShopSessionRedactedPage",
       )(function* (params: {
         readonly after?: string;
         readonly before?: string;
@@ -280,32 +289,32 @@ export class Repository extends Context.Service<
             planHandle, planHandleExpiresAt,
             (accessToken is not null) as hasAccessToken,
             (refreshToken is not null) as hasRefreshToken
-          from Session
+          from ShopSession
           ${clauses.length > 0 ? sql`where ${sql.and(clauses)}` : sql``}
           order by shop ${sql.literal(params.before === undefined ? "asc" : "desc")}
           limit ${fetchLimit}
         `;
         const fetched = yield* decodeRepository(
-          Schema.Array(Domain.SessionRedacted),
-          "Invalid Session rows",
+          Schema.Array(Domain.ShopSessionRedacted),
+          "Invalid ShopSession rows",
         )(rows);
         const overflow = fetched.length > params.limit;
-        const sessions =
+        const shopSessions =
           params.before === undefined
             ? fetched.slice(0, params.limit)
             : fetched.slice(0, params.limit).toReversed();
         return {
-          sessions,
+          shopSessions,
           limit: params.limit,
-          startCursor: sessions[0]?.shop ?? null,
-          endCursor: sessions.at(-1)?.shop ?? null,
+          startCursor: shopSessions[0]?.shop ?? null,
+          endCursor: shopSessions.at(-1)?.shop ?? null,
           hasPreviousPage:
             params.before === undefined
-              ? params.after !== undefined && sessions.length > 0
+              ? params.after !== undefined && shopSessions.length > 0
               : overflow,
           hasNextPage:
-            params.before === undefined ? overflow : sessions.length > 0,
-        } satisfies Domain.SessionRedactedPage;
+            params.before === undefined ? overflow : shopSessions.length > 0,
+        } satisfies Domain.ShopSessionRedactedPage;
       });
 
       const findOrphanShopAgentIds = Effect.fn(
@@ -315,7 +324,7 @@ export class Repository extends Context.Service<
         const rows = yield* sql`
           select je.value as id
           from json_each(${JSON.stringify(ids)}) je
-          left join Session s on s.shopAgentId = je.value
+          left join ShopSession s on s.shopAgentId = je.value
           where s.shopAgentId is null
         `;
         return yield* decodeRepository(
@@ -325,15 +334,15 @@ export class Repository extends Context.Service<
       });
 
       return Repository.of({
-        findSessionByShop,
-        upsertSession,
-        clearSessionAccessToken,
-        updateSessionTokens,
-        updateSessionPlan,
-        deleteSessionByShop,
-        updateSessionScope,
-        findSessionRedactedByShop,
-        getSessionRedactedPage,
+        findShopSession,
+        upsertShopSession,
+        clearShopSessionAccessToken,
+        updateShopSessionTokens,
+        updateShopSessionPlan,
+        deleteShopSession,
+        updateShopSessionScope,
+        findShopSessionRedacted,
+        getShopSessionRedactedPage,
         findOrphanShopAgentIds,
       });
     }),

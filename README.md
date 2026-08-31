@@ -9,7 +9,7 @@ Everything below the UI is production shape — auth, session storage, per-shop 
 | Piece                                              | Where                                                      |
 | -------------------------------------------------- | ---------------------------------------------------------- |
 | Shopify OAuth / token exchange / session refresh   | `src/lib/Shopify.ts`, `src/routes/auth.$.tsx`              |
-| Session storage (D1)                               | `src/lib/Repository.ts`, `migrations/0001_init.sql`        |
+| Shop session storage (D1, `ShopSession`)           | `src/lib/Repository.ts`, `migrations/0001_init.sql`        |
 | Per-shop Durable Object + private SQLite           | `src/lib/ShopAgent.ts`, `src/lib/CounterRepository.ts`     |
 | Typed DO RPC facade for the Worker                 | `src/lib/ShopAgentClient.ts`                               |
 | Shared `/app` WebSocket, keepalive, zombie healing | `src/routes/app.tsx`, `src/lib/ShopAgentContext.tsx`       |

@@ -26,7 +26,7 @@ to `refs/effect`, dropped refs deleted. The research below is the evidence the p
    markdown and no repo (none of baton's current refs qualify).
 4. **Rename `effect4` → `effect`** as part of the migration: ref name `effect`, dir
    `refs/effect`, script pinned via `dependencies.effect` (currently `4.0.0-rc.108`).
-   Effect v4 RC *is* effect now; the `4` suffix adds nothing. §6.
+   Effect v4 RC _is_ effect now; the `4` suffix adds nothing. §6.
 
 ---
 
@@ -40,7 +40,7 @@ Eighteen `refs:*` scripts in package.json, each shaped like:
 
 Problems, all observed in this repo:
 
-- **Version duplicated by hand.** `effect@4.0.0-rc.108` appears in the script string *and*
+- **Version duplicated by hand.** `effect@4.0.0-rc.108` appears in the script string _and_
   in `dependencies`. Every dep bump requires remembering to edit the script; nothing checks.
   All 18 happen to be in sync today, but only by discipline.
 - **No drift detection.** Nothing reports that a ref on disk was fetched from an older tag
@@ -94,26 +94,26 @@ devDependency) and nothing else.
 
 ### Proposed REFS table for baton
 
-| name | source | version from |
-| --- | --- | --- |
-| effect (renamed from effect4) | Effect-TS/effect `effect@{v}` | dep `effect` |
-| tan-start | TanStack/router `@tanstack/react-start@{v}` | dep `@tanstack/react-start` |
-| tan-router | TanStack/router `@tanstack/react-router@{v}` | dep `@tanstack/react-router` |
-| tan-query | TanStack/query `@tanstack/react-query@{v}` | dep `@tanstack/react-query` |
-| tan-form | TanStack/form `@tanstack/react-form@{v}` | dep `@tanstack/react-form` |
-| vitest | vitest-dev/vitest `v{v}` | dep `vitest` |
-| playwright | microsoft/playwright `v{v}` | dep `@playwright/test` |
-| workers-sdk | cloudflare/workers-sdk `wrangler@{v}` | dep `wrangler` |
-| agents | cloudflare/agents `agents@{v}` | dep `agents` |
-| shopify-app-js | Shopify/shopify-app-js `@shopify/shopify-api@{v}` | dep `@shopify/shopify-api` |
-| shopify-bridge | Shopify/shopify-app-bridge `@shopify/app-bridge-react@{v}` | dep `@shopify/app-bridge-react` |
-| shopify-codegen | Shopify/shopify-app-js `@shopify/api-codegen-preset@{v}` | dep `@shopify/api-codegen-preset` |
-| shopify-cli | Shopify/cli `{v}` | literal (CLI version, no dep) |
-| shopify-app-template | Shopify/shopify-app-template-react-router | branch `main` |
-| cloudflare-docs | cloudflare/cloudflare-docs | branch `production` |
-| bang | mw10013/bang, `private: true` | branch `main` |
-| partysocket | npm registry tarball | transitive pin — see below |
-| shopify-docs | ported fetch script (§4) | literal, `optIn: true` |
+| name                          | source                                                     | version from                      |
+| ----------------------------- | ---------------------------------------------------------- | --------------------------------- |
+| effect (renamed from effect4) | Effect-TS/effect `effect@{v}`                              | dep `effect`                      |
+| tan-start                     | TanStack/router `@tanstack/react-start@{v}`                | dep `@tanstack/react-start`       |
+| tan-router                    | TanStack/router `@tanstack/react-router@{v}`               | dep `@tanstack/react-router`      |
+| tan-query                     | TanStack/query `@tanstack/react-query@{v}`                 | dep `@tanstack/react-query`       |
+| tan-form                      | TanStack/form `@tanstack/react-form@{v}`                   | dep `@tanstack/react-form`        |
+| vitest                        | vitest-dev/vitest `v{v}`                                   | dep `vitest`                      |
+| playwright                    | microsoft/playwright `v{v}`                                | dep `@playwright/test`            |
+| workers-sdk                   | cloudflare/workers-sdk `wrangler@{v}`                      | dep `wrangler`                    |
+| agents                        | cloudflare/agents `agents@{v}`                             | dep `agents`                      |
+| shopify-app-js                | Shopify/shopify-app-js `@shopify/shopify-api@{v}`          | dep `@shopify/shopify-api`        |
+| shopify-bridge                | Shopify/shopify-app-bridge `@shopify/app-bridge-react@{v}` | dep `@shopify/app-bridge-react`   |
+| shopify-codegen               | Shopify/shopify-app-js `@shopify/api-codegen-preset@{v}`   | dep `@shopify/api-codegen-preset` |
+| shopify-cli                   | Shopify/cli `{v}`                                          | literal (CLI version, no dep)     |
+| shopify-app-template          | Shopify/shopify-app-template-react-router                  | branch `main`                     |
+| cloudflare-docs               | cloudflare/cloudflare-docs                                 | branch `production`               |
+| bang                          | mw10013/bang, `private: true`                              | branch `main`                     |
+| partysocket                   | npm registry tarball                                       | transitive pin — see below        |
+| shopify-docs                  | ported fetch script (§4)                                   | literal, `optIn: true`            |
 
 Straggler decisions (settled 2026-08-31):
 
@@ -166,14 +166,14 @@ siteone-crawler --url='https://shopify.dev/docs/apps/build/webhooks' \
 
 Findings, siteone output vs `curl https://shopify.dev/docs/apps/build/webhooks/subscribe.md`:
 
-| | native `.md` | siteone crawl of same page |
-| --- | --- | --- |
-| fenced code blocks | **20** | **0** — code emitted as escaped prose: `mutation webhookSubscriptionCreate\($topic: WebhookSubscriptionTopic\!...\)` |
-| headings | clean (`## Subscribe to a topic`) | anchor junk: `## Anchor to What you can build(...webhooks.htmlwhat-you-can-build)What you can build` |
-| page chrome | none — content only, YAML frontmatter with `source_url` | full nav menu, "Skip to main content", sidebar TOC leak into every file (fixable per-site with `--markdown-exclude-selector`, but selectors rot silently) |
-| punctuation | clean | `\(`, `\!`, `\{` escapes throughout prose and tables |
-| size (subscribe page) | 16.7 KB | 25.3 KB (chrome + escapes) |
-| images | **not downloaded** — absolute URLs into shopify.dev/CDN | **downloaded** — content figures AND ~16 site-chrome icons (light+dark logo pairs, 32px nav icons); one page saved with a query-param hash (`get-started.160845adce.md`) |
+|                       | native `.md`                                            | siteone crawl of same page                                                                                                                                               |
+| --------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| fenced code blocks    | **20**                                                  | **0** — code emitted as escaped prose: `mutation webhookSubscriptionCreate\($topic: WebhookSubscriptionTopic\!...\)`                                                     |
+| headings              | clean (`## Subscribe to a topic`)                       | anchor junk: `## Anchor to What you can build(...webhooks.htmlwhat-you-can-build)What you can build`                                                                     |
+| page chrome           | none — content only, YAML frontmatter with `source_url` | full nav menu, "Skip to main content", sidebar TOC leak into every file (fixable per-site with `--markdown-exclude-selector`, but selectors rot silently)                |
+| punctuation           | clean                                                   | `\(`, `\!`, `\{` escapes throughout prose and tables                                                                                                                     |
+| size (subscribe page) | 16.7 KB                                                 | 25.3 KB (chrome + escapes)                                                                                                                                               |
+| images                | **not downloaded** — absolute URLs into shopify.dev/CDN | **downloaded** — content figures AND ~16 site-chrome icons (light+dark logo pairs, 32px nav icons); one page saved with a query-param hash (`get-started.160845adce.md`) |
 
 The code-block loss alone disqualifies the crawl: code examples are the main reason the ref
 exists, and escaped prose is neither runnable nor reliably greppable. Shopify maintains the

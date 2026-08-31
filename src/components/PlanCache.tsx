@@ -7,7 +7,7 @@ import { Match } from "effect";
  * the reason there is no tier, beside the handle exactly as stored.
  *
  * The handle is shown verbatim, including when it decodes to nothing. That is
- * the point of `Session.planHandle` being a plain string rather than the
+ * the point of `ShopSession.planHandle` being a plain string rather than the
  * allowlist — a handle this build no longer recognizes reads as a cache miss
  * everywhere else, and this is the one surface that can say which handle it was.
  */

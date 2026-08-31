@@ -146,14 +146,14 @@ describe("Shopify.validateWebhook", () => {
   it.effect("succeeds for a shop with no stored offline session", () =>
     Effect.gen(function* () {
       const shopify = yield* Shopify;
-      yield* shopify.deleteSessionByShop(shop);
+      yield* shopify.deleteShopSession(shop);
       const request = yield* webhookRequest({
         topic: "app/scopes_update",
         payload: { current: ["read_products"] },
       });
       const result = yield* shopify.validateWebhook(request);
       strictEqual(result.topic, "APP_SCOPES_UPDATE");
-      assertNone(yield* shopify.loadSessionByShop(shop));
+      assertNone(yield* shopify.loadShopSession(shop));
     }).pipe(Effect.provide(shopifyTestLayer())),
   );
 });
@@ -165,7 +165,7 @@ describe("webhook handler effects", () => {
   it.effect("app/uninstalled deletes all sessions for the shop", () =>
     Effect.gen(function* () {
       const shopify = yield* Shopify;
-      yield* shopify.storeSession(makeSession(), shopGid);
+      yield* shopify.storeShopSession(makeSession(), shopGid);
       const response = yield* fetchWebhook(
         yield* webhookRequest({
           path: "/webhooks/app/uninstalled",
@@ -174,7 +174,7 @@ describe("webhook handler effects", () => {
         }),
       );
       strictEqual(response.status, 200);
-      assertNone(yield* shopify.loadSessionByShop(shop));
+      assertNone(yield* shopify.loadShopSession(shop));
     }).pipe(Effect.provide(shopifyTestLayer())),
   );
 
@@ -183,7 +183,7 @@ describe("webhook handler effects", () => {
     () =>
       Effect.gen(function* () {
         const shopify = yield* Shopify;
-        yield* shopify.deleteSessionByShop(shop);
+        yield* shopify.deleteShopSession(shop);
         const response = yield* fetchWebhook(
           yield* webhookRequest({
             path: "/webhooks/app/uninstalled",
@@ -191,14 +191,14 @@ describe("webhook handler effects", () => {
           }),
         );
         strictEqual(response.status, 200);
-        assertNone(yield* shopify.loadSessionByShop(shop));
+        assertNone(yield* shopify.loadShopSession(shop));
       }).pipe(Effect.provide(shopifyTestLayer())),
   );
 
   it.effect("app/scopes_update updates the stored scope from the payload", () =>
     Effect.gen(function* () {
       const shopify = yield* Shopify;
-      yield* shopify.storeSession(
+      yield* shopify.storeShopSession(
         makeSession({ scope: "read_products" }),
         shopGid,
       );
@@ -210,7 +210,7 @@ describe("webhook handler effects", () => {
         }),
       );
       strictEqual(response.status, 200);
-      const record = Option.getOrThrow(yield* shopify.loadSessionByShop(shop));
+      const record = Option.getOrThrow(yield* shopify.loadShopSession(shop));
       strictEqual(record.session.scope, "read_products,write_products");
     }).pipe(Effect.provide(shopifyTestLayer())),
   );
@@ -218,7 +218,7 @@ describe("webhook handler effects", () => {
   it.effect("app/scopes_update is a no-op when no session row exists", () =>
     Effect.gen(function* () {
       const shopify = yield* Shopify;
-      yield* shopify.deleteSessionByShop(shop);
+      yield* shopify.deleteShopSession(shop);
       const response = yield* fetchWebhook(
         yield* webhookRequest({
           path: "/webhooks/app/scopes_update",
@@ -227,7 +227,7 @@ describe("webhook handler effects", () => {
         }),
       );
       strictEqual(response.status, 200);
-      assertNone(yield* shopify.loadSessionByShop(shop));
+      assertNone(yield* shopify.loadShopSession(shop));
     }).pipe(Effect.provide(shopifyTestLayer())),
   );
 

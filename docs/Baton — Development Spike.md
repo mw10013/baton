@@ -112,4 +112,4 @@ Do not turn the spike itself into a V1 spec. When it is done, record only:
 \- whether a larger V1 still looks plausibly bounded.
 
 Then return to the competitor deep dive / merchant-validation process before treating Baton as a commercially validated product.  
-n  
+n

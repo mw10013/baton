@@ -11,7 +11,7 @@
 
 - `Baton` is a Shopify admin app skeleton using TanStack Start, Cloudflare and Effect v4.
 - Route modules are in `src/routes/` and use file route conventions.
-- Per-shop state lives in the `ShopAgent` Durable Object (`src/lib/ShopAgent.ts`) and its private SQLite; shared session state lives in D1.
+- Per-shop state lives in the `ShopAgent` Durable Object (`src/lib/ShopAgent.ts`) and its private SQLite; shared Shopify session state (`ShopSession`) lives in D1.
 - Billing code is present but gated: `BILLING_ENABLED` is `"false"` in `wrangler.jsonc`, so `SubscriptionPlan` grants every shop the default plan without calling the Partner API.
 
 ## Port Configuration

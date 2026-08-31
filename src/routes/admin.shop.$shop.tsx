@@ -17,14 +17,14 @@ import { SubscriptionPlan } from "@/lib/SubscriptionPlan";
 const shopInput = Schema.Struct({ shop: Domain.Shop });
 
 /**
- * The whole page in one request: the shop's D1 session row and its Durable
+ * The whole page in one request: the shop's D1 `ShopSession` row and its Durable
  * Object snapshot.
  *
  * The D1 read is not incidental — every ceiling shown here derives from the
  * plan, which only D1 knows, and the object deliberately stores no limits. Same
  * join `/app` performs on every merchant page view, one shop over.
  *
- * The session lookup gates the DO call rather than running beside it.
+ * The ShopSession lookup gates the DO call rather than running beside it.
  * `getByName` creates the object and runs its migrations on first RPC, so
  * aggregating an arbitrary `:shop` path segment would materialize an empty
  * Durable Object for a shop that never installed — and
@@ -43,18 +43,18 @@ const getLoaderData = createServerFn({ method: "GET" })
   .handler(({ data: { shop }, context: { runEffect } }) =>
     runEffect(
       Effect.gen(function* () {
-        const session = yield* (yield* Repository).findSessionRedactedByShop(
+        const shopSession = yield* (yield* Repository).findShopSessionRedacted(
           shop,
         );
-        if (Option.isNone(session))
+        if (Option.isNone(shopSession))
           return { _tag: "NotFound" } satisfies Domain.AdminShopLoaderData;
         const plan = Domain.adminShopPlanCache(
-          session.value,
+          shopSession.value,
           yield* Clock.currentTimeMillis,
         );
         return {
           _tag: "Found",
-          session: session.value,
+          shopSession: shopSession.value,
           plan,
           entitlements: Domain.adminShopEntitlements(plan),
           derivedShopAgentId: (yield* CloudflareEnv).SHOP_AGENT.idFromName(
@@ -219,7 +219,7 @@ const shopContent = ({
   );
 
 function FoundShop({
-  data: { session, plan, entitlements, derivedShopAgentId, snapshot },
+  data: { shopSession, plan, entitlements, derivedShopAgentId, snapshot },
   refreshing,
   refreshError,
   onRefresh,
@@ -248,7 +248,7 @@ function FoundShop({
             </Field>
             <Field
               label="Fresh until"
-              value={formatDateTime(session.planHandleExpiresAt)}
+              value={formatDateTime(shopSession.planHandleExpiresAt)}
             />
             <Field
               label="Daily action limit"
@@ -290,16 +290,19 @@ function FoundShop({
         </s-grid>
       </s-section>
 
-      <s-section heading="Session" accessibilityLabel="Stored Shopify session">
+      <s-section
+        heading="Shopify session"
+        accessibilityLabel="Stored Shopify session"
+      >
         <s-grid
           gridTemplateColumns="repeat(auto-fit, minmax(240px, 1fr))"
           gap="base"
         >
-          <Field label="Shop GID" value={session.shopGid} />
-          <Field label="Scope" value={session.scope} />
-          <Field label="Shop Agent ID" value={session.shopAgentId} />
+          <Field label="Shop GID" value={shopSession.shopGid} />
+          <Field label="Scope" value={shopSession.scope} />
+          <Field label="Shop Agent ID" value={shopSession.shopAgentId} />
           <Field label="Shop Agent ID from name">
-            {session.shopAgentId === derivedShopAgentId ? (
+            {shopSession.shopAgentId === derivedShopAgentId ? (
               <s-badge tone="success">Matches</s-badge>
             ) : (
               <s-stack gap="small-200">
@@ -310,20 +313,22 @@ function FoundShop({
           </Field>
           <Field
             label="Access token expires"
-            value={formatDateTime(session.accessTokenExpiresAt)}
+            value={formatDateTime(shopSession.accessTokenExpiresAt)}
           />
           <Field
             label="Refresh token expires"
-            value={formatDateTime(session.refreshTokenExpiresAt)}
+            value={formatDateTime(shopSession.refreshTokenExpiresAt)}
           />
           <Field label="Access token">
-            <s-badge tone={session.hasAccessToken ? "success" : "critical"}>
-              {session.hasAccessToken ? "Present" : "Missing"}
+            <s-badge tone={shopSession.hasAccessToken ? "success" : "critical"}>
+              {shopSession.hasAccessToken ? "Present" : "Missing"}
             </s-badge>
           </Field>
           <Field label="Refresh token">
-            <s-badge tone={session.hasRefreshToken ? "success" : "critical"}>
-              {session.hasRefreshToken ? "Present" : "Missing"}
+            <s-badge
+              tone={shopSession.hasRefreshToken ? "success" : "critical"}
+            >
+              {shopSession.hasRefreshToken ? "Present" : "Missing"}
             </s-badge>
           </Field>
         </s-grid>

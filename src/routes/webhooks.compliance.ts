@@ -18,7 +18,7 @@ import { handleWebhook } from "@/lib/Shopify";
  * app/uninstalled is therefore the sole teardown point, and its delivery budget
  * is finite: Shopify retries 8 times over roughly 4 hours
  * (https://shopify.dev/docs/apps/build/webhooks/troubleshoot). A shop that
- * exhausts it strands its Durable Object — the `Session` row survives, so the
+ * exhausts it strands its Durable Object — the `ShopSession` row survives, so the
  * shop still reads as installed and the admin orphan sweep, which anti-joins on
  * the *absence* of that row, cannot see it. Accepted deliberately. Burning all
  * 8 attempts takes a sustained multi-hour failure, so the loss is outage-bound
@@ -30,7 +30,7 @@ import { handleWebhook } from "@/lib/Shopify";
  *
  * Acting on shop/redact as a backstop was considered and rejected. Doing it
  * unconditionally is the resurrection bug above. Guarding on a surviving
- * `Session` row avoids that but buys the cost leak with a correctness risk:
+ * `ShopSession` row avoids that but buys the cost leak with a correctness risk:
  * Shopify does not document whether shop/redact still fires when a merchant
  * reinstalls inside the 48-hour delay, the payload carries no timestamp
  * (`{ shop_id, shop_domain }`), and reinstall is a normal merchant flow, so a

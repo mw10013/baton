@@ -22,7 +22,7 @@ below was run against the live sites on that date; §9 records what the build ch
 2. **One converter, two acquisition paths.** `siteone-crawler` has a standalone single-file mode
    (`--html-to-markdown=<file> --html-to-markdown-output=<file>`), already used by prelive's
    `htmlToMarkdown` for post-crawl repair. That means a plain `curl`-per-URL fetch and a full
-   browser crawl can share the *same* HTML→markdown converter — the hybrid is not two
+   browser crawl can share the _same_ HTML→markdown converter — the hybrid is not two
    conversion pipelines, it is two ways of getting HTML onto disk. §3.
 3. **Only kanbanify needs the crawler.** It is a pure client-rendered SPA: every path returns
    the same 4,409-byte `<div id="root">` shell. The other four sites serve their content in the
@@ -60,14 +60,14 @@ are none of those:
 
 ## 2. Site inventory — measured 2026-08-31
 
-| App | Site | Render | Discovery | Public pages |
-| --- | --- | --- | --- | --- |
-| Route to Ship | `www.routetoship.com` | SSR, content in HTML | `sitemap.xml` — **35 URLs** (20 product, 15 blog) | 35 |
-| Kanbanify | `kanbanify.ungari.org` | **client-rendered SPA** | none (no robots.txt, no sitemap — both return the shell) | 2 |
-| Maker's Production View | `fleartex.com` | SSR (Astro 5.18.2) | none (`sitemap.xml` and `sitemap-index.xml` both fall back to the homepage) | 3 |
-| MakerBatch | `makerbatch.vercel.app` | Next.js | none (`sitemap.xml` → 404) | **1** |
-| BenchCue: Maker Card | `maker-card.revertcreations.com` | SSR Next | `sitemap.xml` — 5 URLs | 5 |
-| (all five) | `apps.shopify.com/<handle>` | SSR, 200 to plain `curl` | 5 known handles | 5 |
+| App                     | Site                             | Render                   | Discovery                                                                   | Public pages |
+| ----------------------- | -------------------------------- | ------------------------ | --------------------------------------------------------------------------- | ------------ |
+| Route to Ship           | `www.routetoship.com`            | SSR, content in HTML     | `sitemap.xml` — **35 URLs** (20 product, 15 blog)                           | 35           |
+| Kanbanify               | `kanbanify.ungari.org`           | **client-rendered SPA**  | none (no robots.txt, no sitemap — both return the shell)                    | 2            |
+| Maker's Production View | `fleartex.com`                   | SSR (Astro 5.18.2)       | none (`sitemap.xml` and `sitemap-index.xml` both fall back to the homepage) | 3            |
+| MakerBatch              | `makerbatch.vercel.app`          | Next.js                  | none (`sitemap.xml` → 404)                                                  | **1**        |
+| BenchCue: Maker Card    | `maker-card.revertcreations.com` | SSR Next                 | `sitemap.xml` — 5 URLs                                                      | 5            |
+| (all five)              | `apps.shopify.com/<handle>`      | SSR, 200 to plain `curl` | 5 known handles                                                             | 5            |
 
 Three of these findings materially change the plan:
 
@@ -79,7 +79,7 @@ Its marketing copy is in the bundle as compiled JSX string literals (`Kanban` ×
 needs `--browser`.
 
 **MakerBatch has no public marketing site.** `https://makerbatch.vercel.app/` returns a Next.js
-**404** and the document is `<meta name="robots" content="noindex">`; the deployment *is* the
+**404** and the document is `<meta name="robots" content="noindex">`; the deployment _is_ the
 embedded Shopify app. The only page that resolves is `/privacy` (14.9 KB) — which is exactly
 where the deep dive's MakerBatch evidence came from (`read_orders` scope, Supabase/Vercel
 infrastructure, redaction handling). See the scope exception in §5.
@@ -91,7 +91,7 @@ describe the product contract.
 ## 3. Mechanism: one converter, two acquisition paths
 
 `siteone-crawler` is two tools behind one binary. prelive's `refs.ts` uses both, but only ever
-the second one *after* the first:
+the second one _after_ the first:
 
 ```ts
 // crawl: discovery + fetch + convert, all in the crawler
@@ -117,7 +117,7 @@ Both paths land in the same converter, so `repairHeading` (§6) applies to both,
 ## 4. Conversion quality — measured, not assumed
 
 `docs/refs-tooling-research.md` §4 rejected siteone for shopify.dev because the converter
-destroyed every fenced code block (20 → 0). That verdict was about *code*. These are marketing
+destroyed every fenced code block (20 → 0). That verdict was about _code_. These are marketing
 pages with no code in them, so the same converter is being asked a much easier question. It
 answers it well.
 
@@ -134,6 +134,7 @@ For small custom shops
 $39/mo
 
 billed monthly
+
 - 3team members
 - 250orders / month
 
@@ -162,16 +163,24 @@ disclosure, which no other source states this precisely:
 ### Data access
 
 #### View customer data:
+
 Sensitive data, device and activity data
+
 - #### Sensitive data
+
 Name, email address, phone number, physical address
+
 - #### Device and activity data
+
 Geolocation, IP address, browser and operating system
 
 #### View staff and contributor data:
+
 Store owner
 ...
+
 #### View and edit store data:
+
 Customers, products, orders
 ```
 
@@ -214,7 +223,7 @@ JSDoc warns about, because Chromium was already installed.
 
 **Decided: take every public page.** An earlier draft of this document proposed excluding legal
 pages as a category. That was wrong, and reversing it is the single most consequential scope
-correction here, because for the two smallest apps the privacy policy *is* the technical
+correction here, because for the two smallest apps the privacy policy _is_ the technical
 documentation:
 
 - **MakerBatch's `/privacy` is the only public page that exists** (§2). It is the documented
@@ -229,16 +238,16 @@ the cost of guessing wrong about which page holds the evidence is a missing prim
 
 Per-app page counts as fetched:
 
-| Ref | Site pages | App Store |
-| --- | --- | --- |
-| `route-to-ship` | 35 (20 product + 15 blog, from the sitemap) | listing + reviews |
-| `kanbanify` | 2 (crawled with `--browser`) | listing + reviews |
-| `makers-production-view` | 3 | listing + reviews |
-| `makerbatch` | 1 | listing + reviews |
-| `benchcue` | 5 | listing + reviews |
+| Ref                      | Site pages                                  | App Store         |
+| ------------------------ | ------------------------------------------- | ----------------- |
+| `route-to-ship`          | 35 (20 product + 15 blog, from the sitemap) | listing + reviews |
+| `kanbanify`              | 2 (crawled with `--browser`)                | listing + reviews |
+| `makers-production-view` | 3                                           | listing + reviews |
+| `makerbatch`             | 1                                           | listing + reviews |
+| `benchcue`               | 5                                           | listing + reviews |
 
 **Review pages are fetched separately.** A listing page carries only the review count and
-rating; the review *text* lives at `apps.shopify.com/<handle>/reviews`. The deep dive leans
+rating; the review _text_ lives at `apps.shopify.com/<handle>/reviews`. The deep dive leans
 heavily on one Purple Carrot review whose body appears nowhere on the listing page, so
 `reviews.md` is a second fetch per app rather than an optional extra.
 
@@ -250,14 +259,14 @@ as, ClaudeBot or any other agent's crawler.
 
 Per-site robots as measured:
 
-| Site | robots.txt |
-| --- | --- |
-| `routetoship.com` | `Allow: /`; explicitly allows GPTBot, OAI-SearchBot, ChatGPT-User, ClaudeBot. Disallows `/billing`, `/onboarding`, `/signup` — none are in scope. |
-| `maker-card.revertcreations.com` | `Allow: /`; disallows `/app`, `/auth`, `/api`, `/print`, `/webhooks` — none are in scope. |
-| `apps.shopify.com` | `User-agent: *` disallows `/internal/`, `/services/`, `*q=*` and auth-param URLs. App listing paths are allowed. |
-| `kanbanify.ungari.org` | No robots.txt (the path returns the SPA shell). |
-| `makerbatch.vercel.app` | No robots.txt; the app itself is `noindex`, which governs indexing, not fetching. |
-| `fleartex.com` | `Content-Signal: search=yes, ai-train=no, use=reference` for `*`, plus `Disallow: /` for a named list of AI crawlers **including ClaudeBot**. |
+| Site                             | robots.txt                                                                                                                                        |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `routetoship.com`                | `Allow: /`; explicitly allows GPTBot, OAI-SearchBot, ChatGPT-User, ClaudeBot. Disallows `/billing`, `/onboarding`, `/signup` — none are in scope. |
+| `maker-card.revertcreations.com` | `Allow: /`; disallows `/app`, `/auth`, `/api`, `/print`, `/webhooks` — none are in scope.                                                         |
+| `apps.shopify.com`               | `User-agent: *` disallows `/internal/`, `/services/`, `*q=*` and auth-param URLs. App listing paths are allowed.                                  |
+| `kanbanify.ungari.org`           | No robots.txt (the path returns the SPA shell).                                                                                                   |
+| `makerbatch.vercel.app`          | No robots.txt; the app itself is `noindex`, which governs indexing, not fetching.                                                                 |
+| `fleartex.com`                   | `Content-Signal: search=yes, ai-train=no, use=reference` for `*`, plus `Disallow: /` for a named list of AI crawlers **including ClaudeBot**.     |
 
 **fleartex, decided:** include, fetched under the `baton/refs-competitors` user-agent. The site's
 `Disallow` list names specific AI training/answer-engine crawlers, and this is not one of them;
@@ -297,13 +306,13 @@ interface Competitor {
 
 Entries, all `optIn: true` and versionless:
 
-| name | listing handle | site |
-| --- | --- | --- |
-| `route-to-ship` | `route-to-ship` | `www.routetoship.com`, sitemap (35) |
-| `kanbanify` | `kanbanify` | `crawl` with `browser: true` (2) |
+| name                     | listing handle          | site                                                         |
+| ------------------------ | ----------------------- | ------------------------------------------------------------ |
+| `route-to-ship`          | `route-to-ship`         | `www.routetoship.com`, sitemap (35)                          |
+| `kanbanify`              | `kanbanify`             | `crawl` with `browser: true` (2)                             |
 | `makers-production-view` | `maker-production-view` | `fleartex.com`, paths `/`, `/maker-production-view/support/` |
-| `makerbatch` | `makerbatch` | `makerbatch.vercel.app`, path `/privacy` |
-| `benchcue` | `maker-card` | `maker-card.revertcreations.com`, sitemap (5) |
+| `makerbatch`             | `makerbatch`            | `makerbatch.vercel.app`, path `/privacy`                     |
+| `benchcue`               | `maker-card`            | `maker-card.revertcreations.com`, sitemap (5)                |
 
 Layout inside each ref: `listing.md` for the App Store page, and site pages mirroring their URL
 path the way `refs-shopify-docs.ts` already does (`toLocalPath`).
@@ -341,7 +350,7 @@ or `[beta]` would silently lose it.
 Leave behind: `FluidTopics` entirely, `flattenExternalAssets` (no cross-domain asset hosts in
 scope), `rescueInlineFigure`, and the `--max-queue-length` / `--max-visited-urls` runaway guards
 tuned for thousand-page manuals — though keeping them costs nothing and the JSDoc explaining
-*why* they exist is the valuable part.
+_why_ they exist is the valuable part.
 
 ## 8. Implementation plan (done)
 
@@ -381,7 +390,7 @@ Two bugs the verification pass caught that the plan had not anticipated:
 
 The carousel-leak guard in `downloadInto` is a direct consequence of §4.2: a
 `--markdown-exclude-selector` that stops matching fails silently, and the failure mode here
-writes *other apps'* review counts into a file whose purpose is review-count evidence. So the
+writes _other apps'_ review counts into a file whose purpose is review-count evidence. So the
 fetch asserts the carousel is gone rather than trusting the crawler's exit code.
 
 Verified after the final fetch: 0 nav blocks, 0 foreign review counts, 0 broken image links,

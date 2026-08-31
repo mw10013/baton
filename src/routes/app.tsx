@@ -369,7 +369,7 @@ function AppRouteContent({ shop }: { readonly shop: string }) {
  * `withSocketRecovery`, `ShopAgentContext.tsx`); it only fires on a zombie
  * younger than the edge deadline or a genuinely slow RPC. Not lower:
  * keep it above the slowest `@callable()` an RPC can reach. Any method that
- * awaits `ensureSession` plus a Shopify Admin GraphQL round trip must clear
+ * awaits `ensureShopSession` plus a Shopify Admin GraphQL round trip must clear
  * Admin API p99 with margin, because a false positive invites a re-click that
  * runs a non-idempotent mutation twice.
  *

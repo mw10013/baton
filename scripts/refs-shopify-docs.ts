@@ -34,7 +34,8 @@ export const ORIGIN = "https://shopify.dev";
 /** Webhooks API version the topic pages are pinned to; matches shopify.app.toml. */
 export const API_VERSION = "2026-10";
 const SITEMAP_URL = `${ORIGIN}/sitemap_standard.xml.gz`;
-const USER_AGENT = "baton/refs-shopify-docs (+https://github.com/mw10013/baton)";
+const USER_AGENT =
+  "baton/refs-shopify-docs (+https://github.com/mw10013/baton)";
 const CONCURRENCY = 8;
 
 type DocSection = "apps" | "api" | "admin-graphql";
@@ -244,7 +245,8 @@ function matchesNamePrefixes(
   canonicalPrefix: string,
 ): boolean {
   if (!namePrefixes || url === canonicalPrefix) return true;
-  const lastSegment = new URL(url).pathname.split("/").pop()?.toLowerCase() ?? "";
+  const lastSegment =
+    new URL(url).pathname.split("/").pop()?.toLowerCase() ?? "";
   return namePrefixes.some((p) => lastSegment.startsWith(p.toLowerCase()));
 }
 
@@ -339,7 +341,9 @@ function readStringArray(value: unknown): readonly string[] | undefined {
     : undefined;
 }
 
-function readWebhookTopicExamples(value: unknown): readonly WebhookTopicExample[] | undefined {
+function readWebhookTopicExamples(
+  value: unknown,
+): readonly WebhookTopicExample[] | undefined {
   return Array.isArray(value)
     ? value.filter(isRecord).map((example) => ({
         title: readString(example.title),
@@ -361,7 +365,8 @@ function readWebhookTopics(decoded: unknown): readonly WebhookTopic[] {
     "webhooks route data",
   );
   const topics = readRecord(
-    readRecord(landing.eventTopicsTypeDefinitions, "webhooks topic definitions").WebhookTopics,
+    readRecord(landing.eventTopicsTypeDefinitions, "webhooks topic definitions")
+      .WebhookTopics,
     "WebhookTopics",
   ).members;
 
@@ -411,11 +416,18 @@ function renderWebhookTopicsMarkdown(
     "",
     "## List of topics",
     "",
-    ...topics.map((topic) => `- [${topic.name}](${toWebhookTopicDocUrl(docUrl, topic.name)})`),
+    ...topics.map(
+      (topic) =>
+        `- [${topic.name}](${toWebhookTopicDocUrl(docUrl, topic.name)})`,
+    ),
   ].join("\n")}\n`;
 }
 
-function renderWebhookTopicMarkdown(docUrl: string, dataUrl: string, topic: WebhookTopic): string {
+function renderWebhookTopicMarkdown(
+  docUrl: string,
+  dataUrl: string,
+  topic: WebhookTopic,
+): string {
   return `${[
     "---",
     `title: ${JSON.stringify(topic.name)}`,
@@ -429,12 +441,18 @@ function renderWebhookTopicMarkdown(docUrl: string, dataUrl: string, topic: Webh
     "",
     topic.description ?? "",
     "",
-    ...(topic.availableOn?.length ? [`- Available on: ${topic.availableOn.join(", ")}`] : []),
-    ...(topic.relatedResource ? [`- Related resource: ${topic.relatedResource}`] : []),
+    ...(topic.availableOn?.length
+      ? [`- Available on: ${topic.availableOn.join(", ")}`]
+      : []),
+    ...(topic.relatedResource
+      ? [`- Related resource: ${topic.relatedResource}`]
+      : []),
     ...(topic.isOptional === undefined
       ? []
       : [`- Optional: ${topic.isOptional ? "yes" : "no"}`]),
-    ...(topic.webhooksNotices?.length ? ["", "## Notices", "", ...topic.webhooksNotices] : []),
+    ...(topic.webhooksNotices?.length
+      ? ["", "## Notices", "", ...topic.webhooksNotices]
+      : []),
     ...(topic.examples?.length
       ? [
           "",
@@ -460,11 +478,15 @@ const request = (url: string) =>
   HttpClient.HttpClient.pipe(
     Effect.flatMap((client) =>
       client.execute(
-        HttpClientRequest.get(url).pipe(HttpClientRequest.setHeader("user-agent", USER_AGENT)),
+        HttpClientRequest.get(url).pipe(
+          HttpClientRequest.setHeader("user-agent", USER_AGENT),
+        ),
       ),
     ),
     Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.mapError((cause) => new ShopifyDocsError({ message: `Failed ${url}`, cause })),
+    Effect.mapError(
+      (cause) => new ShopifyDocsError({ message: `Failed ${url}`, cause }),
+    ),
   );
 
 const requestText = (url: string) =>
@@ -492,14 +514,18 @@ const fetchSitemapXml = requestBytes(SITEMAP_URL).pipe(
   Effect.flatMap((bytes) =>
     Effect.try({
       try: () => zlib.gunzipSync(Buffer.from(bytes)).toString("utf8"),
-      catch: (cause) => new ShopifyDocsError({ message: "Failed to gunzip sitemap", cause }),
+      catch: (cause) =>
+        new ShopifyDocsError({ message: "Failed to gunzip sitemap", cause }),
     }),
   ),
 );
 
 function toLocalPath(staging: string, docUrl: string, path: Path.Path): string {
   const { pathname } = new URL(docUrl);
-  return path.join(staging, `${pathname === "/" ? "index" : pathname.slice(1)}.md`);
+  return path.join(
+    staging,
+    `${pathname === "/" ? "index" : pathname.slice(1)}.md`,
+  );
 }
 
 const persist = (localPath: string, content: string) =>
@@ -514,11 +540,19 @@ const persist = (localPath: string, content: string) =>
       ),
     ),
     Effect.mapError(
-      (cause) => new ShopifyDocsError({ message: `Failed to write ${localPath}`, cause }),
+      (cause) =>
+        new ShopifyDocsError({
+          message: `Failed to write ${localPath}`,
+          cause,
+        }),
     ),
   );
 
-const buildSitemapTasks = (section: DocSection, source: SectionSource, sitemapXml: string) =>
+const buildSitemapTasks = (
+  section: DocSection,
+  source: SectionSource,
+  sitemapXml: string,
+) =>
   Effect.try({
     try: () =>
       [...collectSitemapUrls(sitemapXml, source.prefix, source.namePrefixes)]
@@ -536,7 +570,9 @@ const buildWebhookTasks = (section: DocSection, source: SectionSource) =>
     const canonicalPrefix = canonicalizeDocUrl(source.prefix);
     if (!canonicalPrefix) {
       return yield* Effect.fail(
-        new ShopifyDocsError({ message: `Invalid webhooks data prefix ${source.prefix}` }),
+        new ShopifyDocsError({
+          message: `Invalid webhooks data prefix ${source.prefix}`,
+        }),
       );
     }
     const dataUrl = `${canonicalPrefix}.data`;
@@ -544,9 +580,14 @@ const buildWebhookTasks = (section: DocSection, source: SectionSource) =>
     const topics = yield* Effect.try({
       try: () => readWebhookTopics(decodeReactRouterData(JSON.parse(raw))),
       catch: (cause) =>
-        new ShopifyDocsError({ message: `Failed to decode webhooks data ${dataUrl}`, cause }),
+        new ShopifyDocsError({
+          message: `Failed to decode webhooks data ${dataUrl}`,
+          cause,
+        }),
     });
-    yield* Console.log(`collecting ${section}/${source.label} topics=${String(topics.length)}`);
+    yield* Console.log(
+      `collecting ${section}/${source.label} topics=${String(topics.length)}`,
+    );
     return [
       {
         kind: "Webhook",
@@ -567,14 +608,16 @@ const runTask = (staging: string, task: DocTask) =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
     const content =
-      task.kind === "Markdown" ? yield* requestText(`${task.docUrl}.md`) : task.content;
+      task.kind === "Markdown"
+        ? yield* requestText(`${task.docUrl}.md`)
+        : task.content;
     yield* persist(toLocalPath(staging, task.docUrl, path), content);
     return task.section;
   }).pipe(
     Effect.catch((error) =>
-      Console.error(`failed ${task.section} ${task.docUrl}: ${error.message}`).pipe(
-        Effect.as(null),
-      ),
+      Console.error(
+        `failed ${task.section} ${task.docUrl}: ${error.message}`,
+      ).pipe(Effect.as(null)),
     ),
   );
 
@@ -586,7 +629,9 @@ const allFiles = Effect.fn(function* (dir: string) {
   const pending = [dir];
   while (pending.length > 0) {
     const current = pending.pop() ?? "";
-    for (const entry of yield* fs.readDirectory(current).pipe(Effect.orElseSucceed(() => []))) {
+    for (const entry of yield* fs
+      .readDirectory(current)
+      .pipe(Effect.orElseSucceed(() => []))) {
       const full = path.join(current, entry);
       const type = yield* fs.stat(full).pipe(
         Effect.map((s) => s.type),
@@ -603,7 +648,9 @@ const allFiles = Effect.fn(function* (dir: string) {
 const uniqueName = (name: string, used: Set<string>) => {
   let candidate = name;
   for (let n = 2; used.has(candidate); n++)
-    candidate = /\./u.test(name) ? name.replace(/(?<ext>\.[^.]+)$/u, `-${String(n)}$<ext>`) : `${name}-${String(n)}`;
+    candidate = /\./u.test(name)
+      ? name.replace(/(?<ext>\.[^.]+)$/u, `-${String(n)}$<ext>`)
+      : `${name}-${String(n)}`;
   used.add(candidate);
   return candidate;
 };
@@ -628,7 +675,8 @@ const localizeImages = Effect.fn(function* (staging: string) {
   const files = (yield* allFiles(staging)).filter((f) => f.endsWith(".md"));
   const urls = new Set<string>();
   for (const file of files)
-    for (const [url] of (yield* fs.readFileString(file)).matchAll(IMAGE_URL_RE)) urls.add(url);
+    for (const [url] of (yield* fs.readFileString(file)).matchAll(IMAGE_URL_RE))
+      urls.add(url);
   if (urls.size === 0) return;
 
   const assetsDir = path.join(staging, "_assets");
@@ -639,13 +687,21 @@ const localizeImages = Effect.fn(function* (staging: string) {
   const names = new Map<string, string>();
   const used = new Set<string>();
   for (const url of urls)
-    names.set(url, uniqueName(decodeURIComponent(new URL(url).pathname.split("/").pop() ?? ""), used));
+    names.set(
+      url,
+      uniqueName(
+        decodeURIComponent(new URL(url).pathname.split("/").pop() ?? ""),
+        used,
+      ),
+    );
 
   const results = yield* Effect.forEach(
     [...names],
     ([url, name]) =>
       requestBytes(url).pipe(
-        Effect.flatMap((bytes) => fs.writeFile(path.join(assetsDir, name), bytes)),
+        Effect.flatMap((bytes) =>
+          fs.writeFile(path.join(assetsDir, name), bytes),
+        ),
         Effect.as(url),
         Effect.catch((error) =>
           Console.error(`image failed ${url}: ${error.message}`).pipe(
@@ -665,7 +721,9 @@ const localizeImages = Effect.fn(function* (staging: string) {
       const name = names.get(url);
       return name === undefined
         ? url
-        : path.relative(path.dirname(file), path.join(assetsDir, name)).replaceAll("\\", "/");
+        : path
+            .relative(path.dirname(file), path.join(assetsDir, name))
+            .replaceAll("\\", "/");
     });
     if (after !== before) yield* fs.writeFileString(file, after);
   }
@@ -698,16 +756,24 @@ export const downloadInto = (staging: string) =>
       }
     }
 
-    const results = yield* Effect.forEach(tasks, (task) => runTask(staging, task), {
-      concurrency: CONCURRENCY,
-    });
+    const results = yield* Effect.forEach(
+      tasks,
+      (task) => runTask(staging, task),
+      {
+        concurrency: CONCURRENCY,
+      },
+    );
     const saved = results.filter((r) => r !== null).length;
     const failed = results.length - saved;
-    yield* Console.log(`pages: ${String(saved)}/${String(results.length)} saved`);
+    yield* Console.log(
+      `pages: ${String(saved)}/${String(results.length)} saved`,
+    );
     yield* localizeImages(staging);
     if (failed > 0) {
       yield* Effect.fail(
-        new ShopifyDocsError({ message: `${String(failed)} page(s) failed to fetch` }),
+        new ShopifyDocsError({
+          message: `${String(failed)} page(s) failed to fetch`,
+        }),
       );
     }
   }).pipe(Effect.provide(FetchHttpClient.layer));

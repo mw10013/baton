@@ -11,7 +11,7 @@ handle = "baton-local"
 scopes = ""
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = ["https://example.com/api/auth"]
 
 [webhooks]
 api_version = "2026-10"

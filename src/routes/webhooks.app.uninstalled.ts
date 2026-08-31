@@ -40,7 +40,7 @@ export const Route = createFileRoute("/webhooks/app/uninstalled")({
           handleWebhook((result) =>
             Effect.gen(function* () {
               const shopify = yield* Shopify;
-              yield* shopify.deleteSessionByShop(result.shop);
+              yield* shopify.deleteShopSession(result.shop);
               yield* destroyShopAgent(result.shop);
               return new Response();
             }),
