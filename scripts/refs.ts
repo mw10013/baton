@@ -179,6 +179,11 @@ const REFS: readonly Ref[] = [
     private: true,
   },
   {
+    name: "tceas",
+    repo: "mw10013/tanstack-cloudflare-effect-astryx-saas",
+    branch: "main",
+  },
+  {
     name: "shopify-docs",
     shopifyDocs: true,
     optIn: true,
