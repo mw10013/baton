@@ -55,7 +55,8 @@ pnpm lint               # Run oxlint
 pnpm test               # Run tests with Vitest.
 npm run test:e2e --     # Playwright via npm (uses pnpm exec in script); pass args after -- and may be helpful to use --trace on
 pnpm graphql-codegen    # Validate #graphql template literal strings against the Shopify Admin schema
-pnpm tail               # Tail deployed remote logs (logs/tail.log)
+pnpm tail               # Tail deployed remote logs (raw logs/tail.log, compact logs/tail-compact.log)
+pnpm d1:reset           # Recreate local D1 from migrations (wipes .wrangler)
 ```
 
 - Run typecheck and lint after generating code. Not necessary if just research.
@@ -65,8 +66,9 @@ pnpm tail               # Tail deployed remote logs (logs/tail.log)
 
 - `logs/server.log` - Local dev server logs (written by `pnpm dev`).
 - `logs/tail.log` - Raw remote logs (written by `pnpm tail`).
+- `logs/tail-compact.log` - Same stream through `scripts/wrangler-tail-compact.jq`: one `timestamp<TAB>level<TAB>message` line per event.
 
-Use `tail -f logs/server.log` locally, or `tail -f logs/tail.log` for raw Cloudflare JSON.
+Use `tail -f logs/server.log` locally, `tail -f logs/tail-compact.log` for readable remote logs, or `tail -f logs/tail.log` for raw Cloudflare JSON. `pnpm tail:staging` / `pnpm tail:PRODUCTION` write the same pair as `logs/staging*.log` / `logs/production*.log`.
 
 ## Logging
 
