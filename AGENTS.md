@@ -38,7 +38,7 @@ Downloaded source code of libraries are in `refs/` for reference.
 - **TanStack Query**: `refs/tan-query/docs/` (Markdown files - framework/react, reference, eslint)
 - **TanStack Form**: `refs/tan-form/docs/` (Markdown files)
 - **Cloudflare Docs**: `refs/cloudflare-docs/src/content/docs/` (MDX files)
-- **Effect v4 Docs**: `refs/effect4/ai-docs/src/`
+- **Effect Docs**: `refs/effect/ai-docs/src/` (Effect v4 release candidate — "effect" means v4 here)
 - **Shopify App JS**: `refs/shopify-app-js/` (source for `shopify-api`, `shopify-app-react-router`, and session storage adapters)
 - **Shopify Bridge**: `refs/shopify-bridge/`
 - **Shopify CLI**: `refs/shopify-cli/`
@@ -57,6 +57,8 @@ npm run test:e2e --     # Playwright via npm (uses pnpm exec in script); pass ar
 pnpm graphql-codegen    # Validate #graphql template literal strings against the Shopify Admin schema
 pnpm tail               # Tail deployed remote logs (raw logs/tail.log, compact logs/tail-compact.log)
 pnpm d1:reset           # Recreate local D1 from migrations (wipes .wrangler)
+pnpm refs:check         # Report refs/ that drifted from package.json pins
+pnpm refs fetch <name>  # Refetch a ref (see scripts/refs.ts; refs:all for everything but opt-ins)
 ```
 
 - Run typecheck and lint after generating code. Not necessary if just research.
