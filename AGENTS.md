@@ -45,6 +45,7 @@ Downloaded source code of libraries are in `refs/` for reference.
 - **Shopify Docs**: `refs/shopify-docs/`
 - **Workers SDK**: `refs/workers-sdk/`
 - **Vitest**: `refs/vitest/`
+- **Competitor apps** (opt-in): `refs/route-to-ship/`, `refs/kanbanify/`, `refs/makers-production-view/`, `refs/makerbatch/`, `refs/benchcue/`
 
 ## Commands
 

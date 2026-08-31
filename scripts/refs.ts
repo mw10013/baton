@@ -7,13 +7,21 @@
 //   node scripts/refs.ts check             report refs that drifted from the pins (exit 1 if any)
 //   node scripts/refs.ts list              same report, without exiting non-zero
 //
-// Ported from ableton-extension-prelive's scripts/refs.ts, minus its site-crawl and
-// Fluid Topics machinery (no baton ref needs a crawl; shopify.dev serves first-party
-// markdown -- see docs/refs-tooling-research.md while it lasts, or refs-shopify-docs.ts).
+// Ported from ableton-extension-prelive's scripts/refs.ts, minus its Fluid Topics
+// machinery. shopify.dev serves first-party markdown, so that ref fetches `.md` directly
+// (refs-shopify-docs.ts); the competitor refs fetch and convert HTML, and one crawls with
+// a browser, so a trimmed version of prelive's crawl support lives at the bottom of this
+// file.
 
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import { Console, Effect, FileSystem, Path, Result, Schema } from "effect";
 import { Argument, CliError, Command, Flag } from "effect/unstable/cli";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as ShopifyDocs from "./refs-shopify-docs.ts";
 
@@ -48,6 +56,11 @@ interface Ref {
   readonly private?: boolean;
   /** Fetched by scripts/refs-shopify-docs.ts instead of a tarball download. */
   readonly shopifyDocs?: boolean;
+  /**
+   * A competitor Shopify app's public web presence, fetched by `competitorInto` below.
+   * These have no upstream version to pin to, so `refs check` reports only how old the copy is.
+   */
+  readonly competitor?: Competitor;
   /**
    * Skipped by `fetch --all`, so it has to be named explicitly. For refs whose fetch
    * is slow enough or outward-facing enough that folding it into the bulk command
@@ -164,6 +177,71 @@ const REFS: readonly Ref[] = [
     shopifyDocs: true,
     optIn: true,
   },
+  // The five anchor apps from the production-workflow competitor research. Each is fetched
+  // and aged on its own; `refs check` reports how long ago each copy was taken.
+  {
+    name: "route-to-ship",
+    competitor: {
+      listing: "route-to-ship",
+      site: { origin: "https://www.routetoship.com", sitemap: "/sitemap.xml" },
+    },
+    optIn: true,
+  },
+  {
+    // The only anchor whose site is client-rendered: every path serves the same ~4KB
+    // `<div id="root">` shell and the copy lives in one JS bundle, so this is the sole
+    // ref that needs the crawler and its Chromium render. Its router declares exactly
+    // two routes, `/` and `/privacy`.
+    name: "kanbanify",
+    competitor: {
+      listing: "kanbanify",
+      crawl: {
+        url: "https://kanbanify.ungari.org/",
+        include: String.raw`^https://kanbanify\.ungari\.org/`,
+        browser: true,
+      },
+    },
+    optIn: true,
+  },
+  {
+    // Maker's Production View, published by Fleartex. The site publishes no usable
+    // sitemap (both sitemap.xml and sitemap-index.xml fall through to the homepage), so
+    // the three pages are listed explicitly.
+    //
+    // Its robots.txt carries `Content-Signal: search=yes, ai-train=no, use=reference` for
+    // `User-agent: *`, plus `Disallow: /` for a named list of AI training and answer-engine
+    // crawlers. This fetch is none of those: it identifies as `baton/refs-competitors`,
+    // takes three pages once, and reads them locally as reference -- the `use=reference`
+    // the `*` policy grants. It must never be run under a borrowed crawler token.
+    name: "makers-production-view",
+    competitor: {
+      listing: "maker-production-view",
+      site: {
+        origin: "https://fleartex.com",
+        paths: ["/", "/maker-production-view/support/", "/maker-production-view/privacy/"],
+      },
+    },
+    optIn: true,
+  },
+  {
+    // MakerBatch has no marketing site: `/` is a Next.js 404 marked noindex, because the
+    // deployment is the embedded Shopify app itself. `/privacy` is the only page that
+    // resolves, and it is where the app's documented scope and infrastructure live.
+    name: "makerbatch",
+    competitor: {
+      listing: "makerbatch",
+      site: { origin: "https://makerbatch.vercel.app", paths: ["/privacy"] },
+    },
+    optIn: true,
+  },
+  {
+    name: "benchcue",
+    competitor: {
+      listing: "maker-card",
+      site: { origin: "https://maker-card.revertcreations.com", sitemap: "/sitemap.xml" },
+    },
+    optIn: true,
+  },
 ];
 
 const refNames = REFS.map((ref) => ref.name);
@@ -250,6 +328,11 @@ const resolve = Effect.fn(function* (ref: Ref) {
   // bumping the literal marks the old copy stale, and until then only its age says
   // anything. Same reasoning for a `pin` ref.
   if (ref.shopifyDocs) return { ref, target: ShopifyDocs.API_VERSION };
+  // A competitor snapshot has no upstream version to pin to -- nothing publishes one, and a
+  // hand-edited date would only be a note to self wearing a pin's clothing, marking every
+  // ref that shared it stale on edit. The target names the source instead, `version` stays
+  // unset, and each ref ages independently off its own `fetchedAt`.
+  if (ref.competitor) return { ref, target: `${APP_STORE_ORIGIN}/${ref.competitor.listing}` };
   if (ref.pin) return { ref, target: (ref.tag ?? "{v}").replace("{v}", ref.pin) };
   if (!ref.version || !(ref.tag ?? ref.npm))
     return yield* new RefsError({
@@ -327,14 +410,523 @@ const fillStaging = Effect.fn(function* (staging: string, ref: Ref, target: stri
     return yield* ShopifyDocs.downloadInto(staging).pipe(
       Effect.mapError((error) => new RefsError({ reason: error.message })),
     );
+  if (ref.competitor) return yield* competitorInto(staging, ref.competitor);
   if (!(ref.repo ?? ref.npm))
-    return yield* new RefsError({ reason: `${ref.name} needs a repo, an npm package, or shopifyDocs` });
+    return yield* new RefsError({
+      reason: `${ref.name} needs a repo, an npm package, shopifyDocs, or a competitor`,
+    });
   return yield* downloadInto(staging, ref, target);
 });
+
+// ---------------------------------------------------------------------------
+// Competitor site snapshots
+// ---------------------------------------------------------------------------
+
+/** Every file under `dir`, walked iteratively so the effect stays non-recursive. */
+const allFiles = Effect.fn(function* (dir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const out: string[] = [];
+  const pending = [dir];
+  while (pending.length > 0) {
+    const current = pending.pop() ?? "";
+    for (const entry of yield* fs
+      .readDirectory(current)
+      .pipe(Effect.orElseSucceed(() => []))) {
+      const full = path.join(current, entry);
+      const type = yield* fs.stat(full).pipe(
+        Effect.map((s) => s.type),
+        Effect.orElseSucceed(() => "Other" as const),
+      );
+      if (type === "Directory") pending.push(full);
+      else out.push(full);
+    }
+  }
+  return out;
+});
+
+/** Make `name` unique within `used`, suffixing before the extension. */
+const uniqueName = (name: string, used: Set<string>) => {
+  let candidate = name;
+  for (let n = 2; used.has(candidate); n++)
+    candidate = /\./u.test(name)
+      ? name.replace(/(?<ext>\.[^.]+)$/u, `-${String(n)}$<ext>`)
+      : `${name}-${String(n)}`;
+  used.add(candidate);
+  return candidate;
+};
+
+const APP_STORE_ORIGIN = "https://apps.shopify.com";
+/**
+ * Self-identifying, and deliberately not any AI crawler's token. Sites in this set
+ * publish per-crawler robots policies; borrowing one of those names would misrepresent
+ * what is fetching, and the policy that applies here is the site's `User-agent: *` one.
+ */
+const USER_AGENT = "baton/refs-competitors (+https://github.com/mw10013/baton)";
+/** Below refs-shopify-docs.ts's 8: these are small personal servers, not shopify.dev. */
+const CONCURRENCY = 4;
+const CRAWLER = "siteone-crawler";
+
+/**
+ * Chrome to drop from an App Store listing before conversion. The recommended-apps
+ * carousel is the load-bearing one: it prints other apps' review counts ("23 total
+ * reviews") into a file whose entire purpose is review-count evidence, which is the
+ * kind of wrong that reads as right. A selector that stops matching fails silently, so
+ * `downloadInto` asserts the carousel is gone rather than trusting the exit code.
+ */
+const APP_STORE_EXCLUDE = [
+  "footer",
+  '[data-controller="recommended-apps"]',
+] as const;
+/** Hosts whose images are worth localizing alongside a page's own. */
+const SHOPIFY_ASSET_HOSTS = new Set([
+  "cdn.shopify.com",
+  "apps.shopify.com",
+  "shopify-assets.shopifycdn.com",
+]);
+
+/**
+ * A site crawled with siteone-crawler rather than fetched a URL at a time, for one whose
+ * served HTML has no content in it. `include` is PCRE matched against the whole absolute
+ * URL, not the path -- a path-anchored regex matches nothing and the crawl then quietly
+ * fetches the entry page alone and exits 0, a failure that looks like success.
+ */
+interface Crawl {
+  readonly url: string;
+  readonly include: string;
+  /**
+   * Render each page in Chromium before converting. Costs roughly 20s per page against
+   * ~0.3s for plain HTTP, so it is worth it only when the served HTML is genuinely empty.
+   */
+  readonly browser?: boolean;
+}
+
+interface Competitor {
+  /** App Store listing handle: apps.shopify.com/<handle>. */
+  readonly listing: string;
+  /** Pages served as HTML, fetched by URL and converted locally. */
+  readonly site?: {
+    readonly origin: string;
+    /** Explicit paths, for a site that publishes no usable sitemap. */
+    readonly paths?: readonly string[];
+    /** Sitemap to enumerate instead, relative to `origin`. */
+    readonly sitemap?: string;
+  };
+  /** Client-rendered site, crawled instead of fetched. */
+  readonly crawl?: Crawl;
+  /** Extra CSS selectors dropped from this site's pages before conversion. */
+  readonly excludeSelector?: readonly string[];
+}
+
+const request = (url: string) =>
+  HttpClient.HttpClient.pipe(
+    Effect.flatMap((client) =>
+      client.execute(
+        HttpClientRequest.get(url).pipe(
+          HttpClientRequest.setHeader("user-agent", USER_AGENT),
+        ),
+      ),
+    ),
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+  );
+
+const requestText = (url: string) =>
+  request(url).pipe(
+    Effect.flatMap((response) => response.text),
+    Effect.mapError(() => new RefsError({ reason: `GET ${url} failed` })),
+  );
+
+const requestBytes = (url: string) =>
+  request(url).pipe(
+    Effect.flatMap((response) => response.arrayBuffer),
+    Effect.map((buffer) => new Uint8Array(buffer)),
+    Effect.mapError(() => new RefsError({ reason: `GET ${url} failed` })),
+  );
+
+/** The crawler's converter, run over one HTML file already on disk. */
+const htmlToMarkdown = Effect.fn(function* (
+  from: string,
+  to: string,
+  excludeSelector: readonly string[],
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const exit = yield* spawner.exitCode(
+    ChildProcess.make(
+      CRAWLER,
+      [
+        `--html-to-markdown=${from}`,
+        `--html-to-markdown-output=${to}`,
+        ...excludeSelector.map((s) => `--markdown-exclude-selector=${s}`),
+      ],
+      // Silenced: this converter reports *success* on stderr, so inheriting it prints a
+      // green line per file. The exit code is the signal.
+      { stdout: "ignore", stderr: "ignore" },
+    ),
+  );
+  if (exit !== 0) {
+    yield* new RefsError({
+      reason: `converting ${from} failed (exit ${String(exit)})`,
+    });
+  }
+});
+
+/**
+ * Undo the converter's heading mangling: in heading lines only, `_`, `*`, `[` and `]` are
+ * each replaced by a bare `\`, so `line_item` exports as `line\item` and `number[]` as
+ * `number\\`. (`(`, `)`, `|`, `+` are escaped correctly and their `\` must be left alone.)
+ * No crawler flag fixes it -- `--markdown-replace-content` cannot match a literal
+ * backslash -- so it is repaired afterwards, using what follows the closing `\` to
+ * disambiguate: `\1\` before a space is a type annotation, before a word char an eaten
+ * pair. Unconditional, because the mangling is a converter bug rather than a property of
+ * any one site.
+ */
+const repairHeading = (line: string) =>
+  line.startsWith("#")
+    ? line
+        .replaceAll(/\\\\(?<name>\w+)\\\\/gu, "__$<name>__")
+        .replaceAll(String.raw`\\`, "[]")
+        .replaceAll(
+          /\\(?<inner>[^\\|]*[ ,][^\\|]*)\\(?=[ \t]|$)/gu,
+          "[$<inner>]",
+        )
+        .replaceAll(/\\(?<word>\w+)\\(?=[ \t]|$)/gu, "[$<word>]")
+        .replaceAll(/\\(?=[A-Za-z0-9])/gu, "_")
+        .replaceAll(/\\(?=[ \t]|$)/gu, "_")
+    : line;
+
+/**
+ * Drop the site-navigation blocks the converter emits as `<details><summary>...</summary>`.
+ * They survive every `--markdown-exclude-selector` aimed at them (`header`, `nav`, the
+ * navbar's own id each leave the output byte-identical), because the converter wraps nav
+ * elements after the selectors have run. Removing them here is what the selectors could
+ * not do.
+ *
+ * Matched on content rather than on the `<summary>` label: the converter names the block
+ * from the markup and has been seen to emit both "Menu" and "Links" for the same navbar,
+ * so keying on the label silently stops working. Every one of these blocks is App Store
+ * chrome carrying `surface_type=navbar` links, and nothing else in this output is a
+ * `<details>` block at all.
+ */
+const stripNavDetails = (markdown: string) =>
+  markdown.replaceAll(
+    /^<details>\n<summary>[^<]*<\/summary>\n[\s\S]*?<\/details>\n+/gmu,
+    (block) => (block.includes("surface_type=navbar") ? "" : block),
+  );
+
+const repairMarkdown = Effect.fn(function* (staging: string) {
+  const fs = yield* FileSystem.FileSystem;
+  for (const file of (yield* allFiles(staging)).filter((f) =>
+    f.endsWith(".md"),
+  )) {
+    const before = yield* fs.readFileString(file);
+    const after = stripNavDetails(
+      before.split("\n").map(repairHeading).join("\n"),
+    );
+    if (after !== before) yield* fs.writeFileString(file, after);
+  }
+});
+
+/**
+ * Preflight so a missing binary reads as an install hint rather than a bare ENOENT from
+ * the spawner, minutes into a run.
+ */
+const assertCrawler = Effect.gen(function* () {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const found = yield* spawner.exitCode(
+    ChildProcess.make("which", [CRAWLER], {
+      stdout: "ignore",
+      stderr: "ignore",
+    }),
+  );
+  if (found !== 0) {
+    yield* new RefsError({
+      reason: `${CRAWLER} is not on PATH -- install it with \`brew install janreges/tap/${CRAWLER}\``,
+    });
+  }
+});
+
+/** Crawl a client-rendered site into markdown, images and all, under `staging`. */
+const crawlInto = Effect.fn(function* (
+  staging: string,
+  crawl: Crawl,
+  excludeSelector: readonly string[],
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  yield* assertCrawler;
+  const exit = yield* spawner.exitCode(
+    ChildProcess.make(
+      CRAWLER,
+      [
+        `--url=${crawl.url}`,
+        `--include-regex=${crawl.include}`,
+        "--regex-filtering-only-for-pages",
+        ...(crawl.browser === true
+          ? [
+              "--browser",
+              "--browser-wait=networkidle",
+              "--browser-wait-extra=3000",
+              // A very tall render viewport is what makes lazy-loaded figures resolve:
+              // they carry only `data-src` until they scroll into view, so a normal
+              // viewport yields markdown with no `![]()` in it at all.
+              "--screenshot-viewport=1600x30000",
+              // Consent up front: with no browser installed the crawler otherwise stops
+              // on an interactive prompt that a spawned process has no way to answer.
+              "--browser-auto-download",
+            ]
+          : []),
+        ...excludeSelector.map((s) => `--markdown-exclude-selector=${s}`),
+        `--user-agent=${USER_AGENT}`,
+        `--markdown-export-dir=${staging}`,
+        "--workers=2",
+        "--max-reqs-per-sec=3",
+        // Empty paths switch off the audit report, JSON and text dumps, none of which
+        // belong in a ref.
+        "--output-html-report=",
+        "--output-json-file=",
+        "--output-text-file=",
+      ],
+      { stdout: "ignore", stderr: "inherit" },
+    ),
+  );
+  if (exit !== 0) {
+    yield* new RefsError({
+      reason: `crawl of ${crawl.url} failed (exit ${String(exit)})`,
+    });
+  }
+});
+
+/** `/` -> `index.md`, `/pricing` -> `pricing.md`, `/blog/foo/` -> `blog/foo.md`. */
+const toLocalName = (pathname: string) => {
+  const trimmed = pathname.replaceAll(/^\/|\/$/gu, "");
+  return `${trimmed === "" ? "index" : trimmed}.md`;
+};
+
+const sitemapUrls = Effect.fn(function* (origin: string, sitemap: string) {
+  const xml = yield* requestText(new URL(sitemap, origin).toString());
+  const urls = [...xml.matchAll(/<loc>(?<url>[^<]+)<\/loc>/gu)].flatMap(
+    (match) => {
+      const raw = match.groups?.url?.trim();
+      if (raw === undefined) return [];
+      const url = new URL(raw);
+      return url.origin === new URL(origin).origin ? [url.toString()] : [];
+    },
+  );
+  if (urls.length === 0)
+    return yield* new RefsError({
+      reason: `no URLs in sitemap ${sitemap} of ${origin}`,
+    });
+  return urls.toSorted();
+});
+
+/**
+ * Fetch one page and convert it, recording where it came from. The HTML is staged beside
+ * its markdown and removed after conversion: the converter only reads files on disk, and
+ * a ref of raw HTML is not what anyone greps.
+ */
+const fetchPage = Effect.fn(function* (
+  staging: string,
+  url: string,
+  name: string,
+  excludeSelector: readonly string[],
+  sources: Map<string, string>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const target = path.join(staging, name);
+  const html = `${target}.html`;
+  yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+  yield* fs.writeFileString(html, yield* requestText(url));
+  yield* htmlToMarkdown(html, target, excludeSelector);
+  yield* fs.remove(html, { force: true });
+  yield* fs.writeFileString(
+    target,
+    `---\nsource_url: ${url}\n---\n\n${(yield* fs.readFileString(target)).trimStart()}`,
+  );
+  sources.set(target, url);
+});
+
+const IMAGE_LINK_RE = /!\[[^\]]*\]\((?<url>[^)\s]+)\)/gu;
+
+/**
+ * Download the images the fetched pages reference into `_assets/` and rewrite the links.
+ * Unlike the shopify.dev refs these links are mostly root-relative (`/shots/queue.png`),
+ * which resolve to nothing locally, so each is resolved against the URL its page came
+ * from -- product screenshots are a large part of why these refs exist. Only the page's
+ * own host and Shopify's asset hosts are fetched, so a third-party embed keeps its
+ * absolute URL rather than getting pulled off someone else's server. A failed download
+ * logs and leaves that link alone: a missing figure should not fail the whole fetch.
+ */
+const localizeImages = Effect.fn(function* (
+  staging: string,
+  sources: Map<string, string>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  const wanted = (raw: string | undefined, source: string) => {
+    const url =
+      raw === undefined || raw.startsWith("data:")
+        ? null
+        : URL.parse(raw, source);
+    return url !== null &&
+      url.protocol.startsWith("http") &&
+      (url.hostname === new URL(source).hostname ||
+        SHOPIFY_ASSET_HOSTS.has(url.hostname))
+      ? url.toString()
+      : undefined;
+  };
+
+  const resolved = new Map<string, string>();
+  for (const [file, source] of sources) {
+    if (yield* fs.exists(file)) {
+      for (const match of (yield* fs.readFileString(file)).matchAll(
+        IMAGE_LINK_RE,
+      )) {
+        const raw = match.groups?.url;
+        const url = wanted(raw, source);
+        if (raw !== undefined && url !== undefined) resolved.set(raw, url);
+      }
+    }
+  }
+  if (resolved.size === 0) return;
+
+  const assetsDir = path.join(staging, "_assets");
+  yield* fs.makeDirectory(assetsDir, { recursive: true });
+
+  // Names are assigned up front (uniqueName mutates its set), then the downloads run
+  // concurrently; a failure drops the entry so its link is left as it was.
+  const names = new Map<string, string>();
+  const used = new Set<string>();
+  for (const [raw, url] of resolved)
+    names.set(
+      raw,
+      uniqueName(
+        decodeURIComponent(new URL(url).pathname.split("/").pop() ?? ""),
+        used,
+      ),
+    );
+
+  const results = yield* Effect.forEach(
+    [...names],
+    ([raw, name]) =>
+      requestBytes(resolved.get(raw) ?? raw).pipe(
+        Effect.flatMap((bytes) =>
+          fs.writeFile(path.join(assetsDir, name), bytes),
+        ),
+        Effect.as(raw),
+        Effect.catch((error) =>
+          Console.error(`image failed ${raw}: ${error.message}`).pipe(
+            Effect.andThen(() => {
+              names.delete(raw);
+              return Effect.succeed(null);
+            }),
+          ),
+        ),
+      ),
+    { concurrency: CONCURRENCY },
+  );
+
+  for (const file of sources.keys()) {
+    const before = yield* fs
+      .readFileString(file)
+      .pipe(Effect.orElseSucceed(() => ""));
+    const after = before.replaceAll(IMAGE_LINK_RE, (link) => {
+      const raw =
+        /!\[[^\]]*\]\((?<url>[^)\s]+)\)/u.exec(link)?.groups?.url ?? "";
+      const name = names.get(raw);
+      return name === undefined
+        ? link
+        : link.replace(
+            raw,
+            path
+              .relative(path.dirname(file), path.join(assetsDir, name))
+              .replaceAll("\\", "/"),
+          );
+    });
+    if (after !== before) yield* fs.writeFileString(file, after);
+  }
+  yield* Console.log(
+    `  images: ${String(results.filter((r) => r !== null).length)}/${String(resolved.size)} localized to _assets/`,
+  );
+});
+
+/** Mirror one competitor's listing, reviews and site into `staging` as markdown. */
+const competitorInto = (staging: string, competitor: Competitor) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const sources = new Map<string, string>();
+
+    const listing = `${APP_STORE_ORIGIN}/${competitor.listing}`;
+    yield* fetchPage(
+      staging,
+      listing,
+      "listing.md",
+      APP_STORE_EXCLUDE,
+      sources,
+    );
+    yield* fetchPage(
+      staging,
+      `${listing}/reviews`,
+      "reviews.md",
+      APP_STORE_EXCLUDE,
+      sources,
+    );
+    // The carousel selector is the one whose silent rot would corrupt the evidence rather
+    // than merely add noise, so it is checked rather than assumed.
+    if (
+      /\d+ total reviews/u.test(
+        yield* fs.readFileString(path.join(staging, "listing.md")),
+      )
+    ) {
+      yield* new RefsError({
+        reason: `${competitor.listing}: recommended-apps carousel leaked into listing.md -- the exclude selector no longer matches`,
+      });
+    }
+
+    if (competitor.site) {
+      const { origin, paths, sitemap } = competitor.site;
+      const urls = sitemap
+        ? yield* sitemapUrls(origin, sitemap)
+        : (paths ?? []).map((p) => new URL(p, origin).toString());
+      yield* Console.log(
+        `  ${new URL(origin).hostname}: ${String(urls.length)} page(s)`,
+      );
+      yield* Effect.forEach(
+        urls,
+        (url) =>
+          fetchPage(
+            staging,
+            url,
+            toLocalName(new URL(url).pathname),
+            competitor.excludeSelector ?? [],
+            sources,
+          ),
+        { concurrency: CONCURRENCY },
+      );
+    }
+
+    if (competitor.crawl)
+      yield* crawlInto(
+        staging,
+        competitor.crawl,
+        competitor.excludeSelector ?? [],
+      );
+
+    yield* repairMarkdown(staging);
+    yield* localizeImages(staging, sources);
+  }).pipe(Effect.provide(FetchHttpClient.layer));
+
+/** Entry URL for the stamp, for the refs fetched from the web rather than a tarball. */
+const stampUrl = (ref: Ref) => {
+  if (ref.competitor) return `${APP_STORE_ORIGIN}/${ref.competitor.listing}`;
+  return ref.shopifyDocs ? ShopifyDocs.ORIGIN : undefined;
+};
 
 /** How a ref without a package.json pin gets its content, for the fetch's first line. */
 const sourceKind = (ref: Ref) => {
   if (ref.shopifyDocs) return "docs";
+  if (ref.competitor) return "snapshot";
   if (ref.npm) return "npm";
   if (ref.branch) return "branch";
   return "pin";
@@ -356,7 +948,7 @@ const fetchRef = Effect.fn(function* ({ ref, source, target, version }: Resolved
     const stamp = yield* Schema.encodeEffect(StampJson)({
       repo: ref.repo,
       npm: ref.npm,
-      url: ref.shopifyDocs ? ShopifyDocs.ORIGIN : undefined,
+      url: stampUrl(ref),
       resolved: target,
       version,
       source,
@@ -392,8 +984,8 @@ const checkRefs = Effect.gen(function* () {
       );
       stale++;
     } else if (resolved.success.version === undefined) {
-      // No resolved version means a branch, pin, or docs ref, whose target names itself
-      // rather than a package.json pin, so age is the only thing left to report.
+      // No resolved version means a branch, pin, docs, or competitor ref, whose target
+      // names itself rather than a package.json pin, so age is all there is to report.
       const days = Math.floor((Date.now() - Date.parse(stamp.fetchedAt)) / 86_400_000);
       yield* Console.log(
         `${ref.name.padEnd(NAME_COL)} ${resolved.success.target}  fetched ${days === 0 ? "today" : `${String(days)}d ago`}`,
