@@ -1,0 +1,75 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Top-level name is used by Wrangler as the Cloudflare service grouping tag for all deployed envs.
+  "name": "baton",
+  "compatibility_date": "2026-05-14",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "./src/worker.ts",
+  "vars": {
+    "ENVIRONMENT": "local",
+    // Fill in after `shopify app config link` and `shopify app info`.
+    // CLOUDFLARE_ACCOUNT_ID is only read by the admin Durable Object explorer.
+    "CLOUDFLARE_ACCOUNT_ID": "",
+    "SHOPIFY_PARTNER_ORG_ID": "",
+    "SHOPIFY_PARTNER_APP_ID": "",
+    "SHOPIFY_APP_HANDLE": "baton-local",
+    // App Pricing plans do not exist yet. While this is "false",
+    // `SubscriptionPlan` grants every shop `Domain.DEFAULT_PLAN_HANDLE` without
+    // calling the Partner API, so the `/app` gate and the WebSocket connect
+    // check keep running in their real shape and always pass. Set to "true"
+    // once the plans are created in Partners — nothing else changes.
+    "BILLING_ENABLED": "false"
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "invocation_logs": true,
+      "head_sampling_rate": 1
+    },
+    // Workers traces (https://developers.cloudflare.com/workers/observability/traces/)
+    // bill each span as an observability event at the same $0.60/M rate as log
+    // events, and the automatic instrumentation emits a
+    // `durable_object_storage_exec` span for every SQLite statement inside
+    // ShopAgent — several times the cost of the log events for the same work.
+    // Nothing consumes them: Effect spans (`Effect.fn`, `Effect.withLogSpan`)
+    // decorate logs only and do not bridge into Cloudflare's tracing, so the
+    // spans are pure platform instrumentation with no application detail.
+    // Re-enable temporarily with `head_sampling_rate` ~0.05 for a performance
+    // investigation, or briefly at 1 to read the
+    // `cloudflare.durable_object.response.rows_written` span attribute — the
+    // ground truth for billed rows per action.
+    "traces": {
+      "enabled": false
+    }
+  },
+  "d1_databases": [
+    {
+      "binding": "D1",
+      "database_name": "baton-d1-local",
+      "database_id": "baton-d1-local"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SHOP_AGENT",
+        "class_name": "ShopAgent"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ShopAgent"]
+    }
+  ],
+  "ratelimits": [
+    {
+      // Account-wide ID; reuse shares counters across Workers and environments,
+      // so pick unused ids before deploying anywhere real.
+      "name": "ADMIN_LOGIN_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 5, "period": 60 }
+    }
+  ]
+}

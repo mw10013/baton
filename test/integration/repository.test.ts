@@ -1,0 +1,320 @@
+import { D1Client } from "@effect/sql-d1";
+import { describe, it } from "@effect/vitest";
+import { assertTrue, strictEqual } from "@effect/vitest/utils";
+import { env } from "cloudflare:workers";
+import { Effect, Layer, Option, Schema } from "effect";
+import { afterEach } from "vitest";
+
+import * as Domain from "@/lib/Domain";
+import { Repository } from "@/lib/Repository";
+
+const layer = Repository.layerNoDeps.pipe(
+  Layer.provide(D1Client.layer({ db: env.D1 })),
+);
+
+const run = <A, E>(effect: Effect.Effect<A, E, Repository>) =>
+  effect.pipe(Effect.provide(layer));
+
+const shopOf = (s: string) => Schema.decodeUnknownSync(Domain.Shop)(s);
+const shopGid = Schema.decodeUnknownSync(Domain.ShopGid)(
+  "gid://shopify/Shop/1",
+);
+
+const makeSession = (
+  overrides: Partial<Domain.Session> & { readonly shop: Domain.Shop },
+): Domain.Session => ({
+  shopGid,
+  shopAgentId: Schema.decodeUnknownSync(Domain.ShopAgentId)(
+    `agent-${overrides.shop}`,
+  ),
+  scope: "read_products",
+  accessTokenExpiresAt: 1000,
+  accessToken: "shpat_x",
+  refreshToken: "shprt_x",
+  refreshTokenExpiresAt: 2000,
+  planHandle: null,
+  planHandleExpiresAt: null,
+  ...overrides,
+});
+
+const seed = (repo: Repository["Service"], shops: readonly string[]) =>
+  Effect.forEach(
+    shops,
+    (s) => repo.upsertSession(makeSession({ shop: shopOf(s) })),
+    { discard: true },
+  );
+
+afterEach(() => env.D1.exec("delete from Session"));
+
+describe("Repository SQL (D1 Session)", () => {
+  it.effect(
+    "upsertSession inserts then conflict-updates; findSessionByShop round-trips",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const repo = yield* Repository;
+          const shop = shopOf("a.myshopify.com");
+          yield* repo.upsertSession(
+            makeSession({ shop, scope: "read_products" }),
+          );
+          const first = Option.getOrThrow(yield* repo.findSessionByShop(shop));
+          strictEqual(first.scope, "read_products");
+          yield* repo.upsertSession(
+            makeSession({
+              shop,
+              scope: "write_products",
+              accessToken: "shpat_new",
+            }),
+          );
+          const second = Option.getOrThrow(yield* repo.findSessionByShop(shop));
+          strictEqual(second.scope, "write_products");
+          strictEqual(second.accessToken, "shpat_new");
+        }),
+      ),
+  );
+
+  it.effect("findSessionByShop returns none for a missing shop", () =>
+    run(
+      Effect.gen(function* () {
+        const repo = yield* Repository;
+        const missing = yield* repo.findSessionByShop(
+          shopOf("missing.myshopify.com"),
+        );
+        assertTrue(Option.isNone(missing));
+      }),
+    ),
+  );
+
+  it.effect("clearSessionAccessToken nulls only the access token", () =>
+    run(
+      Effect.gen(function* () {
+        const repo = yield* Repository;
+        const shop = shopOf("clear.myshopify.com");
+        yield* repo.upsertSession(
+          makeSession({
+            shop,
+            accessToken: "shpat_x",
+            refreshToken: "shprt_x",
+          }),
+        );
+        yield* repo.clearSessionAccessToken(shop);
+        const session = Option.getOrThrow(yield* repo.findSessionByShop(shop));
+        strictEqual(session.accessToken, null);
+        strictEqual(session.refreshToken, "shprt_x");
+      }),
+    ),
+  );
+
+  it.effect("updateSessionTokens rewrites the token fields", () =>
+    run(
+      Effect.gen(function* () {
+        const repo = yield* Repository;
+        const shop = shopOf("tokens.myshopify.com");
+        yield* repo.upsertSession(makeSession({ shop }));
+        yield* repo.updateSessionTokens({
+          shop,
+          accessToken: "shpat_2",
+          accessTokenExpiresAt: 5,
+          refreshToken: "shprt_2",
+          refreshTokenExpiresAt: 6,
+        });
+        const session = Option.getOrThrow(yield* repo.findSessionByShop(shop));
+        strictEqual(session.accessToken, "shpat_2");
+        strictEqual(session.accessTokenExpiresAt, 5);
+        strictEqual(session.refreshToken, "shprt_2");
+        strictEqual(session.refreshTokenExpiresAt, 6);
+      }),
+    ),
+  );
+
+  it.effect("updateSessionPlan rewrites only the plan cache fields", () =>
+    run(
+      Effect.gen(function* () {
+        const repo = yield* Repository;
+        const shop = shopOf("plan.myshopify.com");
+        yield* repo.upsertSession(makeSession({ shop }));
+        yield* repo.updateSessionPlan({
+          shop,
+          planHandle: "baton-pro-test",
+          planHandleExpiresAt: 3000,
+        });
+        const session = Option.getOrThrow(yield* repo.findSessionByShop(shop));
+        strictEqual(session.planHandle, "baton-pro-test");
+        strictEqual(session.planHandleExpiresAt, 3000);
+        strictEqual(session.accessToken, "shpat_x");
+        strictEqual(session.refreshToken, "shprt_x");
+        strictEqual(session.scope, "read_products");
+      }),
+    ),
+  );
+
+  it.effect("updateSessionScope rewrites the scope", () =>
+    run(
+      Effect.gen(function* () {
+        const repo = yield* Repository;
+        const shop = shopOf("scope.myshopify.com");
+        yield* repo.upsertSession(
+          makeSession({ shop, scope: "read_products" }),
+        );
+        yield* repo.updateSessionScope(shop, "read_products,write_products");
+        const session = Option.getOrThrow(yield* repo.findSessionByShop(shop));
+        strictEqual(session.scope, "read_products,write_products");
+      }),
+    ),
+  );
+
+  it.effect("deleteSessionByShop removes the row", () =>
+    run(
+      Effect.gen(function* () {
+        const repo = yield* Repository;
+        const shop = shopOf("delete.myshopify.com");
+        yield* repo.upsertSession(makeSession({ shop }));
+        yield* repo.deleteSessionByShop(shop);
+        assertTrue(Option.isNone(yield* repo.findSessionByShop(shop)));
+      }),
+    ),
+  );
+
+  describe("getSessionRedactedPage", () => {
+    it.effect("forward first page reports the next cursor", () =>
+      run(
+        Effect.gen(function* () {
+          const repo = yield* Repository;
+          yield* seed(repo, [
+            "a.myshopify.com",
+            "b.myshopify.com",
+            "c.myshopify.com",
+          ]);
+          const page = yield* repo.getSessionRedactedPage({ limit: 2 });
+          strictEqual(page.sessions.length, 2);
+          strictEqual(page.sessions[0].shop, "a.myshopify.com");
+          strictEqual(page.sessions[1].shop, "b.myshopify.com");
+          strictEqual(page.hasNextPage, true);
+          strictEqual(page.hasPreviousPage, false);
+          strictEqual(page.startCursor, "a.myshopify.com");
+          strictEqual(page.endCursor, "b.myshopify.com");
+        }),
+      ),
+    );
+
+    it.effect("forward page with an after cursor reaches the end", () =>
+      run(
+        Effect.gen(function* () {
+          const repo = yield* Repository;
+          yield* seed(repo, [
+            "a.myshopify.com",
+            "b.myshopify.com",
+            "c.myshopify.com",
+          ]);
+          const page = yield* repo.getSessionRedactedPage({
+            limit: 2,
+            after: "b.myshopify.com",
+          });
+          strictEqual(page.sessions.length, 1);
+          strictEqual(page.sessions[0].shop, "c.myshopify.com");
+          strictEqual(page.hasNextPage, false);
+          strictEqual(page.hasPreviousPage, true);
+        }),
+      ),
+    );
+
+    it.effect("forward page applies the filter (like)", () =>
+      run(
+        Effect.gen(function* () {
+          const repo = yield* Repository;
+          yield* seed(repo, [
+            "alpha.myshopify.com",
+            "alphabeta.myshopify.com",
+            "beta.myshopify.com",
+          ]);
+          const page = yield* repo.getSessionRedactedPage({
+            limit: 10,
+            filter: "alpha",
+          });
+          strictEqual(page.sessions.length, 2);
+          assertTrue(page.sessions.every((s) => s.shop.includes("alpha")));
+          strictEqual(page.hasNextPage, false);
+        }),
+      ),
+    );
+
+    it.effect(
+      "backward page reverses ordering and reports previous cursor",
+      () =>
+        run(
+          Effect.gen(function* () {
+            const repo = yield* Repository;
+            yield* seed(repo, [
+              "a.myshopify.com",
+              "b.myshopify.com",
+              "c.myshopify.com",
+              "d.myshopify.com",
+            ]);
+            const page = yield* repo.getSessionRedactedPage({
+              limit: 2,
+              before: "d.myshopify.com",
+            });
+            strictEqual(page.sessions.length, 2);
+            strictEqual(page.sessions[0].shop, "b.myshopify.com");
+            strictEqual(page.sessions[1].shop, "c.myshopify.com");
+            strictEqual(page.hasPreviousPage, true);
+            strictEqual(page.hasNextPage, true);
+          }),
+        ),
+    );
+
+    it.effect("backward page applies the filter (like)", () =>
+      run(
+        Effect.gen(function* () {
+          const repo = yield* Repository;
+          yield* seed(repo, [
+            "alpha1.myshopify.com",
+            "alpha2.myshopify.com",
+            "beta.myshopify.com",
+          ]);
+          const page = yield* repo.getSessionRedactedPage({
+            limit: 10,
+            before: "zzz.myshopify.com",
+            filter: "alpha",
+          });
+          strictEqual(page.sessions.length, 2);
+          strictEqual(page.sessions[0].shop, "alpha1.myshopify.com");
+          strictEqual(page.sessions[1].shop, "alpha2.myshopify.com");
+          assertTrue(page.sessions.every((s) => s.shop.includes("alpha")));
+        }),
+      ),
+    );
+
+    it.effect(
+      "projects hasAccessToken / hasRefreshToken from null checks",
+      () =>
+        run(
+          Effect.gen(function* () {
+            const repo = yield* Repository;
+            yield* repo.upsertSession(
+              makeSession({
+                shop: shopOf("has.myshopify.com"),
+                accessToken: "shpat_x",
+                refreshToken: null,
+              }),
+            );
+            yield* repo.upsertSession(
+              makeSession({
+                shop: shopOf("none.myshopify.com"),
+                accessToken: null,
+                refreshToken: "shprt_y",
+              }),
+            );
+            const page = yield* repo.getSessionRedactedPage({ limit: 10 });
+            strictEqual(page.sessions.length, 2);
+            strictEqual(page.sessions[0].shop, "has.myshopify.com");
+            strictEqual(page.sessions[0].hasAccessToken, true);
+            strictEqual(page.sessions[0].hasRefreshToken, false);
+            strictEqual(page.sessions[1].shop, "none.myshopify.com");
+            strictEqual(page.sessions[1].hasAccessToken, false);
+            strictEqual(page.sessions[1].hasRefreshToken, true);
+          }),
+        ),
+    );
+  });
+});

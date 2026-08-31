@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": ["Bash(tail:*)", "Bash(find:*)", "Bash(ls:*)"]
+  },
+  "claudeMdExcludes": ["**/refs/**"],
+  "outputStyle": "Concise",
+  "enabledMcpjsonServers": ["chrome-devtools", "shopify-dev-mcp"]
+}

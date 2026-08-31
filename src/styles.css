@@ -1,0 +1,131 @@
+/* No `min-height: 100vh` on html/body. The UA's 8px body margin is not reset,
+   so a 100vh body has a 100vh + 16px margin box and every page overflows by
+   16px — a permanent scrollbar in the embedded app pane even when the content
+   fits. Nothing here paints html/body or measures against their height, so the
+   full-viewport floor bought nothing. */
+
+/* Opaque identifiers (shopAgentId, GIDs, tokens) are unbroken 64-char strings.
+   `anywhere` rather than `break-word` because only `anywhere` shrinks the
+   min-content size, which is what lets an auto-fit grid track hold them. */
+.admin-field {
+  overflow-wrap: anywhere;
+}
+
+.capacity-meter {
+  display: block;
+  inline-size: 100%;
+  block-size: 8px;
+  appearance: none;
+  overflow: hidden;
+  border: 0;
+  border-radius: 4px;
+  background: #e3e3e3;
+}
+
+.capacity-meter::-webkit-progress-bar {
+  background: #e3e3e3;
+}
+
+.capacity-meter::-webkit-progress-value {
+  min-inline-size: 6px;
+  border-radius: 4px;
+  background: #303030;
+}
+
+.capacity-meter::-moz-progress-bar {
+  min-inline-size: 6px;
+  border-radius: 4px;
+  background: #303030;
+}
+
+.live-command-chip {
+  display: inline-flex;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.live-command-chip > s-clickable-chip {
+  max-inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.live-page-query {
+  container: live-page / inline-size;
+}
+
+.live-memory-scroll {
+  max-block-size: clamp(360px, calc(100dvh - 360px), 640px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.live-value-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.25rem;
+  list-style: none;
+}
+
+.live-value-summary::-webkit-details-marker {
+  display: none;
+}
+
+.live-value-chevron::before {
+  content: "\25B6";
+}
+
+details[open] > .live-value-summary .live-value-chevron::before {
+  content: "\25BC";
+}
+
+.live-value-preview {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+details[open] > .live-value-summary .live-value-preview {
+  display: none;
+}
+
+.live-memory-list {
+  display: none;
+  margin: 0;
+  background: #fff;
+}
+
+.live-memory-list-row {
+  padding: 1rem;
+  border-block-end: 1px solid #e3e3e3;
+}
+
+.live-memory-list-row:last-child {
+  border-block-end: 0;
+}
+
+.live-memory-list-key,
+.live-memory-list-value {
+  margin: 0;
+}
+
+.live-memory-list-value {
+  min-inline-size: 0;
+  margin-block-start: 0.5rem;
+}
+
+@container live-page (inline-size <= 600px) {
+  .live-memory-table {
+    display: none;
+  }
+
+  .live-memory-list {
+    display: block;
+  }
+}
+
+@container live-page (inline-size <= 900px) {
+  .live-memory-scroll {
+    max-block-size: none;
+    overflow: visible;
+  }
+}
