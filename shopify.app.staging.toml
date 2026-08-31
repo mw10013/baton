@@ -1,0 +1,35 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+#
+# SKELETON -- not deployable yet. client_id and the staging URLs are intentionally
+# blank: `shopify app deploy --config staging` fails fast rather than pushing this
+# at the wrong app. Fill it in (see refs/bang/shopify.app.staging.toml for the
+# shape) when staging exists.
+#
+# Until then it earns its keep with one line: web_directories.
+# Shopify CLI unions web_directories across EVERY shopify.app*.toml before it globs
+# for shopify.web.toml, so this narrows discovery to the repo root and the app
+# checked out under refs/ (via the refs symlink) is never scanned -- which is what
+# stops "You can only have one web configuration file with the backend role".
+# It must NOT be copied into shopify.app.toml: the ACTIVE config's web_directories
+# are re-matched with minimatch against "shopify.web.toml", "./shopify.web.toml"
+# does not match, and the app silently loads zero webs.
+# See docs/shopify-web-toml-conflict-research.md.
+
+client_id = ""
+name = "baton-staging"
+handle = "baton-staging"
+application_url = ""
+embedded = true
+web_directories = ["."]
+
+[access_scopes]
+scopes = ""
+
+[auth]
+redirect_urls = []
+
+[webhooks]
+api_version = "2026-10"
+
+[build]
+automatically_update_urls_on_dev = false

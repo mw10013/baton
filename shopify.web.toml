@@ -1,7 +1,10 @@
 name = "baton"
 roles = ["frontend", "backend"]
 webhooks_path = "/webhooks/app/uninstalled"
-port = 3500
+# Must equal PORT in .env: Shopify CLI proxies to this port and passes it to the
+# dev command as PORT, but `pnpm dev` sources .env afterwards and overwrites it --
+# so a mismatch leaves vite listening on one port while the proxy dials the other.
+port = 3800
 
 [commands]
 # Why this command uses `env CLOUDFLARE_INCLUDE_PROCESS_ENV=true`:
