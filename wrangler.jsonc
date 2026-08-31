@@ -9,9 +9,9 @@
     "ENVIRONMENT": "local",
     // Fill in after `shopify app config link` and `shopify app info`.
     // CLOUDFLARE_ACCOUNT_ID is only read by the admin Durable Object explorer.
-    "CLOUDFLARE_ACCOUNT_ID": "",
-    "SHOPIFY_PARTNER_ORG_ID": "",
-    "SHOPIFY_PARTNER_APP_ID": "",
+    "CLOUDFLARE_ACCOUNT_ID": "87997fc2724b0127effb8e4524989975",
+    "SHOPIFY_PARTNER_ORG_ID": "2798461",
+    "SHOPIFY_PARTNER_APP_ID": "417214922753",
     "SHOPIFY_APP_HANDLE": "baton-local",
     // App Pricing plans do not exist yet. While this is "false",
     // `SubscriptionPlan` grants every shop `Domain.DEFAULT_PLAN_HANDLE` without
