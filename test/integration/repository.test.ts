@@ -44,7 +44,12 @@ const seed = (repo: Repository["Service"], shops: readonly string[]) =>
     { discard: true },
   );
 
-afterEach(() => env.D1.exec("delete from ShopSession"));
+const emailOf = (e: string) => Schema.decodeUnknownSync(Domain.Email)(e);
+
+afterEach(async () => {
+  await env.D1.exec("delete from Member");
+  await env.D1.exec("delete from ShopSession");
+});
 
 describe("Repository SQL (D1 ShopSession)", () => {
   it.effect(
@@ -326,6 +331,86 @@ describe("Repository SQL (D1 ShopSession)", () => {
             strictEqual(page.shopSessions[1].hasRefreshToken, true);
           }),
         ),
+    );
+  });
+
+  describe("Member", () => {
+    it.effect("addMember inserts idempotently; listMembers round-trips", () =>
+      run(
+        Effect.gen(function* () {
+          const repo = yield* Repository;
+          const shop = shopOf("m.myshopify.com");
+          yield* seed(repo, [shop]);
+          const email = emailOf("worker@example.com");
+          yield* repo.addMember({ shop, email });
+          const first = yield* repo.listMembers(shop);
+          strictEqual(first.length, 1);
+          strictEqual(first[0].email, email);
+          yield* repo.addMember({ shop, email });
+          const second = yield* repo.listMembers(shop);
+          strictEqual(second.length, 1);
+          strictEqual(second[0].id, first[0].id);
+        }),
+      ),
+    );
+
+    it.effect("Email decode trims and lowercases", () =>
+      Effect.gen(function* () {
+        const email = yield* Schema.decodeUnknownEffect(Domain.Email)(
+          "  Worker@Example.COM ",
+        );
+        strictEqual(email, "worker@example.com");
+      }),
+    );
+
+    it.effect("deleteMember removes the row; findMember reflects it", () =>
+      run(
+        Effect.gen(function* () {
+          const repo = yield* Repository;
+          const shop = shopOf("m.myshopify.com");
+          yield* seed(repo, [shop]);
+          const email = emailOf("worker@example.com");
+          yield* repo.addMember({ shop, email });
+          strictEqual(
+            Option.getOrThrow(yield* repo.findMember({ shop, email })).email,
+            email,
+          );
+          yield* repo.deleteMember({ shop, email });
+          assertTrue(Option.isNone(yield* repo.findMember({ shop, email })));
+        }),
+      ),
+    );
+
+    it.effect("listMemberShops spans shops for one email", () =>
+      run(
+        Effect.gen(function* () {
+          const repo = yield* Repository;
+          yield* seed(repo, ["a.myshopify.com", "b.myshopify.com"]);
+          const email = emailOf("multi@example.com");
+          yield* repo.addMember({ shop: shopOf("b.myshopify.com"), email });
+          yield* repo.addMember({ shop: shopOf("a.myshopify.com"), email });
+          const shops = yield* repo.listMemberShops(email);
+          strictEqual(shops.length, 2);
+          strictEqual(shops[0], "a.myshopify.com");
+          strictEqual(shops[1], "b.myshopify.com");
+        }),
+      ),
+    );
+
+    it.effect("deleteShopSession cascades that shop's members only", () =>
+      run(
+        Effect.gen(function* () {
+          const repo = yield* Repository;
+          yield* seed(repo, ["a.myshopify.com", "b.myshopify.com"]);
+          const email = emailOf("multi@example.com");
+          yield* repo.addMember({ shop: shopOf("a.myshopify.com"), email });
+          yield* repo.addMember({ shop: shopOf("b.myshopify.com"), email });
+          yield* repo.deleteShopSession(shopOf("a.myshopify.com"));
+          const shops = yield* repo.listMemberShops(email);
+          strictEqual(shops.length, 1);
+          strictEqual(shops[0], "b.myshopify.com");
+        }),
+      ),
     );
   });
 });

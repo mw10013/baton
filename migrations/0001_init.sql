@@ -10,3 +10,11 @@ create table if not exists ShopSession (
   planHandle text,
   planHandleExpiresAt integer
 );
+
+create table if not exists Member (
+  id text primary key,
+  shop text not null references ShopSession (shop) on delete cascade,
+  email text not null check (email = lower(trim(email))),
+  createdAt text not null,
+  unique (shop, email)
+);

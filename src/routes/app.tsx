@@ -308,6 +308,7 @@ function AppRouteContent({ shop }: { readonly shop: string }) {
           <s-link href="/app" {...{ rel: "home" }}>
             Home
           </s-link>
+          <s-link href="/app/members">Members</s-link>
         </s-app-nav>
       )}
       <Outlet />

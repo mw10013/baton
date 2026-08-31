@@ -1,3 +1,4 @@
+import type { Repository } from "@/lib/Repository";
 import type { ShopAgentClient } from "@/lib/ShopAgentClient";
 import type { ShopifyPartner } from "@/lib/ShopifyPartner";
 import type { SubscriptionPlan } from "@/lib/SubscriptionPlan";
@@ -74,6 +75,7 @@ export const shopifyServerFnMiddleware = createMiddleware({
           A,
           E,
           | CurrentShopifySession
+          | Repository
           | ShopAgentClient
           | SubscriptionPlan
           | ShopifyPartner

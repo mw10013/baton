@@ -14,12 +14,25 @@ Decisions taken (2026-08-31, with mw):
 - **Rename Shopify's D1 `Session` table → `ShopSession`** so better-auth keeps PascalCase `User`/`Session`/`Account`/`Verification`.
 - **`/admin` operator console moves onto better-auth too** (magic link + `role=admin` via `ADMIN_EMAILS` bootstrap), **sequenced after member auth lands**; retires `AdminAuth` password + sealed cookie.
 - **No explicit invite-accept step**: owner adds an email → `Member` row exists → person logs in; the magic link proving email ownership _is_ acceptance. No invitation table/status.
-- **Owner self-adds** their own email in the member list (role `owner`); no install-time auto-provisioning.
+- **Owner self-adds** their own email in the member list; no install-time auto-provisioning. (Originally with role `owner`; roles since dropped — see below.)
 - `Member.shop` **FK to `ShopSession(shop)` with `on delete cascade`** — uninstall tears down memberships via referential integrity.
 - Uninstall = **full shop teardown** (ShopSession row, members via cascade, ShopAgent DO destroyed). Reinstall starts fresh; members re-added. `User` rows persist but are inert (invite-only gate requires a `Member` row).
 - Transactional email via **`mail.mw10013.com`** (Cloudflare Email Sending) — domain already onboarded at the account level (tceas uses it); Baton only adds the `send_email` binding.
 - Term: **member** — final (see Terminology).
-- `Session` → `ShopSession` rename starts **sooner rather than later** as a parallel work item; execution notes in `docs/session-to-shopsession-rename-research.md`.
+- `Session` → `ShopSession` rename starts **sooner rather than later** as a parallel work item; execution notes in `docs/session-to-shopsession-rename-research.md`. **Done** (commit `77a2011`).
+
+Decisions taken (2026-08-31, follow-up session):
+
+- **`Member` is email-keyed, no `userId` FK.** The no-invite flow (owner adds email → row exists → person logs in) means the row predates any `User` row; a `not null` FK to `User` is impossible. Guards match on the session user's email (magic-link-only, email _is_ identity). Schema amended below.
+- **`/login-callback` always lands on `/shop`** — the shop list. Uniform for 0/1/many memberships (0 = empty state "ask your shop owner"); one extra click for single-shop users, no conditional-redirect machinery.
+- **Member-area first screens**: `/shop` = list of the user's member shops; `/shop/$shop` = basic shop info loaded from the ShopAgent DO — proof of authenticated per-shop access. Real workflow screens come later.
+- **Build order: embedded member management first.** The invite-only gate means nobody can log in until `Member` rows exist, and those are written from the embedded app — so the embedded members screen is the first testable milestone, before the login flow.
+- **Rate limiter: new `LOGIN_LIMITER` binding** for magic-link sends. Not `ADMIN_LOGIN_LIMITER` (wrong name for a member-facing flow); that binding retires with `AdminAuth` in phase 2.
+- **No member roles.** `Member.role` + `MemberRole` dropped: membership is binary — a row = access. Nothing reads a role: member management authorization is solved by *where it lives* (the embedded app, behind Shopify auth = the merchant), and the member area is read-only in phase 1. `owner` only marked "the merchant's own email" — identity trivia, not capability. The two-companies-different-views concern is an **assignment/scoping** problem (member ↔ jobs/departments, domain data, deferred), not a role problem. Revisit only when a member-area screen must differ per member; if a role enum ever returns, don't name one `admin` (collides with `User.role="admin"` site operators and Shopify staff vocabulary).
+- **Member management never moves to the member area** (mw, emphatic). The public login site gets no member/permission editing — that's what the embedded app is for.
+- **Email normalization is structural**: `Domain.Email` decodes with trim + lowercase, so an un-normalized `Email` value can't be constructed; `Member.email` carries a `check (email = lower(trim(email)))` backstop. All three comparison sites (member write, magic-link sign-in request, guard lookup vs the better-auth session email) decode through `Domain.Email` — never assume better-auth lowercases. Deliberately not handled: Gmail dot/plus aliasing (distinct strings; the person signs in with exactly the added email, the magic link enforces the inbox) and unicode/IDN domains.
+- **No migration sequence during prototyping.** Extend `migrations/0001_init.sql` in place + `pnpm d1:reset`; nothing deployed to staging/production yet. Keep the schema drift test — it guards hand-written DDL across better-auth upgrades regardless.
+- Phase-1 execution plan: `docs/member-access-phase-1-plan.md`.
 
 ## TL;DR — recommendations
 
@@ -51,7 +64,7 @@ Population is mixed: shop employees without Shopify logins **and** externals (em
 - **Team / teammate** — rejected: hokey, better-auth org-plugin "teams" association, and begs "can a shop have multiple teams?" (no — SMB target, one flat member list per shop).
 - **Crew** — runner-up with workshop personality; singular "crew member" is clunky.
 
-User-role taxonomy once admin migrates onto better-auth: `User.role = "admin"` = site operators (us); everyone else = regular users whose per-shop capability comes from `Member.role` (`owner` | `member`). A shop owner is just a user with an `owner` member row on their shop — and can simultaneously hold a plain `member` row on someone else's shop.
+User-role taxonomy once admin migrates onto better-auth: `User.role = "admin"` = site operators (us); everyone else = regular users whose per-shop access is a `Member` row (binary — no member roles, decided). A shop owner is just a user with a member row on their own shop — and can simultaneously hold one on someone else's shop.
 
 ## Organization plugin vs roll-our-own
 
@@ -75,7 +88,7 @@ User-role taxonomy once admin migrates onto better-auth: `User.role = "admin"` =
 4. **The per-request check we need is app-owned regardless** (tceas's `findMemberRole` pattern). Rolling our own removes the redundant second checker and the upgrade-sync burden.
 5. **Multi-shop membership is just rows** in our table; `listShops(userId)` is one query. No `activeOrganizationId`, no org switcher machinery — tceas itself made org switching pure navigation with "no server call, no D1 write" (`refs/tceas/src/routes/app.$organizationId.tsx:106-137`).
 
-What we give up: invitation lifecycle endpoints (pending/resend/cancel — small to hand-roll, and tceas never finished accept anyway), `getFullOrganization`/`listOrganizations` (trivial queries), stock role plumbing (we own a `role` column with an FK enum table, tceas convention `refs/tceas/migrations/0001_init.sql:6-8`).
+What we give up: invitation lifecycle endpoints (pending/resend/cancel — small to hand-roll, and tceas never finished accept anyway), `getFullOrganization`/`listOrganizations` (trivial queries), stock role plumbing (dropped entirely — membership is binary, decided).
 
 What we keep from Better Auth: the hard parts — `user`/`session`/`account`/`verification` core, magic-link token issuance/consumption (single-use, hashed at rest, 5-min TTL), cookie/session management with cookie cache, and the **`admin` plugin** (listUsers, ban, revoke sessions, impersonate — tceas wires these into its operator console; ours could later).
 
@@ -86,15 +99,14 @@ What we keep from Better Auth: the hard parts — `user`/`session`/`account`/`ve
 ```sql
 create table Member (
   id text primary key,
-  userId text not null references User (id) on delete cascade,
   shop text not null references ShopSession (shop) on delete cascade,
-  role text not null references MemberRole (role) default 'member',
+  email text not null check (email = lower(trim(email))),
   createdAt text not null,
-  unique (userId, shop)
+  unique (shop, email)
 );
 ```
 
-FKs decided: let the database own referential integrity. `on delete cascade` from `ShopSession` means uninstall's row delete tears down that shop's memberships automatically; cascade from `User` covers admin-plugin user removal. No invitation table (no accept step — decided).
+Email-keyed (amended 2026-08-31): the no-invite flow means a `Member` row exists before the person's `User` row does, so a `userId` FK can't hold. Emails stored lowercased; guards and the sign-in gate match on the session user's email (`User.email` is unique in better-auth, and magic-link-only means email is the identity). `on delete cascade` from `ShopSession` means uninstall's row delete tears down that shop's memberships automatically. Admin-plugin user removal leaves `Member` rows behind — harmless: revoke is deleting the row, and a removed user re-signing-in just re-proves the same email. No invitation table (no accept step — decided).
 
 Fallback position if this proves wrong: the org plugin can be added later; its tables are additive and our `Member` data would map 1:1 onto `member`.
 
@@ -130,12 +142,12 @@ Baton today: single session-wrapped client (`src/worker.ts:170-176`) + bookmark 
 1. `/` gets a "Log in" button (tceas: header sign-in → `/login`, `refs/tceas/src/routes/index.tsx:28-45`). Public homepage keeps its app-marketing role — that's fine; one button.
 2. `/login`: email form → server fn → `auth.api.signInMagicLink` → "Check your email" (demo mode: renders link). Invite-only gate runs _before_ send: reject emails with no `Member` row (+ `databaseHooks.user.create.before` returning `false` as authoritative backstop covering all paths — `concepts/database.mdx:855`).
 3. Link → `GET /api/auth/magic-link/verify` (sole public auth route) → cookie → redirect `/login-callback`.
-4. `/login-callback` (invisible on success, tceas `refs/tceas/src/routes/login-callback.tsx:29-56`): query `Member` rows for user → **one shop → straight to `/work/$shop`; several → shop picker**. No active-shop session state; shop is URL state from here on. Multiple tabs on different shops just works.
-5. Guard on `/work/$shop/*`: `beforeLoad` + `memberServerFnMiddleware` (mirroring `src/lib/AdminServerFnMiddleware.ts:7-17`): `getSession` → `findMemberRole(userId, shop)` against the URL param → inject `{ user, shop, role, runEffect }`. This is tceas's two-layer posture minus the redundant plugin layer.
+4. `/login-callback` (invisible on success, tceas `refs/tceas/src/routes/login-callback.tsx:29-56`): redirect to **`/shop`** — the shop list (decided; uniform for 0/1/many memberships, no conditional redirect). No active-shop session state; shop is URL state from here on. Multiple tabs on different shops just works.
+5. Guard on `/shop/$shop/*`: `beforeLoad` + `memberServerFnMiddleware` (mirroring `src/lib/AdminServerFnMiddleware.ts:7-17`): `getSession` → `findMember(email, shop)` against the URL param → inject `{ user, shop, runEffect }`. This is tceas's two-layer posture minus the redundant plugin layer.
 6. Shop switcher for multi-shop users = plain navigation (dropdown listing their `Member` shops), zero server state — tceas precedent.
 7. Data access: after the member check, talk to `env.SHOP_AGENT.getByName(shop)` same as embedded. For WebSockets, tceas authorizes **in the Worker before the DO wakes**, cookie-based, membership checked once per connection (`refs/tceas/src/worker.ts:245-277`) — Baton's existing `authorizeShopAgentRequest` (`src/worker.ts:306-354`) does the same with Shopify tokens; member connections add a cookie-session branch there.
 
-Owner: same flow, same table — a `Member` row with `role='owner'` on their shop, **self-added** in the embedded app's member list (decided; no install-time auto-provisioning, no Admin-API owner-email fetch). The email they add is the one they'll log in with — may differ from their Shopify account email, which is a feature.
+Owner: same flow, same table — a plain `Member` row on their shop, **self-added** in the embedded app's member list (decided; no install-time auto-provisioning, no Admin-API owner-email fetch). The email they add is the one they'll log in with — may differ from their Shopify account email, which is a feature.
 
 Member management stays in the **embedded app** (owner is already authenticated there); server fns behind `shopifyServerFnMiddleware` insert/delete `Member` rows directly (atomic batch). **No accept step** (decided): adding an email is the grant; the person's first magic-link login proves email ownership and that's acceptance. Revoke = delete the row. If "has this person ever logged in?" matters later, derive it (`User` row exists / session history) rather than tracking invitation status.
 
@@ -176,7 +188,8 @@ Deferred (decided direction, not built). When it comes: per-shop **work activity
 
 ## Migrations + drift protection
 
-- **Hand-write the migration** (`migrations/0002_*.sql`), like tceas (`refs/tceas/migrations/0001_init.sql`, header: "Hand-written against the runtime schema definitions (`getAuthTables`) rather than `@better-auth/cli` output"). The CLI can't reach D1; better-auth's runtime `getMigrations` fails on D1 anyway (`pragma_index_list` with dynamic arg → `SQLITE_AUTH`, `refs/tceas/test/integration/auth.test.ts:88-98`).
+- **Prototyping mode (decided 2026-08-31): no migration sequence.** Nothing is deployed to staging/production; extend `migrations/0001_init.sql` in place and `pnpm d1:reset`. Numbered follow-on migrations start only once an environment holds data worth keeping.
+- **Hand-write the DDL**, like tceas (`refs/tceas/migrations/0001_init.sql`, header: "Hand-written against the runtime schema definitions (`getAuthTables`) rather than `@better-auth/cli` output"). The CLI can't reach D1; better-auth's runtime `getMigrations` fails on D1 anyway (`pragma_index_list` with dynamic arg → `SQLITE_AUTH`, `refs/tceas/test/integration/auth.test.ts:88-98`).
 - **Adopt the drift test**: `getSchema(auth.options)` (pure, DB-free) diffed against live D1 via constant-argument pragmas (`refs/tceas/test/integration/auth.test.ts:87-157`). This is the guard rail that makes hand-written migrations safe across better-auth upgrades.
 - Conventions: dates ISO-8601 `text`, booleans `0/1`, FK enum lookup tables instead of check constraints (D1 can't alter checks without table rebuild).
 
@@ -191,8 +204,8 @@ Deferred (decided direction, not built). When it comes: per-shop **work activity
 
 ## Open questions
 
-All prior open questions resolved (terminology = member; rename starts soon, see `docs/session-to-shopsession-rename-research.md`; DO guard = edge checks, recommendation above; `mail.mw10013.com` already onboarded). Remaining are implementation-time choices flagged inline: exact member-area label copy, whether `ADMIN_LOGIN_LIMITER` is reused or a second ratelimit binding added for magic-link sends.
+None. All resolved (terminology = member; rename done; DO guard = edge checks; `mail.mw10013.com` onboarded; limiter = new `LOGIN_LIMITER` binding; member-area first screens = `/shop` list + `/shop/$shop` shop info; `Member` email-keyed; prototyping = no migration sequence). Next: execute `docs/member-access-phase-1-plan.md`.
 
 ## Explicitly not now (spike discipline)
 
-Roles beyond the column existing, invitation lifecycle UI, account recovery/MFA, departments/assignments, workflow engine, Shopify write-backs. Dropped spike constraint: single-shop membership — `Member (userId, shop)` makes multi-shop the default; constraining would be artificial.
+Member roles or per-member permissions (membership is binary; see decisions), invitation lifecycle UI, account recovery/MFA, departments/assignments, workflow engine, Shopify write-backs. Dropped spike constraint: single-shop membership — `Member (userId, shop)` makes multi-shop the default; constraining would be artificial.

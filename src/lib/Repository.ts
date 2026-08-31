@@ -1,6 +1,6 @@
 import type { SqlError } from "effect/unstable/sql";
 
-import { Context, Effect, Layer, Option, Schema } from "effect";
+import { Clock, Context, Effect, Layer, Option, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 
 import * as Domain from "@/lib/Domain";
@@ -115,6 +115,30 @@ export class Repository extends Context.Service<
     readonly findOrphanShopAgentIds: (
       ids: readonly string[],
     ) => Effect.Effect<readonly string[], SqlError.SqlError | RepositoryError>;
+    readonly listMembers: (
+      shop: Domain.Member["shop"],
+    ) => Effect.Effect<
+      readonly Domain.Member[],
+      SqlError.SqlError | RepositoryError
+    >;
+    readonly addMember: (
+      member: Pick<Domain.Member, "shop" | "email">,
+    ) => Effect.Effect<void, SqlError.SqlError>;
+    readonly deleteMember: (
+      member: Pick<Domain.Member, "shop" | "email">,
+    ) => Effect.Effect<void, SqlError.SqlError>;
+    readonly findMember: (
+      member: Pick<Domain.Member, "shop" | "email">,
+    ) => Effect.Effect<
+      Option.Option<Domain.Member>,
+      SqlError.SqlError | RepositoryError
+    >;
+    readonly listMemberShops: (
+      email: Domain.Member["email"],
+    ) => Effect.Effect<
+      readonly Domain.Shop[],
+      SqlError.SqlError | RepositoryError
+    >;
   }
 >()("Repository") {
   static readonly layerNoDeps: Layer.Layer<
@@ -333,6 +357,58 @@ export class Repository extends Context.Service<
         )(rows).pipe(Effect.map((decoded) => decoded.map((row) => row.id)));
       });
 
+      const listMembers = Effect.fn("Repository.listMembers")(function* (
+        shop: Domain.Member["shop"],
+      ) {
+        const rows =
+          yield* sql`select * from Member where shop = ${shop} order by createdAt, email`;
+        return yield* decodeRepository(
+          Schema.Array(Domain.Member),
+          "Invalid Member rows",
+        )(rows);
+      });
+
+      const addMember = Effect.fn("Repository.addMember")(function* (
+        member: Pick<Domain.Member, "shop" | "email">,
+      ) {
+        const createdAt = new Date(
+          yield* Clock.currentTimeMillis,
+        ).toISOString();
+        yield* sql`
+          insert into Member (id, shop, email, createdAt)
+          values (${crypto.randomUUID()}, ${member.shop}, ${member.email}, ${createdAt})
+          on conflict (shop, email) do nothing
+        `;
+      });
+
+      const deleteMember = Effect.fn("Repository.deleteMember")(function* (
+        member: Pick<Domain.Member, "shop" | "email">,
+      ) {
+        yield* sql`delete from Member where shop = ${member.shop} and email = ${member.email}`;
+      });
+
+      const findMember = Effect.fn("Repository.findMember")(function* (
+        member: Pick<Domain.Member, "shop" | "email">,
+      ) {
+        const rows =
+          yield* sql`select * from Member where shop = ${member.shop} and email = ${member.email}`;
+        if (rows[0] === undefined) return Option.none();
+        return Option.some(
+          yield* decodeRepository(Domain.Member, "Invalid Member row")(rows[0]),
+        );
+      });
+
+      const listMemberShops = Effect.fn("Repository.listMemberShops")(
+        function* (email: Domain.Member["email"]) {
+          const rows =
+            yield* sql`select shop from Member where email = ${email} order by shop`;
+          return yield* decodeRepository(
+            Schema.Array(Schema.Struct({ shop: Domain.Shop })),
+            "Invalid Member shop rows",
+          )(rows).pipe(Effect.map((decoded) => decoded.map((row) => row.shop)));
+        },
+      );
+
       return Repository.of({
         findShopSession,
         upsertShopSession,
@@ -344,6 +420,11 @@ export class Repository extends Context.Service<
         findShopSessionRedacted,
         getShopSessionRedactedPage,
         findOrphanShopAgentIds,
+        listMembers,
+        addMember,
+        deleteMember,
+        findMember,
+        listMemberShops,
       });
     }),
   );

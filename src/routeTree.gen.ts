@@ -20,6 +20,7 @@ import { Route as AdminOrphanShopAgentObjectsRouteImport } from './routes/admin.
 import { Route as AdminShopAgentObjectsRouteImport } from './routes/admin.shop-agent-objects'
 import { Route as AdminShopsRouteImport } from './routes/admin.shops'
 import { Route as AppIndexRouteImport } from './routes/app.index'
+import { Route as AppMembersRouteImport } from './routes/app.members'
 import { Route as AuthSplatRouteImport } from './routes/auth.$'
 import { Route as WebhooksComplianceRouteImport } from './routes/webhooks.compliance'
 import { Route as AdminShopShopRouteImport } from './routes/admin.shop.$shop'
@@ -82,6 +83,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRoute,
 } as any)
+const AppMembersRoute = AppMembersRouteImport.update({
+  id: '/members',
+  path: '/members',
+  getParentRoute: () => AppRoute,
+} as any)
 const AuthSplatRoute = AuthSplatRouteImport.update({
   id: '/auth/$',
   path: '/auth/$',
@@ -119,6 +125,7 @@ export interface FileRoutesByFullPath {
   '/admin/orphan-shop-agent-objects': typeof AdminOrphanShopAgentObjectsRoute
   '/admin/shop-agent-objects': typeof AdminShopAgentObjectsRoute
   '/admin/shops': typeof AdminShopsRoute
+  '/app/members': typeof AppMembersRoute
   '/auth/$': typeof AuthSplatRoute
   '/webhooks/compliance': typeof WebhooksComplianceRoute
   '/admin/': typeof AdminIndexRoute
@@ -135,6 +142,7 @@ export interface FileRoutesByTo {
   '/admin/orphan-shop-agent-objects': typeof AdminOrphanShopAgentObjectsRoute
   '/admin/shop-agent-objects': typeof AdminShopAgentObjectsRoute
   '/admin/shops': typeof AdminShopsRoute
+  '/app/members': typeof AppMembersRoute
   '/auth/$': typeof AuthSplatRoute
   '/webhooks/compliance': typeof WebhooksComplianceRoute
   '/admin': typeof AdminIndexRoute
@@ -154,6 +162,7 @@ export interface FileRoutesById {
   '/admin/orphan-shop-agent-objects': typeof AdminOrphanShopAgentObjectsRoute
   '/admin/shop-agent-objects': typeof AdminShopAgentObjectsRoute
   '/admin/shops': typeof AdminShopsRoute
+  '/app/members': typeof AppMembersRoute
   '/auth/$': typeof AuthSplatRoute
   '/webhooks/compliance': typeof WebhooksComplianceRoute
   '/admin/': typeof AdminIndexRoute
@@ -174,6 +183,7 @@ export interface FileRouteTypes {
     | '/admin/orphan-shop-agent-objects'
     | '/admin/shop-agent-objects'
     | '/admin/shops'
+    | '/app/members'
     | '/auth/$'
     | '/webhooks/compliance'
     | '/admin/'
@@ -190,6 +200,7 @@ export interface FileRouteTypes {
     | '/admin/orphan-shop-agent-objects'
     | '/admin/shop-agent-objects'
     | '/admin/shops'
+    | '/app/members'
     | '/auth/$'
     | '/webhooks/compliance'
     | '/admin'
@@ -208,6 +219,7 @@ export interface FileRouteTypes {
     | '/admin/orphan-shop-agent-objects'
     | '/admin/shop-agent-objects'
     | '/admin/shops'
+    | '/app/members'
     | '/auth/$'
     | '/webhooks/compliance'
     | '/admin/'
@@ -307,6 +319,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/members': {
+      id: '/app/members'
+      path: '/members'
+      fullPath: '/app/members'
+      preLoaderRoute: typeof AppMembersRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/auth/$': {
       id: '/auth/$'
       path: '/auth/$'
@@ -368,10 +387,12 @@ const AdminRouteChildren: AdminRouteChildren = {
 const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
 interface AppRouteChildren {
+  AppMembersRoute: typeof AppMembersRoute
   AppIndexRoute: typeof AppIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppMembersRoute: AppMembersRoute,
   AppIndexRoute: AppIndexRoute,
 }
 

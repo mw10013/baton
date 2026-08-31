@@ -168,6 +168,40 @@ export const ShopSessionRedacted = Schema.Struct({
 });
 export type ShopSessionRedacted = typeof ShopSessionRedacted.Type;
 
+/**
+ * Normalization is structural: decoding trims and lowercases, so an
+ * un-normalized `Email` value cannot be constructed. Membership, the magic-link
+ * sign-in gate, and the member-area guard all compare emails across systems
+ * (D1 `Member` rows vs the better-auth session email), and better-auth is not
+ * trusted to lowercase — every boundary decodes through this schema instead.
+ * Deliberately not handled: provider aliasing (Gmail dots/plus) and
+ * unicode/IDN domains — distinct strings are distinct members.
+ */
+export const Email = Schema.String.pipe(
+  Schema.decodeTo(Schema.NonEmptyString.pipe(Schema.brand("Email")), {
+    decode: SchemaGetter.transform((s) => s.trim().toLowerCase()),
+    encode: SchemaGetter.transform((s) => s),
+  }),
+);
+export type Email = typeof Email.Type;
+
+/**
+ * Deliberately email-keyed with no userId: the owner grants access by adding an
+ * email before any better-auth `User` row exists (there is no invite-accept
+ * step), so a `User` FK cannot hold. Sign-in is magic-link-only, which makes the
+ * email itself the identity; guards match the session user's email against this
+ * table. No role column: membership is binary (a row = access) — member
+ * management lives only in the embedded app behind Shopify auth, and the member
+ * area does not differ per member.
+ */
+export const Member = Schema.Struct({
+  id: Schema.String,
+  shop: Shop,
+  email: Email,
+  createdAt: Schema.String,
+});
+export type Member = typeof Member.Type;
+
 export const ShopSessionRedactedPage = Schema.Struct({
   shopSessions: Schema.Array(ShopSessionRedacted),
   limit: Schema.Number,
