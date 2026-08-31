@@ -3,6 +3,7 @@
 - Prefer JSDoc for comments for complex and subtle behavior the code cannot show. A JSDoc must carry its reasoning inline and must never reference files under `docs/` — research docs go stale and get deleted. External URLs and `refs/` paths are acceptable.
 - Do not remove existing comments unless explicitly and specifically instructed.
 - Do not git commit unless you are explicitly instructed.
+- Commit to `main`. Do not create branches.
 - Your answers and explanations should be concise and scannable so the user can scan quickly and easily understand. Scarifice grammar for the sake of concision.
 - Ground your answers and explanations with excerpts from documentation and code.
 
