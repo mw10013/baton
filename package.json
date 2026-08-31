@@ -48,6 +48,7 @@
     "refs:shopify-session-prisma": "rm -rf refs/shopify-session-prisma && mkdir -p refs/shopify-session-prisma && curl -L https://github.com/Shopify/shopify-app-js/archive/refs/tags/@shopify/shopify-app-session-storage-prisma@9.0.1.tar.gz | tar -xz -C refs/shopify-session-prisma --strip-components=1",
     "refs:shopify-codegen": "rm -rf refs/shopify-codegen && mkdir -p refs/shopify-codegen && curl -L https://github.com/Shopify/shopify-app-js/archive/refs/tags/@shopify/api-codegen-preset@2.0.1.tar.gz | tar -xz -C refs/shopify-codegen --strip-components=1",
     "refs:shopify-cli": "rm -rf refs/shopify-cli && mkdir -p refs/shopify-cli && curl -L https://github.com/Shopify/cli/archive/refs/tags/4.6.0.tar.gz | tar -xz -C refs/shopify-cli --strip-components=1",
+    "refs:bang": "rm -rf refs/bang && mkdir -p refs/bang && gh api repos/mw10013/bang/tarball 2>/dev/null | tar -xz -C refs/bang --strip-components=1",
     "refs:agents": "rm -rf refs/agents && mkdir -p refs/agents && curl -L https://github.com/cloudflare/agents/archive/refs/tags/agents@0.20.1.tar.gz | tar -xz -C refs/agents --strip-components=1",
     "refs:partysocket": "rm -rf refs/partysocket && mkdir -p refs/partysocket && npm pack partysocket@1.3.0 --pack-destination refs/partysocket && tar -xzf refs/partysocket/partysocket-1.3.0.tgz -C refs/partysocket --strip-components=1 && rm refs/partysocket/partysocket-1.3.0.tgz",
     "tail": "mkdir -p logs && wrangler tail --format json 2>&1 | tee logs/tail.log"
