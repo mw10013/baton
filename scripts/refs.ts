@@ -133,6 +133,12 @@ const REFS: readonly Ref[] = [
     version: { from: "node_modules/agents", dep: "partysocket" },
   },
   {
+    name: "better-auth",
+    repo: "better-auth/better-auth",
+    tag: "v{v}",
+    version: { from: ".", dep: "better-auth" },
+  },
+  {
     name: "shopify-app-js",
     repo: "Shopify/shopify-app-js",
     tag: "@shopify/shopify-api@{v}",

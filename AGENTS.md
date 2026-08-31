@@ -39,6 +39,7 @@ Downloaded source code of libraries are in `refs/` for reference.
 - **TanStack Form**: `refs/tan-form/docs/` (Markdown files)
 - **Cloudflare Docs**: `refs/cloudflare-docs/src/content/docs/` (MDX files)
 - **Effect Docs**: `refs/effect/ai-docs/src/` (Effect v4 release candidate — "effect" means v4 here)
+- **Better Auth**: `refs/better-auth/docs/content/docs/` (MDX docs; source in `refs/better-auth/packages/`)
 - **Shopify App JS**: `refs/shopify-app-js/` (source for `shopify-api`, `shopify-app-react-router`, and session storage adapters)
 - **Shopify Bridge**: `refs/shopify-bridge/`
 - **Shopify CLI**: `refs/shopify-cli/`

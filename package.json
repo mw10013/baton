@@ -69,6 +69,7 @@
     "@tanstack/react-start": "1.168.36",
     "@tanstack/router-plugin": "1.168.24",
     "agents": "0.20.1",
+    "better-auth": "1.7.2",
     "effect": "4.0.0-rc.108",
     "react": "19.2.3",
     "react-dom": "19.2.3",
