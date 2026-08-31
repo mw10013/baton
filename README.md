@@ -33,65 +33,91 @@ There are no App Pricing plans in Partners yet, so `BILLING_ENABLED` is `"false"
 
 To turn billing on: create the plans in Partners, rename the handles in `Domain.PlanHandle`, set `SHOPIFY_PARTNER_API_TOKEN`, and flip the var. No call sites change.
 
-## Setup
+## Run locally
 
-Prerequisites: Shopify Partner account, Shopify CLI, and a development store — see https://shopify.dev/docs/apps/build/scaffold-app
+### Prerequisites
 
-Shopify CLI config safety:
+- Node.js 26
+- pnpm 10
+- Shopify CLI
+- A Shopify Partner account and development store
 
-- Always pass `--config` when a command can affect a linked Shopify app.
-- Avoid bare `shopify app deploy`; it uses the CLI's current default config, which can change after `shopify app config link` or `shopify app config use`.
-- `shopify app config link --config <name>` creates/links `shopify.app.<name>.toml`, but can also make that config the CLI default.
+See Shopify's [app setup guide](https://shopify.dev/docs/apps/build/scaffold-app) if you need to create a Partner account or development store.
+
+### First-time setup
+
+Install dependencies and create your local environment file:
 
 ```bash
-pnpm i
+pnpm install
 cp .env.example .env
 ```
 
-1. Create and link the Shopify app. `client_id` is empty in `shopify.app.toml`, which is what makes this create a new app rather than relink an existing one:
+Create or select the Shopify app used for local development:
 
 ```bash
 shopify app config link --config shopify.app.toml
-git diff -- shopify.app.toml   # confirm client_id, name, handle
+git diff -- shopify.app.toml
 ```
 
-2. Fill in the values the link produced:
+Confirm that `shopify.app.toml` now contains the intended `client_id`, app name, and handle.
 
-- `wrangler.jsonc` → `vars.SHOPIFY_PARTNER_ORG_ID`, `vars.SHOPIFY_PARTNER_APP_ID` (`shopify app info`), and `vars.SHOPIFY_APP_HANDLE` if the handle changed.
-- `wrangler.jsonc` → `vars.CLOUDFLARE_ACCOUNT_ID` (only read by the admin Durable Object explorer).
-- `wrangler.jsonc` → `ratelimits[].namespace_id` — account-wide ids, so pick ones not already in use before deploying.
-- `.env` → `ADMIN_AUTH_SECRET` (`openssl rand -base64 32`) and `ADMIN_PASSWORD` for the `/admin` console.
+Configure `.env`:
 
-`SHOPIFY_API_KEY` / `SHOPIFY_API_SECRET` are injected by `shopify app dev` from the linked app — do not put them in `.env`. Inspect them with `shopify app env show --config shopify.app.toml`.
+- `ADMIN_AUTH_SECRET`: generate with `openssl rand -hex 32`.
+- `ADMIN_PASSWORD`: password for the local `/admin` console.
+- `ADMIN_PASSWORD1`: second accepted admin password.
+- `SHOPIFY_PARTNER_API_TOKEN`: Partner API token.
 
-3. Create the local D1 database and apply migrations:
+Configure `wrangler.jsonc` using the linked app:
+
+- `SHOPIFY_PARTNER_ORG_ID`
+- `SHOPIFY_PARTNER_APP_ID`
+- `SHOPIFY_APP_HANDLE`
+
+Shopify CLI supplies `SHOPIFY_API_KEY` and `SHOPIFY_API_SECRET`; do not add them to `.env`. Inspect them with:
 
 ```bash
-pnpm wrangler d1 create baton-d1-local   # only needed for a remote database
+shopify app env show --config shopify.app.toml
+```
+
+Apply the local D1 migrations:
+
+```bash
 pnpm d1:migrate:apply
 ```
 
-4. Deploy the app config, then run:
+Wrangler creates the local D1 storage automatically. Do not create a remote D1 database just to run the app locally.
+
+### Start the app
 
 ```bash
-shopify app deploy --config shopify.app.toml
 shopify app dev --config shopify.app.toml --store <your-dev-store>
 ```
 
-## Every day
+Use the preview URL printed by Shopify CLI to install or open the app. On subsequent runs, use the same command or pass the store through the package script:
 
 ```bash
-pnpm app:dev        # Shopify CLI dev (tunnel + shopify.web.toml runs pnpm dev)
+pnpm app:dev -- --store <your-dev-store>
+```
+
+### Validation
+
+```bash
 pnpm typecheck
 pnpm lint
-pnpm test           # integration tests (workers pool)
+pnpm test
 pnpm test:browser
-pnpm test:e2e       # Playwright against SHOPIFY_PREVIEW_URL (see .env.playwright)
+pnpm test:e2e
 ```
 
 ## Deploying
 
 Only a local config is defined in `wrangler.jsonc`. Add `env.staging` / `env.production` blocks with their own `name`, `vars`, `d1_databases`, `durable_objects`, `migrations`, and `ratelimits` when you need them, plus matching `shopify.app.<env>.toml` files — a deployed environment is a separate Shopify app, not a flag on this one.
+
+Always pass `--config` to Shopify CLI commands that can affect a linked app. Avoid bare `shopify app deploy`: it uses the current default config, which can change after `shopify app config link` or `shopify app config use`.
+
+Before deploying, set `CLOUDFLARE_ACCOUNT_ID` and choose unused account-wide `ratelimits[].namespace_id` values for the target Cloudflare environment.
 
 ```bash
 pnpm deploy
