@@ -55,8 +55,16 @@ const make = Effect.gen(function* () {
   const config = yield* Config.all({
     baseURL: Config.nonEmptyString("BETTER_AUTH_URL"),
     secret: Config.redacted("BETTER_AUTH_SECRET"),
+    adminEmails: Config.string("ADMIN_EMAILS").pipe(Config.withDefault("")),
     demoMode: Config.boolean("DEMO_MODE").pipe(Config.withDefault(false)),
   });
+  const adminEmails = new Set(
+    config.adminEmails
+      .split(",")
+      .map((email) => email.trim().toLowerCase())
+      .filter((email) => email.length > 0),
+  );
+  const isAdminEmail = (email: string) => adminEmails.has(email.toLowerCase());
 
   /**
    * `database` is the raw `env.D1` binding, NOT the per-request `d1Session`:
@@ -83,22 +91,35 @@ const make = Effect.gen(function* () {
       user: {
         create: {
           /**
-           * The invite-only gate's authoritative backstop: sign-up is only
-           * ever a side effect of a first magic-link verify, and a person with
-           * no `Member` row has no business getting a `User` row — the /login
-           * server fn already refuses to send them a link, but this hook
-           * covers every path (returning `false` aborts the create,
-           * concepts/database.mdx). Reads through `D1Primary` inside
-           * `listMemberShops`, so a just-added member is never blocked by
-           * replica lag.
+           * Two jobs, both authoritative because sign-up is only ever a side
+           * effect of a first magic-link verify and this hook covers every
+           * path (returning `false` aborts the create, concepts/database.mdx):
+           *
+           * - First-admin bootstrap: admin APIs require `role = 'admin'`,
+           *   only admins can set roles, and sign-up always creates `'user'`,
+           *   so an `ADMIN_EMAILS` match self-seeds the role here. Config,
+           *   not data, so it survives `pnpm d1:reset`. Stamped at creation
+           *   only: changing `ADMIN_EMAILS` later does not promote or demote
+           *   an existing `User` row.
+           * - Invite-only backstop: anyone else with no `Member` row has no
+           *   business getting a `User` row — the /login server fn already
+           *   refuses to send them a link. Reads through `D1Primary` inside
+           *   `listMemberShops`, so a just-added member is never blocked by
+           *   replica lag.
            */
           before: (user) =>
             runPromise(
               Effect.gen(function* () {
-                const repository = yield* Repository;
                 const email = yield* Schema.decodeUnknownEffect(Domain.Email)(
                   user.email,
                 );
+                if (isAdminEmail(email)) {
+                  yield* Effect.logInfo(
+                    `Auth.userCreate: email=${email}: seeding admin role`,
+                  ).pipe(Effect.annotateLogs({ email }));
+                  return { data: { ...user, role: "admin" } };
+                }
+                const repository = yield* Repository;
                 const shops = yield* repository.listMemberShops(email);
                 if (shops.length > 0) return { data: user };
                 yield* Effect.logWarning(
@@ -202,6 +223,7 @@ const make = Effect.gen(function* () {
   return {
     /** Runtime options, exposed for the schema drift test (`getSchema`). */
     options: auth.options,
+    isAdminEmail,
     handler,
     getSession,
     signInMagicLink,

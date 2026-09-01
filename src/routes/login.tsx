@@ -27,8 +27,8 @@ type LoginResult =
   | { readonly ok: false; readonly error: string };
 
 /**
- * The invite gate runs before the send: an email with no `Member` row gets the
- * same "check your email" response with no link ever issued, so the form
+ * The invite gate runs before the send: an email with no `Member` row (and not
+ * in `ADMIN_EMAILS`) gets the same "check your email" response with no link ever issued, so the form
  * cannot be used to enumerate members (`databaseHooks.user.create.before` in
  * `Auth.ts` is the authoritative backstop). Better-auth awaits
  * `sendMagicLink` before resolving, so by the time `signInMagicLink` returns,
@@ -51,15 +51,15 @@ const loginFn = createServerFn({ method: "POST" })
             ok: false,
             error: "Too many attempts. Try again later.",
           } as const satisfies LoginResult;
+        const auth = yield* Auth;
         const repository = yield* Repository;
         const shops = yield* repository.listMemberShops(data.email);
-        if (shops.length === 0) {
+        if (shops.length === 0 && !auth.isAdminEmail(data.email)) {
           yield* Effect.logInfo(
             `login: email=${data.email}: no membership, link not sent`,
           ).pipe(Effect.annotateLogs({ email: data.email }));
           return { ok: true, magicLink: null } as const satisfies LoginResult;
         }
-        const auth = yield* Auth;
         yield* auth.signInMagicLink({
           headers: request.headers,
           email: data.email,

@@ -7,8 +7,10 @@ import { CurrentRequest } from "@/lib/CurrentRequest";
 
 /**
  * Invisible on success: the verify endpoint has already set the session
- * cookie, so this resolves straight to a redirect to `/shop` — the shop list,
- * uniform for 0/1/many memberships. The only rendered state is failure — no
+ * cookie, so this resolves straight to a redirect — `/admin` for the operator
+ * role, otherwise `/shop` (the shop list, uniform for 0/1/many memberships).
+ * Admin and member surfaces are disjoint: an admin never lands on `/shop`
+ * (impersonation is the sanctioned door). The only rendered state is failure — no
  * session, or better-auth redirected here with `?error=INVALID_TOKEN` after an
  * expired/used link.
  */
@@ -21,7 +23,11 @@ const resolveLoginCallback = createServerFn({ method: "GET" }).handler(
         const sessionContext = yield* auth.getSession(request.headers);
         if (Option.isNone(sessionContext))
           return { error: "Magic link sign-in could not be completed." };
-        return yield* Effect.fail(redirect({ to: "/shop" }));
+        return yield* Effect.fail(
+          redirect({
+            to: sessionContext.value.user.role === "admin" ? "/admin" : "/shop",
+          }),
+        );
       }),
     ),
 );

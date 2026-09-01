@@ -203,6 +203,21 @@ describe("magic-link sign-in", () => {
     ),
   );
 
+  it.effect("seeds the admin role for ADMIN_EMAILS on first sign-in", () =>
+    run(
+      Effect.gen(function* () {
+        const auth = yield* Auth;
+        const { headers } = yield* signIn("Admin@Example.com");
+        const sessionContext = yield* auth.getSession(headers);
+        assertTrue(Option.isSome(sessionContext));
+        const { user } = Option.getOrThrow(sessionContext);
+        strictEqual(user.email, "admin@example.com");
+        strictEqual(user.role, "admin");
+        strictEqual(user.emailVerified, true);
+      }),
+    ),
+  );
+
   it.effect(
     "blocks first sign-in for an email with no Member row (user.create.before backstop)",
     () =>

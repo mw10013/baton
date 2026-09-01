@@ -1,20 +1,20 @@
 # `/admin` onto better-auth — phase 2 research
 
-Research + recommendation for the first deferred item in `docs/member-access-phase-1-plan.md`. Prototyping stance: edit `migrations/0001_init.sql` in place if needed, `pnpm d1:reset`, no migration sequence. Also answers the "WebSocket cookie-session branch" question.
+**Implemented 2026-09-01** (touchpoints below all landed; 4 integration tests added). Research + recommendation for the first deferred item in `docs/member-access-phase-1-plan.md`. Prototyping stance: edit `migrations/0001_init.sql` in place if needed, `pnpm d1:reset`, no migration sequence. Also answers the "WebSocket cookie-session branch" question.
 
 ## What exists today
 
-| Piece                         | Where                                                         | Fate                                                                            |
-| ----------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Password + sealed cookie      | `src/lib/AdminAuth.ts` (`useSession`, `pwVersion`, 1h slide)   | delete                                                                          |
-| `ADMIN_AUTH_SECRET/PASSWORD/PASSWORD1` | `.env`, `.env.example`, `test/integration/vitest.config.ts:45-47` | delete; replace with `ADMIN_EMAILS`                                             |
-| `ADMIN_LOGIN_LIMITER`         | `wrangler.jsonc` (all three envs), `admin.login.tsx:33-40`     | delete (magic-link sends already go through `LOGIN_LIMITER` in `/login`)        |
-| `/admin` guard                | `src/routes/admin.tsx` `beforeLoad` → `AdminAuth.requireSession` | rewrite: better-auth session + `user.role === "admin"`                          |
-| `adminServerFnMiddleware`     | `src/lib/AdminServerFnMiddleware.ts`                           | rewrite same way (mirror `memberServerFnMiddleware` + role check)               |
-| `/admin/login`                | `src/routes/admin.login.tsx`                                   | delete — `/login` is the one login page                                         |
-| `/admin/logout` POST route + hidden form | `src/routes/admin.logout.ts`, `admin.index.tsx:19-34`  | delete; sign-out server fn like `shop.index.tsx:30-37`                          |
-| `AdminAuth.layer` in runtime  | `src/worker.ts:84`                                             | remove                                                                          |
-| `User.role` + `UserRole` FK-enum | `migrations/0001_init.sql`, `Domain.UserRole`                | already there (`'user'`, `'admin'`), `admin()` plugin already wired in `Auth.ts` |
+| Piece                                    | Where                                                             | Fate                                                                             |
+| ---------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Password + sealed cookie                 | `src/lib/AdminAuth.ts` (`useSession`, `pwVersion`, 1h slide)      | delete                                                                           |
+| `ADMIN_AUTH_SECRET/PASSWORD/PASSWORD1`   | `.env`, `.env.example`, `test/integration/vitest.config.ts:45-47` | delete; replace with `ADMIN_EMAILS`                                              |
+| `ADMIN_LOGIN_LIMITER`                    | `wrangler.jsonc` (all three envs), `admin.login.tsx:33-40`        | delete (magic-link sends already go through `LOGIN_LIMITER` in `/login`)         |
+| `/admin` guard                           | `src/routes/admin.tsx` `beforeLoad` → `AdminAuth.requireSession`  | rewrite: better-auth session + `user.role === "admin"`                           |
+| `adminServerFnMiddleware`                | `src/lib/AdminServerFnMiddleware.ts`                              | rewrite same way (mirror `memberServerFnMiddleware` + role check)                |
+| `/admin/login`                           | `src/routes/admin.login.tsx`                                      | delete — `/login` is the one login page                                          |
+| `/admin/logout` POST route + hidden form | `src/routes/admin.logout.ts`, `admin.index.tsx:19-34`             | delete; sign-out server fn like `shop.index.tsx:30-37`                           |
+| `AdminAuth.layer` in runtime             | `src/worker.ts:84`                                                | remove                                                                           |
+| `User.role` + `UserRole` FK-enum         | `migrations/0001_init.sql`, `Domain.UserRole`                     | already there (`'user'`, `'admin'`), `admin()` plugin already wired in `Auth.ts` |
 
 Nothing in `test/` or `e2e/` touches `AdminAuth` (only Shopify-admin auth tests). Schema needs no change.
 
@@ -42,8 +42,8 @@ Accepted trade-offs (all fine for a prototype):
 ## Decision 2: sign-in gate and redirects
 
 - **Gate** becomes `Member row exists **or** email ∈ ADMIN_EMAILS`, in both places it lives: the `/login` server fn (`src/routes/login.tsx:54-60`, so an admin with zero memberships gets a link) and the `user.create.before` backstop in `Auth.ts`. Expose `isAdminEmail(email)` on the `Auth` service so `/login` doesn't re-parse the config. Enumeration property unchanged: same "check your email" panel either way.
-- **Do not enforce tceas's disjoint-roles invariant** ("admin owns no memberships", `refs/tceas/src/routes/admin.tsx:24-30`). tceas needs it because its `/app` guard bounces admins to `/admin` and vice versa. For Baton the operator is also the sandbox-shop member, so an admin must be allowed to hold `Member` rows. `/shop` guard stays as is (any session). `/admin` guard: no session → redirect `/login`; session but `role !== "admin"` → `notFound` (same reasoning as `requireMember`: don't reveal the console exists). No guard redirects into the other's route, so no loop is possible.
-- **Post-login landing**: `/login-callback` keeps sending everyone to `/shop`. Add an "Admin" link on `/shop` rendered only when `user.role === "admin"` (the `/shop` loader already has the session user). That's the whole navigation story; a `?next=` param threaded through `callbackURL` is the obvious upgrade if typing `/admin` gets old.
+- **Disjoint roles, tceas's invariant, adopted** (revised 2026-09-01 after first trying a softer "admin may also be a member" shape): an admin is cross-tenant and never on the shop side; impersonation (`admin()` plugin, `session.impersonatedBy`) is the sanctioned door and comes later with a user list on the console. Guards mirror each other: `/shop/*` bounces an admin session to `/admin`, `/admin` bounces a non-admin session to `/shop`, both use `redirect<AnyRouter>` to break the guard-type cycle (`refs/tceas/src/routes/app.tsx:24-30`). A stray `Member` row for an admin email is inert — not blocked at write time, the `/shop` guard still bounces. Operator testing uses two emails (one in `ADMIN_EMAILS`, one as a member).
+- **Post-login landing**: `/login-callback` routes by role — `/admin` for admins, `/shop` for everyone else. No cross-links between the two areas.
 
 ## Decision 3: implementation touchpoints (in order)
 
@@ -53,8 +53,8 @@ Accepted trade-offs (all fine for a prototype):
 4. Delete `AdminAuth.ts`, `admin.login.tsx`, `admin.logout.ts`; `admin.index.tsx` gets a sign-out server fn mirroring `shop.index.tsx` (`tanstackStartCookies` forwards the cleared cookie from a server fn; from a raw route handler it's unverified, so don't take that path).
 5. `worker.ts:84` drop `AdminAuth.layer`. `wrangler.jsonc` drop `ADMIN_LOGIN_LIMITER` from all three envs.
 6. `.env` / `.env.example`: drop the three `ADMIN_*` vars, add `ADMIN_EMAILS`. `test/integration/vitest.config.ts` same (`ADMIN_EMAILS: "admin@example.com"`). `pnpm typecheck` regenerates `worker-configuration.d.ts` without the old secrets.
-7. `/shop` index: Admin link for `role === "admin"`.
-8. Tests: `auth.test.ts` — admin email gets `role='admin'` on first sign-in, member email stays `'user'`, non-member non-admin still blocked. `member-area.test.ts`-style whole-flow for `/admin`: anonymous → 307 `/login`; member session → 404; admin session → 200. Existing `/admin/*` pages need the real `CLOUDFLARE_WORKERS_API_TOKEN` for the DO explorer, so the whole-flow test hits `/admin` (index) only.
+7. `/login-callback`: role-based redirect.
+8. Tests: `auth.test.ts` — admin email gets `role='admin'` on first sign-in, member email stays `'user'`, non-member non-admin still blocked. `member-area.test.ts`-style whole-flow for `/admin`: anonymous → 307 `/login`; member session → 307 `/shop`; admin session → 200 and `/shop` → 307 `/admin`; callback routes each role. Existing `/admin/*` pages need the real `CLOUDFLARE_WORKERS_API_TOKEN` for the DO explorer, so the whole-flow test hits `/admin` (index) only.
 
 Estimated size: ~150 lines net removed. No research left to do; this can go straight to implementation.
 

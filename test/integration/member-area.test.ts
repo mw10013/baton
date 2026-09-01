@@ -46,6 +46,7 @@ const emailOf = Schema.decodeUnknownSync(Domain.Email);
 const SHOP = shopOf("member-area.myshopify.com");
 const OTHER_SHOP = shopOf("other-shop.myshopify.com");
 const MEMBER = emailOf("member@example.com");
+const ADMIN = emailOf("admin@example.com");
 
 const fetchWorker = (url: string, init?: RequestInit) =>
   Effect.promise(() =>
@@ -231,6 +232,56 @@ describe("member area", () => {
   );
 });
 
+describe("admin console", () => {
+  it.effect("redirects an anonymous visitor from /admin to /login", () =>
+    run(
+      Effect.gen(function* () {
+        const response = yield* fetchWorker("http://localhost/admin");
+        strictEqual(response.status, 307);
+        strictEqual(response.headers.get("location"), "/login");
+      }),
+    ),
+  );
+
+  it.effect("bounces a signed-in member from /admin to /shop", () =>
+    run(
+      Effect.gen(function* () {
+        const repository = yield* Repository;
+        yield* seedShop(SHOP);
+        yield* repository.addMember({ shop: SHOP, email: MEMBER });
+        const cookie = yield* signInThroughWorker(MEMBER);
+        const response = yield* fetchWorker("http://localhost/admin", {
+          headers: { cookie },
+        });
+        strictEqual(response.status, 307);
+        strictEqual(response.headers.get("location"), "/shop");
+      }),
+    ),
+  );
+
+  it.effect(
+    "admits an ADMIN_EMAILS user and keeps them off the member area",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const cookie = yield* signInThroughWorker(ADMIN);
+          const response = yield* fetchWorker("http://localhost/admin", {
+            headers: { cookie },
+          });
+          strictEqual(response.status, 200);
+          assertTrue(
+            (yield* Effect.promise(() => response.text())).includes("Admin v"),
+          );
+          const listing = yield* fetchWorker("http://localhost/shop", {
+            headers: { cookie },
+          });
+          strictEqual(listing.status, 307);
+          strictEqual(listing.headers.get("location"), "/admin");
+        }),
+      ),
+  );
+});
+
 describe("login-callback", () => {
   it.effect("sends a freshly signed-in browser on to /shop", () =>
     run(
@@ -244,6 +295,19 @@ describe("login-callback", () => {
         });
         strictEqual(response.status, 307);
         strictEqual(response.headers.get("location"), "/shop");
+      }),
+    ),
+  );
+
+  it.effect("sends a freshly signed-in admin on to /admin", () =>
+    run(
+      Effect.gen(function* () {
+        const cookie = yield* signInThroughWorker(ADMIN);
+        const response = yield* fetchWorker("http://localhost/login-callback", {
+          headers: { cookie },
+        });
+        strictEqual(response.status, 307);
+        strictEqual(response.headers.get("location"), "/admin");
       }),
     ),
   );

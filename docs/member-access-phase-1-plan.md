@@ -65,7 +65,7 @@ Execution plan for `docs/member-access-research.md` (all decisions live there; t
 
 ## Deferred (phase 2+)
 
-- `/admin` onto better-auth: research + recommendation in `docs/admin-on-better-auth-research.md` (`ADMIN_EMAILS` allowlist stamps `role='admin'` at first sign-in; retire `AdminAuth`, `ADMIN_*` secrets, `ADMIN_LOGIN_LIMITER`; gate = `Member` row **or** `ADMIN_EMAILS`).
+- `/admin` onto better-auth — **done 2026-09-01**, per `docs/admin-on-better-auth-research.md` (`ADMIN_EMAILS` allowlist stamps `role='admin'` at first sign-in; retire `AdminAuth`, `ADMIN_*` secrets, `ADMIN_LOGIN_LIMITER`; gate = `Member` row **or** `ADMIN_EMAILS`).
 - WebSocket cookie-session branch in `authorizeShopAgentRequest` — explained in the same doc; stays deferred until a member page needs live DO state.
 - Invitation lifecycle UI, roles beyond the column, audit trail, workflow engine — not planned.
 - `wrangler.jsonc` `env.staging` / `env.production` skeleton blocks **added** (2026-09-01): `ENVIRONMENT` now narrows to `"local" | "staging" | "production"`, `--env staging` resolves, `api.e2e.seed.ts`'s guard is real. D1 ids, KV ids and `SHOPIFY_PARTNER_APP_ID` are placeholders until those envs exist.

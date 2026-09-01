@@ -86,15 +86,9 @@
   ],
   "ratelimits": [
     {
-      // Account-wide ID; reuse shares counters across Workers and environments,
-      // so pick unused ids before deploying anywhere real.
-      "name": "ADMIN_LOGIN_LIMITER",
-      "namespace_id": "1001",
-      "simple": { "limit": 5, "period": 60 }
-    },
-    {
-      // Member magic-link sends. ADMIN_LOGIN_LIMITER retires with AdminAuth in
-      // phase 2; this binding is the member-facing replacement.
+      // Magic-link sends (members and admins alike). Account-wide ID; reuse
+      // shares counters across Workers and environments, so pick unused ids
+      // before deploying anywhere real.
       "name": "LOGIN_LIMITER",
       "namespace_id": "1002",
       "simple": { "limit": 5, "period": 60 }
@@ -159,11 +153,6 @@
       "ratelimits": [
         {
           // Account-wide ID; must differ from local and production.
-          "name": "ADMIN_LOGIN_LIMITER",
-          "namespace_id": "1003",
-          "simple": { "limit": 5, "period": 60 }
-        },
-        {
           "name": "LOGIN_LIMITER",
           "namespace_id": "1004",
           "simple": { "limit": 5, "period": 60 }
@@ -224,11 +213,6 @@
       "ratelimits": [
         {
           // Account-wide ID; must differ from local and staging.
-          "name": "ADMIN_LOGIN_LIMITER",
-          "namespace_id": "1005",
-          "simple": { "limit": 5, "period": 60 }
-        },
-        {
           "name": "LOGIN_LIMITER",
           "namespace_id": "1006",
           "simple": { "limit": 5, "period": 60 }

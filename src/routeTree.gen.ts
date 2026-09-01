@@ -17,8 +17,6 @@ import { Route as LoginCallbackRouteImport } from './routes/login-callback'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as ShopRouteImport } from './routes/shop'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
-import { Route as AdminLoginRouteImport } from './routes/admin.login'
-import { Route as AdminLogoutRouteImport } from './routes/admin.logout'
 import { Route as AdminOrphanShopAgentObjectsRouteImport } from './routes/admin.orphan-shop-agent-objects'
 import { Route as AdminShopAgentObjectsRouteImport } from './routes/admin.shop-agent-objects'
 import { Route as AdminShopsRouteImport } from './routes/admin.shops'
@@ -72,16 +70,6 @@ const ShopRoute = ShopRouteImport.update({
 const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => AdminRoute,
-} as any)
-const AdminLoginRoute = AdminLoginRouteImport.update({
-  id: '/login',
-  path: '/login',
-  getParentRoute: () => AdminRoute,
-} as any)
-const AdminLogoutRoute = AdminLogoutRouteImport.update({
-  id: '/logout',
-  path: '/logout',
   getParentRoute: () => AdminRoute,
 } as any)
 const AdminOrphanShopAgentObjectsRoute =
@@ -165,8 +153,6 @@ export interface FileRoutesByFullPath {
   '/login-callback': typeof LoginCallbackRoute
   '/privacy': typeof PrivacyRoute
   '/shop': typeof ShopRouteWithChildren
-  '/admin/login': typeof AdminLoginRoute
-  '/admin/logout': typeof AdminLogoutRoute
   '/admin/orphan-shop-agent-objects': typeof AdminOrphanShopAgentObjectsRoute
   '/admin/shop-agent-objects': typeof AdminShopAgentObjectsRoute
   '/admin/shops': typeof AdminShopsRoute
@@ -188,8 +174,6 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/login-callback': typeof LoginCallbackRoute
   '/privacy': typeof PrivacyRoute
-  '/admin/login': typeof AdminLoginRoute
-  '/admin/logout': typeof AdminLogoutRoute
   '/admin/orphan-shop-agent-objects': typeof AdminOrphanShopAgentObjectsRoute
   '/admin/shop-agent-objects': typeof AdminShopAgentObjectsRoute
   '/admin/shops': typeof AdminShopsRoute
@@ -215,8 +199,6 @@ export interface FileRoutesById {
   '/login-callback': typeof LoginCallbackRoute
   '/privacy': typeof PrivacyRoute
   '/shop': typeof ShopRouteWithChildren
-  '/admin/login': typeof AdminLoginRoute
-  '/admin/logout': typeof AdminLogoutRoute
   '/admin/orphan-shop-agent-objects': typeof AdminOrphanShopAgentObjectsRoute
   '/admin/shop-agent-objects': typeof AdminShopAgentObjectsRoute
   '/admin/shops': typeof AdminShopsRoute
@@ -243,8 +225,6 @@ export interface FileRouteTypes {
     | '/login-callback'
     | '/privacy'
     | '/shop'
-    | '/admin/login'
-    | '/admin/logout'
     | '/admin/orphan-shop-agent-objects'
     | '/admin/shop-agent-objects'
     | '/admin/shops'
@@ -266,8 +246,6 @@ export interface FileRouteTypes {
     | '/login'
     | '/login-callback'
     | '/privacy'
-    | '/admin/login'
-    | '/admin/logout'
     | '/admin/orphan-shop-agent-objects'
     | '/admin/shop-agent-objects'
     | '/admin/shops'
@@ -292,8 +270,6 @@ export interface FileRouteTypes {
     | '/login-callback'
     | '/privacy'
     | '/shop'
-    | '/admin/login'
-    | '/admin/logout'
     | '/admin/orphan-shop-agent-objects'
     | '/admin/shop-agent-objects'
     | '/admin/shops'
@@ -383,20 +359,6 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/admin/'
       preLoaderRoute: typeof AdminIndexRouteImport
-      parentRoute: typeof AdminRoute
-    }
-    '/admin/login': {
-      id: '/admin/login'
-      path: '/login'
-      fullPath: '/admin/login'
-      preLoaderRoute: typeof AdminLoginRouteImport
-      parentRoute: typeof AdminRoute
-    }
-    '/admin/logout': {
-      id: '/admin/logout'
-      path: '/logout'
-      fullPath: '/admin/logout'
-      preLoaderRoute: typeof AdminLogoutRouteImport
       parentRoute: typeof AdminRoute
     }
     '/admin/orphan-shop-agent-objects': {
@@ -501,8 +463,6 @@ declare module '@tanstack/react-router' {
 }
 
 interface AdminRouteChildren {
-  AdminLoginRoute: typeof AdminLoginRoute
-  AdminLogoutRoute: typeof AdminLogoutRoute
   AdminOrphanShopAgentObjectsRoute: typeof AdminOrphanShopAgentObjectsRoute
   AdminShopAgentObjectsRoute: typeof AdminShopAgentObjectsRoute
   AdminShopsRoute: typeof AdminShopsRoute
@@ -511,8 +471,6 @@ interface AdminRouteChildren {
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
-  AdminLoginRoute: AdminLoginRoute,
-  AdminLogoutRoute: AdminLogoutRoute,
   AdminOrphanShopAgentObjectsRoute: AdminOrphanShopAgentObjectsRoute,
   AdminShopAgentObjectsRoute: AdminShopAgentObjectsRoute,
   AdminShopsRoute: AdminShopsRoute,

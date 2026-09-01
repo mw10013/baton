@@ -1,6 +1,16 @@
-import { useRef } from "react";
+import { useMutation } from "@tanstack/react-query";
+import {
+  createFileRoute,
+  redirect,
+  useHydrated,
+  useRouter,
+} from "@tanstack/react-router";
+import { createServerFn, useServerFn } from "@tanstack/react-start";
+import { Effect } from "effect";
 
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { adminServerFnMiddleware } from "@/lib/AdminServerFnMiddleware";
+import { Auth } from "@/lib/Auth";
+import { CurrentRequest } from "@/lib/CurrentRequest";
 
 declare global {
   interface ImportMetaEnv {
@@ -8,30 +18,48 @@ declare global {
   }
 }
 
+const signOutFn = createServerFn({ method: "POST" })
+  .middleware([adminServerFnMiddleware])
+  .handler(({ context: { runEffect } }) =>
+    runEffect(
+      Effect.gen(function* () {
+        const auth = yield* Auth;
+        const request = yield* CurrentRequest;
+        yield* auth.signOut(request.headers);
+        return yield* Effect.fail(redirect({ to: "/" }));
+      }),
+    ),
+  );
+
 export const Route = createFileRoute("/admin/")({
   component: RouteComponent,
 });
 
 /**
- * Admin landing page.
- *
- * The page's `secondary-actions` slot only accepts `s-button`/`s-button-group`,
- * so the Log out control is a bare `s-button` (not wrapped in a form). Logout is
- * POST-only, so its `onClick` submits a hidden POST form via {@link logoutFormRef}.
+ * Admin landing page. Sign-out is a server fn (not a POST route): the
+ * `tanstackStartCookies` plugin forwards better-auth's cleared session cookie
+ * through TanStack's request storage from a server fn, the same path
+ * `/shop` uses. `disabled={!hydrated}` because SSR'd markup is React-dead
+ * until hydration and the click would be silently dropped.
  */
 function RouteComponent() {
   const router = useRouter();
-  const logoutFormRef = useRef<HTMLFormElement>(null);
+  const hydrated = useHydrated();
+  const signOut = useServerFn(signOutFn);
+  const signOutMutation = useMutation({ mutationFn: () => signOut({}) });
   return (
     <s-page heading={`Admin v${import.meta.env.VITE_APP_VERSION}`}>
       <s-button
         slot="secondary-actions"
         variant="secondary"
-        onClick={() => logoutFormRef.current?.submit()}
+        disabled={!hydrated}
+        {...(signOutMutation.isPending ? { loading: true } : {})}
+        onClick={() => {
+          signOutMutation.mutate();
+        }}
       >
-        Log out
+        Sign out
       </s-button>
-      <form ref={logoutFormRef} method="post" action="/admin/logout" hidden />
       <s-section accessibilityLabel="Admin overview">
         <s-stack gap="base" alignItems="start">
           <s-heading>Shops</s-heading>

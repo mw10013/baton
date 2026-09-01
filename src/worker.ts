@@ -12,7 +12,6 @@ import {
 } from "effect";
 import * as Exit from "effect/Exit";
 
-import { AdminAuth } from "@/lib/AdminAuth";
 import { Auth } from "@/lib/Auth";
 import { CurrentRequest } from "@/lib/CurrentRequest";
 import { D1Bookmark } from "@/lib/D1Bookmark";
@@ -81,7 +80,6 @@ const makeAppLayer = (
     subscriptionPlanLayer,
     shopAgentClientLayer,
     requestLayer,
-    AdminAuth.layer,
     authLayer,
     kvLayer,
     emailLayer,
