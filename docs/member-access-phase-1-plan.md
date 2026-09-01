@@ -46,12 +46,26 @@ Execution plan for `docs/member-access-research.md` (all decisions live there; t
 
 ### 5. Tests
 
-- Schema drift test: `getSchema(auth.options)` diffed against live D1 via constant-argument pragmas (tceas `refs/tceas/test/integration/auth.test.ts:87-157`). **Done** (`test/integration/auth.test.ts`).
-- Integration: read magic-link URL from KV, feed to `auth.handler(new Request(url, { redirect: "manual" }))`, harvest cookies. **Done** — plus non-member sign-up-blocked backstop and invalid-token tests.
-- E2E: add member in embedded app → log in via demo link → land on `/shop` → open shop page. **Not written**: `e2e/shopify-admin.setup.ts` shells out to `scripts/refresh-shopify-playwright-auth.ts`, which does not exist in this repo, so embedded-admin e2e cannot bootstrap. Login → `/shop` → `/shop/$shop` was verified manually headed (playwright-cli) instead; `/shop/$shop`'s `getShopInfo` verified up to `OfflineSessionInvalidError` against a seeded fake token — the happy path needs a real install.
+**Done.** Integration + e2e, both green.
+
+**Integration** (`pnpm test:integration`, 84 tests):
+
+- Schema drift: `getSchema(auth.options)` diffed against live D1 via constant-argument pragmas (tceas `refs/tceas/test/integration/auth.test.ts:87-157`). `test/integration/auth.test.ts`.
+- Auth service round trip: magic-link URL out of KV, fed to `auth.handler`, cookies harvested — plus the non-member sign-up-blocked backstop and invalid-token cases. `test/integration/auth.test.ts`.
+- Whole-flow HTTP through `workerExports.default.fetch` (real worker, real routes, real middleware). `test/integration/member-area.test.ts`: `/api/auth/$` allowlist (verify serves, everything else 404s); anonymous `GET /shop` → 307 `/login`; magic link → `/shop` lists the member's shops; non-member shop → 404; `deleteMember` flips the member's own shop page 500 → 404 and drops it from `/shop`; `/login-callback` → 307 `/shop`, failure state for `?error=`.
+- The `/shop/$shop` happy path is unreachable here: `getShopInfo` runs in the ShopAgent DO's own isolate, out of reach of the in-process Shopify fetch stub, so a seeded shop tops out at 500 (the revocation test uses that 500 as proof the membership gate was passed). The e2e covers it against the real install instead.
+
+**E2E** (`pnpm test:e2e`, 7 tests incl. setup). Unblocked by copying `scripts/refresh-shopify-playwright-auth.ts` from `refs/bang` (decrypts the logged-in admin session out of Chrome's cookie DB via Keychain) and writing `.env.playwright`.
+
+- `src/routes/api.e2e.seed.ts` — one fixture endpoint, bang's shape: `POST {shop, members}` replaces the shop's membership with exactly `members` and drops each listed email's better-auth identity, so every run is a first sign-in and a retry starts clean. `ENVIRONMENT === "local"` only. Deliberately does not seed `ShopSession`, so seeding a shop the app is not installed on fails loudly instead of surfacing as a `/shop/$shop` 500.
+- Two Playwright projects, not one. `e2e` (admin storage state, tunnel) runs `home.spec.ts` + `members.spec.ts`. `member` (empty storage state, `http://localhost:$PORT`, no `setup` dependency, so no Keychain prompt) runs `member-area.member.spec.ts` — the member area is the one non-embedded surface, and `BETTER_AUTH_URL` mints links against localhost, never the tunnel.
+- `members.spec.ts`: empty state → add a padded, mixed-case address → row comes back trimmed and lowercased (proof `Domain.Email` normalizes structurally) → re-add is idempotent → remove returns the empty state.
+- `member-area.member.spec.ts`: anonymous `/shop` → `/login`; a non-member gets the identical "check your email" panel with no link (no member enumeration); a seeded member follows the demo link → `/shop` → `/shop/$shop` **against the real install, so `getShopInfo` renders for real** → sign out → `/shop` bounces again; revoking mid-session closes the shop page on the next request while the cookie is still valid.
+- `data-hydrated` added to `src/routes/__root.tsx`, and `e2e/member.ts` mirrors `e2e/app.ts` as the non-embedded helper module (`gotoMember` / `awaitHydration` / `followMagicLink`). Until React attaches, SSR'd markup is painted and dead, so a click passes every actionability check and is silently swallowed. Full analysis, evidence, and the one open decision (marker naming/count) in `docs/hydration-e2e-research.md`.
 
 ## Deferred (phase 2+)
 
 - `/admin` onto better-auth (`ADMIN_EMAILS` bootstrap, retire `AdminAuth` + `ADMIN_LOGIN_LIMITER`); sign-in gate becomes `Member` row **or** `ADMIN_EMAILS`.
 - WebSocket cookie-session branch in `authorizeShopAgentRequest` — phase 1 member pages use server fns only.
 - Invitation lifecycle UI, roles beyond the column, audit trail, workflow engine.
+- `wrangler.jsonc` has no `env.staging` / `env.production` blocks, so `ENVIRONMENT` is `"local"` everywhere and `pnpm deploy:staging`'s `--env staging` selects nothing. `api.e2e.seed.ts`'s guard is only real once those blocks exist (`refs/bang/wrangler.jsonc:78,130` is the shape). Add them before any deploy.

@@ -45,11 +45,30 @@ export default defineConfig({
     {
       name: "e2e",
       testMatch: ["**/*.spec.ts"],
+      testIgnore: ["**/*.member.spec.ts"],
       dependencies: ["setup"],
       use: {
         channel: "chrome",
         baseURL: process.env.SHOPIFY_PREVIEW_URL,
         storageState: storageStatePath,
+      },
+    },
+    /**
+     * The member area (`/shop/*`) is the one part of the app that is NOT
+     * embedded: `BETTER_AUTH_URL` in `.env` points at `http://localhost:$PORT`,
+     * so the magic link a member follows never touches the admin tunnel. Hence
+     * a project of its own — no `setup` dependency (nothing here needs a
+     * Shopify admin session, so a run never prompts for Keychain access) and no
+     * `storageState`, because the whole point is that a member with zero
+     * Shopify cookies can sign in.
+     */
+    {
+      name: "member",
+      testMatch: ["**/*.member.spec.ts"],
+      use: {
+        channel: "chrome",
+        baseURL: `http://localhost:${process.env.PORT ?? "3000"}`,
+        storageState: { cookies: [], origins: [] },
       },
     },
   ],

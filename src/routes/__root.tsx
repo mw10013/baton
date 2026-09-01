@@ -7,6 +7,7 @@ import {
   HeadContent,
   Outlet,
   Scripts,
+  useHydrated,
 } from "@tanstack/react-router";
 
 import { POLARIS_URL } from "@/lib/shopifyConstants";
@@ -50,9 +51,27 @@ function RouteComponent() {
   return <Outlet />;
 }
 
+/**
+ * `data-hydrated` is the document-wide "React has attached its listeners"
+ * signal e2e waits on before its first interaction. Without it a spec that
+ * types into a form immediately after `goto` fills the SSR'd input and clicks
+ * a button whose `onSubmit` does not exist yet — the click is silently
+ * swallowed and the failure reads as a missing result element, not as a race.
+ * `useHydrated()` exposes no DOM marker of its own.
+ *
+ * Distinct from `data-app-hydrated` in `src/routes/app.tsx`, which marks the
+ * same commit but additionally gates that route's `inert` wrapper; embedded
+ * specs must keep waiting on that one, because being hydrated is not the same
+ * as being interactive inside the iframe.
+ */
 function RootDocument({ children }: { children: React.ReactNode }) {
+  const hydrated = useHydrated();
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      data-hydrated={hydrated ? "true" : undefined}
+    >
       <head>
         <HeadContent />
       </head>

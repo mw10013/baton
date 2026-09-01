@@ -30,6 +30,7 @@ import { Route as ShopShopRouteImport } from './routes/shop.$shop'
 import { Route as WebhooksComplianceRouteImport } from './routes/webhooks.compliance'
 import { Route as AdminShopShopRouteImport } from './routes/admin.shop.$shop'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
+import { Route as ApiE2eSeedRouteImport } from './routes/api.e2e.seed'
 import { Route as WebhooksAppScopes_updateRouteImport } from './routes/webhooks.app.scopes_update'
 import { Route as WebhooksAppUninstalledRouteImport } from './routes/webhooks.app.uninstalled'
 
@@ -139,6 +140,11 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiE2eSeedRoute = ApiE2eSeedRouteImport.update({
+  id: '/api/e2e/seed',
+  path: '/api/e2e/seed',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const WebhooksAppScopes_updateRoute =
   WebhooksAppScopes_updateRouteImport.update({
     id: '/webhooks/app/scopes_update',
@@ -173,6 +179,7 @@ export interface FileRoutesByFullPath {
   '/shop/': typeof ShopIndexRoute
   '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/e2e/seed': typeof ApiE2eSeedRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
 }
@@ -195,6 +202,7 @@ export interface FileRoutesByTo {
   '/shop': typeof ShopIndexRoute
   '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/e2e/seed': typeof ApiE2eSeedRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
 }
@@ -221,6 +229,7 @@ export interface FileRoutesById {
   '/shop/': typeof ShopIndexRoute
   '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/e2e/seed': typeof ApiE2eSeedRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
 }
@@ -248,6 +257,7 @@ export interface FileRouteTypes {
     | '/shop/'
     | '/admin/shop/$shop'
     | '/api/auth/$'
+    | '/api/e2e/seed'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
   fileRoutesByTo: FileRoutesByTo
@@ -270,6 +280,7 @@ export interface FileRouteTypes {
     | '/shop'
     | '/admin/shop/$shop'
     | '/api/auth/$'
+    | '/api/e2e/seed'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
   id:
@@ -295,6 +306,7 @@ export interface FileRouteTypes {
     | '/shop/'
     | '/admin/shop/$shop'
     | '/api/auth/$'
+    | '/api/e2e/seed'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
   fileRoutesById: FileRoutesById
@@ -310,6 +322,7 @@ export interface RootRouteChildren {
   AuthSplatRoute: typeof AuthSplatRoute
   WebhooksComplianceRoute: typeof WebhooksComplianceRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiE2eSeedRoute: typeof ApiE2eSeedRoute
   WebhooksAppScopes_updateRoute: typeof WebhooksAppScopes_updateRoute
   WebhooksAppUninstalledRoute: typeof WebhooksAppUninstalledRoute
 }
@@ -463,6 +476,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/e2e/seed': {
+      id: '/api/e2e/seed'
+      path: '/api/e2e/seed'
+      fullPath: '/api/e2e/seed'
+      preLoaderRoute: typeof ApiE2eSeedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/webhooks/app/scopes_update': {
       id: '/webhooks/app/scopes_update'
       path: '/webhooks/app/scopes_update'
@@ -537,6 +557,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthSplatRoute: AuthSplatRoute,
   WebhooksComplianceRoute: WebhooksComplianceRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiE2eSeedRoute: ApiE2eSeedRoute,
   WebhooksAppScopes_updateRoute: WebhooksAppScopes_updateRoute,
   WebhooksAppUninstalledRoute: WebhooksAppUninstalledRoute,
 }
