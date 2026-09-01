@@ -53,16 +53,21 @@ function RouteComponent() {
 
 /**
  * `data-hydrated` is the document-wide "React has attached its listeners"
- * signal e2e waits on before its first interaction. Without it a spec that
- * types into a form immediately after `goto` fills the SSR'd input and clicks
- * a button whose `onSubmit` does not exist yet — the click is silently
- * swallowed and the failure reads as a missing result element, not as a race.
- * `useHydrated()` exposes no DOM marker of its own.
+ * signal e2e waits on before its first interaction. Until then the SSR'd
+ * markup is painted but React-dead: a click on an `onClick` button is a no-op,
+ * and a submit inside a `<form onSubmit>` falls through to the browser's
+ * native GET submission (verified: `/login?email=...`), because the
+ * `preventDefault` does not exist yet. Playwright cannot tell — its
+ * actionability checks are satisfied by the SSR'd DOM — so a spec that
+ * interacts straight after `goto` fails much later, at an assertion for a
+ * result the click never requested. `useHydrated()` exposes no DOM marker of
+ * its own. The product-side guard for the same window is
+ * `disabled={!hydrated}` on each non-embedded `onClick`/submit control.
  *
- * Distinct from `data-app-hydrated` in `src/routes/app.tsx`, which marks the
- * same commit but additionally gates that route's `inert` wrapper; embedded
- * specs must keep waiting on that one, because being hydrated is not the same
- * as being interactive inside the iframe.
+ * Distinct from `data-app-interactive` in `src/routes/app.tsx`, which marks
+ * the same commit but additionally gates that route's `inert` wrapper;
+ * embedded specs must keep waiting on that one, because being hydrated is not
+ * the same as being interactive inside the iframe.
  */
 function RootDocument({ children }: { children: React.ReactNode }) {
   const hydrated = useHydrated();

@@ -19,7 +19,7 @@ export const appFrame = (page: Page): FrameLocator =>
  * Land on the authed home and return once it is safe to interact INSIDE the
  * iframe.
  *
- * The gate is the `data-app-hydrated` marker (`src/routes/app.tsx`),
+ * The gate is the `data-app-interactive` marker (`src/routes/app.tsx`),
  * which flips with the `useHydrated()` commit that also clears the wrapper's
  * `inert`. It is load-bearing because Playwright's actionability is inert-blind
  * (verified in `refs/playwright`: `injectedScript.ts` never reads `inert`; its
@@ -42,7 +42,7 @@ export const appFrame = (page: Page): FrameLocator =>
  * in; the same bounce, landing a beat later, instead stalls the hydration wait
  * to its full timeout). `"commit"` resolves the instant the response commits,
  * before the SPA runs the redirect, so it can never be aborted. No readiness is
- * lost: unlike `goto`, the `data-app-hydrated` `waitFor` below is a retrying
+ * lost: unlike `goto`, the `data-app-interactive` `waitFor` below is a retrying
  * poll over the live DOM, so it rides through the redirect and is the real gate.
  *
  * Local previews serve Vite's unbundled module graph (~186 requests/load)
@@ -74,7 +74,7 @@ export const appFrame = (page: Page): FrameLocator =>
 export async function gotoApp(page: Page): Promise<FrameLocator> {
   await page.goto("", { waitUntil: "commit" });
   const frame = appFrame(page);
-  const hydrated = frame.locator('[data-app-hydrated="true"]');
+  const hydrated = frame.locator('[data-app-interactive="true"]');
   await hydrated
     .waitFor({ state: "attached", timeout: 15_000 })
     .catch(async () => {

@@ -202,12 +202,16 @@ function RouteComponent() {
  * route's `head` option (see `Route` above), not here.
  *
  * The same `useHydrated()` flip that clears `inert` is also exposed as
- * `data-app-hydrated="true"` on the wrapper, giving e2e a DOM signal for
- * hydration commit (`useHydrated()` itself has no marker). Playwright's
- * actionability is inert-blind, so in-iframe specs wait for this marker before
- * interacting. Written as `hydrated ? "true" : undefined` so the attribute is
- * absent pre-hydration — a bare boolean would render the truthy string
- * `data-app-hydrated="false"`.
+ * `data-app-interactive="true"` on the wrapper, giving e2e a DOM signal that
+ * the `inert` barrier has lifted (`useHydrated()` itself has no marker).
+ * Named "interactive", not "hydrated", on purpose: the root route's
+ * `data-hydrated` flips in the same commit, but only this attribute is bound
+ * to `inert` by construction — same variable, same element — so it stays
+ * correct if `inert` ever gains another condition. Playwright's actionability
+ * is inert-blind, so in-iframe specs wait for this marker before interacting.
+ * Written as `hydrated ? "true" : undefined` so the attribute is absent
+ * pre-hydration — a bare boolean would render the truthy string
+ * `data-app-interactive="false"`.
  *
  * Polaris is loaded globally by the root route.
  */
@@ -228,7 +232,7 @@ function AppProvider({ children }: { readonly children: React.ReactNode }) {
   }, [navigate]);
 
   return (
-    <div inert={!hydrated} data-app-hydrated={hydrated ? "true" : undefined}>
+    <div inert={!hydrated} data-app-interactive={hydrated ? "true" : undefined}>
       {children}
     </div>
   );

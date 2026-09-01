@@ -10,7 +10,7 @@ import { storageStatePath } from "../playwright.config";
  * cookie with a ~1 week lifetime, while the accounts.shopify.com identity
  * cookies live ~1 year. In the window where identity is valid but `koa.sid`
  * is expired, admin bounces to the accounts "Choose an account" screen — the
- * app iframe never loads, `data-app-hydrated` never appears, and specs die as
+ * app iframe never loads, `data-app-interactive` never appears, and specs die as
  * mystery 30s timeouts misattributed to hydration. The 5-minute buffer keeps
  * a session from expiring mid-run.
  */
