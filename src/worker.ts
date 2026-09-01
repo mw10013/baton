@@ -1,4 +1,3 @@
-import { D1Client } from "@effect/sql-d1";
 import { isNotFound, isRedirect } from "@tanstack/react-router";
 import serverEntry from "@tanstack/react-start/server-entry";
 import { routeAgentRequest } from "agents";
@@ -14,9 +13,14 @@ import {
 import * as Exit from "effect/Exit";
 
 import { AdminAuth } from "@/lib/AdminAuth";
+import { Auth } from "@/lib/Auth";
 import { CurrentRequest } from "@/lib/CurrentRequest";
 import { D1Bookmark } from "@/lib/D1Bookmark";
+import { D1Primary } from "@/lib/D1Primary";
+import { D1Session } from "@/lib/D1Session";
 import * as Domain from "@/lib/Domain";
+import { Email } from "@/lib/Email";
+import { KV } from "@/lib/KV";
 import {
   causeToErrorMessage,
   makeEnvLayer,
@@ -36,13 +40,10 @@ const makeAppLayer = (
   d1Session: D1DatabaseSession,
 ) => {
   const envLayer = makeEnvLayer(env);
-  // D1Client.layer wants a full D1Database, but withSession() returns the narrower
-  // D1DatabaseSession (no exec/dump/withSession). Safe cast: the driver only ever
-  // calls db.prepare(), which D1DatabaseSession implements identically.
-  const sqlLayer = D1Client.layer({ db: d1Session as unknown as D1Database });
+  const d1PrimaryLayer = Layer.provide(D1Primary.layerNoDeps, envLayer);
   const repositoryLayer = Layer.provideMerge(
     Repository.layerNoDeps,
-    Layer.merge(sqlLayer, envLayer),
+    Layer.mergeAll(D1Session.layer(d1Session), d1PrimaryLayer, envLayer),
   );
   const requestLayer = Layer.succeedContext(
     Context.make(CurrentRequest, request),
@@ -67,6 +68,12 @@ const makeAppLayer = (
     SubscriptionPlan.layerNoDeps,
     Layer.merge(repositoryLayer, shopifyPartnerLayer),
   );
+  const kvLayer = Layer.provideMerge(KV.layerNoDeps, envLayer);
+  const emailLayer = Layer.provideMerge(Email.layerNoDeps, envLayer);
+  const authLayer = Layer.provideMerge(
+    Auth.layerNoDeps,
+    Layer.mergeAll(kvLayer, repositoryLayer, emailLayer, envLayer),
+  );
   return Layer.mergeAll(
     repositoryLayer,
     shopifyLayer,
@@ -75,6 +82,9 @@ const makeAppLayer = (
     shopAgentClientLayer,
     requestLayer,
     AdminAuth.layer,
+    authLayer,
+    kvLayer,
+    emailLayer,
     d1BookmarkLayer,
     makeLoggerLayer(env),
   );

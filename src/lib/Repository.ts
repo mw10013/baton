@@ -1,8 +1,9 @@
 import type { SqlError } from "effect/unstable/sql";
 
 import { Clock, Context, Effect, Layer, Option, Schema } from "effect";
-import { SqlClient } from "effect/unstable/sql";
 
+import { D1Primary } from "@/lib/D1Primary";
+import { D1Session } from "@/lib/D1Session";
 import * as Domain from "@/lib/Domain";
 
 /**
@@ -141,14 +142,23 @@ export class Repository extends Context.Service<
     >;
   }
 >()("Repository") {
+  /**
+   * Every method names its database path (`D1Session` vs `D1Primary`; the bare
+   * `SqlClient` tag is deliberately never provided for D1). `ShopSession`
+   * methods run on the per-request session: that is the pre-split behavior the
+   * bookmark threading was built around, and its auth-path writes must advance
+   * the bookmark. Member methods split by consequence-of-staleness, noted per
+   * method.
+   */
   static readonly layerNoDeps: Layer.Layer<
     Repository,
     never,
-    SqlClient.SqlClient
+    D1Primary | D1Session
   > = Layer.effect(
     Repository,
     Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
+      const sql = yield* D1Session;
+      const sqlPrimary = yield* D1Primary;
 
       const findShopSession = Effect.fn("Repository.findShopSession")(
         function* (shop: Domain.ShopSession["shop"]) {
@@ -357,11 +367,17 @@ export class Repository extends Context.Service<
         )(rows).pipe(Effect.map((decoded) => decoded.map((row) => row.id)));
       });
 
+      /**
+       * Reads through `D1Primary`: the embedded members screen re-lists
+       * immediately after `addMember`/`deleteMember`, which write through the
+       * primary and so never advance the session bookmark — a session read
+       * could miss the row just written.
+       */
       const listMembers = Effect.fn("Repository.listMembers")(function* (
         shop: Domain.Member["shop"],
       ) {
         const rows =
-          yield* sql`select * from Member where shop = ${shop} order by createdAt, email`;
+          yield* sqlPrimary`select * from Member where shop = ${shop} order by createdAt, email`;
         return yield* decodeRepository(
           Schema.Array(Domain.Member),
           "Invalid Member rows",
@@ -374,7 +390,7 @@ export class Repository extends Context.Service<
         const createdAt = new Date(
           yield* Clock.currentTimeMillis,
         ).toISOString();
-        yield* sql`
+        yield* sqlPrimary`
           insert into Member (id, shop, email, createdAt)
           values (${crypto.randomUUID()}, ${member.shop}, ${member.email}, ${createdAt})
           on conflict (shop, email) do nothing
@@ -384,9 +400,15 @@ export class Repository extends Context.Service<
       const deleteMember = Effect.fn("Repository.deleteMember")(function* (
         member: Pick<Domain.Member, "shop" | "email">,
       ) {
-        yield* sql`delete from Member where shop = ${member.shop} and email = ${member.email}`;
+        yield* sqlPrimary`delete from Member where shop = ${member.shop} and email = ${member.email}`;
       });
 
+      /**
+       * Reads through the per-request replica session (`D1Session`): the
+       * member-area guard tolerates replica lag — a just-revoked membership may
+       * linger for replica-lag seconds, a just-granted one is reachable on
+       * retry.
+       */
       const findMember = Effect.fn("Repository.findMember")(function* (
         member: Pick<Domain.Member, "shop" | "email">,
       ) {
@@ -398,10 +420,15 @@ export class Repository extends Context.Service<
         );
       });
 
+      /**
+       * Reads through `D1Primary`: this feeds the magic-link sign-in gate and
+       * the `user.create.before` backstop, where a stale-replica miss would
+       * wrongly block a just-added member's first login with no visible error.
+       */
       const listMemberShops = Effect.fn("Repository.listMemberShops")(
         function* (email: Domain.Member["email"]) {
           const rows =
-            yield* sql`select shop from Member where email = ${email} order by shop`;
+            yield* sqlPrimary`select shop from Member where email = ${email} order by shop`;
           return yield* decodeRepository(
             Schema.Array(Schema.Struct({ shop: Domain.Shop })),
             "Invalid Member shop rows",

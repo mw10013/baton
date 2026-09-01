@@ -185,6 +185,62 @@ export const Email = Schema.String.pipe(
 );
 export type Email = typeof Email.Type;
 
+export const UserId = Schema.NonEmptyString.pipe(Schema.brand("UserId"));
+export type UserId = typeof UserId.Type;
+
+/**
+ * Mirrors the FK-backed `UserRole` lookup table in `migrations/0001_init.sql`
+ * and better-auth 1.7.2's admin-plugin defaults: without custom access control
+ * only `user`/`admin` exist. `admin` = site operators (us) once `/admin`
+ * migrates onto better-auth in phase 2; per-shop access is always a `Member`
+ * row, never a role.
+ */
+export const UserRole = Schema.Literals(["user", "admin"]);
+export type UserRole = typeof UserRole.Type;
+
+/**
+ * A `User` row: encoded side is the D1 row (ISO text dates, 0/1 booleans),
+ * decoded side the branded domain shape. Better-auth's `getSession` returns
+ * the decoded side already (its adapter coerced the row), so the auth boundary
+ * validates through `Schema.toType(User)` instead of re-running these
+ * transforms.
+ */
+export const User = Schema.Struct({
+  id: UserId,
+  name: Schema.String,
+  email: Email,
+  emailVerified: SqliteBoolean,
+  image: Schema.NullishOr(Schema.String),
+  role: UserRole,
+  banned: SqliteBoolean,
+  banReason: Schema.NullishOr(Schema.String),
+  banExpires: Schema.NullishOr(Schema.DateFromString),
+  createdAt: Schema.DateFromString,
+  updatedAt: Schema.DateFromString,
+});
+export type User = typeof User.Type;
+
+export const AuthSession = Schema.Struct({
+  id: SessionId,
+  expiresAt: Schema.DateFromString,
+  token: Schema.NonEmptyString,
+  createdAt: Schema.DateFromString,
+  updatedAt: Schema.DateFromString,
+  ipAddress: Schema.NullishOr(Schema.String),
+  userAgent: Schema.NullishOr(Schema.String),
+  userId: UserId,
+  impersonatedBy: Schema.NullishOr(UserId),
+});
+export type AuthSession = typeof AuthSession.Type;
+
+export interface SessionContext {
+  readonly user: User;
+  readonly session: AuthSession;
+}
+
+export const LoginInput = Schema.Struct({ email: Email });
+export type LoginInput = typeof LoginInput.Type;
+
 /**
  * Deliberately email-keyed with no userId: the owner grants access by adding an
  * email before any better-auth `User` row exists (there is no invite-accept

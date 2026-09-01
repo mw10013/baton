@@ -21,13 +21,11 @@ Execution plan for `docs/member-access-research.md` (all decisions live there; t
 
 ### 2. Infra (wrangler.jsonc)
 
-- KV namespace binding (demo-mode magic links, key `demo:magicLink:${email}`, TTL 300s).
-- `send_email` binding, `allowed_sender_addresses: ["noreply@mail.mw10013.com"]` (domain already onboarded at account level).
-- `LOGIN_LIMITER` ratelimit binding beside `ADMIN_LOGIN_LIMITER` (which retires in phase 2).
-- Vars: `BETTER_AUTH_URL` per env (`ENVIRONMENT` already exists). Secrets: `BETTER_AUTH_SECRET`, `DEMO_MODE` (local `.dev.vars`).
-- Typecheck regenerates `worker-configuration.d.ts`.
+**Done.** `KV` binding (`baton-kv-local`), `send_email` `EMAIL` binding, `LOGIN_LIMITER` (namespace_id 1002), `EMAIL_FROM` var. Local secrets live in `.env` (not `.dev.vars` — this repo uses `.env`, wrangler reads it when no `.dev.vars` exists): `BETTER_AUTH_URL`, `BETTER_AUTH_SECRET` (placeholder, rotate before real deploy), `DEMO_MODE=true`.
 
 ### 3. Auth foundation (milestone B)
+
+**Done.** Divergences from the notes below: `advanced.backgroundTasks`/`waitUntil` deliberately not set — better-auth awaits `sendMagicLink`, which is what makes the demo-mode KV read-back in `/login` race-free and makes an `EmailError` fail `signInMagicLink` loudly; better-auth core tables added to `migrations/0001_init.sql` (User/Session/Account/Verification + `UserRole` FK-enum, no organization tables, no `activeOrganizationId`).
 
 - `src/lib/Auth.ts`: Effect `Layer.effect` per request wrapping `betterAuth` — core + `magicLink` + `admin` + `tanstackStartCookies` (last). Raw `env.D1` (not the session wrapper). `disableSignUp` paths blocked; sign-in gate = `Member` row exists for email, backstopped by `databaseHooks.user.create.before` returning `false`. `makeRunPromise` seam for callbacks (tceas `refs/tceas/src/lib/LayerEx.ts:122-123`). Wrap ops `Effect.fn("Auth.<op>")` + tagged `AuthError`.
 - `src/lib/Email.ts`: wrap `send_email` binding, `EmailError` with CF codes; local dev body echoed to log annotations only when `ENVIRONMENT === "local"`.
@@ -40,15 +38,17 @@ Execution plan for `docs/member-access-research.md` (all decisions live there; t
 
 ### 4. Member area (milestone C)
 
+**Done.** `requireMember` responds `notFound` (not a redirect) so a non-member cannot distinguish "shop exists" from "no such shop". `/shop` also carries a sign-out button.
+
 - `/shop`: `listShopsForEmail` for the session user; empty state for zero memberships.
 - `/shop/$shop/*`: `beforeLoad` guard + `memberServerFnMiddleware` (mirror `src/lib/AdminServerFnMiddleware.ts`) — `getSession` → `findMember(email, shop)` vs URL param → inject `{ user, shop, runEffect }`.
 - `/shop/$shop` page: shop name header + basic shop info via `env.SHOP_AGENT.getByName(shop)`. Proof of access; workflow screens later.
 
 ### 5. Tests
 
-- Schema drift test: `getSchema(auth.options)` diffed against live D1 via constant-argument pragmas (tceas `refs/tceas/test/integration/auth.test.ts:87-157`).
-- Integration: read magic-link URL from KV, feed to `auth.handler(new Request(url, { redirect: "manual" }))`, harvest cookies.
-- E2E: add member in embedded app → log in via demo link → land on `/shop` → open shop page.
+- Schema drift test: `getSchema(auth.options)` diffed against live D1 via constant-argument pragmas (tceas `refs/tceas/test/integration/auth.test.ts:87-157`). **Done** (`test/integration/auth.test.ts`).
+- Integration: read magic-link URL from KV, feed to `auth.handler(new Request(url, { redirect: "manual" }))`, harvest cookies. **Done** — plus non-member sign-up-blocked backstop and invalid-token tests.
+- E2E: add member in embedded app → log in via demo link → land on `/shop` → open shop page. **Not written**: `e2e/shopify-admin.setup.ts` shells out to `scripts/refresh-shopify-playwright-auth.ts`, which does not exist in this repo, so embedded-admin e2e cannot bootstrap. Login → `/shop` → `/shop/$shop` was verified manually headed (playwright-cli) instead; `/shop/$shop`'s `getShopInfo` verified up to `OfflineSessionInvalidError` against a seeded fake token — the happy path needs a real install.
 
 ## Deferred (phase 2+)
 

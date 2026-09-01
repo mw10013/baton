@@ -45,6 +45,9 @@ export default defineConfig(async () => {
             ADMIN_AUTH_SECRET: "test_admin_auth_secret",
             ADMIN_PASSWORD: "test_admin_password",
             ADMIN_PASSWORD1: "test_admin_password1",
+            BETTER_AUTH_URL: "http://localhost",
+            BETTER_AUTH_SECRET: "test_better_auth_secret",
+            DEMO_MODE: "true",
           },
           durableObjects: {
             TEST_SQL_DO: {

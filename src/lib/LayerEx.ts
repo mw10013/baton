@@ -107,6 +107,21 @@ export const tryPromisePassthrough = <A>(
 ): Effect.Effect<A, unknown> =>
   Effect.tryPromise({ try: evaluate, catch: (cause) => cause });
 
+/**
+ * Callback bridge for layers wrapping callback-driven promise APIs (e.g.
+ * better-auth's `sendMagicLink`/`databaseHooks`): snapshot the already-built
+ * per-request context at layer-build time and derive a local promise runner
+ * from it, so callbacks invoked later from inside the foreign library's
+ * promise machinery still run with this request's services and logger. This is
+ * effect's own idiom — `IndexedDbDatabase` and `NodeHttpServer.makeHandler` do
+ * the identical context snapshot; `runPromiseWith` (not `runForkWith`) because
+ * these libraries await their callbacks and propagate rejections through their
+ * own error paths. The requirement `R` propagates into the calling layer's
+ * dependencies, keeping the layer graph honest.
+ */
+export const makeRunPromise = <R = never>() =>
+  Effect.map(Effect.context<R>(), Effect.runPromiseWith);
+
 export const makeEnvLayer = (env: Env) =>
   Layer.succeedContext(
     Context.make(CloudflareEnv, env).pipe(

@@ -100,7 +100,10 @@ function RouteComponent() {
   ].find(({ mutation }) => mutation.isError);
   const mutationError =
     failedMutation &&
-    mutationErrorMessage(failedMutation.mutation.error, failedMutation.fallback);
+    mutationErrorMessage(
+      failedMutation.mutation.error,
+      failedMutation.fallback,
+    );
 
   return (
     <s-page heading="Members" inlineSize="large">
@@ -111,7 +114,9 @@ function RouteComponent() {
             login needed. Adding an email grants access; removing it revokes
             access. Add your own email to sign in yourself.
           </s-paragraph>
-          {mutationError && <s-banner tone="critical">{mutationError}</s-banner>}
+          {mutationError && (
+            <s-banner tone="critical">{mutationError}</s-banner>
+          )}
           <form
             onSubmit={(event) => {
               event.preventDefault();

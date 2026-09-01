@@ -1,6 +1,5 @@
 import type * as ShopifyApi from "@shopify/shopify-api";
 
-import { D1Client } from "@effect/sql-d1";
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-do";
 import { Agent, callable, getCurrentAgent, type Connection } from "agents";
 import {
@@ -18,6 +17,8 @@ import { SqlClient } from "effect/unstable/sql";
 
 import { CounterRepository } from "@/lib/CounterRepository";
 import { CurrentShopifySession } from "@/lib/CurrentShopifySession";
+import { D1Primary } from "@/lib/D1Primary";
+import { D1Session } from "@/lib/D1Session";
 import * as Domain from "@/lib/Domain";
 import {
   causeToErrorMessage,
@@ -104,20 +105,26 @@ export const runShopAgentMigrations = SqliteMigrator.run({
 );
 
 /**
- * Two SQL stores coexist. `Repository` runs over D1 (shared, sessions);
- * `CounterRepository` runs over the DO's private SQLite (`ctx.storage`,
- * per-shop). Both `D1Client.layer` and `SqliteClient.layer` export a
- * `SqlClient` tag, so ordering matters: the SQLite `provideMerge` comes
- * **after** the D1 `repositoryLayer`, making the ambient `SqlClient` resolve to
- * SQLite. That is what `runShopAgentMigrations` (which requests `SqlClient`
- * directly) needs. Each repository closes over its own client at layer-build
- * time, so the ambient tag only governs the migration.
+ * Two SQL stores coexist. `Repository` runs over D1 (shared, sessions) via the
+ * app-owned `D1Session`/`D1Primary` tags; `CounterRepository` runs over the
+ * DO's private SQLite (`ctx.storage`, per-shop), whose `SqliteClient.layer` is
+ * the only provider of the ambient `SqlClient` tag here. That is what
+ * `runShopAgentMigrations` (which requests `SqlClient` directly) needs. Each
+ * repository closes over its own client at layer-build time, so the ambient
+ * tag only governs the migration.
  */
 const makeRunEffect = (env: Env, storage: DurableObjectStorage) => {
   const envLayer = makeEnvLayer(env);
+  // Both D1 paths resolve to the raw binding here: a Durable Object call has
+  // no per-request replica session, and every read from inside the object is
+  // correctness-sensitive (token refresh) — primary semantics throughout.
   const repositoryLayer = Layer.provideMerge(
     Repository.layerNoDeps,
-    Layer.merge(D1Client.layer({ db: env.D1 }), envLayer),
+    Layer.mergeAll(
+      D1Session.layer(env.D1),
+      Layer.provide(D1Primary.layerNoDeps, envLayer),
+      envLayer,
+    ),
   );
   const shopifyLayer = Layer.provideMerge(Shopify.layerNoDeps, repositoryLayer);
   const durableRepositoryLayer = CounterRepository.layer.pipe(

@@ -18,7 +18,8 @@
     // calling the Partner API, so the `/app` gate and the WebSocket connect
     // check keep running in their real shape and always pass. Set to "true"
     // once the plans are created in Partners — nothing else changes.
-    "BILLING_ENABLED": "false"
+    "BILLING_ENABLED": "false",
+    "EMAIL_FROM": "noreply@mail.mw10013.com"
   },
   "observability": {
     "enabled": true,
@@ -63,12 +64,39 @@
       "new_sqlite_classes": ["ShopAgent"]
     }
   ],
+  // Local id is arbitrary (miniflare keys storage off it). Deployed envs need a
+  // real namespace via `wrangler kv namespace create`. Holds only demo-mode
+  // magic-link URLs (`demo:magicLink:${email}`, TTL-bounded).
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      "id": "baton-kv-local"
+    }
+  ],
+  // Email Sending binding (domain mail.mw10013.com onboarded at the account
+  // level). `allowed_sender_addresses` pins the from-address so a bug cannot
+  // send as an arbitrary @mw10013.com identity. Local dev simulates sends
+  // (wrangler writes bodies to .wrangler/tmp/email/**); add `"remote": true`
+  // for a one-off real-delivery check — real recipients get real mail.
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": ["noreply@mail.mw10013.com"]
+    }
+  ],
   "ratelimits": [
     {
       // Account-wide ID; reuse shares counters across Workers and environments,
       // so pick unused ids before deploying anywhere real.
       "name": "ADMIN_LOGIN_LIMITER",
       "namespace_id": "1001",
+      "simple": { "limit": 5, "period": 60 }
+    },
+    {
+      // Member magic-link sends. ADMIN_LOGIN_LIMITER retires with AdminAuth in
+      // phase 2; this binding is the member-facing replacement.
+      "name": "LOGIN_LIMITER",
+      "namespace_id": "1002",
       "simple": { "limit": 5, "period": 60 }
     }
   ]

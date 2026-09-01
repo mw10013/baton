@@ -27,6 +27,9 @@ function RouteComponent() {
           Cloudflare Workers, Durable Objects, and Effect.
         </s-paragraph>
       </s-section>
+      <s-section accessibilityLabel="Member login">
+        <s-link href="/login">Log in</s-link>
+      </s-section>
       <s-section accessibilityLabel="Legal">
         <s-link href="/privacy">Privacy policy</s-link>
       </s-section>

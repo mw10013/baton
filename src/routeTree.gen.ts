@@ -12,7 +12,10 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AppRouteImport } from './routes/app'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as LoginCallbackRouteImport } from './routes/login-callback'
 import { Route as PrivacyRouteImport } from './routes/privacy'
+import { Route as ShopRouteImport } from './routes/shop'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminLoginRouteImport } from './routes/admin.login'
 import { Route as AdminLogoutRouteImport } from './routes/admin.logout'
@@ -22,8 +25,11 @@ import { Route as AdminShopsRouteImport } from './routes/admin.shops'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppMembersRouteImport } from './routes/app.members'
 import { Route as AuthSplatRouteImport } from './routes/auth.$'
+import { Route as ShopIndexRouteImport } from './routes/shop.index'
+import { Route as ShopShopRouteImport } from './routes/shop.$shop'
 import { Route as WebhooksComplianceRouteImport } from './routes/webhooks.compliance'
 import { Route as AdminShopShopRouteImport } from './routes/admin.shop.$shop'
+import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
 import { Route as WebhooksAppScopes_updateRouteImport } from './routes/webhooks.app.scopes_update'
 import { Route as WebhooksAppUninstalledRouteImport } from './routes/webhooks.app.uninstalled'
 
@@ -42,9 +48,24 @@ const AppRoute = AppRouteImport.update({
   path: '/app',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginCallbackRoute = LoginCallbackRouteImport.update({
+  id: '/login-callback',
+  path: '/login-callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PrivacyRoute = PrivacyRouteImport.update({
   id: '/privacy',
   path: '/privacy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ShopRoute = ShopRouteImport.update({
+  id: '/shop',
+  path: '/shop',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
@@ -93,6 +114,16 @@ const AuthSplatRoute = AuthSplatRouteImport.update({
   path: '/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ShopIndexRoute = ShopIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ShopRoute,
+} as any)
+const ShopShopRoute = ShopShopRouteImport.update({
+  id: '/$shop',
+  path: '/$shop',
+  getParentRoute: () => ShopRoute,
+} as any)
 const WebhooksComplianceRoute = WebhooksComplianceRouteImport.update({
   id: '/webhooks/compliance',
   path: '/webhooks/compliance',
@@ -102,6 +133,11 @@ const AdminShopShopRoute = AdminShopShopRouteImport.update({
   id: '/shop/$shop',
   path: '/shop/$shop',
   getParentRoute: () => AdminRoute,
+} as any)
+const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
+  id: '/api/auth/$',
+  path: '/api/auth/$',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const WebhooksAppScopes_updateRoute =
   WebhooksAppScopes_updateRouteImport.update({
@@ -119,7 +155,10 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
   '/app': typeof AppRouteWithChildren
+  '/login': typeof LoginRoute
+  '/login-callback': typeof LoginCallbackRoute
   '/privacy': typeof PrivacyRoute
+  '/shop': typeof ShopRouteWithChildren
   '/admin/login': typeof AdminLoginRoute
   '/admin/logout': typeof AdminLogoutRoute
   '/admin/orphan-shop-agent-objects': typeof AdminOrphanShopAgentObjectsRoute
@@ -127,15 +166,20 @@ export interface FileRoutesByFullPath {
   '/admin/shops': typeof AdminShopsRoute
   '/app/members': typeof AppMembersRoute
   '/auth/$': typeof AuthSplatRoute
+  '/shop/$shop': typeof ShopShopRoute
   '/webhooks/compliance': typeof WebhooksComplianceRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
+  '/shop/': typeof ShopIndexRoute
   '/admin/shop/$shop': typeof AdminShopShopRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/login-callback': typeof LoginCallbackRoute
   '/privacy': typeof PrivacyRoute
   '/admin/login': typeof AdminLoginRoute
   '/admin/logout': typeof AdminLogoutRoute
@@ -144,10 +188,13 @@ export interface FileRoutesByTo {
   '/admin/shops': typeof AdminShopsRoute
   '/app/members': typeof AppMembersRoute
   '/auth/$': typeof AuthSplatRoute
+  '/shop/$shop': typeof ShopShopRoute
   '/webhooks/compliance': typeof WebhooksComplianceRoute
   '/admin': typeof AdminIndexRoute
   '/app': typeof AppIndexRoute
+  '/shop': typeof ShopIndexRoute
   '/admin/shop/$shop': typeof AdminShopShopRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
 }
@@ -156,7 +203,10 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
   '/app': typeof AppRouteWithChildren
+  '/login': typeof LoginRoute
+  '/login-callback': typeof LoginCallbackRoute
   '/privacy': typeof PrivacyRoute
+  '/shop': typeof ShopRouteWithChildren
   '/admin/login': typeof AdminLoginRoute
   '/admin/logout': typeof AdminLogoutRoute
   '/admin/orphan-shop-agent-objects': typeof AdminOrphanShopAgentObjectsRoute
@@ -164,10 +214,13 @@ export interface FileRoutesById {
   '/admin/shops': typeof AdminShopsRoute
   '/app/members': typeof AppMembersRoute
   '/auth/$': typeof AuthSplatRoute
+  '/shop/$shop': typeof ShopShopRoute
   '/webhooks/compliance': typeof WebhooksComplianceRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
+  '/shop/': typeof ShopIndexRoute
   '/admin/shop/$shop': typeof AdminShopShopRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
 }
@@ -177,7 +230,10 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/app'
+    | '/login'
+    | '/login-callback'
     | '/privacy'
+    | '/shop'
     | '/admin/login'
     | '/admin/logout'
     | '/admin/orphan-shop-agent-objects'
@@ -185,15 +241,20 @@ export interface FileRouteTypes {
     | '/admin/shops'
     | '/app/members'
     | '/auth/$'
+    | '/shop/$shop'
     | '/webhooks/compliance'
     | '/admin/'
     | '/app/'
+    | '/shop/'
     | '/admin/shop/$shop'
+    | '/api/auth/$'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/login'
+    | '/login-callback'
     | '/privacy'
     | '/admin/login'
     | '/admin/logout'
@@ -202,10 +263,13 @@ export interface FileRouteTypes {
     | '/admin/shops'
     | '/app/members'
     | '/auth/$'
+    | '/shop/$shop'
     | '/webhooks/compliance'
     | '/admin'
     | '/app'
+    | '/shop'
     | '/admin/shop/$shop'
+    | '/api/auth/$'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
   id:
@@ -213,7 +277,10 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/app'
+    | '/login'
+    | '/login-callback'
     | '/privacy'
+    | '/shop'
     | '/admin/login'
     | '/admin/logout'
     | '/admin/orphan-shop-agent-objects'
@@ -221,10 +288,13 @@ export interface FileRouteTypes {
     | '/admin/shops'
     | '/app/members'
     | '/auth/$'
+    | '/shop/$shop'
     | '/webhooks/compliance'
     | '/admin/'
     | '/app/'
+    | '/shop/'
     | '/admin/shop/$shop'
+    | '/api/auth/$'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
   fileRoutesById: FileRoutesById
@@ -233,9 +303,13 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRouteWithChildren
   AppRoute: typeof AppRouteWithChildren
+  LoginRoute: typeof LoginRoute
+  LoginCallbackRoute: typeof LoginCallbackRoute
   PrivacyRoute: typeof PrivacyRoute
+  ShopRoute: typeof ShopRouteWithChildren
   AuthSplatRoute: typeof AuthSplatRoute
   WebhooksComplianceRoute: typeof WebhooksComplianceRoute
+  ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   WebhooksAppScopes_updateRoute: typeof WebhooksAppScopes_updateRoute
   WebhooksAppUninstalledRoute: typeof WebhooksAppUninstalledRoute
 }
@@ -263,11 +337,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login-callback': {
+      id: '/login-callback'
+      path: '/login-callback'
+      fullPath: '/login-callback'
+      preLoaderRoute: typeof LoginCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/privacy': {
       id: '/privacy'
       path: '/privacy'
       fullPath: '/privacy'
       preLoaderRoute: typeof PrivacyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/shop': {
+      id: '/shop'
+      path: '/shop'
+      fullPath: '/shop'
+      preLoaderRoute: typeof ShopRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/': {
@@ -333,6 +428,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/shop/': {
+      id: '/shop/'
+      path: '/'
+      fullPath: '/shop/'
+      preLoaderRoute: typeof ShopIndexRouteImport
+      parentRoute: typeof ShopRoute
+    }
+    '/shop/$shop': {
+      id: '/shop/$shop'
+      path: '/$shop'
+      fullPath: '/shop/$shop'
+      preLoaderRoute: typeof ShopShopRouteImport
+      parentRoute: typeof ShopRoute
+    }
     '/webhooks/compliance': {
       id: '/webhooks/compliance'
       path: '/webhooks/compliance'
@@ -346,6 +455,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/admin/shop/$shop'
       preLoaderRoute: typeof AdminShopShopRouteImport
       parentRoute: typeof AdminRoute
+    }
+    '/api/auth/$': {
+      id: '/api/auth/$'
+      path: '/api/auth/$'
+      fullPath: '/api/auth/$'
+      preLoaderRoute: typeof ApiAuthSplatRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/webhooks/app/scopes_update': {
       id: '/webhooks/app/scopes_update'
@@ -398,13 +514,29 @@ const AppRouteChildren: AppRouteChildren = {
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
+interface ShopRouteChildren {
+  ShopShopRoute: typeof ShopShopRoute
+  ShopIndexRoute: typeof ShopIndexRoute
+}
+
+const ShopRouteChildren: ShopRouteChildren = {
+  ShopShopRoute: ShopShopRoute,
+  ShopIndexRoute: ShopIndexRoute,
+}
+
+const ShopRouteWithChildren = ShopRoute._addFileChildren(ShopRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRouteWithChildren,
   AppRoute: AppRouteWithChildren,
+  LoginRoute: LoginRoute,
+  LoginCallbackRoute: LoginCallbackRoute,
   PrivacyRoute: PrivacyRoute,
+  ShopRoute: ShopRouteWithChildren,
   AuthSplatRoute: AuthSplatRoute,
   WebhooksComplianceRoute: WebhooksComplianceRoute,
+  ApiAuthSplatRoute: ApiAuthSplatRoute,
   WebhooksAppScopes_updateRoute: WebhooksAppScopes_updateRoute,
   WebhooksAppUninstalledRoute: WebhooksAppUninstalledRoute,
 }

@@ -1,9 +1,10 @@
-import { D1Client } from "@effect/sql-d1";
 import { env } from "cloudflare:workers";
 import { ConfigProvider, Context, Layer } from "effect";
 
 import { CloudflareEnv } from "@/lib/CloudflareEnv";
 import { CurrentRequest } from "@/lib/CurrentRequest";
+import { D1Primary } from "@/lib/D1Primary";
+import { D1Session } from "@/lib/D1Session";
 import { Repository } from "@/lib/Repository";
 import { Shopify } from "@/lib/Shopify";
 
@@ -20,10 +21,13 @@ export const shopifyTestLayer = () => {
       ),
     ),
   );
-  const sqlLayer = D1Client.layer({ db: env.D1 });
   const repositoryLayer = Layer.provideMerge(
     Repository.layerNoDeps,
-    Layer.merge(sqlLayer, baseLayer),
+    Layer.mergeAll(
+      D1Session.layer(env.D1),
+      Layer.provide(D1Primary.layerNoDeps, baseLayer),
+      baseLayer,
+    ),
   );
   const requestLayer = Layer.succeedContext(
     Context.make(CurrentRequest, new Request("https://example.com/")),

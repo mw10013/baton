@@ -1,11 +1,13 @@
-import { D1Client } from "@effect/sql-d1";
 import { assert, describe, it } from "@effect/vitest";
 import { env } from "cloudflare:workers";
 import { Effect, Layer, Option, Ref, Schema } from "effect";
 import { TestClock } from "effect/testing";
 import { afterEach } from "vitest";
 
+import { D1Primary } from "@/lib/D1Primary";
+import { D1Session } from "@/lib/D1Session";
 import * as Domain from "@/lib/Domain";
+import { makeEnvLayer } from "@/lib/LayerEx";
 import { Repository } from "@/lib/Repository";
 import { ShopifyPartner, ShopifyPartnerError } from "@/lib/ShopifyPartner";
 import {
@@ -14,7 +16,12 @@ import {
 } from "@/lib/SubscriptionPlan";
 
 const repositoryLayer = Repository.layerNoDeps.pipe(
-  Layer.provide(D1Client.layer({ db: env.D1 })),
+  Layer.provide(
+    Layer.merge(
+      D1Session.layer(env.D1),
+      Layer.provide(D1Primary.layerNoDeps, makeEnvLayer(env)),
+    ),
+  ),
 );
 
 const shop = Schema.decodeUnknownSync(Domain.Shop)("plan.myshopify.com");
