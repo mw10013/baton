@@ -99,5 +99,141 @@
       "namespace_id": "1002",
       "simple": { "limit": 5, "period": 60 }
     }
-  ]
+  ],
+  // Skeleton deploy targets. Wrangler does NOT inherit bindings or `vars` into
+  // a named env (https://developers.cloudflare.com/workers/wrangler/environments/),
+  // so every binding is re-declared here; `observability`, `compatibility_*`
+  // and `main` are inherited. Placeholders (`database_id`, KV `id`,
+  // `SHOPIFY_PARTNER_APP_ID`) are filled by `pnpm d1:reset:<env>` (writes the
+  // real D1 id back into this block), `wrangler kv namespace create baton-kv
+  // --env <env>`, and `shopify app info --config <env>`. The blocks exist now
+  // so `ENVIRONMENT` narrows to "local" | "staging" | "production" in
+  // `worker-configuration.d.ts` and `wrangler deploy --env staging` resolves;
+  // nothing is deployed to either yet.
+  "env": {
+    "staging": {
+      "name": "baton-staging",
+      "vars": {
+        "ENVIRONMENT": "staging",
+        "CLOUDFLARE_ACCOUNT_ID": "87997fc2724b0127effb8e4524989975",
+        "SHOPIFY_APP_URL": "https://baton-staging.mw10013.workers.dev",
+        "SHOPIFY_PARTNER_ORG_ID": "2798461",
+        "SHOPIFY_PARTNER_APP_ID": "",
+        "SHOPIFY_APP_HANDLE": "baton-staging",
+        "BILLING_ENABLED": "false",
+        "EMAIL_FROM": "noreply@mail.mw10013.com"
+      },
+      "d1_databases": [
+        {
+          "binding": "D1",
+          "database_name": "baton-d1-staging",
+          "database_id": "baton-d1-staging"
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "SHOP_AGENT",
+            "class_name": "ShopAgent"
+          }
+        ]
+      },
+      "migrations": [
+        {
+          "tag": "v1",
+          "new_sqlite_classes": ["ShopAgent"]
+        }
+      ],
+      "kv_namespaces": [
+        {
+          "binding": "KV",
+          "id": "baton-kv-staging"
+        }
+      ],
+      "send_email": [
+        {
+          "name": "EMAIL",
+          "allowed_sender_addresses": ["noreply@mail.mw10013.com"]
+        }
+      ],
+      "ratelimits": [
+        {
+          // Account-wide ID; must differ from local and production.
+          "name": "ADMIN_LOGIN_LIMITER",
+          "namespace_id": "1003",
+          "simple": { "limit": 5, "period": 60 }
+        },
+        {
+          "name": "LOGIN_LIMITER",
+          "namespace_id": "1004",
+          "simple": { "limit": 5, "period": 60 }
+        }
+      ]
+    },
+    "production": {
+      "name": "baton",
+      "routes": [
+        {
+          "pattern": "baton.mw10013.com",
+          "custom_domain": true
+        }
+      ],
+      "vars": {
+        "ENVIRONMENT": "production",
+        "CLOUDFLARE_ACCOUNT_ID": "87997fc2724b0127effb8e4524989975",
+        "SHOPIFY_APP_URL": "https://baton.mw10013.com",
+        "SHOPIFY_PARTNER_ORG_ID": "2798461",
+        "SHOPIFY_PARTNER_APP_ID": "",
+        "SHOPIFY_APP_HANDLE": "baton-live",
+        "BILLING_ENABLED": "false",
+        "EMAIL_FROM": "noreply@mail.mw10013.com"
+      },
+      "d1_databases": [
+        {
+          "binding": "D1",
+          "database_name": "baton-d1-production",
+          "database_id": "baton-d1-production"
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "SHOP_AGENT",
+            "class_name": "ShopAgent"
+          }
+        ]
+      },
+      "migrations": [
+        {
+          "tag": "v1",
+          "new_sqlite_classes": ["ShopAgent"]
+        }
+      ],
+      "kv_namespaces": [
+        {
+          "binding": "KV",
+          "id": "baton-kv-production"
+        }
+      ],
+      "send_email": [
+        {
+          "name": "EMAIL",
+          "allowed_sender_addresses": ["noreply@mail.mw10013.com"]
+        }
+      ],
+      "ratelimits": [
+        {
+          // Account-wide ID; must differ from local and staging.
+          "name": "ADMIN_LOGIN_LIMITER",
+          "namespace_id": "1005",
+          "simple": { "limit": 5, "period": 60 }
+        },
+        {
+          "name": "LOGIN_LIMITER",
+          "namespace_id": "1006",
+          "simple": { "limit": 5, "period": 60 }
+        }
+      ]
+    }
+  }
 }
