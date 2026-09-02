@@ -4,15 +4,13 @@ import { Effect, Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
-import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { resolveEntitlements } from "@/lib/SubscriptionPlan";
 
 /**
- * The skeleton's one merchant-facing page. It exists to show every seam of the
- * stack carrying real data: the Durable Object calls the Shopify Admin API with
- * the shop's offline session out of D1, and D1's cached plan handle resolves to
- * an entitlement (granted unconditionally while `BILLING_ENABLED` is off).
+ * The skeleton's one merchant-facing page displays the entitlement resolved
+ * from D1's cached plan handle (granted unconditionally while
+ * `BILLING_ENABLED` is off).
  *
  * The plan is resolved server-side rather than read from `/app` route context,
  * even though `beforeLoad` already has it: this loader is isomorphic and runs
@@ -27,14 +25,7 @@ const getLoaderData = createServerFn({ method: "GET" })
         const shop = yield* Schema.decodeUnknownEffect(Domain.Shop)(
           session.shop,
         );
-        const client = yield* ShopAgentClient;
-        return yield* Effect.all(
-          {
-            entitlements: resolveEntitlements(shop),
-            shopInfo: client.getShopInfo(shop),
-          },
-          { concurrency: "unbounded" },
-        );
+        return { entitlements: yield* resolveEntitlements(shop) };
       }),
     ),
   );
@@ -45,22 +36,11 @@ export const Route = createFileRoute("/app/")({
 });
 
 function RouteComponent() {
-  const { entitlements, shopInfo } = Route.useLoaderData();
+  const { entitlements } = Route.useLoaderData();
   const { plan, managePlanUrl } = Route.useRouteContext();
 
   return (
     <s-page heading="Baton" inlineSize="large">
-      <s-section heading="Shop" accessibilityLabel="Shop">
-        <s-stack gap="base">
-          <s-paragraph color="subdued">
-            Read from the Shopify Admin API by the Durable Object, using the
-            offline session stored in D1.
-          </s-paragraph>
-          <s-heading>{shopInfo.name}</s-heading>
-          <s-paragraph>{shopInfo.myshopifyDomain}</s-paragraph>
-        </s-stack>
-      </s-section>
-
       <s-section heading="Plan" accessibilityLabel="Plan">
         <s-stack gap="base">
           <s-paragraph color="subdued">
