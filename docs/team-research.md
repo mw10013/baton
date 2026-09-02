@@ -194,3 +194,217 @@ All subject to revision as the POC progresses.
 ## Explicitly not now
 
 Team roles/leads, team-level permissions, nested teams, moving members between shops, org plugin teams (`better-auth` organization plugin — already rejected).
+
+---
+
+# Teams — spec (phase 1)
+
+Implementable spec derived from the research above. Decisions (2026-09-02, mw): **teams only** (workflow templates + archive guard deferred), **list + detail routes** in the embedded app, **edit `0001_init.sql`** (pre-release, `pnpm d1:reset`), **guard returns teams + member area shows them**.
+
+## Goals / non-goals
+
+- Goals: CRUD-ish teams per shop in D1; membership edges to `Member`; archive not delete; member-area guard exposes `teamIds`; member sees their teams or an empty state.
+- Non-goals: workflow templates, `countStepsOwnedBy` archive guard (archive is **unguarded** this phase; the guard slots into `archiveTeam` later), roles, DO changes of any kind.
+
+## Schema — `migrations/0001_init.sql` (append after `Member`)
+
+```sql
+create table if not exists Team (
+  id text primary key,
+  shop text not null references ShopSession (shop) on delete cascade,
+  name text not null check (name = trim(name) and length(name) > 0),
+  createdAt text not null,
+  archivedAt text
+);
+
+create unique index if not exists Team_shop_name_uidx on Team (shop, name collate nocase);
+
+create table if not exists TeamMember (
+  teamId text not null references Team (id) on delete cascade,
+  memberId text not null references Member (id) on delete cascade,
+  createdAt text not null,
+  primary key (teamId, memberId)
+);
+
+create index if not exists TeamMember_memberId_idx on TeamMember (memberId);
+```
+
+- `archivedAt` null = active. Uniqueness applies across active **and** archived (an archived name blocks reuse; rename the archived one first — keeps history names unambiguous).
+- `TeamMember_memberId_idx` serves the guard join (`memberId → teamIds`).
+- Same-shop invariant for `TeamMember` is by construction (both `Team.shop` and `Member.shop` are FK-bound); `addTeamMember` still asserts it in SQL (below) so a forged id pair cannot cross shops.
+
+## Domain — `src/lib/Domain.ts`
+
+```ts
+export const TeamId = Schema.NonEmptyString.pipe(Schema.brand("TeamId"));
+export type TeamId = typeof TeamId.Type;
+
+export const MemberId = Schema.NonEmptyString.pipe(Schema.brand("MemberId"));
+export type MemberId = typeof MemberId.Type;
+
+// trim on decode, like Email; 1..64 chars after trim
+export const TeamName = Schema.String.pipe(
+  Schema.decodeTo(
+    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64)).pipe(Schema.brand("TeamName")),
+    { decode: Getter.transform((s) => s.trim()), encode: Getter.passthrough() },
+  ),
+);
+export type TeamName = typeof TeamName.Type;
+
+export const Team = Schema.Struct({
+  id: TeamId,
+  shop: Shop,
+  name: TeamName,
+  createdAt: Schema.String,
+  archivedAt: Schema.NullOr(Schema.String),
+});
+export type Team = typeof Team.Type;
+
+export const TeamMember = Schema.Struct({
+  teamId: TeamId,
+  memberId: MemberId,
+  createdAt: Schema.String,
+});
+export type TeamMember = typeof TeamMember.Type;
+
+export const TeamDetail = Schema.Struct({
+  team: Team,
+  members: Schema.Array(Schema.Struct({ member: Member, inTeam: Schema.Boolean })),
+});
+export type TeamDetail = typeof TeamDetail.Type;
+
+export const MemberAccess = Schema.Struct({
+  shop: Shop,
+  memberId: MemberId,
+  teams: Schema.Array(Schema.Struct({ id: TeamId, name: TeamName })),
+});
+export type MemberAccess = typeof MemberAccess.Type;
+```
+
+- `Member.id` becomes `MemberId` (brand). Existing call sites use `Domain.Member["id"]` via Pick so nothing else changes.
+- Mirror `Email`'s `decodeTo` shape exactly (check `Domain.ts:180` for the `Getter` import used there).
+
+## Repository — `src/lib/Repository.ts`
+
+New service methods; all writes through `sqlPrimary`, embedded-screen reads through `sqlPrimary` (same reason as `listMembers`), guard read through `sql` (session; same tolerance as `findMember`).
+
+```ts
+readonly listTeams: (params: { readonly shop: Domain.Shop; readonly includeArchived: boolean })
+  => Effect.Effect<readonly Domain.Team[], SqlError.SqlError | RepositoryError>;
+readonly createTeam: (team: Pick<Domain.Team, "shop" | "name">)
+  => Effect.Effect<Domain.Team, SqlError.SqlError | RepositoryError | TeamNameTakenError>;
+readonly renameTeam: (team: Pick<Domain.Team, "shop" | "id" | "name">)
+  => Effect.Effect<void, SqlError.SqlError | TeamNameTakenError | TeamNotFoundError>;
+readonly setTeamArchived: (team: Pick<Domain.Team, "shop" | "id"> & { readonly archived: boolean })
+  => Effect.Effect<void, SqlError.SqlError | TeamNotFoundError>;
+readonly findTeamDetail: (team: Pick<Domain.Team, "shop" | "id">)
+  => Effect.Effect<Option.Option<Domain.TeamDetail>, SqlError.SqlError | RepositoryError>;
+readonly setTeamMember: (params: { readonly shop: Domain.Shop; readonly teamId: Domain.TeamId; readonly memberId: Domain.MemberId; readonly inTeam: boolean })
+  => Effect.Effect<void, SqlError.SqlError | TeamNotFoundError>;
+readonly findMemberAccess: (member: Pick<Domain.Member, "shop" | "email">)
+  => Effect.Effect<Option.Option<Domain.MemberAccess>, SqlError.SqlError | RepositoryError>;
+```
+
+Errors (add beside `RepositoryError`, same `Schema.TaggedError` style):
+
+```ts
+export class TeamNameTakenError extends Schema.TaggedError<TeamNameTakenError>()("TeamNameTakenError", { shop: Domain.Shop, name: Domain.TeamName }) {}
+export class TeamNotFoundError extends Schema.TaggedError<TeamNotFoundError>()("TeamNotFoundError", { shop: Domain.Shop, teamId: Domain.TeamId }) {}
+```
+
+SQL sketches (lowercase, positional via tagged template):
+
+```ts
+// createTeam — detect the unique violation, don't pre-check (race-free)
+yield* sqlPrimary`insert into Team (id, shop, name, createdAt, archivedAt) values (${id}, ${shop}, ${name}, ${createdAt}, null)`.pipe(
+  Effect.catchIf(isUniqueViolation, () => new TeamNameTakenError({ shop, name })),
+);
+// isUniqueViolation: SqlError whose cause message contains "UNIQUE constraint failed: Team.shop, Team.name" — verify exact D1 text in the integration test before relying on it.
+
+// renameTeam
+const result = yield* sqlPrimary`update Team set name = ${name} where id = ${id} and shop = ${shop}`.raw;   // check meta.changes === 0 → TeamNotFoundError; unique violation → TeamNameTakenError
+
+// setTeamArchived
+update Team set archivedAt = case when ${archived} then coalesce(archivedAt, ${now}) else null end where id = ? and shop = ?
+
+// findTeamDetail — one round trip via batch-free join, decoded to TeamDetail
+select m.id, m.shop, m.email, m.createdAt, tm.teamId is not null as inTeam
+from Member m left join TeamMember tm on tm.memberId = m.id and tm.teamId = ?
+where m.shop = ? order by m.createdAt, m.email
+-- plus: select * from Team where id = ? and shop = ?  (Option.none if missing)
+
+// setTeamMember (inTeam=true) — the shop assertion is in the insert-select, so a cross-shop pair inserts zero rows
+insert into TeamMember (teamId, memberId, createdAt)
+select t.id, m.id, ? from Team t join Member m on m.shop = t.shop
+where t.id = ? and t.shop = ? and m.id = ? and t.archivedAt is null
+on conflict do nothing
+-- (inTeam=false)
+delete from TeamMember where teamId = ? and memberId in (select id from Member where id = ? and shop = ?)
+
+// findMemberAccess — replaces findMember in the guard; one query, session client
+select m.id as memberId, t.id as teamId, t.name as teamName
+from Member m left join TeamMember tm on tm.memberId = m.id
+left join Team t on t.id = tm.teamId and t.archivedAt is null
+where m.shop = ? and m.email = ? order by t.name collate nocase
+-- zero rows → Option.none; rows with null teamId collapse to teams: []
+```
+
+- `.raw` / `meta.changes`: confirm the D1 sql client exposes changed-row count (see `refs/effect` `unstable/sql` + `D1Session.ts`). If not, fall back to `select 1` after update.
+- Keep `findMember` for other callers; the guard moves to `findMemberAccess`.
+- JSDoc per method only where the D1Primary/D1Session choice or a subtle SQL trick (insert-select shop assertion) needs reasoning, matching the existing style.
+
+## Guard — `src/lib/MemberServerFnMiddleware.ts`
+
+```ts
+export const requireMember = (input: { readonly shop: string; readonly email: Domain.Email }) =>
+  Effect.gen(function* () {
+    const shop = yield* Schema.decodeUnknownEffect(Domain.Shop)(input.shop);
+    const access = yield* (yield* Repository).findMemberAccess({ shop, email: input.email });
+    return yield* Option.match(access, { onNone: () => Effect.fail(notFound()), onSome: Effect.succeed });
+  });
+```
+
+- Return type changes from `Shop` to `MemberAccess`. Update `shop.$shop.tsx` (and any other `requireMember` caller — grep) to destructure `{ shop }`. Behavior for non-members unchanged (`notFound`).
+
+## Embedded UI
+
+### `src/routes/app.teams.tsx` — list
+
+- Loader `getTeams({ includeArchived })` (search param `?archived=1`, validated with `Schema`), via `shopifyServerFnMiddleware` + `Repository.listTeams`.
+- Server fns: `createTeamFn({ name })`, `renameTeamFn({ teamId, name })`, `setTeamArchivedFn({ teamId, archived })`. Validators `Schema.toStandardSchemaV1(...)` with `Domain.TeamName`-compatible input (raw string; decode inside handler like `decodeEmail`).
+- Page: `<s-page heading="Teams">`; "Create team" section with one text field (pattern = `app.members.tsx` form + `useMutation` + `router.invalidate`); table of teams: name (link to `/app/teams/$teamId`), member count (add `memberCount` to `listTeams` via correlated subquery), created, Archive/Restore button; "Show archived" toggle.
+- Errors: `TeamNameTakenError` → field error "A team with that name already exists." via `mutationErrorMessage` / `fieldError` (check how `form.ts` maps tagged errors; extend if it only knows `Email`).
+- Nav: add `<s-link href="/app/teams">Teams</s-link>` in `app.tsx` after Members.
+
+### `src/routes/app.teams.$teamId.tsx` — detail
+
+- Loader `getTeamDetail({ teamId })` → `Repository.findTeamDetail`; `Option.none` → `notFound()`.
+- Page: heading = team name, subdued "Archived" badge if archived; inline rename field; section "Members" listing every shop member with an `s-checkbox` bound to `inTeam`; toggling calls `setTeamMemberFn({ teamId, memberId, inTeam })` then invalidates. Checkboxes disabled while archived (server also refuses: insert-select filters `archivedAt is null`; removal still allowed).
+- Empty state when the shop has no members: link to `/app/members`.
+
+## Member area — `src/routes/shop.$shop.tsx`
+
+- Loader already calls `requireMember`; return `{ shop, teams: access.teams, ... }`.
+- Render a "Your teams" section: list names; if empty → `<s-banner>`-style empty state: "You're not on a team yet. Ask the shop owner to add you to a team to see work." (Copy mirrors the decision "zero teams → sees nothing to do".)
+- No new server fn; no DO call.
+
+## Tests
+
+- `test/integration/repository.test.ts`: create/list (nocase uniqueness, archived excluded by default, included with flag), rename conflict → `TeamNameTakenError`, archive/restore idempotent, `setTeamMember` cross-shop pair inserts nothing, archived team refuses add, member delete cascades `TeamMember`, shop delete cascades `Team`, `findMemberAccess` returns `teams: []` for teamless member and excludes archived teams, `Option.none` for non-member.
+- `test/integration/member-area.test.ts`: `/shop/$shop` loader shape includes `teams`; non-member still `notFound`.
+- `test/integration/auth.test.ts` schema drift test: unaffected (only better-auth tables), but run it.
+- Browser/e2e: optional smoke — create team, add member, see team on member page (`api.e2e.seed.ts` may need a `teams` seed hook).
+
+## Implementation order
+
+1. Migration + `Domain` types → `pnpm d1:reset`, `pnpm typecheck`.
+2. `Repository` methods + errors + integration tests.
+3. `requireMember` → `MemberAccess`; fix callers; member-area test.
+4. `app.teams.tsx`, `app.teams.$teamId.tsx`, nav link.
+5. `shop.$shop.tsx` teams section.
+6. `pnpm typecheck && pnpm lint && pnpm test`.
+
+## Deferred hooks (so phase 2 is additive)
+
+- `archiveTeam` becomes: `shopAgent.countStepsOwnedBy(teamId)` → refuse if > 0 → `setTeamArchived`. Only the server fn changes; repository API stays.
+- DO rows carry `teamId text` (opaque); event rows snapshot `teamId, teamName, memberId, email`.
