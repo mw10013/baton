@@ -7,7 +7,7 @@ export const Route = createFileRoute("/")({
       throw redirect({ href: `/app${location.searchStr}` });
     }
   },
-  head: () => ({ meta: [{ title: "Baton" }] }),
+  head: () => ({ meta: [{ title: "Baton | Made-to-order production workflows" }] }),
   component: RouteComponent,
 });
 
@@ -23,8 +23,8 @@ function RouteComponent() {
     <s-page heading="Baton" inlineSize="small">
       <s-section accessibilityLabel="Baton overview">
         <s-paragraph>
-          Baton is a Shopify admin app skeleton built on TanStack Start,
-          Cloudflare Workers, Durable Objects, and Effect.
+          Baton gives made-to-order Shopify merchants a clear production
+          workflow from order to completion.
         </s-paragraph>
       </s-section>
       <s-section accessibilityLabel="Member login">

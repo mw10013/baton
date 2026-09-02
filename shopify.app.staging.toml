@@ -16,7 +16,7 @@
 # See docs/shopify-web-toml-conflict-research.md.
 
 client_id = ""
-name = "baton-staging"
+name = "Baton"
 handle = "baton-staging"
 application_url = ""
 embedded = true

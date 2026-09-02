@@ -27,7 +27,7 @@ export const Route = createRootRouteWithContext<{
         content: "width=device-width, initial-scale=1",
       },
       {
-        title: "Baton",
+        title: "Baton | Made-to-order production workflows",
       },
     ],
     links: [

@@ -8,7 +8,7 @@ import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { resolveEntitlements } from "@/lib/SubscriptionPlan";
 
 /**
- * The skeleton's one merchant-facing page displays the entitlement resolved
+ * The current merchant-facing page displays the entitlement resolved
  * from D1's cached plan handle (granted unconditionally while
  * `BILLING_ENABLED` is off).
  *

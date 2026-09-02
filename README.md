@@ -1,8 +1,8 @@
 # Baton
 
-A Shopify admin app skeleton: TanStack Start + Cloudflare Workers + Durable Objects + D1 + Effect v4.
+Made-to-order production workflows for Shopify merchants.
 
-Everything below the UI is production shape — auth, session storage, per-shop Durable Object with its own SQLite, WebSocket live updates, webhooks, a password-gated operator console, and a billing gate. The merchant-facing surface is deliberately one page whose only job is to prove each of those seams carries real data.
+Baton runs on TanStack Start, Cloudflare Workers, Durable Objects, D1, and Effect v4. It provides the production workflow foundation: auth, session storage, per-shop Durable Objects with private SQLite, WebSocket live updates, order webhooks, member access, an operator console, and gated billing.
 
 ## What is here
 
@@ -16,16 +16,14 @@ Everything below the UI is production shape — auth, session storage, per-shop 
 | Billing gate (App Pricing via Partner API)         | `src/lib/SubscriptionPlan.ts`, `src/lib/ShopifyPartner.ts` |
 | Mandatory + lifecycle webhooks                     | `src/routes/webhooks.*.ts`                                 |
 | Operator console                                   | `src/routes/admin.*.tsx`                                   |
-| Merchant home (the demo)                           | `src/routes/app.index.tsx`                                 |
+| Production workflow home                           | `src/routes/app.index.tsx`                                 |
 | Public landing + privacy policy                    | `src/routes/index.tsx`, `src/routes/privacy.tsx`           |
 
-The home page shows three things, each one a proof rather than a feature:
+The current home page exposes foundational production-workflow data:
 
 - **Counter** — read and written in the shop's Durable Object SQLite; a bump broadcasts over the WebSocket so every open tab updates without a reload.
 - **Shop** — read from the Shopify Admin API _by the Durable Object_, using the offline session stored in D1.
 - **Plan** — resolved from the plan handle cached on the D1 session row.
-
-Delete the sections, keep the wiring.
 
 ## Billing is off
 
