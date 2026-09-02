@@ -11,7 +11,7 @@ Scope: get Shopify orders into the `ShopAgent` Durable Object's private SQLite s
 - **Orchestrate with a Cloudflare Workflow, stream in the DO — the motio shape.** The sibling project `../motio` already does exactly this with Effect v4: `ScanWorkflow` (an `AgentWorkflow`) submits the bulk op, polls with `step.sleep`, then calls `agent.onScanStream({ url })`; the DO streams the file through `HttpClientResponse.stream` → `Ndjson.decodeSchema` → `Stream.mapAccumEffect` (group children under their `__parentId` parent) → `Stream.runFoldEffect` (upsert). Port `src/lib/ScanWorkflow.ts`, `src/lib/ScanBulkRepository.ts`, and `src/lib/ShopAgentScanStream.ts` rather than redesigning.
 - **Trigger = a manual "Sync last 30 days" button, for now**, as a `@callable()` on the DO over the already-authenticated socket (no server-fn hop). The DO refuses if `SyncState` shows a run in flight, otherwise starts a workflow with `this.runWorkflow(...)` under a fresh per-run id. Nothing hangs off token exchange, DO wake, or a timer; the only Shopify polling is the workflow checking the one bulk op it started. A staleness check on app open is a later one-liner.
 - **Window is a constant:** `ORDER_SYNC_WINDOW_DAYS = 30`. Anything ≤ 60 works without `read_all_orders`.
-- **Paid gate exists in the data, not the trigger.** `fullyPaid: Boolean` and `displayFinancialStatus` (`PAID`, `PARTIALLY_PAID`, `PENDING`, `AUTHORIZED`, …) are stored per order; `orders/paid` is subscribed so the transition arrives promptly. What to *do* when an order becomes paid is deferred until rows exist.
+- **Paid gate exists in the data, not the trigger.** `fullyPaid: Boolean` and `displayFinancialStatus` (`PAID`, `PARTIALLY_PAID`, `PENDING`, `AUTHORIZED`, …) are stored per order; `orders/paid` is subscribed so the transition arrives promptly. What to _do_ when an order becomes paid is deferred until rows exist.
 - **Topics:** `orders/create`, `orders/updated`, `orders/paid`, `orders/cancelled`, `orders/fulfilled`, `orders/partially_fulfilled`, `orders/delete` on one `/webhooks/orders` route with `include_fields = ["id", "admin_graphql_api_id", "updated_at"]`. Skip `orders/edited` and `refunds/create` (non-order payloads; both also fire `orders/updated`). No `bulk_operations/finish`.
 - **No customer data.** The product is about making the thing, not shipping it or talking to the buyer. No `customer`, no `shippingAddress`, no email. What stays: order number, timestamps, statuses, order tags/note, line items with `product.tags` and line-item `customAttributes` (the personalization fields a maker needs). That keeps Baton at protected-data Level 1 (orders are still a protected resource) and off `read_customers`.
 - **Schema:** `ShopOrder`, `OrderLineItem` (snapshotted `productTags`), `WebhookDelivery` (dedupe), `SyncState` (in-flight bulk op id, last sync). GIDs as text keys; a `raw` JSON column for prototyping (it holds exactly what the query selects, so no customer fields ever land in it).
@@ -22,7 +22,7 @@ Scope: get Shopify orders into the `ShopAgent` Durable Object's private SQLite s
 The Partner Dashboard step is **first**, not optional, and not deferrable to launch — see "Protected Customer Data Gates Order Webhooks" for why the earlier draft of this document got that wrong.
 
 1. Partner Dashboard → **Apps** → the app → **Distribution**: select a distribution method if none is set. Nothing below is reachable until one is ("Before you can request access to protected customer data, including on development stores, you need to select a distribution method for your app" — `refs/shopify-docs/docs/apps/launch/protected-customer-data.md:47`).
-2. Same app → **API access requests** → **Protected customer data access** → **Request access**. Select **Protected customer data**, give reasons, Save; complete **Data protection details**. Do **not** tick "My app won't use customer data" — that opt-out is the state that makes step 4 fail. Skip the individual protected *fields* (name / address / email / phone): Baton selects none of them, so Level 1 is the whole ask. No app-review submission — "If your app is for testing or installed only on a development store, you can access customer data in development after Step 5" (`protected-customer-data.md:78`).
+2. Same app → **API access requests** → **Protected customer data access** → **Request access**. Select **Protected customer data**, give reasons, Save; complete **Data protection details**. Do **not** tick "My app won't use customer data" — that opt-out is the state that makes step 4 fail. Skip the individual protected _fields_ (name / address / email / phone): Baton selects none of them, so Level 1 is the whole ask. No app-review submission — "If your app is for testing or installed only on a development store, you can access customer data in development after Step 5" (`protected-customer-data.md:78`).
 3. Set `scopes = "write_orders,read_products"` in `shopify.app.toml`.
 4. `pnpm app:deploy` (or save the toml with `pnpm app:dev` running). This is where a missing declaration surfaces — see below.
 5. Open the app on `sandbox-shop-01`. Shopify prompts to approve the added scopes; approving fires `app/scopes_update`, which the existing handler stores. If the prompt does not appear, uninstall/reinstall the dev app.
@@ -50,10 +50,10 @@ and orders likewise (`:94`): "Orders, draft orders, abandoned checkouts, refunds
 
 **What the earlier draft got wrong.** It weighed `manage-access-scopes.md` ("outside of dev stores the API redacts protected fields until your app meets the protected customer data requirements and is approved") against the older `apps/build/webhooks/get-started.md` ("a Partner Dashboard step is required even in development") and treated the newer page as authoritative, concluding the dashboard step was a launch concern. Those two pages describe **different gates**:
 
-| | Gate | When it fires | Failure mode |
-| - | - | - | - |
-| Query redaction | per-field approval | at query time | `200 OK`, `null` fields, an entry in `errors` — dev stores exempt |
-| Webhook subscription | the declaration existing at all | at `app deploy`, before an app version is created | version creation refused — dev stores **not** exempt |
+|                      | Gate                            | When it fires                                     | Failure mode                                                      |
+| -------------------- | ------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------- |
+| Query redaction      | per-field approval              | at query time                                     | `200 OK`, `null` fields, an entry in `errors` — dev stores exempt |
+| Webhook subscription | the declaration existing at all | at `app deploy`, before an app version is created | version creation refused — dev stores **not** exempt              |
 
 `manage-access-scopes.md` only ever spoke to the first. The older tutorial was right about the second. Uninstalling the app does not help: this is checked against the app in the Partner Dashboard, not against any install.
 
@@ -210,15 +210,45 @@ All four validated against the 2026-10 schema with the Shopify Dev MCP on 2026-0
 ```graphql
 query OrderSync($id: ID!) {
   order(id: $id) {
-    id legacyResourceId name createdAt processedAt updatedAt cancelledAt closedAt
-    displayFinancialStatus displayFulfillmentStatus fullyPaid
-    tags note customAttributes { key value }
+    id
+    legacyResourceId
+    name
+    createdAt
+    processedAt
+    updatedAt
+    cancelledAt
+    closedAt
+    displayFinancialStatus
+    displayFulfillmentStatus
+    fullyPaid
+    tags
+    note
+    customAttributes {
+      key
+      value
+    }
     lineItems(first: 50) {
       nodes {
-        id title variantTitle sku quantity currentQuantity unfulfilledQuantity nonFulfillableQuantity requiresShipping
-        customAttributes { key value }
-        variant { id }
-        product { id tags }
+        id
+        title
+        variantTitle
+        sku
+        quantity
+        currentQuantity
+        unfulfilledQuantity
+        nonFulfillableQuantity
+        requiresShipping
+        customAttributes {
+          key
+          value
+        }
+        variant {
+          id
+        }
+        product {
+          id
+          tags
+        }
       }
     }
   }
@@ -232,8 +262,14 @@ Requested cost ≈ 1 + 50 × (1 + variant + product + customAttributes) ≈ 250 
 ```graphql
 mutation OrdersBulkSync($query: String!) {
   bulkOperationRunQuery(query: $query) {
-    bulkOperation { id status }
-    userErrors { field message }
+    bulkOperation {
+      id
+      status
+    }
+    userErrors {
+      field
+      message
+    }
   }
 }
 ```
@@ -245,16 +281,46 @@ mutation OrdersBulkSync($query: String!) {
   orders(query: "updated_at:>='2026-08-03T00:00:00Z'") {
     edges {
       node {
-        id legacyResourceId name createdAt processedAt updatedAt cancelledAt closedAt
-        displayFinancialStatus displayFulfillmentStatus fullyPaid
-        tags note customAttributes { key value }
+        id
+        legacyResourceId
+        name
+        createdAt
+        processedAt
+        updatedAt
+        cancelledAt
+        closedAt
+        displayFinancialStatus
+        displayFulfillmentStatus
+        fullyPaid
+        tags
+        note
+        customAttributes {
+          key
+          value
+        }
         lineItems {
           edges {
             node {
-              id title variantTitle sku quantity currentQuantity unfulfilledQuantity nonFulfillableQuantity requiresShipping
-              customAttributes { key value }
-              variant { id }
-              product { id tags }
+              id
+              title
+              variantTitle
+              sku
+              quantity
+              currentQuantity
+              unfulfilledQuantity
+              nonFulfillableQuantity
+              requiresShipping
+              customAttributes {
+                key
+                value
+              }
+              variant {
+                id
+              }
+              product {
+                id
+                tags
+              }
             }
           }
         }
@@ -267,7 +333,15 @@ mutation OrdersBulkSync($query: String!) {
 ```graphql
 query BulkOperationStatus($id: ID!) {
   bulkOperation(id: $id) {
-    id status errorCode createdAt completedAt objectCount fileSize url partialDataUrl
+    id
+    status
+    errorCode
+    createdAt
+    completedAt
+    objectCount
+    fileSize
+    url
+    partialDataUrl
   }
 }
 ```
@@ -314,13 +388,13 @@ flowchart LR
 
 motio (`/Users/mw/Documents/src/motio`) is the same stack (TanStack Start, Cloudflare, Effect v4, `agents` 0.20.x, `@effect/sql-sqlite-do`) and already ships this pipeline for products. File-by-file mapping:
 
-| motio | Baton | What it does |
-| --- | --- | --- |
-| `src/lib/ScanBulkRepository.ts` | `OrdersBulkRepository` | `submitQuery` (`bulkOperationRunQuery(query:, groupObjects: false)`), `findById` (`bulkOperation(id:)` → `Option`), `list` (`bulkOperations(first: 50, query: "operation_type:query")`). The nested bulk document keeps its `#graphql` tag so `pnpm graphql-codegen` validates it; it must be a **named** operation. |
-| `src/lib/ScanWorkflow.ts` | `OrdersSyncWorkflow extends AgentWorkflow<ShopAgent, { shop }>` | Builds a `ManagedRuntime` in `makeRuntimeLayer` (D1 on primary, `Shopify` + `ShopifyAdmin` for the offline session), then steps: `ensure-session` (session props via `Session.toPropertyArray(true)` so they survive `step.do` serialization), `run-bulk-…-query`, a `step.sleep` + `poll-…-N` loop (`POLL_ATTEMPTS = 24`; delay 5 s → 15 s → 30 s), `on-scan-stream` (RPC `agent.onScanStream({ url })`) or `on-scan-empty`, `step.reportComplete`. `Effect.onError` durably calls `agent.onScanError` before the failure propagates. Permanent failures (`userErrors`, dead session) become `NonRetryableError` from `cloudflare:workflows`. |
-| `src/lib/ShopAgentScanStream.ts` | `ShopAgentOrdersStream.ts` | `HttpClientResponse.stream(client.get(url))` with `HttpClient.retryTransient` → `Stream.pipeThroughChannel(Ndjson.decodeSchema(BulkLine)({ ignoreEmptyLines: true }))` (from `effect/unstable/encoding`) → `Stream.mapAccumEffect` that holds the current parent and attaches child lines whose `__parentId` matches, emitting the finished parent when the next parent line (or `onHalt`) arrives → `Stream.runFoldEffect` inserting rows and counting. Line schemas are a `Schema.Union` tagged on `__typename`. |
-| `ShopAgent.scan()` | `ShopAgent.syncOrders()` | **Not ported as-is** — see "Kickoff: `runWorkflow` vs direct binding" below. motio creates the instance directly on the binding under a fixed id and re-implements the wrapper's private `__agent*` params; Baton uses `this.runWorkflow` with a fresh id and keeps the singleton in `SyncState`. |
-| `ShopAgent.onScanStream/onScanEmpty/onScanError/onWorkflowError` | `onOrdersStream/onOrdersSyncEmpty/onOrdersSyncError/…` | RPC targets the workflow calls; they write `SyncState` and `broadcast` a state-changed message so the page refetches. |
+| motio                                                            | Baton                                                           | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/lib/ScanBulkRepository.ts`                                  | `OrdersBulkRepository`                                          | `submitQuery` (`bulkOperationRunQuery(query:, groupObjects: false)`), `findById` (`bulkOperation(id:)` → `Option`), `list` (`bulkOperations(first: 50, query: "operation_type:query")`). The nested bulk document keeps its `#graphql` tag so `pnpm graphql-codegen` validates it; it must be a **named** operation.                                                                                                                                                                                                                                                                                                                           |
+| `src/lib/ScanWorkflow.ts`                                        | `OrdersSyncWorkflow extends AgentWorkflow<ShopAgent, { shop }>` | Builds a `ManagedRuntime` in `makeRuntimeLayer` (D1 on primary, `Shopify` + `ShopifyAdmin` for the offline session), then steps: `ensure-session` (session props via `Session.toPropertyArray(true)` so they survive `step.do` serialization), `run-bulk-…-query`, a `step.sleep` + `poll-…-N` loop (`POLL_ATTEMPTS = 24`; delay 5 s → 15 s → 30 s), `on-scan-stream` (RPC `agent.onScanStream({ url })`) or `on-scan-empty`, `step.reportComplete`. `Effect.onError` durably calls `agent.onScanError` before the failure propagates. Permanent failures (`userErrors`, dead session) become `NonRetryableError` from `cloudflare:workflows`. |
+| `src/lib/ShopAgentScanStream.ts`                                 | `ShopAgentOrdersStream.ts`                                      | `HttpClientResponse.stream(client.get(url))` with `HttpClient.retryTransient` → `Stream.pipeThroughChannel(Ndjson.decodeSchema(BulkLine)({ ignoreEmptyLines: true }))` (from `effect/unstable/encoding`) → `Stream.mapAccumEffect` that holds the current parent and attaches child lines whose `__parentId` matches, emitting the finished parent when the next parent line (or `onHalt`) arrives → `Stream.runFoldEffect` inserting rows and counting. Line schemas are a `Schema.Union` tagged on `__typename`.                                                                                                                             |
+| `ShopAgent.scan()`                                               | `ShopAgent.syncOrders()`                                        | **Not ported as-is** — see "Kickoff: `runWorkflow` vs direct binding" below. motio creates the instance directly on the binding under a fixed id and re-implements the wrapper's private `__agent*` params; Baton uses `this.runWorkflow` with a fresh id and keeps the singleton in `SyncState`.                                                                                                                                                                                                                                                                                                                                              |
+| `ShopAgent.onScanStream/onScanEmpty/onScanError/onWorkflowError` | `onOrdersStream/onOrdersSyncEmpty/onOrdersSyncError/…`          | RPC targets the workflow calls; they write `SyncState` and `broadcast` a state-changed message so the page refetches.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 ### Kickoff: `runWorkflow` vs Direct Binding
 
@@ -328,10 +402,10 @@ What `runWorkflow` does (`refs/agents/packages/agents/src/index.ts:11211-11280`)
 
 motio's reasons for bypassing it, and whether they hold for Baton:
 
-- *"Partial-failure leak: `create` succeeds, tracking insert fails."* The insert only fails on a UNIQUE clash (`workflow_id` reused) or a storage fault. With a fresh id per run there is no clash; a storage fault inside the DO is the same class of failure as any `SyncState` write. Not a reason.
-- *Singleton instance under a fixed id.* Cloudflare instance ids are unique for the instance's retention life, so a fixed `scan:<shop>` id forces the "already exists → inspect status → restart" dance that is most of motio's `scan()` complexity. Baton's singleton is a business rule ("one sync in flight per shop"), which belongs in `SyncState.workflowId` + a status check, not in Cloudflare's id space. Fresh id `orders-sync:<shop>:<startedAt>`, refuse when `SyncState` says in flight (confirm with `env.ORDERS_SYNC_WORKFLOW.get(id).status()` if the recorded run is old, so a lost callback cannot wedge the button).
-- *Private wrapper contract.* Bypassing means re-implementing `__agentName/__agentBinding/__workflowName` — and 0.20.1 already adds a fourth, `__agentOrigin` (`index.ts:11238`; `workflows.ts:239` fails without "a valid Agent origin"). motio's three-key contract test is exactly the kind of thing that breaks on upgrade. `runWorkflow` owns that contract. Pass `options.agentBinding: "SHOP_AGENT"` explicitly so origin detection does not depend on `constructor.name` surviving the bundle.
-- *Tracking table growth.* Real but trivial: `this.deleteWorkflow(instanceId)` in `onWorkflowComplete/Error` (the SDK's own "Option 1"), since `SyncState` is the record that matters.
+- _"Partial-failure leak: `create` succeeds, tracking insert fails."_ The insert only fails on a UNIQUE clash (`workflow_id` reused) or a storage fault. With a fresh id per run there is no clash; a storage fault inside the DO is the same class of failure as any `SyncState` write. Not a reason.
+- _Singleton instance under a fixed id._ Cloudflare instance ids are unique for the instance's retention life, so a fixed `scan:<shop>` id forces the "already exists → inspect status → restart" dance that is most of motio's `scan()` complexity. Baton's singleton is a business rule ("one sync in flight per shop"), which belongs in `SyncState.workflowId` + a status check, not in Cloudflare's id space. Fresh id `orders-sync:<shop>:<startedAt>`, refuse when `SyncState` says in flight (confirm with `env.ORDERS_SYNC_WORKFLOW.get(id).status()` if the recorded run is old, so a lost callback cannot wedge the button).
+- _Private wrapper contract._ Bypassing means re-implementing `__agentName/__agentBinding/__workflowName` — and 0.20.1 already adds a fourth, `__agentOrigin` (`index.ts:11238`; `workflows.ts:239` fails without "a valid Agent origin"). motio's three-key contract test is exactly the kind of thing that breaks on upgrade. `runWorkflow` owns that contract. Pass `options.agentBinding: "SHOP_AGENT"` explicitly so origin detection does not depend on `constructor.name` surviving the bundle.
+- _Tracking table growth._ Real but trivial: `this.deleteWorkflow(instanceId)` in `onWorkflowComplete/Error` (the SDK's own "Option 1"), since `SyncState` is the record that matters.
 
 Decision: `this.runWorkflow("ORDERS_SYNC_WORKFLOW", { shop, since, field, startedAt }, { id, agentBinding: "SHOP_AGENT" })`. What survives from motio: `AgentWorkflow` subclass with an Effect `ManagedRuntime`, session props through `step.do`, the poll schedule, `NonRetryableError` for permanent failures, `Effect.onError` → durable error callback, and the stream file.
 
@@ -340,8 +414,8 @@ Decision: `this.runWorkflow("ORDERS_SYNC_WORKFLOW", { shop, since, field, starte
 `runWorkflow` does `workflow.create(...)` then a SQLite insert; the two cannot be one transaction, so the instance can exist with no `cf_agents_workflows` row (reported upstream; maintainer declined without a production repro). Consequences under Baton's design:
 
 - **The run still completes correctly.** The workflow body calls `this.agent.onOrdersStream({ url })` by RPC and `step.reportComplete` routes through `_workflow_handleCallback` → `onWorkflowCallback`, whose tracking `UPDATE` is a silent no-op on a missing row and whose call to `onWorkflowComplete` is unconditional (`index.ts:12152-12200`). Rows land, `SyncState.lastFullSyncAt` is written by the hook, `deleteWorkflow(id)` returns `false` harmlessly.
-- **The only exposure is the button.** If `SyncState.workflowId` is written *after* `runWorkflow` returns, the throw leaves it null, the button re-enables, and a second click starts a concurrent run: two bulk ops (Shopify allows five per type), two streams upserting the same rows under the `updatedAt` guard. Wasted work, not corruption.
-- **Mitigation, two lines:** choose the id, write `SyncState.workflowId/startedAt` *before* `runWorkflow`, and on a throw call `env.ORDERS_SYNC_WORKFLOW.get(id).status()` — instance exists → keep the reservation (the hooks will clear it), not found → clear it and surface the error. DO output gates hold the outgoing `create` until the preceding SQLite write is durable, so the reservation cannot be lost to the same fault that loses the tracking row.
+- **The only exposure is the button.** If `SyncState.workflowId` is written _after_ `runWorkflow` returns, the throw leaves it null, the button re-enables, and a second click starts a concurrent run: two bulk ops (Shopify allows five per type), two streams upserting the same rows under the `updatedAt` guard. Wasted work, not corruption.
+- **Mitigation, two lines:** choose the id, write `SyncState.workflowId/startedAt` _before_ `runWorkflow`, and on a throw call `env.ORDERS_SYNC_WORKFLOW.get(id).status()` — instance exists → keep the reservation (the hooks will clear it), not found → clear it and surface the error. DO output gates hold the outgoing `create` until the preceding SQLite write is durable, so the reservation cannot be lost to the same fault that loses the tracking row.
 - Not a proliferation risk: one untracked row per failed insert, and nothing in Baton reads `getWorkflows`.
 
 ### Button: `@callable()` vs Server Function
@@ -363,9 +437,9 @@ Baton-specific differences from motio's stream file:
 ### Constants
 
 ```ts
-export const ORDER_SYNC_WINDOW_DAYS = 30;              // ≤ 60 without read_all_orders
+export const ORDER_SYNC_WINDOW_DAYS = 30; // ≤ 60 without read_all_orders
 export const ORDER_SYNC_OVERLAP_MS = 15 * 60 * 1000;
-export const BULK_POLL_ATTEMPTS = 24;                  // motio's schedule: 5s×3, 15s×3, then 30s
+export const BULK_POLL_ATTEMPTS = 24; // motio's schedule: 5s×3, 15s×3, then 30s
 ```
 
 ## Paid Gate

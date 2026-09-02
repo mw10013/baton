@@ -13,13 +13,16 @@ import { seedConfig, seedMembers } from "./seed";
  * single-use, so without that reset a retry would re-follow a spent URL.
  *
  * `LOGIN_LIMITER` is 5 sends per 60s and every local request shares the
- * `unknown` IP key. The file spends 3 of those per run, so a second full retry
- * inside the same minute would start seeing the rate-limit banner in place of
- * the expected copy.
+ * `unknown` IP key. The file spends 4 of those per run, so even a single full
+ * retry inside the same minute starts seeing the rate-limit banner in place of
+ * the expected copy — keep the send count under the limit when adding tests.
  */
 
 const MEMBER_EMAIL = "e2e.member@example.com";
 const STRANGER_EMAIL = "e2e.stranger@example.com";
+const TEAM = "E2E Cut";
+const OTHER_TEAM = "E2E Pack";
+const TEAMLESS_STATE = "You’re not on a team yet.";
 
 const requestMagicLink = async (page: Page, email: string): Promise<void> => {
   await gotoMember(page, "/login");
@@ -73,6 +76,10 @@ test("a seeded member signs in by magic link, opens their shop, and signs out", 
   await expect(
     page.getByText(`You have member access to this shop (${config.shop}).`),
   ).toBeVisible();
+  /* Seeded with no team: membership is login, teams are work, so a member with
+     neither is a normal state that has to render as an empty state rather than
+     as an error or a blank section. */
+  await expect(page.getByText(TEAMLESS_STATE)).toBeVisible();
 
   await page.getByRole("link", { name: "Back to your shops" }).click();
   await expect(page).toHaveURL(/\/shop$/u);
@@ -105,4 +112,33 @@ test("removing a member closes the shop page on their live session", async ({
   await expect(page.getByText("Not Found")).toBeVisible();
   await gotoMember(page, "/shop");
   await expect(page.getByRole("link", { name: config.shop })).toBeHidden();
+});
+
+/**
+ * Teams are resolved by the same `requireMember` query that proves membership,
+ * so a member sees the teams they are on and nothing else — a team that exists
+ * in the same shop, staffed by someone else, must not appear. Seeded rather
+ * than created through the admin because the two surfaces are separate
+ * Playwright projects; `teams.spec.ts` owns the admin half.
+ */
+test("a member sees the teams they are on, and only those", async ({
+  page,
+}) => {
+  const config = seedConfig();
+  await seedMembers(
+    config,
+    [MEMBER_EMAIL, STRANGER_EMAIL],
+    [
+      { name: TEAM, members: [MEMBER_EMAIL] },
+      { name: OTHER_TEAM, members: [STRANGER_EMAIL] },
+    ],
+  );
+
+  await requestMagicLink(page, MEMBER_EMAIL);
+  await followMagicLink(page);
+  await page.getByRole("link", { name: config.shop }).click();
+
+  await expect(page.getByText(TEAM, { exact: true })).toBeVisible();
+  await expect(page.getByText(OTHER_TEAM, { exact: true })).toBeHidden();
+  await expect(page.getByText(TEAMLESS_STATE)).toBeHidden();
 });

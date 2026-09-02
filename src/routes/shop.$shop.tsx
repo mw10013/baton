@@ -16,12 +16,16 @@ const getShopPage = createServerFn({ method: "GET" })
   .handler(({ data, context: { runEffect, user } }) =>
     runEffect(
       Effect.gen(function* () {
-        const shop = yield* requireMember({
+        const { shop, teams } = yield* requireMember({
           shop: data.shop,
           email: user.email,
         });
         const shopAgentClient = yield* ShopAgentClient;
-        return { shop, shopInfo: yield* shopAgentClient.getShopInfo(shop) };
+        return {
+          shop,
+          teams,
+          shopInfo: yield* shopAgentClient.getShopInfo(shop),
+        };
       }),
     ),
   );
@@ -32,7 +36,7 @@ export const Route = createFileRoute("/shop/$shop")({
 });
 
 function RouteComponent() {
-  const { shop, shopInfo } = Route.useLoaderData();
+  const { shop, teams, shopInfo } = Route.useLoaderData();
   return (
     <s-page heading={shopInfo.name} inlineSize="small">
       <s-section heading="Shop" accessibilityLabel="Shop info">
@@ -43,6 +47,20 @@ function RouteComponent() {
           </s-paragraph>
           <Link to="/shop">Back to your shops</Link>
         </s-stack>
+      </s-section>
+      <s-section heading="Your teams" accessibilityLabel="Your teams">
+        {teams.length === 0 ? (
+          <s-paragraph color="subdued">
+            You&rsquo;re not on a team yet. Ask the shop owner to add you to a
+            team to see work.
+          </s-paragraph>
+        ) : (
+          <s-stack gap="small-300">
+            {teams.map((team) => (
+              <s-text key={team.id}>{team.name}</s-text>
+            ))}
+          </s-stack>
+        )}
       </s-section>
     </s-page>
   );

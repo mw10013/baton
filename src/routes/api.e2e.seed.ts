@@ -10,6 +10,14 @@ import { Repository } from "@/lib/Repository";
 const E2eSeedInput = Schema.Struct({
   shop: Domain.Shop,
   members: Schema.Array(Domain.Email),
+  teams: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        name: Domain.TeamName,
+        members: Schema.Array(Domain.Email),
+      }),
+    ),
+  ),
 });
 
 /**
@@ -34,6 +42,11 @@ const E2eSeedInput = Schema.Struct({
  * Deliberately does NOT seed `ShopSession`: `Member.shop` FKs to it, so seeding
  * a shop the app is not installed on fails loudly here instead of surfacing
  * later as a `/shop/$shop` 500 from a fabricated offline token.
+ *
+ * `Team` is deleted explicitly rather than left to a cascade: it hangs off
+ * `ShopSession`, not `Member`, so wiping membership would leave the previous
+ * run's teams behind and make "no teams yet" untestable. `TeamMember` needs no
+ * such handling — it cascades from the `Member` delete above.
  */
 export const Route = createFileRoute("/api/e2e/seed")({
   server: {
@@ -46,18 +59,46 @@ export const Route = createFileRoute("/api/e2e/seed")({
               return new Response("Not Found", { status: 404 });
             const request = yield* CurrentRequest;
             return yield* Effect.gen(function* () {
-              const { shop, members } = yield* Schema.decodeUnknownEffect(
-                E2eSeedInput,
-              )(yield* Effect.tryPromise(() => request.json()));
+              const { shop, members, teams } =
+                yield* Schema.decodeUnknownEffect(E2eSeedInput)(
+                  yield* Effect.tryPromise(() => request.json()),
+                );
               const sql = yield* D1Primary;
               const repository = yield* Repository;
+              yield* sql`delete from Team where shop = ${shop}`;
               yield* sql`delete from Member where shop = ${shop}`;
               yield* sql`delete from Verification`;
               for (const email of members) {
                 yield* sql`delete from User where email = ${email}`;
                 yield* repository.addMember({ shop, email });
               }
-              return Response.json({ ok: true, shop, members });
+              const memberIds = new Map(
+                (yield* repository.listMembers(shop)).map((member) => [
+                  member.email,
+                  member.id,
+                ]),
+              );
+              for (const team of teams ?? []) {
+                const { id: teamId } = yield* repository.createTeam({
+                  shop,
+                  name: team.name,
+                });
+                for (const email of team.members) {
+                  const memberId = memberIds.get(email);
+                  if (memberId === undefined)
+                    return new Response(
+                      `team ${team.name} references unseeded member ${email}`,
+                      { status: 400 },
+                    );
+                  yield* repository.setTeamMember({
+                    shop,
+                    teamId,
+                    memberId,
+                    inTeam: true,
+                  });
+                }
+              }
+              return Response.json({ ok: true, shop, members, teams });
             }).pipe(
               Effect.catchTag("SchemaError", (error) =>
                 Effect.succeed(new Response(String(error), { status: 400 })),

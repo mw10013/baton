@@ -3,7 +3,7 @@
 client_id = "7c6cceb7f8f9991a543d43648b08e72d"
 application_url = "https://example.com"
 embedded = true
-name = "Baton"
+name = "Baton Local"
 handle = "baton-local"
 
 [access_scopes]

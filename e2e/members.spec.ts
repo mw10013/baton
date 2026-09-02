@@ -18,6 +18,12 @@ const EMPTY_STATE = "No members yet. Add an email above to grant access.";
 test("members screen adds, normalizes, and removes a member", async ({
   page,
 }) => {
+  /* `gotoApp` spends 4-6s on a healthy load and each of the four mutations
+     below re-runs the Shopify auth middleware, so the 30s default leaves no
+     headroom: this passes in isolation but times out on the last assertion in a
+     full-suite run. Same reason `teams.spec.ts` raises its own. */
+  test.setTimeout(90_000);
+
   await seedMembers(seedConfig(), []);
 
   const frame = await gotoApp(page);

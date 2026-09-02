@@ -55,6 +55,7 @@ Downloaded source code of libraries are in `refs/` for reference.
 pnpm app:dev            # Start dev server via Shopify CLI (runs pnpm dev internally)
 pnpm typecheck          # TypeScript type checking (includes wrangler types generation)
 pnpm lint               # Run oxlint
+pnpm fmt                # Format the repo with oxfmt (excludes refs/ and dist/)
 pnpm test               # Run tests with Vitest.
 npm run test:e2e --     # Playwright via npm (uses pnpm exec in script); pass args after -- and may be helpful to use --trace on
 pnpm graphql-codegen    # Validate #graphql template literal strings against the Shopify Admin schema
@@ -66,6 +67,8 @@ pnpm refs fetch <name>  # Refetch a ref (see scripts/refs.ts; refs:all for every
 
 - Run typecheck and lint after generating code. Not necessary if just research.
 - Run `pnpm graphql-codegen` after any change to `#graphql` template literal strings.
+- Run `pnpm fmt` repo-wide and **keep every file it touches**, including files your change never went near. The whole repo should be formatted; reverting the incidental ones means the next agent reformats them, reverts them again, and the repo never converges. Reformatting is not scope creep.
+- Only `pnpm fmt` writes formatting. Never hand-format, and never `git checkout` a file to undo it.
 
 ## Server Log Monitoring
 

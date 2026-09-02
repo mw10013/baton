@@ -8,11 +8,11 @@ Follows `docs/member-access-research.md` (member = a D1 row granting an email ac
 
 Three different things currently get called "the member" in conversation. They are not the same row:
 
-| Concept                | Where                | Key                          | Cardinality             |
-| ---------------------- | -------------------- | ---------------------------- | ----------------------- |
-| **Person / login**     | D1 `User` (better-auth) | `email` (globally unique)  | one per human           |
-| **Membership / grant** | D1 `Member`          | `(shop, email)` unique       | one per human **per shop** |
-| **Shop**               | D1 `ShopSession` + DO | `shop` domain                | one per install         |
+| Concept                | Where                   | Key                       | Cardinality                |
+| ---------------------- | ----------------------- | ------------------------- | -------------------------- |
+| **Person / login**     | D1 `User` (better-auth) | `email` (globally unique) | one per human              |
+| **Membership / grant** | D1 `Member`             | `(shop, email)` unique    | one per human **per shop** |
+| **Shop**               | D1 `ShopSession` + DO   | `shop` domain             | one per install            |
 
 `migrations/0001_init.sql`:
 
@@ -121,15 +121,15 @@ Only worth it if the DO must evaluate team membership on hot paths without a cal
 
 ## Trade-off summary
 
-| Criterion                           | A: D1          | B: DO             | C: DO + index |
-| ----------------------------------- | -------------- | ----------------- | ------------- |
-| FK to `Member`                      | yes            | no                | no (index)    |
-| Sync code between stores            | none           | Member→DO deletes | Member→DO too |
-| Atomic team writes                  | `d1.batch`     | txn               | txn           |
-| FK from domain rows (Job → Team)    | no (opaque id) | yes               | yes           |
-| Member-area guard cost              | +1 D1 query    | +1 DO RPC         | +1 DO RPC     |
-| Embedded management UI              | one store      | two stores        | two stores    |
-| Uninstall cleanup                   | cascade        | deleteAll         | both          |
+| Criterion                        | A: D1          | B: DO             | C: DO + index |
+| -------------------------------- | -------------- | ----------------- | ------------- |
+| FK to `Member`                   | yes            | no                | no (index)    |
+| Sync code between stores         | none           | Member→DO deletes | Member→DO too |
+| Atomic team writes               | `d1.batch`     | txn               | txn           |
+| FK from domain rows (Job → Team) | no (opaque id) | yes               | yes           |
+| Member-area guard cost           | +1 D1 query    | +1 DO RPC         | +1 DO RPC     |
+| Embedded management UI           | one store      | two stores        | two stores    |
+| Uninstall cleanup                | cascade        | deleteAll         | both          |
 
 ## Recommendation
 
@@ -176,11 +176,11 @@ The worry: delete a team, or move a member between teams, and historical bookkee
 
 - **Archive, don't delete.** `Team.archivedAt text` (null = active). Archived teams vanish from pickers and the member's work queue; a step or historical record still resolves the name. Merchant-facing copy says "Archive team"; hard delete is not offered. Same trick as Shopify itself (archived products/orders).
 - **Work history records who and which team, denormalized.** When a member starts/blocks/completes a step, the DO writes an event row with `memberId`, `email`, `teamId`, `teamName` **as they were at that moment**. Later moving the member to another team, renaming a team, or archiving it rewrites nothing. The event is a fact about the past, not a pointer to the present.
-- **Current assignment is a pointer; history is a snapshot.** Two different things: `Step.teamId` (who owns this step *now*, live pointer, D1 id) vs `StepEvent.teamId/teamName` (who did it *then*, frozen). Only the pointer cares whether the team is active.
+- **Current assignment is a pointer; history is a snapshot.** Two different things: `Step.teamId` (who owns this step _now_, live pointer, D1 id) vs `StepEvent.teamId/teamName` (who did it _then_, frozen). Only the pointer cares whether the team is active.
 - **Membership changes never touch the DO.** Moving a member between teams is a D1 `TeamMember` change. The member's queue is recomputed on next request from `requireMember → teamIds`; past events keep their snapshot.
 - **Workflow templates vs workflow instances (coming soon).** The template (step list + owning teams) is edited by the merchant; an instance is stamped onto a job when work starts and carries its own copy of the steps. Editing/archiving a team then affects future instances only. Route-to-ship's "pipeline" behaves this way. This cleanly bounds the blast radius of every edit.
 
-Net: no cross-store cascade needed, no history rewrite, and "can I delete this team?" becomes "archive; the pointer-holding steps on the *template* must be reassigned first" — a one-query check in D1 if templates live there, or a DO check if they live in the DO (they will; they are work, not people).
+Net: no cross-store cascade needed, no history rewrite, and "can I delete this team?" becomes "archive; the pointer-holding steps on the _template_ must be reassigned first" — a one-query check in D1 if templates live there, or a DO check if they live in the DO (they will; they are work, not people).
 
 ## Open questions
 
@@ -245,7 +245,9 @@ export type MemberId = typeof MemberId.Type;
 // trim on decode, like Email; 1..64 chars after trim
 export const TeamName = Schema.String.pipe(
   Schema.decodeTo(
-    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64)).pipe(Schema.brand("TeamName")),
+    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64)).pipe(
+      Schema.brand("TeamName"),
+    ),
     { decode: Getter.transform((s) => s.trim()), encode: Getter.passthrough() },
   ),
 );
@@ -269,7 +271,9 @@ export type TeamMember = typeof TeamMember.Type;
 
 export const TeamDetail = Schema.Struct({
   team: Team,
-  members: Schema.Array(Schema.Struct({ member: Member, inTeam: Schema.Boolean })),
+  members: Schema.Array(
+    Schema.Struct({ member: Member, inTeam: Schema.Boolean }),
+  ),
 });
 export type TeamDetail = typeof TeamDetail.Type;
 
@@ -308,8 +312,14 @@ readonly findMemberAccess: (member: Pick<Domain.Member, "shop" | "email">)
 Errors (add beside `RepositoryError`, same `Schema.TaggedError` style):
 
 ```ts
-export class TeamNameTakenError extends Schema.TaggedError<TeamNameTakenError>()("TeamNameTakenError", { shop: Domain.Shop, name: Domain.TeamName }) {}
-export class TeamNotFoundError extends Schema.TaggedError<TeamNotFoundError>()("TeamNotFoundError", { shop: Domain.Shop, teamId: Domain.TeamId }) {}
+export class TeamNameTakenError extends Schema.TaggedError<TeamNameTakenError>()(
+  "TeamNameTakenError",
+  { shop: Domain.Shop, name: Domain.TeamName },
+) {}
+export class TeamNotFoundError extends Schema.TaggedError<TeamNotFoundError>()(
+  "TeamNotFoundError",
+  { shop: Domain.Shop, teamId: Domain.TeamId },
+) {}
 ```
 
 SQL sketches (lowercase, positional via tagged template):
@@ -356,11 +366,20 @@ where m.shop = ? and m.email = ? order by t.name collate nocase
 ## Guard — `src/lib/MemberServerFnMiddleware.ts`
 
 ```ts
-export const requireMember = (input: { readonly shop: string; readonly email: Domain.Email }) =>
+export const requireMember = (input: {
+  readonly shop: string;
+  readonly email: Domain.Email;
+}) =>
   Effect.gen(function* () {
     const shop = yield* Schema.decodeUnknownEffect(Domain.Shop)(input.shop);
-    const access = yield* (yield* Repository).findMemberAccess({ shop, email: input.email });
-    return yield* Option.match(access, { onNone: () => Effect.fail(notFound()), onSome: Effect.succeed });
+    const access = yield* (yield* Repository).findMemberAccess({
+      shop,
+      email: input.email,
+    });
+    return yield* Option.match(access, {
+      onNone: () => Effect.fail(notFound()),
+      onSome: Effect.succeed,
+    });
   });
 ```
 

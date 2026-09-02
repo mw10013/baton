@@ -7,7 +7,9 @@ export const Route = createFileRoute("/")({
       throw redirect({ href: `/app${location.searchStr}` });
     }
   },
-  head: () => ({ meta: [{ title: "Baton | Made-to-order production workflows" }] }),
+  head: () => ({
+    meta: [{ title: "Baton | Made-to-order production workflows" }],
+  }),
   component: RouteComponent,
 });
 

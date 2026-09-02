@@ -105,6 +105,8 @@ afterEach(async () => {
     env.D1.prepare("delete from Session"),
     env.D1.prepare("delete from User"),
     env.D1.prepare("delete from Verification"),
+    env.D1.prepare("delete from TeamMember"),
+    env.D1.prepare("delete from Team"),
     env.D1.prepare("delete from Member"),
     env.D1.prepare("delete from ShopSession"),
   ]);

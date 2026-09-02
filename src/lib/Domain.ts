@@ -250,13 +250,86 @@ export type LoginInput = typeof LoginInput.Type;
  * management lives only in the embedded app behind Shopify auth, and the member
  * area does not differ per member.
  */
+export const MemberId = Schema.NonEmptyString.pipe(Schema.brand("MemberId"));
+export type MemberId = typeof MemberId.Type;
+
 export const Member = Schema.Struct({
-  id: Schema.String,
+  id: MemberId,
   shop: Shop,
   email: Email,
   createdAt: Schema.String,
 });
 export type Member = typeof Member.Type;
+
+export const TeamId = Schema.NonEmptyString.pipe(Schema.brand("TeamId"));
+export type TeamId = typeof TeamId.Type;
+
+/**
+ * Trimmed on decode for the same structural reason as {@link Email}: the
+ * `Team.name` check constraint rejects untrimmed text, and uniqueness is
+ * `collate nocase`, so a leading space would otherwise be the difference
+ * between a duplicate the database refuses and one it silently accepts.
+ * Case is *not* folded — merchants name teams "Cut & Sew", not "cut & sew".
+ */
+export const TeamName = Schema.String.pipe(
+  Schema.decodeTo(
+    Schema.NonEmptyString.check(Schema.isMaxLength(64)).pipe(
+      Schema.brand("TeamName"),
+    ),
+    {
+      decode: SchemaGetter.transform((s) => s.trim()),
+      encode: SchemaGetter.transform((s) => s),
+    },
+  ),
+);
+export type TeamName = typeof TeamName.Type;
+
+/**
+ * A shop-scoped grouping of members. `archivedAt` null = active; nothing hard
+ * deletes a team, so a step or historical record can always resolve the name it
+ * was owned by (`migrations/0001_init.sql`).
+ */
+export const Team = Schema.Struct({
+  id: TeamId,
+  shop: Shop,
+  name: TeamName,
+  createdAt: Schema.String,
+  archivedAt: Schema.NullOr(Schema.String),
+});
+export type Team = typeof Team.Type;
+
+export const TeamSummary = Schema.Struct({
+  ...Team.fields,
+  memberCount: Schema.Number,
+});
+export type TeamSummary = typeof TeamSummary.Type;
+
+/**
+ * The team plus every member of its shop, each flagged with whether they are on
+ * it — the detail screen toggles membership against the whole roster, so the
+ * non-members are as much a part of the view as the members.
+ */
+export const TeamDetail = Schema.Struct({
+  team: Team,
+  members: Schema.Array(
+    Schema.Struct({ ...Member.fields, inTeam: SqliteBoolean }),
+  ),
+});
+export type TeamDetail = typeof TeamDetail.Type;
+
+/**
+ * What the member-area guard resolves in one query: proof of membership plus
+ * the active teams that membership carries. Teams are what scope work, so every
+ * `/shop/*` handler wants them and none of them should pay a second round trip;
+ * an empty `teams` is the ordinary "member with nothing to do yet" state, not an
+ * error.
+ */
+export const MemberAccess = Schema.Struct({
+  shop: Shop,
+  memberId: MemberId,
+  teams: Schema.Array(Schema.Struct({ id: TeamId, name: TeamName })),
+});
+export type MemberAccess = typeof MemberAccess.Type;
 
 export const ShopSessionRedactedPage = Schema.Struct({
   shopSessions: Schema.Array(ShopSessionRedacted),

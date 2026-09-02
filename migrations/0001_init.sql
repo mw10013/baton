@@ -19,6 +19,40 @@ create table if not exists Member (
   unique (shop, email)
 );
 
+-- Teams are shop-scoped groupings of Member rows: identity, not workflow data,
+-- so they live in D1 beside Member rather than in the ShopAgent's SQLite. That
+-- buys real referential integrity in both directions (archiving a shop or a
+-- member cleans up its edges) at the cost of a hard FK from Durable Object rows
+-- to a team, which is deliberately left as an opaque id.
+--
+-- archivedAt (null = active) is the merchant-facing delete: a team that ever
+-- owned work must stay resolvable by name forever, so nothing hard-deletes one.
+-- Uniqueness spans active and archived rows for the same reason -- reusing an
+-- archived team's name would make historical records ambiguous.
+create table if not exists Team (
+  id text primary key,
+  shop text not null references ShopSession (shop) on delete cascade,
+  name text not null check (name = trim(name) and length(name) > 0),
+  createdAt text not null,
+  archivedAt text
+);
+
+create unique index if not exists Team_shop_name_uidx on Team (shop, name collate nocase);
+
+-- Edges point at Member.id, not at an email: a memberId belongs to exactly one
+-- shop, so "a team never crosses shops" holds by construction and both cascades
+-- (member removed, team removed) come free.
+create table if not exists TeamMember (
+  teamId text not null references Team (id) on delete cascade,
+  memberId text not null references Member (id) on delete cascade,
+  createdAt text not null,
+  primary key (teamId, memberId)
+);
+
+-- Serves the member-area guard's memberId -> teamIds join; the primary key
+-- already covers the teamId -> members direction.
+create index if not exists TeamMember_memberId_idx on TeamMember (memberId);
+
 -- better-auth 1.7.2 core + admin tables (magic-link auth, no organization
 -- plugin — membership is the app-owned Member table above). Hand-written
 -- against the runtime schema definitions (getAuthTables) rather than

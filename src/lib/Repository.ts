@@ -25,6 +25,27 @@ export class RepositoryError extends Schema.TaggedError<RepositoryError>()(
   },
 ) {}
 
+/**
+ * The shop already has a team by that name, case-insensitively. Detected by the
+ * write returning no row under `or ignore` rather than by matching D1's
+ * constraint-violation text, which is neither typed nor stable.
+ */
+export class TeamNameTakenError extends Schema.TaggedError<TeamNameTakenError>()(
+  "TeamNameTakenError",
+  { shop: Domain.Shop, name: Domain.TeamName },
+) {}
+
+/**
+ * No team in this shop is addressable by that id for the attempted write. Also
+ * covers an *archived* team on the membership-add path — an archived team is
+ * not a place work can be assigned to, so from the caller's side it is not
+ * there. Removal never fails this way (see `setTeamMember`).
+ */
+export class TeamNotFoundError extends Schema.TaggedError<TeamNotFoundError>()(
+  "TeamNotFoundError",
+  { shop: Domain.Shop, teamId: Domain.TeamId },
+) {}
+
 const decodeRepository =
   <A>(schema: Schema.ConstraintDecoder<A>, message: string) =>
   (input: unknown) =>
@@ -138,6 +159,49 @@ export class Repository extends Context.Service<
       email: Domain.Member["email"],
     ) => Effect.Effect<
       readonly Domain.Shop[],
+      SqlError.SqlError | RepositoryError
+    >;
+    readonly listTeams: (params: {
+      readonly shop: Domain.Shop;
+      readonly includeArchived: boolean;
+    }) => Effect.Effect<
+      readonly Domain.TeamSummary[],
+      SqlError.SqlError | RepositoryError
+    >;
+    readonly createTeam: (
+      team: Pick<Domain.Team, "shop" | "name">,
+    ) => Effect.Effect<
+      Domain.Team,
+      SqlError.SqlError | RepositoryError | TeamNameTakenError
+    >;
+    readonly renameTeam: (
+      team: Pick<Domain.Team, "shop" | "id" | "name">,
+    ) => Effect.Effect<
+      void,
+      | SqlError.SqlError
+      | RepositoryError
+      | TeamNameTakenError
+      | TeamNotFoundError
+    >;
+    readonly setTeamArchived: (
+      team: Pick<Domain.Team, "shop" | "id"> & { readonly archived: boolean },
+    ) => Effect.Effect<void, SqlError.SqlError | TeamNotFoundError>;
+    readonly findTeamDetail: (
+      team: Pick<Domain.Team, "shop" | "id">,
+    ) => Effect.Effect<
+      Option.Option<Domain.TeamDetail>,
+      SqlError.SqlError | RepositoryError
+    >;
+    readonly setTeamMember: (params: {
+      readonly shop: Domain.Shop;
+      readonly teamId: Domain.TeamId;
+      readonly memberId: Domain.MemberId;
+      readonly inTeam: boolean;
+    }) => Effect.Effect<void, SqlError.SqlError | TeamNotFoundError>;
+    readonly findMemberAccess: (
+      member: Pick<Domain.Member, "shop" | "email">,
+    ) => Effect.Effect<
+      Option.Option<Domain.MemberAccess>,
       SqlError.SqlError | RepositoryError
     >;
   }
@@ -436,6 +500,241 @@ export class Repository extends Context.Service<
         },
       );
 
+      /**
+       * Reads through `D1Primary` for the same reason {@link listMembers} does:
+       * the embedded teams screen re-lists immediately after a primary write.
+       * `memberCount` is a correlated subquery rather than a `group by` join so
+       * a team with no members still returns a row.
+       */
+      const listTeams = Effect.fn("Repository.listTeams")(function* (params: {
+        readonly shop: Domain.Shop;
+        readonly includeArchived: boolean;
+      }) {
+        const rows = yield* sqlPrimary`
+          select t.*, (select count(*) from TeamMember tm where tm.teamId = t.id) as memberCount
+          from Team t
+          where t.shop = ${params.shop}
+          ${params.includeArchived ? sqlPrimary`` : sqlPrimary`and t.archivedAt is null`}
+          order by t.archivedAt is not null, t.name collate nocase
+        `;
+        return yield* decodeRepository(
+          Schema.Array(Domain.TeamSummary),
+          "Invalid Team rows",
+        )(rows);
+      });
+
+      /**
+       * `insert or ignore ... returning` is the whole conflict check: a fresh
+       * uuid makes the name index the only reachable unique constraint, so zero
+       * returned rows means exactly "that name is taken" — with no pre-check to
+       * race against and no dependence on D1's constraint-violation message
+       * text, which is untyped and version-specific. Foreign-key violations are
+       * unaffected: SQLite treats `or ignore` as `abort` for those, so an
+       * uninstalled shop still fails loudly.
+       */
+      const createTeam = Effect.fn("Repository.createTeam")(function* (
+        team: Pick<Domain.Team, "shop" | "name">,
+      ) {
+        const createdAt = new Date(
+          yield* Clock.currentTimeMillis,
+        ).toISOString();
+        const rows = yield* sqlPrimary`
+          insert or ignore into Team (id, shop, name, createdAt, archivedAt)
+          values (${crypto.randomUUID()}, ${team.shop}, ${team.name}, ${createdAt}, null)
+          returning id, shop, name, createdAt, archivedAt
+        `;
+        if (rows[0] === undefined)
+          return yield* new TeamNameTakenError({
+            shop: team.shop,
+            name: team.name,
+          });
+        return yield* decodeRepository(
+          Domain.Team,
+          "Invalid Team row",
+        )(rows[0]);
+      });
+
+      /**
+       * `update or ignore` turns a name collision into zero returned rows
+       * instead of a `SqlError`, which is what lets both failures share one
+       * statement — but it makes "no rows" ambiguous between a missing team and
+       * a taken name. The follow-up query disambiguates, and only runs on that
+       * failure path.
+       */
+      const renameTeam = Effect.fn("Repository.renameTeam")(function* (
+        team: Pick<Domain.Team, "shop" | "id" | "name">,
+      ) {
+        const updated = yield* sqlPrimary`
+          update or ignore Team set name = ${team.name}
+          where id = ${team.id} and shop = ${team.shop}
+          returning id
+        `;
+        if (updated[0] !== undefined) return;
+        const rows = yield* sqlPrimary`
+          select
+            exists(select 1 from Team where shop = ${team.shop} and id = ${team.id}) as teamExists,
+            exists(select 1 from Team where shop = ${team.shop} and name = ${team.name} collate nocase and id <> ${team.id}) as nameTaken
+        `;
+        const { nameTaken } = yield* decodeRepository(
+          Schema.Struct({
+            teamExists: Schema.Number,
+            nameTaken: Schema.Number,
+          }),
+          "Invalid Team conflict row",
+        )(rows[0]);
+        yield* nameTaken === 1
+          ? new TeamNameTakenError({ shop: team.shop, name: team.name })
+          : new TeamNotFoundError({ shop: team.shop, teamId: team.id });
+      });
+
+      /**
+       * Idempotent in both directions: `coalesce` keeps the original archival
+       * instant when archiving an already-archived team, so re-clicking never
+       * rewrites when the team stopped being used.
+       */
+      const setTeamArchived = Effect.fn("Repository.setTeamArchived")(
+        function* (
+          team: Pick<Domain.Team, "shop" | "id"> & {
+            readonly archived: boolean;
+          },
+        ) {
+          const archivedAt = new Date(
+            yield* Clock.currentTimeMillis,
+          ).toISOString();
+          const rows = yield* sqlPrimary`
+            update Team set archivedAt = ${
+              team.archived
+                ? sqlPrimary`coalesce(archivedAt, ${archivedAt})`
+                : sqlPrimary`null`
+            }
+            where id = ${team.id} and shop = ${team.shop}
+            returning id
+          `;
+          if (rows[0] === undefined)
+            yield* new TeamNotFoundError({
+              shop: team.shop,
+              teamId: team.id,
+            });
+        },
+      );
+
+      /**
+       * The roster is a left join from `Member`, not from `TeamMember`: the
+       * screen toggles membership, so a member who is *not* on the team is as
+       * much part of the view as one who is.
+       */
+      const findTeamDetail = Effect.fn("Repository.findTeamDetail")(function* (
+        team: Pick<Domain.Team, "shop" | "id">,
+      ) {
+        const teamRows =
+          yield* sqlPrimary`select * from Team where id = ${team.id} and shop = ${team.shop}`;
+        if (teamRows[0] === undefined) return Option.none();
+        const memberRows = yield* sqlPrimary`
+          select m.*, (tm.teamId is not null) as inTeam
+          from Member m
+          left join TeamMember tm on tm.memberId = m.id and tm.teamId = ${team.id}
+          where m.shop = ${team.shop}
+          order by m.createdAt, m.email
+        `;
+        return Option.some(
+          yield* decodeRepository(
+            Domain.TeamDetail,
+            "Invalid TeamDetail rows",
+          )({ team: teamRows[0], members: memberRows }),
+        );
+      });
+
+      /**
+       * The add is an insert-select, so the same-shop invariant is asserted by
+       * the join rather than trusted from the caller: a forged
+       * `(teamId, memberId)` pair spanning two shops matches no source row and
+       * inserts nothing. `archivedAt is null` is part of that filter — an
+       * archived team is not somewhere work can be assigned.
+       *
+       * `on conflict do nothing` makes a repeat add a no-op, which also makes
+       * "no rows returned" ambiguous with a genuine miss; the existence check
+       * disambiguates, and only runs on that path. Removal is unconditional and
+       * cannot fail: un-assigning must stay possible after a team is archived.
+       */
+      const setTeamMember = Effect.fn("Repository.setTeamMember")(
+        function* (params: {
+          readonly shop: Domain.Shop;
+          readonly teamId: Domain.TeamId;
+          readonly memberId: Domain.MemberId;
+          readonly inTeam: boolean;
+        }) {
+          if (!params.inTeam) {
+            yield* sqlPrimary`
+            delete from TeamMember
+            where teamId = ${params.teamId}
+              and memberId in (select id from Member where id = ${params.memberId} and shop = ${params.shop})
+          `;
+            return;
+          }
+          const createdAt = new Date(
+            yield* Clock.currentTimeMillis,
+          ).toISOString();
+          const inserted = yield* sqlPrimary`
+          insert into TeamMember (teamId, memberId, createdAt)
+          select t.id, m.id, ${createdAt}
+          from Team t join Member m on m.shop = t.shop
+          where t.id = ${params.teamId} and t.shop = ${params.shop}
+            and m.id = ${params.memberId} and t.archivedAt is null
+          on conflict do nothing
+          returning teamId
+        `;
+          if (inserted[0] !== undefined) return;
+          const existing =
+            yield* sqlPrimary`select 1 as present from TeamMember where teamId = ${params.teamId} and memberId = ${params.memberId}`;
+          if (existing[0] === undefined)
+            yield* new TeamNotFoundError({
+              shop: params.shop,
+              teamId: params.teamId,
+            });
+        },
+      );
+
+      /**
+       * The member-area guard's single query: membership and the teams it
+       * carries in one round trip, through the per-request replica session for
+       * the same staleness tolerance as {@link findMember}. The left joins are
+       * what make a teamless member decode to `teams: []` rather than to
+       * `Option.none()` — no team is a normal state for a member, not a
+       * revoked grant. Archived teams are joined away: they scope no work.
+       */
+      const findMemberAccess = Effect.fn("Repository.findMemberAccess")(
+        function* (member: Pick<Domain.Member, "shop" | "email">) {
+          const rows = yield* sql`
+            select m.id as memberId, t.id as teamId, t.name as teamName
+            from Member m
+            left join TeamMember tm on tm.memberId = m.id
+            left join Team t on t.id = tm.teamId and t.archivedAt is null
+            where m.shop = ${member.shop} and m.email = ${member.email}
+            order by t.name collate nocase
+          `;
+          if (rows[0] === undefined) return Option.none();
+          const decoded = yield* decodeRepository(
+            Schema.Array(
+              Schema.Struct({
+                memberId: Domain.MemberId,
+                teamId: Schema.NullOr(Domain.TeamId),
+                teamName: Schema.NullOr(Domain.TeamName),
+              }),
+            ),
+            "Invalid MemberAccess rows",
+          )(rows);
+          return Option.some({
+            shop: member.shop,
+            memberId: decoded[0].memberId,
+            teams: decoded.flatMap((row) =>
+              row.teamId === null || row.teamName === null
+                ? []
+                : [{ id: row.teamId, name: row.teamName }],
+            ),
+          } satisfies Domain.MemberAccess);
+        },
+      );
+
       return Repository.of({
         findShopSession,
         upsertShopSession,
@@ -452,6 +751,13 @@ export class Repository extends Context.Service<
         deleteMember,
         findMember,
         listMemberShops,
+        listTeams,
+        createTeam,
+        renameTeam,
+        setTeamArchived,
+        findTeamDetail,
+        setTeamMember,
+        findMemberAccess,
       });
     }),
   );

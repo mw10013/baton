@@ -31,6 +31,8 @@ import { Route as WebhooksOrdersRouteImport } from './routes/webhooks.orders'
 import { Route as AdminShopShopRouteImport } from './routes/admin.shop.$shop'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
 import { Route as ApiE2eSeedRouteImport } from './routes/api.e2e.seed'
+import { Route as AppTeamsIndexRouteImport } from './routes/app.teams.index'
+import { Route as AppTeamsTeamIdRouteImport } from './routes/app.teams.$teamId'
 import { Route as WebhooksAppScopes_updateRouteImport } from './routes/webhooks.app.scopes_update'
 import { Route as WebhooksAppUninstalledRouteImport } from './routes/webhooks.app.uninstalled'
 
@@ -145,6 +147,16 @@ const ApiE2eSeedRoute = ApiE2eSeedRouteImport.update({
   path: '/api/e2e/seed',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppTeamsIndexRoute = AppTeamsIndexRouteImport.update({
+  id: '/teams/',
+  path: '/teams/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTeamsTeamIdRoute = AppTeamsTeamIdRouteImport.update({
+  id: '/teams/$teamId',
+  path: '/teams/$teamId',
+  getParentRoute: () => AppRoute,
+} as any)
 const WebhooksAppScopes_updateRoute =
   WebhooksAppScopes_updateRouteImport.update({
     id: '/webhooks/app/scopes_update',
@@ -180,8 +192,10 @@ export interface FileRoutesByFullPath {
   '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/e2e/seed': typeof ApiE2eSeedRoute
+  '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
+  '/app/teams/': typeof AppTeamsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -203,8 +217,10 @@ export interface FileRoutesByTo {
   '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/e2e/seed': typeof ApiE2eSeedRoute
+  '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
+  '/app/teams': typeof AppTeamsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -230,8 +246,10 @@ export interface FileRoutesById {
   '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/e2e/seed': typeof ApiE2eSeedRoute
+  '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
+  '/app/teams/': typeof AppTeamsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -258,8 +276,10 @@ export interface FileRouteTypes {
     | '/admin/shop/$shop'
     | '/api/auth/$'
     | '/api/e2e/seed'
+    | '/app/teams/$teamId'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
+    | '/app/teams/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -281,8 +301,10 @@ export interface FileRouteTypes {
     | '/admin/shop/$shop'
     | '/api/auth/$'
     | '/api/e2e/seed'
+    | '/app/teams/$teamId'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
+    | '/app/teams'
   id:
     | '__root__'
     | '/'
@@ -307,8 +329,10 @@ export interface FileRouteTypes {
     | '/admin/shop/$shop'
     | '/api/auth/$'
     | '/api/e2e/seed'
+    | '/app/teams/$teamId'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
+    | '/app/teams/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -484,6 +508,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiE2eSeedRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/app/teams/': {
+      id: '/app/teams/'
+      path: '/teams'
+      fullPath: '/app/teams/'
+      preLoaderRoute: typeof AppTeamsIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/teams/$teamId': {
+      id: '/app/teams/$teamId'
+      path: '/teams/$teamId'
+      fullPath: '/app/teams/$teamId'
+      preLoaderRoute: typeof AppTeamsTeamIdRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/webhooks/app/scopes_update': {
       id: '/webhooks/app/scopes_update'
       path: '/webhooks/app/scopes_update'
@@ -523,12 +561,16 @@ interface AppRouteChildren {
   AppMembersRoute: typeof AppMembersRoute
   AppOrdersRoute: typeof AppOrdersRoute
   AppIndexRoute: typeof AppIndexRoute
+  AppTeamsTeamIdRoute: typeof AppTeamsTeamIdRoute
+  AppTeamsIndexRoute: typeof AppTeamsIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppMembersRoute: AppMembersRoute,
   AppOrdersRoute: AppOrdersRoute,
   AppIndexRoute: AppIndexRoute,
+  AppTeamsTeamIdRoute: AppTeamsTeamIdRoute,
+  AppTeamsIndexRoute: AppTeamsIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

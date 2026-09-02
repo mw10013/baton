@@ -105,7 +105,7 @@ E2E (`npm run test:e2e --`, `e2e` project): `orders.spec.ts` — open `/app/orde
 3. `/app/orders` → Sync → rows appear; `logs/server.log` shows `OrdersSyncWorkflow` steps and `ShopAgent.onOrdersStream: shop=… ordersUpserted=…`.
 4. Place an order on the sandbox → `Webhook received: shop=… topic=orders/create` → row appears without clicking. Mark paid → `orders/paid` → `financialStatus=PAID`, `fullyPaid=1`. Cancel → `cancelledAt` set.
 5. Stop the dev server, place an order, restart, Sync → the `updated_at` window picks it up.
-6. If order fields come back `null` with a protected-data error in `errors`, the *query* is being redacted — a different gate from the subscription check in step 1, and one dev stores are meant to be exempt from. Re-check the Level 1 declaration, then reinstall. (Research doc, "Protected Customer Data Gates Order Webhooks".)
+6. If order fields come back `null` with a protected-data error in `errors`, the _query_ is being redacted — a different gate from the subscription check in step 1, and one dev stores are meant to be exempt from. Re-check the Level 1 declaration, then reinstall. (Research doc, "Protected Customer Data Gates Order Webhooks".)
 
 ## Gotchas (from the research + motio)
 
