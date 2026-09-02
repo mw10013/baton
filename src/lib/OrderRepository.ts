@@ -7,8 +7,7 @@ import * as Domain from "@/lib/Domain";
 
 /**
  * Failure to map stored rows into domain types — a `Schema` decode error, the
- * repository's own invariant, kept distinct from `SqlError.SqlError` the same
- * way {@link CounterRepository} does.
+ * repository's own invariant, kept distinct from `SqlError.SqlError`.
  */
 export class OrderRepositoryError extends Schema.TaggedError<OrderRepositoryError>()(
   "OrderRepositoryError",

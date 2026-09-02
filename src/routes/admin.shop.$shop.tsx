@@ -11,26 +11,21 @@ import { CloudflareEnv } from "@/lib/CloudflareEnv";
 import * as Domain from "@/lib/Domain";
 import { formatDateTime, formatNumber } from "@/lib/format";
 import { Repository } from "@/lib/Repository";
-import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { SubscriptionPlan } from "@/lib/SubscriptionPlan";
 
 const shopInput = Schema.Struct({ shop: Domain.Shop });
 
 /**
  * The whole page in one request: the shop's D1 `ShopSession` row and its Durable
- * Object snapshot.
+ * Object id.
  *
  * The D1 read is not incidental — every ceiling shown here derives from the
  * plan, which only D1 knows, and the object deliberately stores no limits. Same
  * join `/app` performs on every merchant page view, one shop over.
  *
- * The ShopSession lookup gates the DO call rather than running beside it.
- * `getByName` creates the object and runs its migrations on first RPC, so
- * aggregating an arbitrary `:shop` path segment would materialize an empty
- * Durable Object for a shop that never installed — and
- * `/admin/orphan-shop-agent-objects` exists to destroy exactly those. A missing
- * row is also the honest answer for an uninstalled shop, since uninstall
- * deletes it.
+ * A missing row is the honest answer for an uninstalled shop, since uninstall
+ * deletes it. This page derives the Durable Object id without calling the
+ * object, so viewing arbitrary paths cannot materialize an empty object.
  *
  * The plan is decoded from the row, never resolved: `SubscriptionPlan.resolve`
  * calls the Partner API and rewrites D1 on a miss, which would make viewing
@@ -60,9 +55,6 @@ const getLoaderData = createServerFn({ method: "GET" })
           derivedShopAgentId: (yield* CloudflareEnv).SHOP_AGENT.idFromName(
             shop,
           ).toString(),
-          snapshot: yield* ShopAgentClient.pipe(
-            Effect.flatMap((client) => client.getAdminSnapshot(shop)),
-          ),
         } satisfies Domain.AdminShopLoaderData;
       }),
     ),
@@ -219,7 +211,7 @@ const shopContent = ({
   );
 
 function FoundShop({
-  data: { shopSession, plan, entitlements, derivedShopAgentId, snapshot },
+  data: { shopSession, plan, entitlements, derivedShopAgentId },
   refreshing,
   refreshError,
   onRefresh,
@@ -229,8 +221,6 @@ function FoundShop({
   readonly refreshError: string | undefined;
   readonly onRefresh: () => void;
 }) {
-  const { counter } = snapshot;
-
   return (
     <>
       {refreshError ? (
@@ -272,22 +262,6 @@ function FoundShop({
             </s-paragraph>
           </s-stack>
         </s-stack>
-      </s-section>
-
-      <s-section
-        heading="Durable Object"
-        accessibilityLabel="Durable Object stored state"
-      >
-        <s-grid
-          gridTemplateColumns="repeat(auto-fit, minmax(240px, 1fr))"
-          gap="base"
-        >
-          <Field label="Counter" value={formatNumber(counter.count)} />
-          <Field
-            label="Last bumped"
-            value={formatDateTime(counter.updatedAt)}
-          />
-        </s-grid>
       </s-section>
 
       <s-section

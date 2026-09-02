@@ -53,15 +53,9 @@ export class ShopAgentClientError extends Schema.TaggedError<ShopAgentClientErro
 export class ShopAgentClient extends Context.Service<
   ShopAgentClient,
   {
-    readonly getCounter: (
-      shop: string,
-    ) => Effect.Effect<Domain.Counter, ShopAgentClientError>;
     readonly getShopInfo: (
       shop: string,
     ) => Effect.Effect<Domain.ShopInfo, ShopAgentClientError>;
-    readonly getAdminSnapshot: (
-      shop: string,
-    ) => Effect.Effect<Domain.AdminShopAgentSnapshot, ShopAgentClientError>;
   }
 >()("ShopAgentClient") {
   static readonly layerNoDeps = Layer.effect(
@@ -108,22 +102,10 @@ export class ShopAgentClient extends Context.Service<
           ),
         );
       return ShopAgentClient.of({
-        getCounter: Effect.fn("ShopAgentClient.getCounter")((shop: string) =>
-          call("getCounter", Domain.Counter, shop, (stub) => stub.getCounter()),
-        ),
         getShopInfo: Effect.fn("ShopAgentClient.getShopInfo")((shop: string) =>
           call("getShopInfo", Domain.ShopInfo, shop, (stub) =>
             stub.getShopInfo(),
           ),
-        ),
-        getAdminSnapshot: Effect.fn("ShopAgentClient.getAdminSnapshot")(
-          (shop: string) =>
-            call(
-              "getAdminSnapshot",
-              Domain.AdminShopAgentSnapshot,
-              shop,
-              (stub) => stub.getAdminSnapshot(),
-            ),
         ),
       });
     }),

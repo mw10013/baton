@@ -16,7 +16,6 @@ import {
 import { FetchHttpClient } from "effect/unstable/http";
 import { SqlClient, type SqlError } from "effect/unstable/sql";
 
-import { CounterRepository } from "@/lib/CounterRepository";
 import { CurrentShopifySession } from "@/lib/CurrentShopifySession";
 import { D1Primary } from "@/lib/D1Primary";
 import { D1Session } from "@/lib/D1Session";
@@ -89,30 +88,7 @@ const callableEffect =
 /**
  * The Durable Object's private SQLite schema, versioned through
  * `SqliteMigrator` rather than a bare `create table if not exists` block, so
- * the second migration has somewhere to go.
- *
- * `Counter` is the skeleton's demo domain — see {@link CounterRepository}. The
- * `check (id = 1)` primary key with a seeded row makes "exactly one row per
- * shop" a schema fact; the seed is `insert or ignore` so re-running the
- * migration on an existing object is a no-op.
- */
-const initializeSchema = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
-  yield* sql`
-    create table if not exists Counter (
-      id integer primary key check (id = 1),
-      count integer not null check (count >= 0),
-      updatedAt integer
-    )
-  `;
-  yield* sql`
-    insert or ignore into Counter (id, count, updatedAt) values (1, 0, null)
-  `;
-});
-
-/**
- * Orders, their line items, and the two pieces of bookkeeping that make the
- * two ingestion paths safe to interleave.
+ * the next migration has somewhere to go.
  *
  * `ShopOrder`, not `Order` — `order` is a SQL reserved word, and an
  * unquoted identifier collides with `order by` in every hand-written query.
@@ -131,7 +107,7 @@ const initializeSchema = Effect.gen(function* () {
  * on; `id desc` is in it so the tiebreak is index-ordered too, since a shop
  * can place several orders in the same millisecond.
  */
-const initializeOrdersSchema = Effect.gen(function* () {
+const initializeSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`
     create table if not exists ShopOrder (
@@ -153,13 +129,9 @@ const initializeOrdersSchema = Effect.gen(function* () {
       raw text not null,
       syncedAt integer not null,
       syncSource text not null
-    )
-  `;
-  yield* sql`
+    );
     create index if not exists ShopOrder_processedAt
-      on ShopOrder (processedAt desc, id desc)
-  `;
-  yield* sql`
+      on ShopOrder (processedAt desc, id desc);
     create table if not exists OrderLineItem (
       id text primary key,
       orderId text not null references ShopOrder(id) on delete cascade,
@@ -175,21 +147,15 @@ const initializeOrdersSchema = Effect.gen(function* () {
       productTags text not null,
       customAttributes text not null,
       requiresShipping integer not null
-    )
-  `;
-  yield* sql`
-    create index if not exists OrderLineItem_orderId on OrderLineItem (orderId)
-  `;
-  yield* sql`
+    );
+    create index if not exists OrderLineItem_orderId on OrderLineItem (orderId);
     create table if not exists WebhookDelivery (
       webhookId text primary key,
       topic text not null,
       orderId text not null,
       triggeredAt integer not null,
       receivedAt integer not null
-    )
-  `;
-  yield* sql`
+    );
     create table if not exists SyncState (
       id integer primary key check (id = 1),
       workflowId text,
@@ -197,15 +163,14 @@ const initializeOrdersSchema = Effect.gen(function* () {
       lastFullSyncAt integer,
       lastFullSyncWindowStart integer,
       lastError text
-    )
+    );
+    insert or ignore into SyncState (id) values (1);
   `;
-  yield* sql`insert or ignore into SyncState (id) values (1)`;
 });
 
 export const runShopAgentMigrations = SqliteMigrator.run({
   loader: SqliteMigrator.fromRecord({
     "1_initialize schema": initializeSchema,
-    "2_orders": initializeOrdersSchema,
   }),
 }).pipe(
   Effect.tapCause((cause) =>
@@ -218,12 +183,12 @@ export const runShopAgentMigrations = SqliteMigrator.run({
 
 /**
  * Two SQL stores coexist. `Repository` runs over D1 (shared, sessions) via the
- * app-owned `D1Session`/`D1Primary` tags; `CounterRepository` runs over the
- * DO's private SQLite (`ctx.storage`, per-shop), whose `SqliteClient.layer` is
- * the only provider of the ambient `SqlClient` tag here. That is what
+ * app-owned `D1Session`/`D1Primary` tags; `OrderRepository` runs over the DO's
+ * private SQLite (`ctx.storage`, per-shop), whose `SqliteClient.layer` is the
+ * only provider of the ambient `SqlClient` tag here. That is what
  * `runShopAgentMigrations` (which requests `SqlClient` directly) needs. Each
- * repository closes over its own client at layer-build time, so the ambient
- * tag only governs the migration.
+ * repository closes over its own client at layer-build time, so the ambient tag
+ * only governs the migration.
  */
 const makeRunEffect = (env: Env, storage: DurableObjectStorage) => {
   const envLayer = makeEnvLayer(env);
@@ -239,10 +204,9 @@ const makeRunEffect = (env: Env, storage: DurableObjectStorage) => {
     ),
   );
   const shopifyLayer = Layer.provideMerge(Shopify.layerNoDeps, repositoryLayer);
-  const durableRepositoryLayer = Layer.mergeAll(
-    CounterRepository.layer,
-    OrderRepository.layer,
-  ).pipe(Layer.provideMerge(SqliteClient.layer({ storage })));
+  const durableRepositoryLayer = OrderRepository.layer.pipe(
+    Layer.provideMerge(SqliteClient.layer({ storage })),
+  );
   const layer = Layer.mergeAll(
     makeLoggerLayer(env),
     repositoryLayer,
@@ -463,56 +427,6 @@ export class ShopAgent extends Agent {
     );
   }
 
-  /**
-   * The canonical `activate<Feature>` method, and the convention every
-   * browser-reachable read that a route keeps live must follow.
-   *
-   * **The convention:** one idempotent method per feature area that subscribes
-   * the calling connection *and* returns that feature's data in a single round
-   * trip, named `activate<Feature>` so the name says it subscribes. The client
-   * uses it directly as its TanStack Query `queryFn`, so every refetch —
-   * initial mount, identify, reconnect, an invalidation poke — re-registers the
-   * attachment as a side effect of reading. {@link deactivate} on unmount.
-   *
-   * Two properties make it work, and both are load-bearing:
-   *
-   * - **Read and subscribe are one call.** Split them and a change landing
-   *   between the read and the attach is lost with no way to notice.
-   * - **The name is a warning.** A subscribing read called `getX` reads as a
-   *   pure getter, and a route that calls a plain getter and expects pushes
-   *   fails *silently* — it simply never updates until a manual reload. That
-   *   exact bug shipped here once (`getOrders`, now
-   *   {@link activateOrders}); an e2e caught it, nothing else could.
-   *
-   * The `sessionToken` is minted per route mount and stored on the connection
-   * so {@link deactivate} from an unmounted previous mount — the `/app` socket
-   * is shared across route changes — cannot detach the mount that replaced it.
-   * There is one attachment slot per connection, so exactly one route holds it
-   * at a time and the token is what makes the handoff safe in either direction.
-   *
-   * Prior art: `../bang`'s `activateLive` / `closeLive`, whose attachment also
-   * carries the memory keys a tab watches so pushes can be filtered. See
-   * {@link Domain.ConnectionState} for when Baton should grow that.
-   */
-  @callable()
-  activateCounter(input: Domain.SessionTokenInput): Promise<Domain.Counter> {
-    const shop = this.name;
-    return this.runEffect(
-      callableEffect("ShopAgent.activateCounter", Domain.SessionTokenInput, {
-        onExcessProperty: "error",
-      })(({ sessionToken }) =>
-        Effect.gen(function* () {
-          const { connection } = getCurrentAgent<ShopAgent>();
-          if (connection) connection.setState({ sessionToken });
-          yield* Effect.logDebug(
-            `ShopAgent.activateCounter: shop=${shop}`,
-          ).pipe(Effect.annotateLogs({ shop }));
-          return yield* (yield* CounterRepository).get();
-        }),
-      )(input),
-    );
-  }
-
   @callable()
   deactivate(input: Domain.SessionTokenInput): Promise<void> {
     return this.runEffect(
@@ -528,34 +442,6 @@ export class ShopAgent extends Agent {
             connection.setState(null);
         }),
       )(input),
-    );
-  }
-
-  /**
-   * The demo write: browser → WebSocket RPC → SQLite → broadcast. Every open
-   * tab for this shop refetches, including the one that clicked.
-   *
-   * Browser-reachable and taking no arguments, which is the point: nothing a
-   * tab can name reaches storage. A real mutation that must respect a plan
-   * ceiling takes the ceiling as a required argument resolved from D1 by the
-   * Worker, and is therefore reachable only through `ShopAgentClient` from a
-   * server function — never `@callable()`.
-   */
-  @callable()
-  bump(): Promise<Domain.Counter> {
-    const shop = this.name;
-    const notifyChanged = () => this.notifyChanged();
-    return this.runEffect(
-      Effect.gen(function* () {
-        const counter = yield* (yield* CounterRepository).bump(
-          yield* Clock.currentTimeMillis,
-        );
-        yield* Effect.logInfo(
-          `ShopAgent.bump: shop=${shop} count=${String(counter.count)}`,
-        ).pipe(Effect.annotateLogs({ shop, count: counter.count }));
-        yield* notifyChanged();
-        return counter;
-      }).pipe(Effect.withLogSpan("ShopAgent.bump")),
     );
   }
 
@@ -581,30 +467,6 @@ export class ShopAgent extends Agent {
         );
         return info;
       }).pipe(Effect.withLogSpan("ShopAgent.getShopInfo")),
-    );
-  }
-
-  getCounter(): Promise<Domain.Counter> {
-    return this.runEffect(
-      CounterRepository.pipe(
-        Effect.flatMap((repository) => repository.get()),
-        Effect.withLogSpan("ShopAgent.getCounter"),
-      ),
-    );
-  }
-
-  /**
-   * Everything the admin drill-down reads out of this object, in one RPC.
-   * Counters and stored rows only — the plan-derived ceilings they are
-   * displayed against live in D1 and are attached by the route.
-   */
-  getAdminSnapshot(): Promise<Domain.AdminShopAgentSnapshot> {
-    return this.runEffect(
-      Effect.gen(function* () {
-        return {
-          counter: yield* (yield* CounterRepository).get(),
-        } satisfies Domain.AdminShopAgentSnapshot;
-      }).pipe(Effect.withLogSpan("ShopAgent.getAdminSnapshot")),
     );
   }
 
@@ -670,8 +532,8 @@ export class ShopAgent extends Agent {
    * arguments, so there is no privileged input for the Worker to resolve, and
    * its only effect is starting a workflow the object itself refuses to
    * duplicate — a server-function hop would add a round trip and check nothing
-   * new. Contrast {@link bump}'s JSDoc: `ShopAgentClient` is for calls that
-   * must carry a Worker-resolved input such as a plan ceiling.
+   * new. `ShopAgentClient` is for calls that must carry a Worker-resolved input
+   * such as a plan ceiling.
    *
    * The reservation is written **before** `runWorkflow`, which creates the
    * Cloudflare instance and only then inserts its tracking row — two writes
@@ -1031,8 +893,8 @@ export class ShopAgent extends Agent {
 
   /**
    * The orders view's `activate<Feature>` method — reads the page and
-   * subscribes the calling connection in one round trip. See
-   * {@link activateCounter} for the convention and why the name matters.
+   * subscribes the calling connection in one round trip. Combining the read and
+   * subscription prevents a write between separate calls from being missed.
    */
   @callable()
   activateOrders(

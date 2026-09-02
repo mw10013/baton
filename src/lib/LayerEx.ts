@@ -160,9 +160,9 @@ export const makeEnvLayer = (env: Env) =>
  * `annotations` field, which is the structured shape Workers Logs recommends.
  *
  * Make the message scannable: when a fixed label would be too generic to tell
- * entries apart in the Message column (e.g. `"ShopAgent.bump"` repeated for
+ * entries apart in the Message column (e.g. `"ShopAgent.syncOrders"` repeated for
  * every step), interpolate the distinguishing value into the string, e.g.
- * `Effect.logInfo(\`ShopAgent.bump: shop=${shop}\`)`. Keep that same value in
+ * `Effect.logInfo(\`ShopAgent.syncOrders: shop=${shop}\`)`. Keep that same value in
  * `annotateLogs` too so it stays a queryable field; the interpolation is for
  * human scanning, the annotation for filtering. Avoid interpolating high-volume
  * unbounded values that would only bloat the column.

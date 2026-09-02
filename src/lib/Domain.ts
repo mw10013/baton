@@ -269,20 +269,6 @@ export const ShopSessionRedactedPage = Schema.Struct({
 export type ShopSessionRedactedPage = typeof ShopSessionRedactedPage.Type;
 
 /**
- * The demo counter the skeleton's home page reads and bumps.
- *
- * Its only job is to prove the full write path end to end — browser →
- * WebSocket RPC → Durable Object → its private SQLite → broadcast
- * invalidation → every open tab refetches. Replace it with the real domain;
- * the surrounding machinery is what is meant to survive.
- */
-export const Counter = Schema.Struct({
-  count: Schema.Number,
-  updatedAt: Schema.NullOr(Schema.Number),
-});
-export type Counter = typeof Counter.Type;
-
-/**
  * What the Durable Object reads back from the Shopify Admin API using the
  * shop's offline session. Exists to prove that path end to end — D1 session
  * lookup, token refresh if due, Admin GraphQL, schema decode — from inside the
@@ -305,7 +291,7 @@ export type OrderSyncSource = typeof OrderSyncSource.Type;
 
 /**
  * A Shopify `DateTime` (ISO 8601) as the epoch milliseconds every stored
- * timestamp uses, matching `Counter.updatedAt` and `ShopSession.*ExpiresAt`.
+ * timestamp uses, matching `ShopSession.*ExpiresAt`.
  *
  * Routed through {@link Schema.DateFromString}, whose target rejects an
  * invalid `Date`, so an unparseable timestamp fails the decode rather than
@@ -439,7 +425,7 @@ export const OrdersCursor = Schema.String.check(Schema.isMaxLength(128));
 
 /**
  * `sessionToken` is what subscribes the calling connection to invalidations —
- * the `activate<Feature>` convention documented on `ShopAgent.activateCounter`.
+ * the `activate<Feature>` convention documented on `ShopAgent.activateOrders`.
  * A page that only reads is a page that never hears about a write: the Durable
  * Object pushes to attached connections only, and the `/app` socket is shared,
  * so a route that read without attaching would go silent the moment another
@@ -528,26 +514,6 @@ export const OrdersView = Schema.Struct({
 });
 export type OrdersView = typeof OrdersView.Type;
 
-export interface HomeLoaderData {
-  readonly counter: Counter;
-  readonly plan: Plan;
-  readonly entitlements: Entitlements;
-}
-
-/**
- * Everything the admin drill-down reads out of one shop's Durable Object, in a
- * single RPC.
- *
- * Stored rows only — no limits: the ceilings these would be displayed against
- * derive from the shop's plan, which lives in D1, so the route's server
- * function attaches them. An admin page that echoed a limit back out of the
- * object would be reporting the object's guess rather than the plan's grant.
- */
-export const AdminShopAgentSnapshot = Schema.Struct({
-  counter: Counter,
-});
-export type AdminShopAgentSnapshot = typeof AdminShopAgentSnapshot.Type;
-
 /**
  * Why the shop's cached plan entry reads the way it does.
  *
@@ -627,7 +593,6 @@ export type AdminShopLoaderData =
       readonly plan: AdminShopPlanCache;
       readonly entitlements: Entitlements | null;
       readonly derivedShopAgentId: string;
-      readonly snapshot: AdminShopAgentSnapshot;
     };
 
 /**

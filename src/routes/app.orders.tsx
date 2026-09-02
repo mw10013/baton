@@ -22,9 +22,6 @@ const ordersQueryKey = (shop: string) => ["orders", shop] as const;
  * a JSON string) and fail on the first order. `toType` derives a validator over
  * the decoded side, so the wire value is checked without re-running transforms
  * that already ran. Same reasoning as the better-auth boundary in `Auth.ts`.
- *
- * `Domain.Counter` on the home page needs no such care only because it carries
- * no transforms; any domain schema that does must cross this seam as `toType`.
  */
 const decodeOrdersView = Schema.decodeUnknownPromise(
   Schema.toType(Domain.OrdersView),
@@ -123,8 +120,8 @@ export const Route = createFileRoute("/app/orders")({
  * live while a bulk stream and webhooks write underneath it. The cost is no SSR
  * paint, which is why the empty and connecting states are explicit.
  *
- * Invalidations **are** throttled here, unlike the counter page. A bulk sync
- * plus a burst of order webhooks can poke many times in a second, and
+ * Invalidations are throttled because a bulk sync plus a burst of order webhooks
+ * can poke many times in a second, and
  * `invalidateQueries` defaults to `cancelRefetch: true` while a Durable Object
  * RPC cannot be aborted — so N pokes would start N reads and discard N-1. A
  * trailing throttle collapses a burst into one refetch and still guarantees a
@@ -140,9 +137,8 @@ function RouteComponent() {
   /**
    * Mount-scoped, exactly as on the home route: the `/app` socket outlives this
    * route, so a stale `deactivate` from a mount that has already been replaced
-   * must not clear the newer mount's attachment. See
-   * `ShopAgent.activateCounter` for the `activate<Feature>` convention this and
-   * the query function below follow.
+   * must not clear the newer mount's attachment. The query calls
+   * `ShopAgent.activateOrders`, which reads and attaches in one round trip.
    */
   const sessionTokenRef = React.useRef<string | null>(null);
   sessionTokenRef.current ??= crypto.randomUUID();
