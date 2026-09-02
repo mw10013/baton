@@ -1,13 +1,16 @@
+import * as React from "react";
+
 import { useForm } from "@tanstack/react-form";
 import { useMutation } from "@tanstack/react-query";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { createServerFn, useServerFn } from "@tanstack/react-start";
-import { Effect, Schema } from "effect";
+import { Effect, Match, Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
 import { fieldError, mutationErrorMessage } from "@/lib/form";
 import { formatDateTime } from "@/lib/format";
 import { Repository } from "@/lib/Repository";
+import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 
 const teamsSearchSchema = Schema.Struct({
@@ -39,6 +42,20 @@ const failWith = (message: string) => () => Effect.fail(new Error(message));
 
 const NAME_TAKEN = "A team with that name already exists.";
 const TEAM_GONE = "That team no longer exists.";
+
+const decodeTeamArchiveResult = Schema.decodeUnknownPromise(
+  Schema.toType(Domain.TeamArchiveResult),
+);
+
+export const teamArchiveResultMessage = Match.typeTags<
+  Domain.TeamArchiveResult,
+  string | null
+>()({
+  Ok: () => null,
+  InUse: ({ count }) =>
+    `Reassign this team's ${String(count)} workflow step${count === 1 ? "" : "s"} before archiving.`,
+  NotFound: () => TEAM_GONE,
+});
 
 const getTeams = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(teamsSearchSchema))
@@ -97,6 +114,8 @@ function RouteComponent() {
   const router = useRouter();
   const createTeam = useServerFn(createTeamFn);
   const setTeamArchived = useServerFn(setTeamArchivedFn);
+  const { agent, identified } = useShopAgent();
+  const [archiveBanner, setArchiveBanner] = React.useState<string | null>(null);
 
   const createMutation = useMutation({
     mutationFn: (data: TeamNameInput) => createTeam({ data }),
@@ -106,10 +125,28 @@ function RouteComponent() {
     },
   });
 
+  /**
+   * Archive goes through the Durable Object so its "no workflow step still
+   * points here" guard runs serialized with step writes; restore has nothing
+   * to guard and stays a plain server fn.
+   */
   const archiveMutation = useMutation({
-    mutationFn: (data: { teamId: string; archived: boolean }) =>
-      setTeamArchived({ data }),
-    onSuccess: () => router.invalidate({ sync: true }),
+    mutationFn: async (data: { teamId: string; archived: boolean }) => {
+      if (!data.archived) {
+        await setTeamArchived({ data });
+        return null;
+      }
+      if (!agent) throw new Error("Still connecting. Try again in a moment.");
+      return withSocketRecovery(agent)(() =>
+        agent.stub.archiveTeam({ teamId: data.teamId }),
+      ).then(decodeTeamArchiveResult);
+    },
+    onSuccess: async (result) => {
+      setArchiveBanner(
+        result === null ? null : teamArchiveResultMessage(result),
+      );
+      await router.invalidate({ sync: true });
+    },
   });
 
   const form = useForm({
@@ -142,6 +179,9 @@ function RouteComponent() {
           </s-paragraph>
           {mutationError && (
             <s-banner tone="critical">{mutationError}</s-banner>
+          )}
+          {archiveBanner !== null && (
+            <s-banner tone="warning">{archiveBanner}</s-banner>
           )}
           <form
             onSubmit={(event) => {
@@ -223,7 +263,10 @@ function RouteComponent() {
                     <s-table-cell>
                       <s-button
                         variant="tertiary"
-                        disabled={archiveMutation.isPending}
+                        disabled={
+                          archiveMutation.isPending ||
+                          (team.archivedAt === null && !identified)
+                        }
                         onClick={() => {
                           archiveMutation.mutate({
                             teamId: team.id,

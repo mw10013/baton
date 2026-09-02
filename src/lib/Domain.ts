@@ -331,6 +331,257 @@ export const MemberAccess = Schema.Struct({
 });
 export type MemberAccess = typeof MemberAccess.Type;
 
+export const WorkflowId = Schema.NonEmptyString.pipe(
+  Schema.brand("WorkflowId"),
+);
+export type WorkflowId = typeof WorkflowId.Type;
+
+export const WorkflowStepId = Schema.NonEmptyString.pipe(
+  Schema.brand("WorkflowStepId"),
+);
+export type WorkflowStepId = typeof WorkflowStepId.Type;
+
+/**
+ * Arbitrary ceilings, enforced in the schemas below and re-checked by
+ * `WorkflowRepository` before every insert, so the Durable Object never stores
+ * an oversize row and the reorder UI stays a short list. Raise freely; they
+ * exist so `position` loops and tag scans are bounded, not to model a plan tier.
+ */
+export const WorkflowLimits = {
+  maxWorkflows: 50,
+  maxSteps: 20,
+  maxTags: 20,
+} as const;
+
+const trimmedName = <B extends string>(brand: B) =>
+  Schema.String.pipe(
+    Schema.decodeTo(
+      Schema.NonEmptyString.check(Schema.isMaxLength(64)).pipe(
+        Schema.brand(brand),
+      ),
+      {
+        decode: SchemaGetter.transform((s) => s.trim()),
+        encode: SchemaGetter.transform((s) => s),
+      },
+    ),
+  );
+
+/** Same shape and reasoning as {@link TeamName}: trimmed, case preserved. */
+export const WorkflowName = trimmedName("WorkflowName");
+export type WorkflowName = typeof WorkflowName.Type;
+
+export const StepName = trimmedName("StepName");
+export type StepName = typeof StepName.Type;
+
+/**
+ * Trimmed *and* lowercased, unlike the names: a tag exists only to be matched
+ * against `OrderLineItem.productTags`, merchants type `Engraving` and
+ * `engraving` interchangeably, and Shopify's own admin search is
+ * case-insensitive. Folding once at the boundary means matching later is a
+ * plain set intersection over lowercased line-item tags. 255 is Shopify's tag
+ * length limit.
+ */
+export const ProductTag = Schema.String.pipe(
+  Schema.decodeTo(
+    Schema.NonEmptyString.check(Schema.isMaxLength(255)).pipe(
+      Schema.brand("ProductTag"),
+    ),
+    {
+      decode: SchemaGetter.transform((s) => s.trim().toLowerCase()),
+      encode: SchemaGetter.transform((s) => s),
+    },
+  ),
+);
+export type ProductTag = typeof ProductTag.Type;
+
+/**
+ * Dedupes *after* folding, so `["Engraving", "engraving"]` is one tag, and
+ * drops blanks so a trailing comma in the tags field is not an error. The
+ * ceiling is checked on what survives.
+ */
+export const ProductTags = Schema.Array(Schema.String).pipe(
+  Schema.decodeTo(
+    Schema.Array(ProductTag).check(
+      Schema.isMaxLength(WorkflowLimits.maxTags, {
+        message: `At most ${String(WorkflowLimits.maxTags)} tags`,
+      }),
+    ),
+    {
+      decode: SchemaGetter.transform((tags) => [
+        ...new Set(tags.map((t) => t.trim().toLowerCase()).filter(Boolean)),
+      ]),
+      encode: SchemaGetter.transform((tags) => tags),
+    },
+  ),
+);
+export type ProductTags = typeof ProductTags.Type;
+
+/**
+ * A production workflow *definition*: which product tags select it, and (in
+ * `WorkflowStep`) the ordered stops a matching line item will pass through.
+ * Encoded side is the Durable Object row (epoch-ms integers, JSON `tags`).
+ *
+ * No `status` column: `archivedAt is null and stepCount > 0 and every step's
+ * team is active` *is* "routes". Archive, never delete, so a future running
+ * instance can always resolve the name it was copied from. Editing a definition
+ * never rewrites history because instances copy their steps at creation.
+ */
+export const Workflow = Schema.Struct({
+  id: WorkflowId,
+  name: WorkflowName,
+  tags: Schema.fromJsonString(ProductTags),
+  createdAt: Schema.Number,
+  updatedAt: Schema.Number,
+  archivedAt: Schema.NullOr(Schema.Number),
+});
+export type Workflow = typeof Workflow.Type;
+
+/**
+ * `teamId` is a live pointer to a D1 `Team`, not a snapshot: renaming a team
+ * renames every step it owns, and a step can only be *saved* against an active
+ * team. It carries no `teamName` — the name is joined at read time, and only
+ * the eventual instance rows snapshot it.
+ */
+export const WorkflowStep = Schema.Struct({
+  id: WorkflowStepId,
+  workflowId: WorkflowId,
+  position: Schema.Number,
+  name: StepName,
+  teamId: TeamId,
+  createdAt: Schema.Number,
+});
+export type WorkflowStep = typeof WorkflowStep.Type;
+
+export const WorkflowSummary = Schema.Struct({
+  ...Workflow.fields,
+  stepCount: Schema.Number,
+});
+export type WorkflowSummary = typeof WorkflowSummary.Type;
+
+export const WorkflowDetail = Schema.Struct({
+  workflow: Workflow,
+  steps: Schema.Array(WorkflowStep),
+});
+export type WorkflowDetail = typeof WorkflowDetail.Type;
+
+/**
+ * What the detail page renders, in one socket round trip. `teamName` is
+ * `null` when the step's team is archived or gone — a flag, not a block: the
+ * workflow shows "needs attention", the step renders with an empty picker, and
+ * everything else stays editable. `activeTeams` rides along so the team picker
+ * needs no second call.
+ */
+export const WorkflowDetailView = Schema.Struct({
+  workflow: Workflow,
+  steps: Schema.Array(
+    Schema.Struct({
+      ...WorkflowStep.fields,
+      teamName: Schema.NullOr(TeamName),
+    }),
+  ),
+  activeTeams: Schema.Array(Schema.Struct({ id: TeamId, name: TeamName })),
+});
+export type WorkflowDetailView = typeof WorkflowDetailView.Type;
+
+const BoundedId = Schema.NonEmptyString.check(Schema.isMaxLength(128));
+
+export const ListWorkflowsInput = Schema.Struct({
+  includeArchived: Schema.Boolean,
+});
+export type ListWorkflowsInput = typeof ListWorkflowsInput.Type;
+
+export const WorkflowIdInput = Schema.Struct({ workflowId: BoundedId });
+export type WorkflowIdInput = typeof WorkflowIdInput.Type;
+
+export const CreateWorkflowInput = Schema.Struct({
+  name: WorkflowName,
+  tags: ProductTags,
+});
+export type CreateWorkflowInput = typeof CreateWorkflowInput.Type;
+
+export const UpdateWorkflowInput = Schema.Struct({
+  workflowId: BoundedId,
+  name: WorkflowName,
+  tags: ProductTags,
+});
+export type UpdateWorkflowInput = typeof UpdateWorkflowInput.Type;
+
+export const SetWorkflowArchivedInput = Schema.Struct({
+  workflowId: BoundedId,
+  archived: Schema.Boolean,
+});
+export type SetWorkflowArchivedInput = typeof SetWorkflowArchivedInput.Type;
+
+export const AddStepInput = Schema.Struct({
+  workflowId: BoundedId,
+  name: StepName,
+  teamId: BoundedId,
+});
+export type AddStepInput = typeof AddStepInput.Type;
+
+export const UpdateStepInput = Schema.Struct({
+  stepId: BoundedId,
+  name: StepName,
+  teamId: BoundedId,
+});
+export type UpdateStepInput = typeof UpdateStepInput.Type;
+
+export const StepDirection = Schema.Literals(["up", "down"]);
+export type StepDirection = typeof StepDirection.Type;
+
+export const MoveStepInput = Schema.Struct({
+  stepId: BoundedId,
+  direction: StepDirection,
+});
+export type MoveStepInput = typeof MoveStepInput.Type;
+
+export const StepIdInput = Schema.Struct({ stepId: BoundedId });
+export type StepIdInput = typeof StepIdInput.Type;
+
+export const TeamIdInput = Schema.Struct({ teamId: BoundedId });
+export type TeamIdInput = typeof TeamIdInput.Type;
+
+/**
+ * Expected failures cross the socket as values, not throws: `runEffect`
+ * collapses every failure into one `Error(message)` at the RPC seam, which is
+ * fine for faults but loses the tag the page needs to put "name taken" on the
+ * field rather than in a banner.
+ */
+export const WorkflowResult = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("Ok"), workflow: Workflow }),
+  Schema.Struct({ _tag: Schema.Literal("NameTaken") }),
+  Schema.Struct({ _tag: Schema.Literal("NotFound") }),
+  Schema.Struct({ _tag: Schema.Literal("Limit"), limit: Schema.Number }),
+]);
+export type WorkflowResult = typeof WorkflowResult.Type;
+
+export const StepResult = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal("Ok"),
+    step: Schema.NullOr(WorkflowStep),
+  }),
+  Schema.Struct({ _tag: Schema.Literal("NotFound") }),
+  Schema.Struct({ _tag: Schema.Literal("Limit"), limit: Schema.Number }),
+  Schema.Struct({ _tag: Schema.Literal("TeamNotActive") }),
+  Schema.Struct({ _tag: Schema.Literal("Archived") }),
+]);
+export type StepResult = typeof StepResult.Type;
+
+export const TeamArchiveResult = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("Ok") }),
+  Schema.Struct({ _tag: Schema.Literal("InUse"), count: Schema.Number }),
+  Schema.Struct({ _tag: Schema.Literal("NotFound") }),
+]);
+export type TeamArchiveResult = typeof TeamArchiveResult.Type;
+
+export const OwnedStep = Schema.Struct({
+  workflowId: WorkflowId,
+  workflowName: WorkflowName,
+  workflowArchived: SqliteBoolean,
+  stepName: StepName,
+});
+export type OwnedStep = typeof OwnedStep.Type;
+
 export const ShopSessionRedactedPage = Schema.Struct({
   shopSessions: Schema.Array(ShopSessionRedacted),
   limit: Schema.Number,

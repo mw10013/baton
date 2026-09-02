@@ -33,6 +33,8 @@ import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
 import { Route as ApiE2eSeedRouteImport } from './routes/api.e2e.seed'
 import { Route as AppTeamsIndexRouteImport } from './routes/app.teams.index'
 import { Route as AppTeamsTeamIdRouteImport } from './routes/app.teams.$teamId'
+import { Route as AppWorkflowsIndexRouteImport } from './routes/app.workflows.index'
+import { Route as AppWorkflowsWorkflowIdRouteImport } from './routes/app.workflows.$workflowId'
 import { Route as WebhooksAppScopes_updateRouteImport } from './routes/webhooks.app.scopes_update'
 import { Route as WebhooksAppUninstalledRouteImport } from './routes/webhooks.app.uninstalled'
 
@@ -157,6 +159,16 @@ const AppTeamsTeamIdRoute = AppTeamsTeamIdRouteImport.update({
   path: '/teams/$teamId',
   getParentRoute: () => AppRoute,
 } as any)
+const AppWorkflowsIndexRoute = AppWorkflowsIndexRouteImport.update({
+  id: '/workflows/',
+  path: '/workflows/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppWorkflowsWorkflowIdRoute = AppWorkflowsWorkflowIdRouteImport.update({
+  id: '/workflows/$workflowId',
+  path: '/workflows/$workflowId',
+  getParentRoute: () => AppRoute,
+} as any)
 const WebhooksAppScopes_updateRoute =
   WebhooksAppScopes_updateRouteImport.update({
     id: '/webhooks/app/scopes_update',
@@ -193,9 +205,11 @@ export interface FileRoutesByFullPath {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/e2e/seed': typeof ApiE2eSeedRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
+  '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
   '/app/teams/': typeof AppTeamsIndexRoute
+  '/app/workflows/': typeof AppWorkflowsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -218,9 +232,11 @@ export interface FileRoutesByTo {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/e2e/seed': typeof ApiE2eSeedRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
+  '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
   '/app/teams': typeof AppTeamsIndexRoute
+  '/app/workflows': typeof AppWorkflowsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -247,9 +263,11 @@ export interface FileRoutesById {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/e2e/seed': typeof ApiE2eSeedRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
+  '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
   '/app/teams/': typeof AppTeamsIndexRoute
+  '/app/workflows/': typeof AppWorkflowsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -277,9 +295,11 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/e2e/seed'
     | '/app/teams/$teamId'
+    | '/app/workflows/$workflowId'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
     | '/app/teams/'
+    | '/app/workflows/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -302,9 +322,11 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/e2e/seed'
     | '/app/teams/$teamId'
+    | '/app/workflows/$workflowId'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
     | '/app/teams'
+    | '/app/workflows'
   id:
     | '__root__'
     | '/'
@@ -330,9 +352,11 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/e2e/seed'
     | '/app/teams/$teamId'
+    | '/app/workflows/$workflowId'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
     | '/app/teams/'
+    | '/app/workflows/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -522,6 +546,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTeamsTeamIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/workflows/': {
+      id: '/app/workflows/'
+      path: '/workflows'
+      fullPath: '/app/workflows/'
+      preLoaderRoute: typeof AppWorkflowsIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/workflows/$workflowId': {
+      id: '/app/workflows/$workflowId'
+      path: '/workflows/$workflowId'
+      fullPath: '/app/workflows/$workflowId'
+      preLoaderRoute: typeof AppWorkflowsWorkflowIdRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/webhooks/app/scopes_update': {
       id: '/webhooks/app/scopes_update'
       path: '/webhooks/app/scopes_update'
@@ -562,7 +600,9 @@ interface AppRouteChildren {
   AppOrdersRoute: typeof AppOrdersRoute
   AppIndexRoute: typeof AppIndexRoute
   AppTeamsTeamIdRoute: typeof AppTeamsTeamIdRoute
+  AppWorkflowsWorkflowIdRoute: typeof AppWorkflowsWorkflowIdRoute
   AppTeamsIndexRoute: typeof AppTeamsIndexRoute
+  AppWorkflowsIndexRoute: typeof AppWorkflowsIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -570,7 +610,9 @@ const AppRouteChildren: AppRouteChildren = {
   AppOrdersRoute: AppOrdersRoute,
   AppIndexRoute: AppIndexRoute,
   AppTeamsTeamIdRoute: AppTeamsTeamIdRoute,
+  AppWorkflowsWorkflowIdRoute: AppWorkflowsWorkflowIdRoute,
   AppTeamsIndexRoute: AppTeamsIndexRoute,
+  AppWorkflowsIndexRoute: AppWorkflowsIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

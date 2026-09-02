@@ -1,5 +1,5 @@
 import { useForm } from "@tanstack/react-form";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute, notFound, useRouter } from "@tanstack/react-router";
 import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Effect, Option, Schema } from "effect";
@@ -7,6 +7,7 @@ import { Effect, Option, Schema } from "effect";
 import * as Domain from "@/lib/Domain";
 import { fieldError, mutationErrorMessage } from "@/lib/form";
 import { Repository } from "@/lib/Repository";
+import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 
 const TeamIdInput = Schema.Struct({ teamId: Schema.String });
@@ -38,6 +39,10 @@ const failWith = (message: string) => () => Effect.fail(new Error(message));
 
 const NAME_TAKEN = "A team with that name already exists.";
 const TEAM_GONE = "That team is no longer available.";
+
+const decodeOwnedSteps = Schema.decodeUnknownPromise(
+  Schema.toType(Schema.Array(Domain.OwnedStep)),
+);
 
 const getTeamDetail = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(TeamIdInput))
@@ -100,6 +105,20 @@ function RouteComponent() {
   const renameTeam = useServerFn(renameTeamFn);
   const setTeamMember = useServerFn(setTeamMemberFn);
   const archived = team.archivedAt !== null;
+  const { agent, identified } = useShopAgent();
+
+  // oxlint-disable-next-line @tanstack/query/exhaustive-deps -- agent.stub is the stable per-shop socket; the cache identity is the shop plus the team
+  const ownedStepsQuery = useQuery({
+    queryKey: ["team-steps", team.shop, team.id],
+    staleTime: Infinity,
+    queryFn: () =>
+      agent
+        ? withSocketRecovery(agent)(() =>
+            agent.stub.listStepsOwnedBy({ teamId: team.id }),
+          ).then(decodeOwnedSteps)
+        : Promise.reject(new Error("Still connecting. Try again in a moment.")),
+    enabled: identified,
+  });
 
   const renameMutation = useMutation({
     mutationFn: (name: string) =>
@@ -132,6 +151,53 @@ function RouteComponent() {
       failedMutation.mutation.error,
       failedMutation.fallback,
     );
+
+  const renderOwnedSteps = () => {
+    if (ownedStepsQuery.isError)
+      return (
+        <s-banner tone="critical">
+          {ownedStepsQuery.error instanceof Error
+            ? ownedStepsQuery.error.message
+            : "Could not load workflow steps."}
+        </s-banner>
+      );
+    if (ownedStepsQuery.data === undefined)
+      return <s-paragraph color="subdued">Loading…</s-paragraph>;
+    if (ownedStepsQuery.data.length === 0)
+      return (
+        <s-paragraph color="subdued">
+          No workflow steps are assigned to this team.
+        </s-paragraph>
+      );
+    return (
+      <s-table>
+        <s-table-header-row>
+          <s-table-header listSlot="primary">Workflow</s-table-header>
+          <s-table-header>Step</s-table-header>
+        </s-table-header-row>
+        <s-table-body>
+          {ownedStepsQuery.data.map((owned, index) => (
+            <s-table-row
+              key={`${owned.workflowId}-${String(index)}`}
+              id={`${owned.workflowId}-${String(index)}`}
+            >
+              <s-table-cell>
+                <s-stack direction="inline" gap="small-300">
+                  <s-link href={`/app/workflows/${owned.workflowId}`}>
+                    {owned.workflowName}
+                  </s-link>
+                  {owned.workflowArchived && (
+                    <s-badge tone="info">Archived</s-badge>
+                  )}
+                </s-stack>
+              </s-table-cell>
+              <s-table-cell>{owned.stepName}</s-table-cell>
+            </s-table-row>
+          ))}
+        </s-table-body>
+      </s-table>
+    );
+  };
 
   return (
     <s-page heading={team.name} inlineSize="large">
@@ -181,6 +247,19 @@ function RouteComponent() {
               </s-stack>
             </s-stack>
           </form>
+        </s-stack>
+      </s-section>
+
+      <s-section
+        heading="Workflow steps"
+        accessibilityLabel="Workflow steps owned by this team"
+      >
+        <s-stack gap="base">
+          <s-paragraph color="subdued">
+            Steps this team owns. A team cannot be archived while any step still
+            points at it; reassign those steps first.
+          </s-paragraph>
+          {renderOwnedSteps()}
         </s-stack>
       </s-section>
 

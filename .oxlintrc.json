@@ -42,6 +42,7 @@
   ],
   "rules": {
     "typescript/prefer-readonly-parameter-types": "off",
+    "no-underscore-dangle": ["warn", { "allow": ["_tag"] }],
     "no-unused-vars": [
       "error",
       {

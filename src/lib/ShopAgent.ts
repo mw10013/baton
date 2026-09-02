@@ -42,10 +42,18 @@ import {
   ORDER_SYNC_OVERLAP_MS,
   ORDERS_SYNC_WORKFLOW_NAME,
 } from "@/lib/orderSyncConstants";
-import { Repository } from "@/lib/Repository";
+import { Repository, type RepositoryError } from "@/lib/Repository";
 import { runShopAgentOrdersStream } from "@/lib/ShopAgentOrdersStream";
 import { Shopify } from "@/lib/Shopify";
 import { ShopifyAdmin } from "@/lib/ShopifyAdmin";
+import {
+  type StepNotFoundError,
+  type WorkflowRepositoryError,
+  type WorkflowLimitError,
+  type WorkflowNameTakenError,
+  type WorkflowNotFoundError,
+  WorkflowRepository,
+} from "@/lib/WorkflowRepository";
 
 class ShopAgentNotifyError extends Schema.TaggedError<ShopAgentNotifyError>()(
   "ShopAgentNotifyError",
@@ -106,6 +114,18 @@ const callableEffect =
  * The `(processedAt desc, id desc)` index is the keyset the orders page pages
  * on; `id desc` is in it so the tiebreak is index-ordered too, since a shop
  * can place several orders in the same millisecond.
+ *
+ * `Workflow` / `WorkflowStep` are the production-workflow *definitions* a
+ * merchant configures (name, product tags, ordered steps). `WorkflowStep.teamId`
+ * is a D1 `Team.id` with no foreign key because none is possible: `Team` lives
+ * in D1 and this table in the object's private SQLite, and SQLite foreign keys
+ * do not cross databases. Integrity is application-level — `addStep` /
+ * `updateStep` verify the team is active before writing, and `archiveTeam`
+ * refuses while any step still points at it (`countStepsOwnedBy`, served by
+ * `WorkflowStep_teamId_idx`). `unique (workflowId, position)` is what forces
+ * `moveStep` to go through a scratch position inside one transaction.
+ * Epoch-ms integers like `ShopOrder`, not D1 `Team`'s ISO text: the two stores
+ * already differ, and one store should not mix.
  */
 const initializeSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -165,6 +185,26 @@ const initializeSchema = Effect.gen(function* () {
       lastError text
     );
     insert or ignore into SyncState (id) values (1);
+    create table if not exists Workflow (
+      id text primary key,
+      name text not null check (name = trim(name) and length(name) > 0),
+      tags text not null,
+      createdAt integer not null,
+      updatedAt integer not null,
+      archivedAt integer
+    );
+    create unique index if not exists Workflow_name_uidx
+      on Workflow (name collate nocase);
+    create table if not exists WorkflowStep (
+      id text primary key,
+      workflowId text not null references Workflow (id) on delete cascade,
+      position integer not null,
+      name text not null check (name = trim(name) and length(name) > 0),
+      teamId text not null,
+      createdAt integer not null,
+      unique (workflowId, position)
+    );
+    create index if not exists WorkflowStep_teamId_idx on WorkflowStep (teamId);
   `;
 });
 
@@ -204,9 +244,10 @@ const makeRunEffect = (env: Env, storage: DurableObjectStorage) => {
     ),
   );
   const shopifyLayer = Layer.provideMerge(Shopify.layerNoDeps, repositoryLayer);
-  const durableRepositoryLayer = OrderRepository.layer.pipe(
-    Layer.provideMerge(SqliteClient.layer({ storage })),
-  );
+  const durableRepositoryLayer = Layer.merge(
+    OrderRepository.layer,
+    WorkflowRepository.layer,
+  ).pipe(Layer.provideMerge(SqliteClient.layer({ storage })));
   const layer = Layer.mergeAll(
     makeLoggerLayer(env),
     repositoryLayer,
@@ -249,6 +290,77 @@ const shopInfoQuery = `#graphql
   }`;
 
 const ShopInfoResponse = Schema.Struct({ shop: Domain.ShopInfo });
+
+/**
+ * Maps the repository's expected failures onto the tagged result union the
+ * page decodes, leaving faults (`SqlError`, decode errors) to propagate and
+ * become a thrown `Error` at the `runEffect` seam. Expected failures must be
+ * *values* here because that seam collapses every failure into one message
+ * string, which would leave the browser unable to tell "name taken" (a field
+ * error) from "limit reached" (a banner).
+ */
+const workflowResult = <R>(
+  effect: Effect.Effect<
+    Domain.Workflow,
+    | WorkflowNameTakenError
+    | WorkflowNotFoundError
+    | WorkflowLimitError
+    | SqlError.SqlError
+    | WorkflowRepositoryError,
+    R
+  >,
+): Effect.Effect<
+  Domain.WorkflowResult,
+  SqlError.SqlError | WorkflowRepositoryError,
+  R
+> =>
+  effect.pipe(
+    Effect.map((workflow): Domain.WorkflowResult => ({ _tag: "Ok", workflow })),
+    Effect.catchTags({
+      WorkflowNameTakenError: () =>
+        Effect.succeed<Domain.WorkflowResult>({ _tag: "NameTaken" }),
+      WorkflowNotFoundError: () =>
+        Effect.succeed<Domain.WorkflowResult>({ _tag: "NotFound" }),
+      WorkflowLimitError: ({ limit }) =>
+        Effect.succeed<Domain.WorkflowResult>({ _tag: "Limit", limit }),
+    }),
+  );
+
+const stepResult = <R>(
+  effect: Effect.Effect<
+    Domain.StepResult,
+    | StepNotFoundError
+    | WorkflowNotFoundError
+    | WorkflowLimitError
+    | SqlError.SqlError
+    | WorkflowRepositoryError
+    | RepositoryError
+    | Schema.SchemaError,
+    R
+  >,
+): Effect.Effect<
+  Domain.StepResult,
+  | SqlError.SqlError
+  | WorkflowRepositoryError
+  | RepositoryError
+  | Schema.SchemaError,
+  R
+> =>
+  effect.pipe(
+    Effect.catchTags({
+      StepNotFoundError: () =>
+        Effect.succeed<Domain.StepResult>({ _tag: "NotFound" }),
+      WorkflowNotFoundError: () =>
+        Effect.succeed<Domain.StepResult>({ _tag: "NotFound" }),
+      WorkflowLimitError: ({ limit }) =>
+        Effect.succeed<Domain.StepResult>({ _tag: "Limit", limit }),
+    }),
+  );
+
+const inUseResult = (count: number): Domain.TeamArchiveResult => ({
+  _tag: "InUse",
+  count,
+});
 
 const SHOP_AGENT_BINDING = "SHOP_AGENT";
 
@@ -913,6 +1025,342 @@ export class ShopAgent extends Agent {
             syncState: yield* repository.getSyncState(),
           } satisfies Domain.OrdersView;
         }),
+      )(input),
+    );
+  }
+
+  @callable()
+  listWorkflows(
+    input: typeof Domain.ListWorkflowsInput.Encoded,
+  ): Promise<readonly Domain.WorkflowSummary[]> {
+    return this.runEffect(
+      callableEffect("ShopAgent.listWorkflows", Domain.ListWorkflowsInput, {
+        onExcessProperty: "error",
+      })(({ includeArchived }) =>
+        WorkflowRepository.pipe(
+          Effect.flatMap((repository) =>
+            repository.listWorkflows({ includeArchived }),
+          ),
+        ),
+      )(input),
+    );
+  }
+
+  /**
+   * `getWorkflowDetail`, not `getWorkflow`: the Agents SDK base class already
+   * has a `getWorkflow(workflowId)` that tracks Cloudflare Workflow instances.
+   *
+   * Joins team names from D1 inside the object rather than in a server fn: the
+   * runtime already holds `Repository`, and one round trip returns the steps,
+   * their resolved team names, and the active-team roster the picker needs.
+   * A step whose team is archived or missing resolves to `teamName: null` —
+   * flagged, never blocked, since the risk is at routing time, not in the
+   * editor, and unarchiving the team restores validity with no edit.
+   */
+  @callable()
+  getWorkflowDetail(
+    input: typeof Domain.WorkflowIdInput.Encoded,
+  ): Promise<Domain.WorkflowDetailView | null> {
+    const name = this.name;
+    return this.runEffect(
+      callableEffect("ShopAgent.getWorkflowDetail", Domain.WorkflowIdInput, {
+        onExcessProperty: "error",
+      })(({ workflowId }) =>
+        Effect.gen(function* () {
+          const detail = yield* (yield* WorkflowRepository).getWorkflow({
+            workflowId,
+          });
+          if (Option.isNone(detail)) return null;
+          const teams = yield* (yield* Repository).listTeams({
+            shop: yield* Schema.decodeUnknownEffect(Domain.Shop)(name),
+            includeArchived: true,
+          });
+          const nameOf = new Map(
+            teams
+              .filter((team) => team.archivedAt === null)
+              .map((team) => [team.id, team.name]),
+          );
+          return {
+            workflow: detail.value.workflow,
+            steps: detail.value.steps.map((step) => ({
+              ...step,
+              teamName: nameOf.get(step.teamId) ?? null,
+            })),
+            activeTeams: [...nameOf].map(([id, name]) => ({ id, name })),
+          } satisfies Domain.WorkflowDetailView;
+        }),
+      )(input),
+    );
+  }
+
+  @callable()
+  createWorkflow(
+    input: typeof Domain.CreateWorkflowInput.Encoded,
+  ): Promise<Domain.WorkflowResult> {
+    const notifyChanged = () => this.notifyChanged();
+    return this.runEffect(
+      callableEffect("ShopAgent.createWorkflow", Domain.CreateWorkflowInput, {
+        onExcessProperty: "error",
+      })(({ name, tags }) =>
+        workflowResult(
+          WorkflowRepository.pipe(
+            Effect.flatMap((repository) =>
+              repository.createWorkflow({ name, tags }),
+            ),
+          ),
+        ).pipe(Effect.tap(notifyChanged)),
+      )(input),
+    );
+  }
+
+  @callable()
+  updateWorkflow(
+    input: typeof Domain.UpdateWorkflowInput.Encoded,
+  ): Promise<Domain.WorkflowResult> {
+    const notifyChanged = () => this.notifyChanged();
+    return this.runEffect(
+      callableEffect("ShopAgent.updateWorkflow", Domain.UpdateWorkflowInput, {
+        onExcessProperty: "error",
+      })(({ workflowId, name, tags }) =>
+        workflowResult(
+          WorkflowRepository.pipe(
+            Effect.flatMap((repository) =>
+              repository.updateWorkflow({ workflowId, name, tags }),
+            ),
+          ),
+        ).pipe(Effect.tap(notifyChanged)),
+      )(input),
+    );
+  }
+
+  @callable()
+  setWorkflowArchived(
+    input: typeof Domain.SetWorkflowArchivedInput.Encoded,
+  ): Promise<Domain.WorkflowResult> {
+    const notifyChanged = () => this.notifyChanged();
+    return this.runEffect(
+      callableEffect(
+        "ShopAgent.setWorkflowArchived",
+        Domain.SetWorkflowArchivedInput,
+        { onExcessProperty: "error" },
+      )(({ workflowId, archived }) =>
+        workflowResult(
+          WorkflowRepository.pipe(
+            Effect.flatMap((repository) =>
+              repository.setWorkflowArchived({ workflowId, archived }),
+            ),
+          ),
+        ).pipe(Effect.tap(notifyChanged)),
+      )(input),
+    );
+  }
+
+  /**
+   * The team check lives here, not in the repository: `Team` is a D1 row the
+   * Durable Object's SQLite cannot reference, so "active team" is an
+   * application invariant. Checked against the live roster on every write,
+   * and serialized against `archiveTeam` by the object's input gate.
+   */
+  private activeTeam(teamId: string) {
+    const name = this.name;
+    return Effect.gen(function* () {
+      const teams = yield* (yield* Repository).listTeams({
+        shop: yield* Schema.decodeUnknownEffect(Domain.Shop)(name),
+        includeArchived: false,
+      });
+      return teams.find((team) => team.id === teamId) ?? null;
+    });
+  }
+
+  private workflowWritable(workflowId: string) {
+    return WorkflowRepository.pipe(
+      Effect.flatMap((repository) => repository.getWorkflow({ workflowId })),
+      Effect.map(
+        Option.match({
+          onNone: (): Domain.StepResult => ({ _tag: "NotFound" }),
+          onSome: ({ workflow }): Domain.StepResult | null =>
+            workflow.archivedAt === null ? null : { _tag: "Archived" },
+        }),
+      ),
+    );
+  }
+
+  @callable()
+  addStep(
+    input: typeof Domain.AddStepInput.Encoded,
+  ): Promise<Domain.StepResult> {
+    const notifyChanged = () => this.notifyChanged();
+    const activeTeam = (teamId: string) => this.activeTeam(teamId);
+    const workflowWritable = (workflowId: string) =>
+      this.workflowWritable(workflowId);
+    return this.runEffect(
+      callableEffect("ShopAgent.addStep", Domain.AddStepInput, {
+        onExcessProperty: "error",
+      })(({ workflowId, name, teamId }) =>
+        stepResult(
+          Effect.gen(function* () {
+            const blocked = yield* workflowWritable(workflowId);
+            if (blocked !== null) return blocked;
+            const team = yield* activeTeam(teamId);
+            if (team === null) return { _tag: "TeamNotActive" };
+            const step = yield* (yield* WorkflowRepository).addStep({
+              workflowId,
+              name,
+              teamId: team.id,
+            });
+            yield* notifyChanged();
+            return { _tag: "Ok", step };
+          }),
+        ),
+      )(input),
+    );
+  }
+
+  @callable()
+  updateStep(
+    input: typeof Domain.UpdateStepInput.Encoded,
+  ): Promise<Domain.StepResult> {
+    const notifyChanged = () => this.notifyChanged();
+    const activeTeam = (teamId: string) => this.activeTeam(teamId);
+    const workflowWritable = (workflowId: string) =>
+      this.workflowWritable(workflowId);
+    return this.runEffect(
+      callableEffect("ShopAgent.updateStep", Domain.UpdateStepInput, {
+        onExcessProperty: "error",
+      })(({ stepId, name, teamId }) =>
+        stepResult(
+          Effect.gen(function* () {
+            const repository = yield* WorkflowRepository;
+            const existing = yield* repository.getStep({ stepId });
+            if (Option.isNone(existing)) return { _tag: "NotFound" };
+            const blocked = yield* workflowWritable(existing.value.workflowId);
+            if (blocked !== null) return blocked;
+            const team = yield* activeTeam(teamId);
+            if (team === null) return { _tag: "TeamNotActive" };
+            const step = yield* repository.updateStep({
+              stepId,
+              name,
+              teamId: team.id,
+            });
+            yield* notifyChanged();
+            return { _tag: "Ok", step };
+          }),
+        ),
+      )(input),
+    );
+  }
+
+  @callable()
+  moveStep(
+    input: typeof Domain.MoveStepInput.Encoded,
+  ): Promise<Domain.StepResult> {
+    const notifyChanged = () => this.notifyChanged();
+    const workflowWritable = (workflowId: string) =>
+      this.workflowWritable(workflowId);
+    return this.runEffect(
+      callableEffect("ShopAgent.moveStep", Domain.MoveStepInput, {
+        onExcessProperty: "error",
+      })(({ stepId, direction }) =>
+        stepResult(
+          Effect.gen(function* () {
+            const repository = yield* WorkflowRepository;
+            const existing = yield* repository.getStep({ stepId });
+            if (Option.isNone(existing)) return { _tag: "NotFound" };
+            const blocked = yield* workflowWritable(existing.value.workflowId);
+            if (blocked !== null) return blocked;
+            yield* repository.moveStep({ stepId, direction });
+            yield* notifyChanged();
+            return { _tag: "Ok", step: null };
+          }),
+        ),
+      )(input),
+    );
+  }
+
+  @callable()
+  removeStep(
+    input: typeof Domain.StepIdInput.Encoded,
+  ): Promise<Domain.StepResult> {
+    const notifyChanged = () => this.notifyChanged();
+    const workflowWritable = (workflowId: string) =>
+      this.workflowWritable(workflowId);
+    return this.runEffect(
+      callableEffect("ShopAgent.removeStep", Domain.StepIdInput, {
+        onExcessProperty: "error",
+      })(({ stepId }) =>
+        stepResult(
+          Effect.gen(function* () {
+            const repository = yield* WorkflowRepository;
+            const existing = yield* repository.getStep({ stepId });
+            if (Option.isNone(existing)) return { _tag: "NotFound" };
+            const blocked = yield* workflowWritable(existing.value.workflowId);
+            if (blocked !== null) return blocked;
+            yield* repository.removeStep({ stepId });
+            yield* notifyChanged();
+            return { _tag: "Ok", step: null };
+          }),
+        ),
+      )(input),
+    );
+  }
+
+  /**
+   * Lives in the object rather than a server fn so the guard is race-free:
+   * count → D1 archive → re-check all run in one single-threaded object,
+   * serialized against `addStep`/`updateStep` by the input gate. In the Worker
+   * that sequence could interleave with a step being saved against the team
+   * between the count and the write. The re-check is belt and braces for the
+   * cross-store gap that remains (D1 is not in the object's transaction);
+   * if a step landed anyway the archive is flipped back. Restore has nothing
+   * to guard and stays a plain server fn.
+   */
+  @callable()
+  archiveTeam(
+    input: typeof Domain.TeamIdInput.Encoded,
+  ): Promise<Domain.TeamArchiveResult> {
+    const name = this.name;
+    return this.runEffect(
+      callableEffect("ShopAgent.archiveTeam", Domain.TeamIdInput, {
+        onExcessProperty: "error",
+      })(({ teamId }) =>
+        Effect.gen(function* () {
+          const workflows = yield* WorkflowRepository;
+          const teams = yield* Repository;
+          const shop = yield* Schema.decodeUnknownEffect(Domain.Shop)(name);
+          const id = yield* Schema.decodeUnknownEffect(Domain.TeamId)(teamId);
+          const inUse = yield* workflows.countStepsOwnedBy({ teamId });
+          if (inUse > 0) return inUseResult(inUse);
+          const archived = yield* teams
+            .setTeamArchived({ shop, id, archived: true })
+            .pipe(
+              Effect.as<Domain.TeamArchiveResult>({ _tag: "Ok" }),
+              Effect.catchTag("TeamNotFoundError", () =>
+                Effect.succeed<Domain.TeamArchiveResult>({ _tag: "NotFound" }),
+              ),
+            );
+          if (archived._tag !== "Ok") return archived;
+          const recheck = yield* workflows.countStepsOwnedBy({ teamId });
+          if (recheck === 0) return archived;
+          yield* teams.setTeamArchived({ shop, id, archived: false });
+          return inUseResult(recheck);
+        }),
+      )(input),
+    );
+  }
+
+  @callable()
+  listStepsOwnedBy(
+    input: typeof Domain.TeamIdInput.Encoded,
+  ): Promise<readonly Domain.OwnedStep[]> {
+    return this.runEffect(
+      callableEffect("ShopAgent.listStepsOwnedBy", Domain.TeamIdInput, {
+        onExcessProperty: "error",
+      })(({ teamId }) =>
+        WorkflowRepository.pipe(
+          Effect.flatMap((repository) =>
+            repository.listStepsOwnedBy({ teamId }),
+          ),
+        ),
       )(input),
     );
   }
