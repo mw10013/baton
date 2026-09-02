@@ -161,7 +161,7 @@ const REFS: readonly Ref[] = [
     name: "shopify-cli",
     repo: "Shopify/cli",
     tag: "{v}",
-    pin: "4.7.0",
+    pin: "4.7.1",
   },
   {
     name: "shopify-app-template",
