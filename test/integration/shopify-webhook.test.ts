@@ -1,3 +1,4 @@
+import { SqliteClient } from "@effect/sql-sqlite-do";
 import { describe, it } from "@effect/vitest";
 import {
   assertInstanceOf,
@@ -6,11 +7,14 @@ import {
   strictEqual,
 } from "@effect/vitest/utils";
 import * as ShopifyApi from "@shopify/shopify-api";
+import { runInDurableObject } from "cloudflare:test";
 import { exports as workerExports } from "cloudflare:workers";
-import { Effect, Option, Schema } from "effect";
+import { env as workerEnv } from "cloudflare:workers";
+import { Effect, Layer, Option, Schema } from "effect";
 
 import { CurrentRequest } from "@/lib/CurrentRequest";
 import * as Domain from "@/lib/Domain";
+import { OrderRepository } from "@/lib/OrderRepository";
 import { handleWebhook, ResponseError, Shopify } from "@/lib/Shopify";
 
 import { shopifyTestLayer } from "./shopify-test-layer";
@@ -46,6 +50,7 @@ const webhookRequest = ({
   method = "POST",
   includeTopic = true,
   path = "/webhooks",
+  webhookId = "wh-1",
 }: {
   topic: string;
   payload?: unknown;
@@ -53,6 +58,7 @@ const webhookRequest = ({
   method?: string;
   includeTopic?: boolean;
   path?: string;
+  webhookId?: string;
 }) =>
   Effect.gen(function* () {
     const body = JSON.stringify(payload);
@@ -60,7 +66,7 @@ const webhookRequest = ({
       "content-type": "application/json",
       "X-Shopify-Shop-Domain": SHOP,
       "X-Shopify-API-Version": "2026-01",
-      "X-Shopify-Webhook-Id": "wh-1",
+      "X-Shopify-Webhook-Id": webhookId,
       "X-Shopify-Hmac-Sha256": hmac ?? (yield* hmacBase64(SECRET, body)),
     });
     if (includeTopic) headers.set("X-Shopify-Topic", topic);
@@ -325,6 +331,155 @@ describe("handleWebhook", () => {
       ).pipe(Effect.provideService(CurrentRequest, request), Effect.flip);
       assertInstanceOf(error, Error);
       strictEqual(error.message, "boom");
+    }).pipe(Effect.provide(shopifyTestLayer())),
+  );
+});
+
+const ORDER_ID = "gid://shopify/Order/1001";
+
+/**
+ * Reaches into the very Durable Object the webhook route addresses, so a
+ * delivery through the real worker fetch can be asserted against real stored
+ * rows. The route's Shopify fetch is never exercised: each case here is one the
+ * object answers before it would call the Admin API.
+ */
+const inShopAgent = <A, E>(
+  program: Effect.Effect<A, E, OrderRepository>,
+): Promise<A> =>
+  runInDurableObject(workerEnv.SHOP_AGENT.getByName(SHOP), (_instance, state) =>
+    Effect.runPromise(
+      program.pipe(
+        Effect.provide(
+          Layer.provideMerge(
+            OrderRepository.layer,
+            SqliteClient.layer({ storage: state.storage }),
+          ),
+        ),
+      ),
+    ),
+  );
+
+const storedOrder = (updatedAt: number): Domain.ShopOrder => ({
+  id: ORDER_ID,
+  legacyId: "1001",
+  name: "#1001",
+  createdAt: updatedAt,
+  processedAt: updatedAt,
+  updatedAt,
+  cancelledAt: null,
+  closedAt: null,
+  financialStatus: "PAID",
+  fulfillmentStatus: "UNFULFILLED",
+  fullyPaid: true,
+  tags: [],
+  note: null,
+  customAttributes: [],
+  lineItemsComplete: true,
+  syncedAt: updatedAt,
+  syncSource: "bulk",
+});
+
+const seedOrder = (updatedAt: number) =>
+  Effect.promise(() =>
+    inShopAgent(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        yield* repository.deleteOrder(ORDER_ID);
+        yield* repository.upsertOrder({
+          order: storedOrder(updatedAt),
+          raw: "{}",
+          lineItems: [],
+        });
+      }),
+    ),
+  );
+
+const readOrder = () =>
+  Effect.promise(() =>
+    inShopAgent(
+      OrderRepository.pipe(
+        Effect.flatMap((repository) => repository.getOrder(ORDER_ID)),
+      ),
+    ),
+  );
+
+const orderWebhookRequest = ({
+  topic,
+  updatedAt,
+  webhookId,
+}: {
+  topic: string;
+  updatedAt?: string;
+  webhookId?: string;
+}) =>
+  webhookRequest({
+    path: "/webhooks/orders",
+    topic,
+    webhookId,
+    payload: {
+      id: 1001,
+      admin_graphql_api_id: ORDER_ID,
+      ...(updatedAt === undefined ? {} : { updated_at: updatedAt }),
+    },
+  });
+
+describe("orders webhooks", () => {
+  /**
+   * Deliveries are unordered and retries replay the original payload, so a
+   * payload no newer than the stored row must not spend an Admin API call — and
+   * must not overwrite what is stored.
+   */
+  it.effect("skips a delivery whose updated_at is not newer than the row", () =>
+    Effect.gen(function* () {
+      yield* seedOrder(Date.parse("2026-09-02T12:00:00Z"));
+      const response = yield* fetchWebhook(
+        yield* orderWebhookRequest({
+          topic: "orders/updated",
+          updatedAt: "2026-09-02T11:00:00Z",
+          webhookId: "wh-stale",
+        }),
+      );
+      strictEqual(response.status, 200);
+      const { order } = Option.getOrThrow(yield* readOrder());
+      strictEqual(order.syncSource, "bulk");
+      strictEqual(order.updatedAt, Date.parse("2026-09-02T12:00:00Z"));
+    }).pipe(Effect.provide(shopifyTestLayer())),
+  );
+
+  it.effect("treats a redelivered webhook id as a no-op", () =>
+    Effect.gen(function* () {
+      yield* seedOrder(Date.parse("2026-09-02T12:00:00Z"));
+      const send = () =>
+        Effect.gen(function* () {
+          return yield* fetchWebhook(
+            yield* orderWebhookRequest({
+              topic: "orders/updated",
+              updatedAt: "2026-09-02T11:00:00Z",
+              webhookId: "wh-duplicate",
+            }),
+          );
+        });
+      strictEqual((yield* send()).status, 200);
+      strictEqual((yield* send()).status, 200);
+      const { order } = Option.getOrThrow(yield* readOrder());
+      strictEqual(order.syncSource, "bulk");
+    }).pipe(Effect.provide(shopifyTestLayer())),
+  );
+
+  /** `orders/delete` carries `{ id }` only — nothing to fetch, just remove it. */
+  it.effect("orders/delete removes the stored order", () =>
+    Effect.gen(function* () {
+      yield* seedOrder(Date.parse("2026-09-02T12:00:00Z"));
+      const response = yield* fetchWebhook(
+        yield* webhookRequest({
+          path: "/webhooks/orders",
+          topic: "orders/delete",
+          webhookId: "wh-delete",
+          payload: { id: 1001 },
+        }),
+      );
+      strictEqual(response.status, 200);
+      assertNone(yield* readOrder());
     }).pipe(Effect.provide(shopifyTestLayer())),
   );
 });

@@ -50,6 +50,13 @@
       "database_id": "baton-d1-local"
     }
   ],
+  "workflows": [
+    {
+      "binding": "ORDERS_SYNC_WORKFLOW",
+      "name": "baton-orders-sync-local",
+      "class_name": "OrdersSyncWorkflow"
+    }
+  ],
   "durable_objects": {
     "bindings": [
       {
@@ -124,6 +131,13 @@
           "database_id": "baton-d1-staging"
         }
       ],
+      "workflows": [
+        {
+          "binding": "ORDERS_SYNC_WORKFLOW",
+          "name": "baton-orders-sync-staging",
+          "class_name": "OrdersSyncWorkflow"
+        }
+      ],
       "durable_objects": {
         "bindings": [
           {
@@ -182,6 +196,13 @@
           "binding": "D1",
           "database_name": "baton-d1-production",
           "database_id": "baton-d1-production"
+        }
+      ],
+      "workflows": [
+        {
+          "binding": "ORDERS_SYNC_WORKFLOW",
+          "name": "baton-orders-sync-production",
+          "class_name": "OrdersSyncWorkflow"
         }
       ],
       "durable_objects": {

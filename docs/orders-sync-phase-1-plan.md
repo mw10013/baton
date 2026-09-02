@@ -13,7 +13,7 @@ Reference implementation to port from: `/Users/mw/Documents/src/motio` (same sta
 - Trigger is a manual "Sync last 30 days" button, `@callable()` on the DO over the authenticated socket. No install hook, no timer, no staleness check yet.
 - Workflow started with `this.runWorkflow(...)` (agents SDK tracking on), fresh id per run, singleton enforced by `SyncState`. Not motio's direct-binding/fixed-id bypass.
 - No customer data: no `customer`, `shippingAddress`, email, phone. Line-item `customAttributes` and order `note` stay.
-- Scopes `write_orders,read_products`, declared in `shopify.app.toml`; merchant approves on next open. No dashboard step for the dev store.
+- Scopes `write_orders,read_products`, declared in `shopify.app.toml`; merchant approves on next open. The Partner Dashboard protected-customer-data declaration **is** required, dev store included — it gates the order webhook subscriptions at `app deploy`, not just query redaction (research doc, "Protected Customer Data Gates Order Webhooks").
 - Constants: `ORDER_SYNC_WINDOW_DAYS = 30`, `ORDER_SYNC_OVERLAP_MS = 15 min`, `BULK_POLL_ATTEMPTS = 24` (5 s ×3, 15 s ×3, then 30 s).
 - Streaming is constant-memory by construction; never buffer the file.
 - Deferred, do not build: paid-gate logic, routing, edit/cancel policies, fulfillment/tracking tables, `orders/edited`, `refunds/create`, `read_customers`, `read_all_orders`.
@@ -32,6 +32,7 @@ Reference implementation to port from: `/Users/mw/Documents/src/motio` (same sta
 - `wrangler.jsonc`: `"workflows": [{ "binding": "ORDERS_SYNC_WORKFLOW", "name": "baton-orders-sync-local", "class_name": "OrdersSyncWorkflow" }]` at top level and in `env.staging` / `env.production` with `-staging` / `-production` names (shape: `../motio/wrangler.jsonc:33-39,79-85,131-137`). Run `pnpm typecheck` so `worker-configuration.d.ts` gains the binding.
 - `src/worker.ts`: `export { OrdersSyncWorkflow } from "@/lib/OrdersSyncWorkflow";` (motio `src/worker.ts:22`).
 - `src/lib/shopifyConstants.ts` (or a new `orderSyncConstants.ts`): the three constants above.
+- **Before any deploy:** Partner Dashboard → the app → **Distribution** (select a method if unset) → **API access requests** → **Protected customer data access** → **Request access**; select **Protected customer data**, give reasons, complete Data protection details. Do not tick "My app won't use customer data". Level 1 only — Baton selects no name/address/email/phone field anywhere. Without this, `pnpm app:deploy` refuses to create a version with six "not approved to subscribe to webhook topics containing protected customer data" errors (one per order topic; `orders/delete` is exempt).
 - With `pnpm app:dev` running, saving the toml pushes scopes + subscriptions; open the app on `sandbox-shop-01` and approve the prompt. `app/scopes_update` fires into the existing handler.
 
 ### 2. Schema + domain + repository (milestone A)
@@ -104,7 +105,7 @@ E2E (`npm run test:e2e --`, `e2e` project): `orders.spec.ts` — open `/app/orde
 3. `/app/orders` → Sync → rows appear; `logs/server.log` shows `OrdersSyncWorkflow` steps and `ShopAgent.onOrdersStream: shop=… ordersUpserted=…`.
 4. Place an order on the sandbox → `Webhook received: shop=… topic=orders/create` → row appears without clicking. Mark paid → `orders/paid` → `financialStatus=PAID`, `fullyPaid=1`. Cancel → `cancelledAt` set.
 5. Stop the dev server, place an order, restart, Sync → the `updated_at` window picks it up.
-6. If order fields come back `null` with a protected-data error in `errors`, the dev store is being redacted after all: Partner/Dev Dashboard → app → API access → Protected customer data, complete step 1, reinstall. (Research doc, "Manual Steps".)
+6. If order fields come back `null` with a protected-data error in `errors`, the *query* is being redacted — a different gate from the subscription check in step 1, and one dev stores are meant to be exempt from. Re-check the Level 1 declaration, then reinstall. (Research doc, "Protected Customer Data Gates Order Webhooks".)
 
 ## Gotchas (from the research + motio)
 

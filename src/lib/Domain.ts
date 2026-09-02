@@ -294,6 +294,231 @@ export const ShopInfo = Schema.Struct({
 });
 export type ShopInfo = typeof ShopInfo.Type;
 
+/**
+ * Which ingestion path last wrote a `ShopOrder` row. Diagnostic, not control
+ * flow: every path runs the same guarded upsert, so the value only answers
+ * "how did this row get here" while the policies in
+ * `docs/shop-agent-orders-sync-research.md` are still being decided.
+ */
+export const OrderSyncSource = Schema.Literals(["webhook", "bulk", "manual"]);
+export type OrderSyncSource = typeof OrderSyncSource.Type;
+
+/**
+ * A Shopify `DateTime` (ISO 8601) as the epoch milliseconds every stored
+ * timestamp uses, matching `Counter.updatedAt` and `ShopSession.*ExpiresAt`.
+ *
+ * Routed through {@link Schema.DateFromString}, whose target rejects an
+ * invalid `Date`, so an unparseable timestamp fails the decode rather than
+ * storing `NaN` — which would silently defeat the `updatedAt` upsert guard
+ * that makes the webhook and bulk paths safe to interleave.
+ */
+export const EpochMillis = Schema.DateFromString.pipe(
+  Schema.decodeTo(Schema.Number, {
+    decode: SchemaGetter.transform((date) => date.getTime()),
+    encode: SchemaGetter.transform((millis) => new Date(millis)),
+  }),
+);
+
+/** Shopify's `Attribute` — order `customAttributes` and line-item personalization. */
+export const OrderAttribute = Schema.Struct({
+  key: Schema.String,
+  value: Schema.NullOr(Schema.String),
+});
+export type OrderAttribute = typeof OrderAttribute.Type;
+
+/**
+ * One order in the shop's Durable Object SQLite. Encoded side is the row
+ * (epoch-ms integers, `0`/`1` booleans, JSON text); decoded side is what the
+ * page renders.
+ *
+ * Deliberately carries no customer identity: no `customer`, `shippingAddress`,
+ * email, or phone. Baton is a production-floor view, so the buyer never needs
+ * naming, and staying off those fields keeps the app clear of Level 2 protected
+ * customer data. `note` and `customAttributes` stay because they carry the
+ * personalization text a maker works from.
+ *
+ * `financialStatus` is nullable because `Order.displayFinancialStatus` is —
+ * `displayFulfillmentStatus` is the non-null one of the pair.
+ *
+ * The `raw` column is not part of this shape: it exists so a new order-level
+ * field can be promoted to a column via `json_extract` without a resync, and
+ * nothing renders it. Both ingestion paths write the same thing there — the
+ * order node's own fields, never its line items — because the bulk NDJSON
+ * flattens connections onto separate lines and would otherwise produce a
+ * differently-shaped blob for the same order.
+ */
+export const ShopOrder = Schema.Struct({
+  id: Schema.String,
+  legacyId: Schema.String,
+  name: Schema.String,
+  createdAt: Schema.Number,
+  processedAt: Schema.Number,
+  updatedAt: Schema.Number,
+  cancelledAt: Schema.NullOr(Schema.Number),
+  closedAt: Schema.NullOr(Schema.Number),
+  financialStatus: Schema.NullOr(Schema.String),
+  fulfillmentStatus: Schema.String,
+  fullyPaid: SqliteBoolean,
+  tags: Schema.fromJsonString(Schema.Array(Schema.String)),
+  note: Schema.NullOr(Schema.String),
+  customAttributes: Schema.fromJsonString(Schema.Array(OrderAttribute)),
+  /**
+   * Whether the stored line-item set is the whole set. False only when a
+   * single-order fetch hit `ORDER_SYNC_LINE_ITEMS` and reported another page,
+   * in which case the write merges instead of replacing so the unseen tail is
+   * not deleted. The bulk path is always complete — flattened connections are
+   * not paginated.
+   */
+  lineItemsComplete: SqliteBoolean,
+  syncedAt: Schema.Number,
+  syncSource: OrderSyncSource,
+});
+export type ShopOrder = typeof ShopOrder.Type;
+
+/**
+ * `productTags` is a **snapshot** taken at sync time, not a live read: a
+ * resync overwrites it. Once tag-based routing exists, the routing row must
+ * copy the tags it actually matched, so that a merchant retagging a product
+ * cannot silently rewrite history.
+ */
+export const OrderLineItem = Schema.Struct({
+  id: Schema.String,
+  orderId: Schema.String,
+  productId: Schema.NullOr(Schema.String),
+  variantId: Schema.NullOr(Schema.String),
+  title: Schema.String,
+  variantTitle: Schema.NullOr(Schema.String),
+  sku: Schema.NullOr(Schema.String),
+  quantity: Schema.Number,
+  currentQuantity: Schema.Number,
+  unfulfilledQuantity: Schema.Number,
+  nonFulfillableQuantity: Schema.Number,
+  productTags: Schema.fromJsonString(Schema.Array(Schema.String)),
+  customAttributes: Schema.fromJsonString(Schema.Array(OrderAttribute)),
+  requiresShipping: SqliteBoolean,
+});
+export type OrderLineItem = typeof OrderLineItem.Type;
+
+export const OrderDetail = Schema.Struct({
+  order: ShopOrder,
+  lineItems: Schema.Array(OrderLineItem),
+});
+export type OrderDetail = typeof OrderDetail.Type;
+
+/**
+ * The single `SyncState` row: the reservation held while a window sync is in
+ * flight, plus what the last one achieved.
+ *
+ * `workflowId` non-null *is* the "a sync is running" flag, and it is written
+ * before `runWorkflow` is called rather than after. The Agents SDK creates the
+ * Cloudflare instance and only then inserts its tracking row, two steps that
+ * cannot be one transaction; reserving first means a throw between them leaves
+ * a claim we can verify against `status()` instead of a running workflow with
+ * a re-enabled button in front of it.
+ *
+ * `startedAt` doubles as the run's identity. Workflow completion callbacks
+ * carry it back, so a late callback from a superseded run cannot clear a newer
+ * reservation.
+ */
+export const SyncState = Schema.Struct({
+  workflowId: Schema.NullOr(Schema.String),
+  startedAt: Schema.NullOr(Schema.Number),
+  lastFullSyncAt: Schema.NullOr(Schema.Number),
+  lastFullSyncWindowStart: Schema.NullOr(Schema.Number),
+  lastError: Schema.NullOr(Schema.String),
+});
+export type SyncState = typeof SyncState.Type;
+
+/**
+ * Keyset cursor over `(processedAt desc, id desc)`, encoded as
+ * `<processedAt>:<id>`. Not an offset: the bulk stream and webhooks both insert
+ * while a merchant pages, and `limit/offset` would drop or repeat rows under
+ * those writes.
+ */
+export const OrdersCursor = Schema.String.check(Schema.isMaxLength(128));
+
+export const GetOrdersInput = Schema.Struct({
+  limit: Schema.Number.check(
+    Schema.isInt(),
+    Schema.isBetween({ minimum: 1, maximum: 50 }),
+  ),
+  cursor: Schema.NullOr(OrdersCursor),
+});
+export type GetOrdersInput = typeof GetOrdersInput.Type;
+
+export const ResyncOrderInput = Schema.Struct({
+  orderId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
+});
+export type ResyncOrderInput = typeof ResyncOrderInput.Type;
+
+export const OrdersPage = Schema.Struct({
+  orders: Schema.Array(OrderDetail),
+  limit: Schema.Number,
+  nextCursor: Schema.NullOr(OrdersCursor),
+  orderCount: Schema.Number,
+});
+export type OrdersPage = typeof OrdersPage.Type;
+
+/**
+ * A Shopify bulk operation as the sync workflow observes it.
+ *
+ * `objectCount` and `fileSize` are `UnsignedInt64`, which Shopify serializes as
+ * a string in some responses and a number in others; both are accepted rather
+ * than guessing, and the value is only ever logged or compared against zero.
+ *
+ * Crosses a `step.do` boundary, so every field must survive JSON.
+ */
+export const BulkOperationStatus = Schema.Literals([
+  "CANCELED",
+  "CANCELING",
+  "COMPLETED",
+  "CREATED",
+  "EXPIRED",
+  "FAILED",
+  "RUNNING",
+]);
+export type BulkOperationStatus = typeof BulkOperationStatus.Type;
+
+export const BulkOperation = Schema.Struct({
+  id: Schema.String,
+  status: BulkOperationStatus,
+  errorCode: Schema.NullOr(Schema.String),
+  createdAt: Schema.String,
+  completedAt: Schema.NullOr(Schema.String),
+  objectCount: Schema.Union([Schema.Number, Schema.String]),
+  fileSize: Schema.NullOr(Schema.Union([Schema.Number, Schema.String])),
+  url: Schema.NullOr(Schema.String),
+  partialDataUrl: Schema.NullOr(Schema.String),
+});
+export type BulkOperation = typeof BulkOperation.Type;
+
+/**
+ * Which timestamp the window sync filters on. The first run has nothing stored
+ * and asks for orders *placed* in the window; every later run asks for orders
+ * *touched* since the last one, which also picks up an old order that was just
+ * edited — exactly the reconciliation Shopify recommends webhooks be backed by.
+ */
+export const OrderSyncField = Schema.Literals(["created_at", "updated_at"]);
+export type OrderSyncField = typeof OrderSyncField.Type;
+
+/**
+ * What `step.reportComplete` carries back to the agent. `startedAt` identifies
+ * the run so `completeSync` cannot release a reservation a later run took out.
+ * Crosses a workflow callback boundary as JSON, hence the re-decode.
+ */
+export const OrdersSyncResult = Schema.Struct({
+  shop: Schema.String,
+  startedAt: Schema.Number,
+});
+export type OrdersSyncResult = typeof OrdersSyncResult.Type;
+
+/** Everything `/app/orders` renders, in one socket round trip. */
+export const OrdersView = Schema.Struct({
+  page: OrdersPage,
+  syncState: SyncState,
+});
+export type OrdersView = typeof OrdersView.Type;
+
 export interface HomeLoaderData {
   readonly counter: Counter;
   readonly plan: Plan;

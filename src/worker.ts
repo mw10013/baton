@@ -32,6 +32,7 @@ import { ResponseError, Shopify } from "@/lib/Shopify";
 import { ShopifyPartner } from "@/lib/ShopifyPartner";
 import { SubscriptionPlan } from "@/lib/SubscriptionPlan";
 export { ShopAgent } from "@/lib/ShopAgent";
+export { OrdersSyncWorkflow } from "@/lib/OrdersSyncWorkflow";
 
 const makeAppLayer = (
   env: Env,

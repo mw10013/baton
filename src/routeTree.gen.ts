@@ -22,10 +22,12 @@ import { Route as AdminShopAgentObjectsRouteImport } from './routes/admin.shop-a
 import { Route as AdminShopsRouteImport } from './routes/admin.shops'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppMembersRouteImport } from './routes/app.members'
+import { Route as AppOrdersRouteImport } from './routes/app.orders'
 import { Route as AuthSplatRouteImport } from './routes/auth.$'
 import { Route as ShopIndexRouteImport } from './routes/shop.index'
 import { Route as ShopShopRouteImport } from './routes/shop.$shop'
 import { Route as WebhooksComplianceRouteImport } from './routes/webhooks.compliance'
+import { Route as WebhooksOrdersRouteImport } from './routes/webhooks.orders'
 import { Route as AdminShopShopRouteImport } from './routes/admin.shop.$shop'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
 import { Route as ApiE2eSeedRouteImport } from './routes/api.e2e.seed'
@@ -98,6 +100,11 @@ const AppMembersRoute = AppMembersRouteImport.update({
   path: '/members',
   getParentRoute: () => AppRoute,
 } as any)
+const AppOrdersRoute = AppOrdersRouteImport.update({
+  id: '/orders',
+  path: '/orders',
+  getParentRoute: () => AppRoute,
+} as any)
 const AuthSplatRoute = AuthSplatRouteImport.update({
   id: '/auth/$',
   path: '/auth/$',
@@ -116,6 +123,11 @@ const ShopShopRoute = ShopShopRouteImport.update({
 const WebhooksComplianceRoute = WebhooksComplianceRouteImport.update({
   id: '/webhooks/compliance',
   path: '/webhooks/compliance',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WebhooksOrdersRoute = WebhooksOrdersRouteImport.update({
+  id: '/webhooks/orders',
+  path: '/webhooks/orders',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminShopShopRoute = AdminShopShopRouteImport.update({
@@ -157,9 +169,11 @@ export interface FileRoutesByFullPath {
   '/admin/shop-agent-objects': typeof AdminShopAgentObjectsRoute
   '/admin/shops': typeof AdminShopsRoute
   '/app/members': typeof AppMembersRoute
+  '/app/orders': typeof AppOrdersRoute
   '/auth/$': typeof AuthSplatRoute
   '/shop/$shop': typeof ShopShopRoute
   '/webhooks/compliance': typeof WebhooksComplianceRoute
+  '/webhooks/orders': typeof WebhooksOrdersRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
   '/shop/': typeof ShopIndexRoute
@@ -178,9 +192,11 @@ export interface FileRoutesByTo {
   '/admin/shop-agent-objects': typeof AdminShopAgentObjectsRoute
   '/admin/shops': typeof AdminShopsRoute
   '/app/members': typeof AppMembersRoute
+  '/app/orders': typeof AppOrdersRoute
   '/auth/$': typeof AuthSplatRoute
   '/shop/$shop': typeof ShopShopRoute
   '/webhooks/compliance': typeof WebhooksComplianceRoute
+  '/webhooks/orders': typeof WebhooksOrdersRoute
   '/admin': typeof AdminIndexRoute
   '/app': typeof AppIndexRoute
   '/shop': typeof ShopIndexRoute
@@ -203,9 +219,11 @@ export interface FileRoutesById {
   '/admin/shop-agent-objects': typeof AdminShopAgentObjectsRoute
   '/admin/shops': typeof AdminShopsRoute
   '/app/members': typeof AppMembersRoute
+  '/app/orders': typeof AppOrdersRoute
   '/auth/$': typeof AuthSplatRoute
   '/shop/$shop': typeof ShopShopRoute
   '/webhooks/compliance': typeof WebhooksComplianceRoute
+  '/webhooks/orders': typeof WebhooksOrdersRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
   '/shop/': typeof ShopIndexRoute
@@ -229,9 +247,11 @@ export interface FileRouteTypes {
     | '/admin/shop-agent-objects'
     | '/admin/shops'
     | '/app/members'
+    | '/app/orders'
     | '/auth/$'
     | '/shop/$shop'
     | '/webhooks/compliance'
+    | '/webhooks/orders'
     | '/admin/'
     | '/app/'
     | '/shop/'
@@ -250,9 +270,11 @@ export interface FileRouteTypes {
     | '/admin/shop-agent-objects'
     | '/admin/shops'
     | '/app/members'
+    | '/app/orders'
     | '/auth/$'
     | '/shop/$shop'
     | '/webhooks/compliance'
+    | '/webhooks/orders'
     | '/admin'
     | '/app'
     | '/shop'
@@ -274,9 +296,11 @@ export interface FileRouteTypes {
     | '/admin/shop-agent-objects'
     | '/admin/shops'
     | '/app/members'
+    | '/app/orders'
     | '/auth/$'
     | '/shop/$shop'
     | '/webhooks/compliance'
+    | '/webhooks/orders'
     | '/admin/'
     | '/app/'
     | '/shop/'
@@ -297,6 +321,7 @@ export interface RootRouteChildren {
   ShopRoute: typeof ShopRouteWithChildren
   AuthSplatRoute: typeof AuthSplatRoute
   WebhooksComplianceRoute: typeof WebhooksComplianceRoute
+  WebhooksOrdersRoute: typeof WebhooksOrdersRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiE2eSeedRoute: typeof ApiE2eSeedRoute
   WebhooksAppScopes_updateRoute: typeof WebhooksAppScopes_updateRoute
@@ -396,6 +421,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppMembersRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/orders': {
+      id: '/app/orders'
+      path: '/orders'
+      fullPath: '/app/orders'
+      preLoaderRoute: typeof AppOrdersRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/auth/$': {
       id: '/auth/$'
       path: '/auth/$'
@@ -422,6 +454,13 @@ declare module '@tanstack/react-router' {
       path: '/webhooks/compliance'
       fullPath: '/webhooks/compliance'
       preLoaderRoute: typeof WebhooksComplianceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/webhooks/orders': {
+      id: '/webhooks/orders'
+      path: '/webhooks/orders'
+      fullPath: '/webhooks/orders'
+      preLoaderRoute: typeof WebhooksOrdersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/shop/$shop': {
@@ -482,11 +521,13 @@ const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
 interface AppRouteChildren {
   AppMembersRoute: typeof AppMembersRoute
+  AppOrdersRoute: typeof AppOrdersRoute
   AppIndexRoute: typeof AppIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppMembersRoute: AppMembersRoute,
+  AppOrdersRoute: AppOrdersRoute,
   AppIndexRoute: AppIndexRoute,
 }
 
@@ -514,6 +555,7 @@ const rootRouteChildren: RootRouteChildren = {
   ShopRoute: ShopRouteWithChildren,
   AuthSplatRoute: AuthSplatRoute,
   WebhooksComplianceRoute: WebhooksComplianceRoute,
+  WebhooksOrdersRoute: WebhooksOrdersRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiE2eSeedRoute: ApiE2eSeedRoute,
   WebhooksAppScopes_updateRoute: WebhooksAppScopes_updateRoute,

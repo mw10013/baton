@@ -102,6 +102,20 @@ interface ShopifyService {
       readonly shop: Domain.Shop;
       readonly topic: string;
       readonly payload: unknown;
+      /**
+       * `X-Shopify-Webhook-Id`. Shopify retries a delivery 8 times over 4 hours
+       * and warns the same webhook may arrive more than once, so a handler that
+       * is not naturally idempotent needs this to dedupe. The library surfaces
+       * it but does no deduping itself.
+       */
+      readonly webhookId: string;
+      /**
+       * `X-Shopify-Triggered-At` as epoch milliseconds, or `null` when the
+       * header is absent or unparseable. Deliveries are unordered, and retries
+       * replay the original payload, so this is when the event happened — not
+       * when it was received.
+       */
+      readonly triggeredAt: number | null;
     },
     Schema.SchemaError | ShopifyError | ResponseError
   >;
@@ -988,7 +1002,14 @@ export class Shopify extends Context.Service<Shopify, ShopifyService>()(
           validation.domain,
         );
         const payload = yield* tryShopify(() => JSON.parse(rawBody) as unknown);
-        return { shop, topic: validation.topic, payload } as const;
+        const triggeredAt = Date.parse(validation.triggeredAt ?? "");
+        return {
+          shop,
+          topic: validation.topic,
+          payload,
+          webhookId: validation.webhookId,
+          triggeredAt: Number.isNaN(triggeredAt) ? null : triggeredAt,
+        } as const;
       });
 
       const authenticateFlowAction = Effect.fn(
@@ -1591,6 +1612,8 @@ export const handleWebhook = Effect.fn("handleWebhook")(function* <E, R>(
     readonly shop: Domain.Shop;
     readonly topic: string;
     readonly payload: unknown;
+    readonly webhookId: string;
+    readonly triggeredAt: number | null;
   }) => Effect.Effect<Response, E, R>,
 ) {
   const request = yield* CurrentRequest;

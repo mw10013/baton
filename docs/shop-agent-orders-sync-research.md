@@ -15,18 +15,49 @@ Scope: get Shopify orders into the `ShopAgent` Durable Object's private SQLite s
 - **Topics:** `orders/create`, `orders/updated`, `orders/paid`, `orders/cancelled`, `orders/fulfilled`, `orders/partially_fulfilled`, `orders/delete` on one `/webhooks/orders` route with `include_fields = ["id", "admin_graphql_api_id", "updated_at"]`. Skip `orders/edited` and `refunds/create` (non-order payloads; both also fire `orders/updated`). No `bulk_operations/finish`.
 - **No customer data.** The product is about making the thing, not shipping it or talking to the buyer. No `customer`, no `shippingAddress`, no email. What stays: order number, timestamps, statuses, order tags/note, line items with `product.tags` and line-item `customAttributes` (the personalization fields a maker needs). That keeps Baton at protected-data Level 1 (orders are still a protected resource) and off `read_customers`.
 - **Schema:** `ShopOrder`, `OrderLineItem` (snapshotted `productTags`), `WebhookDelivery` (dedupe), `SyncState` (in-flight bulk op id, last sync). GIDs as text keys; a `raw` JSON column for prototyping (it holds exactly what the query selects, so no customer fields ever land in it).
-- **Scopes:** `scopes = "write_orders,read_products"` in `shopify.app.toml`, deployed with `shopify app deploy` (or pushed by `shopify app dev`). Merchants approve required scopes at install; when the list changes, "Merchants are prompted to approve the updated access scopes when they open your app" and `app/scopes_update` fires (`refs/shopify-docs/docs/apps/build/authentication-authorization/manage-access-scopes.md`). `write_orders` implies `read_orders` ("A write scope includes read … declare the write scope on its own"). Not `read_customers`, not `read_all_orders`. On dev stores nothing else is needed; protected-customer-data approval is a launch step for non-dev stores.
+- **Scopes:** `scopes = "write_orders,read_products"` in `shopify.app.toml`, deployed with `shopify app deploy` (or pushed by `shopify app dev`). Merchants approve required scopes at install; when the list changes, "Merchants are prompted to approve the updated access scopes when they open your app" and `app/scopes_update` fires (`refs/shopify-docs/docs/apps/build/authentication-authorization/manage-access-scopes.md`). `write_orders` implies `read_orders` ("A write scope includes read … declare the write scope on its own"). Not `read_customers`, not `read_all_orders`. Scopes are not the whole story: the order **webhook topics** are gated separately on a protected-customer-data declaration that `shopify app deploy` checks before it will create an app version, on dev stores included — see "Protected Customer Data Gates Order Webhooks".
 
 ## Manual Steps
 
-For the sandbox shop, effectively none beyond clicking through the scope prompt:
+The Partner Dashboard step is **first**, not optional, and not deferrable to launch — see "Protected Customer Data Gates Order Webhooks" for why the earlier draft of this document got that wrong.
 
-1. Set `scopes = "write_orders,read_products"` in `shopify.app.toml`. With `pnpm app:dev` running, the CLI pushes config changes on save; otherwise `pnpm app:deploy`.
-2. Open the app on `sandbox-shop-01`. Shopify prompts to approve the added scopes; approving fires `app/scopes_update`, which the existing handler stores. If the prompt does not appear, uninstall/reinstall the dev app.
-3. Add `workflows` binding(s) to `wrangler.jsonc` (copy the shape from `../motio/wrangler.jsonc`: `binding`, per-env `name`, `class_name`).
-4. Place a test order and mark it paid (Bogus gateway) to exercise `orders/create` → `orders/paid`.
+1. Partner Dashboard → **Apps** → the app → **Distribution**: select a distribution method if none is set. Nothing below is reachable until one is ("Before you can request access to protected customer data, including on development stores, you need to select a distribution method for your app" — `refs/shopify-docs/docs/apps/launch/protected-customer-data.md:47`).
+2. Same app → **API access requests** → **Protected customer data access** → **Request access**. Select **Protected customer data**, give reasons, Save; complete **Data protection details**. Do **not** tick "My app won't use customer data" — that opt-out is the state that makes step 4 fail. Skip the individual protected *fields* (name / address / email / phone): Baton selects none of them, so Level 1 is the whole ask. No app-review submission — "If your app is for testing or installed only on a development store, you can access customer data in development after Step 5" (`protected-customer-data.md:78`).
+3. Set `scopes = "write_orders,read_products"` in `shopify.app.toml`.
+4. `pnpm app:deploy` (or save the toml with `pnpm app:dev` running). This is where a missing declaration surfaces — see below.
+5. Open the app on `sandbox-shop-01`. Shopify prompts to approve the added scopes; approving fires `app/scopes_update`, which the existing handler stores. If the prompt does not appear, uninstall/reinstall the dev app.
+6. Add `workflows` binding(s) to `wrangler.jsonc` (copy the shape from `../motio/wrangler.jsonc`: `binding`, per-env `name`, `class_name`).
+7. Place a test order and mark it paid (Bogus gateway) to exercise `orders/create` → `orders/paid`.
 
-Before installing on any non-dev store: request **protected customer data** access (Level 1: orders without name/address/email) in the Partner/Dev Dashboard. `manage-access-scopes.md`: "orders, draft orders, fulfillments … all carry customer data too. You can declare any of them, but outside of dev stores the API redacts protected fields until your app meets the protected customer data requirements and is approved." The older webhooks tutorial (`apps/build/webhooks/get-started.md`) claims a dashboard step is needed even in development; the newer scopes page scopes the redaction to non-dev stores. If the sandbox unexpectedly returns redacted orders, do the dashboard step then.
+## Protected Customer Data Gates Order Webhooks
+
+Observed 2026-09-02. `pnpm app:deploy` with the seven order topics declared failed with **six** copies of:
+
+> This app is not approved to subscribe to webhook topics containing protected customer data.
+
+Six errors for seven topics: `orders/delete` passes because its payload is `{ "id" }` alone. The other six carry Shopify's fixed REST order body, which includes `customer`, `email`, `phone`, and `shipping_address`.
+
+Two things the check is **not**:
+
+- **Not about `include_fields`.** The gate is on the topic subscribed to, not the fields delivered. Shopify decides whether the app may subscribe to `orders/create` before it considers what the app asked to be sent, so trimming the payload to ids does not avoid it.
+- **Not about the GraphQL selections.** Baton's queries select no customer fields at all, and the `access_scopes` half of the same deploy succeeded. Only the subscriptions were rejected.
+
+Webhooks are named as a protected resource in their own right (`protected-customer-data.md:92`):
+
+> | Webhooks, Metafields | Events and metafields that relate to a single customer **or order**. |
+
+and orders likewise (`:94`): "Orders, draft orders, abandoned checkouts, refunds, transactions, and other data that relate to a single customer."
+
+**What the earlier draft got wrong.** It weighed `manage-access-scopes.md` ("outside of dev stores the API redacts protected fields until your app meets the protected customer data requirements and is approved") against the older `apps/build/webhooks/get-started.md` ("a Partner Dashboard step is required even in development") and treated the newer page as authoritative, concluding the dashboard step was a launch concern. Those two pages describe **different gates**:
+
+| | Gate | When it fires | Failure mode |
+| - | - | - | - |
+| Query redaction | per-field approval | at query time | `200 OK`, `null` fields, an entry in `errors` — dev stores exempt |
+| Webhook subscription | the declaration existing at all | at `app deploy`, before an app version is created | version creation refused — dev stores **not** exempt |
+
+`manage-access-scopes.md` only ever spoke to the first. The older tutorial was right about the second. Uninstalling the app does not help: this is checked against the app in the Partner Dashboard, not against any install.
+
+The declaration is Level 1 only. Level 2 (name, address, email, phone) is a separate per-field request Baton never needs, since it selects none of those fields anywhere — the "No customer data" decision above is what keeps the ask that small.
 
 ## What Route To Ship Persists (Inspected)
 
@@ -97,7 +128,7 @@ Source: https://shopify.dev/docs/api/usage/access-scopes. A 30- or 60-day backfi
 
 Protected customer data: Level 1 = customer data excluding name/address/phone/email; Level 2 = including them. "You don't need to submit a request for review for apps that are installed only on development stores." Unapproved fields come back redacted (`null` + `errors` entry) rather than failing the query. Source: https://shopify.dev/docs/apps/launch/protected-customer-data.
 
-**Dev stores vs redaction:** `manage-access-scopes.md` — "outside of dev stores the API redacts protected fields until your app meets the protected customer data requirements and is approved." `get-started.md` (older) says a Partner Dashboard step is required even in development. Treat the newer page as authoritative and verify on the sandbox.
+**Dev stores vs redaction:** `manage-access-scopes.md` — "outside of dev stores the API redacts protected fields until your app meets the protected customer data requirements and is approved" — is about **query responses only**, and dev stores are exempt from that redaction. It says nothing about subscribing to webhook topics, which is a separate gate that fires at `app deploy` and exempts nobody. See "Protected Customer Data Gates Order Webhooks".
 
 ## Proposed Schema
 

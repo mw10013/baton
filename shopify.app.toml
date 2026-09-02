@@ -8,7 +8,7 @@ handle = "baton-local"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = ""
+scopes = "write_orders,read_products"
 
 [auth]
 redirect_urls = ["https://example.com/api/auth"]
@@ -31,5 +31,21 @@ topics = ["app/scopes_update"]
 [[webhooks.subscriptions]]
 uri = "/webhooks/app/uninstalled"
 topics = ["app/uninstalled"]
+
+[[webhooks.subscriptions]]
+uri = "/webhooks/orders"
+topics = [
+  "orders/create",
+  "orders/updated",
+  "orders/paid",
+  "orders/cancelled",
+  "orders/fulfilled",
+  "orders/partially_fulfilled",
+  "orders/delete",
+]
+# `updated_at` is load-bearing, not informational: Shopify debounces consecutive
+# identical trimmed payloads, so a subscription whose fields never change would
+# silently drop updates.
+include_fields = ["id", "admin_graphql_api_id", "updated_at"]
 [build]
 automatically_update_urls_on_dev = true
