@@ -33,11 +33,28 @@ test("orders screen syncs the window and lists orders", async ({ page }) => {
 
   const sync = frame.getByRole("button", { name: /^Sync last \d+ days$/u });
   await expect(sync).toBeEnabled();
+
+  /* The completion signal is a *new* `Last synced` timestamp, not the transient
+     "Syncing…" text and not the button re-enabling. A sandbox window syncs in
+     seconds, so the in-flight state can come and go between polls, and the
+     button is momentarily enabled between the click and the state update —
+     both would pass without proving anything ran. Comparing the timestamp
+     against the one on screen beforehand is the only assertion that can only
+     be satisfied by a run that actually finished. */
+  const status = frame.getByText(/^(?:Last synced|Never synced|Syncing)/u);
+  const before = await status.textContent();
+
   await sync.click();
 
-  await expect(frame.getByText(/Syncing/u)).toBeVisible({ timeout: 30_000 });
-  await expect(sync).toBeEnabled({ timeout: 120_000 });
-  await expect(frame.getByText(/Last synced/u)).toBeVisible();
+  await expect
+    .poll(
+      async () => {
+        const text = (await status.textContent()) ?? "";
+        return text.startsWith("Last synced") && text !== before;
+      },
+      { timeout: 120_000 },
+    )
+    .toBe(true);
 
   const rows = frame.locator("s-table-row");
   await expect(rows.first()).toBeVisible({ timeout: 30_000 });

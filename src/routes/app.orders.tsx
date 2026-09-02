@@ -135,6 +135,21 @@ function RouteComponent() {
   const queryClient = useQueryClient();
   const shopify = useAppBridge();
   const { agent, identified } = useShopAgent();
+  const agentRef = React.useRef(agent);
+  agentRef.current = agent;
+  /**
+   * Mount-scoped, exactly as on the home route: the `/app` socket outlives this
+   * route, so a stale `deactivate` from a mount that has already been replaced
+   * must not clear the newer mount's attachment. See
+   * `ShopAgent.activateCounter` for the `activate<Feature>` convention this and
+   * the query function below follow.
+   */
+  const sessionTokenRef = React.useRef<string | null>(null);
+  sessionTokenRef.current ??= crypto.randomUUID();
+  const sessionToken = sessionTokenRef.current;
+  const deactivateTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const [cursor, setCursor] = React.useState<string | null>(null);
   const [selectedOrderId, setSelectedOrderId] = React.useState<string | null>(
     null,
@@ -143,7 +158,7 @@ function RouteComponent() {
   const [syncing, setSyncing] = React.useState(false);
   const [resyncingId, setResyncingId] = React.useState<string | null>(null);
 
-  // oxlint-disable-next-line @tanstack/query/exhaustive-deps -- agent.stub is the stable per-shop socket; the cache identity is the shop, and `cursor` is read fresh on every fetch so a poke re-reads the page being viewed
+  // oxlint-disable-next-line @tanstack/query/exhaustive-deps -- agent.stub is the stable per-shop socket and sessionToken is mount-scoped connection metadata; the cache identity is the shop, and `cursor` is read fresh on every fetch so a poke re-reads the page being viewed
   const ordersQuery = useQuery({
     queryKey: ordersQueryKey(shop),
     staleTime: Infinity,
@@ -151,7 +166,11 @@ function RouteComponent() {
     queryFn: () =>
       agent
         ? withSocketRecovery(agent)(() =>
-            agent.stub.getOrders({ limit: ORDERS_PAGE_SIZE, cursor }),
+            agent.stub.activateOrders({
+              limit: ORDERS_PAGE_SIZE,
+              cursor,
+              sessionToken,
+            }),
           ).then(decodeOrdersView)
         : Promise.reject(new Error("Still connecting. Try again in a moment.")),
     enabled: identified,
@@ -183,6 +202,29 @@ function RouteComponent() {
       agent?.removeEventListener("message", onMessage);
     };
   }, [agent, invalidate]);
+
+  /**
+   * Deferred by one task and cancelled if the effect sets up again, so React
+   * Strict Mode's setup → cleanup → setup probe cannot detach the attachment
+   * the first read just created. A real unmount has no following setup, so its
+   * deferred deactivate still runs. Best-effort and outside `withSocketRecovery`
+   * for the reason the home route documents: the attachment is
+   * connection-scoped, so any failure means it is already gone.
+   */
+  React.useEffect(() => {
+    if (deactivateTimerRef.current) {
+      clearTimeout(deactivateTimerRef.current);
+      deactivateTimerRef.current = null;
+    }
+    return () => {
+      deactivateTimerRef.current = setTimeout(() => {
+        deactivateTimerRef.current = null;
+        const closing = agentRef.current;
+        if (closing?.identified)
+          void closing.stub.deactivate({ sessionToken }).catch(() => null);
+      }, 0);
+    };
+  }, [sessionToken]);
 
   const toast = (error: unknown, fallback: string) => {
     shopify.toast.show(error instanceof Error ? error.message : fallback, {

@@ -464,27 +464,49 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Subscribes the calling connection to invalidations and returns the current
-   * value, in one round trip so a tab cannot miss a change between reading and
-   * attaching.
+   * The canonical `activate<Feature>` method, and the convention every
+   * browser-reachable read that a route keeps live must follow.
+   *
+   * **The convention:** one idempotent method per feature area that subscribes
+   * the calling connection *and* returns that feature's data in a single round
+   * trip, named `activate<Feature>` so the name says it subscribes. The client
+   * uses it directly as its TanStack Query `queryFn`, so every refetch —
+   * initial mount, identify, reconnect, an invalidation poke — re-registers the
+   * attachment as a side effect of reading. {@link deactivate} on unmount.
+   *
+   * Two properties make it work, and both are load-bearing:
+   *
+   * - **Read and subscribe are one call.** Split them and a change landing
+   *   between the read and the attach is lost with no way to notice.
+   * - **The name is a warning.** A subscribing read called `getX` reads as a
+   *   pure getter, and a route that calls a plain getter and expects pushes
+   *   fails *silently* — it simply never updates until a manual reload. That
+   *   exact bug shipped here once (`getOrders`, now
+   *   {@link activateOrders}); an e2e caught it, nothing else could.
    *
    * The `sessionToken` is minted per route mount and stored on the connection
    * so {@link deactivate} from an unmounted previous mount — the `/app` socket
    * is shared across route changes — cannot detach the mount that replaced it.
+   * There is one attachment slot per connection, so exactly one route holds it
+   * at a time and the token is what makes the handoff safe in either direction.
+   *
+   * Prior art: `../bang`'s `activateLive` / `closeLive`, whose attachment also
+   * carries the memory keys a tab watches so pushes can be filtered. See
+   * {@link Domain.ConnectionState} for when Baton should grow that.
    */
   @callable()
-  activate(input: Domain.SessionTokenInput): Promise<Domain.Counter> {
+  activateCounter(input: Domain.SessionTokenInput): Promise<Domain.Counter> {
     const shop = this.name;
     return this.runEffect(
-      callableEffect("ShopAgent.activate", Domain.SessionTokenInput, {
+      callableEffect("ShopAgent.activateCounter", Domain.SessionTokenInput, {
         onExcessProperty: "error",
       })(({ sessionToken }) =>
         Effect.gen(function* () {
           const { connection } = getCurrentAgent<ShopAgent>();
           if (connection) connection.setState({ sessionToken });
-          yield* Effect.logDebug(`ShopAgent.activate: shop=${shop}`).pipe(
-            Effect.annotateLogs({ shop }),
-          );
+          yield* Effect.logDebug(
+            `ShopAgent.activateCounter: shop=${shop}`,
+          ).pipe(Effect.annotateLogs({ shop }));
           return yield* (yield* CounterRepository).get();
         }),
       )(input),
@@ -1007,16 +1029,25 @@ export class ShopAgent extends Agent {
     );
   }
 
+  /**
+   * The orders view's `activate<Feature>` method — reads the page and
+   * subscribes the calling connection in one round trip. See
+   * {@link activateCounter} for the convention and why the name matters.
+   */
   @callable()
-  getOrders(input: Domain.GetOrdersInput): Promise<Domain.OrdersView> {
+  activateOrders(
+    input: Domain.ActivateOrdersInput,
+  ): Promise<Domain.OrdersView> {
     return this.runEffect(
-      callableEffect("ShopAgent.getOrders", Domain.GetOrdersInput, {
+      callableEffect("ShopAgent.activateOrders", Domain.ActivateOrdersInput, {
         onExcessProperty: "error",
-      })((page) =>
+      })(({ limit, cursor, sessionToken }) =>
         Effect.gen(function* () {
+          const { connection } = getCurrentAgent<ShopAgent>();
+          if (connection) connection.setState({ sessionToken });
           const repository = yield* OrderRepository;
           return {
-            page: yield* repository.listOrders(page),
+            page: yield* repository.listOrders({ limit, cursor }),
             syncState: yield* repository.getSyncState(),
           } satisfies Domain.OrdersView;
         }),

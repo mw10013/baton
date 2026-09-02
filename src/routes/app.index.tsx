@@ -84,9 +84,10 @@ const decodeAgentMessage = (data: string) => {
 /**
  * Home on the poke → invalidate → refetch model.
  *
- * One query per shop holds the counter. Its query function is `activate`, which
- * both fetches and (re)registers this connection's server-side attachment — so
- * every refetch is also a (re)subscription. The route loader seeds it via
+ * One query per shop holds the counter. Its query function is
+ * `activateCounter`, which both fetches and (re)registers this connection's
+ * server-side attachment — so every refetch is also a (re)subscription. See
+ * `ShopAgent.activateCounter` for the `activate<Feature>` convention. The route loader seeds it via
  * `initialData` for the SSR paint; `staleTime: Infinity` makes WebSocket pokes
  * (and the explicit invalidation on identify) the only refetch triggers.
  * `gcTime` matches Router's 30-minute route cache so a retained loader match
@@ -100,7 +101,7 @@ const decodeAgentMessage = (data: string) => {
  * `deactivate` is deferred by one task and canceled if the effect sets up
  * again. TanStack Start's development client uses React Strict Mode, whose
  * setup → cleanup → setup probe would otherwise detach the attachment created
- * by the first `activate`. A real route unmount has no following setup, so its
+ * by the first `activateCounter`. A real route unmount has no following setup, so its
  * deferred deactivate still runs.
  *
  * `agent` is `null` until the socket host first commits — on a fresh document
@@ -144,7 +145,7 @@ function RouteComponent() {
     queryFn: () =>
       agent
         ? withSocketRecovery(agent)(() =>
-            agent.stub.activate({ sessionToken }),
+            agent.stub.activateCounter({ sessionToken }),
           ).then(decodeCounter)
         : Promise.reject(new Error("Still connecting. Try again in a moment.")),
     enabled: identified,
@@ -153,7 +154,7 @@ function RouteComponent() {
 
   /**
    * A reconnect creates a fresh server connection with no attachment, so pokes
-   * stop until `activate` runs again. Every identify (initial connect and
+   * stop until `activateCounter` runs again. Every identify (initial connect and
    * reconnect) invalidates the query, which refetches and thereby re-registers
    * the attachment. `cancelRefetch: false` reuses an activation already started
    * by mounting instead of executing a second unabortable Durable Object RPC.

@@ -437,14 +437,23 @@ export type SyncState = typeof SyncState.Type;
  */
 export const OrdersCursor = Schema.String.check(Schema.isMaxLength(128));
 
-export const GetOrdersInput = Schema.Struct({
+/**
+ * `sessionToken` is what subscribes the calling connection to invalidations —
+ * the `activate<Feature>` convention documented on `ShopAgent.activateCounter`.
+ * A page that only reads is a page that never hears about a write: the Durable
+ * Object pushes to attached connections only, and the `/app` socket is shared,
+ * so a route that read without attaching would go silent the moment another
+ * route's unmount detached the connection.
+ */
+export const ActivateOrdersInput = Schema.Struct({
   limit: Schema.Number.check(
     Schema.isInt(),
     Schema.isBetween({ minimum: 1, maximum: 50 }),
   ),
   cursor: Schema.NullOr(OrdersCursor),
+  sessionToken: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
 });
-export type GetOrdersInput = typeof GetOrdersInput.Type;
+export type ActivateOrdersInput = typeof ActivateOrdersInput.Type;
 
 export const ResyncOrderInput = Schema.Struct({
   orderId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
@@ -630,7 +639,11 @@ export type AdminShopLoaderData =
  * The struct exists rather than a bare boolean because this is the seam where
  * per-connection subscription detail goes (which records a tab is watching,
  * which filters it has applied); the skeleton keeps the shape and carries only
- * the guard.
+ * the guard. The sibling `../bang` project is that seam realized: its
+ * attachment is `{ sessionToken, memoryKeys }` and its notifier pushes only to
+ * connections watching the keys that changed. Baton has one message type and
+ * two routes, so every attached connection is poked; grow the struct when a
+ * second thing needs filtering, not before.
  */
 export const ConnectionState = Schema.Struct({
   sessionToken: Schema.String,

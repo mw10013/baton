@@ -93,9 +93,10 @@ export class OrderRepository extends Context.Service<
     readonly getOrderUpdatedAt: (
       orderId: string,
     ) => Effect.Effect<Option.Option<number>, SqlError.SqlError>;
-    readonly listOrders: (
-      input: Domain.GetOrdersInput,
-    ) => Effect.Effect<
+    readonly listOrders: (input: {
+      readonly limit: number;
+      readonly cursor: string | null;
+    }) => Effect.Effect<
       Domain.OrdersPage,
       SqlError.SqlError | OrderRepositoryError
     >;
@@ -346,7 +347,10 @@ export class OrderRepository extends Context.Service<
         listOrders: Effect.fn("OrderRepository.listOrders")(function* ({
           limit,
           cursor,
-        }: Domain.GetOrdersInput) {
+        }: {
+          readonly limit: number;
+          readonly cursor: string | null;
+        }) {
           /**
            * Keyset, never `limit/offset`: the bulk stream and webhooks insert
            * while a merchant pages, and an offset would skip or repeat rows
