@@ -8,6 +8,8 @@ Route to Ship's in-app Help center says pipeline routing is based on Shopify **p
 
 Product-tag routing is therefore documented in the app, public site, App Store listing, and checked-in reference. It is not runtime-tested in this sandbox. The public Shopify integration page is inconsistent: it claims both order and product tags, whereas the in-app Help describes only product-tag matching.
 
+Order synchronization is webhook-first. Authenticated Help says seven order, fulfillment, and refund topics deliver changes within seconds. Pre-install orders are explicitly **not** imported by default; Route to Ship asks merchants to request a support-run backfill by date range. The public integration page claims an incremental Admin GraphQL safety-net sync, but no public or in-app source gives its cadence, lookback window, cursor, or reconciliation rules. A per-order `Resync` action is documented and present in the app.
+
 ## Public Claims
 
 ### Public Order-And-Product Claim
@@ -156,6 +158,18 @@ The public documentation consistently presents **payment** as the production-rel
 
 So the documented intended behavior is: payment clears, the order syncs, then each matching line item enters its product-tag-selected pipeline. The authenticated Getting Started guide is less precise, saying only that new orders sync in real time after installation.
 
+The documented webhook lists do not include `ORDERS_PAID`. It is therefore unclear whether Route to Ship detects payment by examining financial status on `ORDERS_CREATE` / `ORDERS_UPDATED`, subscribes to an undocumented payment topic, or merely uses "paid orders" as simplified marketing language.
+
+### Initial Installation And Historical Orders
+
+Route to Ship says it starts capturing orders **from installation onward**, not by importing the shop's existing order history:
+
+> "New orders sync automatically from the moment you install via Shopify webhooks — orders that existed in your store before install aren't imported by default."
+
+For older orders, the merchant must email support with a date range for a one-time backfill ([support mirror](../refs/route-to-ship/support.md#L27-L31); [homepage mirror](../refs/route-to-ship/index.md#L543-L551)). Authenticated `Orders & Sync` Help repeats the same behavior.
+
+This means the orders that appeared shortly after sandbox installation were not necessarily an automatic historical scan. The documented explanations are that they arrived after installation through webhooks or were backfilled separately. Although the App Store permission disclosure says Route to Ship can access order history for the last 60 days ([mirror](../refs/route-to-ship/listing.md#L218)), permission to read those orders is not evidence that it imports them on installation.
+
 ### Update Events Are Synced, But Their Workflow Effect Is Not Documented
 
 The in-app `Orders & Sync` Help FAQ says the app syncs these Shopify webhook events within seconds:
@@ -182,9 +196,40 @@ This establishes that Route to Ship receives order changes. It does **not** esta
 
 Do not infer that every `ORDERS_UPDATED` event creates a new job. The documentation calls it a sync event, not a production-work creation event.
 
+### Webhook Processing And Manual Recovery
+
+The deployed order-detail UI gives more detail about an API failure during webhook processing. Its `Waiting for the rest of this order from Shopify` state says Route to Ship saved what the webhook notification carried — order number, customer, and total — but still lacks items, pipeline, and delivery address because Shopify could not be reached. It tells the operator to use `Re-sync from Shopify`; opening Route to Ship inside Shopify admin is also said to reconnect the store and then resync.
+
+This supports the following limited model:
+
+1. A webhook can create at least a skeletal local order record.
+2. Route to Ship also calls Shopify for richer order data needed for line items and routing.
+3. If that API call fails, the local record remains in an `awaitingSync` state rather than being discarded.
+4. Per-order `Resync` retries the Shopify fetch and refreshes the local record.
+
+The same UI says an incomplete order older than Shopify's 60-day read window can no longer be enriched and remains only as a reference. It does not say that the incremental safety-net sync retries these records automatically.
+
+### Incremental Safety Net: Cadence Unknown
+
+The strongest safety-net claim remains the public Shopify integration page:
+
+> "Paid orders flow in automatically over Shopify webhooks in real time, with an incremental Admin GraphQL sync as a safety net so nothing is missed."
+
+Source: [Route to Ship Shopify integration](https://www.routetoship.com/integrations/shopify), mirrored at [`refs/route-to-ship/integrations/shopify.md`](../refs/route-to-ship/integrations/shopify.md#L17-L23).
+
+No inspected source says whether this runs hourly, daily, on app launch, after a webhook failure, or on another trigger. No source documents:
+
+- the query cursor or timestamp used for incremental discovery;
+- the lookback overlap used to avoid boundary misses;
+- whether it discovers missing orders only or also reconciles changed orders;
+- whether it reruns product-tag routing and production-work creation; or
+- how it deduplicates a webhook delivery against a safety-net result.
+
+The deployed frontend contains user-facing strings for starting a sync, selecting a shorter period after timeout, viewing Shopify sync logs, and triggering pipelines for synced orders. However, the current app router exposes no Shopify-integration settings route, and the inspected Settings page has no bulk-sync control. These strings may belong to an internal, removed, or unfinished tool; they establish that bulk-sync tooling has existed in some form, but not that a scheduled job currently runs or what its cadence is.
+
 ### Documentation Conflict
 
-The in-app `Shopify Integration` Help page separately says the automatically registered topics are only `ORDERS_CREATE`, `ORDERS_UPDATED`, and `APP_UNINSTALLED`. That conflicts with the more detailed `Orders & Sync` list above. The public integration page adds an incremental Admin GraphQL sync as a safety net, but does not give its interval or reconciliation rules.
+The in-app `Shopify Integration` Help page separately says the automatically registered topics are only `ORDERS_CREATE`, `ORDERS_UPDATED`, and `APP_UNINSTALLED`. That conflicts with the more detailed `Orders & Sync` list above. Neither list includes an explicit payment topic despite the public site's repeated paid-order claim. The public integration page adds an incremental Admin GraphQL sync as a safety net, but does not give its interval or reconciliation rules.
 
 There is no documentation that a standalone **product-tag edit** triggers rerouting of existing orders. Product tags are routing inputs when an order is processed; whether they are snapshotted, fetched live, or reconciled later is unspecified.
 
@@ -198,13 +243,15 @@ The restarted tour did not add tag-matching semantics beyond the Help FAQs.
 
 ## Interpretation
 
-The remaining open question is whether order-tag matching actually exists. The possibilities are:
+Product tags are the supported routing assumption for current product work. Order-tag matching remains an undocumented inconsistency rather than a blocker to that conclusion. The possible explanations are:
 
 1. The field matches both order tags and line-item product tags, but the Help center documents only the latter.
 2. The field matches only product tags, and the public integration page's order-tag claim is incorrect or stale.
 3. Order tags work only after another mechanism, such as Shopify Flow, copies or transforms them; no documentation states this.
 
 The product-tag behavior is documented, but the current evidence cannot distinguish these order-tag possibilities. The builder's order-only inline wording conflicts with its Help center.
+
+For synchronization, the evidence supports webhook-first ingestion, an API enrichment step, retained partial records on API failure, manual per-order retry, support-assisted historical backfill, and a claimed incremental API safety net. It does **not** support assigning that safety net a daily or other interval. Route to Ship would need to confirm the scheduler and reconciliation semantics, or they would need to be observed through a deliberately missed-webhook test.
 
 ## Needed Verification
 
@@ -220,6 +267,10 @@ Run controlled tests before relying on undocumented order-tag behavior or update
 8. Add and remove a tagged line item from a paid order and record whether corresponding work is added or cancelled.
 9. Change a product tag after payment, then trigger an order resync and record whether existing work is rerouted.
 10. Cancel or refund an in-progress order and record whether work remains visible, is blocked, or is cancelled.
+11. Disable or break the app's webhook delivery, create a paid order, restore delivery, and measure whether the incremental safety net discovers it without manual action.
+12. Repeat around several observation windows to establish the safety-net cadence rather than assuming it is daily.
+13. Force or observe an `awaitingSync` order and determine whether it recovers automatically, on embedded-app launch, or only after per-order `Resync`.
+14. Re-deliver a webhook for an already-synced order and confirm that order records and production work are idempotent.
 
 Use product tags for routing: that is the documented in-app configuration. Do not rely on order tags until the order-only test passes or Route to Ship confirms the public integration-page claim.
 
@@ -233,3 +284,8 @@ Use product tags for routing: that is the documented in-app configuration. Do no
 - Is payment the only production-release gate, or can pending, authorized, or manually-approved orders enter work queues?
 - What does each of `ORDERS_UPDATED`, `ORDERS_EDITED`, `ORDERS_CANCELLED`, and `REFUNDS_CREATE` do to existing production work?
 - Are routing tags and released quantities snapshotted per line item, and how are order edits reconciled?
+- Which webhook topic or financial-status transition releases a paid order into production?
+- Which webhook list is current: the seven-topic `Orders & Sync` list or the three-topic `Shopify Integration` list?
+- How often does the incremental Admin GraphQL safety-net sync run, what lookback/cursor does it use, and does it reconcile updates or only discover missing orders?
+- Does an `awaitingSync` order retry automatically, on app launch, or only through manual `Resync`?
+- Is the date-range backfill entirely support-operated, and does it automatically create production work for imported orders?

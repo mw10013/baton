@@ -44,6 +44,22 @@ const config = defineConfig({
     "import.meta.env.VITE_APP_VERSION": JSON.stringify(packageJson.version),
   },
   server: {
+    /**
+     * Bind IPv4 explicitly. Vite defaults `server.host` to `localhost` and sets
+     * `dns.setDefaultResultOrder("verbatim")`, so on macOS `localhost` resolves to
+     * `::1` first and Vite ends up listening on IPv6 only.
+     *
+     * Shopify CLI's dev proxy dials `127.0.0.1`. Node's Happy Eyeballs usually
+     * recovers, but under a burst of parallel requests (the full reload that
+     * follows a dependency re-optimization) some connections lose that race and
+     * the module 404s as:
+     * `Error forwarding web request: connect ECONNREFUSED 127.0.0.1:3800`.
+     *
+     * The proxy is the only client that reaches Vite directly, so IPv4-only is
+     * enough; use `true` (0.0.0.0 + ::) if LAN access is ever needed --
+     * `allowedHosts` still guards the host check either way.
+     */
+    host: "127.0.0.1",
     allowedHosts,
   },
   // `vite-tsconfig-paths` should cover `@/*`, but Vite's dependency scan / SSR pre-bundling
