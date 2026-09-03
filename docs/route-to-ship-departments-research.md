@@ -199,6 +199,21 @@ The existing Baton decision therefore remains sound for the stated goal: **keep 
 5. Design a reusable **step template/SOP library** only if merchants actually repeat detailed work definitions across workflows. It should be a separate optional reference/copy mechanism, never a mandatory property of a team. Copy-on-use avoids a shared template edit silently changing multiple workflows.
 6. Make completion scope explicit on the workflow step when instantiation is designed: `perLineItem`, `perOrder`, and potentially `perUnit`. Route to Ship demonstrates that Dispatch has a real per-order use case. Do not adopt `Count units`/`Confirm each unit` until their behavior has been experimentally verified.
 
+### Future parallelism conclusion
+
+Baton will probably need limited within-workflow parallelism eventually, but not a pipeline-wide switch that releases every team at once. Use a staged model:
+
+```text
+Stage 1: Prepare artwork, Pick materials       parallel
+Stage 2: Produce                               after Stage 1
+Stage 3: QC, Prepare packaging                 parallel
+Stage 4: Dispatch                              after Stage 3
+```
+
+An optional `parallelGroup` (or stage) on `WorkflowStep` is sufficient for that first version. Required steps in a group form a join: all must complete before the next group becomes available. This keeps the merchant model ordered by default, makes the completion rule visible, and avoids prematurely supporting arbitrary graphs, branch failure, rework paths, or team-level parallelism.
+
+Line items already run independently when they match separate workflow instances. That is useful concurrency without workflow-step parallelism. Add parallel groups only after a real single-line-item workflow has independent work that must later join.
+
 This delivers Route to Ship's useful separation of people from queue eligibility while avoiding its forced reuse of a department's SOP. It also preserves a future option to share a step template where standardization is truly desired.
 
 ## Open questions before Baton copies any advanced behavior
@@ -211,6 +226,10 @@ This delivers Route to Ship's useful separation of people from queue eligibility
 6. How does an approval step identify a line manager when department manager and user role are separate concepts?
 
 These are questions to answer by creating throwaway departments/pipelines and running test orders, not by making Baton schema assumptions.
+
+## Live experiment note
+
+On 2026-09-02, the logged-in Route to Ship `My Work` screen was inspected to test unit and per-order behavior. It reported `0 tasks across 0 orders`, so there was no existing executable task to observe. A conclusive experiment would require creating a throwaway product, tagged pipeline, department, and Shopify order with quantity greater than one. That work is intentionally deferred: it would not change the current Baton POC, which should instantiate sequential work per line item first.
 
 ## Source excerpts
 
