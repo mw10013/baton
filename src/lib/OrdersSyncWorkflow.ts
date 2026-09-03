@@ -47,8 +47,19 @@ class OrdersSyncWorkflowError extends Schema.TaggedError<OrdersSyncWorkflowError
 
 /**
  * A permanent failure: retrying an expired refresh token or a rejected bulk
- * query only burns the retry budget. `Effect.die` because the workflow runtime
- * reads the thrown value, not an Effect failure channel.
+ * query only burns the retry budget, so the value has to reach the workflow
+ * runtime as a `NonRetryableError` for it to stop retrying the step
+ * (https://developers.cloudflare.com/workflows/build/sleeping-and-retrying/).
+ *
+ * `Effect.die`, not `Effect.fail`, for the *type*, not the throw: either one
+ * rejects `runPromise` with this exact object, since `causeSquash` unwraps
+ * `Fail` and `Die` alike. `die` types as `Effect<never, never>`, which makes
+ * this usable as a terminal `catchTag` handler that leaves the inner error
+ * channel `never`. A `fail` would put `NonRetryableError` into `E` and
+ * propagate it through every step wrapper, where nothing can handle it: it is
+ * a control signal addressed to the host runtime, not an error this program
+ * can recover from. The cost is that a defect bypasses `catchTag`/`catchAll`
+ * on its way out, which is the intent here.
  */
 const nonRetryable = (message: string) =>
   Effect.die(new NonRetryableError(message));

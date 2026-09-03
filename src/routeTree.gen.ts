@@ -30,7 +30,7 @@ import { Route as WebhooksComplianceRouteImport } from './routes/webhooks.compli
 import { Route as WebhooksOrdersRouteImport } from './routes/webhooks.orders'
 import { Route as AdminShopShopRouteImport } from './routes/admin.shop.$shop'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
-import { Route as ApiE2eSeedRouteImport } from './routes/api.e2e.seed'
+import { Route as ApiDevSeedRouteImport } from './routes/api.dev.seed'
 import { Route as AppTeamsIndexRouteImport } from './routes/app.teams.index'
 import { Route as AppTeamsTeamIdRouteImport } from './routes/app.teams.$teamId'
 import { Route as AppWorkflowsIndexRouteImport } from './routes/app.workflows.index'
@@ -145,9 +145,9 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiE2eSeedRoute = ApiE2eSeedRouteImport.update({
-  id: '/api/e2e/seed',
-  path: '/api/e2e/seed',
+const ApiDevSeedRoute = ApiDevSeedRouteImport.update({
+  id: '/api/dev/seed',
+  path: '/api/dev/seed',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppTeamsIndexRoute = AppTeamsIndexRouteImport.update({
@@ -209,7 +209,7 @@ export interface FileRoutesByFullPath {
   '/shop/': typeof ShopIndexRoute
   '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
-  '/api/e2e/seed': typeof ApiE2eSeedRoute
+  '/api/dev/seed': typeof ApiDevSeedRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
   '/shop/$shop/queue': typeof ShopShopQueueRoute
@@ -237,7 +237,7 @@ export interface FileRoutesByTo {
   '/shop': typeof ShopIndexRoute
   '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
-  '/api/e2e/seed': typeof ApiE2eSeedRoute
+  '/api/dev/seed': typeof ApiDevSeedRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
   '/shop/$shop/queue': typeof ShopShopQueueRoute
@@ -269,7 +269,7 @@ export interface FileRoutesById {
   '/shop/': typeof ShopIndexRoute
   '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
-  '/api/e2e/seed': typeof ApiE2eSeedRoute
+  '/api/dev/seed': typeof ApiDevSeedRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
   '/shop/$shop/queue': typeof ShopShopQueueRoute
@@ -302,7 +302,7 @@ export interface FileRouteTypes {
     | '/shop/'
     | '/admin/shop/$shop'
     | '/api/auth/$'
-    | '/api/e2e/seed'
+    | '/api/dev/seed'
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
     | '/shop/$shop/queue'
@@ -330,7 +330,7 @@ export interface FileRouteTypes {
     | '/shop'
     | '/admin/shop/$shop'
     | '/api/auth/$'
-    | '/api/e2e/seed'
+    | '/api/dev/seed'
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
     | '/shop/$shop/queue'
@@ -361,7 +361,7 @@ export interface FileRouteTypes {
     | '/shop/'
     | '/admin/shop/$shop'
     | '/api/auth/$'
-    | '/api/e2e/seed'
+    | '/api/dev/seed'
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
     | '/shop/$shop/queue'
@@ -383,7 +383,7 @@ export interface RootRouteChildren {
   WebhooksComplianceRoute: typeof WebhooksComplianceRoute
   WebhooksOrdersRoute: typeof WebhooksOrdersRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
-  ApiE2eSeedRoute: typeof ApiE2eSeedRoute
+  ApiDevSeedRoute: typeof ApiDevSeedRoute
   WebhooksAppScopes_updateRoute: typeof WebhooksAppScopes_updateRoute
   WebhooksAppUninstalledRoute: typeof WebhooksAppUninstalledRoute
 }
@@ -537,11 +537,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/e2e/seed': {
-      id: '/api/e2e/seed'
-      path: '/api/e2e/seed'
-      fullPath: '/api/e2e/seed'
-      preLoaderRoute: typeof ApiE2eSeedRouteImport
+    '/api/dev/seed': {
+      id: '/api/dev/seed'
+      path: '/api/dev/seed'
+      fullPath: '/api/dev/seed'
+      preLoaderRoute: typeof ApiDevSeedRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/app/teams/': {
@@ -672,7 +672,7 @@ const rootRouteChildren: RootRouteChildren = {
   WebhooksComplianceRoute: WebhooksComplianceRoute,
   WebhooksOrdersRoute: WebhooksOrdersRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
-  ApiE2eSeedRoute: ApiE2eSeedRoute,
+  ApiDevSeedRoute: ApiDevSeedRoute,
   WebhooksAppScopes_updateRoute: WebhooksAppScopes_updateRoute,
   WebhooksAppUninstalledRoute: WebhooksAppUninstalledRoute,
 }

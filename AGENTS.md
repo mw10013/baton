@@ -58,6 +58,7 @@ pnpm test               # Run tests with Vitest.
 npm run test:e2e --     # Playwright via npm (uses pnpm exec in script); pass args after -- and may be helpful to use --trace on
 pnpm graphql-codegen    # Validate #graphql template literal strings against the Shopify Admin schema
 pnpm tail               # Tail deployed remote logs (raw logs/tail.log, compact logs/tail-compact.log)
+pnpm seed               # Seed local dev data (members, teams, workflows) via /api/dev/seed
 pnpm d1:reset           # Recreate local D1 from migrations (wipes .wrangler)
 pnpm refs:check         # Report refs/ that drifted from package.json pins
 pnpm refs fetch <name>  # Refetch a ref (see scripts/refs.ts; refs:all for everything but opt-ins)

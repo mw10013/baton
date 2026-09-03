@@ -37,6 +37,7 @@
     "fmt": "oxfmt . '!refs/**' '!dist/**'",
     "fmt:check": "oxfmt --check . '!refs/**' '!dist/**'",
     "port": "source .env && echo $PORT",
+    "seed": "node --env-file=.env scripts/seed.ts",
     "graphql-codegen": "graphql-codegen",
     "d1:migrate:list": "wrangler d1 migrations list baton-d1-local --local",
     "d1:migrations": "wrangler d1 execute baton-d1-local --local --command \"select * from d1_migrations order by id\"",

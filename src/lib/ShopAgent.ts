@@ -48,11 +48,11 @@ import { Shopify } from "@/lib/Shopify";
 import { ShopifyAdmin } from "@/lib/ShopifyAdmin";
 import {
   type StepNotFoundError,
-  type WorkflowRepositoryError,
   type WorkflowLimitError,
   type WorkflowNameTakenError,
   type WorkflowNotFoundError,
   WorkflowRepository,
+  WorkflowRepositoryError,
 } from "@/lib/WorkflowRepository";
 import {
   isRoutable,
@@ -1673,6 +1673,47 @@ export class ShopAgent extends Agent {
           if (recheck === 0) return archived;
           yield* teams.setTeamArchived({ shop, id, archived: false });
           return inUseResult(recheck);
+        }),
+      )(input),
+    );
+  }
+
+  /**
+   * Development seed: replaces this shop's workflow definitions (and every
+   * run) with `input.workflows` in one transaction. One callable rather than
+   * `createWorkflow` + an `addStep` round trip per step, so the fixture
+   * arrives as a single declarative payload and a failure partway cannot leave
+   * a half-built definition behind.
+   *
+   * Gated on `ENVIRONMENT === "local"` here as well as at the route that calls
+   * it (`src/routes/api.dev.seed.ts`): this is the one write path into
+   * `Workflow` that skips the name, limit, and active-team checks, and the
+   * guard belongs with the bypass, not only with its current caller. An
+   * ordinary failure rather than `Effect.die` — `runEffect` collapses failures
+   * and defects into the same thrown `Error` at the RPC seam, so a defect buys
+   * nothing here.
+   */
+  @callable()
+  seedWorkflows(
+    input: typeof Domain.SeedWorkflowsInput.Encoded,
+  ): Promise<void> {
+    const environment = this.env.ENVIRONMENT;
+    const notifyChanged = () => this.notifyChanged();
+    return this.runEffect(
+      callableEffect("ShopAgent.seedWorkflows", Domain.SeedWorkflowsInput, {
+        onExcessProperty: "error",
+      })((seed) =>
+        Effect.gen(function* () {
+          if (environment === "local") {
+            yield* (yield* WorkflowRepository).replaceWorkflows(seed);
+            yield* notifyChanged();
+          } else
+            yield* Effect.fail(
+              new WorkflowRepositoryError({
+                message: `ShopAgent.seedWorkflows: environment=${environment}: seeding is local-only`,
+                cause: environment,
+              }),
+            );
         }),
       )(input),
     );

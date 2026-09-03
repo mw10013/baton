@@ -77,6 +77,24 @@ export class WorkflowRepository extends Context.Service<
       readonly Domain.WorkflowDetail[],
       SqlError.SqlError | WorkflowRepositoryError
     >;
+    /**
+     * Development seed only (`ShopAgent.seedWorkflows`): replaces every
+     * definition and every run with `workflows`, in one transaction, steps
+     * included. Destructive on purpose — a reseed exists to discard whatever
+     * the last one left behind, and skipping existing names would preserve it.
+     *
+     * `WorkflowRun` needs its own delete: it deliberately has no foreign key
+     * to `Workflow` (a run snapshots its definition so it survives a rename or
+     * an archive), so nothing cascades from the `Workflow` delete to it.
+     *
+     * Bypasses the name, limit, and active-team checks the ordinary write path
+     * enforces: positions come from array order and `teamId` from `Team` rows
+     * the caller created moments earlier, so there is nothing left to race.
+     * The Durable Object gates the callable on `ENVIRONMENT === "local"`.
+     */
+    readonly replaceWorkflows: (
+      input: Domain.SeedWorkflowsInput,
+    ) => Effect.Effect<void, SqlError.SqlError>;
     readonly createWorkflow: (input: {
       readonly name: Domain.WorkflowName;
       readonly tags: Domain.ProductTags;
@@ -298,6 +316,34 @@ export class WorkflowRepository extends Context.Service<
          * without a transaction because the Durable Object runs one turn at a
          * time and neither statement awaits anything else.
          */
+        replaceWorkflows: Effect.fn("WorkflowRepository.replaceWorkflows")(
+          function* ({ workflows }: Domain.SeedWorkflowsInput) {
+            const now = yield* Clock.currentTimeMillis;
+            yield* sql.withTransaction(
+              Effect.gen(function* () {
+                yield* sql`delete from WorkflowRun`;
+                yield* sql`delete from Workflow`;
+                for (const workflow of workflows) {
+                  const workflowId = crypto.randomUUID();
+                  yield* sql`
+                    insert into Workflow
+                      (id, name, tags, createdAt, updatedAt, archivedAt)
+                    values
+                      (${workflowId}, ${workflow.name}, ${json(workflow.tags)}, ${now}, ${now}, null)
+                  `;
+                  for (const [index, step] of workflow.steps.entries())
+                    yield* sql`
+                      insert into WorkflowStep
+                        (id, workflowId, position, name, teamId, createdAt)
+                      values
+                        (${crypto.randomUUID()}, ${workflowId}, ${index + 1}, ${step.name}, ${step.teamId}, ${now})
+                    `;
+                }
+              }),
+            );
+          },
+        ),
+
         createWorkflow: Effect.fn("WorkflowRepository.createWorkflow")(
           function* ({
             name,

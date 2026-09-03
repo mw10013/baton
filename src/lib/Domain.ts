@@ -527,6 +527,25 @@ export const UpdateStepInput = Schema.Struct({
 });
 export type UpdateStepInput = typeof UpdateStepInput.Type;
 
+/**
+ * The whole workflow fixture for `ShopAgent.seedWorkflows`, steps inline: one
+ * declarative payload written in one transaction, rather than a
+ * `createWorkflow` + `addStep`-per-step conversation whose failure midway
+ * leaves a half-built definition. `position` is array order; `teamId` is a D1
+ * `Team.id` the caller has already created, so the active-team check
+ * `AddStepInput` exists to trigger has nothing left to catch.
+ */
+export const SeedWorkflowsInput = Schema.Struct({
+  workflows: Schema.Array(
+    Schema.Struct({
+      name: WorkflowName,
+      tags: ProductTags,
+      steps: Schema.Array(Schema.Struct({ name: StepName, teamId: TeamId })),
+    }),
+  ),
+});
+export type SeedWorkflowsInput = typeof SeedWorkflowsInput.Type;
+
 export const StepDirection = Schema.Literals(["up", "down"]);
 export type StepDirection = typeof StepDirection.Type;
 
