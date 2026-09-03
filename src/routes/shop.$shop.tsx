@@ -59,6 +59,9 @@ function RouteComponent() {
             {teams.map((team) => (
               <s-text key={team.id}>{team.name}</s-text>
             ))}
+            <Link to="/shop/$shop/queue" params={{ shop }}>
+              See your work
+            </Link>
           </s-stack>
         )}
       </s-section>

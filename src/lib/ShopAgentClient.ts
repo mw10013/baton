@@ -56,6 +56,18 @@ export class ShopAgentClient extends Context.Service<
     readonly getShopInfo: (
       shop: string,
     ) => Effect.Effect<Domain.ShopInfo, ShopAgentClientError>;
+    readonly listQueue: (
+      shop: string,
+      input: Domain.ListQueueInput,
+    ) => Effect.Effect<readonly Domain.QueueItem[], ShopAgentClientError>;
+    readonly completeStep: (
+      shop: string,
+      input: Domain.CompleteStepInput,
+    ) => Effect.Effect<Domain.RunResult, ShopAgentClientError>;
+    readonly dismissFlag: (
+      shop: string,
+      input: Domain.DismissFlagInput,
+    ) => Effect.Effect<Domain.RunResult, ShopAgentClientError>;
   }
 >()("ShopAgentClient") {
   static readonly layerNoDeps = Layer.effect(
@@ -101,11 +113,36 @@ export class ShopAgentClient extends Context.Service<
             ),
           ),
         );
+      /**
+       * `Schema.toType`: the object already decoded these rows, so the wire
+       * value is the decoded shape (`customAttributes` an array, not JSON
+       * text) and must be validated on that side. `ShopInfo` has no transforms
+       * and needs no such care.
+       */
+      const queueItems = Schema.toType(Schema.Array(Domain.QueueItem));
       return ShopAgentClient.of({
         getShopInfo: Effect.fn("ShopAgentClient.getShopInfo")((shop: string) =>
           call("getShopInfo", Domain.ShopInfo, shop, (stub) =>
             stub.getShopInfo(),
           ),
+        ),
+        listQueue: Effect.fn("ShopAgentClient.listQueue")(
+          (shop: string, input: Domain.ListQueueInput) =>
+            call("listQueue", queueItems, shop, (stub) =>
+              stub.listQueue(input),
+            ),
+        ),
+        completeStep: Effect.fn("ShopAgentClient.completeStep")(
+          (shop: string, input: Domain.CompleteStepInput) =>
+            call("completeStep", Domain.RunResult, shop, (stub) =>
+              stub.completeStep(input),
+            ),
+        ),
+        dismissFlag: Effect.fn("ShopAgentClient.dismissFlag")(
+          (shop: string, input: Domain.DismissFlagInput) =>
+            call("dismissFlag", Domain.RunResult, shop, (stub) =>
+              stub.dismissFlag(input),
+            ),
         ),
       });
     }),

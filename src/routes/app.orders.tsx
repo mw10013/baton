@@ -1,9 +1,9 @@
 import * as React from "react";
 
 import { useAppBridge } from "@shopify/app-bridge-react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ClientOnly, createFileRoute } from "@tanstack/react-router";
-import { Option, Schema } from "effect";
+import { Match, Option, Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
 import { formatDateTime, formatNumber } from "@/lib/format";
@@ -13,6 +13,8 @@ import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 const ORDERS_PAGE_SIZE = 25;
 
 const ordersQueryKey = (shop: string) => ["orders", shop] as const;
+const runsQueryKey = (shop: string, orderId: string) =>
+  ["runs", shop, orderId] as const;
 
 /**
  * `Schema.toType`, not the schema itself. A Durable Object RPC result has
@@ -29,6 +31,47 @@ const decodeOrdersView = Schema.decodeUnknownPromise(
 const decodeSyncState = Schema.decodeUnknownPromise(
   Schema.toType(Domain.SyncState),
 );
+const decodeRuns = Schema.decodeUnknownPromise(
+  Schema.toType(Schema.Array(Domain.WorkflowRunDetail)),
+);
+const decodeWorkflows = Schema.decodeUnknownPromise(
+  Schema.toType(Schema.Array(Domain.WorkflowSummary)),
+);
+const decodeAttachResult = Schema.decodeUnknownPromise(
+  Schema.toType(Domain.AttachResult),
+);
+const decodeRunResult = Schema.decodeUnknownPromise(
+  Schema.toType(Domain.RunResult),
+);
+
+const attachResultMessage = Match.typeTags<
+  Domain.AttachResult,
+  string | null
+>()({
+  Ok: () => null,
+  AlreadyExists: () => "That workflow is already attached to this line item.",
+  LineItemNotFound: () => "That line item no longer exists.",
+  WorkflowNotRoutable: () =>
+    "That workflow cannot route work: it is archived, has no steps, or points at an archived team.",
+});
+
+const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
+  Ok: () => null,
+  NotFound: () => "That workflow run no longer exists.",
+  NotAllowed: () => "Not allowed.",
+  NotCurrent: () => "An earlier step is still open.",
+  Terminal: () => "That workflow run is already finished.",
+});
+
+const RUN_STATUS_TONE = {
+  pending: "info",
+  active: "success",
+  done: "neutral",
+  cancelled: "critical",
+} as const satisfies Record<Domain.RunStatus, string>;
+
+const currentStepName = ({ steps }: Domain.WorkflowRunDetail) =>
+  steps.find((step) => step.completedAt === null)?.name ?? null;
 
 const decodeAgentMessage = (data: string) => {
   const parsed = ((): unknown => {
@@ -153,6 +196,10 @@ function RouteComponent() {
   const resourceLinkTarget = useResourceLinkTarget();
   const [syncing, setSyncing] = React.useState(false);
   const [resyncingId, setResyncingId] = React.useState<string | null>(null);
+  const [attachChoice, setAttachChoice] = React.useState<
+    Record<string, string>
+  >({});
+  const [runBanner, setRunBanner] = React.useState<string | null>(null);
 
   // oxlint-disable-next-line @tanstack/query/exhaustive-deps -- agent.stub is the stable per-shop socket and sessionToken is mount-scoped connection metadata; the cache identity is the shop, and `cursor` is read fresh on every fetch so a poke re-reads the page being viewed
   const ordersQuery = useQuery({
@@ -173,9 +220,79 @@ function RouteComponent() {
   });
 
   const invalidate = React.useCallback(
-    () => queryClient.invalidateQueries({ queryKey: ordersQueryKey(shop) }),
+    () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ordersQueryKey(shop) }),
+        queryClient.invalidateQueries({ queryKey: ["runs", shop] }),
+      ]),
     [queryClient, shop],
   );
+
+  // oxlint-disable-next-line @tanstack/query/exhaustive-deps -- agent.stub is the stable per-shop socket; the cache identity is the shop plus the selected order
+  const runsQuery = useQuery({
+    queryKey: runsQueryKey(shop, selectedOrderId ?? ""),
+    staleTime: Infinity,
+    queryFn: () =>
+      agent && selectedOrderId !== null
+        ? withSocketRecovery(agent)(() =>
+            agent.stub.listRunsForOrder({ orderId: selectedOrderId }),
+          ).then(decodeRuns)
+        : Promise.reject(new Error("Still connecting. Try again in a moment.")),
+    enabled: identified && selectedOrderId !== null,
+  });
+
+  // oxlint-disable-next-line @tanstack/query/exhaustive-deps -- agent.stub is the stable per-shop socket; the cache identity is the shop plus the archived filter, shared with the workflows page
+  const workflowsQuery = useQuery({
+    queryKey: ["workflows", shop, false],
+    staleTime: Infinity,
+    queryFn: () =>
+      agent
+        ? withSocketRecovery(agent)(() =>
+            agent.stub.listWorkflows({ includeArchived: false }),
+          ).then(decodeWorkflows)
+        : Promise.reject(new Error("Still connecting. Try again in a moment.")),
+    enabled: identified && selectedOrderId !== null,
+  });
+
+  const attachMutation = useMutation({
+    mutationFn: (input: typeof Domain.AttachWorkflowInput.Encoded) =>
+      agent
+        ? withSocketRecovery(agent)(() =>
+            agent.stub.attachWorkflow(input),
+          ).then(decodeAttachResult)
+        : Promise.reject(new Error("Still connecting. Try again in a moment.")),
+    onSuccess: async (result) => {
+      setRunBanner(attachResultMessage(result));
+      await invalidate();
+    },
+    onError: (error) => {
+      setRunBanner(error.message);
+    },
+  });
+
+  const runMutation = useMutation({
+    mutationFn: ({
+      runId,
+      action,
+    }: {
+      readonly runId: string;
+      readonly action: "cancel" | "uncancel";
+    }) =>
+      agent
+        ? withSocketRecovery(agent)(() =>
+            action === "cancel"
+              ? agent.stub.cancelRun({ runId })
+              : agent.stub.uncancelRun({ runId }),
+          ).then(decodeRunResult)
+        : Promise.reject(new Error("Still connecting. Try again in a moment.")),
+    onSuccess: async (result) => {
+      setRunBanner(runResultMessage(result));
+      await invalidate();
+    },
+    onError: (error) => {
+      setRunBanner(error.message);
+    },
+  });
 
   React.useEffect(() => {
     if (identified) void invalidate();
@@ -259,6 +376,99 @@ function RouteComponent() {
   const syncInFlight = view !== undefined && view.syncState.workflowId !== null;
   const orders = view?.page.orders ?? [];
   const selected = orders.find(({ order }) => order.id === selectedOrderId);
+  const runs = runsQuery.data ?? [];
+  const routableWorkflows = (workflowsQuery.data ?? []).filter(
+    (workflow) => workflow.stepCount > 0 && workflow.archivedAt === null,
+  );
+  const runsBusy = attachMutation.isPending || runMutation.isPending;
+
+  const renderRuns = (lineItemId: string) => (
+    <s-stack gap="small-300">
+      {runs
+        .filter(({ run }) => run.lineItemId === lineItemId)
+        .map((detail) => (
+          <s-stack
+            key={detail.run.id}
+            direction="inline"
+            gap="small-300"
+            alignItems="center"
+          >
+            <s-text>{detail.run.workflowName}</s-text>
+            <s-badge tone={RUN_STATUS_TONE[detail.run.status]}>
+              {detail.run.status}
+            </s-badge>
+            {currentStepName(detail) !== null &&
+              detail.run.status !== "cancelled" && (
+                <s-text color="subdued">{currentStepName(detail)}</s-text>
+              )}
+            {detail.run.flag !== null && (
+              <s-badge tone="warning">{detail.run.flag}</s-badge>
+            )}
+            {detail.run.status === "pending" ||
+            detail.run.status === "active" ? (
+              <s-button
+                variant="tertiary"
+                disabled={!identified || runsBusy}
+                onClick={() => {
+                  runMutation.mutate({
+                    runId: detail.run.id,
+                    action: "cancel",
+                  });
+                }}
+              >
+                Cancel
+              </s-button>
+            ) : null}
+            {detail.run.status === "cancelled" && (
+              <s-button
+                variant="tertiary"
+                disabled={!identified || runsBusy}
+                onClick={() => {
+                  runMutation.mutate({
+                    runId: detail.run.id,
+                    action: "uncancel",
+                  });
+                }}
+              >
+                Undo cancel
+              </s-button>
+            )}
+          </s-stack>
+        ))}
+      <s-stack direction="inline" gap="small-300" alignItems="end">
+        <s-select
+          label="Attach workflow"
+          labelAccessibilityVisibility="exclusive"
+          placeholder="Attach workflow"
+          value={attachChoice[lineItemId] ?? ""}
+          disabled={!identified || runsBusy}
+          onChange={(event) => {
+            const workflowId = event.currentTarget.value;
+            setAttachChoice((choice) => ({
+              ...choice,
+              [lineItemId]: workflowId,
+            }));
+          }}
+        >
+          {routableWorkflows.map((workflow) => (
+            <s-option key={workflow.id} value={workflow.id}>
+              {workflow.name}
+            </s-option>
+          ))}
+        </s-select>
+        <s-button
+          variant="secondary"
+          disabled={!identified || runsBusy || !attachChoice[lineItemId]}
+          onClick={() => {
+            const workflowId = attachChoice[lineItemId];
+            if (workflowId) attachMutation.mutate({ lineItemId, workflowId });
+          }}
+        >
+          Attach
+        </s-button>
+      </s-stack>
+    </s-stack>
+  );
 
   const renderOrders = () => {
     /**
@@ -425,6 +635,16 @@ function RouteComponent() {
             {selected.order.note !== null && (
               <s-paragraph>{selected.order.note}</s-paragraph>
             )}
+            {runBanner !== null && (
+              <s-banner tone="critical">{runBanner}</s-banner>
+            )}
+            {runsQuery.isError && (
+              <s-banner tone="critical">
+                {runsQuery.error instanceof Error
+                  ? runsQuery.error.message
+                  : "Could not load workflows for this order."}
+              </s-banner>
+            )}
             <s-table>
               <s-table-header-row>
                 <s-table-header listSlot="primary">Title</s-table-header>
@@ -432,6 +652,7 @@ function RouteComponent() {
                 <s-table-header>Qty</s-table-header>
                 <s-table-header>Product tags</s-table-header>
                 <s-table-header>Personalization</s-table-header>
+                <s-table-header>Workflows</s-table-header>
               </s-table-header-row>
               <s-table-body>
                 {selected.lineItems.map((item) => (
@@ -449,6 +670,7 @@ function RouteComponent() {
                     <s-table-cell>
                       {attributeSummary(item.customAttributes)}
                     </s-table-cell>
+                    <s-table-cell>{renderRuns(item.id)}</s-table-cell>
                   </s-table-row>
                 ))}
               </s-table-body>

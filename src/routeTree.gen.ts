@@ -35,6 +35,7 @@ import { Route as AppTeamsIndexRouteImport } from './routes/app.teams.index'
 import { Route as AppTeamsTeamIdRouteImport } from './routes/app.teams.$teamId'
 import { Route as AppWorkflowsIndexRouteImport } from './routes/app.workflows.index'
 import { Route as AppWorkflowsWorkflowIdRouteImport } from './routes/app.workflows.$workflowId'
+import { Route as ShopShopQueueRouteImport } from './routes/shop.$shop.queue'
 import { Route as WebhooksAppScopes_updateRouteImport } from './routes/webhooks.app.scopes_update'
 import { Route as WebhooksAppUninstalledRouteImport } from './routes/webhooks.app.uninstalled'
 
@@ -169,6 +170,11 @@ const AppWorkflowsWorkflowIdRoute = AppWorkflowsWorkflowIdRouteImport.update({
   path: '/workflows/$workflowId',
   getParentRoute: () => AppRoute,
 } as any)
+const ShopShopQueueRoute = ShopShopQueueRouteImport.update({
+  id: '/queue',
+  path: '/queue',
+  getParentRoute: () => ShopShopRoute,
+} as any)
 const WebhooksAppScopes_updateRoute =
   WebhooksAppScopes_updateRouteImport.update({
     id: '/webhooks/app/scopes_update',
@@ -195,7 +201,7 @@ export interface FileRoutesByFullPath {
   '/app/members': typeof AppMembersRoute
   '/app/orders': typeof AppOrdersRoute
   '/auth/$': typeof AuthSplatRoute
-  '/shop/$shop': typeof ShopShopRoute
+  '/shop/$shop': typeof ShopShopRouteWithChildren
   '/webhooks/compliance': typeof WebhooksComplianceRoute
   '/webhooks/orders': typeof WebhooksOrdersRoute
   '/admin/': typeof AdminIndexRoute
@@ -206,6 +212,7 @@ export interface FileRoutesByFullPath {
   '/api/e2e/seed': typeof ApiE2eSeedRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
+  '/shop/$shop/queue': typeof ShopShopQueueRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
   '/app/teams/': typeof AppTeamsIndexRoute
@@ -222,7 +229,7 @@ export interface FileRoutesByTo {
   '/app/members': typeof AppMembersRoute
   '/app/orders': typeof AppOrdersRoute
   '/auth/$': typeof AuthSplatRoute
-  '/shop/$shop': typeof ShopShopRoute
+  '/shop/$shop': typeof ShopShopRouteWithChildren
   '/webhooks/compliance': typeof WebhooksComplianceRoute
   '/webhooks/orders': typeof WebhooksOrdersRoute
   '/admin': typeof AdminIndexRoute
@@ -233,6 +240,7 @@ export interface FileRoutesByTo {
   '/api/e2e/seed': typeof ApiE2eSeedRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
+  '/shop/$shop/queue': typeof ShopShopQueueRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
   '/app/teams': typeof AppTeamsIndexRoute
@@ -253,7 +261,7 @@ export interface FileRoutesById {
   '/app/members': typeof AppMembersRoute
   '/app/orders': typeof AppOrdersRoute
   '/auth/$': typeof AuthSplatRoute
-  '/shop/$shop': typeof ShopShopRoute
+  '/shop/$shop': typeof ShopShopRouteWithChildren
   '/webhooks/compliance': typeof WebhooksComplianceRoute
   '/webhooks/orders': typeof WebhooksOrdersRoute
   '/admin/': typeof AdminIndexRoute
@@ -264,6 +272,7 @@ export interface FileRoutesById {
   '/api/e2e/seed': typeof ApiE2eSeedRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
+  '/shop/$shop/queue': typeof ShopShopQueueRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
   '/app/teams/': typeof AppTeamsIndexRoute
@@ -296,6 +305,7 @@ export interface FileRouteTypes {
     | '/api/e2e/seed'
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
+    | '/shop/$shop/queue'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
     | '/app/teams/'
@@ -323,6 +333,7 @@ export interface FileRouteTypes {
     | '/api/e2e/seed'
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
+    | '/shop/$shop/queue'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
     | '/app/teams'
@@ -353,6 +364,7 @@ export interface FileRouteTypes {
     | '/api/e2e/seed'
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
+    | '/shop/$shop/queue'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
     | '/app/teams/'
@@ -560,6 +572,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppWorkflowsWorkflowIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/shop/$shop/queue': {
+      id: '/shop/$shop/queue'
+      path: '/queue'
+      fullPath: '/shop/$shop/queue'
+      preLoaderRoute: typeof ShopShopQueueRouteImport
+      parentRoute: typeof ShopShopRoute
+    }
     '/webhooks/app/scopes_update': {
       id: '/webhooks/app/scopes_update'
       path: '/webhooks/app/scopes_update'
@@ -617,13 +636,25 @@ const AppRouteChildren: AppRouteChildren = {
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
+interface ShopShopRouteChildren {
+  ShopShopQueueRoute: typeof ShopShopQueueRoute
+}
+
+const ShopShopRouteChildren: ShopShopRouteChildren = {
+  ShopShopQueueRoute: ShopShopQueueRoute,
+}
+
+const ShopShopRouteWithChildren = ShopShopRoute._addFileChildren(
+  ShopShopRouteChildren,
+)
+
 interface ShopRouteChildren {
-  ShopShopRoute: typeof ShopShopRoute
+  ShopShopRoute: typeof ShopShopRouteWithChildren
   ShopIndexRoute: typeof ShopIndexRoute
 }
 
 const ShopRouteChildren: ShopRouteChildren = {
-  ShopShopRoute: ShopShopRoute,
+  ShopShopRoute: ShopShopRouteWithChildren,
   ShopIndexRoute: ShopIndexRoute,
 }
 

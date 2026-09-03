@@ -17,11 +17,20 @@ export class OrderRepositoryError extends Schema.TaggedError<OrderRepositoryErro
   },
 ) {}
 
-export interface OrderUpsert {
+export interface OrderUpsert<E = never> {
   readonly order: Domain.ShopOrder;
   /** Order-level JSON only; see {@link Domain.ShopOrder}. */
   readonly raw: string;
   readonly lineItems: readonly Domain.OrderLineItem[];
+  /**
+   * Runs inside the upsert's transaction, after the line items are written and
+   * only when the write actually happened. The seam for workflow-run
+   * reconciliation: runs must be created and adjusted against exactly the
+   * line-item set this write produced, and Durable Object SQLite refuses
+   * nested transactions, so the caller composes plain statements here rather
+   * than opening its own. Must not await anything but storage.
+   */
+  readonly afterWrite?: Effect.Effect<void, E>;
 }
 
 export interface WebhookDelivery {
@@ -73,12 +82,19 @@ export class OrderRepository extends Context.Service<
      * and will interleave between orders. Per-order atomicity is what keeps
      * either writer from observing half an order.
      */
-    readonly upsertOrder: (
-      input: OrderUpsert,
-    ) => Effect.Effect<{ readonly written: boolean }, SqlError.SqlError>;
+    readonly upsertOrder: <E = never>(
+      input: OrderUpsert<E>,
+    ) => Effect.Effect<{ readonly written: boolean }, SqlError.SqlError | E>;
     readonly deleteOrder: (
       orderId: string,
     ) => Effect.Effect<void, SqlError.SqlError>;
+    readonly getLineItem: (lineItemId: string) => Effect.Effect<
+      Option.Option<{
+        readonly order: Domain.ShopOrder;
+        readonly lineItem: Domain.OrderLineItem;
+      }>,
+      SqlError.SqlError | OrderRepositoryError
+    >;
     readonly getOrder: (
       orderId: string,
     ) => Effect.Effect<
@@ -251,14 +267,16 @@ export class OrderRepository extends Context.Service<
         );
 
       return OrderRepository.of({
-        upsertOrder: Effect.fn("OrderRepository.upsertOrder")(function* ({
+        upsertOrder: <E>({
           order,
           raw,
           lineItems,
-        }: OrderUpsert) {
-          return yield* sql.withTransaction(
-            Effect.gen(function* () {
-              const written = yield* sql`
+          afterWrite,
+        }: OrderUpsert<E>) =>
+          sql
+            .withTransaction(
+              Effect.gen(function* () {
+                const written = yield* sql`
                 insert into ShopOrder (
                   id, legacyId, name, createdAt, processedAt, updatedAt,
                   cancelledAt, closedAt, financialStatus, fulfillmentStatus,
@@ -295,14 +313,15 @@ export class OrderRepository extends Context.Service<
                 where excluded.updatedAt >= ShopOrder.updatedAt
                 returning id
               `;
-              if (written.length === 0) return { written: false };
-              if (order.lineItemsComplete)
-                yield* sql`delete from OrderLineItem where orderId = ${order.id}`;
-              yield* insertLineItems(lineItems);
-              return { written: true };
-            }),
-          );
-        }),
+                if (written.length === 0) return { written: false };
+                if (order.lineItemsComplete)
+                  yield* sql`delete from OrderLineItem where orderId = ${order.id}`;
+                yield* insertLineItems(lineItems);
+                if (afterWrite !== undefined) yield* afterWrite;
+                return { written: true };
+              }),
+            )
+            .pipe(Effect.withSpan("OrderRepository.upsertOrder")),
 
         deleteOrder: Effect.fn("OrderRepository.deleteOrder")(function* (
           orderId: string,
@@ -313,6 +332,21 @@ export class OrderRepository extends Context.Service<
               yield* sql`delete from ShopOrder where id = ${orderId}`;
             }),
           );
+        }),
+
+        getLineItem: Effect.fn("OrderRepository.getLineItem")(function* (
+          lineItemId: string,
+        ) {
+          const [lineItem] = yield* decodeLineItems(
+            yield* sql`select * from OrderLineItem where id = ${lineItemId}`,
+          );
+          if (lineItem === undefined) return Option.none();
+          const [order] = yield* decodeOrders(
+            yield* sql`select ${orderColumns} from ShopOrder where id = ${lineItem.orderId}`,
+          );
+          return order === undefined
+            ? Option.none()
+            : Option.some({ order, lineItem });
         }),
 
         getOrder: Effect.fn("OrderRepository.getOrder")(function* (

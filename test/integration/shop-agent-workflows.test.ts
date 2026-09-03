@@ -1,5 +1,7 @@
+import { SqliteClient } from "@effect/sql-sqlite-do";
 import { strictEqual } from "@effect/vitest/utils";
 import { getAgentByName } from "agents";
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { Effect, Layer, Option, Schema } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,7 +10,9 @@ import { D1Primary } from "@/lib/D1Primary";
 import { D1Session } from "@/lib/D1Session";
 import * as Domain from "@/lib/Domain";
 import { makeEnvLayer } from "@/lib/LayerEx";
+import { OrderRepository } from "@/lib/OrderRepository";
 import { Repository } from "@/lib/Repository";
+import { runShopAgentMigrations } from "@/lib/ShopAgent";
 
 const layer = Repository.layerNoDeps.pipe(
   Layer.provide(
@@ -213,5 +217,174 @@ describe("ShopAgent workflow callables", () => {
       ),
       true,
     );
+  });
+});
+
+/**
+ * Orders are seeded straight into the object's SQLite through the repository:
+ * the object's own fetch path needs a Shopify session and an Admin API the
+ * test isolate cannot stub, and what these cases exercise is the attach /
+ * cancel logic over stored rows, not the fetch.
+ */
+const seedOrder = (shop: string, processedAt: number) =>
+  runInDurableObject(
+    env.SHOP_AGENT.get(env.SHOP_AGENT.idFromName(shop)),
+    (_instance, state) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          yield* runShopAgentMigrations;
+          yield* (yield* OrderRepository).upsertOrder({
+            order: {
+              id: "gid://shopify/Order/1",
+              legacyId: "1",
+              name: "#1001",
+              createdAt: processedAt,
+              processedAt,
+              updatedAt: processedAt,
+              cancelledAt: null,
+              closedAt: null,
+              financialStatus: "PAID",
+              fulfillmentStatus: "UNFULFILLED",
+              fullyPaid: true,
+              tags: [],
+              note: null,
+              customAttributes: [],
+              lineItemsComplete: true,
+              syncedAt: processedAt,
+              syncSource: "manual",
+            },
+            raw: "{}",
+            lineItems: [
+              {
+                id: "gid://shopify/LineItem/1",
+                orderId: "gid://shopify/Order/1",
+                productId: null,
+                variantId: null,
+                title: "Necklace",
+                variantTitle: null,
+                sku: null,
+                quantity: 1,
+                currentQuantity: 1,
+                unfulfilledQuantity: 1,
+                nonFulfillableQuantity: 0,
+                productTags: [],
+                customAttributes: [],
+                requiresShipping: true,
+              },
+            ],
+          });
+        }).pipe(
+          Effect.provide(
+            Layer.provideMerge(
+              OrderRepository.layer,
+              SqliteClient.layer({ storage: state.storage }),
+            ),
+          ),
+        ),
+      ),
+  );
+
+describe("ShopAgent workflow run callables", () => {
+  it("attachWorkflow validates the line item and the workflow, then refuses a duplicate", async () => {
+    const shop = "wf-attach.myshopify.com";
+    const team = await seedTeam(shop, "Engraving");
+    await seedOrder(shop, Date.now() - 24 * 60 * 60 * 1000);
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const created = await agent.createWorkflow({ name: "Engrave", tags: [] });
+    if (created._tag !== "Ok") throw new Error(created._tag);
+    const workflowId = created.workflow.id;
+
+    const noSteps = await agent.attachWorkflow({
+      lineItemId: "gid://shopify/LineItem/1",
+      workflowId,
+    });
+    strictEqual(noSteps._tag, "WorkflowNotRoutable");
+    await agent.addStep({ workflowId, name: "Engrave", teamId: team.id });
+
+    const unknownItem = await agent.attachWorkflow({
+      lineItemId: "nope",
+      workflowId,
+    });
+    strictEqual(unknownItem._tag, "LineItemNotFound");
+
+    const attached = await agent.attachWorkflow({
+      lineItemId: "gid://shopify/LineItem/1",
+      workflowId,
+    });
+    strictEqual(attached._tag, "Ok");
+    if (attached._tag !== "Ok") return;
+    strictEqual(attached.run.source, "manual");
+    strictEqual(attached.run.orderName, "#1001");
+
+    const twice = await agent.attachWorkflow({
+      lineItemId: "gid://shopify/LineItem/1",
+      workflowId,
+    });
+    strictEqual(twice._tag, "AlreadyExists");
+
+    const listed = await agent.listRunsForOrder({
+      orderId: "gid://shopify/Order/1",
+    });
+    expect(listed.map((d) => [d.run.id, d.steps.length])).toEqual([
+      [attached.run.id, 1],
+    ]);
+    const summaries = await agent.listWorkflows({ includeArchived: false });
+    strictEqual(summaries[0]?.activeRunCount, 1);
+
+    await agent.setWorkflowArchived({ workflowId, archived: true });
+    const archived = await agent.attachWorkflow({
+      lineItemId: "gid://shopify/LineItem/1",
+      workflowId,
+    });
+    strictEqual(archived._tag, "WorkflowNotRoutable");
+  });
+
+  it("cancelRun / uncancelRun / completeStep map repository failures to results", async () => {
+    const shop = "wf-cancel.myshopify.com";
+    const team = await seedTeam(shop, "Engraving");
+    await seedOrder(shop, Date.now());
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const created = await agent.createWorkflow({ name: "Engrave", tags: [] });
+    if (created._tag !== "Ok") throw new Error(created._tag);
+    await agent.addStep({
+      workflowId: created.workflow.id,
+      name: "Engrave",
+      teamId: team.id,
+    });
+    const attached = await agent.attachWorkflow({
+      lineItemId: "gid://shopify/LineItem/1",
+      workflowId: created.workflow.id,
+    });
+    if (attached._tag !== "Ok") throw new Error(attached._tag);
+    const runId = attached.run.id;
+
+    expect(await agent.uncancelRun({ runId })).toEqual({ _tag: "Terminal" });
+    expect(await agent.cancelRun({ runId })).toEqual({ _tag: "Ok" });
+    expect(await agent.cancelRun({ runId })).toEqual({ _tag: "Terminal" });
+    expect(await agent.uncancelRun({ runId })).toEqual({ _tag: "Ok" });
+    expect(await agent.cancelRun({ runId: "nope" })).toEqual({
+      _tag: "NotFound",
+    });
+
+    const [detail] = await agent.listRunsForOrder({
+      orderId: "gid://shopify/Order/1",
+    });
+    const runStepId = detail?.steps[0]?.id ?? "";
+    expect(
+      await agent.completeStep({ runStepId, memberId: "m1", teamIds: ["x"] }),
+    ).toEqual({ _tag: "NotAllowed" });
+    expect(await agent.listQueue({ teamIds: [team.id] })).toHaveLength(1);
+    expect(
+      await agent.completeStep({
+        runStepId,
+        memberId: "m1",
+        teamIds: [team.id],
+      }),
+    ).toEqual({ _tag: "Ok" });
+    expect(await agent.listQueue({ teamIds: [team.id] })).toHaveLength(0);
+    expect(await agent.cancelRun({ runId })).toEqual({ _tag: "Terminal" });
+    expect(
+      await agent.dismissFlag({ runId, memberId: "m1", teamIds: [team.id] }),
+    ).toEqual({ _tag: "NotAllowed" });
   });
 });

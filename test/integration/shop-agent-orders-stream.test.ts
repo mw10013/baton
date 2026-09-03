@@ -2,13 +2,16 @@ import { SqliteClient } from "@effect/sql-sqlite-do";
 import { strictEqual } from "@effect/vitest/utils";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer, Option, Schema } from "effect";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { describe, it } from "vitest";
 
+import * as Domain from "@/lib/Domain";
 import { OrderRepository } from "@/lib/OrderRepository";
 import { runShopAgentMigrations } from "@/lib/ShopAgent";
 import { runShopAgentOrdersStream } from "@/lib/ShopAgentOrdersStream";
+import { WorkflowRepository } from "@/lib/WorkflowRepository";
+import { WorkflowRunRepository } from "@/lib/WorkflowRunRepository";
 
 const BULK_URL = "https://storage.googleapis.test/bulk-orders.jsonl";
 
@@ -204,5 +207,100 @@ describe("runShopAgentOrdersStream", () => {
     strictEqual(order.syncSource, "webhook");
     strictEqual(order.financialStatus, "REFUNDED");
     strictEqual(lineItems.length, 0);
+  });
+});
+
+/**
+ * The bulk path routes with the same rules as a webhook: the reconcile hook
+ * runs inside each order's upsert transaction, and the age rule — not the
+ * source — is what keeps a thirty-day history file from starting work on
+ * orders placed before the workflow existed.
+ */
+describe("runShopAgentOrdersStream with afterWrite", () => {
+  const runWithRuns = <A, E>(
+    body: string,
+    program: Effect.Effect<
+      A,
+      E,
+      | OrderRepository
+      | WorkflowRepository
+      | WorkflowRunRepository
+      | HttpClient.HttpClient
+    >,
+  ): Promise<A> =>
+    runInDurableObject(
+      env.TEST_SQL_DO.get(env.TEST_SQL_DO.idFromName(crypto.randomUUID())),
+      (_instance, state) =>
+        Effect.runPromise(
+          Effect.gen(function* () {
+            yield* runShopAgentMigrations;
+            return yield* program;
+          }).pipe(
+            Effect.provide(
+              Layer.merge(
+                Layer.provideMerge(
+                  Layer.mergeAll(
+                    OrderRepository.layer,
+                    WorkflowRepository.layer,
+                    WorkflowRunRepository.layer,
+                  ),
+                  SqliteClient.layer({ storage: state.storage }),
+                ),
+                httpClientLayer(body),
+              ),
+            ),
+          ),
+        ),
+    );
+
+  it("creates runs only for orders processed after the workflow was created; a re-stream creates none", async () => {
+    const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const body = ndjson(
+      orderLine(1, "2026-08-01T10:00:00Z"),
+      lineItemLine(1, 1),
+      { ...orderLine(2, future), processedAt: future },
+      lineItemLine(2, 2),
+    );
+    const { first, second, secondPass } = await runWithRuns(
+      body,
+      Effect.gen(function* () {
+        const workflows = yield* WorkflowRepository;
+        const runs = yield* WorkflowRunRepository;
+        const team = {
+          id: Schema.decodeUnknownSync(Domain.TeamId)("t1"),
+          name: Schema.decodeUnknownSync(Domain.TeamName)("Engravers"),
+        };
+        const workflow = yield* workflows.createWorkflow({
+          name: Schema.decodeUnknownSync(Domain.WorkflowName)("Engrave"),
+          tags: Schema.decodeUnknownSync(Domain.ProductTags)(["engraved"]),
+        });
+        yield* workflows.addStep({
+          workflowId: workflow.id,
+          name: Schema.decodeUnknownSync(Domain.StepName)("Engrave"),
+          teamId: team.id,
+        });
+        const context = {
+          workflows: yield* workflows.listActiveWorkflowDetails(),
+          activeTeams: [team],
+        };
+        const afterWrite = (order: Domain.ShopOrder) =>
+          runs
+            .reconcileOrder({ ...context, orderId: order.id })
+            .pipe(Effect.asVoid);
+        yield* runShopAgentOrdersStream({ url: BULK_URL, afterWrite });
+        const first = yield* runs.listRunsForOrder({ orderId: orderGid(1) });
+        const second = yield* runs.listRunsForOrder({ orderId: orderGid(2) });
+        yield* runShopAgentOrdersStream({ url: BULK_URL, afterWrite });
+        const secondPass = yield* runs.listRunsForOrder({
+          orderId: orderGid(2),
+        });
+        return { first, second, secondPass };
+      }),
+    );
+    strictEqual(first.length, 0);
+    strictEqual(second.length, 1);
+    strictEqual(second[0]?.run.source, "tag");
+    strictEqual(second[0]?.steps[0]?.teamName, "Engravers");
+    strictEqual(secondPass.length, 1);
   });
 });

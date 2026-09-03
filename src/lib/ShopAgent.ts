@@ -54,6 +54,16 @@ import {
   type WorkflowNotFoundError,
   WorkflowRepository,
 } from "@/lib/WorkflowRepository";
+import {
+  isRoutable,
+  type RoutingContext,
+  type RunNotAllowedError,
+  type RunNotFoundError,
+  type RunTerminalError,
+  type StepNotCurrentError,
+  WorkflowRunRepository,
+  type WorkflowRunRepositoryError,
+} from "@/lib/WorkflowRunRepository";
 
 class ShopAgentNotifyError extends Schema.TaggedError<ShopAgentNotifyError>()(
   "ShopAgentNotifyError",
@@ -126,6 +136,19 @@ const callableEffect =
  * `moveStep` to go through a scratch position inside one transaction.
  * Epoch-ms integers like `ShopOrder`, not D1 `Team`'s ISO text: the two stores
  * already differ, and one store should not mix.
+ *
+ * `WorkflowRun` / `WorkflowRunStep` are the *instances*: one workflow applied
+ * to one line item, with the definition's steps copied in. Every display
+ * field is a snapshot and there is no foreign key to `ShopOrder`,
+ * `OrderLineItem`, or `Workflow` — a run must survive an order delete, a
+ * line item dropped by an edit, and a definition rename, because it is the
+ * record of work someone may already have started. `unique (lineItemId,
+ * workflowId)` spans every status so a cancelled run keeps its key: neither
+ * the sync nor manual attach can create a second one, and recovery from a
+ * mistaken cancel is un-cancel. `status` is denormalized from the steps for
+ * the queue and the definitions badge; every step write recomputes it in the
+ * same transaction. `(teamId, completedAt)` serves the member queue, which
+ * asks for open steps by team.
  */
 const initializeSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -205,6 +228,43 @@ const initializeSchema = Effect.gen(function* () {
       unique (workflowId, position)
     );
     create index if not exists WorkflowStep_teamId_idx on WorkflowStep (teamId);
+    create table if not exists WorkflowRun (
+      id text primary key,
+      workflowId text not null,
+      workflowName text not null,
+      orderId text not null,
+      orderName text not null,
+      lineItemId text not null,
+      lineItemTitle text not null,
+      variantTitle text,
+      sku text,
+      quantity integer not null,
+      customAttributes text not null,
+      source text not null check (source in ('tag', 'manual')),
+      status text not null check (status in ('pending', 'active', 'done', 'cancelled')),
+      flag text check (flag in ('item_removed', 'quantity_changed', 'order_cancelled', 'order_deleted')),
+      flagAt integer,
+      flagDetail text,
+      createdAt integer not null,
+      updatedAt integer not null,
+      cancelledAt integer,
+      unique (lineItemId, workflowId)
+    );
+    create index if not exists WorkflowRun_orderId_idx on WorkflowRun (orderId);
+    create index if not exists WorkflowRun_status_idx on WorkflowRun (status);
+    create table if not exists WorkflowRunStep (
+      id text primary key,
+      runId text not null references WorkflowRun (id) on delete cascade,
+      position integer not null,
+      name text not null,
+      teamId text not null,
+      teamName text not null,
+      completedAt integer,
+      completedBy text,
+      unique (runId, position)
+    );
+    create index if not exists WorkflowRunStep_teamId_idx
+      on WorkflowRunStep (teamId, completedAt);
   `;
 });
 
@@ -244,9 +304,10 @@ const makeRunEffect = (env: Env, storage: DurableObjectStorage) => {
     ),
   );
   const shopifyLayer = Layer.provideMerge(Shopify.layerNoDeps, repositoryLayer);
-  const durableRepositoryLayer = Layer.merge(
+  const durableRepositoryLayer = Layer.mergeAll(
     OrderRepository.layer,
     WorkflowRepository.layer,
+    WorkflowRunRepository.layer,
   ).pipe(Layer.provideMerge(SqliteClient.layer({ storage })));
   const layer = Layer.mergeAll(
     makeLoggerLayer(env),
@@ -361,6 +422,37 @@ const inUseResult = (count: number): Domain.TeamArchiveResult => ({
   _tag: "InUse",
   count,
 });
+
+/** Same shape as {@link workflowResult}: expected run failures become values. */
+const runResult = <R>(
+  effect: Effect.Effect<
+    void,
+    | RunNotFoundError
+    | RunTerminalError
+    | RunNotAllowedError
+    | StepNotCurrentError
+    | SqlError.SqlError
+    | WorkflowRunRepositoryError,
+    R
+  >,
+): Effect.Effect<
+  Domain.RunResult,
+  SqlError.SqlError | WorkflowRunRepositoryError,
+  R
+> =>
+  effect.pipe(
+    Effect.as<Domain.RunResult>({ _tag: "Ok" }),
+    Effect.catchTags({
+      RunNotFoundError: () =>
+        Effect.succeed<Domain.RunResult>({ _tag: "NotFound" }),
+      RunTerminalError: () =>
+        Effect.succeed<Domain.RunResult>({ _tag: "Terminal" }),
+      RunNotAllowedError: () =>
+        Effect.succeed<Domain.RunResult>({ _tag: "NotAllowed" }),
+      StepNotCurrentError: () =>
+        Effect.succeed<Domain.RunResult>({ _tag: "NotCurrent" }),
+    }),
+  );
 
 const SHOP_AGENT_BINDING = "SHOP_AGENT";
 
@@ -594,6 +686,7 @@ export class ShopAgent extends Agent {
    */
   private fetchAndUpsertOrder(orderId: string, source: Domain.OrderSyncSource) {
     const name = this.name;
+    const reconciler = () => this.reconciler(source);
     return Effect.gen(function* () {
       const shop = yield* Schema.decodeUnknownEffect(Domain.Shop)(name);
       const session = yield* (yield* Shopify).ensureShopSession(shop);
@@ -616,17 +709,20 @@ export class ShopAgent extends Agent {
         yield* Effect.logError(
           `ShopAgent.fetchAndUpsertOrder: shop=${shop} orderId=${orderId}: line items truncated, merging instead of replacing`,
         ).pipe(Effect.annotateLogs({ shop, orderId, source }));
+      const reconcile = yield* reconciler();
+      const shopOrder = toShopOrder({
+        node: order,
+        source,
+        syncedAt: yield* Clock.currentTimeMillis,
+        lineItemsComplete,
+      });
       const { written } = yield* (yield* OrderRepository).upsertOrder({
-        order: toShopOrder({
-          node: order,
-          source,
-          syncedAt: yield* Clock.currentTimeMillis,
-          lineItemsComplete,
-        }),
+        order: shopOrder,
         raw: toOrderRaw(order),
         lineItems: order.lineItems.nodes.map((node) =>
           toOrderLineItem(order.id, node),
         ),
+        afterWrite: reconcile(shopOrder),
       });
       yield* Effect.logInfo(
         `ShopAgent.fetchAndUpsertOrder: shop=${shop} orderId=${orderId} source=${source} written=${String(written)}`,
@@ -772,13 +868,17 @@ export class ShopAgent extends Agent {
   }> {
     const shop = this.name;
     const notifyChanged = () => this.notifyChanged();
+    const reconciler = () => this.reconciler("bulk");
     return this.runEffect(
       callableEffect(
         "ShopAgent.onOrdersStream",
         OrdersStreamInput,
       )(({ url }) =>
         Effect.gen(function* () {
-          const counts = yield* runShopAgentOrdersStream({ url });
+          const counts = yield* runShopAgentOrdersStream({
+            url,
+            afterWrite: yield* reconciler(),
+          });
           yield* Effect.logInfo(
             `ShopAgent.onOrdersStream: shop=${shop} ordersSeen=${String(counts.ordersSeen)} ordersUpserted=${String(counts.ordersUpserted)} lineItemsUpserted=${String(counts.lineItemsUpserted)}`,
           ).pipe(Effect.annotateLogs({ shop, ...counts }));
@@ -993,6 +1093,7 @@ export class ShopAgent extends Agent {
         Domain.ResyncOrderInput,
       )(({ orderId }) =>
         Effect.gen(function* () {
+          yield* (yield* WorkflowRunRepository).markOrderDeleted({ orderId });
           yield* (yield* OrderRepository).deleteOrder(orderId);
           yield* Effect.logInfo(
             `ShopAgent.deleteOrder: shop=${shop} orderId=${orderId}`,
@@ -1148,6 +1249,235 @@ export class ShopAgent extends Agent {
           WorkflowRepository.pipe(
             Effect.flatMap((repository) =>
               repository.setWorkflowArchived({ workflowId, archived }),
+            ),
+          ),
+        ).pipe(Effect.tap(notifyChanged)),
+      )(input),
+    );
+  }
+
+  private activeTeams() {
+    const name = this.name;
+    return Effect.gen(function* () {
+      const teams = yield* (yield* Repository).listTeams({
+        shop: yield* Schema.decodeUnknownEffect(Domain.Shop)(name),
+        includeArchived: false,
+      });
+      return teams.map(({ id, name }) => ({ id, name }));
+    });
+  }
+
+  /**
+   * Loads what routing needs — every active definition with its steps, and
+   * the active team roster from D1 — *before* any transaction opens, and
+   * returns a per-order effect the caller hands to `upsertOrder.afterWrite`.
+   * The D1 read is the one await routing needs that is not storage, and it
+   * cannot happen inside the Durable Object transaction; loading once per
+   * webhook or per bulk stream also bounds the cost for a thousand-order file,
+   * at the accepted price of a snapshot that a mid-stream team archive would
+   * not refresh.
+   */
+  private reconciler(source: Domain.OrderSyncSource) {
+    const shop = this.name;
+    const activeTeams = () => this.activeTeams();
+    return Effect.gen(function* () {
+      const context: RoutingContext = {
+        workflows:
+          yield* (yield* WorkflowRepository).listActiveWorkflowDetails(),
+        activeTeams: yield* activeTeams(),
+      };
+      const runs = yield* WorkflowRunRepository;
+      return (order: Domain.ShopOrder) =>
+        runs.reconcileOrder({ ...context, orderId: order.id }).pipe(
+          Effect.tap(({ created, cancelled, flagged }) =>
+            Effect.logInfo(
+              `ShopAgent.reconcileOrder: shop=${shop} orderId=${order.id} source=${source} created=${String(created)} cancelled=${String(cancelled)} flagged=${String(flagged)}`,
+            ).pipe(
+              Effect.annotateLogs({
+                shop,
+                orderId: order.id,
+                source,
+                created,
+                cancelled,
+                flagged,
+              }),
+            ),
+          ),
+          Effect.asVoid,
+        );
+    });
+  }
+
+  @callable()
+  listRunsForOrder(
+    input: typeof Domain.ListRunsForOrderInput.Encoded,
+  ): Promise<readonly Domain.WorkflowRunDetail[]> {
+    return this.runEffect(
+      callableEffect(
+        "ShopAgent.listRunsForOrder",
+        Domain.ListRunsForOrderInput,
+        { onExcessProperty: "error" },
+      )(({ orderId }) =>
+        WorkflowRunRepository.pipe(
+          Effect.flatMap((repository) =>
+            repository.listRunsForOrder({ orderId }),
+          ),
+        ),
+      )(input),
+    );
+  }
+
+  /**
+   * Manual attach applies only the definition half of the routing predicate
+   * (`isRoutable`): an admin choosing a workflow for a line item by hand is
+   * exactly the override for a missing tag, a fulfilled line, or an order
+   * older than the workflow. The run key still refuses a duplicate.
+   */
+  @callable()
+  attachWorkflow(
+    input: typeof Domain.AttachWorkflowInput.Encoded,
+  ): Promise<Domain.AttachResult> {
+    const notifyChanged = () => this.notifyChanged();
+    const activeTeams = () => this.activeTeams();
+    return this.runEffect(
+      callableEffect("ShopAgent.attachWorkflow", Domain.AttachWorkflowInput, {
+        onExcessProperty: "error",
+      })(({ lineItemId, workflowId }) =>
+        Effect.gen(function* () {
+          const target = yield* (yield* OrderRepository).getLineItem(
+            lineItemId,
+          );
+          if (Option.isNone(target))
+            return { _tag: "LineItemNotFound" } satisfies Domain.AttachResult;
+          const workflow = yield* (yield* WorkflowRepository).getWorkflow({
+            workflowId,
+          });
+          const teams = yield* activeTeams();
+          if (Option.isNone(workflow) || !isRoutable(workflow.value, teams))
+            return {
+              _tag: "WorkflowNotRoutable",
+            } satisfies Domain.AttachResult;
+          const run = yield* (yield* WorkflowRunRepository).createRun({
+            workflow: workflow.value,
+            activeTeams: teams,
+            order: target.value.order,
+            lineItem: target.value.lineItem,
+            source: "manual",
+          });
+          if (Option.isNone(run))
+            return { _tag: "AlreadyExists" } satisfies Domain.AttachResult;
+          yield* notifyChanged();
+          return { _tag: "Ok", run: run.value } satisfies Domain.AttachResult;
+        }),
+      )(input),
+    );
+  }
+
+  @callable()
+  cancelRun(
+    input: typeof Domain.RunIdInput.Encoded,
+  ): Promise<Domain.RunResult> {
+    const shop = this.name;
+    const notifyChanged = () => this.notifyChanged();
+    return this.runEffect(
+      callableEffect("ShopAgent.cancelRun", Domain.RunIdInput, {
+        onExcessProperty: "error",
+      })(({ runId }) =>
+        runResult(
+          WorkflowRunRepository.pipe(
+            Effect.flatMap((repository) => repository.cancelRun({ runId })),
+            Effect.tap(() =>
+              Effect.logInfo(
+                `ShopAgent.cancelRun: shop=${shop} runId=${runId}`,
+              ).pipe(Effect.annotateLogs({ shop, runId })),
+            ),
+          ),
+        ).pipe(Effect.tap(notifyChanged)),
+      )(input),
+    );
+  }
+
+  @callable()
+  uncancelRun(
+    input: typeof Domain.RunIdInput.Encoded,
+  ): Promise<Domain.RunResult> {
+    const notifyChanged = () => this.notifyChanged();
+    return this.runEffect(
+      callableEffect("ShopAgent.uncancelRun", Domain.RunIdInput, {
+        onExcessProperty: "error",
+      })(({ runId }) =>
+        runResult(
+          WorkflowRunRepository.pipe(
+            Effect.flatMap((repository) => repository.uncancelRun({ runId })),
+          ),
+        ).pipe(Effect.tap(notifyChanged)),
+      )(input),
+    );
+  }
+
+  /**
+   * Member-area methods. Plain RPC, not `@callable()`: the member area has no
+   * socket, and `teamIds` / `memberId` are privileged inputs the Worker
+   * resolves from the session in `requireMember` — exactly what the
+   * `ShopAgentClient` path exists to carry. Decoded lax: the caller is the
+   * Worker, not a browser.
+   */
+  listQueue(
+    input: typeof Domain.ListQueueInput.Encoded,
+  ): Promise<readonly Domain.QueueItem[]> {
+    return this.runEffect(
+      callableEffect(
+        "ShopAgent.listQueue",
+        Domain.ListQueueInput,
+      )(({ teamIds }) =>
+        WorkflowRunRepository.pipe(
+          Effect.flatMap((repository) => repository.listQueue({ teamIds })),
+        ),
+      )(input),
+    );
+  }
+
+  completeStep(
+    input: typeof Domain.CompleteStepInput.Encoded,
+  ): Promise<Domain.RunResult> {
+    const shop = this.name;
+    const notifyChanged = () => this.notifyChanged();
+    return this.runEffect(
+      callableEffect(
+        "ShopAgent.completeStep",
+        Domain.CompleteStepInput,
+      )(({ runStepId, memberId, teamIds }) =>
+        runResult(
+          Effect.gen(function* () {
+            yield* (yield* WorkflowRunRepository).completeStep({
+              runStepId,
+              memberId: yield* Schema.decodeUnknownEffect(Domain.MemberId)(
+                memberId,
+              ).pipe(Effect.orDie),
+              teamIds,
+            });
+            yield* Effect.logInfo(
+              `ShopAgent.completeStep: shop=${shop} step=${runStepId} memberId=${memberId}`,
+            ).pipe(Effect.annotateLogs({ shop, step: runStepId, memberId }));
+          }),
+        ).pipe(Effect.tap(notifyChanged)),
+      )(input),
+    );
+  }
+
+  dismissFlag(
+    input: typeof Domain.DismissFlagInput.Encoded,
+  ): Promise<Domain.RunResult> {
+    const notifyChanged = () => this.notifyChanged();
+    return this.runEffect(
+      callableEffect(
+        "ShopAgent.dismissFlag",
+        Domain.DismissFlagInput,
+      )(({ runId, teamIds }) =>
+        runResult(
+          WorkflowRunRepository.pipe(
+            Effect.flatMap((repository) =>
+              repository.dismissFlag({ runId, teamIds }),
             ),
           ),
         ).pipe(Effect.tap(notifyChanged)),

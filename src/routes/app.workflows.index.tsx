@@ -152,6 +152,7 @@ function RouteComponent() {
           <s-table-header listSlot="primary">Name</s-table-header>
           <s-table-header>Product tags</s-table-header>
           <s-table-header>Steps</s-table-header>
+          <s-table-header>Active runs</s-table-header>
           <s-table-header>Updated</s-table-header>
           <s-table-header> </s-table-header>
         </s-table-header-row>
@@ -179,6 +180,7 @@ function RouteComponent() {
                 </s-stack>
               </s-table-cell>
               <s-table-cell>{workflow.stepCount}</s-table-cell>
+              <s-table-cell>{workflow.activeRunCount}</s-table-cell>
               <s-table-cell>{formatDateTime(workflow.updatedAt)}</s-table-cell>
               <s-table-cell>
                 <s-button

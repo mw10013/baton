@@ -234,6 +234,41 @@ describe("member area", () => {
   );
 });
 
+describe("member queue", () => {
+  /**
+   * `/shop/$shop/queue` nests under `/shop/$shop`, whose loader renders
+   * `getShopInfo` — the call that can only reach `500` here for the reason
+   * documented on the revocation test above. So, as there, the pair is the
+   * assertion: `500` proves `requireMember` admitted the member before the
+   * parent loader failed, and `404` on another shop proves the queue route
+   * is behind the same gate. The queue read itself is covered against the
+   * Durable Object in `shop-agent-workflows.test.ts`.
+   */
+  it.effect("is gated by membership like the shop page", () =>
+    run(
+      Effect.gen(function* () {
+        const repository = yield* Repository;
+        yield* seedShop(SHOP);
+        yield* seedShop(OTHER_SHOP);
+        yield* repository.addMember({ shop: SHOP, email: MEMBER });
+        const cookie = yield* signInThroughWorker(MEMBER);
+        strictEqual(
+          (yield* fetchWorker(`http://localhost/shop/${SHOP}/queue`, {
+            headers: { cookie },
+          })).status,
+          500,
+        );
+        strictEqual(
+          (yield* fetchWorker(`http://localhost/shop/${OTHER_SHOP}/queue`, {
+            headers: { cookie },
+          })).status,
+          404,
+        );
+      }),
+    ),
+  );
+});
+
 describe("admin console", () => {
   it.effect("redirects an anonymous visitor from /admin to /login", () =>
     run(

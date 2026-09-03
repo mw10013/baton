@@ -455,6 +455,7 @@ export type WorkflowStep = typeof WorkflowStep.Type;
 export const WorkflowSummary = Schema.Struct({
   ...Workflow.fields,
   stepCount: Schema.Number,
+  activeRunCount: Schema.Number,
 });
 export type WorkflowSummary = typeof WorkflowSummary.Type;
 
@@ -972,3 +973,180 @@ export type AgentMessage = typeof AgentMessage.Type;
  */
 export const SocketKeepalivePing = "ping";
 export const SocketKeepalivePong = "pong";
+
+export const WorkflowRunId = Schema.NonEmptyString.pipe(
+  Schema.brand("WorkflowRunId"),
+);
+export type WorkflowRunId = typeof WorkflowRunId.Type;
+
+export const WorkflowRunStepId = Schema.NonEmptyString.pipe(
+  Schema.brand("WorkflowRunStepId"),
+);
+export type WorkflowRunStepId = typeof WorkflowRunStepId.Type;
+
+/** How a run came to exist: tag routing during an order upsert, or an admin attaching by hand. */
+export const RunSource = Schema.Literals(["tag", "manual"]);
+export type RunSource = typeof RunSource.Type;
+
+/**
+ * Derived from the run's steps and stored for querying; every step write
+ * recomputes it in the same transaction. `cancelled` is the one value steps
+ * cannot produce — reconcile sets it on a `pending` run whose work vanished,
+ * a person sets it from anywhere but `done`, and un-cancel recomputes from
+ * the steps again.
+ */
+export const RunStatus = Schema.Literals([
+  "pending",
+  "active",
+  "done",
+  "cancelled",
+]);
+export type RunStatus = typeof RunStatus.Type;
+
+/**
+ * Attention markers reconcile leaves on an `active` run when the order under
+ * it changed. A `pending` run is cancelled or updated silently instead — no
+ * one has started it — and a `done` run is never touched. A later flag
+ * overwrites an earlier one; a person clears it from the queue.
+ */
+export const RunFlag = Schema.Literals([
+  "item_removed",
+  "quantity_changed",
+  "order_cancelled",
+  "order_deleted",
+]);
+export type RunFlag = typeof RunFlag.Type;
+
+export const RunFlagDetail = Schema.Struct({
+  from: Schema.optionalKey(Schema.Number),
+  to: Schema.optionalKey(Schema.Number),
+});
+export type RunFlagDetail = typeof RunFlagDetail.Type;
+
+/**
+ * One workflow applied to one line item. Every display field is a snapshot
+ * taken at creation — `workflowName`, `orderName`, the line item's title and
+ * personalization — so the queue card reads only this row and the run outlives
+ * an order delete, a definition rename, or a line item dropped from the order.
+ * No foreign keys to `ShopOrder`, `OrderLineItem`, or `Workflow` for that
+ * reason. `unique (lineItemId, workflowId)` spans every status, so a cancelled
+ * run keeps its key and the only way back is un-cancel.
+ */
+export const WorkflowRun = Schema.Struct({
+  id: WorkflowRunId,
+  workflowId: WorkflowId,
+  workflowName: WorkflowName,
+  orderId: Schema.String,
+  orderName: Schema.String,
+  lineItemId: Schema.String,
+  lineItemTitle: Schema.String,
+  variantTitle: Schema.NullOr(Schema.String),
+  sku: Schema.NullOr(Schema.String),
+  quantity: Schema.Number,
+  customAttributes: Schema.fromJsonString(Schema.Array(OrderAttribute)),
+  source: RunSource,
+  status: RunStatus,
+  flag: Schema.NullOr(RunFlag),
+  flagAt: Schema.NullOr(Schema.Number),
+  flagDetail: Schema.NullOr(Schema.fromJsonString(RunFlagDetail)),
+  createdAt: Schema.Number,
+  updatedAt: Schema.Number,
+  cancelledAt: Schema.NullOr(Schema.Number),
+});
+export type WorkflowRun = typeof WorkflowRun.Type;
+
+/**
+ * A step copied from the definition at run creation. `teamName` is snapshotted
+ * alongside `teamId` so the queue never joins D1; `completedBy` is the D1
+ * `Member.id`, cross-store and therefore unreferenced.
+ */
+export const WorkflowRunStep = Schema.Struct({
+  id: WorkflowRunStepId,
+  runId: WorkflowRunId,
+  position: Schema.Number,
+  name: StepName,
+  teamId: TeamId,
+  teamName: TeamName,
+  completedAt: Schema.NullOr(Schema.Number),
+  completedBy: Schema.NullOr(MemberId),
+});
+export type WorkflowRunStep = typeof WorkflowRunStep.Type;
+
+export const WorkflowRunDetail = Schema.Struct({
+  run: WorkflowRun,
+  steps: Schema.Array(WorkflowRunStep),
+});
+export type WorkflowRunDetail = typeof WorkflowRunDetail.Type;
+
+/**
+ * One row of a member's queue: a run whose current step — the lowest open
+ * position — belongs to one of the member's teams. `note` is the order's live
+ * note, joined at read time rather than snapshotted because a merchant edits
+ * it while work is in progress.
+ */
+export const QueueItem = Schema.Struct({
+  run: WorkflowRun,
+  step: WorkflowRunStep,
+  note: Schema.NullOr(Schema.String),
+});
+export type QueueItem = typeof QueueItem.Type;
+
+export const ListRunsForOrderInput = Schema.Struct({ orderId: BoundedId });
+export type ListRunsForOrderInput = typeof ListRunsForOrderInput.Type;
+
+export const AttachWorkflowInput = Schema.Struct({
+  lineItemId: BoundedId,
+  workflowId: BoundedId,
+});
+export type AttachWorkflowInput = typeof AttachWorkflowInput.Type;
+
+export const RunIdInput = Schema.Struct({ runId: BoundedId });
+export type RunIdInput = typeof RunIdInput.Type;
+
+/**
+ * Member-area inputs. `teamIds` and `memberId` are resolved by `requireMember`
+ * in the server fn from the session, never taken from the browser; the Durable
+ * Object trusts them because its only caller for these methods is the Worker.
+ */
+export const ListQueueInput = Schema.Struct({
+  teamIds: Schema.Array(BoundedId),
+});
+export type ListQueueInput = typeof ListQueueInput.Type;
+
+export const CompleteStepInput = Schema.Struct({
+  runStepId: BoundedId,
+  memberId: BoundedId,
+  teamIds: Schema.Array(BoundedId),
+});
+export type CompleteStepInput = typeof CompleteStepInput.Type;
+
+export const DismissFlagInput = Schema.Struct({
+  runId: BoundedId,
+  memberId: BoundedId,
+  teamIds: Schema.Array(BoundedId),
+});
+export type DismissFlagInput = typeof DismissFlagInput.Type;
+
+/** `WorkflowNotRoutable` = archived, zero steps, or a step owned by an inactive team. */
+export const AttachResult = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("Ok"), run: WorkflowRun }),
+  Schema.Struct({ _tag: Schema.Literal("AlreadyExists") }),
+  Schema.Struct({ _tag: Schema.Literal("LineItemNotFound") }),
+  Schema.Struct({ _tag: Schema.Literal("WorkflowNotRoutable") }),
+]);
+export type AttachResult = typeof AttachResult.Type;
+
+/**
+ * `NotAllowed` = the step's team is not among the caller's; `NotCurrent` = a
+ * lower-position step is still open (or this one is already done);
+ * `Terminal` = the run is `done` or `cancelled` (or, for un-cancel, is not
+ * cancelled).
+ */
+export const RunResult = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("Ok") }),
+  Schema.Struct({ _tag: Schema.Literal("NotFound") }),
+  Schema.Struct({ _tag: Schema.Literal("NotAllowed") }),
+  Schema.Struct({ _tag: Schema.Literal("NotCurrent") }),
+  Schema.Struct({ _tag: Schema.Literal("Terminal") }),
+]);
+export type RunResult = typeof RunResult.Type;

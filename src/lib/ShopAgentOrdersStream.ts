@@ -1,3 +1,5 @@
+import type * as Domain from "@/lib/Domain";
+
 import { Clock, Effect, Schedule, Schema, Stream } from "effect";
 import { Ndjson } from "effect/unstable/encoding";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
@@ -119,7 +121,14 @@ const addLine = (
  * webhook deliveries genuinely interleave between orders — that is expected,
  * and per-order transactions plus the guard are what make it safe.
  */
-export const runShopAgentOrdersStream = ({ url }: { readonly url: string }) =>
+export const runShopAgentOrdersStream = <E = never>({
+  url,
+  afterWrite,
+}: {
+  readonly url: string;
+  /** Composed into each order's upsert transaction; see `OrderUpsert.afterWrite`. */
+  readonly afterWrite?: (order: Domain.ShopOrder) => Effect.Effect<void, E>;
+}) =>
   Effect.gen(function* () {
     const repository = yield* OrderRepository;
     const syncedAt = yield* Clock.currentTimeMillis;
@@ -166,19 +175,21 @@ export const runShopAgentOrdersStream = ({ url }: { readonly url: string }) =>
           ordersUpserted: 0,
           lineItemsUpserted: 0,
         }),
-        (counts, { order, lineItems }) =>
-          Effect.map(
+        (counts, { order, lineItems }) => {
+          const shopOrder = toShopOrder({
+            node: order,
+            source: "bulk",
+            syncedAt,
+            lineItemsComplete: true,
+          });
+          return Effect.map(
             repository.upsertOrder({
-              order: toShopOrder({
-                node: order,
-                source: "bulk",
-                syncedAt,
-                lineItemsComplete: true,
-              }),
+              order: shopOrder,
               raw: toOrderRaw(order),
               lineItems: lineItems.map((item) =>
                 toOrderLineItem(order.id, item),
               ),
+              afterWrite: afterWrite?.(shopOrder),
             }),
             ({ written }) => ({
               ordersSeen: counts.ordersSeen + 1,
@@ -186,7 +197,8 @@ export const runShopAgentOrdersStream = ({ url }: { readonly url: string }) =>
               lineItemsUpserted:
                 counts.lineItemsUpserted + (written ? lineItems.length : 0),
             }),
-          ),
+          );
+        },
       ),
     );
   }).pipe(Effect.withLogSpan("ShopAgent.onOrdersStream"));

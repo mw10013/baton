@@ -68,6 +68,15 @@ export class WorkflowRepository extends Context.Service<
       Option.Option<Domain.WorkflowDetail>,
       SqlError.SqlError | WorkflowRepositoryError
     >;
+    /**
+     * Every non-archived definition with its steps, in two statements rather
+     * than one per workflow: this is what an order upsert loads before routing
+     * its line items, and a bulk stream loads it once for thousands of orders.
+     */
+    readonly listActiveWorkflowDetails: () => Effect.Effect<
+      readonly Domain.WorkflowDetail[],
+      SqlError.SqlError | WorkflowRepositoryError
+    >;
     readonly createWorkflow: (input: {
       readonly name: Domain.WorkflowName;
       readonly tags: Domain.ProductTags;
@@ -227,7 +236,9 @@ export class WorkflowRepository extends Context.Service<
             )(
               yield* sql`
                 select w.id, w.name, w.tags, w.createdAt, w.updatedAt, w.archivedAt,
-                  (select count(*) from WorkflowStep s where s.workflowId = w.id) as stepCount
+                  (select count(*) from WorkflowStep s where s.workflowId = w.id) as stepCount,
+                  (select count(*) from WorkflowRun r
+                    where r.workflowId = w.id and r.status in ('pending', 'active')) as activeRunCount
                 from Workflow w
                 ${includeArchived ? sql`` : sql`where w.archivedAt is null`}
                 order by w.archivedAt is not null, w.name collate nocase
@@ -253,6 +264,30 @@ export class WorkflowRepository extends Context.Service<
               `,
             ),
           } satisfies Domain.WorkflowDetail);
+        }),
+
+        listActiveWorkflowDetails: Effect.fn(
+          "WorkflowRepository.listActiveWorkflowDetails",
+        )(function* () {
+          const workflows = yield* decodeWorkflows(
+            yield* sql`
+              select ${workflowColumns} from Workflow
+              where archivedAt is null
+              order by name collate nocase
+            `,
+          );
+          const steps = yield* decodeSteps(
+            yield* sql`
+              select s.* from WorkflowStep s
+              join Workflow w on w.id = s.workflowId
+              where w.archivedAt is null
+              order by s.workflowId, s.position
+            `,
+          );
+          return workflows.map((workflow): Domain.WorkflowDetail => ({
+            workflow,
+            steps: steps.filter((step) => step.workflowId === workflow.id),
+          }));
         }),
 
         /**
