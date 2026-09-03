@@ -4,8 +4,6 @@
 - Do not remove existing comments unless explicitly and specifically instructed.
 - Do not git commit unless you are explicitly instructed.
 - Commit to `main`. Do not create branches.
-- Your answers and explanations should be concise and scannable so the user can scan quickly and easily understand. Scarifice grammar for the sake of concision.
-- Ground your answers and explanations with excerpts from documentation and code.
 
 ## Project
 
@@ -104,13 +102,8 @@ Effect.logError(`ShopAgent.getShopInfo: shop=${this.name}: ${message}`).pipe(
 ## TypeScript Guidelines
 
 - Always follow functional programming principles and effect v4 patterns and idioms.
-- Use interfaces for data structures and type definitions
 - Prefer immutable data (const, readonly)
 - Use optional chaining (?.) and nullish coalescing (??) operators
-- **Do not add any comments to generated code.** Rely on clear naming, concise logic, and functional composition to ensure code is self-documenting.
-- Employ a concise and dense coding style. Prefer inlining expressions, function composition (e.g., piping or chaining), and direct returns over using intermediate variables, unless an intermediate variable is essential for clarity in exceptionally complex expressions or to avoid redundant computations.
-- Inline types when practical instead of introducing extra interfaces or type aliases.
-- Avoid intermediate variables that are not necessary for clarity.
 - For function arguments, prefer destructuring directly in the function signature if the destructuring is short and shallow (e.g., `({ data: { value }, otherArg })`). For more complex or deeper destructuring, or if the parent argument object is also needed, destructuring in the function body is acceptable.
 - Import modules as namespace objects and access members through them (`Effect.gen`, `Schema.String`, `Domain.MemoryKey`) — never cherry-pick individual functions (`import { gen } from "effect/Effect"`). For `effect`, use named module imports from the barrel (`import { Effect, Schema, Layer } from "effect"`) — the documented v4 style; those named exports are module namespaces. Use `import * as X` for local modules (`import * as Domain from "@/lib/Domain"`) and libraries without namespace re-exports (`import * as ShopifyApi from "@shopify/shopify-api"`).
 - **Strict mode enabled**: All strict TypeScript checks are on
