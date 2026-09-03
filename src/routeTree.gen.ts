@@ -22,7 +22,6 @@ import { Route as AdminShopAgentObjectsRouteImport } from './routes/admin.shop-a
 import { Route as AdminShopsRouteImport } from './routes/admin.shops'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppMembersRouteImport } from './routes/app.members'
-import { Route as AppOrdersRouteImport } from './routes/app.orders'
 import { Route as AuthSplatRouteImport } from './routes/auth.$'
 import { Route as ShopIndexRouteImport } from './routes/shop.index'
 import { Route as ShopShopRouteImport } from './routes/shop.$shop'
@@ -31,6 +30,8 @@ import { Route as WebhooksOrdersRouteImport } from './routes/webhooks.orders'
 import { Route as AdminShopShopRouteImport } from './routes/admin.shop.$shop'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
 import { Route as ApiDevSeedRouteImport } from './routes/api.dev.seed'
+import { Route as AppOrdersIndexRouteImport } from './routes/app.orders.index'
+import { Route as AppOrdersOrderIdRouteImport } from './routes/app.orders.$orderId'
 import { Route as AppTeamsIndexRouteImport } from './routes/app.teams.index'
 import { Route as AppTeamsTeamIdRouteImport } from './routes/app.teams.$teamId'
 import { Route as AppWorkflowsIndexRouteImport } from './routes/app.workflows.index'
@@ -105,11 +106,6 @@ const AppMembersRoute = AppMembersRouteImport.update({
   path: '/members',
   getParentRoute: () => AppRoute,
 } as any)
-const AppOrdersRoute = AppOrdersRouteImport.update({
-  id: '/orders',
-  path: '/orders',
-  getParentRoute: () => AppRoute,
-} as any)
 const AuthSplatRoute = AuthSplatRouteImport.update({
   id: '/auth/$',
   path: '/auth/$',
@@ -149,6 +145,16 @@ const ApiDevSeedRoute = ApiDevSeedRouteImport.update({
   id: '/api/dev/seed',
   path: '/api/dev/seed',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AppOrdersIndexRoute = AppOrdersIndexRouteImport.update({
+  id: '/orders/',
+  path: '/orders/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppOrdersOrderIdRoute = AppOrdersOrderIdRouteImport.update({
+  id: '/orders/$orderId',
+  path: '/orders/$orderId',
+  getParentRoute: () => AppRoute,
 } as any)
 const AppTeamsIndexRoute = AppTeamsIndexRouteImport.update({
   id: '/teams/',
@@ -199,7 +205,6 @@ export interface FileRoutesByFullPath {
   '/admin/shop-agent-objects': typeof AdminShopAgentObjectsRoute
   '/admin/shops': typeof AdminShopsRoute
   '/app/members': typeof AppMembersRoute
-  '/app/orders': typeof AppOrdersRoute
   '/auth/$': typeof AuthSplatRoute
   '/shop/$shop': typeof ShopShopRouteWithChildren
   '/webhooks/compliance': typeof WebhooksComplianceRoute
@@ -210,11 +215,13 @@ export interface FileRoutesByFullPath {
   '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/dev/seed': typeof ApiDevSeedRoute
+  '/app/orders/$orderId': typeof AppOrdersOrderIdRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
   '/shop/$shop/queue': typeof ShopShopQueueRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
+  '/app/orders/': typeof AppOrdersIndexRoute
   '/app/teams/': typeof AppTeamsIndexRoute
   '/app/workflows/': typeof AppWorkflowsIndexRoute
 }
@@ -227,7 +234,6 @@ export interface FileRoutesByTo {
   '/admin/shop-agent-objects': typeof AdminShopAgentObjectsRoute
   '/admin/shops': typeof AdminShopsRoute
   '/app/members': typeof AppMembersRoute
-  '/app/orders': typeof AppOrdersRoute
   '/auth/$': typeof AuthSplatRoute
   '/shop/$shop': typeof ShopShopRouteWithChildren
   '/webhooks/compliance': typeof WebhooksComplianceRoute
@@ -238,11 +244,13 @@ export interface FileRoutesByTo {
   '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/dev/seed': typeof ApiDevSeedRoute
+  '/app/orders/$orderId': typeof AppOrdersOrderIdRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
   '/shop/$shop/queue': typeof ShopShopQueueRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
+  '/app/orders': typeof AppOrdersIndexRoute
   '/app/teams': typeof AppTeamsIndexRoute
   '/app/workflows': typeof AppWorkflowsIndexRoute
 }
@@ -259,7 +267,6 @@ export interface FileRoutesById {
   '/admin/shop-agent-objects': typeof AdminShopAgentObjectsRoute
   '/admin/shops': typeof AdminShopsRoute
   '/app/members': typeof AppMembersRoute
-  '/app/orders': typeof AppOrdersRoute
   '/auth/$': typeof AuthSplatRoute
   '/shop/$shop': typeof ShopShopRouteWithChildren
   '/webhooks/compliance': typeof WebhooksComplianceRoute
@@ -270,11 +277,13 @@ export interface FileRoutesById {
   '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/dev/seed': typeof ApiDevSeedRoute
+  '/app/orders/$orderId': typeof AppOrdersOrderIdRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
   '/shop/$shop/queue': typeof ShopShopQueueRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
+  '/app/orders/': typeof AppOrdersIndexRoute
   '/app/teams/': typeof AppTeamsIndexRoute
   '/app/workflows/': typeof AppWorkflowsIndexRoute
 }
@@ -292,7 +301,6 @@ export interface FileRouteTypes {
     | '/admin/shop-agent-objects'
     | '/admin/shops'
     | '/app/members'
-    | '/app/orders'
     | '/auth/$'
     | '/shop/$shop'
     | '/webhooks/compliance'
@@ -303,11 +311,13 @@ export interface FileRouteTypes {
     | '/admin/shop/$shop'
     | '/api/auth/$'
     | '/api/dev/seed'
+    | '/app/orders/$orderId'
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
     | '/shop/$shop/queue'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
+    | '/app/orders/'
     | '/app/teams/'
     | '/app/workflows/'
   fileRoutesByTo: FileRoutesByTo
@@ -320,7 +330,6 @@ export interface FileRouteTypes {
     | '/admin/shop-agent-objects'
     | '/admin/shops'
     | '/app/members'
-    | '/app/orders'
     | '/auth/$'
     | '/shop/$shop'
     | '/webhooks/compliance'
@@ -331,11 +340,13 @@ export interface FileRouteTypes {
     | '/admin/shop/$shop'
     | '/api/auth/$'
     | '/api/dev/seed'
+    | '/app/orders/$orderId'
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
     | '/shop/$shop/queue'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
+    | '/app/orders'
     | '/app/teams'
     | '/app/workflows'
   id:
@@ -351,7 +362,6 @@ export interface FileRouteTypes {
     | '/admin/shop-agent-objects'
     | '/admin/shops'
     | '/app/members'
-    | '/app/orders'
     | '/auth/$'
     | '/shop/$shop'
     | '/webhooks/compliance'
@@ -362,11 +372,13 @@ export interface FileRouteTypes {
     | '/admin/shop/$shop'
     | '/api/auth/$'
     | '/api/dev/seed'
+    | '/app/orders/$orderId'
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
     | '/shop/$shop/queue'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
+    | '/app/orders/'
     | '/app/teams/'
     | '/app/workflows/'
   fileRoutesById: FileRoutesById
@@ -481,13 +493,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppMembersRouteImport
       parentRoute: typeof AppRoute
     }
-    '/app/orders': {
-      id: '/app/orders'
-      path: '/orders'
-      fullPath: '/app/orders'
-      preLoaderRoute: typeof AppOrdersRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/auth/$': {
       id: '/auth/$'
       path: '/auth/$'
@@ -543,6 +548,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/dev/seed'
       preLoaderRoute: typeof ApiDevSeedRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/app/orders/': {
+      id: '/app/orders/'
+      path: '/orders'
+      fullPath: '/app/orders/'
+      preLoaderRoute: typeof AppOrdersIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/orders/$orderId': {
+      id: '/app/orders/$orderId'
+      path: '/orders/$orderId'
+      fullPath: '/app/orders/$orderId'
+      preLoaderRoute: typeof AppOrdersOrderIdRouteImport
+      parentRoute: typeof AppRoute
     }
     '/app/teams/': {
       id: '/app/teams/'
@@ -616,20 +635,22 @@ const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
 interface AppRouteChildren {
   AppMembersRoute: typeof AppMembersRoute
-  AppOrdersRoute: typeof AppOrdersRoute
   AppIndexRoute: typeof AppIndexRoute
+  AppOrdersOrderIdRoute: typeof AppOrdersOrderIdRoute
   AppTeamsTeamIdRoute: typeof AppTeamsTeamIdRoute
   AppWorkflowsWorkflowIdRoute: typeof AppWorkflowsWorkflowIdRoute
+  AppOrdersIndexRoute: typeof AppOrdersIndexRoute
   AppTeamsIndexRoute: typeof AppTeamsIndexRoute
   AppWorkflowsIndexRoute: typeof AppWorkflowsIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppMembersRoute: AppMembersRoute,
-  AppOrdersRoute: AppOrdersRoute,
   AppIndexRoute: AppIndexRoute,
+  AppOrdersOrderIdRoute: AppOrdersOrderIdRoute,
   AppTeamsTeamIdRoute: AppTeamsTeamIdRoute,
   AppWorkflowsWorkflowIdRoute: AppWorkflowsWorkflowIdRoute,
+  AppOrdersIndexRoute: AppOrdersIndexRoute,
   AppTeamsIndexRoute: AppTeamsIndexRoute,
   AppWorkflowsIndexRoute: AppWorkflowsIndexRoute,
 }

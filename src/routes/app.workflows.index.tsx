@@ -2,13 +2,14 @@ import * as React from "react";
 
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ClientOnly, createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { Match, Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
 import { fieldError } from "@/lib/form";
 import { formatDateTime } from "@/lib/format";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
+import { SocketBanner } from "@/lib/SocketBanner";
 
 const workflowsSearchSchema = Schema.Struct({
   archived: Schema.optional(Schema.Boolean),
@@ -26,7 +27,7 @@ export const workflowsQueryKey = (shop: string, archived: boolean) =>
 /**
  * `Schema.toType`: the Durable Object already decoded the rows, so the wire
  * value is the decoded shape (`tags` an array, not JSON text). See the same
- * note on `decodeOrdersView` in `app.orders.tsx`.
+ * note on `decodeOrdersView` in `app.orders.index.tsx`.
  */
 const decodeWorkflows = Schema.decodeUnknownPromise(
   Schema.toType(Schema.Array(Domain.WorkflowSummary)),
@@ -205,11 +206,7 @@ function RouteComponent() {
 
   return (
     <s-page heading="Workflows" inlineSize="large">
-      <ClientOnly>
-        <s-badge slot="header-actions" tone={identified ? "success" : "info"}>
-          {identified ? "Connected" : "Connecting"}
-        </s-badge>
-      </ClientOnly>
+      <SocketBanner />
 
       <s-section heading="Create workflow" accessibilityLabel="Create workflow">
         <s-stack gap="base">

@@ -2,12 +2,13 @@ import * as React from "react";
 
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ClientOnly, createFileRoute } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { Match, Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
 import { fieldError } from "@/lib/form";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
+import { SocketBanner } from "@/lib/SocketBanner";
 
 import { splitTags, workflowResultMessage } from "./app.workflows.index";
 
@@ -239,20 +240,16 @@ function RouteComponent() {
   );
 
   return (
-    <s-page heading={workflow.name} inlineSize="large">
+    <s-page heading={workflow.name} inlineSize="base">
       <s-link slot="breadcrumb-actions" href="/app/workflows">
         Workflows
       </s-link>
-      <ClientOnly>
-        <s-badge slot="header-actions" tone={identified ? "success" : "info"}>
-          {identified ? "Connected" : "Connecting"}
-        </s-badge>
-      </ClientOnly>
       {archived && (
-        <s-badge slot="header-actions" tone="info">
+        <s-badge slot="accessory" tone="info">
           Archived
         </s-badge>
       )}
+      <SocketBanner />
 
       <s-section heading="Details" accessibilityLabel="Workflow details">
         <s-stack gap="base">

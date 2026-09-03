@@ -790,13 +790,50 @@ export const ResyncOrderInput = Schema.Struct({
 });
 export type ResyncOrderInput = typeof ResyncOrderInput.Type;
 
+/**
+ * Per-order production state for the index table, aggregated from
+ * `WorkflowRun` rows in the same read. `open` counts `pending` and `active`
+ * runs; cancelled runs count nowhere, so an order whose only runs were
+ * cancelled reads as unrouted — which is what an admin has to act on.
+ */
+export const OrderRunSummary = Schema.Struct({
+  open: Schema.Number,
+  done: Schema.Number,
+  flagged: Schema.Number,
+});
+export type OrderRunSummary = typeof OrderRunSummary.Type;
+
+/**
+ * One index row. `itemUnits` is the sum of `currentQuantity`, not the number
+ * of line-item rows: a cancelled or edited-down order keeps its line items and
+ * drops their current quantity to zero, and the admin shows those as
+ * "0 items". Line items themselves are not carried; the detail page reads them.
+ */
+export const OrderRow = Schema.Struct({
+  order: ShopOrder,
+  itemUnits: Schema.Number,
+  runs: OrderRunSummary,
+});
+export type OrderRow = typeof OrderRow.Type;
+
 export const OrdersPage = Schema.Struct({
-  orders: Schema.Array(OrderDetail),
+  orders: Schema.Array(OrderRow),
   limit: Schema.Number,
   nextCursor: Schema.NullOr(OrdersCursor),
   orderCount: Schema.Number,
 });
 export type OrdersPage = typeof OrdersPage.Type;
+
+/**
+ * The detail page is addressed by `legacyId`, not the GID: the GID contains
+ * slashes, and the legacy id is what the Shopify admin puts in its own URL.
+ */
+export const ActivateOrderInput = Schema.Struct({
+  legacyId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
+  /** Subscribes the connection to pushes; see `ActivateOrdersInput`. */
+  sessionToken: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
+});
+export type ActivateOrderInput = typeof ActivateOrderInput.Type;
 
 /**
  * A Shopify bulk operation as the sync workflow observes it.
@@ -1121,6 +1158,14 @@ export type AttachWorkflowInput = typeof AttachWorkflowInput.Type;
 
 export const RunIdInput = Schema.Struct({ runId: BoundedId });
 export type RunIdInput = typeof RunIdInput.Type;
+
+/** Everything `/app/orders/$orderId` renders, in one socket round trip. */
+export const OrderDetailView = Schema.Struct({
+  order: ShopOrder,
+  lineItems: Schema.Array(OrderLineItem),
+  runs: Schema.Array(WorkflowRunDetail),
+});
+export type OrderDetailView = typeof OrderDetailView.Type;
 
 /**
  * Member-area inputs. `teamIds` and `memberId` are resolved by `requireMember`

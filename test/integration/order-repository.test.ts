@@ -206,7 +206,8 @@ describe("OrderRepository.listOrders", () => {
     strictEqual(first.orders.length, 2);
     strictEqual(first.orders[0]?.order.name, "#1003");
     strictEqual(first.orders[1]?.order.name, "#1002");
-    strictEqual(first.orders[0]?.lineItems.length, 1);
+    strictEqual(first.orders[0]?.itemUnits, 1);
+    strictEqual(first.orders[0]?.runs.open, 0);
     strictEqual(second.orders.length, 1);
     strictEqual(second.orders[0]?.order.name, "#1001");
     strictEqual(second.nextCursor, null);

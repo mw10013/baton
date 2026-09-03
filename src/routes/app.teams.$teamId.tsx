@@ -9,6 +9,7 @@ import { fieldError, mutationErrorMessage } from "@/lib/form";
 import { Repository } from "@/lib/Repository";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
+import { SocketBanner } from "@/lib/SocketBanner";
 
 const TeamIdInput = Schema.Struct({ teamId: Schema.String });
 
@@ -200,15 +201,16 @@ function RouteComponent() {
   };
 
   return (
-    <s-page heading={team.name} inlineSize="large">
+    <s-page heading={team.name} inlineSize="base">
       <s-link slot="breadcrumb-actions" href="/app/teams">
         Teams
       </s-link>
       {archived && (
-        <s-badge slot="header-actions" tone="info">
+        <s-badge slot="accessory" tone="info">
           Archived
         </s-badge>
       )}
+      <SocketBanner />
       <s-section heading="Name" accessibilityLabel="Team name">
         <s-stack gap="base">
           {mutationError && (

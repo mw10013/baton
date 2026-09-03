@@ -1308,6 +1308,41 @@ export class ShopAgent extends Agent {
     });
   }
 
+  /**
+   * The detail page's `activate<Feature>` read: the order, its line items, and
+   * every run on them, and the calling connection subscribed to pushes in the
+   * same round trip (the convention documented on `activateOrders`). Without
+   * the attach, a webhook landing on the open order would update SQLite and
+   * push to nobody. Addressed by `legacyId` because that is what the route
+   * carries (see `Domain.ActivateOrderInput`). `null` when the order is not
+   * stored, which the page renders as not-found rather than as a failure.
+   */
+  @callable()
+  activateOrder(
+    input: typeof Domain.ActivateOrderInput.Encoded,
+  ): Promise<Domain.OrderDetailView | null> {
+    return this.runEffect(
+      callableEffect("ShopAgent.activateOrder", Domain.ActivateOrderInput, {
+        onExcessProperty: "error",
+      })(({ legacyId, sessionToken }) =>
+        Effect.gen(function* () {
+          const { connection } = getCurrentAgent<ShopAgent>();
+          if (connection) connection.setState({ sessionToken });
+          const orders = yield* OrderRepository;
+          const runs = yield* WorkflowRunRepository;
+          const detail = yield* orders.getOrderByLegacyId(legacyId);
+          if (Option.isNone(detail)) return null;
+          const { order, lineItems } = detail.value;
+          return {
+            order,
+            lineItems,
+            runs: yield* runs.listRunsForOrder({ orderId: order.id }),
+          } satisfies Domain.OrderDetailView;
+        }),
+      )(input),
+    );
+  }
+
   @callable()
   listRunsForOrder(
     input: typeof Domain.ListRunsForOrderInput.Encoded,

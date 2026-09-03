@@ -59,10 +59,10 @@ test("orders screen syncs the window and lists orders", async ({ page }) => {
   const rows = frame.locator("s-table-row");
   await expect(rows.first()).toBeVisible({ timeout: 30_000 });
 
-  /* Details opens the line-item section for the first order, which is the only
-     place personalization (`customAttributes`) and product tags are rendered —
-     the fields the bulk path exists to collect. */
-  await frame.getByRole("button", { name: "Details" }).first().click();
+  /* The order name links to the detail page, which is the only place
+     personalization (`customAttributes`) and product tags are rendered — the
+     fields the bulk path exists to collect. */
+  await rows.first().getByRole("link").first().click();
   await expect(
     frame.locator('s-section[accessibilityLabel="Line items"]'),
   ).toBeVisible();

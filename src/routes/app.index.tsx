@@ -40,7 +40,7 @@ function RouteComponent() {
   const { plan, managePlanUrl } = Route.useRouteContext();
 
   return (
-    <s-page heading="Baton" inlineSize="large">
+    <s-page heading="Baton" inlineSize="base">
       <s-section heading="Plan" accessibilityLabel="Plan">
         <s-stack gap="base">
           <s-paragraph color="subdued">

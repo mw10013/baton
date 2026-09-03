@@ -101,6 +101,12 @@ export class OrderRepository extends Context.Service<
       Option.Option<Domain.OrderDetail>,
       SqlError.SqlError | OrderRepositoryError
     >;
+    readonly getOrderByLegacyId: (
+      legacyId: string,
+    ) => Effect.Effect<
+      Option.Option<Domain.OrderDetail>,
+      SqlError.SqlError | OrderRepositoryError
+    >;
     /**
      * The stored `updatedAt`, for the webhook path's skip-if-stale check. An
      * absent row is `none`, which reads as "fetch it".
@@ -192,6 +198,24 @@ export class OrderRepository extends Context.Service<
          closedAt, financialStatus, fulfillmentStatus, fullyPaid, tags, note,
          customAttributes, lineItemsComplete, syncedAt, syncSource`,
       );
+
+      /**
+       * A single order with its line items, or `none`. Shared by the GID and
+       * legacy-id lookups so both read the same shape.
+       */
+      const detailOf = Effect.fn("OrderRepository.detailOf")(function* (
+        rows: readonly unknown[],
+      ) {
+        const [order] = yield* decodeOrders(rows);
+        return order === undefined
+          ? Option.none()
+          : Option.some({
+              order,
+              lineItems: yield* decodeLineItems(
+                yield* sql`select * from OrderLineItem where orderId = ${order.id} order by id`,
+              ),
+            } satisfies Domain.OrderDetail);
+      });
 
       const decodeOrders = decode(
         Schema.Array(Domain.ShopOrder),
@@ -352,18 +376,18 @@ export class OrderRepository extends Context.Service<
         getOrder: Effect.fn("OrderRepository.getOrder")(function* (
           orderId: string,
         ) {
-          const [order] = yield* decodeOrders(
+          return yield* detailOf(
             yield* sql`select ${orderColumns} from ShopOrder where id = ${orderId}`,
           );
-          return order === undefined
-            ? Option.none()
-            : Option.some({
-                order,
-                lineItems: yield* decodeLineItems(
-                  yield* sql`select * from OrderLineItem where orderId = ${orderId} order by id`,
-                ),
-              } satisfies Domain.OrderDetail);
         }),
+
+        getOrderByLegacyId: Effect.fn("OrderRepository.getOrderByLegacyId")(
+          function* (legacyId: string) {
+            return yield* detailOf(
+              yield* sql`select ${orderColumns} from ShopOrder where legacyId = ${legacyId}`,
+            );
+          },
+        ),
 
         getOrderUpdatedAt: Effect.fn("OrderRepository.getOrderUpdatedAt")(
           function* (orderId: string) {
@@ -408,24 +432,55 @@ export class OrderRepository extends Context.Service<
             `,
           );
           const orders = page.slice(0, limit);
-          const lineItems = yield* decodeLineItems(
-            yield* sql`
-              select * from OrderLineItem
-              where orderId in (
-                select id from ShopOrder
-                where ${keyset}
-                order by processedAt desc, id desc
-                limit ${limit}
-              )
-              order by id
-            `,
+          const ids = orders.map(({ id }) => id);
+          /**
+           * Two aggregates keyed by the page's ids rather than a join: the
+           * decoder for `ShopOrder` wants exactly its columns, and `WorkflowRun`
+           * lives in the same Durable Object SQLite but belongs to
+           * `WorkflowRunRepository`, so this read touches it for counts only.
+           */
+          const unitRows =
+            ids.length === 0
+              ? []
+              : yield* sql`
+                  select orderId, sum(currentQuantity) as units
+                  from OrderLineItem
+                  where ${sql.in("orderId", ids)}
+                  group by orderId
+                `.values;
+          const runRows =
+            ids.length === 0
+              ? []
+              : yield* sql`
+                  select
+                    orderId,
+                    sum(status in ('pending', 'active')) as open,
+                    sum(status = 'done') as done,
+                    sum(flag is not null and status in ('pending', 'active')) as flagged
+                  from WorkflowRun
+                  where ${sql.in("orderId", ids)}
+                  group by orderId
+                `.values;
+          const units = new Map(
+            unitRows.map((row) => [String(row[0]), Number(row[1] ?? 0)]),
+          );
+          const runs = new Map(
+            runRows.map((row) => [
+              String(row[0]),
+              {
+                open: Number(row[1] ?? 0),
+                done: Number(row[2] ?? 0),
+                flagged: Number(row[3] ?? 0),
+              } satisfies Domain.OrderRunSummary,
+            ]),
           );
           const [countRow] = yield* sql`select count(*) from ShopOrder`.values;
           const last = orders.at(-1);
           return {
             orders: orders.map((order) => ({
               order,
-              lineItems: lineItems.filter((item) => item.orderId === order.id),
+              itemUnits: units.get(order.id) ?? 0,
+              runs: runs.get(order.id) ?? { open: 0, done: 0, flagged: 0 },
             })),
             limit,
             nextCursor:
