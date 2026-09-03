@@ -33,7 +33,6 @@ test/browser/__screenshots__/
 !.env.playwright.example
 
 
-CLAUDE.md
 .claude/*
 !.claude/settings.json
 .amp-tmp/
