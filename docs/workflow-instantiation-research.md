@@ -6,7 +6,8 @@ Scope: when Baton turns a Shopify order into running production workflows, how "
 
 ## Conclusion
 
-- **Trigger in the upsert, not in the webhook.** Every order write (webhook, bulk sync, manual resync) already funnels through one seam: `ShopAgent.fetchAndUpsertOrder` → `OrderRepository.upsertOrder`. Run the instantiation check there, after the row is written, regardless of source. The `orders/paid` topic is a hint, never the gate.
+- **Trigger in the upsert, for every source.** Webhook, bulk sync, and manual resync all funnel through `OrderRepository.upsertOrder`; run creation and reconcile happen there regardless of which path delivered the order. That is what makes resync and the periodic catch-up sync a real safety net for flaky webhooks. The `orders/paid` topic is a hint, never the gate.
+- **The age rule is what stops history from starting work.** A run is created only for orders paid after the workflow was created. Install-time sync finds no workflows, so nothing starts; workflows created later never reach back; older in-process orders are attached by hand.
 - **Gate = `fullyPaid` true and `cancelledAt` null.** Not `financialStatus = 'PAID'`: a partially refunded order stays paid for production purposes, and `fullyPaid` already covers that.
 - **Idempotency comes from the instance key `(lineItemId, workflowId)`, not from "does the order have any workflows".** A unique index makes a repeat upsert a no-op; a later-added line item gets its instances on its own.
 - **Order changes after instantiation: reconcile line items, never rewrite steps.** Line item disappears or `currentQuantity` hits 0 → instance cancelled if not started, flagged if started. New line item → new instance. Quantity change → update a snapshot, flag if started. Product tags change → no reroute. Order cancelled → cancel unstarted, flag started.
@@ -82,9 +83,21 @@ Deliberately excluded: `AUTHORIZED` (manual capture shops), `PENDING` (COD, bank
 
 ### Where
 
-Inside `upsertOrder`'s transaction, after line items are written, or as a second step in `fetchAndUpsertOrder` / the bulk stream keyed off `written: true`. Doing it in the same SQLite transaction is preferable: the DO is single-threaded per shop, so no concurrency between webhook and bulk beyond what the upsert guard already handles, and instance creation can't be lost between two writes.
+Inside `upsertOrder`'s transaction, after line items are written, keyed off `written: true`. Doing it in the same SQLite transaction is preferable: the DO is single-threaded per shop, so no concurrency between webhook and bulk beyond what the upsert guard already handles, and run creation can't be lost between two writes.
 
 Skip when `written: false` (stale). A stale write cannot change eligibility.
+
+### Which sources create runs
+
+All of them, with the same predicate. The path must not matter, because the non-webhook paths exist precisely for when webhooks fail:
+
+- Manual resync: merchant suspects a missed webhook and clicks resync on the order. They expect work to start.
+- Periodic catch-up sync (to be designed in the orders-sync doc; short lookback, roughly 48h): finds orders whose webhook never arrived. Must start work or it is not a safety net.
+- Install-time sync (30 days): no workflows exist yet, so it creates nothing. It is for seeing orders.
+
+What prevents accidental floods is the age rule, not the source: `processedAt >= workflow.createdAt`. A workflow created today never reaches orders paid before today, whichever path touches them. Older in-process orders the merchant wants in Baton are attached by hand, line item by line item.
+
+DO load: the DO handles one request at a time per shop, so a bulk sync already blocks webhooks and the UI while it runs. Run creation adds `lineItems × workflows` set intersections per order, all in SQLite, and the age rule makes the install-time sync skip everything. Acceptable; watch `logs/server.log` on the first real sync.
 
 ### Routing predicate (from definition spec)
 
@@ -96,7 +109,11 @@ match = workflow.archivedAt is null
      && every step.team is active
      && intersect(workflow.tags, lineItem.productTags) non-empty
      && lineItem.currentQuantity > 0
+     && lineItem.unfulfilledQuantity > 0
+     && order.processedAt >= workflow.createdAt
 ```
+
+The last two rules apply to tag routing only; a manual attach bypasses them.
 
 One instance per `(lineItemId, workflowId)`, enforced with a unique index. Instances copy steps (name, position, teamId, snapshotted teamName) so later definition edits don't touch running work.
 
@@ -111,7 +128,7 @@ The user's proposal ("if paid and no workflows on the order, create them") break
 
 ### Retroactivity
 
-Because the check runs on every upsert, a newly created workflow will attach to old paid orders the next time those orders are touched (webhook, resync, bulk). Options:
+Because creation runs on every webhook upsert, a newly created workflow would attach to old paid orders the next time Shopify sends an update for them (a note edit, a fulfillment). Options:
 
 - **A. Allow it** (default with no extra logic). Simple; may surprise a merchant with a wall of old jobs after a bulk resync.
 - **B. Only route orders whose `processedAt >= workflow.createdAt`.** Cheap, deterministic, matches "new orders flow into pipelines".
@@ -193,6 +210,7 @@ create table if not exists WorkflowRun (
   lineItemId text not null,
   lineItemTitle text not null,
   quantity integer not null,
+  source text not null check (source in ('tag','manual')),
   status text not null check (status in ('pending','active','done','cancelled')),
   flag text,
   flagAt integer,
@@ -240,15 +258,35 @@ Scan of `refs/route-to-ship`, `refs/kanbanify`, `refs/makers-production-view`, `
 
 Takeaway: the two apps closest to Baton's model (stored copy, work materialized at ingest) simply don't say. The live-read apps avoid the question by holding almost no state. Baton's flag-don't-destroy policy is a reasonable middle: instances are derived until touched, then become records.
 
+## Route to Ship Comparison
+
+`docs/route-to-ship-departments-research.md` confirms Route to Ship puts the task list on the department and the pipeline only orders departments. Baton keeps steps on the workflow and teams as people only; decided there, not revisited here. Two things from that research touch instantiation:
+
+- **Per-order steps.** Route to Ship's `Complete once per order` (Dispatch) groups all of an order's line items into one task. Runs here are per line item, so a future `perOrder` flag on `WorkflowStep` means: the step is available once every run of that order reaches it, and completing it once completes it on every run. `WorkflowRun` carries `orderId` and `WorkflowRunStep` carries `position`, which is enough to add that join later. Phase 2.
+- **In-flight edits.** Route to Ship's help does not say whether editing a department's task list changes in-flight work. Runs here copy their steps at creation, so definition edits never touch them. Already decided in the definition spec; unchanged.
+- **Units.** `Count units` / `Confirm each unit` are unverified in Route to Ship. Consistent with deferring per-unit progress.
+- **Same-team consecutive steps.** Allowed by the definition spec. The queue UI can present consecutive steps owned by one team as a single card with a checklist, which gives workers Route to Ship's department-task-list feel without moving steps onto teams.
+
 ## Decisions (mw, 2026-09-02)
 
-1. **Retroactivity: no.** A new workflow only routes orders with `processedAt >= workflow.createdAt` (`processedAt` = when Shopify processed the checkout). "From now on" is what merchants expect; an "apply to existing open orders" button can come later.
+1. **Retroactivity: no.** A new workflow only routes orders with `processedAt >= workflow.createdAt` (`processedAt` = when Shopify processed the checkout; both are epoch ms in the DO, so the compare is direct, but clock skew between Shopify and the DO means an order paid seconds before the workflow was saved may land either side; accepted). Also never route an order whose line item is already fulfilled (`unfulfilledQuantity = 0`), regardless of age: add that to the routing predicate. "From now on" is what merchants expect. **Manual attach** is the escape hatch: an admin action that starts a chosen workflow on a chosen line item, ignoring tags and the `createdAt` rule. Same `(lineItemId, workflowId)` key, same reconcile afterwards; record `source = 'manual' | 'tag'` on the run. Not phase 1 of instantiation, but the schema should leave room.
 2. **Gate: `fullyPaid` only.** No `AUTHORIZED`/`PENDING` support; everything automated on paid.
 3. **Line item removed with active work: flag and keep.** Badge loud, flagged runs sort to top of the queue; member dismisses or cancels. Auto-cancel only for `pending` runs (nobody touched them). Trade-off accepted: a missed badge wastes work, but auto-cancel hides half-made items and needs a restore path.
 4. **Quantity: snapshot on the run, whole line item marches together.** No per-unit status in phase 1. Qty change on an active run only flags it.
-5. **Order delete: keep runs, snapshot display fields.** Shopify's `orderDelete` "permanently deletes" but "You can only delete specific order types"; normal paid online orders are cancelled and archived, not deleted (https://shopify.dev/docs/api/admin-graphql/latest/mutations/orderDelete). Archiving sets `closedAt` and the order still exists. So delete is rare, mostly test data. Runs hold `orderName`, `lineItemTitle`, `sku` and have no FK to `OrderLineItem`; on delete, `pending` → cancelled, others flagged `order_deleted`. Rejected: cascade (loses done-work history), soft-delete on `ShopOrder` (touches every orders query).
+5. **Personalization is copied onto the run; paid means locked.** Line item `customAttributes` (engraving text, gift note) are snapshotted at creation. Shopify cannot edit an existing line item's properties after the order exists (neither the admin UI nor the order edit API); a correction is a remove-and-add, which reconcile already handles as cancel/flag old run + new run. The order **note** is editable any time and the queue reads it live, so it is the merchant's one-off channel for last-minute instructions.
+   5b. **Order delete: keep runs, snapshot display fields.** Shopify's `orderDelete` "permanently deletes" but "You can only delete specific order types"; normal paid online orders are cancelled and archived, not deleted (https://shopify.dev/docs/api/admin-graphql/latest/mutations/orderDelete). Archiving sets `closedAt` and the order still exists. So delete is rare, mostly test data. Runs hold `orderName`, `lineItemTitle`, `sku` and have no FK to `OrderLineItem`; on delete, `pending` → cancelled, others flagged `order_deleted`. Rejected: cascade (loses done-work history), soft-delete on `ShopOrder` (touches every orders query).
 6. **Noun: `WorkflowRun` in code.** Merchant copy avoids the noun: "this workflow on line item X". Rejected "job" (reads interchangeable with workflow), `LineItemWorkflow` (awkward), `WorkflowRun` (abstract). Table sketch above should read `WorkflowRun` / `WorkflowRunStep`.
 
 ## Remaining Questions
 
-- **Fulfilled before done.** If Shopify fulfills the line item (`unfulfilledQuantity = 0`) while the run is `pending`/`active`, do anything? Default: nothing in phase 1; a `fulfilled_externally` flag is cheap if wanted.
+- **Fulfilled before done.** Fulfilled line items are never routed (decided above). If Shopify fulfills while a run is `pending`/`active`, do nothing in phase 1; a `fulfilled_externally` flag is cheap if wanted.
+
+## Next
+
+Spec: `workflow-runs-spec.md`.
+
+1. **Phase 1 spec for runs**: `WorkflowRun` / `WorkflowRunStep` schema and migration, Domain types, repository (`createRunsForOrder`, `reconcileOrder`, `listRunsForTeam`, `completeStep`, `dismissFlag`, `cancelRun`), and the hook in `upsertOrder`.
+2. **Queue UI**: per-team list of runs with the current step, flagged runs on top, complete/dismiss/cancel actions. Needs the member-area guard from teams.
+3. **Order detail**: show runs and step progress per line item.
+4. **Manual attach**: admin action on order detail. After 1 to 3.
+5. **Tests**: reconcile matrix (remove, qty change, add item, cancel, delete, stale write, duplicate webhook, bulk after webhook).
