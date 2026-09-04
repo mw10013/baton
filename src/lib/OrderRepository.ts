@@ -471,7 +471,7 @@ export class OrderRepository extends Context.Service<
                 open: Number(row[1] ?? 0),
                 done: Number(row[2] ?? 0),
                 flagged: Number(row[3] ?? 0),
-              } satisfies Domain.OrderRunSummary,
+              } satisfies Domain.RunCounts,
             ]),
           );
           const [countRow] = yield* sql`select count(*) from ShopOrder`.values;

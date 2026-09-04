@@ -860,16 +860,18 @@ export type ResyncOrderInput = typeof ResyncOrderInput.Type;
 
 /**
  * Per-order production state for the index table, aggregated from
- * `WorkflowRun` rows in the same read. `open` counts `pending` and `active`
+ * `WorkflowRun` rows in the same read. Counts every run on the order, item
+ * runs and the order run alike; it is not a view of the order run, which is
+ * why the name avoids "order run". `open` counts `pending` and `active`
  * runs; cancelled runs count nowhere, so an order whose only runs were
  * cancelled reads as unrouted — which is what an admin has to act on.
  */
-export const OrderRunSummary = Schema.Struct({
+export const RunCounts = Schema.Struct({
   open: Schema.Number,
   done: Schema.Number,
   flagged: Schema.Number,
 });
-export type OrderRunSummary = typeof OrderRunSummary.Type;
+export type RunCounts = typeof RunCounts.Type;
 
 /**
  * One index row. `itemUnits` is the sum of `currentQuantity`, not the number
@@ -880,7 +882,7 @@ export type OrderRunSummary = typeof OrderRunSummary.Type;
 export const OrderRow = Schema.Struct({
   order: ShopOrder,
   itemUnits: Schema.Number,
-  runs: OrderRunSummary,
+  runs: RunCounts,
 });
 export type OrderRow = typeof OrderRow.Type;
 
