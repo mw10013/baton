@@ -62,12 +62,15 @@ const RUN_FLAG_LABEL = {
   order_cancelled: "Order cancelled",
   order_deleted: "Order deleted",
   blocked: "Blocked",
+  item_added: "New item",
 } as const satisfies Record<Domain.RunFlag, string>;
 
 const flagLabel = (run: Domain.WorkflowRun) => {
   if (run.flag === null) return null;
   if (run.flag === "blocked" && run.flagDetail?.reason !== undefined)
     return `Blocked: ${run.flagDetail.reason}`;
+  if (run.flagDetail?.item !== undefined)
+    return `${RUN_FLAG_LABEL[run.flag]}: ${run.flagDetail.item}`;
   return RUN_FLAG_LABEL[run.flag];
 };
 
@@ -409,9 +412,19 @@ function RouteComponent() {
       </s-page>
     );
 
-  const { order, lineItems, runs } = detail;
+  const { order, lineItems, runs, orderWorkflow } = detail;
+  const orderRuns = runs.filter(({ run }) => Domain.isOrderRun(run));
+  const itemRunCount = runs.length - orderRuns.length;
+  /** Mirrors the trigger's age rule: a manual attach opts an older order in. */
+  const tooOld =
+    orderWorkflow !== null &&
+    order.processedAt < orderWorkflow.createdAt &&
+    !runs.some(({ run }) => !Domain.isOrderRun(run) && run.source === "manual");
   const routableWorkflows = (workflowsQuery.data ?? []).filter(
-    (workflow) => workflow.stepCount > 0 && workflow.archivedAt === null,
+    (workflow) =>
+      workflow.scope === "item" &&
+      workflow.stepCount > 0 &&
+      workflow.archivedAt === null,
   );
   const busy = attachMutation.isPending || runMutation.isPending;
 
@@ -600,6 +613,23 @@ function RouteComponent() {
           lineItems.map(renderLineItem)
         )}
       </s-section>
+
+      {(orderRuns.length > 0 ||
+        (orderWorkflow !== null && itemRunCount > 0)) && (
+        <s-section heading="Order workflow" accessibilityLabel="Order workflow">
+          <s-stack gap="base">
+            {orderRuns.length > 0 ? (
+              orderRuns.map(renderRun)
+            ) : (
+              <s-paragraph color="subdued">
+                {tooOld
+                  ? `${orderWorkflow?.name ?? ""} will not start here: this order was placed before that workflow was created. Attaching a workflow to an item by hand opts the order in.`
+                  : `${orderWorkflow?.name ?? ""} starts when all items are made.`}
+              </s-paragraph>
+            )}
+          </s-stack>
+        </s-section>
+      )}
 
       {order.note !== null && (
         <s-section slot="aside" heading="Order note">

@@ -38,13 +38,16 @@ Enforced in `WorkflowRepository`, not by a SQL constraint, so the error is a typ
 readyForOrderRun(order, orderWorkflow) =
   isEligibleOrder(order)                                          (fullyPaid, cancelledAt null)
   and isRoutable(orderWorkflow, activeTeams)                      (not archived, ≥ 1 step, teams active)
-  and order.processedAt >= orderWorkflow.createdAt                (age rule)
+  and (order.processedAt >= orderWorkflow.createdAt                (age rule)
+       or exists run where orderId = order.id and lineItemId is not null and source = 'manual')
   and exists  run where orderId = order.id and lineItemId is not null and status = 'done'
   and not exists run where orderId = order.id and lineItemId is not null and status in ('pending', 'active')
   and not exists run where orderId = order.id and lineItemId is null and workflowId = orderWorkflow.id   (any status)
 ```
 
 Stock-only orders (no item runs) never trigger. An order whose item runs were all cancelled never triggers. Cancel of the last open item run triggers when another is done.
+
+**Manual attach opts an old order in.** The age rule exists so a bulk backfill never starts work on history. Manual attach already overrides it for the item, so an admin who pulls an old order into production by hand gets the order run too; otherwise the item finishes and the page keeps promising packing that never comes. Tag-routed runs cannot exist on an order older than their workflow, so the exception only reaches orders a person chose.
 
 Evaluated, inside the existing transaction, at the end of:
 
@@ -180,8 +183,9 @@ Private helper, not on the service interface:
 const startOrderRunIfReady = ({ orderId, workflows, activeTeams }: RoutingContext & { orderId }) =>
   // 1. orderWorkflow = workflows.find(w => w.workflow.scope === 'order'); none → 0
   // 2. order = select ShopOrder; missing or !isEligibleOrder → 0
-  // 3. !isRoutable(orderWorkflow) or order.processedAt < orderWorkflow.createdAt → 0
-  // 4. one select over WorkflowRun for orderId: any item run done, no item run open
+  // 3. !isRoutable(orderWorkflow) → 0
+  // 4. one select over WorkflowRun for orderId: any item run done, no item run open,
+  //    any manual item run; order.processedAt < createdAt and none manual → 0
   // 5. insertRun({ lineItem: null }) → Option; log on Some
 ```
 
@@ -252,7 +256,7 @@ An item with two runs yields two rows; collapse to the "worst" status (`pending`
 
 - After the line items, a section "Order workflow":
   - order run exists: same run component as item runs (name, status badge, flag badge, stages and steps, cancel / un-cancel).
-  - no run, `orderWorkflow` active, and at least one item run on the order: "{name} starts when all items are made."
+  - no run, `orderWorkflow` active, and at least one item run on the order: "{name} starts when all items are made." When the order predates the workflow and no item run is manual: "{name} will not start here: this order was placed before that workflow was created. Attaching a workflow to an item by hand opts the order in."
   - otherwise: section omitted.
 - Flag label for `item_added`: "New item: {item}".
 
@@ -279,7 +283,7 @@ Fixture: one item workflow (tag `necklace`), one order workflow (QC, Pack), orde
 - all item runs done → one order run, `pending`, steps copied with stages.
 - one done + one cancelled → order run; all cancelled → none; untagged-only order → none.
 - trigger twice (complete last step, then reconcile again) → still one order run.
-- order workflow archived before the last completion → none; created after `processedAt` → none.
+- order workflow archived before the last completion → none; created after `processedAt` → none, unless an item run on the order is `source = 'manual'` (opt-in).
 - item added by reconcile after order run pending / active → `item_added` with item title; done → untouched.
 - `attachWorkflow` and `uncancelRun` after order run → `item_added`.
 - item removed after order run → `item_removed` on both runs.

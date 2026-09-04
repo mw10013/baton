@@ -11,7 +11,11 @@ import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { SocketBanner } from "@/lib/SocketBanner";
 import * as WorkflowLayout from "@/lib/WorkflowLayout";
 
-import { splitTags, workflowResultMessage } from "./app.workflows.index";
+import {
+  ORDER_WORKFLOW_TRIGGER,
+  splitTags,
+  workflowResultMessage,
+} from "./app.workflows.index";
 
 const WorkflowForm = Schema.Struct({
   name: Schema.String.check(Schema.isNonEmpty({ message: "Name is required" })),
@@ -115,7 +119,12 @@ function RouteComponent() {
   const updateMutation = useMutation({
     mutationFn: ({ name, tags }: WorkflowForm) =>
       call((stub) =>
-        stub.updateWorkflow({ workflowId, name, tags: splitTags(tags) }),
+        stub.updateWorkflow({
+          workflowId,
+          name,
+          tags:
+            detailQuery.data?.workflow.scope === "order" ? [] : splitTags(tags),
+        }),
       ).then(decodeWorkflowResult),
     onSuccess: async (result) => {
       setBanner(workflowResultMessage(result));
@@ -252,6 +261,7 @@ function RouteComponent() {
 
   const { workflow, steps, activeTeams } = detail;
   const archived = workflow.archivedAt !== null;
+  const orderScope = workflow.scope === "order";
   const orphanedSteps = steps.filter((step) => step.teamName === null);
   const stepsLocked =
     archived ||
@@ -558,19 +568,25 @@ function RouteComponent() {
       <s-link slot="breadcrumb-actions" href="/app/workflows">
         Workflows
       </s-link>
-      {archived && (
-        <s-badge slot="accessory" tone="info">
-          Archived
-        </s-badge>
+      {(archived || orderScope) && (
+        <s-stack slot="accessory" direction="inline" gap="small-300">
+          {orderScope && <s-badge tone="info">Order workflow</s-badge>}
+          {archived && <s-badge tone="info">Archived</s-badge>}
+        </s-stack>
       )}
       <SocketBanner />
 
       <s-section heading="Details" accessibilityLabel="Workflow details">
         <s-stack gap="base">
+          {orderScope && (
+            <s-paragraph color="subdued">{ORDER_WORKFLOW_TRIGGER}</s-paragraph>
+          )}
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
           {!archived && steps.length === 0 && (
             <s-banner tone="warning" heading="Needs attention">
-              This workflow has no steps, so it will not route any line items.
+              {orderScope
+                ? "This workflow has no steps, so it will not start on any order."
+                : "This workflow has no steps, so it will not route any line items."}
             </s-banner>
           )}
           {!archived && orphanedSteps.length > 0 && (
@@ -600,20 +616,22 @@ function RouteComponent() {
                   />
                 )}
               </form.Field>
-              <form.Field name="tags">
-                {(field) => (
-                  <s-text-field
-                    label="Product tags"
-                    details="Comma-separated. Add any of these tags to a product in Shopify and its line items follow this workflow."
-                    name={field.name}
-                    value={field.state.value}
-                    onInput={(event) => {
-                      field.handleChange(event.currentTarget.value);
-                    }}
-                    onBlur={field.handleBlur}
-                  />
-                )}
-              </form.Field>
+              {!orderScope && (
+                <form.Field name="tags">
+                  {(field) => (
+                    <s-text-field
+                      label="Product tags"
+                      details="Comma-separated. Add any of these tags to a product in Shopify and its line items follow this workflow."
+                      name={field.name}
+                      value={field.state.value}
+                      onInput={(event) => {
+                        field.handleChange(event.currentTarget.value);
+                      }}
+                      onBlur={field.handleBlur}
+                    />
+                  )}
+                </form.Field>
+              )}
               <s-stack direction="inline" gap="base" alignItems="start">
                 <s-button
                   type="submit"

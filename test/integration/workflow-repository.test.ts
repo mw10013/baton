@@ -511,6 +511,102 @@ describe("WorkflowRepository", () => {
       }),
     ));
 
+  it("allows one active order workflow: second refused, archive frees the slot, restore into an occupied slot refused", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const repo = yield* WorkflowRepository;
+        const first = yield* repo.createWorkflow({
+          name: name("Pack"),
+          scope: "order",
+          tags: tags([]),
+        });
+        strictEqual(first.scope, "order");
+        const second = yield* repo
+          .createWorkflow({
+            name: name("Ship"),
+            scope: "order",
+            tags: tags([]),
+          })
+          .pipe(Effect.flip);
+        strictEqual(second._tag, "OrderWorkflowExistsError");
+        // Item workflows are unaffected by the slot.
+        const item = yield* repo.createWorkflow({
+          name: name("Engrave"),
+          tags: tags(["x"]),
+        });
+        strictEqual(item.scope, "item");
+
+        yield* repo.setWorkflowArchived({
+          workflowId: first.id,
+          archived: true,
+        });
+        const ship = yield* repo.createWorkflow({
+          name: name("Ship"),
+          scope: "order",
+          tags: tags([]),
+        });
+        strictEqual(ship.scope, "order");
+        const restore = yield* repo
+          .setWorkflowArchived({ workflowId: first.id, archived: false })
+          .pipe(Effect.flip);
+        strictEqual(restore._tag, "OrderWorkflowExistsError");
+        // Re-archiving and restoring the holder itself is fine.
+        yield* repo.setWorkflowArchived({
+          workflowId: ship.id,
+          archived: true,
+        });
+        const restored = yield* repo.setWorkflowArchived({
+          workflowId: ship.id,
+          archived: false,
+        });
+        strictEqual(restored.archivedAt, null);
+        const listed = yield* repo.listWorkflows({ includeArchived: true });
+        deepStrictEqual(
+          listed.map((w) => [w.name, w.scope]),
+          [
+            ["Engrave", "item"],
+            ["Ship", "order"],
+            ["Pack", "order"],
+          ],
+        );
+      }),
+    ));
+
+  it("refuses tags on an order workflow on create and update; scope never changes", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const repo = yield* WorkflowRepository;
+        const tagged = yield* repo
+          .createWorkflow({
+            name: name("Pack"),
+            scope: "order",
+            tags: tags(["x"]),
+          })
+          .pipe(Effect.flip);
+        strictEqual(tagged._tag, "WorkflowRepositoryError");
+        const pack = yield* repo.createWorkflow({
+          name: name("Pack"),
+          scope: "order",
+          tags: tags([]),
+        });
+        const retag = yield* repo
+          .updateWorkflow({
+            workflowId: pack.id,
+            name: name("Pack"),
+            tags: tags(["x"]),
+          })
+          .pipe(Effect.flip);
+        strictEqual(retag._tag, "WorkflowRepositoryError");
+        const renamed = yield* repo.updateWorkflow({
+          workflowId: pack.id,
+          name: name("Pack & ship"),
+          tags: tags([]),
+        });
+        strictEqual(renamed.scope, "order");
+        strictEqual(renamed.name, "Pack & ship");
+      }),
+    ));
+
   it("deleting a workflow cascades its steps", () =>
     runInRepository(
       Effect.gen(function* () {

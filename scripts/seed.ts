@@ -11,6 +11,9 @@
  * - `Necklace` (tag `necklace`) exercises stages: two steps share stage 1
  *   (Teams 1 and 2), then Team 3, then Team 1 again, with instructions on
  *   the first — the fixture for trying Start / Done / "together with" by hand.
+ * - `Pack & ship` is the one order workflow (`scope: "order"`, no tags): QC
+ *   then Pack, both owned by a `Packing` team with its own member
+ *   `packing@m.com`. It starts on an order once every item run is finished.
  *
  * The step wrap is the point: every team then owns two steps across two
  * different workflows, so no queue is single-workflow and every hand-off
@@ -36,13 +39,19 @@ const teamName = (i: number) => `Team ${String(i)}`;
 const wrap = (i: number) => (i % COUNT) + 1;
 const range = Array.from({ length: COUNT }, (_, offset) => offset + 1);
 
+const PACKING_TEAM = "Packing";
+const PACKING_MEMBER = "packing@m.com";
+
 const body = {
   shop,
-  members: range.map((i) => `m${String(i)}@m.com`),
-  teams: range.map((i) => ({
-    name: teamName(i),
-    members: [`m${String(i)}@m.com`],
-  })),
+  members: [...range.map((i) => `m${String(i)}@m.com`), PACKING_MEMBER],
+  teams: [
+    ...range.map((i) => ({
+      name: teamName(i),
+      members: [`m${String(i)}@m.com`],
+    })),
+    { name: PACKING_TEAM, members: [PACKING_MEMBER] },
+  ],
   workflows: [
     ...range.map((i) => ({
       name: `Workflow ${String(i)}`,
@@ -68,6 +77,15 @@ const body = {
         { name: "Inspect", team: teamName(1), stage: 3 },
       ],
     },
+    {
+      name: "Pack & ship",
+      scope: "order",
+      tags: [],
+      steps: [
+        { name: "QC", team: PACKING_TEAM },
+        { name: "Pack", team: PACKING_TEAM },
+      ],
+    },
   ],
 };
 
@@ -81,5 +99,5 @@ if (!response.ok)
     `seed failed: ${String(response.status)} ${await response.text()}`,
   );
 console.log(
-  `seeded ${shop}: ${String(COUNT)} members, ${String(COUNT)} teams, ${String(COUNT + 1)} workflows`,
+  `seeded ${shop}: ${String(COUNT + 1)} members, ${String(COUNT + 1)} teams, ${String(COUNT + 2)} workflows`,
 );

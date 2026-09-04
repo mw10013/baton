@@ -90,7 +90,8 @@ ready(order) =
   and every line-item run on the order is finished
   and at least one line-item run on the order is done
   and no order run exists for (orderId, orderWorkflowId)     (any status; same idempotency as item runs)
-  and order.processedAt >= orderWorkflow.createdAt           (age rule, unchanged)
+  and (order.processedAt >= orderWorkflow.createdAt          (age rule, unchanged)
+       or any line-item run on the order is source = 'manual')  (manual attach opts in; added 2026-09-04)
 ```
 
 Decisions folded in (mw, 2026-09-04):
@@ -248,9 +249,10 @@ Each arrow is a predicate change and an invariant change. No arrow touches `Work
 8. **Dismissing `item_added` has no precondition.** A person's judgement, as for every other flag; the card shows the new item's run status live.
 9. **Order-run queue card**: order name, workflow name, every line item with quantity and live run status, each item's `customAttributes`, the order note. No snapshot of the item list on the run.
 10. **Order page placeholder** "Pack & ship starts when all items are made" shows whenever an order workflow is active and the order has at least one item run.
-11. **Scope is fixed at creation**, shown read-only afterwards.
-12. **Cancel / un-cancel of an order run**: admin on the order page, same as item runs. No new authorisation.
-13. **No orders-index column** for the order run yet.
+11. **Manual attach opts an old order in** (found in the first browser smoke, 2026-09-04). The age rule blocked the order run on a Sep 1 order whose item run had been attached by hand and worked to done, which read as a dead end. Manual attach is already the documented override of the age rule for the item, so the same signal now overrides it for the order: if any item run on the order is `source = 'manual'`, the order workflow starts regardless of `processedAt`. Bulk history stays quiet because tag routing never creates a run on an order older than its workflow. Alternatives considered: dropping the age rule for order workflows entirely (simpler, but a backfill plus a stray old item run would start packing), or leaving it (correct by the letter, surprising in practice).
+12. **Scope is fixed at creation**, shown read-only afterwards.
+13. **Cancel / un-cancel of an order run**: admin on the order page, same as item runs. No new authorisation.
+14. **No orders-index column** for the order run yet.
 
 ## Next
 

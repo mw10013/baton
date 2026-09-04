@@ -47,6 +47,7 @@ import { runShopAgentOrdersStream } from "@/lib/ShopAgentOrdersStream";
 import { Shopify } from "@/lib/Shopify";
 import { ShopifyAdmin } from "@/lib/ShopifyAdmin";
 import {
+  type OrderWorkflowExistsError,
   type StageNotFoundError,
   type StepNotFoundError,
   type WorkflowLimitError,
@@ -145,14 +146,19 @@ const callableEffect =
  * already differ, and one store should not mix.
  *
  * `WorkflowRun` / `WorkflowRunStep` are the *instances*: one workflow applied
- * to one line item, with the definition's steps copied in. Every display
- * field is a snapshot and there is no foreign key to `ShopOrder`,
+ * to one line item **or to one order**, with the definition's steps copied
+ * in. An order run (`Workflow.scope = 'order'`) has `lineItemId` and the
+ * three line-item snapshot columns null together (the `check`), and starts
+ * once every item run on the order is finished with at least one done. Every
+ * display field is a snapshot and there is no foreign key to `ShopOrder`,
  * `OrderLineItem`, or `Workflow` — a run must survive an order delete, a
  * line item dropped by an edit, and a definition rename, because it is the
  * record of work someone may already have started. `unique (lineItemId,
  * workflowId)` spans every status so a cancelled run keeps its key: neither
  * the sync nor manual attach can create a second one, and recovery from a
- * mistaken cancel is un-cancel. `status` is denormalized from the steps for
+ * mistaken cancel is un-cancel. SQLite treats nulls as distinct in that
+ * constraint, so the partial `WorkflowRun_order_uidx` is what makes an order
+ * run single-use per `(orderId, workflowId)`. `status` is denormalized from the steps for
  * the queue and the definitions badge; every step write recomputes it in the
  * same transaction. `(teamId, completedAt)` serves the member queue, which
  * asks for open steps by team. A run step is *ready* when it is open and no
@@ -223,6 +229,7 @@ const initializeSchema = Effect.gen(function* () {
     create table if not exists Workflow (
       id text primary key,
       name text not null check (name = trim(name) and length(name) > 0),
+      scope text not null default 'item' check (scope in ('item', 'order')),
       tags text not null,
       createdAt integer not null,
       updatedAt integer not null,
@@ -248,22 +255,27 @@ const initializeSchema = Effect.gen(function* () {
       workflowName text not null,
       orderId text not null,
       orderName text not null,
-      lineItemId text not null,
-      lineItemTitle text not null,
+      lineItemId text,
+      lineItemTitle text,
       variantTitle text,
       sku text,
-      quantity integer not null,
-      customAttributes text not null,
+      quantity integer,
+      customAttributes text,
       source text not null check (source in ('tag', 'manual')),
       status text not null check (status in ('pending', 'active', 'done', 'cancelled')),
-      flag text check (flag in ('item_removed', 'quantity_changed', 'order_cancelled', 'order_deleted', 'blocked')),
+      flag text check (flag in ('item_removed', 'quantity_changed', 'order_cancelled', 'order_deleted', 'blocked', 'item_added')),
       flagAt integer,
       flagDetail text,
       createdAt integer not null,
       updatedAt integer not null,
       cancelledAt integer,
+      check ((lineItemId is null) = (lineItemTitle is null)
+         and (lineItemId is null) = (quantity is null)
+         and (lineItemId is null) = (customAttributes is null)),
       unique (lineItemId, workflowId)
     );
+    create unique index if not exists WorkflowRun_order_uidx
+      on WorkflowRun (orderId, workflowId) where lineItemId is null;
     create index if not exists WorkflowRun_orderId_idx on WorkflowRun (orderId);
     create index if not exists WorkflowRun_status_idx on WorkflowRun (status);
     create table if not exists WorkflowRunStep (
@@ -385,6 +397,7 @@ const workflowResult = <R>(
     | WorkflowNameTakenError
     | WorkflowNotFoundError
     | WorkflowLimitError
+    | OrderWorkflowExistsError
     | SqlError.SqlError
     | WorkflowRepositoryError,
     R
@@ -403,6 +416,8 @@ const workflowResult = <R>(
         Effect.succeed<Domain.WorkflowResult>({ _tag: "NotFound" }),
       WorkflowLimitError: ({ limit }) =>
         Effect.succeed<Domain.WorkflowResult>({ _tag: "Limit", limit }),
+      OrderWorkflowExistsError: () =>
+        Effect.succeed<Domain.WorkflowResult>({ _tag: "OrderWorkflowExists" }),
     }),
   );
 
@@ -445,7 +460,12 @@ const inUseResult = (count: number): Domain.TeamArchiveResult => ({
   count,
 });
 
-/** Same shape as {@link workflowResult}: expected run failures become values. */
+/**
+ * Same shape as {@link workflowResult}: expected run failures become values.
+ * `WorkflowRepositoryError` and `SchemaError` ride along because the actions
+ * that can start an order run load the routing context (active definitions
+ * from this object, teams from D1) first.
+ */
 const runResult = <R>(
   effect: Effect.Effect<
     void,
@@ -455,12 +475,18 @@ const runResult = <R>(
     | StepNotReadyError
     | SqlError.SqlError
     | WorkflowRunRepositoryError
-    | RepositoryError,
+    | WorkflowRepositoryError
+    | RepositoryError
+    | Schema.SchemaError,
     R
   >,
 ): Effect.Effect<
   Domain.RunResult,
-  SqlError.SqlError | WorkflowRunRepositoryError | RepositoryError,
+  | SqlError.SqlError
+  | WorkflowRunRepositoryError
+  | WorkflowRepositoryError
+  | RepositoryError
+  | Schema.SchemaError,
   R
 > =>
   effect.pipe(
@@ -1225,11 +1251,11 @@ export class ShopAgent extends Agent {
     return this.runEffect(
       callableEffect("ShopAgent.createWorkflow", Domain.CreateWorkflowInput, {
         onExcessProperty: "error",
-      })(({ name, tags }) =>
+      })(({ name, scope, tags }) =>
         workflowResult(
           WorkflowRepository.pipe(
             Effect.flatMap((repository) =>
-              repository.createWorkflow({ name, tags }),
+              repository.createWorkflow({ name, scope, tags }),
             ),
           ),
         ).pipe(Effect.tap(notifyChanged)),
@@ -1300,21 +1326,28 @@ export class ShopAgent extends Agent {
    * at the accepted price of a snapshot that a mid-stream team archive would
    * not refresh.
    */
-  private reconciler(source: Domain.OrderSyncSource) {
-    const shop = this.name;
+  private routingContext() {
     const activeTeams = () => this.activeTeams();
     return Effect.gen(function* () {
-      const context: RoutingContext = {
+      return {
         workflows:
           yield* (yield* WorkflowRepository).listActiveWorkflowDetails(),
         activeTeams: yield* activeTeams(),
-      };
+      } satisfies RoutingContext;
+    });
+  }
+
+  private reconciler(source: Domain.OrderSyncSource) {
+    const shop = this.name;
+    const routingContext = () => this.routingContext();
+    return Effect.gen(function* () {
+      const context = yield* routingContext();
       const runs = yield* WorkflowRunRepository;
       return (order: Domain.ShopOrder) =>
         runs.reconcileOrder({ ...context, orderId: order.id }).pipe(
-          Effect.tap(({ created, cancelled, flagged }) =>
+          Effect.tap(({ created, cancelled, flagged, orderRuns }) =>
             Effect.logInfo(
-              `ShopAgent.reconcileOrder: shop=${shop} orderId=${order.id} source=${source} created=${String(created)} cancelled=${String(cancelled)} flagged=${String(flagged)}`,
+              `ShopAgent.reconcileOrder: shop=${shop} orderId=${order.id} source=${source} created=${String(created)} cancelled=${String(cancelled)} flagged=${String(flagged)} orderRuns=${String(orderRuns)}`,
             ).pipe(
               Effect.annotateLogs({
                 shop,
@@ -1323,6 +1356,7 @@ export class ShopAgent extends Agent {
                 created,
                 cancelled,
                 flagged,
+                orderRuns,
               }),
             ),
           ),
@@ -1356,10 +1390,15 @@ export class ShopAgent extends Agent {
           const detail = yield* orders.getOrderByLegacyId(legacyId);
           if (Option.isNone(detail)) return null;
           const { order, lineItems } = detail.value;
+          const workflows =
+            yield* (yield* WorkflowRepository).listActiveWorkflowDetails();
           return {
             order,
             lineItems,
             runs: yield* runs.listRunsForOrder({ orderId: order.id }),
+            orderWorkflow:
+              workflows.find(({ workflow }) => workflow.scope === "order")
+                ?.workflow ?? null,
           } satisfies Domain.OrderDetailView;
         }),
       )(input),
@@ -1411,7 +1450,13 @@ export class ShopAgent extends Agent {
             workflowId,
           });
           const teams = yield* activeTeams();
-          if (Option.isNone(workflow) || !isRoutable(workflow.value, teams))
+          // An order workflow starts by rule, never by attaching it to one
+          // line item (deferred; see the `WorkflowScope` doc).
+          if (
+            Option.isNone(workflow) ||
+            workflow.value.workflow.scope !== "item" ||
+            !isRoutable(workflow.value, teams)
+          )
             return {
               _tag: "WorkflowNotRoutable",
             } satisfies Domain.AttachResult;
@@ -1437,13 +1482,20 @@ export class ShopAgent extends Agent {
   ): Promise<Domain.RunResult> {
     const shop = this.name;
     const notifyChanged = () => this.notifyChanged();
+    const routingContext = () => this.routingContext();
     return this.runEffect(
       callableEffect("ShopAgent.cancelRun", Domain.RunIdInput, {
         onExcessProperty: "error",
       })(({ runId }) =>
         runResult(
           WorkflowRunRepository.pipe(
-            Effect.flatMap((repository) => repository.cancelRun({ runId })),
+            Effect.flatMap((repository) =>
+              routingContext().pipe(
+                Effect.flatMap((routing) =>
+                  repository.cancelRun({ runId, routing }),
+                ),
+              ),
+            ),
             Effect.tap(() =>
               Effect.logInfo(
                 `ShopAgent.cancelRun: shop=${shop} runId=${runId}`,
@@ -1523,6 +1575,7 @@ export class ShopAgent extends Agent {
                     steps: [first, ...rest],
                     stageCount: row.stageCount,
                     note: row.note,
+                    items: row.items,
                   },
                 ];
           });
@@ -1623,6 +1676,7 @@ export class ShopAgent extends Agent {
   ): Promise<Domain.RunResult> {
     const shop = this.name;
     const notifyChanged = () => this.notifyChanged();
+    const routingContext = () => this.routingContext();
     return this.runEffect(
       callableEffect(
         "ShopAgent.completeStep",
@@ -1636,6 +1690,7 @@ export class ShopAgent extends Agent {
                 memberId,
               ).pipe(Effect.orDie),
               teamIds,
+              routing: yield* routingContext(),
             });
             yield* Effect.logInfo(
               `ShopAgent.completeStep: shop=${shop} step=${runStepId} memberId=${memberId}`,

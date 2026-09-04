@@ -455,6 +455,91 @@ describe("ShopAgent workflow run callables", () => {
     ).toEqual({ _tag: "NotAllowed" });
   });
 
+  it("completing the last item step starts the order run; the packing team can complete and cancel it", async () => {
+    const shop = "wf-order-run.myshopify.com";
+    const engraving = await seedTeam(shop, "Engraving");
+    const packing = await seedTeam(shop, "Packing");
+    await seedOrder(shop, Date.now() + 60 * 60 * 1000);
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const item = await agent.createWorkflow({ name: "Engrave", tags: [] });
+    if (item._tag !== "Ok") throw new Error(item._tag);
+    await agent.addStep({
+      workflowId: item.workflow.id,
+      name: "Engrave",
+      teamId: engraving.id,
+    });
+    const pack = await agent.createWorkflow({
+      name: "Pack",
+      scope: "order",
+      tags: [],
+    });
+    if (pack._tag !== "Ok") throw new Error(pack._tag);
+    strictEqual(pack.workflow.scope, "order");
+    expect(
+      await agent.createWorkflow({ name: "Pack 2", scope: "order", tags: [] }),
+    ).toEqual({ _tag: "OrderWorkflowExists" });
+    await agent.addStep({
+      workflowId: pack.workflow.id,
+      name: "QC",
+      teamId: packing.id,
+    });
+
+    const attached = await agent.attachWorkflow({
+      lineItemId: "gid://shopify/LineItem/1",
+      workflowId: item.workflow.id,
+    });
+    if (attached._tag !== "Ok") throw new Error(attached._tag);
+    const detail = await agent.activateOrder({
+      legacyId: "1",
+      sessionToken: "t",
+    });
+    strictEqual(detail?.orderWorkflow?.id, pack.workflow.id);
+    strictEqual(detail?.runs.length, 1);
+
+    const [engraveItem] = await agent.listQueue({ teamIds: [engraving.id] });
+    expect(
+      await agent.completeStep({
+        runStepId: engraveItem?.steps[0]?.id ?? "",
+        memberId: "m1",
+        teamIds: [engraving.id],
+      }),
+    ).toEqual({ _tag: "Ok" });
+
+    const [packItem] = await agent.listQueue({ teamIds: [packing.id] });
+    if (packItem === undefined) throw new Error("no order run in the queue");
+    strictEqual(packItem.run.lineItemId, null);
+    strictEqual(packItem.run.workflowName, "Pack");
+    expect(packItem.items.map((i) => [i.title, i.runStatus])).toEqual([
+      ["Necklace", "done"],
+    ]);
+    const runs = await agent.listRunsForOrder({
+      orderId: "gid://shopify/Order/1",
+    });
+    strictEqual(runs.at(-1)?.run.id, packItem.run.id);
+
+    expect(await agent.cancelRun({ runId: packItem.run.id })).toEqual({
+      _tag: "Ok",
+    });
+    expect(await agent.uncancelRun({ runId: packItem.run.id })).toEqual({
+      _tag: "Ok",
+    });
+    expect(
+      await agent.completeStep({
+        runStepId: packItem.steps[0]?.id ?? "",
+        memberId: "m1",
+        teamIds: [packing.id],
+      }),
+    ).toEqual({ _tag: "Ok" });
+    expect(await agent.listQueue({ teamIds: [packing.id] })).toHaveLength(0);
+    const after = await agent.listRunsForOrder({
+      orderId: "gid://shopify/Order/1",
+    });
+    strictEqual(
+      after.find((d) => d.run.id === packItem.run.id)?.run.status,
+      "done",
+    );
+  });
+
   /**
    * The member-area server fns cannot be driven end to end here (their route
    * needs a Shopify session the isolate cannot stub), so the scope check they

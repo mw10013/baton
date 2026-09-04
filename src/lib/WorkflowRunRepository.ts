@@ -55,12 +55,15 @@ export interface QueueRow {
   })[];
   readonly stageCount: number;
   readonly note: string | null;
+  readonly items: readonly Domain.QueueOrderItem[];
 }
 
 export interface ReconcileCounts {
   readonly created: number;
   readonly cancelled: number;
   readonly flagged: number;
+  /** Order runs started by this pass (0 or 1). */
+  readonly orderRuns: number;
 }
 
 export interface RoutingContext {
@@ -111,6 +114,13 @@ const json = (value: unknown) => JSON.stringify(value);
 const isTerminal = (run: Domain.WorkflowRun) =>
   run.status === "done" || run.status === "cancelled";
 
+const NO_COUNTS: ReconcileCounts = {
+  created: 0,
+  cancelled: 0,
+  flagged: 0,
+  orderRuns: 0,
+};
+
 export class WorkflowRunRepository extends Context.Service<
   WorkflowRunRepository,
   {
@@ -128,7 +138,11 @@ export class WorkflowRunRepository extends Context.Service<
       ReconcileCounts,
       SqlError.SqlError | WorkflowRunRepositoryError
     >;
-    /** `None` when `(lineItemId, workflowId)` already has a run in any status. */
+    /**
+     * Manual attach of an item workflow. `None` when `(lineItemId,
+     * workflowId)` already has a run in any status. A new item run flags any
+     * open order run of the order `item_added`.
+     */
     readonly createRun: (input: {
       readonly workflow: Domain.WorkflowDetail;
       readonly activeTeams: RoutingContext["activeTeams"];
@@ -154,8 +168,13 @@ export class WorkflowRunRepository extends Context.Service<
       Option.Option<Domain.WorkflowRunDetail>,
       SqlError.SqlError | WorkflowRunRepositoryError
     >;
+    /**
+     * `routing` lets cancelling the last open item run start the order run;
+     * absent (tests that only exercise steps), the trigger is skipped.
+     */
     readonly cancelRun: (input: {
       readonly runId: string;
+      readonly routing?: RoutingContext;
     }) => Effect.Effect<
       void,
       | SqlError.SqlError
@@ -163,7 +182,7 @@ export class WorkflowRunRepository extends Context.Service<
       | RunNotFoundError
       | RunTerminalError
     >;
-    /** Only from `cancelled`; status is recomputed from the steps. */
+    /** Only from `cancelled`; status is recomputed from the steps. Un-cancelling an item run flags any open order run `item_added`. */
     readonly uncancelRun: (input: {
       readonly runId: string;
     }) => Effect.Effect<
@@ -198,11 +217,16 @@ export class WorkflowRunRepository extends Context.Service<
       | StepNotReadyError
       | RunTerminalError
     >;
-    /** Also backfills `startedAt` / `startedBy` when Done arrives without a Start, so every finished step records who. */
+    /**
+     * Also backfills `startedAt` / `startedBy` when Done arrives without a
+     * Start, so every finished step records who. With `routing`, a completion
+     * that finishes the last item run on an order starts the order run.
+     */
     readonly completeStep: (input: {
       readonly runStepId: string;
       readonly memberId: Domain.MemberId;
       readonly teamIds: readonly string[];
+      readonly routing?: RoutingContext;
     }) => Effect.Effect<
       void,
       | SqlError.SqlError
@@ -416,6 +440,74 @@ export class WorkflowRunRepository extends Context.Service<
           ),
         );
 
+      const RUN_STATUS_RANK: Record<Domain.RunStatus, number> = {
+        pending: 0,
+        active: 1,
+        done: 2,
+        cancelled: 3,
+      };
+
+      /** The less-finished of two item statuses; null means "no run", which never wins over a run. */
+      const worstStatus = (
+        a: Domain.RunStatus | null,
+        b: Domain.RunStatus | null,
+      ) => {
+        if (a === null) return b;
+        if (b === null) return a;
+        return RUN_STATUS_RANK[a] <= RUN_STATUS_RANK[b] ? a : b;
+      };
+
+      /**
+       * The live line items of the orders behind the order runs on a queue
+       * page, each with the worst status across its non-cancelled runs
+       * (`pending` < `active` < `done`) or null when no item workflow touched
+       * it. Read live rather than snapshotted so a late item shows on the
+       * card as soon as reconcile stores it.
+       */
+      const orderItems = (orderIds: readonly string[]) =>
+        orderIds.length === 0
+          ? Effect.succeed([])
+          : sql`
+              select li.orderId, li.id as lineItemId, li.title, li.variantTitle,
+                li.currentQuantity as quantity, li.customAttributes, r.status as runStatus
+              from OrderLineItem li
+              left join WorkflowRun r on r.lineItemId = li.id and r.status <> 'cancelled'
+              where li.orderId in (select value from json_each(${json(orderIds)}))
+                and li.currentQuantity > 0
+              order by li.orderId, li.title
+            `.pipe(
+              Effect.flatMap(
+                decode(
+                  Schema.Array(
+                    Schema.Struct({
+                      ...Domain.QueueOrderItem.fields,
+                      orderId: Schema.String,
+                      customAttributes: Schema.fromJsonString(
+                        Schema.Array(Domain.OrderAttribute),
+                      ),
+                    }),
+                  ),
+                  "Invalid queue order item row",
+                ),
+              ),
+              Effect.map((rows) =>
+                rows.reduce<
+                  readonly (Domain.QueueOrderItem & {
+                    readonly orderId: string;
+                  })[]
+                >((acc, row) => {
+                  const previous = acc.find(
+                    (item) => item.lineItemId === row.lineItemId,
+                  );
+                  if (previous === undefined) return [...acc, row];
+                  const worst = worstStatus(row.runStatus, previous.runStatus);
+                  return acc.map((item) =>
+                    item === previous ? { ...item, runStatus: worst } : item,
+                  );
+                }, []),
+              ),
+            );
+
       /**
        * `status` is a function of the steps; recomputing it in SQL from the
        * same rows the step write just touched is what keeps the two in one
@@ -446,7 +538,8 @@ export class WorkflowRunRepository extends Context.Service<
           returning id
         `.pipe(Effect.map((rows) => rows.length));
 
-      const flagActive = (
+      const flagWhere = (
+        status: Statement.Fragment,
         where: Statement.Fragment,
         flag: Domain.RunFlag,
         detail: Domain.RunFlagDetail,
@@ -455,10 +548,43 @@ export class WorkflowRunRepository extends Context.Service<
         sql`
           update WorkflowRun
           set flag = ${flag}, flagAt = ${now}, flagDetail = ${json(detail)}, updatedAt = ${now}
-          where status = 'active' and ${where}
+          where ${status} and ${where}
           returning id
         `.pipe(Effect.map((rows) => rows.length));
 
+      const flagActive = (
+        where: Statement.Fragment,
+        flag: Domain.RunFlag,
+        detail: Domain.RunFlagDetail,
+        now: number,
+      ) => flagWhere(sql`status = 'active'`, where, flag, detail, now);
+
+      /**
+       * Order runs only: flags `pending` as well as `active`. An item run that
+       * is still pending is adjusted silently because no one has started it;
+       * an order run's premise ("every item is made") is what changed, and
+       * nothing silent can restore it, so the worker must see it either way.
+       */
+      const flagOpenOrderRuns = (
+        orderId: string,
+        flag: Domain.RunFlag,
+        detail: Domain.RunFlagDetail,
+        now: number,
+      ) =>
+        flagWhere(
+          sql`status in ('pending', 'active')`,
+          sql`orderId = ${orderId} and lineItemId is null`,
+          flag,
+          detail,
+          now,
+        );
+
+      /**
+       * `lineItem: null` writes an order run: the four line-item columns null
+       * together, and the conflict target is the partial index
+       * `WorkflowRun_order_uidx`, whose predicate the clause must repeat
+       * verbatim for SQLite to pick it.
+       */
       const insertRun = Effect.fn("WorkflowRunRepository.insertRun")(
         function* ({
           workflow: { workflow, steps },
@@ -470,7 +596,7 @@ export class WorkflowRunRepository extends Context.Service<
           readonly workflow: Domain.WorkflowDetail;
           readonly activeTeams: RoutingContext["activeTeams"];
           readonly order: Domain.ShopOrder;
-          readonly lineItem: Domain.OrderLineItem;
+          readonly lineItem: Domain.OrderLineItem | null;
           readonly source: Domain.RunSource;
         }) {
           const now = yield* Clock.currentTimeMillis;
@@ -484,12 +610,17 @@ export class WorkflowRunRepository extends Context.Service<
                 cancelledAt
               ) values (
                 ${runId}, ${workflow.id}, ${workflow.name}, ${order.id},
-                ${order.name}, ${lineItem.id}, ${lineItem.title},
-                ${lineItem.variantTitle}, ${lineItem.sku},
-                ${lineItem.currentQuantity}, ${json(lineItem.customAttributes)},
+                ${order.name}, ${lineItem?.id ?? null}, ${lineItem?.title ?? null},
+                ${lineItem?.variantTitle ?? null}, ${lineItem?.sku ?? null},
+                ${lineItem?.currentQuantity ?? null},
+                ${lineItem === null ? null : json(lineItem.customAttributes)},
                 ${source}, 'pending', null, null, null, ${now}, ${now}, null
               )
-              on conflict (lineItemId, workflowId) do nothing
+              ${
+                lineItem === null
+                  ? sql`on conflict (orderId, workflowId) where lineItemId is null do nothing`
+                  : sql`on conflict (lineItemId, workflowId) do nothing`
+              }
               returning *
             `,
           );
@@ -513,6 +644,96 @@ export class WorkflowRunRepository extends Context.Service<
         },
       );
 
+      /**
+       * The order-run trigger, evaluated inside the caller's transaction at
+       * the end of every action that can finish an order's last open item run.
+       * Never opens a transaction of its own. Returns how many order runs
+       * started (0 or 1).
+       *
+       * Ready = order eligible (paid, not cancelled), the order workflow
+       * routable and older than the order (the same age rule as item
+       * routing), at least one item run `done`, no item run open, and no
+       * order run for this workflow in any status — a cancelled order run
+       * keeps its key, so recovery is un-cancel, never a second start. A
+       * stock-only order (no item runs) never triggers.
+       *
+       * The age rule has one exception: an item run with `source = 'manual'`
+       * opts the order in. Manual attach already overrides the age rule for
+       * the item — an admin choosing to work an old order by hand — and the
+       * item's completion would otherwise dead-end there, with the placeholder
+       * promising packing that never comes. Tag-routed runs cannot exist on an
+       * order older than their workflow, so this only ever fires on orders a
+       * person deliberately pulled into production.
+       */
+      const startOrderRunIfReady = Effect.fn(
+        "WorkflowRunRepository.startOrderRunIfReady",
+      )(function* ({
+        orderId,
+        workflows,
+        activeTeams,
+      }: RoutingContext & { readonly orderId: string }) {
+        const orderWorkflow = workflows.find(
+          ({ workflow }) => workflow.scope === "order",
+        );
+        if (orderWorkflow === undefined) return 0;
+        if (!isRoutable(orderWorkflow, activeTeams)) return 0;
+        const [order] = yield* decodeOrders(
+          yield* sql`select ${orderColumns} from ShopOrder where id = ${orderId}`,
+        );
+        if (order === undefined || !isEligibleOrder(order)) return 0;
+        const [ready] = yield* sql`
+          select
+            exists (
+              select 1 from WorkflowRun
+              where orderId = ${orderId} and lineItemId is not null and status = 'done'
+            ) as anyDone,
+            exists (
+              select 1 from WorkflowRun
+              where orderId = ${orderId} and lineItemId is not null and source = 'manual'
+            ) as optedIn,
+            exists (
+              select 1 from WorkflowRun
+              where orderId = ${orderId} and lineItemId is not null
+                and status in ('pending', 'active')
+            ) as anyOpen,
+            exists (
+              select 1 from WorkflowRun
+              where orderId = ${orderId} and lineItemId is null
+                and workflowId = ${orderWorkflow.workflow.id}
+            ) as started
+        `;
+        if (
+          ready === undefined ||
+          Number(ready.anyDone) === 0 ||
+          Number(ready.anyOpen) !== 0 ||
+          Number(ready.started) !== 0
+        )
+          return 0;
+        if (
+          order.processedAt < orderWorkflow.workflow.createdAt &&
+          Number(ready.optedIn) === 0
+        )
+          return 0;
+        const run = yield* insertRun({
+          workflow: orderWorkflow,
+          activeTeams,
+          order,
+          lineItem: null,
+          source: "tag",
+        });
+        if (Option.isNone(run)) return 0;
+        yield* Effect.logInfo(
+          `WorkflowRunRepository.startOrderRun: orderId=${orderId} workflowId=${orderWorkflow.workflow.id} runId=${run.value.id}`,
+        ).pipe(
+          Effect.annotateLogs({
+            orderId,
+            workflowId: orderWorkflow.workflow.id,
+            runId: run.value.id,
+          }),
+        );
+        return 1;
+      });
+
       return WorkflowRunRepository.of({
         reconcileOrder: Effect.fn("WorkflowRunRepository.reconcileOrder")(
           function* ({
@@ -524,11 +745,10 @@ export class WorkflowRunRepository extends Context.Service<
             const [order] = yield* decodeOrders(
               yield* sql`select ${orderColumns} from ShopOrder where id = ${orderId}`,
             );
-            if (order === undefined)
-              return { created: 0, cancelled: 0, flagged: 0 };
+            if (order === undefined) return NO_COUNTS;
             if (!isEligibleOrder(order))
               return {
-                created: 0,
+                ...NO_COUNTS,
                 cancelled: yield* cancelPending(orderId, now),
                 flagged:
                   order.cancelledAt === null
@@ -552,11 +772,13 @@ export class WorkflowRunRepository extends Context.Service<
             const routable = workflows.filter((workflow) =>
               isRoutable(workflow, activeTeams),
             );
-            const created = yield* Effect.forEach(
+            const inserted = yield* Effect.forEach(
               lineItems.flatMap((lineItem) =>
                 routable
-                  .filter((workflow) =>
-                    matchesLineItem(workflow, order, lineItem),
+                  .filter(
+                    (workflow) =>
+                      workflow.workflow.scope === "item" &&
+                      matchesLineItem(workflow, order, lineItem),
                   )
                   .map((workflow) => ({ workflow, lineItem })),
               ),
@@ -567,10 +789,16 @@ export class WorkflowRunRepository extends Context.Service<
                   order,
                   lineItem,
                   source: "tag",
-                }),
-            ).pipe(
-              Effect.map((results) => results.filter(Option.isSome).length),
-            );
+                }).pipe(
+                  Effect.map(
+                    Option.map((run) => ({ run, item: lineItem.title })),
+                  ),
+                ),
+            ).pipe(Effect.map((results) => results.filter(Option.isSome)));
+            const created = inserted.length;
+            const itemRuns = runs.filter((run) => run.lineItemId !== null);
+            const orderRuns = runs.filter((run) => run.lineItemId === null);
+            /** `removed` names the item so the order run's flag can carry it. */
             const adjust = (run: Domain.WorkflowRun) => {
               const lineItem = lineItems.find(
                 (item) => item.id === run.lineItemId,
@@ -581,17 +809,31 @@ export class WorkflowRunRepository extends Context.Service<
                       update WorkflowRun
                       set status = 'cancelled', cancelledAt = ${now}, updatedAt = ${now}
                       where id = ${run.id}
-                    `.pipe(Effect.as({ cancelled: 1, flagged: 0 }))
+                    `.pipe(
+                      Effect.as({
+                        cancelled: 1,
+                        flagged: 0,
+                        removed: null,
+                      }),
+                    )
                   : flagActive(
                       sql`id = ${run.id}`,
                       "item_removed",
                       {},
                       now,
                     ).pipe(
-                      Effect.map((flagged) => ({ cancelled: 0, flagged })),
+                      Effect.map((flagged) => ({
+                        cancelled: 0,
+                        flagged,
+                        removed: flagged > 0 ? run.lineItemTitle : null,
+                      })),
                     );
               if (lineItem.currentQuantity === run.quantity)
-                return Effect.succeed({ cancelled: 0, flagged: 0 });
+                return Effect.succeed({
+                  cancelled: 0,
+                  flagged: 0,
+                  removed: null,
+                });
               return sql`
                 update WorkflowRun
                 set quantity = ${lineItem.currentQuantity}, updatedAt = ${now}
@@ -603,29 +845,88 @@ export class WorkflowRunRepository extends Context.Service<
                     : flagActive(
                         sql`id = ${run.id}`,
                         "quantity_changed",
-                        { from: run.quantity, to: lineItem.currentQuantity },
+                        {
+                          from: run.quantity ?? 0,
+                          to: lineItem.currentQuantity,
+                        },
                         now,
                       ),
                 ),
-                Effect.map((flagged) => ({ cancelled: 0, flagged })),
+                Effect.map((flagged) => ({
+                  cancelled: 0,
+                  flagged,
+                  removed: null,
+                })),
               );
             };
-            const adjusted = yield* Effect.all(runs.map(adjust));
+            const adjusted = yield* Effect.all(itemRuns.map(adjust));
+            // Order runs already open: a new item, or an item removed in this
+            // pass, breaks "all items made". Removal wins when both happen,
+            // because it is the one the worker cannot see from the items list.
+            const addedItem = inserted[0]?.value.item ?? null;
+            const removedItem =
+              adjusted.find((delta) => delta.removed !== null)?.removed ?? null;
+            const orderRunFlag = (():
+              | readonly [Domain.RunFlag, string]
+              | null => {
+              if (orderRuns.length === 0) return null;
+              if (removedItem !== null) return ["item_removed", removedItem];
+              if (addedItem !== null) return ["item_added", addedItem];
+              return null;
+            })();
+            const orderRunFlags =
+              orderRunFlag === null
+                ? 0
+                : yield* flagOpenOrderRuns(
+                    orderId,
+                    orderRunFlag[0],
+                    { item: orderRunFlag[1] },
+                    now,
+                  );
+            const startedOrderRuns = yield* startOrderRunIfReady({
+              orderId,
+              workflows,
+              activeTeams,
+            });
             return adjusted.reduce<ReconcileCounts>(
               (counts, delta) => ({
-                created: counts.created,
+                ...counts,
                 cancelled: counts.cancelled + delta.cancelled,
                 flagged: counts.flagged + delta.flagged,
               }),
-              { created, cancelled: 0, flagged: 0 },
+              {
+                created,
+                cancelled: 0,
+                flagged: orderRunFlags,
+                orderRuns: startedOrderRuns,
+              },
             );
           },
         ),
 
         createRun: Effect.fn("WorkflowRunRepository.createRun")(function* (
-          input: Parameters<typeof insertRun>[0],
+          input: Parameters<typeof insertRun>[0] & {
+            readonly lineItem: Domain.OrderLineItem;
+          },
         ) {
-          return yield* sql.withTransaction(insertRun(input));
+          return yield* sql.withTransaction(
+            insertRun(input).pipe(
+              Effect.tap((run) =>
+                Option.isNone(run)
+                  ? Effect.void
+                  : Clock.currentTimeMillis.pipe(
+                      Effect.flatMap((now) =>
+                        flagOpenOrderRuns(
+                          input.order.id,
+                          "item_added",
+                          { item: input.lineItem.title },
+                          now,
+                        ),
+                      ),
+                    ),
+              ),
+            ),
+          );
         }),
 
         markOrderDeleted: Effect.fn("WorkflowRunRepository.markOrderDeleted")(
@@ -648,7 +949,7 @@ export class WorkflowRunRepository extends Context.Service<
                 yield* sql`
                   select * from WorkflowRun
                   where orderId = ${orderId}
-                  order by lineItemId, createdAt
+                  order by lineItemId is null, lineItemId, createdAt
                 `,
               ),
             );
@@ -670,18 +971,29 @@ export class WorkflowRunRepository extends Context.Service<
 
         cancelRun: Effect.fn("WorkflowRunRepository.cancelRun")(function* ({
           runId,
+          routing,
         }: {
           readonly runId: string;
+          readonly routing?: RoutingContext;
         }) {
-          const run = yield* requireRun(runId);
-          if (run.status === "done" || run.status === "cancelled")
-            yield* new RunTerminalError({ runId, status: run.status });
-          const now = yield* Clock.currentTimeMillis;
-          yield* sql`
-            update WorkflowRun
-            set status = 'cancelled', cancelledAt = ${now}, updatedAt = ${now}
-            where id = ${runId}
-          `;
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              const run = yield* requireRun(runId);
+              if (run.status === "done" || run.status === "cancelled")
+                yield* new RunTerminalError({ runId, status: run.status });
+              const now = yield* Clock.currentTimeMillis;
+              yield* sql`
+                update WorkflowRun
+                set status = 'cancelled', cancelledAt = ${now}, updatedAt = ${now}
+                where id = ${runId}
+              `;
+              if (routing !== undefined && !Domain.isOrderRun(run))
+                yield* startOrderRunIfReady({
+                  ...routing,
+                  orderId: run.orderId,
+                });
+            }),
+          );
         }),
 
         uncancelRun: Effect.fn("WorkflowRunRepository.uncancelRun")(function* ({
@@ -689,12 +1001,23 @@ export class WorkflowRunRepository extends Context.Service<
         }: {
           readonly runId: string;
         }) {
-          const run = yield* requireRun(runId);
-          if (run.status !== "cancelled")
-            yield* new RunTerminalError({ runId, status: run.status });
-          const now = yield* Clock.currentTimeMillis;
-          yield* sql`update WorkflowRun set cancelledAt = null where id = ${runId}`;
-          yield* recomputeStatus(runId, now);
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              const run = yield* requireRun(runId);
+              if (run.status !== "cancelled")
+                yield* new RunTerminalError({ runId, status: run.status });
+              const now = yield* Clock.currentTimeMillis;
+              yield* sql`update WorkflowRun set cancelledAt = null where id = ${runId}`;
+              yield* recomputeStatus(runId, now);
+              if (!Domain.isOrderRun(run))
+                yield* flagOpenOrderRuns(
+                  run.orderId,
+                  "item_added",
+                  { item: run.lineItemTitle ?? "" },
+                  now,
+                );
+            }),
+          );
         }),
 
         /**
@@ -737,6 +1060,14 @@ export class WorkflowRunRepository extends Context.Service<
               order by r.flag is null, r.createdAt, r.orderName, r.lineItemId
             `,
           );
+          const orderIds = [
+            ...new Set(
+              runs
+                .filter((run) => run.lineItemId === null)
+                .map((run) => run.orderId),
+            ),
+          ];
+          const items = yield* orderItems(orderIds);
           return runs.flatMap(({ note, stageCount, ...run }): QueueRow[] => {
             const ofRun = ready.filter((step) => step.runId === run.id);
             const mine = ofRun.filter((step) => teamIds.includes(step.teamId));
@@ -746,6 +1077,10 @@ export class WorkflowRunRepository extends Context.Service<
                 run,
                 stageCount,
                 note,
+                items:
+                  run.lineItemId === null
+                    ? items.filter((item) => item.orderId === run.orderId)
+                    : [],
                 steps: mine.map((step) => ({
                   ...step,
                   siblings: ofRun
@@ -795,10 +1130,12 @@ export class WorkflowRunRepository extends Context.Service<
             runStepId,
             memberId,
             teamIds,
+            routing,
           }: {
             readonly runStepId: string;
             readonly memberId: Domain.MemberId;
             readonly teamIds: readonly string[];
+            readonly routing?: RoutingContext;
           }) {
             yield* sql.withTransaction(
               Effect.gen(function* () {
@@ -817,6 +1154,11 @@ export class WorkflowRunRepository extends Context.Service<
                   where id = ${runStepId}
                 `;
                 yield* recomputeStatus(run.id, now);
+                if (routing !== undefined && !Domain.isOrderRun(run))
+                  yield* startOrderRunIfReady({
+                    ...routing,
+                    orderId: run.orderId,
+                  });
               }),
             );
           },

@@ -447,9 +447,18 @@ export type ProductTags = typeof ProductTags.Type;
  * instance can always resolve the name it was copied from. Editing a definition
  * never rewrites history because instances copy their steps at creation.
  */
+/**
+ * `item`: runs once per matching line item (tag routed). `order`: runs once
+ * per order, after every item run on it is finished — at most one active per
+ * shop, never tag-selected, `tags` always empty. Set on create, never changed.
+ */
+export const WorkflowScope = Schema.Literals(["item", "order"]);
+export type WorkflowScope = typeof WorkflowScope.Type;
+
 export const Workflow = Schema.Struct({
   id: WorkflowId,
   name: WorkflowName,
+  scope: WorkflowScope,
   tags: Schema.fromJsonString(ProductTags),
   createdAt: Schema.Number,
   updatedAt: Schema.Number,
@@ -523,8 +532,10 @@ export type ListWorkflowsInput = typeof ListWorkflowsInput.Type;
 export const WorkflowIdInput = Schema.Struct({ workflowId: BoundedId });
 export type WorkflowIdInput = typeof WorkflowIdInput.Type;
 
+/** `scope` omitted means `item`, so every pre-existing caller keeps its shape. */
 export const CreateWorkflowInput = Schema.Struct({
   name: WorkflowName,
+  scope: Schema.optionalKey(WorkflowScope),
   tags: ProductTags,
 });
 export type CreateWorkflowInput = typeof CreateWorkflowInput.Type;
@@ -583,6 +594,7 @@ export const SeedWorkflowsInput = Schema.Struct({
   workflows: Schema.Array(
     Schema.Struct({
       name: WorkflowName,
+      scope: Schema.optionalKey(WorkflowScope),
       tags: ProductTags,
       steps: Schema.Array(
         Schema.Struct({
@@ -627,6 +639,7 @@ export const WorkflowResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("NameTaken") }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("Limit"), limit: Schema.Number }),
+  Schema.Struct({ _tag: Schema.Literal("OrderWorkflowExists") }),
 ]);
 export type WorkflowResult = typeof WorkflowResult.Type;
 
@@ -1123,6 +1136,11 @@ export type RunStatus = typeof RunStatus.Type;
  * `blocked` is the one flag a person sets rather than reconcile: a worker
  * marking the run as needing attention, with an optional reason. A later
  * reconcile flag overwrites it like any other.
+ *
+ * `item_added` is set only on an order run: a line item run appeared (new
+ * item, manual attach, un-cancel) after the order run started, so "all items
+ * made" no longer holds. Unlike item-run flags it lands on a `pending` order
+ * run too, because there is no silent adjustment that restores the premise.
  */
 export const RunFlag = Schema.Literals([
   "item_removed",
@@ -1130,6 +1148,7 @@ export const RunFlag = Schema.Literals([
   "order_cancelled",
   "order_deleted",
   "blocked",
+  "item_added",
 ]);
 export type RunFlag = typeof RunFlag.Type;
 
@@ -1138,17 +1157,25 @@ export const RunFlagDetail = Schema.Struct({
   to: Schema.optionalKey(Schema.Number),
   reason: Schema.optionalKey(StepNote),
   by: Schema.optionalKey(MemberId),
+  /** The line item title behind an order run's `item_added` / `item_removed`. */
+  item: Schema.optionalKey(Schema.String),
 });
 export type RunFlagDetail = typeof RunFlagDetail.Type;
 
 /**
- * One workflow applied to one line item. Every display field is a snapshot
- * taken at creation — `workflowName`, `orderName`, the line item's title and
- * personalization — so the queue card reads only this row and the run outlives
- * an order delete, a definition rename, or a line item dropped from the order.
- * No foreign keys to `ShopOrder`, `OrderLineItem`, or `Workflow` for that
- * reason. `unique (lineItemId, workflowId)` spans every status, so a cancelled
- * run keeps its key and the only way back is un-cancel.
+ * One workflow applied to one line item, or — when `lineItemId` is null — to
+ * one whole order (an *order run*, see `WorkflowScope`). Every display field
+ * is a snapshot taken at creation — `workflowName`, `orderName`, the line
+ * item's title and personalization — so the queue card reads only this row
+ * and the run outlives an order delete, a definition rename, or a line item
+ * dropped from the order. No foreign keys to `ShopOrder`, `OrderLineItem`, or
+ * `Workflow` for that reason. `unique (lineItemId, workflowId)` spans every
+ * status, so a cancelled run keeps its key and the only way back is un-cancel;
+ * a partial unique index does the same for `(orderId, workflowId)` on order
+ * runs.
+ *
+ * One struct with nullable fields rather than a union: every decoder, action,
+ * and card reads the same row, and {@link isOrderRun} is the only branch.
  */
 export const WorkflowRun = Schema.Struct({
   id: WorkflowRunId,
@@ -1156,12 +1183,14 @@ export const WorkflowRun = Schema.Struct({
   workflowName: WorkflowName,
   orderId: Schema.String,
   orderName: Schema.String,
-  lineItemId: Schema.String,
-  lineItemTitle: Schema.String,
+  lineItemId: Schema.NullOr(Schema.String),
+  lineItemTitle: Schema.NullOr(Schema.String),
   variantTitle: Schema.NullOr(Schema.String),
   sku: Schema.NullOr(Schema.String),
-  quantity: Schema.Number,
-  customAttributes: Schema.fromJsonString(Schema.Array(OrderAttribute)),
+  quantity: Schema.NullOr(Schema.Number),
+  customAttributes: Schema.NullOr(
+    Schema.fromJsonString(Schema.Array(OrderAttribute)),
+  ),
   source: RunSource,
   status: RunStatus,
   flag: Schema.NullOr(RunFlag),
@@ -1172,6 +1201,8 @@ export const WorkflowRun = Schema.Struct({
   cancelledAt: Schema.NullOr(Schema.Number),
 });
 export type WorkflowRun = typeof WorkflowRun.Type;
+
+export const isOrderRun = (run: WorkflowRun) => run.lineItemId === null;
 
 /**
  * A step copied from the definition at run creation. `teamName` is snapshotted
@@ -1225,11 +1256,29 @@ export type QueueStep = typeof QueueStep.Type;
  * `note` is the order's live note, joined at read time rather than
  * snapshotted because a merchant edits it while work is in progress.
  */
+/**
+ * One line item of the order an *order run* is on, read live at queue time
+ * (never snapshotted) so a late item shows on the card as soon as reconcile
+ * stores it. `runStatus` is the worst status across that item's runs
+ * (`pending` < `active` < `done`), or null when no item workflow touched it.
+ */
+export const QueueOrderItem = Schema.Struct({
+  lineItemId: BoundedId,
+  title: Schema.String,
+  variantTitle: Schema.NullOr(Schema.String),
+  quantity: Schema.Number,
+  customAttributes: Schema.Array(OrderAttribute),
+  runStatus: Schema.NullOr(RunStatus),
+});
+export type QueueOrderItem = typeof QueueOrderItem.Type;
+
 export const QueueItem = Schema.Struct({
   run: WorkflowRun,
   steps: Schema.NonEmptyArray(QueueStep),
   stageCount: Schema.Number,
   note: Schema.NullOr(Schema.String),
+  /** Populated only for order runs; `[]` for item runs. */
+  items: Schema.Array(QueueOrderItem),
 });
 export type QueueItem = typeof QueueItem.Type;
 
@@ -1250,6 +1299,8 @@ export const OrderDetailView = Schema.Struct({
   order: ShopOrder,
   lineItems: Schema.Array(OrderLineItem),
   runs: Schema.Array(WorkflowRunDetail),
+  /** The shop's active order workflow, so the page can say what will start once the items are made. */
+  orderWorkflow: Schema.NullOr(Workflow),
 });
 export type OrderDetailView = typeof OrderDetailView.Type;
 

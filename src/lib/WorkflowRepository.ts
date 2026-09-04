@@ -55,6 +55,17 @@ export class WorkflowLimitError extends Schema.TaggedError<WorkflowLimitError>()
   { limit: Schema.Number },
 ) {}
 
+/**
+ * Another non-archived workflow already has `scope = 'order'`. A repository
+ * check rather than a SQL constraint so the UI gets a named error; archiving
+ * the holder frees the slot, and un-archiving into an occupied slot is refused
+ * with the same error.
+ */
+export class OrderWorkflowExistsError extends Schema.TaggedError<OrderWorkflowExistsError>()(
+  "OrderWorkflowExistsError",
+  { workflowId: Schema.String },
+) {}
+
 const json = (value: unknown) => JSON.stringify(value);
 
 const count = (query: Statement.Statement<SqlConnection.Row>) =>
@@ -102,8 +113,14 @@ export class WorkflowRepository extends Context.Service<
     readonly replaceWorkflows: (
       input: Domain.SeedWorkflowsInput,
     ) => Effect.Effect<void, SqlError.SqlError | WorkflowRepositoryError>;
+    /**
+     * `scope` defaults to `item`. An order workflow must have no tags (a
+     * `WorkflowRepositoryError`: the UI never sends any, so it is a programming
+     * error) and is refused while another active one exists.
+     */
     readonly createWorkflow: (input: {
       readonly name: Domain.WorkflowName;
+      readonly scope?: Domain.WorkflowScope;
       readonly tags: Domain.ProductTags;
     }) => Effect.Effect<
       Domain.Workflow,
@@ -111,7 +128,9 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowRepositoryError
       | WorkflowNameTakenError
       | WorkflowLimitError
+      | OrderWorkflowExistsError
     >;
+    /** `scope` is not editable; non-empty tags on an order workflow are refused. */
     readonly updateWorkflow: (input: {
       readonly workflowId: string;
       readonly name: Domain.WorkflowName;
@@ -124,16 +143,20 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowNotFoundError
     >;
     /**
-     * Unconditional and idempotent. Nothing points at a definition — a future
-     * running instance copies its steps — so archiving only stops new line
-     * items from routing here. Guard live pointers (step → team), never copies.
+     * Idempotent. Nothing points at a definition — a future running instance
+     * copies its steps — so archiving only stops new line items from routing
+     * here. Guard live pointers (step → team), never copies. Restoring an
+     * order workflow is refused while another active one holds the slot.
      */
     readonly setWorkflowArchived: (input: {
       readonly workflowId: string;
       readonly archived: boolean;
     }) => Effect.Effect<
       Domain.Workflow,
-      SqlError.SqlError | WorkflowRepositoryError | WorkflowNotFoundError
+      | SqlError.SqlError
+      | WorkflowRepositoryError
+      | WorkflowNotFoundError
+      | OrderWorkflowExistsError
     >;
     /** New step in a new last stage. */
     readonly addStep: (input: {
@@ -244,7 +267,7 @@ export class WorkflowRepository extends Context.Service<
       );
 
       const workflowColumns = sql.literal(
-        "id, name, tags, createdAt, updatedAt, archivedAt",
+        "id, name, scope, tags, createdAt, updatedAt, archivedAt",
       );
 
       const findWorkflow = (workflowId: string) =>
@@ -268,6 +291,43 @@ export class WorkflowRepository extends Context.Service<
             }),
           ),
         );
+
+      /** The active order workflow other than `exceptId`, if any. */
+      const activeOrderWorkflowId = (exceptId: string | null) =>
+        sql`
+          select id from Workflow
+          where scope = 'order' and archivedAt is null
+            and id is not ${exceptId}
+          limit 1
+        `.pipe(
+          Effect.map((rows) =>
+            Option.fromUndefinedOr(rows[0]?.id).pipe(Option.map(String)),
+          ),
+        );
+
+      const requireOrderWorkflowSlot = (exceptId: string | null) =>
+        activeOrderWorkflowId(exceptId).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () => Effect.void,
+              onSome: (workflowId) =>
+                Effect.fail(new OrderWorkflowExistsError({ workflowId })),
+            }),
+          ),
+        );
+
+      const requireNoTagsForOrderScope = (
+        scope: Domain.WorkflowScope,
+        tags: Domain.ProductTags,
+      ) =>
+        scope === "order" && tags.length > 0
+          ? Effect.fail(
+              new WorkflowRepositoryError({
+                message: "An order workflow cannot have product tags",
+                cause: tags,
+              }),
+            )
+          : Effect.void;
 
       const countSteps = (workflowId: string) =>
         count(
@@ -380,7 +440,7 @@ export class WorkflowRepository extends Context.Service<
               "Invalid WorkflowSummary row",
             )(
               yield* sql`
-                select w.id, w.name, w.tags, w.createdAt, w.updatedAt, w.archivedAt,
+                select w.id, w.name, w.scope, w.tags, w.createdAt, w.updatedAt, w.archivedAt,
                   (select count(*) from WorkflowStep s where s.workflowId = w.id) as stepCount,
                   (select count(*) from WorkflowRun r
                     where r.workflowId = w.id and r.status in ('pending', 'active')) as activeRunCount
@@ -491,9 +551,9 @@ export class WorkflowRepository extends Context.Service<
                   const workflowId = crypto.randomUUID();
                   yield* sql`
                     insert into Workflow
-                      (id, name, tags, createdAt, updatedAt, archivedAt)
+                      (id, name, scope, tags, createdAt, updatedAt, archivedAt)
                     values
-                      (${workflowId}, ${workflow.name}, ${json(workflow.tags)}, ${now}, ${now}, null)
+                      (${workflowId}, ${workflow.name}, ${workflow.scope ?? "item"}, ${json(workflow.tags)}, ${now}, ${now}, null)
                   `;
                   for (const step of workflow.steps)
                     yield* sql`
@@ -511,11 +571,15 @@ export class WorkflowRepository extends Context.Service<
         createWorkflow: Effect.fn("WorkflowRepository.createWorkflow")(
           function* ({
             name,
+            scope = "item",
             tags,
           }: {
             readonly name: Domain.WorkflowName;
+            readonly scope?: Domain.WorkflowScope;
             readonly tags: Domain.ProductTags;
           }) {
+            yield* requireNoTagsForOrderScope(scope, tags);
+            if (scope === "order") yield* requireOrderWorkflowSlot(null);
             const active = yield* count(
               sql`select count(*) from Workflow where archivedAt is null`,
             );
@@ -527,9 +591,9 @@ export class WorkflowRepository extends Context.Service<
             const [workflow] = yield* decodeWorkflows(
               yield* sql`
                 insert or ignore into Workflow
-                  (id, name, tags, createdAt, updatedAt, archivedAt)
+                  (id, name, scope, tags, createdAt, updatedAt, archivedAt)
                 values
-                  (${crypto.randomUUID()}, ${name}, ${json(tags)}, ${now}, ${now}, null)
+                  (${crypto.randomUUID()}, ${name}, ${scope}, ${json(tags)}, ${now}, ${now}, null)
                 returning ${workflowColumns}
               `,
             );
@@ -538,9 +602,9 @@ export class WorkflowRepository extends Context.Service<
         ),
 
         /**
-         * `update or ignore` turns a name collision into zero returned rows,
-         * which makes "no rows" ambiguous with "no such workflow"; the
-         * follow-up existence check disambiguates and only runs on failure.
+         * `update or ignore` turns a name collision into zero returned rows.
+         * Existence is checked first (the scope rule needs the row anyway), so
+         * no rows afterwards means exactly "name taken".
          */
         updateWorkflow: Effect.fn("WorkflowRepository.updateWorkflow")(
           function* ({
@@ -552,6 +616,10 @@ export class WorkflowRepository extends Context.Service<
             readonly name: Domain.WorkflowName;
             readonly tags: Domain.ProductTags;
           }) {
+            const existing = yield* findWorkflow(workflowId);
+            if (Option.isNone(existing))
+              return yield* new WorkflowNotFoundError({ workflowId });
+            yield* requireNoTagsForOrderScope(existing.value.scope, tags);
             const now = yield* Clock.currentTimeMillis;
             const [workflow] = yield* decodeWorkflows(
               yield* sql`
@@ -561,10 +629,7 @@ export class WorkflowRepository extends Context.Service<
                 returning ${workflowColumns}
               `,
             );
-            if (workflow !== undefined) return workflow;
-            return Option.isSome(yield* findWorkflow(workflowId))
-              ? yield* new WorkflowNameTakenError({ name })
-              : yield* new WorkflowNotFoundError({ workflowId });
+            return workflow ?? (yield* new WorkflowNameTakenError({ name }));
           },
         ),
 
@@ -577,6 +642,13 @@ export class WorkflowRepository extends Context.Service<
           readonly workflowId: string;
           readonly archived: boolean;
         }) {
+          if (!archived) {
+            const existing = yield* findWorkflow(workflowId);
+            if (Option.isNone(existing))
+              return yield* new WorkflowNotFoundError({ workflowId });
+            if (existing.value.scope === "order")
+              yield* requireOrderWorkflowSlot(workflowId);
+          }
           const now = yield* Clock.currentTimeMillis;
           const [workflow] = yield* decodeWorkflows(
             yield* sql`

@@ -17,6 +17,7 @@ const workflowsSearchSchema = Schema.Struct({
 
 const CreateWorkflowForm = Schema.Struct({
   name: Schema.String.check(Schema.isNonEmpty({ message: "Name is required" })),
+  scope: Domain.WorkflowScope,
   tags: Schema.String,
 });
 type CreateWorkflowForm = typeof CreateWorkflowForm.Type;
@@ -53,7 +54,12 @@ export const workflowResultMessage = Match.typeTags<
   NotFound: () => "That workflow no longer exists.",
   Limit: ({ limit }) =>
     `This shop has reached its limit of ${String(limit)} active workflows.`,
+  OrderWorkflowExists: () =>
+    "This shop already has an order workflow. Archive it first to create or restore another.",
 });
+
+export const ORDER_WORKFLOW_TRIGGER =
+  "Starts when every item on an order that has a workflow is done. One order workflow per shop.";
 
 export const Route = createFileRoute("/app/workflows/")({
   validateSearch: Schema.toStandardSchemaV1(workflowsSearchSchema),
@@ -91,10 +97,14 @@ function RouteComponent() {
   };
 
   const createMutation = useMutation({
-    mutationFn: ({ name, tags }: CreateWorkflowForm) =>
+    mutationFn: ({ name, scope, tags }: CreateWorkflowForm) =>
       agent
         ? withSocketRecovery(agent)(() =>
-            agent.stub.createWorkflow({ name, tags: splitTags(tags) }),
+            agent.stub.createWorkflow({
+              name,
+              scope,
+              tags: scope === "order" ? [] : splitTags(tags),
+            }),
           ).then(decodeWorkflowResult)
         : Promise.reject(new Error("Still connecting. Try again in a moment.")),
     onSuccess: async (result) => {
@@ -120,14 +130,87 @@ function RouteComponent() {
   });
 
   const form = useForm({
-    defaultValues: { name: "", tags: "" } satisfies CreateWorkflowForm,
+    defaultValues: {
+      name: "",
+      scope: "item" as Domain.WorkflowScope,
+      tags: "",
+    } satisfies CreateWorkflowForm,
     validators: { onSubmit: Schema.toStandardSchemaV1(CreateWorkflowForm) },
     onSubmit: ({ value }) => {
       void createMutation.mutateAsync(value);
     },
   });
 
-  const workflows = workflowsQuery.data ?? [];
+  const allWorkflows = workflowsQuery.data ?? [];
+  const orderWorkflows = allWorkflows.filter(
+    (workflow) => workflow.scope === "order",
+  );
+  const workflows = allWorkflows.filter(
+    (workflow) => workflow.scope === "item",
+  );
+  const orderWorkflowActive = orderWorkflows.some(
+    (workflow) => workflow.archivedAt === null,
+  );
+
+  const renderRow = (workflow: Domain.WorkflowSummary) => (
+    <s-table-row key={workflow.id} id={workflow.id}>
+      <s-table-cell>
+        <s-stack direction="inline" gap="small-300">
+          <s-link href={`/app/workflows/${workflow.id}`}>
+            {workflow.name}
+          </s-link>
+          {workflow.archivedAt !== null && (
+            <s-badge tone="info">Archived</s-badge>
+          )}
+          {workflow.archivedAt === null && workflow.stepCount === 0 && (
+            <s-badge tone="warning">No steps</s-badge>
+          )}
+        </s-stack>
+      </s-table-cell>
+      <s-table-cell>
+        {workflow.scope === "order" ? (
+          <s-text color="subdued">Whole order</s-text>
+        ) : (
+          <s-stack direction="inline" gap="small-300">
+            {workflow.tags.map((tag) => (
+              <s-badge key={tag}>{tag}</s-badge>
+            ))}
+          </s-stack>
+        )}
+      </s-table-cell>
+      <s-table-cell>{workflow.stepCount}</s-table-cell>
+      <s-table-cell>{workflow.activeRunCount}</s-table-cell>
+      <s-table-cell>{formatDateTime(workflow.updatedAt)}</s-table-cell>
+      <s-table-cell>
+        <s-button
+          variant="tertiary"
+          disabled={archiveMutation.isPending}
+          onClick={() => {
+            archiveMutation.mutate({
+              workflowId: workflow.id,
+              archived: workflow.archivedAt === null,
+            });
+          }}
+        >
+          {workflow.archivedAt === null ? "Archive" : "Restore"}
+        </s-button>
+      </s-table-cell>
+    </s-table-row>
+  );
+
+  const renderTable = (rows: readonly Domain.WorkflowSummary[]) => (
+    <s-table>
+      <s-table-header-row>
+        <s-table-header listSlot="primary">Name</s-table-header>
+        <s-table-header>Product tags</s-table-header>
+        <s-table-header>Steps</s-table-header>
+        <s-table-header>Active runs</s-table-header>
+        <s-table-header>Updated</s-table-header>
+        <s-table-header> </s-table-header>
+      </s-table-header-row>
+      <s-table-body>{rows.map(renderRow)}</s-table-body>
+    </s-table>
+  );
 
   const renderWorkflows = () => {
     if (workflowsQuery.isError)
@@ -147,60 +230,31 @@ function RouteComponent() {
           any product in Shopify and its line items will follow that workflow.
         </s-paragraph>
       );
+    return renderTable(workflows);
+  };
+
+  /**
+   * Its own short section above the table rather than a column, so the
+   * one-per-shop rule is visible: there is one slot, and it is either filled
+   * or empty.
+   */
+  const renderOrderWorkflow = () => {
+    if (workflowsQuery.data === undefined || workflowsQuery.isError)
+      return null;
     return (
-      <s-table>
-        <s-table-header-row>
-          <s-table-header listSlot="primary">Name</s-table-header>
-          <s-table-header>Product tags</s-table-header>
-          <s-table-header>Steps</s-table-header>
-          <s-table-header>Active runs</s-table-header>
-          <s-table-header>Updated</s-table-header>
-          <s-table-header> </s-table-header>
-        </s-table-header-row>
-        <s-table-body>
-          {workflows.map((workflow) => (
-            <s-table-row key={workflow.id} id={workflow.id}>
-              <s-table-cell>
-                <s-stack direction="inline" gap="small-300">
-                  <s-link href={`/app/workflows/${workflow.id}`}>
-                    {workflow.name}
-                  </s-link>
-                  {workflow.archivedAt !== null && (
-                    <s-badge tone="info">Archived</s-badge>
-                  )}
-                  {workflow.archivedAt === null && workflow.stepCount === 0 && (
-                    <s-badge tone="warning">No steps</s-badge>
-                  )}
-                </s-stack>
-              </s-table-cell>
-              <s-table-cell>
-                <s-stack direction="inline" gap="small-300">
-                  {workflow.tags.map((tag) => (
-                    <s-badge key={tag}>{tag}</s-badge>
-                  ))}
-                </s-stack>
-              </s-table-cell>
-              <s-table-cell>{workflow.stepCount}</s-table-cell>
-              <s-table-cell>{workflow.activeRunCount}</s-table-cell>
-              <s-table-cell>{formatDateTime(workflow.updatedAt)}</s-table-cell>
-              <s-table-cell>
-                <s-button
-                  variant="tertiary"
-                  disabled={archiveMutation.isPending}
-                  onClick={() => {
-                    archiveMutation.mutate({
-                      workflowId: workflow.id,
-                      archived: workflow.archivedAt === null,
-                    });
-                  }}
-                >
-                  {workflow.archivedAt === null ? "Archive" : "Restore"}
-                </s-button>
-              </s-table-cell>
-            </s-table-row>
-          ))}
-        </s-table-body>
-      </s-table>
+      <s-section heading="Order workflow" accessibilityLabel="Order workflow">
+        <s-stack gap="base">
+          <s-paragraph color="subdued">{ORDER_WORKFLOW_TRIGGER}</s-paragraph>
+          {orderWorkflows.length === 0 ? (
+            <s-paragraph color="subdued">
+              No order workflow yet. Create one above to add steps such as
+              packing that happen once per order after every item is made.
+            </s-paragraph>
+          ) : (
+            renderTable(orderWorkflows)
+          )}
+        </s-stack>
+      </s-section>
     );
   };
 
@@ -238,20 +292,50 @@ function RouteComponent() {
                   />
                 )}
               </form.Field>
-              <form.Field name="tags">
+              <form.Field name="scope">
                 {(field) => (
-                  <s-text-field
-                    label="Product tags"
-                    details="Comma-separated. Matching ignores case."
+                  <s-choice-list
+                    label="This workflow is for"
                     name={field.name}
-                    value={field.state.value}
-                    onInput={(event) => {
-                      field.handleChange(event.currentTarget.value);
+                    values={[field.state.value]}
+                    onChange={(event) => {
+                      const [value] = event.currentTarget.values;
+                      if (value === "item" || value === "order")
+                        field.handleChange(value);
                     }}
-                    onBlur={field.handleBlur}
-                  />
+                  >
+                    <s-choice value="item">Making one item</s-choice>
+                    <s-choice value="order" disabled={orderWorkflowActive}>
+                      The whole order, after every item is made
+                      <s-text slot="details">
+                        {orderWorkflowActive
+                          ? "This shop already has an order workflow. Archive it to create another."
+                          : ORDER_WORKFLOW_TRIGGER}
+                      </s-text>
+                    </s-choice>
+                  </s-choice-list>
                 )}
               </form.Field>
+              <form.Subscribe selector={(state) => state.values.scope}>
+                {(scope) =>
+                  scope === "item" && (
+                    <form.Field name="tags">
+                      {(field) => (
+                        <s-text-field
+                          label="Product tags"
+                          details="Comma-separated. Matching ignores case."
+                          name={field.name}
+                          value={field.state.value}
+                          onInput={(event) => {
+                            field.handleChange(event.currentTarget.value);
+                          }}
+                          onBlur={field.handleBlur}
+                        />
+                      )}
+                    </form.Field>
+                  )
+                }
+              </form.Subscribe>
               <s-stack alignItems="start">
                 <s-button
                   type="submit"
@@ -266,6 +350,8 @@ function RouteComponent() {
           </form>
         </s-stack>
       </s-section>
+
+      {renderOrderWorkflow()}
 
       <s-section heading="Workflows" accessibilityLabel="Workflows">
         <s-stack gap="base">

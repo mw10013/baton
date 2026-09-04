@@ -1,5 +1,3 @@
-import type * as Domain from "@/lib/Domain";
-
 import * as React from "react";
 
 import { useMutation } from "@tanstack/react-query";
@@ -7,6 +5,7 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Effect, Match, Schema } from "effect";
 
+import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
 import {
   memberServerFnMiddleware,
@@ -185,14 +184,20 @@ const flagMessage = (run: Domain.WorkflowRun) =>
     ? null
     : Match.value(run.flag).pipe(
         Match.withReturnType<string>(),
-        Match.when(
-          "item_removed",
-          () => "This item was removed from the order.",
+        Match.when("item_removed", () =>
+          Domain.isOrderRun(run)
+            ? `Item removed from this order: ${run.flagDetail?.item ?? ""}`
+            : "This item was removed from the order.",
         ),
         Match.when(
           "quantity_changed",
           () =>
-            `Quantity changed from ${formatNumber(run.flagDetail?.from ?? 0)} to ${formatNumber(run.flagDetail?.to ?? run.quantity)}.`,
+            `Quantity changed from ${formatNumber(run.flagDetail?.from ?? 0)} to ${formatNumber(run.flagDetail?.to ?? run.quantity ?? 0)}.`,
+        ),
+        Match.when("item_added", () =>
+          run.flagDetail?.item === undefined
+            ? "A new item was added to this order after it was ready."
+            : `New item: ${run.flagDetail.item}`,
         ),
         Match.when("order_cancelled", () => "The order was cancelled."),
         Match.when("order_deleted", () => "The order was deleted."),
@@ -204,8 +209,26 @@ const flagMessage = (run: Domain.WorkflowRun) =>
         Match.exhaustive,
       );
 
+/** Item runs only: an order run has no line item of its own (`items` carries them). */
 const lineItemLabel = ({ run }: Domain.QueueItem) =>
-  `${run.lineItemTitle}${run.variantTitle === null ? "" : ` — ${run.variantTitle}`} ×${formatNumber(run.quantity)}`;
+  `${run.lineItemTitle ?? ""}${run.variantTitle === null ? "" : ` — ${run.variantTitle}`} ×${formatNumber(run.quantity ?? 0)}`;
+
+const orderItemLabel = ({
+  title,
+  variantTitle,
+  quantity,
+}: Domain.QueueOrderItem) =>
+  `${title}${variantTitle === null ? "" : ` — ${variantTitle}`} ×${formatNumber(quantity)}`;
+
+const ITEM_STATUS = {
+  pending: { label: "Not started", tone: "info" },
+  active: { label: "In progress", tone: "success" },
+  done: { label: "Done", tone: "neutral" },
+  cancelled: { label: "Cancelled", tone: "critical" },
+} as const satisfies Record<
+  Domain.RunStatus,
+  { readonly label: string; readonly tone: string }
+>;
 
 const personalization = (attributes: readonly Domain.OrderAttribute[]) =>
   attributes.map(({ key, value }) => `${key}: ${value ?? ""}`).join(", ");
@@ -409,9 +432,40 @@ function RouteComponent() {
               <s-badge tone="success">In progress</s-badge>
             )}
           </s-stack>
-          <s-text>{lineItemLabel(item)}</s-text>
-          {item.run.customAttributes.length > 0 && (
-            <s-text>{personalization(item.run.customAttributes)}</s-text>
+          {Domain.isOrderRun(item.run) ? (
+            <s-stack gap="small-300">
+              {item.items.map((orderItem) => (
+                <s-stack key={orderItem.lineItemId} gap="small-500">
+                  <s-stack
+                    direction="inline"
+                    gap="small-300"
+                    alignItems="center"
+                  >
+                    <s-text>{orderItemLabel(orderItem)}</s-text>
+                    {orderItem.runStatus === null ? (
+                      <s-badge>No workflow</s-badge>
+                    ) : (
+                      <s-badge tone={ITEM_STATUS[orderItem.runStatus].tone}>
+                        {ITEM_STATUS[orderItem.runStatus].label}
+                      </s-badge>
+                    )}
+                  </s-stack>
+                  {orderItem.customAttributes.length > 0 && (
+                    <s-text color="subdued">
+                      {personalization(orderItem.customAttributes)}
+                    </s-text>
+                  )}
+                </s-stack>
+              ))}
+            </s-stack>
+          ) : (
+            <>
+              <s-text>{lineItemLabel(item)}</s-text>
+              {item.run.customAttributes !== null &&
+                item.run.customAttributes.length > 0 && (
+                  <s-text>{personalization(item.run.customAttributes)}</s-text>
+                )}
+            </>
           )}
           {item.note !== null && item.note.length > 0 && (
             <s-text color="subdued">{`Order note: ${item.note}`}</s-text>
