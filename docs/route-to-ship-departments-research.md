@@ -1,6 +1,6 @@
 # Route to Ship departments and task templates — research
 
-Research date: 2026-09-02. Research only, not a Baton spec.
+Research date: 2026-09-02; amended 2026-09-03 after a second live inspection (see "Amendments, 2026-09-03" at the end). Research only, not a Baton spec.
 
 Scope: Route to Ship's department model, the tasks/steps configured inside a department, and the two distinct forms of parallelism. This answers whether Baton should put steps on teams or on workflows.
 
@@ -14,7 +14,7 @@ This report combines three sources:
 | Downloaded Route to Ship site in `refs/route-to-ship/`                                           | Public claims and operational context. Useful corroboration, but marketing copy is not a data-model contract. |
 | Existing Baton research                                                                          | The already-decided Baton terminology and current proposed model.                                             |
 
-The live app was inspected in `sandbox-shop-01` on 2026-09-02. The help pages expose their complete answer text as control descriptions, so quoted behavior below is product documentation, not guesswork. Two department toggles, `Count units` and `Confirm each unit`, are visible in the editor but are not described by the help content inspected; they remain unverified.
+The live app was inspected in `sandbox-shop-01` on 2026-09-02 and again on 2026-09-03. The help pages expose their complete answer text as control descriptions, so quoted behavior below is product documentation, not guesswork. Where the help text and the live controls disagree, the 2026-09-03 amendments below record the live behavior and mark the help claim as unverified.
 
 ## Short answer
 
@@ -47,26 +47,26 @@ The creation wizard has four stages:
 1. **Basic info**: name; optional parent department; department manager; description shown on the customer tracking portal.
 2. **Assign users**: a multi-select list. A user may belong to more than one department; assigned users see that department's work in My Work.
 3. **Configure steps**: task name, type, ordering by drag-and-drop, and required flag.
-4. **Review**: review and save. Editing reopens the wizard with existing values.
+4. **Review**: review and save. The pencil icon reopens this wizard with existing values; the wizard does **not** expose the work-mode toggles.
 
-The live department editor also exposes a generated/displayed **slug**, manager, assigned users, task list, and department-level work-mode switches. It allows editing and deletion. The list screen supports top-level departments and nested sub-departments.
+Clicking a department card body (not the pencil) opens a separate **detail dialog** that owns the slug, manager, assigned users, the task list with `Save all tasks`, and the four department-level work-mode switches. That dialog is the only place the toggles can be changed (2026-09-03). The list screen supports top-level departments and nested sub-departments.
 
 ### Department properties
 
-| Property                                 | Observed/documented semantics                                                                                                                                                             | Confidence |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
-| Name                                     | Department's display name. Example names: Engraving, Assembly, Dispatch.                                                                                                                  | High       |
-| Slug                                     | Visible read-only-like value in the editor (`department-01`). Exact generation/edit rules not researched.                                                                                 | Medium     |
-| Parent department                        | Optional. Creates a sub-department. It inherits its parent's _position in the pipeline_, but keeps its own members and tasks. Example: `Engraving > Fine Detail` and `Engraving > Bulk`.  | High       |
-| Description                              | Set in Basic Info; shown to customers on the tracking portal.                                                                                                                             | High       |
-| Members                                  | Determines who sees the department's tasks in My Work. Many-to-many: one user may be in several departments.                                                                              | High       |
-| Manager                                  | Selected in Basic Info. Receives Manager Dashboard visibility for that department and can handle escalations.                                                                             | High       |
-| Complete once per order (`workPerOrder`) | Off: each line item is a separate task. On: all an order's line items are grouped into one task for this department. Intended example: Dispatch, which processes an entire order at once. | High       |
-| Allow print                              | Shows Print on task cards. A worker must print before Done is enabled. Intended example: printed proof at a Print department.                                                             | High       |
-| Count units                              | Visible department toggle. Its exact unit source and effect were not described in inspected help.                                                                                         | Unverified |
-| Confirm each unit                        | Visible department toggle. Its exact relationship to Count units and completion was not described in inspected help.                                                                      | Unverified |
+| Property                                 | Observed/documented semantics                                                                                                                                                                                                                                                                               | Confidence |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| Name                                     | Department's display name. Example names: Engraving, Assembly, Dispatch.                                                                                                                                                                                                                                    | High       |
+| Slug                                     | Visible read-only-like value in the editor (`department-01`). Exact generation/edit rules not researched.                                                                                                                                                                                                   | Medium     |
+| Parent department                        | Optional. Creates a sub-department. It inherits its parent's _position in the pipeline_, but keeps its own members and tasks. Example: `Engraving > Fine Detail` and `Engraving > Bulk`.                                                                                                                    | High       |
+| Description                              | Set in Basic Info; shown to customers on the tracking portal.                                                                                                                                                                                                                                               | High       |
+| Members                                  | Determines who sees the department's tasks in My Work. Many-to-many: one user may be in several departments.                                                                                                                                                                                                | High       |
+| Manager                                  | Selected in Basic Info. Receives Manager Dashboard visibility for that department and can handle escalations.                                                                                                                                                                                               | High       |
+| Complete once per order (`workPerOrder`) | Off: each line item is a separate task. On: all an order's line items are grouped into one task for this department. Intended example: Dispatch, which processes an entire order at once.                                                                                                                   | High       |
+| Allow print                              | Shows Print on task cards for job sheets or labels. The help page says Done is disabled until Print; the control's own tooltip describes only a visible button. Gating unverified.                                                                                                                          | Medium     |
+| Count units                              | Default **on**. Unit = line-item quantity. Worker records how many units are finished ("Done — all 5" or tick units one at a time); a part-finished step stays queued as "3 of 5 done"; the next step in the department cannot record more units than the previous step finished. Tooltip text, 2026-09-03. | High       |
+| Confirm each unit                        | Default off. Hides the "Done — all N" shortcut so every unit must be ticked individually; single-unit lines are unaffected. A modifier of Count units, presumably inert when Count units is off (not verified by toggling). Tooltip text, 2026-09-03.                                                       | High       |
 
-The screenshot supplied for this research shows `Count units` enabled while the other four visible work-mode switches are off. That establishes the control exists, not its runtime behavior.
+There are exactly four work-mode switches. Defaults on a new department: Complete once per order off, Allow print off, Count units on, Confirm each unit off (2026-09-03).
 
 ### Tasks (steps) within a department
 
@@ -75,20 +75,25 @@ Every configured child has:
 - A free-text task name.
 - An order, shown as `#1`, `#2`, etc.; the creation wizard says the merchant can drag to set order.
 - A `Step Type`.
-- A `Must complete` required checkbox.
+- A `Must complete` required checkbox, checked by default.
+- A `Parallel Group ID` text field, rendered only when the type is `Parallel Work` (placeholder "e.g., bag-assembly, zipper-team").
 - Add and remove controls. The editor saves the task list together with `Save all tasks`.
+
+That is the complete field list (verified in both editors, 2026-09-03). There is **no** instructions or description field, estimated time, per-step print option, attachment, per-step assignee, or approver picker on a task.
 
 The app documents five step types:
 
-| Type              | Worker interaction and use                                                                                                                                                 |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Start/Stop**    | Standard timed work. Worker clicks **Accept** to claim/start it, then **Done**. Best when elapsed time matters.                                                            |
-| **Checklist**     | Direct check-off; no Accept step. Intended for quick verification such as quality or packaging checks.                                                                     |
-| **Auto-Complete** | Completes automatically when the previous step finishes. Intended for non-human logging or a handoff such as "Notify next department."                                     |
-| **Approval**      | Requires sign-off. Configurable approver scope: any department member, line managers only, any admin, or one specified user. The order cannot move forward until approval. |
-| **Parallel**      | Tasks sharing a Parallel Group ID run at the same time within the department.                                                                                              |
+| Type              | Worker interaction and use                                                                                                                                                                                                                                                 |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Start/Stop**    | Standard timed work. Worker clicks **Accept** to claim/start it, then **Done**. Best when elapsed time matters.                                                                                                                                                            |
+| **Checklist**     | Direct check-off; no Accept step. Intended for quick verification such as quality or packaging checks.                                                                                                                                                                     |
+| **Auto-Complete** | Completes automatically when the previous step finishes. Intended for non-human logging or a handoff such as "Notify next department."                                                                                                                                     |
+| **Approval**      | Requires sign-off. The help page describes a configurable approver scope (any department member, line managers only, any admin, one specified user), but selecting `Approval Required` renders no approver control in either editor (2026-09-03). Documented, not shipped. |
+| **Parallel**      | Tasks sharing a Parallel Group ID run at the same time within the department.                                                                                                                                                                                              |
 
-`Required` clearly applies to each task, but the exact behavior when an optional task is left incomplete was not spelled out in the inspected help. Pipeline-level `Require All Steps` is a separate control, discussed below.
+The live select labels the types `Start/Stop Timer`, `Checklist`, `Auto Complete`, `Approval Required`, `Parallel Work`; the internal enum shows as `START_STOP`, `CHECKLIST` on the review screen and in the pipeline visualization.
+
+`Must complete` applies to each task and defaults on. Pipeline-level `Require All Steps` is documented as "If enabled, all steps must be completed (overrides per-step settings)" and also defaults on, so an optional task only takes effect when the merchant turns both off (2026-09-03).
 
 Task execution is queue-based. My Work contains pending tasks from the worker's assigned departments, grouped by order. Standard view provides full order details, notes, and actions; Production/Tablet view emphasizes large Accept/Done controls. Workers can add/view step-specific notes. Past Work records start and completion timestamps and the latest note.
 
@@ -105,7 +110,7 @@ Route to Ship says a pipeline is "the sequence of departments an order passes th
 
 At order sync, Route to Ship examines **each line item's product tags**. Any matching pipeline tag routes that line item to the pipeline. A line item may match multiple pipelines through multiple tags; each matching pipeline is independently applied. This agrees with `docs/route-to-ship-tag-routing-research.md` and the public integration copy in `refs/route-to-ship/integrations/shopify.md:23`.
 
-The pipeline builder's `Require All Steps` is documented as: "if every step in every department must be completed." Exact interaction with a task's individual `Must complete` flag is not explained, so Baton should not infer a truth table from the labels alone.
+The pipeline builder's `Require All Steps` help text is "If enabled, all steps must be completed (overrides per-step settings)". It is an override of each task's `Must complete`, not guidance. A department cannot be added to a pipeline twice: once added it disappears from the add dropdown (2026-09-03). There is no grouping or stage construct between pipeline and department; ordering granularity is department order only.
 
 ## Ordering and concurrency
 
@@ -218,12 +223,11 @@ This delivers Route to Ship's useful separation of people from queue eligibility
 
 ## Open questions before Baton copies any advanced behavior
 
-1. What does Route to Ship's `Must complete` do when pipeline `Require All Steps` is off? Is it a per-task override, or only UI guidance?
+Questions 1, 3, and 5 were answered on 2026-09-03; see Amendments. Still open:
+
 2. What exact conditions complete a department in the presence of optional tasks, auto-complete tasks, and parallel groups?
-3. What are the data and UI semantics of `Count units` and `Confirm each unit`? Is a unit a line-item quantity, a manually entered count, or something else?
-4. Does a reused Route to Ship department's task edit affect in-flight work, only new work, or a snapshotted department occurrence? The app's help does not say.
-5. Can one department appear multiple times in one pipeline? The builder help does not specify.
-6. How does an approval step identify a line manager when department manager and user role are separate concepts?
+3. Does a reused Route to Ship department's task edit affect in-flight work, only new work, or a snapshotted department occurrence? The app's help does not say.
+4. How does an approval step identify a line manager when department manager and user role are separate concepts? Compounded by the missing approver-scope control.
 
 These are questions to answer by creating throwaway departments/pipelines and running test orders, not by making Baton schema assumptions.
 
@@ -242,3 +246,53 @@ On 2026-09-02, the logged-in Route to Ship `My Work` screen was inspected to tes
 - `refs/route-to-ship/support.md:33-35`: create departments first, then build a pipeline that chains them together.
 - `refs/route-to-ship/blog/sops-for-scaling-custom-shopify-products.md:126-128`: describes checklist-type steps "inside each department's workflow" alongside start/stop and approval.
 - `docs/workflow-definition-research.md:34`: Baton previously recorded the competitor's department template shape; this research verifies and materially expands it from the logged-in application.
+
+## Amendments, 2026-09-03
+
+Second live inspection of `sandbox-shop-01`. A throwaway department was created and deleted; no existing configuration was changed. Quotes are verbatim tooltip or help text.
+
+### Corrections to the text above
+
+1. **Approver scope is not a shipped control.** Selecting `Approval Required` shows only name, type, and `Must complete`. The help page's approver-scope list is documentation without a UI.
+2. **`Require All Steps` overrides `Must complete`.** Both default on. Answers old question 1.
+3. **A department cannot appear twice in one pipeline.** Answers old question 5.
+4. **`Count units` / `Confirm each unit` are fully specified by their tooltips.** Answers old question 3; see the properties table. Count units defaults on.
+5. **Work-mode toggles live in the department detail dialog, not the edit wizard.**
+6. **Print gating is contradictory.** Help: "Done is disabled until print is completed." Tooltip: only that a Print button is shown. Treat gating as unverified.
+7. **View toggle naming drift.** My Work shows `Standard` / `Focus`; the help still says "Production (Tablet) View".
+
+### Escalations: the rework and blocked mechanism
+
+The prior text did not cover escalations. Help, "Escalations":
+
+> "1 Worker escalates — Click the red 'Escalate' button on My Work. Optionally provide a reason. 2 Order is flagged — 'Escalated' tag appears across the app. Task actions disabled. 3 Manager reviews — Line managers see escalated orders in the Escalations page. 4 Manager resolves — Click 'Resolve', select target department and step, confirm. 5 Order resumes — Returns to the specified workflow step for continued processing."
+
+So escalation freezes task actions on the order, and resolution is an arbitrary rewind or jump to any (department, step). There is no per-task Skip, Reject, Hold, or Reassign anywhere; escalate-and-resolve is the single mechanism. Reassignment of a line item to another pipeline is a per-line-item `Pipeline` selector on the order detail page.
+
+### Worker actions
+
+Help, "Accepting and completing tasks":
+
+> "1 Accept — Click 'Accept' to claim the task and mark it as In Progress. 2 Complete — When finished, click 'Done' to mark the step as completed. 3 Print — If the step requires a print proof, click the Print button first. Done is disabled until print is completed. 4 Notes — Click the ⋯ menu to view or add step-specific notes."
+
+Order detail shows per-line-item statuses `Done`, `In Progress`, `Not Started`, `Blocked`; notes are typed Manual / Escalation / Resolution, up to 4,000 characters. No live task card could be observed (`0 tasks across 0 orders`); the action set above is assembled from help and tooltips.
+
+### Shop-level Order Completion settings
+
+Settings → Order Completion, not previously seen, governs where production ends:
+
+- "Do you record shipping (fulfillment) in Shopify?" `Yes: Orders count as shipped when fulfilled in Shopify.` / `No: Orders count as done when the last production step is completed.`
+- "Flag an order as at-risk after" N days (1–60), drives the dashboard at-risk alert.
+- "Partial shipping — May finished units go out before the rest of the line is made?" `Yes — ship what's ready` ("Dispatch sees '3 of 4 — ship these 3'. You record the partial shipment in Shopify yourself; Route to Ship never creates fulfilments.") / `No — hold the whole line`.
+- "Which sales channels create production work?" per-channel; unticked channels' orders appear as "Sold from stock".
+- Products tagged `rts-no-production` never create work; picking a pipeline on the order still overrides this.
+
+Takeaways: Route to Ship never writes fulfillments; "Ready to ship" means "production done, fulfil in Shopify". The dashboard states "An order can hold several items; each item moves through the departments on its own"; order status (`In Progress`, `Partial`) is a rollup, and `Complete once per order` is the only per-order work unit. The unit model reaches dispatch through the shop-level partial-shipping policy.
+
+### Sub-departments (unchanged, quoted)
+
+> "The sub-department inherits the parent's position in the pipeline but has its own members and tasks." Editor field `Parent Department`, default `None (Top-level department)`. Whether a sub-department must be added to a pipeline explicitly, and how work splits between parent and child at one position, remains unverifiable without a live example.
+
+### Consequences for Baton
+
+Folded into `workflow-step-model-research.md` (topology, step functionality catalog, order-level boundary). In short: Route to Ship's per-item concurrency is expressible as stages; its only rework path is a manager rewind; its unit model is the reference if Baton ever adds per-unit progress; and it draws the production/fulfillment boundary exactly where Baton's line-item runs already end.
