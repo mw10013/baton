@@ -328,6 +328,8 @@ Annotate the same fields. Never put `note`, `reason`, or `instructions` in the m
 
 Add `startStep`, `setStepNote`, `blockRun` beside `completeStep` and `dismissFlag`, same signature style `(shop, input) => Effect<Result, ...>`.
 
+Amended 2026-09-04: `setStepNote` and `blockRun` take the `Encoded` input type (`typeof Domain.SetStepNoteInput.Encoded`), so the server fn passes the raw string and the object's decoder trims and brands it. Decoding once, at the object, keeps the branding in one place.
+
 ## Browser
 
 ### `src/routes/app.workflows.$workflowId.tsx` (editor)
@@ -443,9 +445,11 @@ Add a fixture workflow with stages `1 1 2 3` (teams A, B, C, A). Then:
 - `addParallelStep` on a missing stage → `{ _tag: "NotFound" }`; on an archived workflow → `Archived`; with an inactive team → `TeamNotActive`.
 - `separateStep` on unknown step → `NotFound`.
 
-### `test/integration/member-area.test.ts`
+### `test/integration/shop-agent-workflows.test.ts` (member-area seam)
 
-- `startStep`, `setStepNote`, `blockRun` server fns reject a step/run outside the member's teams with `NotAllowed`; `listQueue` returns `startedByEmail` for a started step.
+Amended 2026-09-04: these assertions live here, against the object, rather than in `member-area.test.ts`. That file's existing queue test documents that the route can only reach a 500 in the isolate (no Shopify session), so the server-fn layer cannot be exercised there.
+
+- `startStep`, `setStepNote`, `blockRun` on the object reject a step/run outside the member's teams with `NotAllowed`; `listQueue` returns `startedByEmail` for a started step.
 
 ### Browser smoke (optional, headed Playwright per `AGENTS.md`)
 

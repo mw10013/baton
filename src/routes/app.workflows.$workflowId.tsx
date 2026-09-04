@@ -9,6 +9,7 @@ import * as Domain from "@/lib/Domain";
 import { fieldError } from "@/lib/form";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { SocketBanner } from "@/lib/SocketBanner";
+import * as WorkflowLayout from "@/lib/WorkflowLayout";
 
 import { splitTags, workflowResultMessage } from "./app.workflows.index";
 
@@ -30,6 +31,10 @@ const decodeWorkflowResult = Schema.decodeUnknownPromise(
 const decodeStepResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.StepResult),
 );
+
+/** A blank instructions field means "no instructions", which the wire carries as `null`, never `""`. */
+const instructionsOrNull = (value: string) =>
+  value.trim().length === 0 ? null : value;
 
 const stepResultMessage = Match.typeTags<Domain.StepResult, string | null>()({
   Ok: () => null,
@@ -59,11 +64,23 @@ function RouteComponent() {
   const queryClient = useQueryClient();
   const { agent, identified } = useShopAgent();
   const [banner, setBanner] = React.useState<string | null>(null);
-  const [newStep, setNewStep] = React.useState({ name: "", teamId: "" });
+  const [newStep, setNewStep] = React.useState({
+    name: "",
+    teamId: "",
+    instructions: "",
+  });
   const [editing, setEditing] = React.useState<{
     stepId: string;
     name: string;
     teamId: string;
+    instructions: string;
+  } | null>(null);
+  /** One inline "at the same time" form open at a time, keyed by stage. */
+  const [parallel, setParallel] = React.useState<{
+    stage: number;
+    name: string;
+    teamId: string;
+    instructions: string;
   } | null>(null);
 
   // oxlint-disable-next-line @tanstack/query/exhaustive-deps -- agent.stub is the stable per-shop socket; the cache identity is the shop plus the workflow id
@@ -133,9 +150,36 @@ function RouteComponent() {
         decodeStepResult,
       ),
     onSuccess: async (result) => {
-      if (result._tag === "Ok") setNewStep({ name: "", teamId: "" });
+      if (result._tag === "Ok")
+        setNewStep({ name: "", teamId: "", instructions: "" });
       await onStepResult(result);
     },
+    onError,
+  });
+
+  const addParallelStepMutation = useMutation({
+    mutationFn: (
+      input: Omit<typeof Domain.AddParallelStepInput.Encoded, "workflowId">,
+    ) =>
+      call((stub) => stub.addParallelStep({ workflowId, ...input })).then(
+        decodeStepResult,
+      ),
+    onSuccess: async (result) => {
+      if (result._tag === "Ok") setParallel(null);
+      setBanner(
+        result._tag === "NotFound"
+          ? "That step group no longer exists. Refresh."
+          : stepResultMessage(result),
+      );
+      await invalidate();
+    },
+    onError,
+  });
+
+  const separateStepMutation = useMutation({
+    mutationFn: (input: typeof Domain.SeparateStepInput.Encoded) =>
+      call((stub) => stub.separateStep(input)).then(decodeStepResult),
+    onSuccess: onStepResult,
     onError,
   });
 
@@ -212,9 +256,12 @@ function RouteComponent() {
   const stepsLocked =
     archived ||
     addStepMutation.isPending ||
+    addParallelStepMutation.isPending ||
+    separateStepMutation.isPending ||
     updateStepMutation.isPending ||
     moveStepMutation.isPending ||
     removeStepMutation.isPending;
+  const stages = WorkflowLayout.stagesOf(steps);
 
   const teamSelect = (
     value: string,
@@ -237,6 +284,273 @@ function RouteComponent() {
         </s-option>
       ))}
     </s-select>
+  );
+
+  const instructionsField = (
+    value: string,
+    onChange: (instructions: string) => void,
+    label: string,
+  ) => (
+    <s-text-area
+      label={label}
+      labelAccessibilityVisibility="exclusive"
+      placeholder="Instructions (optional)"
+      rows={2}
+      value={value}
+      disabled={stepsLocked}
+      onInput={(event) => {
+        onChange(event.currentTarget.value);
+      }}
+    />
+  );
+
+  const stepRow = (
+    step: (typeof steps)[number],
+    index: number,
+    shared: boolean,
+  ) =>
+    editing?.stepId === step.id ? (
+      <s-table-row key={step.id} id={step.id}>
+        <s-table-cell>{step.stage}</s-table-cell>
+        <s-table-cell>
+          <s-stack gap="small-300">
+            <s-text-field
+              label="Step name"
+              labelAccessibilityVisibility="exclusive"
+              value={editing.name}
+              onInput={(event) => {
+                setEditing({
+                  ...editing,
+                  name: event.currentTarget.value,
+                });
+              }}
+            />
+            {instructionsField(
+              editing.instructions,
+              (instructions) => {
+                setEditing({ ...editing, instructions });
+              },
+              "Instructions",
+            )}
+          </s-stack>
+        </s-table-cell>
+        <s-table-cell>
+          {teamSelect(
+            editing.teamId,
+            (teamId) => {
+              setEditing({ ...editing, teamId });
+            },
+            "Team",
+          )}
+        </s-table-cell>
+        <s-table-cell>
+          <s-stack direction="inline" gap="small-300">
+            <s-button
+              variant="primary"
+              disabled={
+                stepsLocked ||
+                editing.name.trim().length === 0 ||
+                editing.teamId === ""
+              }
+              onClick={() => {
+                updateStepMutation.mutate({
+                  stepId: step.id,
+                  name: editing.name,
+                  teamId: editing.teamId,
+                  instructions: instructionsOrNull(editing.instructions),
+                });
+              }}
+            >
+              Save
+            </s-button>
+            <s-button
+              variant="tertiary"
+              onClick={() => {
+                setEditing(null);
+              }}
+            >
+              Cancel
+            </s-button>
+          </s-stack>
+        </s-table-cell>
+      </s-table-row>
+    ) : (
+      <s-table-row key={step.id} id={step.id}>
+        <s-table-cell>
+          <s-stack direction="inline" gap="small-300" alignItems="center">
+            <s-text>{step.stage}</s-text>
+            {shared && <s-badge tone="info">together</s-badge>}
+          </s-stack>
+        </s-table-cell>
+        <s-table-cell>
+          <s-stack gap="small-500">
+            <s-text>{step.name}</s-text>
+            {step.instructions !== null && (
+              <s-text color="subdued">{step.instructions}</s-text>
+            )}
+          </s-stack>
+        </s-table-cell>
+        <s-table-cell>
+          {step.teamName ?? <s-badge tone="warning">Team archived</s-badge>}
+        </s-table-cell>
+        <s-table-cell>
+          <s-stack direction="inline" gap="small-300">
+            <s-button
+              variant="tertiary"
+              disabled={stepsLocked || index === 0}
+              onClick={() => {
+                moveStepMutation.mutate({
+                  stepId: step.id,
+                  direction: "up",
+                });
+              }}
+            >
+              Up
+            </s-button>
+            <s-button
+              variant="tertiary"
+              disabled={stepsLocked || index === steps.length - 1}
+              onClick={() => {
+                moveStepMutation.mutate({
+                  stepId: step.id,
+                  direction: "down",
+                });
+              }}
+            >
+              Down
+            </s-button>
+            {shared && (
+              <s-button
+                variant="tertiary"
+                disabled={stepsLocked}
+                onClick={() => {
+                  separateStepMutation.mutate({ stepId: step.id });
+                }}
+              >
+                Separate
+              </s-button>
+            )}
+            <s-button
+              variant="tertiary"
+              disabled={stepsLocked}
+              onClick={() => {
+                setEditing({
+                  stepId: step.id,
+                  name: step.name,
+                  teamId: step.teamName === null ? "" : step.teamId,
+                  instructions: step.instructions ?? "",
+                });
+              }}
+            >
+              Edit
+            </s-button>
+            <s-button
+              variant="tertiary"
+              tone="critical"
+              disabled={stepsLocked}
+              onClick={() => {
+                removeStepMutation.mutate({ stepId: step.id });
+              }}
+            >
+              Remove
+            </s-button>
+          </s-stack>
+        </s-table-cell>
+      </s-table-row>
+    );
+
+  const parallelRow = (stage: number) => (
+    <s-table-row
+      key={`parallel-${String(stage)}`}
+      id={`parallel-${String(stage)}`}
+    >
+      <s-table-cell> </s-table-cell>
+      {parallel?.stage === stage ? (
+        <>
+          <s-table-cell>
+            <s-stack gap="small-300">
+              <s-text-field
+                label="Step name"
+                labelAccessibilityVisibility="exclusive"
+                placeholder="e.g. Pick materials"
+                value={parallel.name}
+                disabled={stepsLocked}
+                onInput={(event) => {
+                  setParallel({ ...parallel, name: event.currentTarget.value });
+                }}
+              />
+              {instructionsField(
+                parallel.instructions,
+                (instructions) => {
+                  setParallel({ ...parallel, instructions });
+                },
+                "Instructions",
+              )}
+            </s-stack>
+          </s-table-cell>
+          <s-table-cell>
+            {teamSelect(
+              parallel.teamId,
+              (teamId) => {
+                setParallel({ ...parallel, teamId });
+              },
+              "Team",
+            )}
+          </s-table-cell>
+          <s-table-cell>
+            <s-stack direction="inline" gap="small-300">
+              <s-button
+                variant="primary"
+                disabled={
+                  stepsLocked ||
+                  parallel.name.trim().length === 0 ||
+                  parallel.teamId === ""
+                }
+                {...(addParallelStepMutation.isPending
+                  ? { loading: true }
+                  : {})}
+                onClick={() => {
+                  addParallelStepMutation.mutate({
+                    stage,
+                    name: parallel.name,
+                    teamId: parallel.teamId,
+                    ...(instructionsOrNull(parallel.instructions) === null
+                      ? {}
+                      : { instructions: parallel.instructions }),
+                  });
+                }}
+              >
+                Add
+              </s-button>
+              <s-button
+                variant="tertiary"
+                onClick={() => {
+                  setParallel(null);
+                }}
+              >
+                Cancel
+              </s-button>
+            </s-stack>
+          </s-table-cell>
+        </>
+      ) : (
+        <>
+          <s-table-cell>
+            <s-button
+              variant="tertiary"
+              disabled={stepsLocked || activeTeams.length === 0}
+              onClick={() => {
+                setParallel({ stage, name: "", teamId: "", instructions: "" });
+              }}
+            >
+              + Add a step that happens at the same time
+            </s-button>
+          </s-table-cell>
+          <s-table-cell> </s-table-cell>
+          <s-table-cell> </s-table-cell>
+        </>
+      )}
+    </s-table-row>
   );
 
   return (
@@ -327,8 +641,9 @@ function RouteComponent() {
       <s-section heading="Steps" accessibilityLabel="Workflow steps">
         <s-stack gap="base">
           <s-paragraph color="subdued">
-            Steps run in order. A team completes its step and the next team's
-            step becomes available. Name the step by the work, not the team.
+            Steps with the same number happen at the same time. The next number
+            waits until all of them are done. Name the step by the work, not the
+            team.
           </s-paragraph>
           {archived && (
             <s-paragraph color="subdued">
@@ -344,126 +659,16 @@ function RouteComponent() {
                 <s-table-header> </s-table-header>
               </s-table-header-row>
               <s-table-body>
-                {steps.map((step, index) =>
-                  editing?.stepId === step.id ? (
-                    <s-table-row key={step.id} id={step.id}>
-                      <s-table-cell>{step.position}</s-table-cell>
-                      <s-table-cell>
-                        <s-text-field
-                          label="Step name"
-                          labelAccessibilityVisibility="exclusive"
-                          value={editing.name}
-                          onInput={(event) => {
-                            setEditing({
-                              ...editing,
-                              name: event.currentTarget.value,
-                            });
-                          }}
-                        />
-                      </s-table-cell>
-                      <s-table-cell>
-                        {teamSelect(
-                          editing.teamId,
-                          (teamId) => {
-                            setEditing({ ...editing, teamId });
-                          },
-                          "Team",
-                        )}
-                      </s-table-cell>
-                      <s-table-cell>
-                        <s-stack direction="inline" gap="small-300">
-                          <s-button
-                            variant="primary"
-                            disabled={
-                              stepsLocked ||
-                              editing.name.trim().length === 0 ||
-                              editing.teamId === ""
-                            }
-                            onClick={() => {
-                              updateStepMutation.mutate({
-                                stepId: step.id,
-                                name: editing.name,
-                                teamId: editing.teamId,
-                              });
-                            }}
-                          >
-                            Save
-                          </s-button>
-                          <s-button
-                            variant="tertiary"
-                            onClick={() => {
-                              setEditing(null);
-                            }}
-                          >
-                            Cancel
-                          </s-button>
-                        </s-stack>
-                      </s-table-cell>
-                    </s-table-row>
-                  ) : (
-                    <s-table-row key={step.id} id={step.id}>
-                      <s-table-cell>{step.position}</s-table-cell>
-                      <s-table-cell>{step.name}</s-table-cell>
-                      <s-table-cell>
-                        {step.teamName ?? (
-                          <s-badge tone="warning">Team archived</s-badge>
-                        )}
-                      </s-table-cell>
-                      <s-table-cell>
-                        <s-stack direction="inline" gap="small-300">
-                          <s-button
-                            variant="tertiary"
-                            disabled={stepsLocked || index === 0}
-                            onClick={() => {
-                              moveStepMutation.mutate({
-                                stepId: step.id,
-                                direction: "up",
-                              });
-                            }}
-                          >
-                            Up
-                          </s-button>
-                          <s-button
-                            variant="tertiary"
-                            disabled={stepsLocked || index === steps.length - 1}
-                            onClick={() => {
-                              moveStepMutation.mutate({
-                                stepId: step.id,
-                                direction: "down",
-                              });
-                            }}
-                          >
-                            Down
-                          </s-button>
-                          <s-button
-                            variant="tertiary"
-                            disabled={stepsLocked}
-                            onClick={() => {
-                              setEditing({
-                                stepId: step.id,
-                                name: step.name,
-                                teamId:
-                                  step.teamName === null ? "" : step.teamId,
-                              });
-                            }}
-                          >
-                            Edit
-                          </s-button>
-                          <s-button
-                            variant="tertiary"
-                            tone="critical"
-                            disabled={stepsLocked}
-                            onClick={() => {
-                              removeStepMutation.mutate({ stepId: step.id });
-                            }}
-                          >
-                            Remove
-                          </s-button>
-                        </s-stack>
-                      </s-table-cell>
-                    </s-table-row>
+                {stages.flatMap((group) => [
+                  ...group.map((step) =>
+                    stepRow(
+                      step,
+                      steps.findIndex((candidate) => candidate.id === step.id),
+                      group.length > 1,
+                    ),
                   ),
-                )}
+                  ...(archived ? [] : [parallelRow(group[0]?.stage ?? 1)]),
+                ])}
               </s-table-body>
             </s-table>
           )}
@@ -476,37 +681,55 @@ function RouteComponent() {
             </s-stack>
           ) : (
             !archived && (
-              <s-stack direction="inline" gap="base" alignItems="end">
-                <s-text-field
-                  label="New step"
-                  placeholder="e.g. Engrave"
-                  value={newStep.name}
-                  disabled={stepsLocked}
-                  onInput={(event) => {
-                    setNewStep({ ...newStep, name: event.currentTarget.value });
-                  }}
-                />
-                {teamSelect(
-                  newStep.teamId,
-                  (teamId) => {
-                    setNewStep({ ...newStep, teamId });
+              <s-stack gap="small-300">
+                <s-stack direction="inline" gap="base" alignItems="end">
+                  <s-text-field
+                    label="New step"
+                    placeholder="e.g. Engrave"
+                    value={newStep.name}
+                    disabled={stepsLocked}
+                    onInput={(event) => {
+                      setNewStep({
+                        ...newStep,
+                        name: event.currentTarget.value,
+                      });
+                    }}
+                  />
+                  {teamSelect(
+                    newStep.teamId,
+                    (teamId) => {
+                      setNewStep({ ...newStep, teamId });
+                    },
+                    "Team for new step",
+                  )}
+                  <s-button
+                    variant="secondary"
+                    disabled={
+                      stepsLocked ||
+                      newStep.name.trim().length === 0 ||
+                      newStep.teamId === ""
+                    }
+                    {...(addStepMutation.isPending ? { loading: true } : {})}
+                    onClick={() => {
+                      addStepMutation.mutate({
+                        name: newStep.name,
+                        teamId: newStep.teamId,
+                        ...(instructionsOrNull(newStep.instructions) === null
+                          ? {}
+                          : { instructions: newStep.instructions }),
+                      });
+                    }}
+                  >
+                    Add step
+                  </s-button>
+                </s-stack>
+                {instructionsField(
+                  newStep.instructions,
+                  (instructions) => {
+                    setNewStep({ ...newStep, instructions });
                   },
-                  "Team for new step",
+                  "Instructions for new step",
                 )}
-                <s-button
-                  variant="secondary"
-                  disabled={
-                    stepsLocked ||
-                    newStep.name.trim().length === 0 ||
-                    newStep.teamId === ""
-                  }
-                  {...(addStepMutation.isPending ? { loading: true } : {})}
-                  onClick={() => {
-                    addStepMutation.mutate(newStep);
-                  }}
-                >
-                  Add step
-                </s-button>
               </s-stack>
             )
           )}

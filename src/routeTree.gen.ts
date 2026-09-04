@@ -36,6 +36,7 @@ import { Route as AppTeamsIndexRouteImport } from './routes/app.teams.index'
 import { Route as AppTeamsTeamIdRouteImport } from './routes/app.teams.$teamId'
 import { Route as AppWorkflowsIndexRouteImport } from './routes/app.workflows.index'
 import { Route as AppWorkflowsWorkflowIdRouteImport } from './routes/app.workflows.$workflowId'
+import { Route as ShopShopIndexRouteImport } from './routes/shop.$shop.index'
 import { Route as ShopShopQueueRouteImport } from './routes/shop.$shop.queue'
 import { Route as WebhooksAppScopes_updateRouteImport } from './routes/webhooks.app.scopes_update'
 import { Route as WebhooksAppUninstalledRouteImport } from './routes/webhooks.app.uninstalled'
@@ -176,6 +177,11 @@ const AppWorkflowsWorkflowIdRoute = AppWorkflowsWorkflowIdRouteImport.update({
   path: '/workflows/$workflowId',
   getParentRoute: () => AppRoute,
 } as any)
+const ShopShopIndexRoute = ShopShopIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ShopShopRoute,
+} as any)
 const ShopShopQueueRoute = ShopShopQueueRouteImport.update({
   id: '/queue',
   path: '/queue',
@@ -224,6 +230,7 @@ export interface FileRoutesByFullPath {
   '/app/orders/': typeof AppOrdersIndexRoute
   '/app/teams/': typeof AppTeamsIndexRoute
   '/app/workflows/': typeof AppWorkflowsIndexRoute
+  '/shop/$shop/': typeof ShopShopIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -235,7 +242,6 @@ export interface FileRoutesByTo {
   '/admin/shops': typeof AdminShopsRoute
   '/app/members': typeof AppMembersRoute
   '/auth/$': typeof AuthSplatRoute
-  '/shop/$shop': typeof ShopShopRouteWithChildren
   '/webhooks/compliance': typeof WebhooksComplianceRoute
   '/webhooks/orders': typeof WebhooksOrdersRoute
   '/admin': typeof AdminIndexRoute
@@ -253,6 +259,7 @@ export interface FileRoutesByTo {
   '/app/orders': typeof AppOrdersIndexRoute
   '/app/teams': typeof AppTeamsIndexRoute
   '/app/workflows': typeof AppWorkflowsIndexRoute
+  '/shop/$shop': typeof ShopShopIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -286,6 +293,7 @@ export interface FileRoutesById {
   '/app/orders/': typeof AppOrdersIndexRoute
   '/app/teams/': typeof AppTeamsIndexRoute
   '/app/workflows/': typeof AppWorkflowsIndexRoute
+  '/shop/$shop/': typeof ShopShopIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -320,6 +328,7 @@ export interface FileRouteTypes {
     | '/app/orders/'
     | '/app/teams/'
     | '/app/workflows/'
+    | '/shop/$shop/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -331,7 +340,6 @@ export interface FileRouteTypes {
     | '/admin/shops'
     | '/app/members'
     | '/auth/$'
-    | '/shop/$shop'
     | '/webhooks/compliance'
     | '/webhooks/orders'
     | '/admin'
@@ -349,6 +357,7 @@ export interface FileRouteTypes {
     | '/app/orders'
     | '/app/teams'
     | '/app/workflows'
+    | '/shop/$shop'
   id:
     | '__root__'
     | '/'
@@ -381,6 +390,7 @@ export interface FileRouteTypes {
     | '/app/orders/'
     | '/app/teams/'
     | '/app/workflows/'
+    | '/shop/$shop/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -591,6 +601,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppWorkflowsWorkflowIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/shop/$shop/': {
+      id: '/shop/$shop/'
+      path: '/'
+      fullPath: '/shop/$shop/'
+      preLoaderRoute: typeof ShopShopIndexRouteImport
+      parentRoute: typeof ShopShopRoute
+    }
     '/shop/$shop/queue': {
       id: '/shop/$shop/queue'
       path: '/queue'
@@ -659,10 +676,12 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 interface ShopShopRouteChildren {
   ShopShopQueueRoute: typeof ShopShopQueueRoute
+  ShopShopIndexRoute: typeof ShopShopIndexRoute
 }
 
 const ShopShopRouteChildren: ShopShopRouteChildren = {
   ShopShopQueueRoute: ShopShopQueueRoute,
+  ShopShopIndexRoute: ShopShopIndexRoute,
 }
 
 const ShopShopRouteWithChildren = ShopShopRoute._addFileChildren(

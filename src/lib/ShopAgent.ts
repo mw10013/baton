@@ -47,6 +47,7 @@ import { runShopAgentOrdersStream } from "@/lib/ShopAgentOrdersStream";
 import { Shopify } from "@/lib/Shopify";
 import { ShopifyAdmin } from "@/lib/ShopifyAdmin";
 import {
+  type StageNotFoundError,
   type StepNotFoundError,
   type WorkflowLimitError,
   type WorkflowNameTakenError,
@@ -60,7 +61,7 @@ import {
   type RunNotAllowedError,
   type RunNotFoundError,
   type RunTerminalError,
-  type StepNotCurrentError,
+  type StepNotReadyError,
   WorkflowRunRepository,
   type WorkflowRunRepositoryError,
 } from "@/lib/WorkflowRunRepository";
@@ -133,7 +134,13 @@ const callableEffect =
  * `updateStep` verify the team is active before writing, and `archiveTeam`
  * refuses while any step still points at it (`countStepsOwnedBy`, served by
  * `WorkflowStep_teamId_idx`). `unique (workflowId, position)` is what forces
- * `moveStep` to go through a scratch position inside one transaction.
+ * `moveStep` to go through a scratch position inside one transaction — and,
+ * now that every layout edit rewrites the whole workflow, why
+ * `WorkflowRepository.writeLayout` first parks every step at `-position`
+ * before assigning final positions and stages. `stage` groups steps that are
+ * ready together: along `position` stages are dense `1..m` and
+ * non-decreasing, an invariant kept by the pure `WorkflowLayout` module
+ * rather than by SQL. `instructions` is merchant text copied onto each run.
  * Epoch-ms integers like `ShopOrder`, not D1 `Team`'s ISO text: the two stores
  * already differ, and one store should not mix.
  *
@@ -148,7 +155,12 @@ const callableEffect =
  * mistaken cancel is un-cancel. `status` is denormalized from the steps for
  * the queue and the definitions badge; every step write recomputes it in the
  * same transaction. `(teamId, completedAt)` serves the member queue, which
- * asks for open steps by team.
+ * asks for open steps by team. A run step is *ready* when it is open and no
+ * step in an earlier `stage` of the same run is still open, so several steps
+ * of one run can be ready at once; `startedAt` / `startedBy` record Start and
+ * make the run `active` before anything is completed; `note` is worker text
+ * about this particular item. `flag = 'blocked'` is the one flag a person
+ * sets (with an optional reason in `flagDetail`) rather than reconcile.
  */
 const initializeSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -222,8 +234,10 @@ const initializeSchema = Effect.gen(function* () {
       id text primary key,
       workflowId text not null references Workflow (id) on delete cascade,
       position integer not null,
+      stage integer not null,
       name text not null check (name = trim(name) and length(name) > 0),
       teamId text not null,
+      instructions text,
       createdAt integer not null,
       unique (workflowId, position)
     );
@@ -242,7 +256,7 @@ const initializeSchema = Effect.gen(function* () {
       customAttributes text not null,
       source text not null check (source in ('tag', 'manual')),
       status text not null check (status in ('pending', 'active', 'done', 'cancelled')),
-      flag text check (flag in ('item_removed', 'quantity_changed', 'order_cancelled', 'order_deleted')),
+      flag text check (flag in ('item_removed', 'quantity_changed', 'order_cancelled', 'order_deleted', 'blocked')),
       flagAt integer,
       flagDetail text,
       createdAt integer not null,
@@ -256,11 +270,16 @@ const initializeSchema = Effect.gen(function* () {
       id text primary key,
       runId text not null references WorkflowRun (id) on delete cascade,
       position integer not null,
+      stage integer not null,
       name text not null,
       teamId text not null,
       teamName text not null,
+      instructions text,
+      startedAt integer,
+      startedBy text,
       completedAt integer,
       completedBy text,
+      note text,
       unique (runId, position)
     );
     create index if not exists WorkflowRunStep_teamId_idx
@@ -391,6 +410,7 @@ const stepResult = <R>(
   effect: Effect.Effect<
     Domain.StepResult,
     | StepNotFoundError
+    | StageNotFoundError
     | WorkflowNotFoundError
     | WorkflowLimitError
     | SqlError.SqlError
@@ -411,6 +431,8 @@ const stepResult = <R>(
     Effect.catchTags({
       StepNotFoundError: () =>
         Effect.succeed<Domain.StepResult>({ _tag: "NotFound" }),
+      StageNotFoundError: () =>
+        Effect.succeed<Domain.StepResult>({ _tag: "NotFound" }),
       WorkflowNotFoundError: () =>
         Effect.succeed<Domain.StepResult>({ _tag: "NotFound" }),
       WorkflowLimitError: ({ limit }) =>
@@ -430,14 +452,15 @@ const runResult = <R>(
     | RunNotFoundError
     | RunTerminalError
     | RunNotAllowedError
-    | StepNotCurrentError
+    | StepNotReadyError
     | SqlError.SqlError
-    | WorkflowRunRepositoryError,
+    | WorkflowRunRepositoryError
+    | RepositoryError,
     R
   >,
 ): Effect.Effect<
   Domain.RunResult,
-  SqlError.SqlError | WorkflowRunRepositoryError,
+  SqlError.SqlError | WorkflowRunRepositoryError | RepositoryError,
   R
 > =>
   effect.pipe(
@@ -449,8 +472,8 @@ const runResult = <R>(
         Effect.succeed<Domain.RunResult>({ _tag: "Terminal" }),
       RunNotAllowedError: () =>
         Effect.succeed<Domain.RunResult>({ _tag: "NotAllowed" }),
-      StepNotCurrentError: () =>
-        Effect.succeed<Domain.RunResult>({ _tag: "NotCurrent" }),
+      StepNotReadyError: () =>
+        Effect.succeed<Domain.RunResult>({ _tag: "NotReady" }),
     }),
   );
 
@@ -1457,17 +1480,140 @@ export class ShopAgent extends Agent {
    * `ShopAgentClient` path exists to carry. Decoded lax: the caller is the
    * Worker, not a browser.
    */
+  /**
+   * `startedByEmail` is joined here from D1's `Member` roster — one read per
+   * call, mapped by id — because the run rows hold only member ids and the
+   * repository never sees D1.
+   */
   listQueue(
     input: typeof Domain.ListQueueInput.Encoded,
   ): Promise<readonly Domain.QueueItem[]> {
+    const name = this.name;
     return this.runEffect(
       callableEffect(
         "ShopAgent.listQueue",
         Domain.ListQueueInput,
       )(({ teamIds }) =>
-        WorkflowRunRepository.pipe(
-          Effect.flatMap((repository) => repository.listQueue({ teamIds })),
-        ),
+        Effect.gen(function* () {
+          const rows = yield* (yield* WorkflowRunRepository).listQueue({
+            teamIds,
+          });
+          if (rows.length === 0) return [];
+          const members = yield* (yield* Repository).listMembers(
+            yield* Schema.decodeUnknownEffect(Domain.Shop)(name),
+          );
+          const emailOf = new Map(
+            members.map((member) => [member.id, member.email]),
+          );
+          return rows.flatMap((row): Domain.QueueItem[] => {
+            const [first, ...rest] = row.steps.map(
+              (step): Domain.QueueStep => ({
+                ...step,
+                startedByEmail:
+                  step.startedBy === null
+                    ? null
+                    : (emailOf.get(step.startedBy) ?? null),
+              }),
+            );
+            return first === undefined
+              ? []
+              : [
+                  {
+                    run: row.run,
+                    steps: [first, ...rest],
+                    stageCount: row.stageCount,
+                    note: row.note,
+                  },
+                ];
+          });
+        }),
+      )(input),
+    );
+  }
+
+  startStep(
+    input: typeof Domain.StartStepInput.Encoded,
+  ): Promise<Domain.RunResult> {
+    const shop = this.name;
+    const notifyChanged = () => this.notifyChanged();
+    return this.runEffect(
+      callableEffect(
+        "ShopAgent.startStep",
+        Domain.StartStepInput,
+      )(({ runStepId, memberId, teamIds }) =>
+        runResult(
+          Effect.gen(function* () {
+            yield* (yield* WorkflowRunRepository).startStep({
+              runStepId,
+              memberId: yield* Schema.decodeUnknownEffect(Domain.MemberId)(
+                memberId,
+              ).pipe(Effect.orDie),
+              teamIds,
+            });
+            yield* Effect.logInfo(
+              `ShopAgent.startStep: shop=${shop} step=${runStepId} memberId=${memberId}`,
+            ).pipe(Effect.annotateLogs({ shop, step: runStepId, memberId }));
+          }),
+        ).pipe(Effect.tap(notifyChanged)),
+      )(input),
+    );
+  }
+
+  /** The note itself never reaches the log line: worker text is unbounded and not ours to index. */
+  setStepNote(
+    input: typeof Domain.SetStepNoteInput.Encoded,
+  ): Promise<Domain.RunResult> {
+    const shop = this.name;
+    const notifyChanged = () => this.notifyChanged();
+    return this.runEffect(
+      callableEffect(
+        "ShopAgent.setStepNote",
+        Domain.SetStepNoteInput,
+      )(({ runStepId, memberId, teamIds, note }) =>
+        runResult(
+          Effect.gen(function* () {
+            yield* (yield* WorkflowRunRepository).setStepNote({
+              runStepId,
+              memberId: yield* Schema.decodeUnknownEffect(Domain.MemberId)(
+                memberId,
+              ).pipe(Effect.orDie),
+              teamIds,
+              note,
+            });
+            yield* Effect.logInfo(
+              `ShopAgent.setStepNote: shop=${shop} step=${runStepId} memberId=${memberId}`,
+            ).pipe(Effect.annotateLogs({ shop, step: runStepId, memberId }));
+          }),
+        ).pipe(Effect.tap(notifyChanged)),
+      )(input),
+    );
+  }
+
+  blockRun(
+    input: typeof Domain.BlockRunInput.Encoded,
+  ): Promise<Domain.RunResult> {
+    const shop = this.name;
+    const notifyChanged = () => this.notifyChanged();
+    return this.runEffect(
+      callableEffect(
+        "ShopAgent.blockRun",
+        Domain.BlockRunInput,
+      )(({ runId, memberId, teamIds, reason }) =>
+        runResult(
+          Effect.gen(function* () {
+            yield* (yield* WorkflowRunRepository).blockRun({
+              runId,
+              memberId: yield* Schema.decodeUnknownEffect(Domain.MemberId)(
+                memberId,
+              ).pipe(Effect.orDie),
+              teamIds,
+              reason,
+            });
+            yield* Effect.logInfo(
+              `ShopAgent.blockRun: shop=${shop} runId=${runId} memberId=${memberId}`,
+            ).pipe(Effect.annotateLogs({ shop, runId, memberId }));
+          }),
+        ).pipe(Effect.tap(notifyChanged)),
       )(input),
     );
   }
@@ -1561,7 +1707,7 @@ export class ShopAgent extends Agent {
     return this.runEffect(
       callableEffect("ShopAgent.addStep", Domain.AddStepInput, {
         onExcessProperty: "error",
-      })(({ workflowId, name, teamId }) =>
+      })(({ workflowId, name, teamId, instructions }) =>
         stepResult(
           Effect.gen(function* () {
             const blocked = yield* workflowWritable(workflowId);
@@ -1572,7 +1718,46 @@ export class ShopAgent extends Agent {
               workflowId,
               name,
               teamId: team.id,
+              instructions: instructions ?? null,
             });
+            yield* notifyChanged();
+            return { _tag: "Ok", step };
+          }),
+        ),
+      )(input),
+    );
+  }
+
+  /** `StageNotFoundError` surfaces as `NotFound`: the stage the editor showed was closed by a concurrent edit. */
+  @callable()
+  addParallelStep(
+    input: typeof Domain.AddParallelStepInput.Encoded,
+  ): Promise<Domain.StepResult> {
+    const shop = this.name;
+    const notifyChanged = () => this.notifyChanged();
+    const activeTeam = (teamId: string) => this.activeTeam(teamId);
+    const workflowWritable = (workflowId: string) =>
+      this.workflowWritable(workflowId);
+    return this.runEffect(
+      callableEffect("ShopAgent.addParallelStep", Domain.AddParallelStepInput, {
+        onExcessProperty: "error",
+      })(({ workflowId, stage, name, teamId, instructions }) =>
+        stepResult(
+          Effect.gen(function* () {
+            const blocked = yield* workflowWritable(workflowId);
+            if (blocked !== null) return blocked;
+            const team = yield* activeTeam(teamId);
+            if (team === null) return { _tag: "TeamNotActive" };
+            const step = yield* (yield* WorkflowRepository).addParallelStep({
+              workflowId,
+              stage,
+              name,
+              teamId: team.id,
+              instructions: instructions ?? null,
+            });
+            yield* Effect.logInfo(
+              `ShopAgent.addParallelStep: shop=${shop} workflowId=${workflowId} stage=${String(stage)}`,
+            ).pipe(Effect.annotateLogs({ shop, workflowId, stage }));
             yield* notifyChanged();
             return { _tag: "Ok", step };
           }),
@@ -1592,7 +1777,7 @@ export class ShopAgent extends Agent {
     return this.runEffect(
       callableEffect("ShopAgent.updateStep", Domain.UpdateStepInput, {
         onExcessProperty: "error",
-      })(({ stepId, name, teamId }) =>
+      })(({ stepId, name, teamId, instructions }) =>
         stepResult(
           Effect.gen(function* () {
             const repository = yield* WorkflowRepository;
@@ -1606,6 +1791,7 @@ export class ShopAgent extends Agent {
               stepId,
               name,
               teamId: team.id,
+              instructions,
             });
             yield* notifyChanged();
             return { _tag: "Ok", step };
@@ -1634,6 +1820,43 @@ export class ShopAgent extends Agent {
             const blocked = yield* workflowWritable(existing.value.workflowId);
             if (blocked !== null) return blocked;
             yield* repository.moveStep({ stepId, direction });
+            yield* notifyChanged();
+            return { _tag: "Ok", step: null };
+          }),
+        ),
+      )(input),
+    );
+  }
+
+  @callable()
+  separateStep(
+    input: typeof Domain.SeparateStepInput.Encoded,
+  ): Promise<Domain.StepResult> {
+    const shop = this.name;
+    const notifyChanged = () => this.notifyChanged();
+    const workflowWritable = (workflowId: string) =>
+      this.workflowWritable(workflowId);
+    return this.runEffect(
+      callableEffect("ShopAgent.separateStep", Domain.SeparateStepInput, {
+        onExcessProperty: "error",
+      })(({ stepId }) =>
+        stepResult(
+          Effect.gen(function* () {
+            const repository = yield* WorkflowRepository;
+            const existing = yield* repository.getStep({ stepId });
+            if (Option.isNone(existing)) return { _tag: "NotFound" };
+            const blocked = yield* workflowWritable(existing.value.workflowId);
+            if (blocked !== null) return blocked;
+            yield* repository.separateStep({ stepId });
+            yield* Effect.logInfo(
+              `ShopAgent.separateStep: shop=${shop} workflowId=${existing.value.workflowId} stage=${String(existing.value.stage)}`,
+            ).pipe(
+              Effect.annotateLogs({
+                shop,
+                workflowId: existing.value.workflowId,
+                stage: existing.value.stage,
+              }),
+            );
             yield* notifyChanged();
             return { _tag: "Ok", step: null };
           }),

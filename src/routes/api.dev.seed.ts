@@ -30,7 +30,12 @@ const DevSeedInput = Schema.Struct({
         name: Domain.WorkflowName,
         tags: Domain.ProductTags,
         steps: Schema.Array(
-          Schema.Struct({ name: Domain.StepName, team: Domain.TeamName }),
+          Schema.Struct({
+            name: Domain.StepName,
+            team: Domain.TeamName,
+            stage: Schema.optionalKey(Schema.Number),
+            instructions: Schema.optionalKey(Domain.StepInstructions),
+          }),
         ),
       }),
     ),
@@ -142,13 +147,15 @@ export const Route = createFileRoute("/api/dev/seed")({
                   });
                 }
               }
+              type SeedStep =
+                (typeof Domain.SeedWorkflowsInput.Encoded)["workflows"][number]["steps"][number];
               const seedWorkflows: {
                 name: string;
                 tags: readonly string[];
-                steps: { name: string; teamId: string }[];
+                steps: SeedStep[];
               }[] = [];
               for (const workflow of workflows ?? []) {
-                const steps: { name: string; teamId: string }[] = [];
+                const steps: SeedStep[] = [];
                 for (const step of workflow.steps) {
                   const teamId = teamIds.get(step.team);
                   if (teamId === undefined)
@@ -156,7 +163,14 @@ export const Route = createFileRoute("/api/dev/seed")({
                       `workflow ${workflow.name} step ${step.name} references unseeded team ${step.team}`,
                       { status: 400 },
                     );
-                  steps.push({ name: step.name, teamId });
+                  steps.push({
+                    name: step.name,
+                    teamId,
+                    ...(step.stage === undefined ? {} : { stage: step.stage }),
+                    ...(step.instructions === undefined
+                      ? {}
+                      : { instructions: step.instructions }),
+                  });
                 }
                 seedWorkflows.push({
                   name: workflow.name,

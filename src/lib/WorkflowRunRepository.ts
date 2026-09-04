@@ -34,11 +34,28 @@ export class RunNotAllowedError extends Schema.TaggedError<RunNotAllowedError>()
   { runId: Schema.String, teamId: Schema.String },
 ) {}
 
-/** A lower-position step is still open, or this step is already completed. */
-export class StepNotCurrentError extends Schema.TaggedError<StepNotCurrentError>()(
-  "StepNotCurrentError",
+/** A step in an earlier stage is still open, or this step is already completed. */
+export class StepNotReadyError extends Schema.TaggedError<StepNotReadyError>()(
+  "StepNotReadyError",
   { runStepId: Schema.String },
 ) {}
+
+/**
+ * What `listQueue` returns before the Durable Object joins member emails:
+ * every ready step of the run the caller may act on, with the run's last
+ * stage and each step's same-stage siblings owned by other teams.
+ */
+export interface QueueRow {
+  readonly run: Domain.WorkflowRun;
+  readonly steps: readonly (Domain.WorkflowRunStep & {
+    readonly siblings: readonly {
+      readonly name: Domain.StepName;
+      readonly teamName: Domain.TeamName;
+    }[];
+  })[];
+  readonly stageCount: number;
+  readonly note: string | null;
+}
 
 export interface ReconcileCounts {
   readonly created: number;
@@ -90,6 +107,9 @@ export const isEligibleOrder = (order: Domain.ShopOrder) =>
   order.fullyPaid && order.cancelledAt === null;
 
 const json = (value: unknown) => JSON.stringify(value);
+
+const isTerminal = (run: Domain.WorkflowRun) =>
+  run.status === "done" || run.status === "cancelled";
 
 export class WorkflowRunRepository extends Context.Service<
   WorkflowRunRepository,
@@ -153,12 +173,32 @@ export class WorkflowRunRepository extends Context.Service<
       | RunNotFoundError
       | RunTerminalError
     >;
+    /** One row per run with at least one ready step owned by `teamIds`; flagged runs first, then oldest. */
     readonly listQueue: (input: {
       readonly teamIds: readonly string[];
     }) => Effect.Effect<
-      readonly Domain.QueueItem[],
+      readonly QueueRow[],
       SqlError.SqlError | WorkflowRunRepositoryError
     >;
+    /**
+     * Marks a ready step in progress. Idempotent: a second Start leaves the
+     * original `startedAt` / `startedBy` — no takeover, no error — so two
+     * people pressing it does not rewrite who began.
+     */
+    readonly startStep: (input: {
+      readonly runStepId: string;
+      readonly memberId: Domain.MemberId;
+      readonly teamIds: readonly string[];
+    }) => Effect.Effect<
+      void,
+      | SqlError.SqlError
+      | WorkflowRunRepositoryError
+      | RunNotFoundError
+      | RunNotAllowedError
+      | StepNotReadyError
+      | RunTerminalError
+    >;
+    /** Also backfills `startedAt` / `startedBy` when Done arrives without a Start, so every finished step records who. */
     readonly completeStep: (input: {
       readonly runStepId: string;
       readonly memberId: Domain.MemberId;
@@ -169,10 +209,38 @@ export class WorkflowRunRepository extends Context.Service<
       | WorkflowRunRepositoryError
       | RunNotFoundError
       | RunNotAllowedError
-      | StepNotCurrentError
+      | StepNotReadyError
       | RunTerminalError
     >;
-    /** Allowed when the run's current step belongs to one of `teamIds`. */
+    /** No readiness requirement — a note on a done step is allowed — but the run must be non-terminal. `null` clears. */
+    readonly setStepNote: (input: {
+      readonly runStepId: string;
+      readonly memberId: Domain.MemberId;
+      readonly teamIds: readonly string[];
+      readonly note: Domain.StepNote | null;
+    }) => Effect.Effect<
+      void,
+      | SqlError.SqlError
+      | WorkflowRunRepositoryError
+      | RunNotFoundError
+      | RunNotAllowedError
+      | RunTerminalError
+    >;
+    /** Sets `flag = 'blocked'` with an optional reason, overwriting any prior flag. Allowed when a ready step belongs to `teamIds`. */
+    readonly blockRun: (input: {
+      readonly runId: string;
+      readonly memberId: Domain.MemberId;
+      readonly teamIds: readonly string[];
+      readonly reason: Domain.StepNote | null;
+    }) => Effect.Effect<
+      void,
+      | SqlError.SqlError
+      | WorkflowRunRepositoryError
+      | RunNotFoundError
+      | RunNotAllowedError
+      | RunTerminalError
+    >;
+    /** Allowed when any ready step of the run belongs to one of `teamIds`. */
     readonly dismissFlag: (input: {
       readonly runId: string;
       readonly teamIds: readonly string[];
@@ -224,6 +292,7 @@ export class WorkflowRunRepository extends Context.Service<
           Schema.Struct({
             ...Domain.WorkflowRun.fields,
             note: Schema.NullOr(Schema.String),
+            stageCount: Schema.Number,
           }),
         ),
         "Invalid queue row",
@@ -266,6 +335,68 @@ export class WorkflowRunRepository extends Context.Service<
           Effect.flatMap(decodeSteps),
         );
 
+      /**
+       * A step is ready when it is open and nothing in an earlier stage of
+       * the same run is still open. One definition, interpolated as a literal
+       * with the outer alias, so the queue and every action agree.
+       */
+      const readyWhere = (alias: string) =>
+        sql.literal(`(
+          ${alias}.completedAt is null and not exists (
+            select 1 from WorkflowRunStep p
+            where p.runId = ${alias}.runId and p.completedAt is null and p.stage < ${alias}.stage
+          )
+        )`);
+
+      const readySteps = (runId: string) =>
+        sql`
+          select s.* from WorkflowRunStep s
+          where s.runId = ${runId} and ${readyWhere("s")}
+          order by s.position
+        `.pipe(Effect.flatMap(decodeSteps));
+
+      const isReady = (runStepId: string) =>
+        sql`
+          select 1 from WorkflowRunStep s
+          where s.id = ${runStepId} and ${readyWhere("s")}
+        `.pipe(Effect.map((rows) => rows.length > 0));
+
+      /** The guard every step action shares: step exists, run not terminal, step's team among the caller's. */
+      const requireActionable = ({
+        runStepId,
+        teamIds,
+      }: {
+        readonly runStepId: string;
+        readonly teamIds: readonly string[];
+      }) =>
+        Effect.gen(function* () {
+          const step = yield* requireStep(runStepId);
+          const run = yield* requireRun(step.runId);
+          if (isTerminal(run))
+            yield* new RunTerminalError({ runId: run.id, status: run.status });
+          if (!teamIds.includes(step.teamId))
+            yield* new RunNotAllowedError({
+              runId: run.id,
+              teamId: step.teamId,
+            });
+          return { step, run };
+        });
+
+      /** `RunNotAllowedError` unless some ready step of the run belongs to `teamIds`. */
+      const requireReadyTeam = (runId: string, teamIds: readonly string[]) =>
+        readySteps(runId).pipe(
+          Effect.flatMap((ready) =>
+            ready.some((step) => teamIds.includes(step.teamId))
+              ? Effect.void
+              : Effect.fail(
+                  new RunNotAllowedError({
+                    runId,
+                    teamId: ready[0]?.teamId ?? "",
+                  }),
+                ),
+          ),
+        );
+
       const stepsForRuns = (runIds: readonly string[]) =>
         runIds.length === 0
           ? Effect.succeed([])
@@ -288,7 +419,9 @@ export class WorkflowRunRepository extends Context.Service<
       /**
        * `status` is a function of the steps; recomputing it in SQL from the
        * same rows the step write just touched is what keeps the two in one
-       * transaction with nothing to drift.
+       * transaction with nothing to drift. A started step counts as `active`
+       * on its own: "someone has started work" is exactly what should protect
+       * a run from being silently cancelled by reconcile.
        */
       const recomputeStatus = (runId: string, now: number) =>
         sql`
@@ -296,7 +429,7 @@ export class WorkflowRunRepository extends Context.Service<
             status = (
               select case
                 when count(*) = sum(completedAt is not null) then 'done'
-                when sum(completedAt is not null) > 0 then 'active'
+                when sum(completedAt is not null) > 0 or sum(startedAt is not null) > 0 then 'active'
                 else 'pending'
               end
               from WorkflowRunStep s where s.runId = WorkflowRun.id
@@ -365,12 +498,13 @@ export class WorkflowRunRepository extends Context.Service<
             steps,
             (step) => sql`
               insert into WorkflowRunStep
-                (id, runId, position, name, teamId, teamName, completedAt, completedBy)
+                (id, runId, position, stage, name, teamId, teamName, instructions,
+                 startedAt, startedBy, completedAt, completedBy, note)
               values (
-                ${crypto.randomUUID()}, ${runId}, ${step.position}, ${step.name},
-                ${step.teamId},
+                ${crypto.randomUUID()}, ${runId}, ${step.position}, ${step.stage},
+                ${step.name}, ${step.teamId},
                 ${activeTeams.find((team) => team.id === step.teamId)?.name ?? ""},
-                null, null
+                ${step.instructions}, null, null, null, null, null
               )
             `,
             { discard: true },
@@ -564,9 +698,11 @@ export class WorkflowRunRepository extends Context.Service<
         }),
 
         /**
-         * The current step is the lowest open position; the `not exists`
-         * clause selects exactly one step per run without a `group by`, and
-         * `json_each` keeps the team list a single bound parameter.
+         * Two statements: every ready step of every run that has at least one
+         * ready step for the caller's teams (so siblings owned by other teams
+         * are in hand), then those runs with their last stage and the order's
+         * live note. Grouping happens here in TypeScript; `json_each` keeps the
+         * team list a single bound parameter.
          */
         listQueue: Effect.fn("WorkflowRunRepository.listQueue")(function* ({
           teamIds,
@@ -574,32 +710,84 @@ export class WorkflowRunRepository extends Context.Service<
           readonly teamIds: readonly string[];
         }) {
           if (teamIds.length === 0) return [];
-          const steps = yield* decodeSteps(
+          const ready = yield* decodeSteps(
             yield* sql`
               select s.* from WorkflowRunStep s
               join WorkflowRun r on r.id = s.runId
               where r.status in ('pending', 'active')
-                and s.completedAt is null
-                and s.teamId in (select value from json_each(${json(teamIds)}))
-                and not exists (
-                  select 1 from WorkflowRunStep p
-                  where p.runId = s.runId and p.completedAt is null and p.position < s.position
+                and ${readyWhere("s")}
+                and exists (
+                  select 1 from WorkflowRunStep m
+                  where m.runId = s.runId
+                    and m.teamId in (select value from json_each(${json(teamIds)}))
+                    and ${readyWhere("m")}
                 )
+              order by s.runId, s.position
             `,
           );
-          if (steps.length === 0) return [];
+          if (ready.length === 0) return [];
+          const runIds = [...new Set(ready.map((step) => step.runId))];
           const runs = yield* decodeQueueRuns(
             yield* sql`
-              select r.*, o.note from WorkflowRun r
+              select r.*, o.note,
+                (select max(stage) from WorkflowRunStep c where c.runId = r.id) as stageCount
+              from WorkflowRun r
               left join ShopOrder o on o.id = r.orderId
-              where r.id in (select value from json_each(${json(steps.map((step) => step.runId))}))
+              where r.id in (select value from json_each(${json(runIds)}))
               order by r.flag is null, r.createdAt, r.orderName, r.lineItemId
             `,
           );
-          return runs.flatMap(({ note, ...run }) => {
-            const step = steps.find((candidate) => candidate.runId === run.id);
-            return step === undefined ? [] : [{ run, step, note }];
+          return runs.flatMap(({ note, stageCount, ...run }): QueueRow[] => {
+            const ofRun = ready.filter((step) => step.runId === run.id);
+            const mine = ofRun.filter((step) => teamIds.includes(step.teamId));
+            if (mine.length === 0) return [];
+            return [
+              {
+                run,
+                stageCount,
+                note,
+                steps: mine.map((step) => ({
+                  ...step,
+                  siblings: ofRun
+                    .filter(
+                      (other) =>
+                        other.stage === step.stage &&
+                        !mine.some((m) => m.id === other.id),
+                    )
+                    .map((other) => ({
+                      name: other.name,
+                      teamName: other.teamName,
+                    })),
+                })),
+              },
+            ];
           });
+        }),
+
+        startStep: Effect.fn("WorkflowRunRepository.startStep")(function* ({
+          runStepId,
+          memberId,
+          teamIds,
+        }: {
+          readonly runStepId: string;
+          readonly memberId: Domain.MemberId;
+          readonly teamIds: readonly string[];
+        }) {
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              const { run } = yield* requireActionable({ runStepId, teamIds });
+              if (!(yield* isReady(runStepId)))
+                yield* new StepNotReadyError({ runStepId });
+              const now = yield* Clock.currentTimeMillis;
+              yield* sql`
+                update WorkflowRunStep
+                set startedAt = coalesce(startedAt, ${now}),
+                    startedBy = coalesce(startedBy, ${memberId})
+                where id = ${runStepId}
+              `;
+              yield* recomputeStatus(run.id, now);
+            }),
+          );
         }),
 
         completeStep: Effect.fn("WorkflowRunRepository.completeStep")(
@@ -614,29 +802,18 @@ export class WorkflowRunRepository extends Context.Service<
           }) {
             yield* sql.withTransaction(
               Effect.gen(function* () {
-                const step = yield* requireStep(runStepId);
-                const run = yield* requireRun(step.runId);
-                if (!teamIds.includes(step.teamId))
-                  yield* new RunNotAllowedError({
-                    runId: run.id,
-                    teamId: step.teamId,
-                  });
-                if (run.status === "done" || run.status === "cancelled")
-                  yield* new RunTerminalError({
-                    runId: run.id,
-                    status: run.status,
-                  });
-                const open = yield* stepsOf(run.id).pipe(
-                  Effect.map((steps) =>
-                    steps.filter((candidate) => candidate.completedAt === null),
-                  ),
-                );
-                if (step.completedAt !== null || open[0]?.id !== step.id)
-                  yield* new StepNotCurrentError({ runStepId });
+                const { run } = yield* requireActionable({
+                  runStepId,
+                  teamIds,
+                });
+                if (!(yield* isReady(runStepId)))
+                  yield* new StepNotReadyError({ runStepId });
                 const now = yield* Clock.currentTimeMillis;
                 yield* sql`
                   update WorkflowRunStep
-                  set completedAt = ${now}, completedBy = ${memberId}
+                  set completedAt = ${now}, completedBy = ${memberId},
+                      startedAt = coalesce(startedAt, ${now}),
+                      startedBy = coalesce(startedBy, ${memberId})
                   where id = ${runStepId}
                 `;
                 yield* recomputeStatus(run.id, now);
@@ -644,6 +821,55 @@ export class WorkflowRunRepository extends Context.Service<
             );
           },
         ),
+
+        setStepNote: Effect.fn("WorkflowRunRepository.setStepNote")(function* ({
+          runStepId,
+          teamIds,
+          note,
+        }: {
+          readonly runStepId: string;
+          readonly memberId: Domain.MemberId;
+          readonly teamIds: readonly string[];
+          readonly note: Domain.StepNote | null;
+        }) {
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              const { run } = yield* requireActionable({ runStepId, teamIds });
+              const now = yield* Clock.currentTimeMillis;
+              yield* sql`update WorkflowRunStep set note = ${note} where id = ${runStepId}`;
+              yield* sql`update WorkflowRun set updatedAt = ${now} where id = ${run.id}`;
+            }),
+          );
+        }),
+
+        blockRun: Effect.fn("WorkflowRunRepository.blockRun")(function* ({
+          runId,
+          memberId,
+          teamIds,
+          reason,
+        }: {
+          readonly runId: string;
+          readonly memberId: Domain.MemberId;
+          readonly teamIds: readonly string[];
+          readonly reason: Domain.StepNote | null;
+        }) {
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              const run = yield* requireRun(runId);
+              if (isTerminal(run))
+                yield* new RunTerminalError({ runId, status: run.status });
+              yield* requireReadyTeam(runId, teamIds);
+              const now = yield* Clock.currentTimeMillis;
+              const detail: Domain.RunFlagDetail =
+                reason === null ? { by: memberId } : { reason, by: memberId };
+              yield* sql`
+                update WorkflowRun
+                set flag = 'blocked', flagAt = ${now}, flagDetail = ${json(detail)}, updatedAt = ${now}
+                where id = ${runId}
+              `;
+            }),
+          );
+        }),
 
         dismissFlag: Effect.fn("WorkflowRunRepository.dismissFlag")(function* ({
           runId,
@@ -653,14 +879,7 @@ export class WorkflowRunRepository extends Context.Service<
           readonly teamIds: readonly string[];
         }) {
           const run = yield* requireRun(runId);
-          const current = (yield* stepsOf(runId)).find(
-            (step) => step.completedAt === null,
-          );
-          if (current === undefined || !teamIds.includes(current.teamId))
-            yield* new RunNotAllowedError({
-              runId,
-              teamId: current?.teamId ?? "",
-            });
+          yield* requireReadyTeam(runId, teamIds);
           const now = yield* Clock.currentTimeMillis;
           yield* sql`
               update WorkflowRun

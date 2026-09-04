@@ -60,9 +60,26 @@ export class ShopAgentClient extends Context.Service<
       shop: string,
       input: Domain.ListQueueInput,
     ) => Effect.Effect<readonly Domain.QueueItem[], ShopAgentClientError>;
+    readonly startStep: (
+      shop: string,
+      input: Domain.StartStepInput,
+    ) => Effect.Effect<Domain.RunResult, ShopAgentClientError>;
     readonly completeStep: (
       shop: string,
       input: Domain.CompleteStepInput,
+    ) => Effect.Effect<Domain.RunResult, ShopAgentClientError>;
+    /**
+     * `Encoded`, not `Type`: the note is free text the object trims and
+     * bounds on decode, so the server fn hands the wire string across and
+     * lets the one decoder on the object side be the one that brands it.
+     */
+    readonly setStepNote: (
+      shop: string,
+      input: typeof Domain.SetStepNoteInput.Encoded,
+    ) => Effect.Effect<Domain.RunResult, ShopAgentClientError>;
+    readonly blockRun: (
+      shop: string,
+      input: typeof Domain.BlockRunInput.Encoded,
     ) => Effect.Effect<Domain.RunResult, ShopAgentClientError>;
     readonly dismissFlag: (
       shop: string,
@@ -132,10 +149,28 @@ export class ShopAgentClient extends Context.Service<
               stub.listQueue(input),
             ),
         ),
+        startStep: Effect.fn("ShopAgentClient.startStep")(
+          (shop: string, input: Domain.StartStepInput) =>
+            call("startStep", Domain.RunResult, shop, (stub) =>
+              stub.startStep(input),
+            ),
+        ),
         completeStep: Effect.fn("ShopAgentClient.completeStep")(
           (shop: string, input: Domain.CompleteStepInput) =>
             call("completeStep", Domain.RunResult, shop, (stub) =>
               stub.completeStep(input),
+            ),
+        ),
+        setStepNote: Effect.fn("ShopAgentClient.setStepNote")(
+          (shop: string, input: typeof Domain.SetStepNoteInput.Encoded) =>
+            call("setStepNote", Domain.RunResult, shop, (stub) =>
+              stub.setStepNote(input),
+            ),
+        ),
+        blockRun: Effect.fn("ShopAgentClient.blockRun")(
+          (shop: string, input: typeof Domain.BlockRunInput.Encoded) =>
+            call("blockRun", Domain.RunResult, shop, (stub) =>
+              stub.blockRun(input),
             ),
         ),
         dismissFlag: Effect.fn("ShopAgentClient.dismissFlag")(

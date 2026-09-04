@@ -213,39 +213,197 @@ describe("WorkflowRepository", () => {
         const s2 = yield* add("Two");
         const s3 = yield* add("Three");
         deepStrictEqual([s1.position, s2.position, s3.position], [1, 2, 3]);
+        deepStrictEqual([s1.stage, s2.stage, s3.stage], [1, 2, 3]);
 
         const positions = () =>
           Effect.map(repo.getWorkflow({ workflowId: w.id }), (d) =>
             Option.getOrThrow(d).steps.map((s) => s.name),
+          );
+        const stages = () =>
+          Effect.map(repo.getWorkflow({ workflowId: w.id }), (d) =>
+            Option.getOrThrow(d).steps.map((s) => s.stage),
           );
 
         yield* repo.moveStep({ stepId: s1.id, direction: "up" });
         deepStrictEqual(yield* positions(), ["One", "Two", "Three"]);
         yield* repo.moveStep({ stepId: s3.id, direction: "down" });
         deepStrictEqual(yield* positions(), ["One", "Two", "Three"]);
+        // Linear steps are each their own stage, so a move joins the
+        // neighbour's stage and separate restores the boundary.
         yield* repo.moveStep({ stepId: s3.id, direction: "up" });
         deepStrictEqual(yield* positions(), ["One", "Three", "Two"]);
+        deepStrictEqual(yield* stages(), [1, 2, 2]);
+        yield* repo.separateStep({ stepId: s2.id });
+        deepStrictEqual(yield* stages(), [1, 2, 3]);
         yield* repo.moveStep({ stepId: s1.id, direction: "down" });
         deepStrictEqual(yield* positions(), ["Three", "One", "Two"]);
+        deepStrictEqual(yield* stages(), [1, 1, 2]);
 
         yield* repo.removeStep({ stepId: s1.id });
         const after = Option.getOrThrow(
           yield* repo.getWorkflow({ workflowId: w.id }),
         ).steps;
         deepStrictEqual(
-          after.map((s) => [s.name, s.position]),
+          after.map((s) => [s.name, s.position, s.stage]),
           [
-            ["Three", 1],
-            ["Two", 2],
+            ["Three", 1, 1],
+            ["Two", 2, 2],
           ],
         );
         const s4 = yield* add("Four");
         strictEqual(s4.position, 3);
+        strictEqual(s4.stage, 3);
 
         const missing = yield* repo
           .removeStep({ stepId: s1.id })
           .pipe(Effect.flip);
         strictEqual(missing._tag, "StepNotFoundError");
+      }),
+    ));
+
+  it("stages: move joins, separate splits, remove closes, addParallelStep shares; unknown stage fails", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const repo = yield* WorkflowRepository;
+        const w = yield* repo.createWorkflow({
+          name: name("A"),
+          tags: tags([]),
+        });
+        const add = (n: string) =>
+          repo.addStep({
+            workflowId: w.id,
+            name: stepName(n),
+            teamId: teamId("t1"),
+          });
+        const layout = () =>
+          Effect.map(repo.getWorkflow({ workflowId: w.id }), (d) =>
+            Option.getOrThrow(d).steps.map(
+              (s) => `${s.name}${String(s.stage)}`,
+            ),
+          );
+        const a = yield* add("a");
+        const b = yield* repo.addParallelStep({
+          workflowId: w.id,
+          stage: 1,
+          name: stepName("b"),
+          teamId: teamId("t2"),
+        });
+        strictEqual(b.stage, 1);
+        strictEqual(b.position, 2);
+        const c = yield* add("c");
+        const d = yield* add("d");
+        deepStrictEqual(yield* layout(), ["a1", "b1", "c2", "d3"]);
+
+        yield* repo.moveStep({ stepId: c.id, direction: "up" });
+        deepStrictEqual(yield* layout(), ["a1", "c1", "b1", "d2"]);
+
+        yield* repo.separateStep({ stepId: b.id });
+        deepStrictEqual(yield* layout(), ["a1", "c1", "b2", "d3"]);
+        yield* repo.separateStep({ stepId: b.id });
+        deepStrictEqual(yield* layout(), ["a1", "c1", "b2", "d3"]);
+
+        yield* repo.removeStep({ stepId: b.id });
+        deepStrictEqual(yield* layout(), ["a1", "c1", "d2"]);
+
+        const e = yield* repo.addParallelStep({
+          workflowId: w.id,
+          stage: 2,
+          name: stepName("e"),
+          teamId: teamId("t1"),
+        });
+        strictEqual(e.stage, 2);
+        deepStrictEqual(yield* layout(), ["a1", "c1", "d2", "e2"]);
+        strictEqual(a.id !== d.id, true);
+
+        const noStage = yield* repo
+          .addParallelStep({
+            workflowId: w.id,
+            stage: 9,
+            name: stepName("x"),
+            teamId: teamId("t1"),
+          })
+          .pipe(Effect.flip);
+        strictEqual(noStage._tag, "StageNotFoundError");
+        const noWorkflow = yield* repo
+          .addParallelStep({
+            workflowId: "nope",
+            stage: 1,
+            name: stepName("x"),
+            teamId: teamId("t1"),
+          })
+          .pipe(Effect.flip);
+        strictEqual(noWorkflow._tag, "WorkflowNotFoundError");
+      }),
+    ));
+
+  it("replaceWorkflows round-trips explicit stages and instructions; rejects an invalid layout", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const repo = yield* WorkflowRepository;
+        const instructions = Schema.decodeUnknownSync(Domain.StepInstructions);
+        yield* repo.replaceWorkflows({
+          workflows: [
+            {
+              name: name("Staged"),
+              tags: tags(["s"]),
+              steps: [
+                {
+                  name: stepName("a"),
+                  teamId: teamId("t1"),
+                  stage: 1,
+                  instructions: instructions("Read the order"),
+                },
+                { name: stepName("b"), teamId: teamId("t2"), stage: 1 },
+                { name: stepName("c"), teamId: teamId("t3"), stage: 2 },
+              ],
+            },
+            {
+              name: name("Linear"),
+              tags: tags(["l"]),
+              steps: [
+                { name: stepName("x"), teamId: teamId("t1") },
+                { name: stepName("y"), teamId: teamId("t2") },
+              ],
+            },
+          ],
+        });
+        const [linear, staged] = yield* repo.listActiveWorkflowDetails();
+        deepStrictEqual(
+          staged?.steps.map((s) => [
+            s.name,
+            s.position,
+            s.stage,
+            s.instructions,
+          ]),
+          [
+            ["a", 1, 1, "Read the order"],
+            ["b", 2, 1, null],
+            ["c", 3, 2, null],
+          ],
+        );
+        deepStrictEqual(
+          linear?.steps.map((s) => [s.name, s.stage]),
+          [
+            ["x", 1],
+            ["y", 2],
+          ],
+        );
+        const invalid = yield* repo
+          .replaceWorkflows({
+            workflows: [
+              {
+                name: name("Bad"),
+                tags: tags([]),
+                steps: [
+                  { name: stepName("a"), teamId: teamId("t1"), stage: 1 },
+                  { name: stepName("b"), teamId: teamId("t1"), stage: 3 },
+                ],
+              },
+            ],
+          })
+          .pipe(Effect.flip);
+        strictEqual(invalid._tag, "WorkflowRepositoryError");
+        strictEqual((yield* repo.listActiveWorkflowDetails()).length, 2);
       }),
     ));
 
@@ -266,9 +424,20 @@ describe("WorkflowRepository", () => {
           stepId: s.id,
           name: stepName("Y"),
           teamId: teamId("t2"),
+          instructions: Schema.decodeUnknownSync(Domain.StepInstructions)(
+            "Mind the grain",
+          ),
         });
         strictEqual(updated.name, "Y");
         strictEqual(updated.teamId, "t2");
+        strictEqual(updated.instructions, "Mind the grain");
+        const cleared = yield* repo.updateStep({
+          stepId: s.id,
+          name: stepName("Y"),
+          teamId: teamId("t2"),
+          instructions: null,
+        });
+        strictEqual(cleared.instructions, null);
         yield* Effect.forEach(
           Array.from(
             { length: Domain.WorkflowLimits.maxSteps - 1 },

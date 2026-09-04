@@ -45,7 +45,7 @@ const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
   Ok: () => null,
   NotFound: () => "That workflow run no longer exists.",
   NotAllowed: () => "Not allowed.",
-  NotCurrent: () => "An earlier step is still open.",
+  NotReady: () => "A step in an earlier stage is still open.",
   Terminal: () => "That workflow run is already finished.",
 });
 
@@ -61,7 +61,22 @@ const RUN_FLAG_LABEL = {
   quantity_changed: "Quantity changed",
   order_cancelled: "Order cancelled",
   order_deleted: "Order deleted",
+  blocked: "Blocked",
 } as const satisfies Record<Domain.RunFlag, string>;
+
+const flagLabel = (run: Domain.WorkflowRun) => {
+  if (run.flag === null) return null;
+  if (run.flag === "blocked" && run.flagDetail?.reason !== undefined)
+    return `Blocked: ${run.flagDetail.reason}`;
+  return RUN_FLAG_LABEL[run.flag];
+};
+
+/** "✓" done, "●" started, nothing for untouched. */
+const stepMark = (step: Domain.WorkflowRunStep) => {
+  if (step.completedAt !== null) return " ✓";
+  if (step.startedAt !== null) return " ●";
+  return "";
+};
 
 const decodeAgentMessage = (data: string) => {
   const parsed = ((): unknown => {
@@ -130,29 +145,56 @@ const fact = (label: string, value: React.ReactNode) =>
   );
 
 /**
- * Steps as a compact inline trail — "Cut ✓ · Engrave ● · Polish" — because the
- * whole run must be readable at a glance inside the line item it belongs to.
- * The current step is the lowest-position open one, matching the queue.
+ * Steps as a compact inline trail — "1 Cut ✓ · 2 Engrave ● · 2 Polish" —
+ * because the whole run must be readable at a glance inside the line item it
+ * belongs to. A step is *ready* (bold) when it is open and nothing in an
+ * earlier stage is still open, matching the queue; several can be ready at
+ * once. The prefix is the stage number, and the summary counts stages, so
+ * two steps that happen together read as one stop.
  */
 const stepTrail = ({ run, steps }: Domain.WorkflowRunDetail) => {
-  const currentId =
-    run.status === "cancelled"
-      ? null
-      : (steps.find((step) => step.completedAt === null)?.id ?? null);
+  const lowestOpenStage = steps
+    .filter((step) => step.completedAt === null)
+    .reduce<number | null>(
+      (lowest, step) =>
+        lowest === null ? step.stage : Math.min(lowest, step.stage),
+      null,
+    );
+  const isReady = (step: Domain.WorkflowRunStep) =>
+    run.status !== "cancelled" &&
+    step.completedAt === null &&
+    step.stage === lowestOpenStage;
+  const stageCount = steps.reduce((max, step) => Math.max(max, step.stage), 0);
+  const progress = (() => {
+    if (run.status === "done")
+      return `Done · ${String(stageCount)} stage${stageCount === 1 ? "" : "s"}`;
+    if (lowestOpenStage === null) return null;
+    return `Stage ${String(lowestOpenStage)} of ${String(stageCount)}`;
+  })();
   return (
-    <s-stack direction="inline" gap="small-300" alignItems="center">
-      {steps.map((step, index) => (
-        <React.Fragment key={step.id}>
-          {index > 0 && <s-text color="subdued">·</s-text>}
-          <s-text
-            color={step.completedAt === null ? undefined : "subdued"}
-            type={step.id === currentId ? "strong" : undefined}
-          >
-            {`${step.name}${step.completedAt === null ? "" : " ✓"}`}
+    <s-stack gap="small-500">
+      {progress !== null && <s-text color="subdued">{progress}</s-text>}
+      <s-stack direction="inline" gap="small-300" alignItems="center">
+        {steps.map((step, index) => (
+          <React.Fragment key={step.id}>
+            {index > 0 && <s-text color="subdued">·</s-text>}
+            <s-text
+              color={step.completedAt === null ? undefined : "subdued"}
+              type={isReady(step) ? "strong" : undefined}
+            >
+              {`${String(step.stage)} ${step.name}${stepMark(step)}`}
+            </s-text>
+            <s-text color="subdued">{`(${step.teamName})`}</s-text>
+          </React.Fragment>
+        ))}
+      </s-stack>
+      {steps
+        .filter((step) => step.note !== null)
+        .map((step) => (
+          <s-text key={step.id} color="subdued">
+            {`${step.name} note: ${step.note ?? ""}`}
           </s-text>
-          <s-text color="subdued">{`(${step.teamName})`}</s-text>
-        </React.Fragment>
-      ))}
+        ))}
     </s-stack>
   );
 };
@@ -381,7 +423,7 @@ function RouteComponent() {
           {run.run.status}
         </s-badge>
         {run.run.flag !== null && (
-          <s-badge tone="warning">{RUN_FLAG_LABEL[run.run.flag]}</s-badge>
+          <s-badge tone="warning">{flagLabel(run.run)}</s-badge>
         )}
         {run.run.status === "pending" || run.run.status === "active" ? (
           <s-button

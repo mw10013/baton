@@ -8,6 +8,9 @@
  * - member `m{i}@m.com` is the sole member of `Team {i}`
  * - `Workflow {i}` carries tag `workflow-{i}` and two steps, `Step 1` owned by
  *   `Team {i}` and `Step 2` by `Team {i % 6 + 1}`
+ * - `Necklace` (tag `necklace`) exercises stages: two steps share stage 1
+ *   (Teams 1 and 2), then Team 3, then Team 1 again, with instructions on
+ *   the first — the fixture for trying Start / Done / "together with" by hand.
  *
  * The step wrap is the point: every team then owns two steps across two
  * different workflows, so no queue is single-workflow and every hand-off
@@ -40,14 +43,32 @@ const body = {
     name: teamName(i),
     members: [`m${String(i)}@m.com`],
   })),
-  workflows: range.map((i) => ({
-    name: `Workflow ${String(i)}`,
-    tags: [`workflow-${String(i)}`],
-    steps: [
-      { name: "Step 1", team: teamName(i) },
-      { name: "Step 2", team: teamName(wrap(i)) },
-    ],
-  })),
+  workflows: [
+    ...range.map((i) => ({
+      name: `Workflow ${String(i)}`,
+      tags: [`workflow-${String(i)}`],
+      steps: [
+        { name: "Step 1", team: teamName(i) },
+        { name: "Step 2", team: teamName(wrap(i)) },
+      ],
+    })),
+    {
+      name: "Necklace",
+      tags: ["necklace"],
+      steps: [
+        {
+          name: "Prepare artwork",
+          team: teamName(1),
+          stage: 1,
+          instructions:
+            "Export artwork at 300 dpi, check spelling against the order.",
+        },
+        { name: "Pick materials", team: teamName(2), stage: 1 },
+        { name: "Produce", team: teamName(3), stage: 2 },
+        { name: "Inspect", team: teamName(1), stage: 3 },
+      ],
+    },
+  ],
 };
 
 const response = await fetch(`http://localhost:${port}/api/dev/seed`, {
@@ -60,5 +81,5 @@ if (!response.ok)
     `seed failed: ${String(response.status)} ${await response.text()}`,
   );
 console.log(
-  `seeded ${shop}: ${String(COUNT)} members, ${String(COUNT)} teams, ${String(COUNT)} workflows`,
+  `seeded ${shop}: ${String(COUNT)} members, ${String(COUNT)} teams, ${String(COUNT + 1)} workflows`,
 );

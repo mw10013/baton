@@ -134,6 +134,7 @@ describe("ShopAgent workflow callables", () => {
       stepId: step.step.id,
       name: "S",
       teamId: b.id,
+      instructions: null,
     });
     strictEqual(moved._tag, "Ok");
     const archived = await agent.archiveTeam({ teamId: a.id });
@@ -205,6 +206,72 @@ describe("ShopAgent workflow callables", () => {
     strictEqual(dupe._tag, "NameTaken");
     const list = await agent.listWorkflows({ includeArchived: true });
     expect(list.map((w) => [w.name, w.stepCount])).toEqual([["W", 1]]);
+  });
+
+  it("addParallelStep and separateStep map missing stage / step / team and archived to results", async () => {
+    const shop = "wf-parallel.myshopify.com";
+    const team = await seedTeam(shop, "T");
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const created = await agent.createWorkflow({ name: "W", tags: [] });
+    if (created._tag !== "Ok") throw new Error(created._tag);
+    const workflowId = created.workflow.id;
+    const first = await agent.addStep({
+      workflowId,
+      name: "A",
+      teamId: team.id,
+      instructions: "  Do it carefully  ",
+    });
+    if (first._tag !== "Ok" || first.step === null) throw new Error(first._tag);
+    strictEqual(first.step.instructions, "Do it carefully");
+    strictEqual(first.step.stage, 1);
+
+    const missingStage = await agent.addParallelStep({
+      workflowId,
+      stage: 9,
+      name: "B",
+      teamId: team.id,
+    });
+    strictEqual(missingStage._tag, "NotFound");
+    const inactive = await agent.addParallelStep({
+      workflowId,
+      stage: 1,
+      name: "B",
+      teamId: "nope",
+    });
+    strictEqual(inactive._tag, "TeamNotActive");
+    const parallel = await agent.addParallelStep({
+      workflowId,
+      stage: 1,
+      name: "B",
+      teamId: team.id,
+    });
+    if (parallel._tag !== "Ok" || parallel.step === null)
+      throw new Error(parallel._tag);
+    strictEqual(parallel.step.stage, 1);
+    strictEqual(parallel.step.position, 2);
+
+    const separateMissing = await agent.separateStep({ stepId: "nope" });
+    strictEqual(separateMissing._tag, "NotFound");
+    const separated = await agent.separateStep({ stepId: parallel.step.id });
+    strictEqual(separated._tag, "Ok");
+    const detail = await agent.getWorkflowDetail({ workflowId });
+    expect(detail?.steps.map((s) => [s.name, s.stage])).toEqual([
+      ["A", 1],
+      ["B", 2],
+    ]);
+
+    await agent.setWorkflowArchived({ workflowId, archived: true });
+    const parallelOnArchived = await agent.addParallelStep({
+      workflowId,
+      stage: 1,
+      name: "C",
+      teamId: team.id,
+    });
+    strictEqual(parallelOnArchived._tag, "Archived");
+    const separateOnArchived = await agent.separateStep({
+      stepId: parallel.step.id,
+    });
+    strictEqual(separateOnArchived._tag, "Archived");
   });
 
   it("callable inputs reject excess properties", () => {
@@ -386,5 +453,88 @@ describe("ShopAgent workflow run callables", () => {
     expect(
       await agent.dismissFlag({ runId, memberId: "m1", teamIds: [team.id] }),
     ).toEqual({ _tag: "NotAllowed" });
+  });
+
+  /**
+   * The member-area server fns cannot be driven end to end here (their route
+   * needs a Shopify session the isolate cannot stub), so the scope check they
+   * delegate to is asserted at the object: a team outside the caller's is
+   * `NotAllowed` for every action, and `listQueue` resolves `startedByEmail`.
+   */
+  it("startStep / setStepNote / blockRun refuse another team's work; listQueue joins startedByEmail", async () => {
+    const shop = "wf-start.myshopify.com";
+    const team = await seedTeam(shop, "Engraving");
+    await seedOrder(shop, Date.now());
+    const memberId = await Effect.runPromise(
+      Effect.gen(function* () {
+        const repo = yield* Repository;
+        const email = Schema.decodeUnknownSync(Domain.Email)("w@example.com");
+        yield* repo.addMember({ shop: shopOf(shop), email });
+        const members = yield* repo.listMembers(shopOf(shop));
+        return members.find((m) => m.email === email)?.id ?? "";
+      }).pipe(Effect.provide(layer)),
+    );
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const created = await agent.createWorkflow({ name: "Engrave", tags: [] });
+    if (created._tag !== "Ok") throw new Error(created._tag);
+    await agent.addStep({
+      workflowId: created.workflow.id,
+      name: "Engrave",
+      teamId: team.id,
+    });
+    const attached = await agent.attachWorkflow({
+      lineItemId: "gid://shopify/LineItem/1",
+      workflowId: created.workflow.id,
+    });
+    if (attached._tag !== "Ok") throw new Error(attached._tag);
+    const runId = attached.run.id;
+    const [detail] = await agent.listRunsForOrder({
+      orderId: "gid://shopify/Order/1",
+    });
+    const runStepId = detail?.steps[0]?.id ?? "";
+
+    expect(
+      await agent.startStep({ runStepId, memberId, teamIds: ["x"] }),
+    ).toEqual({ _tag: "NotAllowed" });
+    expect(
+      await agent.setStepNote({
+        runStepId,
+        memberId,
+        teamIds: ["x"],
+        note: "hi",
+      }),
+    ).toEqual({ _tag: "NotAllowed" });
+    expect(
+      await agent.blockRun({ runId, memberId, teamIds: ["x"], reason: null }),
+    ).toEqual({ _tag: "NotAllowed" });
+
+    expect(
+      await agent.startStep({ runStepId, memberId, teamIds: [team.id] }),
+    ).toEqual({ _tag: "Ok" });
+    const [item] = await agent.listQueue({ teamIds: [team.id] });
+    strictEqual(item?.run.status, "active");
+    strictEqual(item?.steps[0]?.startedByEmail, "w@example.com");
+    strictEqual(item?.stageCount, 1);
+    expect(
+      await agent.setStepNote({
+        runStepId,
+        memberId,
+        teamIds: [team.id],
+        note: " spelling confirmed ",
+      }),
+    ).toEqual({ _tag: "Ok" });
+    expect(
+      await agent.blockRun({
+        runId,
+        memberId,
+        teamIds: [team.id],
+        reason: "waiting on stock",
+      }),
+    ).toEqual({ _tag: "Ok" });
+    const [blocked] = await agent.listQueue({ teamIds: [team.id] });
+    strictEqual(blocked?.run.flag, "blocked");
+    strictEqual(blocked?.run.flagDetail?.reason, "waiting on stock");
+    strictEqual(blocked?.run.flagDetail?.by, memberId);
+    strictEqual(blocked?.steps[0]?.note, "spelling confirmed");
   });
 });

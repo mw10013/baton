@@ -1,5 +1,7 @@
 import type * as Domain from "@/lib/Domain";
 
+import * as React from "react";
+
 import { useMutation } from "@tanstack/react-query";
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { createServerFn, useServerFn } from "@tanstack/react-start";
@@ -14,15 +16,33 @@ import { ShopAgentClient } from "@/lib/ShopAgentClient";
 
 const ShopParamInput = Schema.Struct({ shop: Schema.String });
 
-const CompleteStepFormInput = Schema.Struct({
+const BoundedId = Schema.NonEmptyString.check(Schema.isMaxLength(128));
+
+const StepFormInput = Schema.Struct({
   shop: Schema.String,
-  runStepId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
+  runStepId: BoundedId,
 });
 
-const DismissFlagFormInput = Schema.Struct({
+const NoteFormInput = Schema.Struct({
   shop: Schema.String,
-  runId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
+  runStepId: BoundedId,
+  note: Schema.String.check(Schema.isMaxLength(1000)),
 });
+
+const RunFormInput = Schema.Struct({
+  shop: Schema.String,
+  runId: BoundedId,
+});
+
+const BlockFormInput = Schema.Struct({
+  shop: Schema.String,
+  runId: BoundedId,
+  reason: Schema.String.check(Schema.isMaxLength(1000)),
+});
+
+/** A blank text field on the wire is "cleared", which the object stores as `null`. */
+const textOrNull = (value: string) =>
+  value.trim().length === 0 ? null : value;
 
 /**
  * `teamIds` and `memberId` never come from the browser: `requireMember`
@@ -49,8 +69,27 @@ const getQueue = createServerFn({ method: "GET" })
     ),
   );
 
+const startStepFn = createServerFn({ method: "POST" })
+  .validator(Schema.toStandardSchemaV1(StepFormInput))
+  .middleware([memberServerFnMiddleware])
+  .handler(({ data, context: { runEffect, user } }) =>
+    runEffect(
+      Effect.gen(function* () {
+        const { shop, memberId, teams } = yield* requireMember({
+          shop: data.shop,
+          email: user.email,
+        });
+        return yield* (yield* ShopAgentClient).startStep(shop, {
+          runStepId: data.runStepId,
+          memberId,
+          teamIds: teams.map((team) => team.id),
+        });
+      }),
+    ),
+  );
+
 const completeStepFn = createServerFn({ method: "POST" })
-  .validator(Schema.toStandardSchemaV1(CompleteStepFormInput))
+  .validator(Schema.toStandardSchemaV1(StepFormInput))
   .middleware([memberServerFnMiddleware])
   .handler(({ data, context: { runEffect, user } }) =>
     runEffect(
@@ -68,8 +107,48 @@ const completeStepFn = createServerFn({ method: "POST" })
     ),
   );
 
+const setStepNoteFn = createServerFn({ method: "POST" })
+  .validator(Schema.toStandardSchemaV1(NoteFormInput))
+  .middleware([memberServerFnMiddleware])
+  .handler(({ data, context: { runEffect, user } }) =>
+    runEffect(
+      Effect.gen(function* () {
+        const { shop, memberId, teams } = yield* requireMember({
+          shop: data.shop,
+          email: user.email,
+        });
+        return yield* (yield* ShopAgentClient).setStepNote(shop, {
+          runStepId: data.runStepId,
+          memberId,
+          teamIds: teams.map((team) => team.id),
+          note: textOrNull(data.note),
+        });
+      }),
+    ),
+  );
+
+const blockRunFn = createServerFn({ method: "POST" })
+  .validator(Schema.toStandardSchemaV1(BlockFormInput))
+  .middleware([memberServerFnMiddleware])
+  .handler(({ data, context: { runEffect, user } }) =>
+    runEffect(
+      Effect.gen(function* () {
+        const { shop, memberId, teams } = yield* requireMember({
+          shop: data.shop,
+          email: user.email,
+        });
+        return yield* (yield* ShopAgentClient).blockRun(shop, {
+          runId: data.runId,
+          memberId,
+          teamIds: teams.map((team) => team.id),
+          reason: textOrNull(data.reason),
+        });
+      }),
+    ),
+  );
+
 const dismissFlagFn = createServerFn({ method: "POST" })
-  .validator(Schema.toStandardSchemaV1(DismissFlagFormInput))
+  .validator(Schema.toStandardSchemaV1(RunFormInput))
   .middleware([memberServerFnMiddleware])
   .handler(({ data, context: { runEffect, user } }) =>
     runEffect(
@@ -96,8 +175,8 @@ const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
   Ok: () => null,
   NotFound: () => "That work no longer exists.",
   NotAllowed: () => "This step belongs to another team.",
-  NotCurrent: () =>
-    "This step is not up next: an earlier step is still open, or someone already completed it.",
+  NotReady: () =>
+    "Someone finished an earlier step just now, or this step is waiting on another team. Refresh.",
   Terminal: () => "This workflow is already finished or cancelled.",
 });
 
@@ -117,6 +196,11 @@ const flagMessage = (run: Domain.WorkflowRun) =>
         ),
         Match.when("order_cancelled", () => "The order was cancelled."),
         Match.when("order_deleted", () => "The order was deleted."),
+        Match.when("blocked", () =>
+          run.flagDetail?.reason === undefined
+            ? "Blocked."
+            : `Blocked: ${run.flagDetail.reason}`,
+        ),
         Match.exhaustive,
       );
 
@@ -126,35 +210,193 @@ const lineItemLabel = ({ run }: Domain.QueueItem) =>
 const personalization = (attributes: readonly Domain.OrderAttribute[]) =>
   attributes.map(({ key, value }) => `${key}: ${value ?? ""}`).join(", ");
 
+const timeOf = (epochMs: number) =>
+  new Date(epochMs).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
 function RouteComponent() {
   const { shop, teams, items } = Route.useLoaderData();
   const router = useRouter();
+  const startStep = useServerFn(startStepFn);
   const completeStep = useServerFn(completeStepFn);
+  const setStepNote = useServerFn(setStepNoteFn);
+  const blockRun = useServerFn(blockRunFn);
   const dismissFlag = useServerFn(dismissFlagFn);
+  /** Which step's note editor is open and its draft; one at a time. */
+  const [noteDraft, setNoteDraft] = React.useState<{
+    runStepId: string;
+    note: string;
+  } | null>(null);
+  /** Which run's block form is open and its draft reason; one at a time. */
+  const [blockDraft, setBlockDraft] = React.useState<{
+    runId: string;
+    reason: string;
+  } | null>(null);
 
+  const onSuccess = () => router.invalidate();
+  const startMutation = useMutation({
+    mutationFn: (runStepId: string) => startStep({ data: { shop, runStepId } }),
+    onSuccess,
+  });
   const completeMutation = useMutation({
     mutationFn: (runStepId: string) =>
       completeStep({ data: { shop, runStepId } }),
-    onSuccess: () => router.invalidate(),
+    onSuccess,
+  });
+  const noteMutation = useMutation({
+    mutationFn: (input: { runStepId: string; note: string }) =>
+      setStepNote({ data: { shop, ...input } }),
+    onSuccess: async (result) => {
+      if (result._tag === "Ok") setNoteDraft(null);
+      await onSuccess();
+    },
+  });
+  const blockMutation = useMutation({
+    mutationFn: (input: { runId: string; reason: string }) =>
+      blockRun({ data: { shop, ...input } }),
+    onSuccess: async (result) => {
+      if (result._tag === "Ok") setBlockDraft(null);
+      await onSuccess();
+    },
   });
   const dismissMutation = useMutation({
     mutationFn: (runId: string) => dismissFlag({ data: { shop, runId } }),
-    onSuccess: () => router.invalidate(),
+    onSuccess,
   });
 
-  const pending = completeMutation.isPending || dismissMutation.isPending;
+  const mutations = [
+    startMutation,
+    completeMutation,
+    noteMutation,
+    blockMutation,
+    dismissMutation,
+  ];
+  const pending = mutations.some((mutation) => mutation.isPending);
   const banner =
-    completeMutation.error?.message ??
-    dismissMutation.error?.message ??
-    (completeMutation.data && runResultMessage(completeMutation.data)) ??
-    (dismissMutation.data && runResultMessage(dismissMutation.data)) ??
+    mutations.find((mutation) => mutation.error)?.error?.message ??
+    mutations
+      .map((mutation) => mutation.data && runResultMessage(mutation.data))
+      .find((message) => typeof message === "string") ??
     null;
+
+  const renderStep = (item: Domain.QueueItem, step: Domain.QueueStep) => {
+    const started = step.startedAt !== null;
+    const editingNote = noteDraft?.runStepId === step.id;
+    return (
+      <s-box
+        key={step.id}
+        padding="small"
+        borderWidth="base"
+        borderRadius="base"
+        background="subdued"
+      >
+        <s-stack gap="small-300">
+          <s-stack direction="inline" gap="small-300" alignItems="center">
+            <s-text type="strong">
+              {`Step ${String(step.stage)} of ${String(item.stageCount)} · ${step.name}`}
+            </s-text>
+            {step.siblings.length > 0 && (
+              <s-text color="subdued">
+                {`together with: ${step.siblings
+                  .map((sibling) => `${sibling.name} (${sibling.teamName})`)
+                  .join(", ")}`}
+              </s-text>
+            )}
+          </s-stack>
+          {step.instructions !== null && (
+            <s-text>{`Instructions: ${step.instructions}`}</s-text>
+          )}
+          {started && (
+            <s-text color="subdued">
+              {`In progress since ${timeOf(step.startedAt ?? 0)}${step.startedByEmail === null ? "" : ` by ${step.startedByEmail}`}`}
+            </s-text>
+          )}
+          {!editingNote && step.note !== null && (
+            <s-text color="subdued">{`Note: ${step.note}`}</s-text>
+          )}
+          {editingNote && (
+            <s-stack direction="inline" gap="small-300" alignItems="end">
+              <s-text-field
+                label="Note"
+                labelAccessibilityVisibility="exclusive"
+                placeholder="Note about this item"
+                value={noteDraft.note}
+                disabled={pending}
+                onInput={(event) => {
+                  setNoteDraft({
+                    runStepId: step.id,
+                    note: event.currentTarget.value,
+                  });
+                }}
+              />
+              <s-button
+                variant="primary"
+                disabled={pending}
+                onClick={() => {
+                  noteMutation.mutate({
+                    runStepId: step.id,
+                    note: noteDraft.note,
+                  });
+                }}
+              >
+                Save note
+              </s-button>
+              <s-button
+                variant="tertiary"
+                onClick={() => {
+                  setNoteDraft(null);
+                }}
+              >
+                Cancel
+              </s-button>
+            </s-stack>
+          )}
+          <s-stack direction="inline" gap="base">
+            {!started && (
+              <s-button
+                variant="secondary"
+                disabled={pending}
+                onClick={() => {
+                  startMutation.mutate(step.id);
+                }}
+              >
+                Start
+              </s-button>
+            )}
+            <s-button
+              variant="primary"
+              disabled={pending}
+              onClick={() => {
+                completeMutation.mutate(step.id);
+              }}
+            >
+              Done
+            </s-button>
+            {!editingNote && (
+              <s-button
+                variant="tertiary"
+                disabled={pending}
+                onClick={() => {
+                  setNoteDraft({ runStepId: step.id, note: step.note ?? "" });
+                }}
+              >
+                {step.note === null ? "Note" : "Edit note"}
+              </s-button>
+            )}
+          </s-stack>
+        </s-stack>
+      </s-box>
+    );
+  };
 
   const renderItem = (item: Domain.QueueItem) => {
     const flag = flagMessage(item.run);
+    const blocking = blockDraft?.runId === item.run.id;
     return (
       <s-box
-        key={item.step.id}
+        key={item.run.id}
         padding="base"
         borderWidth="base"
         borderRadius="base"
@@ -168,7 +410,6 @@ function RouteComponent() {
             )}
           </s-stack>
           <s-text>{lineItemLabel(item)}</s-text>
-          <s-text type="strong">{`Step: ${item.step.name}`}</s-text>
           {item.run.customAttributes.length > 0 && (
             <s-text>{personalization(item.run.customAttributes)}</s-text>
           )}
@@ -180,16 +421,57 @@ function RouteComponent() {
               {flag}
             </s-banner>
           )}
+          {item.steps.map((step) => renderStep(item, step))}
+          {blocking && (
+            <s-stack direction="inline" gap="small-300" alignItems="end">
+              <s-text-field
+                label="Reason"
+                labelAccessibilityVisibility="exclusive"
+                placeholder="Why is this blocked? (optional)"
+                value={blockDraft.reason}
+                disabled={pending}
+                onInput={(event) => {
+                  setBlockDraft({
+                    runId: item.run.id,
+                    reason: event.currentTarget.value,
+                  });
+                }}
+              />
+              <s-button
+                variant="primary"
+                tone="critical"
+                disabled={pending}
+                onClick={() => {
+                  blockMutation.mutate({
+                    runId: item.run.id,
+                    reason: blockDraft.reason,
+                  });
+                }}
+              >
+                Mark blocked
+              </s-button>
+              <s-button
+                variant="tertiary"
+                onClick={() => {
+                  setBlockDraft(null);
+                }}
+              >
+                Cancel
+              </s-button>
+            </s-stack>
+          )}
           <s-stack direction="inline" gap="base">
-            <s-button
-              variant="primary"
-              disabled={pending}
-              onClick={() => {
-                completeMutation.mutate(item.step.id);
-              }}
-            >
-              Done
-            </s-button>
+            {!blocking && (
+              <s-button
+                variant="secondary"
+                disabled={pending}
+                onClick={() => {
+                  setBlockDraft({ runId: item.run.id, reason: "" });
+                }}
+              >
+                Block
+              </s-button>
+            )}
             {flag !== null && (
               <s-button
                 variant="secondary"
@@ -207,11 +489,17 @@ function RouteComponent() {
     );
   };
 
+  /**
+   * With several teams, a run appears under each team that owns one of its
+   * ready steps; the card still shows every step the member may act on.
+   */
   const groups =
     teams.length > 1
       ? teams.map((team) => ({
           team,
-          items: items.filter((item) => item.step.teamId === team.id),
+          items: items.filter((item) =>
+            item.steps.some((step) => step.teamId === team.id),
+          ),
         }))
       : [{ team: null, items }];
 

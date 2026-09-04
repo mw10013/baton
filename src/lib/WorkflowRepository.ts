@@ -8,6 +8,7 @@ import {
 } from "effect/unstable/sql";
 
 import * as Domain from "@/lib/Domain";
+import * as WorkflowLayout from "@/lib/WorkflowLayout";
 
 /**
  * Failure to map stored rows into domain types — a `Schema` decode error, the
@@ -41,6 +42,12 @@ export class WorkflowNotFoundError extends Schema.TaggedError<WorkflowNotFoundEr
 export class StepNotFoundError extends Schema.TaggedError<StepNotFoundError>()(
   "StepNotFoundError",
   { stepId: Schema.String },
+) {}
+
+/** `addParallelStep` named a stage no step of the workflow is in. */
+export class StageNotFoundError extends Schema.TaggedError<StageNotFoundError>()(
+  "StageNotFoundError",
+  { workflowId: Schema.String, stage: Schema.Number },
 ) {}
 
 export class WorkflowLimitError extends Schema.TaggedError<WorkflowLimitError>()(
@@ -94,7 +101,7 @@ export class WorkflowRepository extends Context.Service<
      */
     readonly replaceWorkflows: (
       input: Domain.SeedWorkflowsInput,
-    ) => Effect.Effect<void, SqlError.SqlError>;
+    ) => Effect.Effect<void, SqlError.SqlError | WorkflowRepositoryError>;
     readonly createWorkflow: (input: {
       readonly name: Domain.WorkflowName;
       readonly tags: Domain.ProductTags;
@@ -128,10 +135,12 @@ export class WorkflowRepository extends Context.Service<
       Domain.Workflow,
       SqlError.SqlError | WorkflowRepositoryError | WorkflowNotFoundError
     >;
+    /** New step in a new last stage. */
     readonly addStep: (input: {
       readonly workflowId: string;
       readonly name: Domain.StepName;
       readonly teamId: Domain.TeamId;
+      readonly instructions?: Domain.StepInstructions | null;
     }) => Effect.Effect<
       Domain.WorkflowStep,
       | SqlError.SqlError
@@ -139,24 +148,48 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowNotFoundError
       | WorkflowLimitError
     >;
+    /** New step into an existing `stage`, after that stage's last step. */
+    readonly addParallelStep: (input: {
+      readonly workflowId: string;
+      readonly stage: number;
+      readonly name: Domain.StepName;
+      readonly teamId: Domain.TeamId;
+      readonly instructions?: Domain.StepInstructions | null;
+    }) => Effect.Effect<
+      Domain.WorkflowStep,
+      | SqlError.SqlError
+      | WorkflowRepositoryError
+      | WorkflowNotFoundError
+      | WorkflowLimitError
+      | StageNotFoundError
+    >;
     readonly getStep: (input: {
       readonly stepId: string;
     }) => Effect.Effect<
       Option.Option<Domain.WorkflowStep>,
       SqlError.SqlError | WorkflowRepositoryError
     >;
+    /** `instructions: null` clears. */
     readonly updateStep: (input: {
       readonly stepId: string;
       readonly name: Domain.StepName;
       readonly teamId: Domain.TeamId;
+      readonly instructions: Domain.StepInstructions | null;
     }) => Effect.Effect<
       Domain.WorkflowStep,
       SqlError.SqlError | WorkflowRepositoryError | StepNotFoundError
     >;
-    /** A move past either edge is a no-op, not an error. */
+    /** A move past either edge is a no-op, not an error. Across a stage boundary the step joins the neighbour's stage. */
     readonly moveStep: (input: {
       readonly stepId: string;
       readonly direction: Domain.StepDirection;
+    }) => Effect.Effect<
+      void,
+      SqlError.SqlError | WorkflowRepositoryError | StepNotFoundError
+    >;
+    /** The step leaves its stage into a new one of its own right after it; no-op when already alone. */
+    readonly separateStep: (input: {
+      readonly stepId: string;
     }) => Effect.Effect<
       void,
       SqlError.SqlError | WorkflowRepositoryError | StepNotFoundError
@@ -241,6 +274,100 @@ export class WorkflowRepository extends Context.Service<
           sql`select count(*) from WorkflowStep where workflowId = ${workflowId}`,
         );
 
+      const layoutOf = (workflowId: string) =>
+        sql`
+          select id, position, stage from WorkflowStep
+          where workflowId = ${workflowId}
+          order by position
+        `.pipe(
+          Effect.flatMap(
+            decode(
+              Schema.Array(
+                Schema.Struct({
+                  id: Schema.String,
+                  position: Schema.Number,
+                  stage: Schema.Number,
+                }),
+              ),
+              "Invalid WorkflowStep layout row",
+            ),
+          ),
+        );
+
+      /**
+       * Persists a whole layout. `unique (workflowId, position)` forbids
+       * in-place renumbering (a +1 shift collides row by row), so every step
+       * first parks at `-position`, then takes its final position and stage.
+       * Plain statements, no transaction of its own: callers wrap it, and
+       * `removeStep` composes a delete in front of it, because
+       * `@effect/sql-sqlite-do` backs `withTransaction` with
+       * `storage.transaction` and Durable Object SQLite refuses to nest.
+       */
+      const writeLayout = (workflowId: string, layout: WorkflowLayout.Layout) =>
+        Effect.gen(function* () {
+          yield* sql`update WorkflowStep set position = -position where workflowId = ${workflowId}`;
+          yield* Effect.forEach(
+            layout,
+            (p) =>
+              sql`update WorkflowStep set position = ${p.position}, stage = ${p.stage} where id = ${p.id}`,
+            { discard: true },
+          );
+        });
+
+      const relayout = (
+        workflowId: string,
+        edit: (layout: WorkflowLayout.Layout) => WorkflowLayout.Layout,
+      ) =>
+        sql.withTransaction(
+          layoutOf(workflowId).pipe(
+            Effect.flatMap((layout) => writeLayout(workflowId, edit(layout))),
+          ),
+        );
+
+      /** Shared by `addStep` and `addParallelStep`: existence, the step ceiling, and the insert itself. */
+      const insertStep = ({
+        workflowId,
+        position,
+        stage,
+        name,
+        teamId,
+        instructions,
+      }: {
+        readonly workflowId: string;
+        readonly position: Statement.Fragment;
+        readonly stage: Statement.Fragment;
+        readonly name: Domain.StepName;
+        readonly teamId: Domain.TeamId;
+        readonly instructions: Domain.StepInstructions | null;
+      }) =>
+        Effect.gen(function* () {
+          if (Option.isNone(yield* findWorkflow(workflowId)))
+            return yield* new WorkflowNotFoundError({ workflowId });
+          if ((yield* countSteps(workflowId)) >= Domain.WorkflowLimits.maxSteps)
+            return yield* new WorkflowLimitError({
+              limit: Domain.WorkflowLimits.maxSteps,
+            });
+          const now = yield* Clock.currentTimeMillis;
+          const [step] = yield* decodeSteps(
+            yield* sql`
+              insert into WorkflowStep
+                (id, workflowId, position, stage, name, teamId, instructions, createdAt)
+              values (
+                ${crypto.randomUUID()}, ${workflowId}, ${position}, ${stage},
+                ${name}, ${teamId}, ${instructions}, ${now}
+              )
+              returning *
+            `,
+          );
+          return (
+            step ??
+            (yield* new WorkflowRepositoryError({
+              message: "WorkflowStep insert returned no row",
+              cause: workflowId,
+            }))
+          );
+        });
+
       return WorkflowRepository.of({
         listWorkflows: Effect.fn("WorkflowRepository.listWorkflows")(
           function* ({
@@ -319,11 +446,48 @@ export class WorkflowRepository extends Context.Service<
         replaceWorkflows: Effect.fn("WorkflowRepository.replaceWorkflows")(
           function* ({ workflows }: Domain.SeedWorkflowsInput) {
             const now = yield* Clock.currentTimeMillis;
-            yield* sql.withTransaction(
+            // A step with no `stage` follows the previous one (linear); the
+            // layout is checked before anything is written so a bad fixture
+            // fails whole rather than half-seeding.
+            const staged = workflows.map((workflow) => ({
+              ...workflow,
+              steps: workflow.steps.reduce<
+                readonly (Domain.SeedWorkflowsInput["workflows"][number]["steps"][number] & {
+                  readonly position: number;
+                  readonly stage: number;
+                })[]
+              >((acc, step, index) => {
+                const previous = acc[index - 1]?.stage ?? 0;
+                return [
+                  ...acc,
+                  {
+                    ...step,
+                    position: index + 1,
+                    stage: step.stage ?? previous + 1,
+                  },
+                ];
+              }, []),
+            }));
+            const invalid = staged.find(
+              (workflow) =>
+                !WorkflowLayout.isValid(
+                  workflow.steps.map((step, index) => ({
+                    id: String(index),
+                    position: step.position,
+                    stage: step.stage,
+                  })),
+                ),
+            );
+            if (invalid !== undefined)
+              return yield* new WorkflowRepositoryError({
+                message: `replaceWorkflows: workflow=${invalid.name}: stages must be dense from 1 and non-decreasing`,
+                cause: invalid.steps.map((step) => step.stage),
+              });
+            return yield* sql.withTransaction(
               Effect.gen(function* () {
                 yield* sql`delete from WorkflowRun`;
                 yield* sql`delete from Workflow`;
-                for (const workflow of workflows) {
+                for (const workflow of staged) {
                   const workflowId = crypto.randomUUID();
                   yield* sql`
                     insert into Workflow
@@ -331,12 +495,12 @@ export class WorkflowRepository extends Context.Service<
                     values
                       (${workflowId}, ${workflow.name}, ${json(workflow.tags)}, ${now}, ${now}, null)
                   `;
-                  for (const [index, step] of workflow.steps.entries())
+                  for (const step of workflow.steps)
                     yield* sql`
                       insert into WorkflowStep
-                        (id, workflowId, position, name, teamId, createdAt)
+                        (id, workflowId, position, stage, name, teamId, instructions, createdAt)
                       values
-                        (${crypto.randomUUID()}, ${workflowId}, ${index + 1}, ${step.name}, ${step.teamId}, ${now})
+                        (${crypto.randomUUID()}, ${workflowId}, ${step.position}, ${step.stage}, ${step.name}, ${step.teamId}, ${step.instructions ?? null}, ${now})
                     `;
                 }
               }),
@@ -430,38 +594,73 @@ export class WorkflowRepository extends Context.Service<
           workflowId,
           name,
           teamId,
+          instructions,
         }: {
           readonly workflowId: string;
           readonly name: Domain.StepName;
           readonly teamId: Domain.TeamId;
+          readonly instructions?: Domain.StepInstructions | null;
         }) {
-          if (Option.isNone(yield* findWorkflow(workflowId)))
-            return yield* new WorkflowNotFoundError({ workflowId });
-          if ((yield* countSteps(workflowId)) >= Domain.WorkflowLimits.maxSteps)
-            return yield* new WorkflowLimitError({
-              limit: Domain.WorkflowLimits.maxSteps,
-            });
-          const now = yield* Clock.currentTimeMillis;
-          const [step] = yield* decodeSteps(
-            yield* sql`
-              insert into WorkflowStep
-                (id, workflowId, position, name, teamId, createdAt)
-              values (
-                ${crypto.randomUUID()}, ${workflowId},
-                (select coalesce(max(position), 0) + 1 from WorkflowStep where workflowId = ${workflowId}),
-                ${name}, ${teamId}, ${now}
-              )
-              returning *
-            `,
-          );
-          return (
-            step ??
-            (yield* new WorkflowRepositoryError({
-              message: "WorkflowStep insert returned no row",
-              cause: workflowId,
-            }))
-          );
+          return yield* insertStep({
+            workflowId,
+            position: sql`(select coalesce(max(position), 0) + 1 from WorkflowStep where workflowId = ${workflowId})`,
+            stage: sql`(select coalesce(max(stage), 0) + 1 from WorkflowStep where workflowId = ${workflowId})`,
+            name,
+            teamId,
+            instructions: instructions ?? null,
+          });
         }),
+
+        /**
+         * Inserted at a temporary last position in the target stage, then the
+         * whole layout is rewritten so the new step lands right after that
+         * stage's last member. Both in one transaction, and the step is re-read
+         * afterwards so the caller sees its final position.
+         */
+        addParallelStep: Effect.fn("WorkflowRepository.addParallelStep")(
+          function* ({
+            workflowId,
+            stage,
+            name,
+            teamId,
+            instructions,
+          }: {
+            readonly workflowId: string;
+            readonly stage: number;
+            readonly name: Domain.StepName;
+            readonly teamId: Domain.TeamId;
+            readonly instructions?: Domain.StepInstructions | null;
+          }) {
+            if (Option.isNone(yield* findWorkflow(workflowId)))
+              return yield* new WorkflowNotFoundError({ workflowId });
+            const before = yield* layoutOf(workflowId);
+            if (!before.some((p) => p.stage === stage))
+              return yield* new StageNotFoundError({ workflowId, stage });
+            return yield* sql.withTransaction(
+              Effect.gen(function* () {
+                const inserted = yield* insertStep({
+                  workflowId,
+                  position: sql`${before.length + 1}`,
+                  stage: sql`${stage}`,
+                  name,
+                  teamId,
+                  instructions: instructions ?? null,
+                });
+                yield* writeLayout(
+                  workflowId,
+                  WorkflowLayout.appendParallel(before, stage, inserted.id),
+                );
+                const placed = yield* findStep(inserted.id);
+                return Option.isSome(placed)
+                  ? placed.value
+                  : yield* new WorkflowRepositoryError({
+                      message: "WorkflowStep vanished during relayout",
+                      cause: inserted.id,
+                    });
+              }),
+            );
+          },
+        ),
 
         getStep: Effect.fn("WorkflowRepository.getStep")(function* ({
           stepId,
@@ -475,14 +674,17 @@ export class WorkflowRepository extends Context.Service<
           stepId,
           name,
           teamId,
+          instructions,
         }: {
           readonly stepId: string;
           readonly name: Domain.StepName;
           readonly teamId: Domain.TeamId;
+          readonly instructions: Domain.StepInstructions | null;
         }) {
           const [step] = yield* decodeSteps(
             yield* sql`
-              update WorkflowStep set name = ${name}, teamId = ${teamId}
+              update WorkflowStep
+              set name = ${name}, teamId = ${teamId}, instructions = ${instructions}
               where id = ${stepId}
               returning *
             `,
@@ -490,15 +692,6 @@ export class WorkflowRepository extends Context.Service<
           return step ?? (yield* new StepNotFoundError({ stepId }));
         }),
 
-        /**
-         * A swap under `unique (workflowId, position)` cannot be two updates:
-         * the first would collide with the neighbour. The target parks at
-         * `-1`, the neighbour takes its slot, then the target takes the
-         * neighbour's — inside one storage transaction so a fault between
-         * statements cannot leave a step parked at `-1`. `@effect/sql-sqlite-do`
-         * backs `withTransaction` with `storage.transaction` when given
-         * `ctx.storage`, which `makeRunEffect` does; no nesting, keep it short.
-         */
         moveStep: Effect.fn("WorkflowRepository.moveStep")(function* ({
           stepId,
           direction,
@@ -507,24 +700,23 @@ export class WorkflowRepository extends Context.Service<
           readonly direction: Domain.StepDirection;
         }) {
           const step = yield* requireStep(stepId);
-          const target = step.position + (direction === "up" ? -1 : 1);
-          const [neighbour] = yield* decodeSteps(
-            yield* sql`
-              select * from WorkflowStep
-              where workflowId = ${step.workflowId} and position = ${target}
-            `,
-          );
-          if (neighbour === undefined) return;
-          yield* sql.withTransaction(
-            Effect.gen(function* () {
-              yield* sql`update WorkflowStep set position = -1 where id = ${step.id}`;
-              yield* sql`update WorkflowStep set position = ${step.position} where id = ${neighbour.id}`;
-              yield* sql`update WorkflowStep set position = ${target} where id = ${step.id}`;
-            }),
+          yield* relayout(step.workflowId, (layout) =>
+            WorkflowLayout.move(layout, stepId, direction),
           );
         }),
 
-        /** Deletes, then closes the gap so positions stay dense from 1. */
+        separateStep: Effect.fn("WorkflowRepository.separateStep")(function* ({
+          stepId,
+        }: {
+          readonly stepId: string;
+        }) {
+          const step = yield* requireStep(stepId);
+          yield* relayout(step.workflowId, (layout) =>
+            WorkflowLayout.separate(layout, stepId),
+          );
+        }),
+
+        /** Deletes, then rewrites the layout so positions and stages stay dense from 1 — one transaction. */
         removeStep: Effect.fn("WorkflowRepository.removeStep")(function* ({
           stepId,
         }: {
@@ -533,11 +725,12 @@ export class WorkflowRepository extends Context.Service<
           const step = yield* requireStep(stepId);
           yield* sql.withTransaction(
             Effect.gen(function* () {
+              const layout = yield* layoutOf(step.workflowId);
               yield* sql`delete from WorkflowStep where id = ${step.id}`;
-              yield* sql`
-                update WorkflowStep set position = position - 1
-                where workflowId = ${step.workflowId} and position > ${step.position}
-              `;
+              yield* writeLayout(
+                step.workflowId,
+                WorkflowLayout.remove(layout, stepId),
+              );
             }),
           );
         }),

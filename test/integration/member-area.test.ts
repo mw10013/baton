@@ -236,13 +236,14 @@ describe("member area", () => {
 
 describe("member queue", () => {
   /**
-   * `/shop/$shop/queue` nests under `/shop/$shop`, whose loader renders
-   * `getShopInfo` — the call that can only reach `500` here for the reason
-   * documented on the revocation test above. So, as there, the pair is the
-   * assertion: `500` proves `requireMember` admitted the member before the
-   * parent loader failed, and `404` on another shop proves the queue route
-   * is behind the same gate. The queue read itself is covered against the
-   * Durable Object in `shop-agent-workflows.test.ts`.
+   * `/shop/$shop/queue` is a sibling of the shop index under the `/shop/$shop`
+   * layout, which owns no loader of its own — each child's server fn calls
+   * `requireMember` itself. So unlike the shop index (whose `getShopInfo`
+   * call can only reach `500` here for the reason documented on the
+   * revocation test above), the queue read hits only the Durable Object and
+   * renders `200`. The `404` on another shop proves the queue route is behind
+   * the same gate. Step-level queue behavior is covered against the Durable
+   * Object in `shop-agent-workflows.test.ts`.
    */
   it.effect("is gated by membership like the shop page", () =>
     run(
@@ -256,7 +257,7 @@ describe("member queue", () => {
           (yield* fetchWorker(`http://localhost/shop/${SHOP}/queue`, {
             headers: { cookie },
           })).status,
-          500,
+          200,
         );
         strictEqual(
           (yield* fetchWorker(`http://localhost/shop/${OTHER_SHOP}/queue`, {

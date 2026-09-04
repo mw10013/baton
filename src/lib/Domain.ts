@@ -373,6 +373,27 @@ export type WorkflowName = typeof WorkflowName.Type;
 export const StepName = trimmedName("StepName");
 export type StepName = typeof StepName.Type;
 
+const trimmedText = <B extends string>(brand: B, maxLength: number) =>
+  Schema.String.pipe(
+    Schema.decodeTo(
+      Schema.NonEmptyString.check(Schema.isMaxLength(maxLength)).pipe(
+        Schema.brand(brand),
+      ),
+      {
+        decode: SchemaGetter.transform((s) => s.trim()),
+        encode: SchemaGetter.transform((s) => s),
+      },
+    ),
+  );
+
+/** Merchant-written how-to for a step, copied onto every run. Trimmed like {@link StepName}; a blank field is sent as `null`, never as an empty string. */
+export const StepInstructions = trimmedText("StepInstructions", 2000);
+export type StepInstructions = typeof StepInstructions.Type;
+
+/** Worker-written text about one run's step (or a block reason). Same trimming; `null` clears. */
+export const StepNote = trimmedText("StepNote", 1000);
+export type StepNote = typeof StepNote.Type;
+
 /**
  * Trimmed *and* lowercased, unlike the names: a tag exists only to be matched
  * against `OrderLineItem.productTags`, merchants type `Engraving` and
@@ -441,13 +462,21 @@ export type Workflow = typeof Workflow.Type;
  * renames every step it owns, and a step can only be *saved* against an active
  * team. It carries no `teamName` — the name is joined at read time, and only
  * the eventual instance rows snapshot it.
+ *
+ * `stage` groups steps that are ready together: along `position` the stages
+ * are dense `1..m` and non-decreasing (`1 1 2 3 3`), so every step belongs to
+ * exactly one stage and a stage of one step is the plain linear case. The
+ * invariant lives in `WorkflowLayout`, which recomputes the whole layout for
+ * every edit rather than patching rows.
  */
 export const WorkflowStep = Schema.Struct({
   id: WorkflowStepId,
   workflowId: WorkflowId,
   position: Schema.Number,
+  stage: Schema.Number,
   name: StepName,
   teamId: TeamId,
+  instructions: Schema.NullOr(StepInstructions),
   createdAt: Schema.Number,
 });
 export type WorkflowStep = typeof WorkflowStep.Type;
@@ -517,13 +546,26 @@ export const AddStepInput = Schema.Struct({
   workflowId: BoundedId,
   name: StepName,
   teamId: BoundedId,
+  instructions: Schema.optionalKey(StepInstructions),
 });
 export type AddStepInput = typeof AddStepInput.Type;
 
+/** Same as {@link AddStepInput} but into an existing stage: the new step lands after that stage's last step and is ready together with it. */
+export const AddParallelStepInput = Schema.Struct({
+  workflowId: BoundedId,
+  stage: Schema.Number,
+  name: StepName,
+  teamId: BoundedId,
+  instructions: Schema.optionalKey(StepInstructions),
+});
+export type AddParallelStepInput = typeof AddParallelStepInput.Type;
+
+/** `instructions: null` clears; the UI maps a blank field to `null` before sending. */
 export const UpdateStepInput = Schema.Struct({
   stepId: BoundedId,
   name: StepName,
   teamId: BoundedId,
+  instructions: Schema.NullOr(StepInstructions),
 });
 export type UpdateStepInput = typeof UpdateStepInput.Type;
 
@@ -533,14 +575,23 @@ export type UpdateStepInput = typeof UpdateStepInput.Type;
  * `createWorkflow` + `addStep`-per-step conversation whose failure midway
  * leaves a half-built definition. `position` is array order; `teamId` is a D1
  * `Team.id` the caller has already created, so the active-team check
- * `AddStepInput` exists to trigger has nothing left to catch.
+ * `AddStepInput` exists to trigger has nothing left to catch. A step with no
+ * `stage` gets the previous step's stage + 1 (linear); the repository
+ * validates the stage invariant before writing.
  */
 export const SeedWorkflowsInput = Schema.Struct({
   workflows: Schema.Array(
     Schema.Struct({
       name: WorkflowName,
       tags: ProductTags,
-      steps: Schema.Array(Schema.Struct({ name: StepName, teamId: TeamId })),
+      steps: Schema.Array(
+        Schema.Struct({
+          name: StepName,
+          teamId: TeamId,
+          stage: Schema.optionalKey(Schema.Number),
+          instructions: Schema.optionalKey(StepInstructions),
+        }),
+      ),
     }),
   ),
 });
@@ -557,6 +608,10 @@ export type MoveStepInput = typeof MoveStepInput.Type;
 
 export const StepIdInput = Schema.Struct({ stepId: BoundedId });
 export type StepIdInput = typeof StepIdInput.Type;
+
+/** `separateStep`: the step leaves its stage into a new stage of its own immediately after it. */
+export const SeparateStepInput = StepIdInput;
+export type SeparateStepInput = typeof SeparateStepInput.Type;
 
 export const TeamIdInput = Schema.Struct({ teamId: BoundedId });
 export type TeamIdInput = typeof TeamIdInput.Type;
@@ -1064,18 +1119,25 @@ export type RunStatus = typeof RunStatus.Type;
  * it changed. A `pending` run is cancelled or updated silently instead — no
  * one has started it — and a `done` run is never touched. A later flag
  * overwrites an earlier one; a person clears it from the queue.
+ *
+ * `blocked` is the one flag a person sets rather than reconcile: a worker
+ * marking the run as needing attention, with an optional reason. A later
+ * reconcile flag overwrites it like any other.
  */
 export const RunFlag = Schema.Literals([
   "item_removed",
   "quantity_changed",
   "order_cancelled",
   "order_deleted",
+  "blocked",
 ]);
 export type RunFlag = typeof RunFlag.Type;
 
 export const RunFlagDetail = Schema.Struct({
   from: Schema.optionalKey(Schema.Number),
   to: Schema.optionalKey(Schema.Number),
+  reason: Schema.optionalKey(StepNote),
+  by: Schema.optionalKey(MemberId),
 });
 export type RunFlagDetail = typeof RunFlagDetail.Type;
 
@@ -1113,18 +1175,27 @@ export type WorkflowRun = typeof WorkflowRun.Type;
 
 /**
  * A step copied from the definition at run creation. `teamName` is snapshotted
- * alongside `teamId` so the queue never joins D1; `completedBy` is the D1
- * `Member.id`, cross-store and therefore unreferenced.
+ * alongside `teamId` so the queue never joins D1; `completedBy` / `startedBy`
+ * are D1 `Member.id`s, cross-store and therefore unreferenced.
+ *
+ * A step is *ready* when it is open and nothing in an earlier stage is still
+ * open; several steps of one run can be ready at once. `startedAt` is set by
+ * Start (and backfilled by a Done without Start) and marks the run `active`.
  */
 export const WorkflowRunStep = Schema.Struct({
   id: WorkflowRunStepId,
   runId: WorkflowRunId,
   position: Schema.Number,
+  stage: Schema.Number,
   name: StepName,
   teamId: TeamId,
   teamName: TeamName,
+  instructions: Schema.NullOr(StepInstructions),
+  startedAt: Schema.NullOr(Schema.Number),
+  startedBy: Schema.NullOr(MemberId),
   completedAt: Schema.NullOr(Schema.Number),
   completedBy: Schema.NullOr(MemberId),
+  note: Schema.NullOr(StepNote),
 });
 export type WorkflowRunStep = typeof WorkflowRunStep.Type;
 
@@ -1135,14 +1206,29 @@ export const WorkflowRunDetail = Schema.Struct({
 export type WorkflowRunDetail = typeof WorkflowRunDetail.Type;
 
 /**
- * One row of a member's queue: a run whose current step — the lowest open
- * position — belongs to one of the member's teams. `note` is the order's live
- * note, joined at read time rather than snapshotted because a merchant edits
- * it while work is in progress.
+ * One ready step the member may act on. `siblings` are the other steps of
+ * the same stage that are *not* in the item — owned by other teams — so a
+ * worker can see who they are working alongside. `startedByEmail` is joined
+ * from D1 by the Durable Object, since the run rows hold only member ids.
+ */
+export const QueueStep = Schema.Struct({
+  ...WorkflowRunStep.fields,
+  startedByEmail: Schema.NullOr(Email),
+  siblings: Schema.Array(Schema.Struct({ name: StepName, teamName: TeamName })),
+});
+export type QueueStep = typeof QueueStep.Type;
+
+/**
+ * One row of a member's queue: a run with every *ready* step — open, and
+ * nothing in an earlier stage still open — that belongs to one of the
+ * member's teams. `stageCount` is the run's last stage, for "step k of n".
+ * `note` is the order's live note, joined at read time rather than
+ * snapshotted because a merchant edits it while work is in progress.
  */
 export const QueueItem = Schema.Struct({
   run: WorkflowRun,
-  step: WorkflowRunStep,
+  steps: Schema.NonEmptyArray(QueueStep),
+  stageCount: Schema.Number,
   note: Schema.NullOr(Schema.String),
 });
 export type QueueItem = typeof QueueItem.Type;
@@ -1191,6 +1277,27 @@ export const DismissFlagInput = Schema.Struct({
 });
 export type DismissFlagInput = typeof DismissFlagInput.Type;
 
+export const StartStepInput = CompleteStepInput;
+export type StartStepInput = typeof StartStepInput.Type;
+
+/** `note: null` clears. */
+export const SetStepNoteInput = Schema.Struct({
+  runStepId: BoundedId,
+  memberId: BoundedId,
+  teamIds: Schema.Array(BoundedId),
+  note: Schema.NullOr(StepNote),
+});
+export type SetStepNoteInput = typeof SetStepNoteInput.Type;
+
+/** `reason: null` blocks without a reason. */
+export const BlockRunInput = Schema.Struct({
+  runId: BoundedId,
+  memberId: BoundedId,
+  teamIds: Schema.Array(BoundedId),
+  reason: Schema.NullOr(StepNote),
+});
+export type BlockRunInput = typeof BlockRunInput.Type;
+
 /** `WorkflowNotRoutable` = archived, zero steps, or a step owned by an inactive team. */
 export const AttachResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok"), run: WorkflowRun }),
@@ -1201,8 +1308,8 @@ export const AttachResult = Schema.Union([
 export type AttachResult = typeof AttachResult.Type;
 
 /**
- * `NotAllowed` = the step's team is not among the caller's; `NotCurrent` = a
- * lower-position step is still open (or this one is already done);
+ * `NotAllowed` = the step's team is not among the caller's; `NotReady` = a
+ * step in an earlier stage is still open (or this one is already done);
  * `Terminal` = the run is `done` or `cancelled` (or, for un-cancel, is not
  * cancelled).
  */
@@ -1210,7 +1317,7 @@ export const RunResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok") }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("NotAllowed") }),
-  Schema.Struct({ _tag: Schema.Literal("NotCurrent") }),
+  Schema.Struct({ _tag: Schema.Literal("NotReady") }),
   Schema.Struct({ _tag: Schema.Literal("Terminal") }),
 ]);
 export type RunResult = typeof RunResult.Type;
