@@ -296,3 +296,30 @@ Takeaways: Route to Ship never writes fulfillments; "Ready to ship" means "produ
 ### Consequences for Baton
 
 Folded into `workflow-step-model-research.md` (topology, step functionality catalog, order-level boundary). In short: Route to Ship's per-item concurrency is expressible as stages; its only rework path is a manager rewind; its unit model is the reference if Baton ever adds per-unit progress; and it draws the production/fulfillment boundary exactly where Baton's line-item runs already end.
+
+## Amendments, 2026-09-04
+
+Third inspection of `sandbox-shop-01`, this time also reading Route to Ship's shipped client bundle (`app.routetoship.com/assets/*.js`), which carries the complete Help text, tooltips, and the client-side work logic verbatim. Focus: what happens at the order level. `Complete once per order` was toggled on and back off on one department; nothing else was changed. The sandbox has only two synced orders, both single-item, so every multi-item question stays unobserved. Consequences for Baton are in `order-workflow-research.md`.
+
+### `Complete once per order`, sharper
+
+- Live tooltip, newer than the help page: "ON: workers complete the whole order in one action (good for Dispatch, Quality Control, Picking — the work is per-order, not per-item). OFF (default): each line item is tracked separately, so workers tick off items one by one (good for Engraving, Assembly — work happens per item)." Picking and QC are named, so the flag is not meant to be terminal-only.
+- **Position is unconstrained.** The pipeline builder has no knowledge of the flag; a per-order department can sit anywhere. Pipelines persist as stages (`PUT /pipelines/{id}/stages`, `{stages:[{stageOrder, departmentIds}]}`); Sequential saves one department per stage, Parallel one stage with all of them.
+- **No join rule is documented anywhere.** The client completes an order-level task by `(orderId, departmentId, stepType, stepOrder)` for Checklist and Approval types, and by an ordinary step-run id for Start/Stop. That reads as an aggregation over per-item step runs, not a wait-for-all. Whether the grouped task appears when the first item arrives or the last is unknown (Medium-low).
+- **An order-level task never counts units.** Client predicate: `countUnits !== true || isOrderLevel === true || stepType === "PARALLEL"` → no unit rows, no Confirm each unit, no per-unit escalation. The settings UI does not grey out `Count units`; it is silently inert.
+- **Partial shipping is per line item and final-department only.** "3 of 4 — ship these 3" counts units of one line ("May finished units go out before the rest of the line is made?") and renders only when `isFinalDepartment`; a per-order Dispatch therefore never shows it. The two features are mutually exclusive at one station.
+- Mixed pipelines, untagged items, and order edits after the grouped task exists: undocumented. The Orders board knows the states ("{n} of {m} items — no pipeline", "Sold from stock", "Options / services only") but no rule is stated.
+- Single-item observation: with the flag on, the My Work card was indistinguishable from a per-item card. No dedicated order-level card component exists in the bundle; Focus view adds "Also on this order · {n} more items" on any card.
+
+### Other whole-order mechanisms
+
+- **Escalation scope**: whole order ("This freezes the WHOLE order until a line manager resolves it. Use it for problems with the order itself — payment, address, the customer."), item ("The other items on this order carry on as normal."), or unit.
+- **Rework send-back scope**: whole order ("Every item on this order will be sent back to the department you choose… Every department AFTER the one you choose is reopened too") or item.
+- **Pipeline selector is per line item**: "Pipeline set — production work has been created for this item."
+- **Order status rollup**, Orders board: `Awaiting payment` (synced, not paid) → `Ready for production` (paid, not started) → `In production` (at least one step in progress) → `Ready to ship` (all production done, not fulfilled) → `Shipped` (fulfilled). Help also names `Partial` (some items shipped, others in production).
+- **No order tags.** All routing and `rts-no-production` are product tags.
+- **No join, and copy for the friction instead**: dashboard "{items} finished items are waiting for the rest of their orders", Orders board "{done} of {total} items finished, waiting behind siblings — some items on this order have finished production and are held back by their siblings." Design statement on the dashboard: "An order can hold several items; each item moves through the departments on its own."
+
+### Still open (needs one Shopify order with ≥ 2 line items)
+
+Join semantics of the grouped task; scoping when only some items route through the per-order department; behaviour on `ORDERS_EDITED` before and after the grouped task completes; the N-item card shape; whether a mid-pipeline per-order department releases downstream per-item departments for every item.
