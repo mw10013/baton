@@ -205,7 +205,7 @@ describe("member area", () => {
    * later `404` is the gate closing rather than the page having been
    * unreachable all along.
    */
-  it.effect("closes the shop page the moment membership is deleted", () =>
+  it.effect("closes the shop page the moment membership is archived", () =>
     run(
       Effect.gen(function* () {
         const repository = yield* Repository;
@@ -217,7 +217,11 @@ describe("member area", () => {
           (yield* fetchWorker(shopUrl, { headers: { cookie } })).status,
           500,
         );
-        yield* repository.deleteMember({ shop: SHOP, email: MEMBER });
+        yield* repository.setMemberArchived({
+          shop: SHOP,
+          email: MEMBER,
+          archived: true,
+        });
         strictEqual(
           (yield* fetchWorker(shopUrl, { headers: { cookie } })).status,
           404,
@@ -228,6 +232,12 @@ describe("member area", () => {
         strictEqual(listing.status, 200);
         assertFalse(
           (yield* Effect.promise(() => listing.text())).includes(SHOP),
+        );
+        // Re-adding restores; the same session cookie works again.
+        yield* repository.addMember({ shop: SHOP, email: MEMBER });
+        strictEqual(
+          (yield* fetchWorker(shopUrl, { headers: { cookie } })).status,
+          500,
         );
       }),
     ),

@@ -11,11 +11,17 @@ create table if not exists ShopSession (
   planHandleExpiresAt integer
 );
 
+-- archivedAt (null = active) is the merchant-facing delete: run history in the
+-- ShopAgent's SQLite references Member.id (WorkflowRunStep.startedBy /
+-- completedBy, the block flag's actor) with no FK, so nothing hard-deletes a
+-- member that may have worked. Uniqueness spans active and archived rows so
+-- re-adding an archived email restores the same id and history re-attaches.
 create table if not exists Member (
   id text primary key,
   shop text not null references ShopSession (shop) on delete cascade,
   email text not null check (email = lower(trim(email))),
   createdAt text not null,
+  archivedAt text,
   unique (shop, email)
 );
 

@@ -282,20 +282,24 @@ function RouteComponent() {
               </s-paragraph>
             )}
             {members.map((member) => (
-              <s-checkbox
-                key={member.id}
-                label={member.email}
-                checked={member.inTeam}
-                disabled={
-                  memberMutation.isPending || (archived && !member.inTeam)
-                }
-                onChange={() => {
-                  memberMutation.mutate({
-                    memberId: member.id,
-                    inTeam: !member.inTeam,
-                  });
-                }}
-              />
+              <s-stack key={member.id} direction="inline" gap="small-300">
+                <s-checkbox
+                  label={member.email}
+                  checked={member.inTeam}
+                  disabled={
+                    memberMutation.isPending || (archived && !member.inTeam)
+                  }
+                  onChange={() => {
+                    memberMutation.mutate({
+                      memberId: member.id,
+                      inTeam: !member.inTeam,
+                    });
+                  }}
+                />
+                {member.archivedAt !== null && (
+                  <s-badge tone="info">Archived</s-badge>
+                )}
+              </s-stack>
             ))}
           </s-stack>
         )}

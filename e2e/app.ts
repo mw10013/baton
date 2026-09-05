@@ -99,3 +99,19 @@ export async function clickHoisted(locator: Locator): Promise<void> {
     (el as HTMLElement).click();
   });
 }
+
+/**
+ * Whether a hoisted control is enabled. `toBeEnabled()` cannot answer this
+ * for the same reason `clickHoisted` exists: the `aria-disabled` ancestor
+ * App Bridge places the control under makes Playwright report every
+ * descendant as disabled. Reads the element's own `disabled` state instead,
+ * which is what the app's `disabled` prop drives. Resolves `false` while the
+ * element is absent so it composes with `expect.poll`.
+ */
+export const hoistedEnabled = async (locator: Locator): Promise<boolean> =>
+  (await locator.count()) > 0 &&
+  locator.evaluate(
+    (el) =>
+      !(el as HTMLButtonElement).disabled &&
+      el.getAttribute("aria-disabled") !== "true",
+  );

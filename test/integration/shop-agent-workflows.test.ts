@@ -600,6 +600,19 @@ describe("ShopAgent workflow run callables", () => {
     strictEqual(item?.run.status, "active");
     strictEqual(item?.steps[0]?.startedByEmail, "w@example.com");
     strictEqual(item?.stageCount, 1);
+    // startedByEmail still resolves after the member is archived.
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const repo = yield* Repository;
+        yield* repo.setMemberArchived({
+          shop: shopOf(shop),
+          email: Schema.decodeUnknownSync(Domain.Email)("w@example.com"),
+          archived: true,
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+    const [archivedItem] = await agent.listQueue({ teamIds: [team.id] });
+    strictEqual(archivedItem?.steps[0]?.startedByEmail, "w@example.com");
     expect(
       await agent.setStepNote({
         runStepId,

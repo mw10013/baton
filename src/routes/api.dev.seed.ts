@@ -9,7 +9,18 @@ import { Repository } from "@/lib/Repository";
 
 const DevSeedInput = Schema.Struct({
   shop: Domain.Shop,
-  members: Schema.Array(Domain.Email),
+  /**
+   * A bare email is an active member; the object form can seed an archived
+   * one. Archiving is applied after team membership because `setTeamMember`
+   * refuses an archived member, and a fixture wants archived members to keep
+   * their team edges the way a real archive does.
+   */
+  members: Schema.Array(
+    Schema.Union([
+      Domain.Email,
+      Schema.Struct({ email: Domain.Email, archived: Schema.Boolean }),
+    ]),
+  ),
   teams: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
@@ -96,10 +107,19 @@ export const Route = createFileRoute("/api/dev/seed")({
               return new Response("Not Found", { status: 404 });
             const request = yield* CurrentRequest;
             return yield* Effect.gen(function* () {
-              const { shop, members, teams, workflows } =
-                yield* Schema.decodeUnknownEffect(DevSeedInput)(
-                  yield* Effect.tryPromise(() => request.json()),
-                );
+              const {
+                shop,
+                members: memberInputs,
+                teams,
+                workflows,
+              } = yield* Schema.decodeUnknownEffect(DevSeedInput)(
+                yield* Effect.tryPromise(() => request.json()),
+              );
+              const members = memberInputs.map((member) =>
+                typeof member === "string"
+                  ? { email: member, archived: false }
+                  : member,
+              );
               const sql = yield* D1Primary;
               const repository = yield* Repository;
               // Checked rather than left to the FK: `Member.shop` and
@@ -116,7 +136,7 @@ export const Route = createFileRoute("/api/dev/seed")({
               yield* sql`delete from Team where shop = ${shop}`;
               yield* sql`delete from Member where shop = ${shop}`;
               yield* sql`delete from Verification`;
-              for (const email of members) {
+              for (const { email } of members) {
                 yield* sql`delete from User where email = ${email}`;
                 yield* repository.addMember({ shop, email });
               }
@@ -148,6 +168,13 @@ export const Route = createFileRoute("/api/dev/seed")({
                   });
                 }
               }
+              for (const { email, archived } of members)
+                if (archived)
+                  yield* repository.setMemberArchived({
+                    shop,
+                    email,
+                    archived: true,
+                  });
               type SeedStep =
                 (typeof Domain.SeedWorkflowsInput.Encoded)["workflows"][number]["steps"][number];
               const seedWorkflows: {

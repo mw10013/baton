@@ -1535,7 +1535,8 @@ export class ShopAgent extends Agent {
   /**
    * `startedByEmail` is joined here from D1's `Member` roster — one read per
    * call, mapped by id — because the run rows hold only member ids and the
-   * repository never sees D1.
+   * repository never sees D1. The roster includes archived members, so an
+   * email keeps resolving after the member is archived.
    */
   listQueue(
     input: typeof Domain.ListQueueInput.Encoded,

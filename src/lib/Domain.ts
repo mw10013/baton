@@ -253,11 +253,20 @@ export type LoginInput = typeof LoginInput.Type;
 export const MemberId = Schema.NonEmptyString.pipe(Schema.brand("MemberId"));
 export type MemberId = typeof MemberId.Type;
 
+/**
+ * `archivedAt` null = active. Same reasoning as {@link Team}: a member is
+ * archived, never deleted, because the ShopAgent's `WorkflowRunStep.startedBy`
+ * / `completedBy` (and the block flag's actor) hold `Member.id` as bare text
+ * with no foreign key, so a deleted row would leave history resolving to
+ * nobody. An archived member cannot sign in or be added to a team, but still
+ * resolves as an actor on run history.
+ */
 export const Member = Schema.Struct({
   id: MemberId,
   shop: Shop,
   email: Email,
   createdAt: Schema.String,
+  archivedAt: Schema.NullOr(Schema.String),
 });
 export type Member = typeof Member.Type;
 

@@ -25,6 +25,11 @@ export const seedConfig = (): SeedConfig => {
   };
 };
 
+/** A member to seed; a bare string is active, the object form can archive. */
+export type SeedMember =
+  | string
+  | { readonly email: string; readonly archived: boolean };
+
 /** A team to create, plus which of the seeded `members` belong to it. */
 export interface SeedTeam {
   readonly name: string;
@@ -62,7 +67,7 @@ export interface SeedWorkflow {
  */
 export const seedMembers = async (
   config: SeedConfig,
-  members: readonly string[],
+  members: readonly SeedMember[],
   teams: readonly SeedTeam[] = [],
   workflows: readonly SeedWorkflow[] = [],
 ): Promise<void> => {

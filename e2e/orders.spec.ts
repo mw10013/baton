@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { clickHoisted, gotoApp } from "./app";
+import { clickHoisted, gotoApp, hoistedEnabled } from "./app";
 
 /**
  * The window sync end to end, against the real sandbox: click, and real orders
@@ -23,6 +23,12 @@ import { clickHoisted, gotoApp } from "./app";
  * a reservation and re-enables when the completion callback clears it, so
  * "enabled again" is the honest signal that the run finished — more honest than
  * waiting for rows, which start landing mid-stream.
+ *
+ * Both action buttons sit in the page's `primary-action` slot, which App Bridge
+ * hoists out of the iframe into the admin title bar, so they are located on
+ * `page`, not `frame`, and driven through the hoisted helpers. The orders index
+ * also renders an in-frame copy inside its empty state, which is why a
+ * frame-scoped locator passes on a fresh database and fails once orders exist.
  */
 test("orders screen syncs the window and lists orders", async ({ page }) => {
   test.setTimeout(180_000);
@@ -31,8 +37,8 @@ test("orders screen syncs the window and lists orders", async ({ page }) => {
   await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
 
-  const sync = frame.getByRole("button", { name: /^Sync last \d+ days$/u });
-  await expect(sync).toBeEnabled();
+  const sync = page.getByRole("button", { name: /^Sync last \d+ days$/u });
+  await expect.poll(() => hoistedEnabled(sync)).toBe(true);
 
   /* The completion signal is a *new* `Last synced` timestamp, not the transient
      "Syncing…" text and not the button re-enabling. A sandbox window syncs in
@@ -44,7 +50,7 @@ test("orders screen syncs the window and lists orders", async ({ page }) => {
   const status = frame.getByText(/^(?:Last synced|Never synced|Syncing)/u);
   const before = await status.textContent();
 
-  await sync.click();
+  await clickHoisted(sync);
 
   await expect
     .poll(
@@ -67,8 +73,10 @@ test("orders screen syncs the window and lists orders", async ({ page }) => {
     frame.locator('s-section[accessibilityLabel="Line items"]'),
   ).toBeVisible();
 
-  await frame.getByRole("button", { name: "Resync from Shopify" }).click();
-  await expect(
-    frame.getByRole("button", { name: "Resync from Shopify" }),
-  ).toBeEnabled({ timeout: 30_000 });
+  const resync = page.getByRole("button", { name: "Resync from Shopify" });
+  await expect.poll(() => hoistedEnabled(resync)).toBe(true);
+  await clickHoisted(resync);
+  await expect
+    .poll(() => hoistedEnabled(resync), { timeout: 30_000 })
+    .toBe(true);
 });

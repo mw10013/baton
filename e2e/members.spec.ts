@@ -15,7 +15,7 @@ import { seedConfig, seedMembers } from "./seed";
 const MEMBER_EMAIL = "e2e.member@example.com";
 const EMPTY_STATE = "No members yet. Add an email above to grant access.";
 
-test("members screen adds, normalizes, and removes a member", async ({
+test("members screen adds, normalizes, archives, and restores a member", async ({
   page,
 }) => {
   /* `gotoApp` spends 4-6s on a healthy load and each of the four mutations
@@ -42,6 +42,15 @@ test("members screen adds, normalizes, and removes a member", async ({
   await frame.getByRole("button", { name: "Add member" }).click();
   await expect(frame.getByText(MEMBER_EMAIL, { exact: true })).toHaveCount(1);
 
-  await frame.getByRole("button", { name: "Remove" }).click();
+  await frame.getByRole("button", { name: "Archive" }).click();
   await expect(frame.getByText(EMPTY_STATE)).toBeVisible();
+
+  await frame.getByLabel("Show archived").check();
+  await expect(frame.getByText(MEMBER_EMAIL, { exact: true })).toBeVisible();
+  await expect(frame.getByText("Archived", { exact: true })).toBeVisible();
+  await frame.getByRole("button", { name: "Restore" }).click();
+  await expect(frame.getByText("Archived", { exact: true })).toHaveCount(0);
+  await frame.getByLabel("Show archived").uncheck();
+  await expect(frame.getByText(MEMBER_EMAIL, { exact: true })).toBeVisible();
+  await expect(frame.getByText("Archived", { exact: true })).toHaveCount(0);
 });

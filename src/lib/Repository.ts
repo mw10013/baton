@@ -46,6 +46,17 @@ export class TeamNotFoundError extends Schema.TaggedError<TeamNotFoundError>()(
   { shop: Domain.Shop, teamId: Domain.TeamId },
 ) {}
 
+/**
+ * No member in this shop is addressable by that email for the attempted write.
+ * Also covers an *archived* member on the team-membership-add path — an
+ * archived member is not someone work can be assigned to, so from the caller's
+ * side they are not there. Removal never fails this way (see `setTeamMember`).
+ */
+export class MemberNotFoundError extends Schema.TaggedError<MemberNotFoundError>()(
+  "MemberNotFoundError",
+  { shop: Domain.Shop, email: Domain.Email },
+) {}
+
 const decodeRepository =
   <A>(schema: Schema.ConstraintDecoder<A>, message: string) =>
   (input: unknown) =>
@@ -146,9 +157,11 @@ export class Repository extends Context.Service<
     readonly addMember: (
       member: Pick<Domain.Member, "shop" | "email">,
     ) => Effect.Effect<void, SqlError.SqlError>;
-    readonly deleteMember: (
-      member: Pick<Domain.Member, "shop" | "email">,
-    ) => Effect.Effect<void, SqlError.SqlError>;
+    readonly setMemberArchived: (
+      member: Pick<Domain.Member, "shop" | "email"> & {
+        readonly archived: boolean;
+      },
+    ) => Effect.Effect<void, SqlError.SqlError | MemberNotFoundError>;
     readonly findMember: (
       member: Pick<Domain.Member, "shop" | "email">,
     ) => Effect.Effect<
@@ -197,7 +210,13 @@ export class Repository extends Context.Service<
       readonly teamId: Domain.TeamId;
       readonly memberId: Domain.MemberId;
       readonly inTeam: boolean;
-    }) => Effect.Effect<void, SqlError.SqlError | TeamNotFoundError>;
+    }) => Effect.Effect<
+      void,
+      | SqlError.SqlError
+      | RepositoryError
+      | TeamNotFoundError
+      | MemberNotFoundError
+    >;
     readonly findMemberAccess: (
       member: Pick<Domain.Member, "shop" | "email">,
     ) => Effect.Effect<
@@ -433,21 +452,32 @@ export class Repository extends Context.Service<
 
       /**
        * Reads through `D1Primary`: the embedded members screen re-lists
-       * immediately after `addMember`/`deleteMember`, which write through the
-       * primary and so never advance the session bookmark — a session read
+       * immediately after `addMember`/`setMemberArchived`, which write through
+       * the primary and so never advance the session bookmark — a session read
        * could miss the row just written.
+       *
+       * Returns archived members too, active first. The queue's actor roster
+       * (`ShopAgent.listQueue`) must resolve archived ids so `startedByEmail`
+       * survives an archive, and the members screen shows both; a caller that
+       * wants only active members filters in memory.
        */
       const listMembers = Effect.fn("Repository.listMembers")(function* (
         shop: Domain.Member["shop"],
       ) {
         const rows =
-          yield* sqlPrimary`select * from Member where shop = ${shop} order by createdAt, email`;
+          yield* sqlPrimary`select * from Member where shop = ${shop} order by archivedAt is not null, createdAt, email`;
         return yield* decodeRepository(
           Schema.Array(Domain.Member),
           "Invalid Member rows",
         )(rows);
       });
 
+      /**
+       * Re-adding an archived email is a restore: the conflict branch clears
+       * `archivedAt` and nothing else, so the id — and every run-history
+       * reference to it — survives. For an active member the update is a
+       * no-op value-wise, which keeps the call idempotent.
+       */
       const addMember = Effect.fn("Repository.addMember")(function* (
         member: Pick<Domain.Member, "shop" | "email">,
       ) {
@@ -455,17 +485,48 @@ export class Repository extends Context.Service<
           yield* Clock.currentTimeMillis,
         ).toISOString();
         yield* sqlPrimary`
-          insert into Member (id, shop, email, createdAt)
-          values (${crypto.randomUUID()}, ${member.shop}, ${member.email}, ${createdAt})
-          on conflict (shop, email) do nothing
+          insert into Member (id, shop, email, createdAt, archivedAt)
+          values (${crypto.randomUUID()}, ${member.shop}, ${member.email}, ${createdAt}, null)
+          on conflict (shop, email) do update set archivedAt = null
         `;
       });
 
-      const deleteMember = Effect.fn("Repository.deleteMember")(function* (
-        member: Pick<Domain.Member, "shop" | "email">,
-      ) {
-        yield* sqlPrimary`delete from Member where shop = ${member.shop} and email = ${member.email}`;
-      });
+      /**
+       * The merchant-facing delete. Idempotent in both directions: `coalesce`
+       * keeps the original archival instant when archiving an already-archived
+       * member, so re-clicking never rewrites when access was revoked.
+       *
+       * Team edges are left alone so team detail can still show who was on
+       * the team; active-roster reads filter by `archivedAt` instead. Existing
+       * better-auth sessions are not revoked either — the member-area guard
+       * (`findMemberAccess`) rejects them on the next request, which is the
+       * same behaviour a hard delete had.
+       */
+      const setMemberArchived = Effect.fn("Repository.setMemberArchived")(
+        function* (
+          member: Pick<Domain.Member, "shop" | "email"> & {
+            readonly archived: boolean;
+          },
+        ) {
+          const archivedAt = new Date(
+            yield* Clock.currentTimeMillis,
+          ).toISOString();
+          const rows = yield* sqlPrimary`
+            update Member set archivedAt = ${
+              member.archived
+                ? sqlPrimary`coalesce(archivedAt, ${archivedAt})`
+                : sqlPrimary`null`
+            }
+            where shop = ${member.shop} and email = ${member.email}
+            returning id
+          `;
+          if (rows[0] === undefined)
+            yield* new MemberNotFoundError({
+              shop: member.shop,
+              email: member.email,
+            });
+        },
+      );
 
       /**
        * Reads through the per-request replica session (`D1Session`): the
@@ -488,11 +549,14 @@ export class Repository extends Context.Service<
        * Reads through `D1Primary`: this feeds the magic-link sign-in gate and
        * the `user.create.before` backstop, where a stale-replica miss would
        * wrongly block a just-added member's first login with no visible error.
+       *
+       * An archived member has no shops: this is the sign-in gate, so an
+       * archived email gets the same no-link response a stranger does.
        */
       const listMemberShops = Effect.fn("Repository.listMemberShops")(
         function* (email: Domain.Member["email"]) {
           const rows =
-            yield* sqlPrimary`select shop from Member where email = ${email} order by shop`;
+            yield* sqlPrimary`select shop from Member where email = ${email} and archivedAt is null order by shop`;
           return yield* decodeRepository(
             Schema.Array(Schema.Struct({ shop: Domain.Shop })),
             "Invalid Member shop rows",
@@ -621,7 +685,9 @@ export class Repository extends Context.Service<
       /**
        * The roster is a left join from `Member`, not from `TeamMember`: the
        * screen toggles membership, so a member who is *not* on the team is as
-       * much part of the view as one who is.
+       * much part of the view as one who is. Archived members appear only
+       * while they are still on the team, so the screen can badge them and
+       * offer removal but never addition.
        */
       const findTeamDetail = Effect.fn("Repository.findTeamDetail")(function* (
         team: Pick<Domain.Team, "shop" | "id">,
@@ -633,7 +699,7 @@ export class Repository extends Context.Service<
           select m.*, (tm.teamId is not null) as inTeam
           from Member m
           left join TeamMember tm on tm.memberId = m.id and tm.teamId = ${team.id}
-          where m.shop = ${team.shop}
+          where m.shop = ${team.shop} and (m.archivedAt is null or tm.teamId is not null)
           order by m.createdAt, m.email
         `;
         return Option.some(
@@ -648,13 +714,16 @@ export class Repository extends Context.Service<
        * The add is an insert-select, so the same-shop invariant is asserted by
        * the join rather than trusted from the caller: a forged
        * `(teamId, memberId)` pair spanning two shops matches no source row and
-       * inserts nothing. `archivedAt is null` is part of that filter — an
-       * archived team is not somewhere work can be assigned.
+       * inserts nothing. `archivedAt is null` on both sides is part of that
+       * filter — an archived team is not somewhere work can be assigned, and
+       * an archived member is not someone it can be assigned to.
        *
        * `on conflict do nothing` makes a repeat add a no-op, which also makes
-       * "no rows returned" ambiguous with a genuine miss; the existence check
-       * disambiguates, and only runs on that path. Removal is unconditional and
-       * cannot fail: un-assigning must stay possible after a team is archived.
+       * "no rows returned" ambiguous with a genuine miss; the existence checks
+       * disambiguate, and only run on that path: an archived member row fails
+       * as `MemberNotFoundError`, anything else as `TeamNotFoundError`.
+       * Removal is unconditional and cannot fail: un-assigning must stay
+       * possible after a team or member is archived.
        */
       const setTeamMember = Effect.fn("Repository.setTeamMember")(
         function* (params: {
@@ -679,18 +748,30 @@ export class Repository extends Context.Service<
           select t.id, m.id, ${createdAt}
           from Team t join Member m on m.shop = t.shop
           where t.id = ${params.teamId} and t.shop = ${params.shop}
-            and m.id = ${params.memberId} and t.archivedAt is null
+            and m.id = ${params.memberId} and t.archivedAt is null and m.archivedAt is null
           on conflict do nothing
           returning teamId
         `;
           if (inserted[0] !== undefined) return;
           const existing =
             yield* sqlPrimary`select 1 as present from TeamMember where teamId = ${params.teamId} and memberId = ${params.memberId}`;
-          if (existing[0] === undefined)
-            yield* new TeamNotFoundError({
+          if (existing[0] !== undefined) return;
+          const archivedMember = yield* sqlPrimary`
+            select email from Member
+            where id = ${params.memberId} and shop = ${params.shop} and archivedAt is not null
+          `;
+          if (archivedMember[0] !== undefined)
+            yield* new MemberNotFoundError({
               shop: params.shop,
-              teamId: params.teamId,
+              email: yield* decodeRepository(
+                Domain.Email,
+                "Invalid Member email",
+              )(archivedMember[0].email),
             });
+          yield* new TeamNotFoundError({
+            shop: params.shop,
+            teamId: params.teamId,
+          });
         },
       );
 
@@ -701,6 +782,8 @@ export class Repository extends Context.Service<
        * what make a teamless member decode to `teams: []` rather than to
        * `Option.none()` — no team is a normal state for a member, not a
        * revoked grant. Archived teams are joined away: they scope no work.
+       * An archived member is `Option.none()`: the guard then 404s exactly as
+       * it would for a stranger.
        */
       const findMemberAccess = Effect.fn("Repository.findMemberAccess")(
         function* (member: Pick<Domain.Member, "shop" | "email">) {
@@ -709,7 +792,7 @@ export class Repository extends Context.Service<
             from Member m
             left join TeamMember tm on tm.memberId = m.id
             left join Team t on t.id = tm.teamId and t.archivedAt is null
-            where m.shop = ${member.shop} and m.email = ${member.email}
+            where m.shop = ${member.shop} and m.email = ${member.email} and m.archivedAt is null
             order by t.name collate nocase
           `;
           if (rows[0] === undefined) return Option.none();
@@ -748,7 +831,7 @@ export class Repository extends Context.Service<
         findOrphanShopAgentIds,
         listMembers,
         addMember,
-        deleteMember,
+        setMemberArchived,
         findMember,
         listMemberShops,
         listTeams,
