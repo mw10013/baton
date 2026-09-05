@@ -1,14 +1,17 @@
 import * as React from "react";
 
 import { useForm } from "@tanstack/react-form";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { Match, Schema } from "effect";
+import { createServerFn } from "@tanstack/react-start";
+import { Effect, Match, Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
 import { fieldError } from "@/lib/form";
 import { formatDateTime } from "@/lib/format";
+import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
+import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
 
 const workflowsSearchSchema = Schema.Struct({
@@ -22,18 +25,11 @@ const CreateWorkflowForm = Schema.Struct({
 });
 type CreateWorkflowForm = typeof CreateWorkflowForm.Type;
 
-export const workflowsQueryKey = (shop: string, archived: boolean) =>
-  ["workflows", shop, archived] as const;
-
 /**
- * `Schema.toType`: the Durable Object already decoded the rows, so the wire
- * value is the decoded shape (`tags` an array, not JSON text). See the same
- * note on `decodeOrdersView` in `app.orders.index.tsx`.
- */
-const decodeWorkflows = Schema.decodeUnknownPromise(
-  Schema.toType(Schema.Array(Domain.WorkflowSummary)),
-);
-const decodeWorkflowResult = Schema.decodeUnknownPromise(
+ * `Schema.toType` on the mutation results: the Durable Object already decoded
+ * them, so the wire value is the decoded shape. See the same note on
+ * `decodeOrdersView` in `app.orders.index.tsx`.
+ */ const decodeWorkflowResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.WorkflowResult),
 );
 
@@ -61,35 +57,42 @@ export const workflowResultMessage = Match.typeTags<
 export const ORDER_WORKFLOW_TRIGGER =
   "Starts when every item on an order that has a workflow is done. One order workflow per shop.";
 
+/**
+ * Workflow definitions are configuration one person edits, so the read is a
+ * loader (the loader-versus-socket rule on `ShopAgentClient`): SSR paint, and
+ * `router.invalidate()` after each write. Only the writes use the socket.
+ */
+const getLoaderData = createServerFn({ method: "GET" })
+  .validator(Schema.toStandardSchemaV1(workflowsSearchSchema))
+  .middleware([shopifyServerFnMiddleware])
+  .handler(({ data, context: { runEffect, session } }) =>
+    runEffect(
+      Effect.gen(function* () {
+        const workflows = yield* (yield* ShopAgentClient).listWorkflows(
+          session.shop,
+          { includeArchived: data.archived === true },
+        );
+        return { workflows } satisfies Domain.WorkflowsIndexLoaderData;
+      }),
+    ),
+  );
+
 export const Route = createFileRoute("/app/workflows/")({
   validateSearch: Schema.toStandardSchemaV1(workflowsSearchSchema),
+  loaderDeps: ({ search }) => ({ archived: search.archived }),
+  loader: ({ deps }) => getLoaderData({ data: deps }),
   component: RouteComponent,
 });
 
 function RouteComponent() {
-  const { shop } = Route.useRouteContext();
   const { archived } = Route.useSearch();
   const includeArchived = archived === true;
   const router = useRouter();
-  const queryClient = useQueryClient();
+  const { workflows: allWorkflows } = Route.useLoaderData();
   const { agent, identified } = useShopAgent();
   const [banner, setBanner] = React.useState<string | null>(null);
 
-  // oxlint-disable-next-line @tanstack/query/exhaustive-deps -- agent.stub is the stable per-shop socket; the cache identity is the shop plus the archived filter
-  const workflowsQuery = useQuery({
-    queryKey: workflowsQueryKey(shop, includeArchived),
-    staleTime: Infinity,
-    queryFn: () =>
-      agent
-        ? withSocketRecovery(agent)(() =>
-            agent.stub.listWorkflows({ includeArchived }),
-          ).then(decodeWorkflows)
-        : Promise.reject(new Error("Still connecting. Try again in a moment.")),
-    enabled: identified,
-  });
-
-  const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: ["workflows", shop] });
+  const invalidate = () => router.invalidate({ sync: true });
 
   const onResult = (result: Domain.WorkflowResult) => {
     setBanner(workflowResultMessage(result));
@@ -141,7 +144,6 @@ function RouteComponent() {
     },
   });
 
-  const allWorkflows = workflowsQuery.data ?? [];
   const orderWorkflows = allWorkflows.filter(
     (workflow) => workflow.scope === "order",
   );
@@ -221,16 +223,6 @@ function RouteComponent() {
   );
 
   const renderWorkflows = () => {
-    if (workflowsQuery.isError)
-      return (
-        <s-banner tone="critical">
-          {workflowsQuery.error instanceof Error
-            ? workflowsQuery.error.message
-            : "Could not load workflows."}
-        </s-banner>
-      );
-    if (workflowsQuery.data === undefined)
-      return <s-paragraph color="subdued">Loading workflows…</s-paragraph>;
     if (workflows.length === 0)
       return (
         <s-paragraph color="subdued">
@@ -247,8 +239,6 @@ function RouteComponent() {
    * or empty.
    */
   const renderOrderWorkflow = () => {
-    if (workflowsQuery.data === undefined || workflowsQuery.isError)
-      return null;
     return (
       <s-section heading="Order workflow" accessibilityLabel="Order workflow">
         <s-stack gap="base">

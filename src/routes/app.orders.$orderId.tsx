@@ -1,14 +1,18 @@
 import * as React from "react";
 
 import { useAppBridge } from "@shopify/app-bridge-react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Match, Option, Schema } from "effect";
+import { createServerFn } from "@tanstack/react-start";
+import { Effect, Match, Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
 import { formatDateTime, formatNumber } from "@/lib/format";
-import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
+import { ShopAgentClient } from "@/lib/ShopAgentClient";
+import { withSocketRecovery } from "@/lib/ShopAgentContext";
+import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
+import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
 
 const orderQueryKey = (shop: string, legacyId: string) =>
   ["order", shop, legacyId] as const;
@@ -16,9 +20,6 @@ const orderQueryKey = (shop: string, legacyId: string) =>
 /** See the note on `decodeOrdersView` in `app.orders.index.tsx`. */
 const decodeDetail = Schema.decodeUnknownPromise(
   Schema.toType(Schema.NullOr(Domain.OrderDetailView)),
-);
-const decodeWorkflows = Schema.decodeUnknownPromise(
-  Schema.toType(Schema.Array(Domain.WorkflowSummary)),
 );
 const decodeAttachResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.AttachResult),
@@ -91,19 +92,6 @@ const stepMark = (step: Domain.WorkflowRunStep) => {
   if (step.completedAt !== null) return " ✓";
   if (step.startedAt !== null) return " ●";
   return "";
-};
-
-const decodeAgentMessage = (data: string) => {
-  const parsed = ((): unknown => {
-    try {
-      return JSON.parse(data);
-    } catch {
-      return undefined;
-    }
-  })();
-  return Schema.decodeUnknownOption(Domain.AgentMessage)(parsed, {
-    onExcessProperty: "error",
-  });
 };
 
 /**
@@ -214,85 +202,67 @@ const stepTrail = ({ run, steps }: Domain.WorkflowRunDetail) => {
   );
 };
 
+const OrderParams = Schema.Struct({ legacyId: Schema.String });
+
+/** The loader half of the subscribed page; see the index's `getLoaderData`. */
+const getLoaderData = createServerFn({ method: "GET" })
+  .validator(Schema.toStandardSchemaV1(OrderParams))
+  .middleware([shopifyServerFnMiddleware])
+  .handler(({ data, context: { runEffect, session } }) =>
+    runEffect(
+      ShopAgentClient.pipe(
+        Effect.flatMap((client) => client.getOrderDetail(session.shop, data)),
+      ),
+    ),
+  );
+
 export const Route = createFileRoute("/app/orders/$orderId")({
+  loader: ({ params }) => getLoaderData({ data: { legacyId: params.orderId } }),
   component: RouteComponent,
 });
 
 /**
  * One order: its note, every line item with its personalization and workflow
- * runs, and the order's facts. Same shape as `/app/workflows/$workflowId`: no
- * route loader, one socket RPC for the read, and every write returns a tagged
- * result that is copy-mapped into the banner rather than thrown.
+ * runs, and the order's facts. Subscribed like the index: the loader paints,
+ * `useSubscribedQuery` reads through `ShopAgent.subscribeOrder` — which subscribes the
+ * shared `/app` connection to this order's pushes — so a webhook, resync, or
+ * member step action on this order repaints the page. Every write returns a
+ * tagged result that is copy-mapped into the banner rather than thrown.
  *
  * The `$orderId` param is the Shopify legacy id, so the URL matches the one
  * the admin uses for the same order (`Domain.GetOrderDetailInput`).
- *
- * Live updates: the read goes through `ShopAgent.activateOrder`, which
- * attaches the shared `/app` connection to pushes as well as reading, so a
- * webhook or resync that touches this order repaints the page. The attachment
- * is released on unmount, the same way the index does it.
  */
 function RouteComponent() {
   const { shop } = Route.useRouteContext();
   const { orderId: legacyId } = Route.useParams();
   const queryClient = useQueryClient();
   const shopify = useAppBridge();
-  const { agent, identified } = useShopAgent();
-  const agentRef = React.useRef(agent);
-  agentRef.current = agent;
-  /**
-   * Mount-scoped, as on the index: the `/app` socket outlives this route, so a
-   * stale `deactivate` from a replaced mount must not clear the newer mount's
-   * attachment.
-   */
-  const sessionTokenRef = React.useRef<string | null>(null);
-  sessionTokenRef.current ??= crypto.randomUUID();
-  const sessionToken = sessionTokenRef.current;
-  const deactivateTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
+  const loaderData = Route.useLoaderData();
   const resourceLinkTarget = useResourceLinkTarget();
   const [banner, setBanner] = React.useState<string | null>(null);
   const [attachChoice, setAttachChoice] = React.useState<
     Record<string, string>
   >({});
 
-  // oxlint-disable-next-line @tanstack/query/exhaustive-deps -- agent.stub is the stable per-shop socket and sessionToken is mount-scoped connection metadata; the cache identity is the shop plus the order
-  const detailQuery = useQuery({
+  const {
+    data: detail,
+    query: detailQuery,
+    invalidate: invalidateDetail,
+    agent,
+    identified,
+  } = useSubscribedQuery({
     queryKey: orderQueryKey(shop, legacyId),
-    staleTime: Infinity,
-    queryFn: () =>
-      agent
-        ? withSocketRecovery(agent)(() =>
-            agent.stub.activateOrder({ legacyId, sessionToken }),
-          ).then(decodeDetail)
-        : connecting(),
-    enabled: identified,
+    subscribe: (stub, subscriberId) =>
+      stub.subscribeOrder({ legacyId, subscriberId }).then(decodeDetail),
+    initialData: loaderData,
   });
 
-  // oxlint-disable-next-line @tanstack/query/exhaustive-deps -- agent.stub is the stable per-shop socket; the cache identity is the shop plus the archived filter, shared with the workflows page
-  const workflowsQuery = useQuery({
-    queryKey: ["workflows", shop, false],
-    staleTime: Infinity,
-    queryFn: () =>
-      agent
-        ? withSocketRecovery(agent)(() =>
-            agent.stub.listWorkflows({ includeArchived: false }),
-          ).then(decodeWorkflows)
-        : connecting(),
-    enabled: identified,
-  });
-
-  const invalidate = React.useCallback(
-    () =>
-      Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: orderQueryKey(shop, legacyId),
-        }),
-        queryClient.invalidateQueries({ queryKey: ["orders", shop] }),
-      ]),
-    [queryClient, shop, legacyId],
-  );
+  /** Own writes also touch the index's aggregate, whose key is a prefix match. */
+  const invalidate = () =>
+    Promise.all([
+      invalidateDetail(),
+      queryClient.invalidateQueries({ queryKey: ["orders", shop] }),
+    ]);
 
   const call = <A,>(
     op: (stub: NonNullable<typeof agent>["stub"]) => Promise<A>,
@@ -343,52 +313,6 @@ function RouteComponent() {
     },
   });
 
-  React.useEffect(() => {
-    if (identified) void invalidate();
-  }, [identified, invalidate]);
-
-  React.useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const onMessage = (event: MessageEvent) => {
-      if (typeof event.data !== "string") return;
-      if (Option.isNone(decodeAgentMessage(event.data))) return;
-      if (timer) return;
-      timer = setTimeout(() => {
-        timer = null;
-        void invalidate();
-      }, 500);
-    };
-    agent?.addEventListener("message", onMessage);
-    return () => {
-      if (timer) clearTimeout(timer);
-      agent?.removeEventListener("message", onMessage);
-    };
-  }, [agent, invalidate]);
-
-  /**
-   * Deferred by one task and cancelled if the effect sets up again, so React
-   * Strict Mode's setup → cleanup → setup probe cannot detach the attachment
-   * the first read just created. Best-effort and outside `withSocketRecovery`:
-   * the attachment is connection-scoped, so any failure means it is already
-   * gone.
-   */
-  React.useEffect(() => {
-    if (deactivateTimerRef.current) {
-      clearTimeout(deactivateTimerRef.current);
-      deactivateTimerRef.current = null;
-    }
-    return () => {
-      deactivateTimerRef.current = setTimeout(() => {
-        deactivateTimerRef.current = null;
-        const closing = agentRef.current;
-        if (closing?.identified)
-          void closing.stub.deactivate({ sessionToken }).catch(() => null);
-      }, 0);
-    };
-  }, [sessionToken]);
-
-  const detail = detailQuery.data;
-
   if (detailQuery.isError)
     return (
       <s-page heading="Order">
@@ -400,15 +324,6 @@ function RouteComponent() {
             ? detailQuery.error.message
             : "Could not load the order."}
         </s-banner>
-      </s-page>
-    );
-  if (detail === undefined)
-    return (
-      <s-page heading="Order">
-        <s-link slot="breadcrumb-actions" href="/app/orders">
-          Orders
-        </s-link>
-        <s-paragraph color="subdued">Loading order…</s-paragraph>
       </s-page>
     );
   if (detail === null)
@@ -424,7 +339,7 @@ function RouteComponent() {
       </s-page>
     );
 
-  const { order, lineItems, runs, orderWorkflow } = detail;
+  const { order, lineItems, runs, orderWorkflow, routableWorkflows } = detail;
   /**
    * The same aggregate the index computes in SQL, rebuilt from the run list
    * this page already carries so both pages read one `productionState`.
@@ -441,12 +356,6 @@ function RouteComponent() {
     orderWorkflow !== null &&
     order.processedAt < orderWorkflow.createdAt &&
     !runs.some(({ run }) => !Domain.isOrderRun(run) && run.source === "manual");
-  const routableWorkflows = (workflowsQuery.data ?? []).filter(
-    (workflow) =>
-      workflow.scope === "item" &&
-      workflow.stepCount > 0 &&
-      workflow.archivedAt === null,
-  );
   const busy = attachMutation.isPending || runMutation.isPending;
 
   const renderRun = (run: Domain.WorkflowRunDetail) => (

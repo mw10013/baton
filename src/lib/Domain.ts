@@ -932,14 +932,14 @@ export type ProductionState = typeof ProductionState.Type;
 export const OrdersCursor = Schema.String.check(Schema.isMaxLength(128));
 
 /**
- * `sessionToken` is what subscribes the calling connection to invalidations —
- * the `activate<Feature>` convention documented on `ShopAgent.activateOrders`.
+ * `subscriberId` is what subscribes the calling connection to invalidations —
+ * the `subscribe<Feature>` convention documented on `ShopAgent.subscribeOrders`.
  * A page that only reads is a page that never hears about a write: the Durable
- * Object pushes to attached connections only, and the `/app` socket is shared,
- * so a route that read without attaching would go silent the moment another
- * route's unmount detached the connection.
+ * Object publishes to subscribed connections only, and the `/app` socket is
+ * shared, so a route that read without subscribing would go silent the moment
+ * another route's unmount unsubscribed the connection.
  */
-export const ActivateOrdersInput = Schema.Struct({
+export const ListOrdersInput = Schema.Struct({
   limit: Schema.Number.check(
     Schema.isInt(),
     Schema.isBetween({ minimum: 1, maximum: 50 }),
@@ -947,9 +947,14 @@ export const ActivateOrdersInput = Schema.Struct({
   cursor: Schema.NullOr(OrdersCursor),
   /** `null` is every order; only `ready_to_ship` has a SQL form today (see `OrderRepository.listOrders`). */
   state: Schema.NullOr(ProductionState),
-  sessionToken: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
 });
-export type ActivateOrdersInput = typeof ActivateOrdersInput.Type;
+export type ListOrdersInput = typeof ListOrdersInput.Type;
+
+export const SubscribeOrdersInput = Schema.Struct({
+  ...ListOrdersInput.fields,
+  subscriberId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
+});
+export type SubscribeOrdersInput = typeof SubscribeOrdersInput.Type;
 
 export const ResyncOrderInput = Schema.Struct({
   orderId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
@@ -1038,12 +1043,17 @@ export type OrdersPage = typeof OrdersPage.Type;
  * The detail page is addressed by `legacyId`, not the GID: the GID contains
  * slashes, and the legacy id is what the Shopify admin puts in its own URL.
  */
-export const ActivateOrderInput = Schema.Struct({
+export const GetOrderDetailInput = Schema.Struct({
   legacyId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
-  /** Subscribes the connection to pushes; see `ActivateOrdersInput`. */
-  sessionToken: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
 });
-export type ActivateOrderInput = typeof ActivateOrderInput.Type;
+export type GetOrderDetailInput = typeof GetOrderDetailInput.Type;
+
+export const SubscribeOrderInput = Schema.Struct({
+  ...GetOrderDetailInput.fields,
+  /** Subscribes the connection to pushes; see `SubscribeOrdersInput`. */
+  subscriberId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
+});
+export type SubscribeOrderInput = typeof SubscribeOrderInput.Type;
 
 /**
  * A Shopify bulk operation as the sync workflow observes it.
@@ -1186,9 +1196,8 @@ export const adminShopEntitlements = Match.typeTags<
  * drives its shape; the route's server fn binds to it as the module-private
  * `getLoaderData`, one fixed name per route so nobody has to coin a fetch
  * name per page. When another consumer needs the shape to change, promote
- * the contract to a domain-named type instead of bending it. Same convention
- * as the sibling `../bang` project. Loader-vs-socket placement is documented
- * on `ShopAgentClient`.
+ * the contract to a domain-named type instead of bending it. Loader-vs-socket
+ * placement is documented on `ShopAgentClient`.
  */
 export type AdminShopLoaderData =
   | { readonly _tag: "NotFound" }
@@ -1209,6 +1218,20 @@ export interface AppIndexLoaderData {
 export interface LoginLoaderData {
   readonly isDemoMode: boolean;
 }
+
+/** `/app/orders` (`app.orders.index`): the first page; the socket takes over on identify. */
+export type OrdersIndexLoaderData = OrdersView;
+
+/** `/app/orders/$orderId` (`app.orders.$orderId`); `null` is not stored. */
+export type OrderLoaderData = OrderDetailView | null;
+
+/** `/app/workflows` (`app.workflows.index`). */
+export interface WorkflowsIndexLoaderData {
+  readonly workflows: readonly WorkflowSummary[];
+}
+
+/** `/app/workflows/$workflowId` (`app.workflows.$workflowId`); `null` is not found. */
+export type WorkflowLoaderData = WorkflowDetailView | null;
 
 /** `/app/members` (`app.members`). */
 export interface MembersLoaderData {
@@ -1244,31 +1267,54 @@ export interface QueueLoaderData {
 }
 
 /**
- * Per-connection attachment: the mount-scoped `sessionToken` that guards a
- * stale `deactivate` from a previous route mount on the same shared socket.
- * A connection with no attachment receives no pushes — attaching is what
- * subscribes a tab to invalidations.
+ * The subscribe pattern — the socket half of the loader-versus-socket rule on
+ * `ShopAgentClient`, for a page whose data other actors change underneath it.
+ * One cycle, named the same on both sides:
  *
- * The struct exists rather than a bare boolean because this is the seam where
- * per-connection subscription detail goes (which records a tab is watching,
- * which filters it has applied); the skeleton keeps the shape and carries only
- * the guard. The sibling `../bang` project is that seam realized: its
- * attachment is `{ sessionToken, memoryKeys }` and its notifier pushes only to
- * connections watching the keys that changed. Baton has one message type and
- * two routes, so every attached connection is poked; grow the struct when a
- * second thing needs filtering, not before.
+ * 1. **Subscribe.** The page's read is a `subscribe<Feature>` RPC on
+ *    `ShopAgent` (`subscribeOrders`, `subscribeOrder`) that returns the view
+ *    *and* stores this `Subscription` as the connection's state, in one round
+ *    trip so a write between two calls cannot be missed. Each has a plain
+ *    twin without the subscription (`listOrders`, `getOrderDetail`) that the
+ *    route loader reads through `ShopAgentClient` for SSR paint. The page
+ *    calls the RPC through `useSubscribedQuery`, which owns the client half.
+ * 2. **Publish.** A write on the object ends with `ShopAgent.publish`, which
+ *    sends `InvalidatedMessage` to every connection whose subscription the
+ *    write touched — a hint that the view is stale, never the new value.
+ * 3. **Invalidate.** The hook decodes the message and invalidates its query
+ *    (throttled), which re-runs the `subscribe<Feature>` read and so also
+ *    renews the subscription.
+ * 4. **Unsubscribe.** On unmount the hook calls `unsubscribe` with its
+ *    `subscriberId`; the object clears the state only if the id still
+ *    matches, so a stale unsubscribe from a previous mount on the same shared
+ *    socket cannot clear a newer mount's subscription. A reconnect is a fresh
+ *    connection with no subscription, which is why the hook re-subscribes on
+ *    every identify.
+ *
+ * A connection with no subscription receives nothing. A socket `useQuery`
+ * outside this cycle is a mistake — it never refetches — and belongs on a
+ * loader instead.
+ *
+ * `orderId` is the subscription's scope: `null` is the orders index, which
+ * wants every order-state change; a GID is one detail page, which wants only
+ * its own order. `publish` takes the set of orders a write touched (or `"all"`
+ * for the bulk sync and for the run mutations, whose repository does not
+ * report the order yet) and skips a detail subscription whose order is not in
+ * it. Only order state is ever published — workflow configuration is loader
+ * data and changes on navigation.
  */
-export const ConnectionState = Schema.Struct({
-  sessionToken: Schema.String,
+export const Subscription = Schema.Struct({
+  subscriberId: Schema.String,
+  orderId: Schema.NullOr(Schema.String),
 });
-export type ConnectionState = typeof ConnectionState.Type;
+export type Subscription = typeof Subscription.Type;
 
-export const ConnectionAttachment = Schema.NullOr(ConnectionState);
+export const SubscriptionState = Schema.NullOr(Subscription);
 
-export const SessionTokenInput = Schema.Struct({
-  sessionToken: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
+export const SubscriberIdInput = Schema.Struct({
+  subscriberId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
 });
-export type SessionTokenInput = typeof SessionTokenInput.Type;
+export type SubscriberIdInput = typeof SubscriberIdInput.Type;
 
 /**
  * The one server push: "your loader data is stale, refetch". Deliberately not
@@ -1507,6 +1553,12 @@ export const OrderDetailView = Schema.Struct({
   runs: Schema.Array(WorkflowRunDetail),
   /** The shop's active order workflow, so the page can say what will start once the items are made. */
   orderWorkflow: Schema.NullOr(Workflow),
+  /**
+   * Active item workflows with at least one step — the manual-attach picker's
+   * choices. Carried in the view rather than read by a second socket query so
+   * the page has exactly one read, one key, and one push.
+   */
+  routableWorkflows: Schema.Array(Workflow),
 });
 export type OrderDetailView = typeof OrderDetailView.Type;
 

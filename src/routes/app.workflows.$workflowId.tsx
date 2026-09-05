@@ -1,13 +1,16 @@
 import * as React from "react";
 
 import { useForm } from "@tanstack/react-form";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
-import { Match, Schema } from "effect";
+import { useMutation } from "@tanstack/react-query";
+import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createServerFn } from "@tanstack/react-start";
+import { Effect, Match, Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
 import { fieldError } from "@/lib/form";
+import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
+import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
 import * as WorkflowLayout from "@/lib/WorkflowLayout";
 
@@ -23,12 +26,6 @@ const WorkflowForm = Schema.Struct({
 });
 type WorkflowForm = typeof WorkflowForm.Type;
 
-const workflowQueryKey = (shop: string, workflowId: string) =>
-  ["workflow", shop, workflowId] as const;
-
-const decodeDetail = Schema.decodeUnknownPromise(
-  Schema.toType(Schema.NullOr(Domain.WorkflowDetailView)),
-);
 const decodeWorkflowResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.WorkflowResult),
 );
@@ -51,21 +48,37 @@ const stepResultMessage = Match.typeTags<Domain.StepResult, string | null>()({
 const connecting = () =>
   Promise.reject(new Error("Still connecting. Try again in a moment."));
 
+const WorkflowParams = Schema.Struct({ workflowId: Schema.String });
+
+/** Loader read for the same reason as the index's `getLoaderData`. */
+const getLoaderData = createServerFn({ method: "GET" })
+  .validator(Schema.toStandardSchemaV1(WorkflowParams))
+  .middleware([shopifyServerFnMiddleware])
+  .handler(({ data, context: { runEffect, session } }) =>
+    runEffect(
+      ShopAgentClient.pipe(
+        Effect.flatMap((client) =>
+          client.getWorkflowDetail(session.shop, data),
+        ),
+      ),
+    ),
+  );
+
 export const Route = createFileRoute("/app/workflows/$workflowId")({
+  loader: ({ params }) => getLoaderData({ data: params }),
   component: RouteComponent,
 });
 
 /**
- * Same shape as `/app/orders`: no route loader, every read is a socket RPC on
- * the gated connection, and the page paints after hydration. Reads and writes
- * are one Durable Object call each; every write returns a tagged result that
- * is copy-mapped here rather than thrown, so a taken name lands on the field
- * and a limit lands in the banner.
+ * Same shape as `/app/workflows`: the read is a loader, every write is one
+ * socket RPC, and `router.invalidate()` re-reads after each. Every write
+ * returns a tagged result that is copy-mapped here rather than thrown, so a
+ * taken name lands on the field and a limit lands in the banner.
  */
 function RouteComponent() {
-  const { shop } = Route.useRouteContext();
   const { workflowId } = Route.useParams();
-  const queryClient = useQueryClient();
+  const router = useRouter();
+  const detail = Route.useLoaderData();
   const { agent, identified } = useShopAgent();
   const [banner, setBanner] = React.useState<string | null>(null);
   const [newStep, setNewStep] = React.useState({
@@ -87,26 +100,7 @@ function RouteComponent() {
     instructions: string;
   } | null>(null);
 
-  // oxlint-disable-next-line @tanstack/query/exhaustive-deps -- agent.stub is the stable per-shop socket; the cache identity is the shop plus the workflow id
-  const detailQuery = useQuery({
-    queryKey: workflowQueryKey(shop, workflowId),
-    staleTime: Infinity,
-    queryFn: () =>
-      agent
-        ? withSocketRecovery(agent)(() =>
-            agent.stub.getWorkflowDetail({ workflowId }),
-          ).then(decodeDetail)
-        : connecting(),
-    enabled: identified,
-  });
-
-  const invalidate = () =>
-    Promise.all([
-      queryClient.invalidateQueries({
-        queryKey: workflowQueryKey(shop, workflowId),
-      }),
-      queryClient.invalidateQueries({ queryKey: ["workflows", shop] }),
-    ]);
+  const invalidate = () => router.invalidate({ sync: true });
 
   const call = <A,>(
     op: (stub: NonNullable<typeof agent>["stub"]) => Promise<A>,
@@ -122,8 +116,7 @@ function RouteComponent() {
         stub.updateWorkflow({
           workflowId,
           name,
-          tags:
-            detailQuery.data?.workflow.scope === "order" ? [] : splitTags(tags),
+          tags: detail?.workflow.scope === "order" ? [] : splitTags(tags),
         }),
       ).then(decodeWorkflowResult),
     onSuccess: async (result) => {
@@ -213,7 +206,6 @@ function RouteComponent() {
     onError,
   });
 
-  const detail = detailQuery.data;
   const form = useForm({
     defaultValues: {
       name: detail?.workflow.name ?? "",
@@ -231,22 +223,6 @@ function RouteComponent() {
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- reset the form once per loaded workflow, not on every render of the form object
   }, [loadedId, detail?.workflow.updatedAt]);
 
-  if (detailQuery.isError)
-    return (
-      <s-page heading="Workflow">
-        <s-banner tone="critical">
-          {detailQuery.error instanceof Error
-            ? detailQuery.error.message
-            : "Could not load the workflow."}
-        </s-banner>
-      </s-page>
-    );
-  if (detail === undefined)
-    return (
-      <s-page heading="Workflow">
-        <s-paragraph color="subdued">Loading workflow…</s-paragraph>
-      </s-page>
-    );
   if (detail === null)
     return (
       <s-page heading="Workflow not found">

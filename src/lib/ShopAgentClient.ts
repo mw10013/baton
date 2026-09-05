@@ -65,12 +65,11 @@ export class ShopAgentClientError extends Schema.TaggedError<ShopAgentClientErro
  *   naming), so a route never invents a bespoke fetch name.
  * - **Operational state other actors change underneath the page** (orders,
  *   which webhooks, the bulk sync stream, and members' step actions all
- *   write) goes through the `/app` socket as an `activate<Feature>` query:
- *   `staleTime: Infinity`, a `message` listener that invalidates on
- *   `Domain.InvalidatedMessage`, and a connection attachment so
- *   `ShopAgent.notifyChanged` reaches it. All three, or none — a socket
- *   `useQuery` with no listener never refetches, which is the bug that moved
- *   `listStepsOwnedBy` from the socket to this service.
+ *   write) goes through the `/app` socket via `useSubscribedQuery` — the
+ *   subscribe pattern, described end to end on `Domain.Subscription`. All of
+ *   it, or none — a socket `useQuery` outside that cycle never refetches,
+ *   which is the bug that moved `listStepsOwnedBy` from the socket to this
+ *   service.
  *
  * The `@callable()` set on `ShopAgent` is exactly what the browser may reach
  * over the socket; a read that only loaders need is plain RPC and lives here.
@@ -89,6 +88,22 @@ export class ShopAgentClient extends Context.Service<
       shop: string,
       input: Domain.TeamIdInput,
     ) => Effect.Effect<readonly Domain.OwnedStep[], ShopAgentClientError>;
+    readonly listOrders: (
+      shop: string,
+      input: Domain.ListOrdersInput,
+    ) => Effect.Effect<Domain.OrdersView, ShopAgentClientError>;
+    readonly getOrderDetail: (
+      shop: string,
+      input: Domain.GetOrderDetailInput,
+    ) => Effect.Effect<Domain.OrderDetailView | null, ShopAgentClientError>;
+    readonly listWorkflows: (
+      shop: string,
+      input: Domain.ListWorkflowsInput,
+    ) => Effect.Effect<readonly Domain.WorkflowSummary[], ShopAgentClientError>;
+    readonly getWorkflowDetail: (
+      shop: string,
+      input: Domain.WorkflowIdInput,
+    ) => Effect.Effect<Domain.WorkflowDetailView | null, ShopAgentClientError>;
     readonly startStep: (
       shop: string,
       input: Domain.StartStepInput,
@@ -168,6 +183,12 @@ export class ShopAgentClient extends Context.Service<
       const queueItems = Schema.toType(Schema.Array(Domain.QueueItem));
       /** Same reason: `workflowArchived` is `SqliteBoolean`, already decoded. */
       const ownedSteps = Schema.toType(Schema.Array(Domain.OwnedStep));
+      const ordersView = Schema.toType(Domain.OrdersView);
+      const orderDetail = Schema.toType(Schema.NullOr(Domain.OrderDetailView));
+      const workflows = Schema.toType(Schema.Array(Domain.WorkflowSummary));
+      const workflowDetail = Schema.toType(
+        Schema.NullOr(Domain.WorkflowDetailView),
+      );
       return ShopAgentClient.of({
         getShopInfo: Effect.fn("ShopAgentClient.getShopInfo")((shop: string) =>
           call("getShopInfo", Domain.ShopInfo, shop, (stub) =>
@@ -184,6 +205,30 @@ export class ShopAgentClient extends Context.Service<
           (shop: string, input: Domain.TeamIdInput) =>
             call("listStepsOwnedBy", ownedSteps, shop, (stub) =>
               stub.listStepsOwnedBy(input),
+            ),
+        ),
+        listOrders: Effect.fn("ShopAgentClient.listOrders")(
+          (shop: string, input: Domain.ListOrdersInput) =>
+            call("listOrders", ordersView, shop, (stub) =>
+              stub.listOrders(input),
+            ),
+        ),
+        getOrderDetail: Effect.fn("ShopAgentClient.getOrderDetail")(
+          (shop: string, input: Domain.GetOrderDetailInput) =>
+            call("getOrderDetail", orderDetail, shop, (stub) =>
+              stub.getOrderDetail(input),
+            ),
+        ),
+        listWorkflows: Effect.fn("ShopAgentClient.listWorkflows")(
+          (shop: string, input: Domain.ListWorkflowsInput) =>
+            call("listWorkflows", workflows, shop, (stub) =>
+              stub.listWorkflows(input),
+            ),
+        ),
+        getWorkflowDetail: Effect.fn("ShopAgentClient.getWorkflowDetail")(
+          (shop: string, input: Domain.WorkflowIdInput) =>
+            call("getWorkflowDetail", workflowDetail, shop, (stub) =>
+              stub.getWorkflowDetail(input),
             ),
         ),
         startStep: Effect.fn("ShopAgentClient.startStep")(

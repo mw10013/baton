@@ -593,7 +593,7 @@ const OrdersStreamInput = Schema.Struct({ url: Schema.String });
  * application lock. Durable Objects run one synchronous JavaScript turn at a time;
  * `SqlStorage.exec()` is synchronous, and Cloudflare input gates protect the
  * Promise-based `storage.transaction()` used by Effect's SQLite adapter. Once a
- * transaction completes, connection attachment updates and WebSocket sends below
+ * transaction completes, subscription updates and WebSocket sends below
  * are synchronous in the resumed turn. `blockConcurrencyWhile()` is therefore only
  * needed for constructor migrations. Revisit this only if a state transition starts
  * awaiting non-storage I/O such as `fetch()`.
@@ -601,6 +601,9 @@ const OrdersStreamInput = Schema.Struct({ url: Schema.String });
  * The object is addressed by shop domain (`env.SHOP_AGENT.getByName(shop)`), so
  * `this.name` is the shop and no method takes one.
  */
+/** See `publish`. */
+type PublishScope = "all" | readonly string[];
+
 export class ShopAgent extends Agent {
   declare private readonly runEffect: ReturnType<typeof makeRunEffect>;
 
@@ -618,14 +621,11 @@ export class ShopAgent extends Agent {
     );
   }
 
-  private connectionState(
-    connection: Connection,
-  ): Domain.ConnectionState | null {
+  private subscription(connection: Connection): Domain.Subscription | null {
     return Option.getOrNull(
-      Schema.decodeUnknownOption(Domain.ConnectionAttachment)(
-        connection.state,
-        { onExcessProperty: "error" },
-      ),
+      Schema.decodeUnknownOption(Domain.SubscriptionState)(connection.state, {
+        onExcessProperty: "error",
+      }),
     );
   }
 
@@ -637,10 +637,16 @@ export class ShopAgent extends Agent {
     });
   }
 
-  private notifyConnection(connection: Connection) {
+  private publishTo(connection: Connection, touched: PublishScope) {
     return Effect.try({
       try: () => {
-        if (this.connectionState(connection))
+        const state = this.subscription(connection);
+        if (
+          state &&
+          (touched === "all" ||
+            state.orderId === null ||
+            touched.includes(state.orderId))
+        )
           connection.send(
             JSON.stringify({
               type: "invalidated",
@@ -652,45 +658,53 @@ export class ShopAgent extends Agent {
     }).pipe(
       Effect.ignore({
         log: "Debug",
-        message: `ShopAgent.notifyConnection: shop=${this.name}`,
+        message: `ShopAgent.publishTo: shop=${this.name}`,
       }),
     );
   }
 
   /**
    * Invalidations are best-effort hints, never the new value: SQLite stays
-   * authoritative and an attaching tab refetches, so a dropped push costs a
-   * stale render until the next activation rather than a lost write. That is
+   * authoritative and a subscribing tab refetches, so a dropped push costs a
+   * stale render until the next subscribe rather than a lost write. That is
    * why a send failure is swallowed here instead of failing the mutation that
    * triggered it.
+   *
+   * `touched` scopes the push (see `Domain.Subscription`): the order GIDs a
+   * write changed, or `"all"` when the writer cannot name them — the bulk
+   * sync, which touches a window of orders, and the run mutations, whose
+   * repository reports a `RunResult` without the order. An index subscription
+   * (`orderId: null`) is published to either way; a detail subscription only
+   * for its own order. Workflow configuration never publishes: it is loader
+   * data.
    */
-  private notifyChanged() {
+  private publish(touched: PublishScope) {
     return this.connections().pipe(
       Effect.flatMap((connections) =>
         Effect.forEach(
           connections,
-          (connection) => this.notifyConnection(connection),
+          (connection) => this.publishTo(connection, touched),
           { discard: true },
         ),
       ),
       Effect.ignore({
         log: "Debug",
-        message: `ShopAgent.notifyChanged: shop=${this.name}`,
+        message: `ShopAgent.publish: shop=${this.name}`,
       }),
     );
   }
 
   @callable()
-  deactivate(input: Domain.SessionTokenInput): Promise<void> {
+  unsubscribe(input: Domain.SubscriberIdInput): Promise<void> {
     return this.runEffect(
-      callableEffect("ShopAgent.deactivate", Domain.SessionTokenInput, {
+      callableEffect("ShopAgent.unsubscribe", Domain.SubscriberIdInput, {
         onExcessProperty: "error",
-      })(({ sessionToken }) =>
+      })(({ subscriberId }) =>
         Effect.sync(() => {
           const { connection } = getCurrentAgent<ShopAgent>();
           if (
             connection &&
-            this.connectionState(connection)?.sessionToken === sessionToken
+            this.subscription(connection)?.subscriberId === subscriberId
           )
             connection.setState(null);
         }),
@@ -819,7 +833,7 @@ export class ShopAgent extends Agent {
           agentBinding: SHOP_AGENT_BINDING,
         }),
       );
-    const notifyChanged = () => this.notifyChanged();
+    const publish = () => this.publish("all");
     return this.runEffect(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
@@ -899,7 +913,7 @@ export class ShopAgent extends Agent {
             workflowId: id,
           }),
         );
-        yield* notifyChanged();
+        yield* publish();
         return reserved;
       }).pipe(Effect.withLogSpan("ShopAgent.syncOrders")),
     );
@@ -916,7 +930,7 @@ export class ShopAgent extends Agent {
     readonly lineItemsUpserted: number;
   }> {
     const shop = this.name;
-    const notifyChanged = () => this.notifyChanged();
+    const publish = () => this.publish("all");
     const reconciler = () => this.reconciler("bulk");
     return this.runEffect(
       callableEffect(
@@ -931,7 +945,7 @@ export class ShopAgent extends Agent {
           yield* Effect.logInfo(
             `ShopAgent.onOrdersStream: shop=${shop} ordersSeen=${String(counts.ordersSeen)} ordersUpserted=${String(counts.ordersUpserted)} lineItemsUpserted=${String(counts.lineItemsUpserted)}`,
           ).pipe(Effect.annotateLogs({ shop, ...counts }));
-          yield* notifyChanged();
+          yield* publish();
           return counts;
         }),
       )(input),
@@ -962,7 +976,7 @@ export class ShopAgent extends Agent {
     readonly message: string;
   }): Promise<void> {
     const shop = this.name;
-    const notifyChanged = () => this.notifyChanged();
+    const publish = () => this.publish("all");
     return this.runEffect(
       callableEffect(
         "ShopAgent.onOrdersSyncError",
@@ -976,7 +990,7 @@ export class ShopAgent extends Agent {
             startedAt,
             error: message,
           });
-          yield* notifyChanged();
+          yield* publish();
         }),
       )(input),
     );
@@ -996,7 +1010,7 @@ export class ShopAgent extends Agent {
     if (workflowName !== ORDERS_SYNC_WORKFLOW_NAME) return;
     const shop = this.name;
     const deleteWorkflow = () => this.deleteWorkflow(workflowId);
-    const notifyChanged = () => this.notifyChanged();
+    const publish = () => this.publish("all");
     await this.runEffect(
       callableEffect(
         "ShopAgent.onWorkflowComplete",
@@ -1010,7 +1024,7 @@ export class ShopAgent extends Agent {
             `ShopAgent.onWorkflowComplete: shop=${shop} workflowId=${workflowId}`,
           ).pipe(Effect.annotateLogs({ shop, workflowId, startedAt }));
           yield* Effect.sync(deleteWorkflow);
-          yield* notifyChanged();
+          yield* publish();
           return state;
         }),
       )(result),
@@ -1025,7 +1039,7 @@ export class ShopAgent extends Agent {
     if (workflowName !== ORDERS_SYNC_WORKFLOW_NAME) return;
     const shop = this.name;
     const deleteWorkflow = () => this.deleteWorkflow(workflowId);
-    const notifyChanged = () => this.notifyChanged();
+    const publish = () => this.publish("all");
     await this.runEffect(
       Effect.gen(function* () {
         yield* Effect.logError(
@@ -1041,7 +1055,7 @@ export class ShopAgent extends Agent {
         if (state.startedAt !== null)
           yield* repository.failSync({ startedAt: state.startedAt, error });
         yield* Effect.sync(deleteWorkflow);
-        yield* notifyChanged();
+        yield* publish();
       }).pipe(Effect.withLogSpan("ShopAgent.onWorkflowError")),
     );
   }
@@ -1058,7 +1072,7 @@ export class ShopAgent extends Agent {
    */
   syncOrder(input: OrderWebhookInput): Promise<void> {
     const shop = this.name;
-    const notifyChanged = () => this.notifyChanged();
+    const publish = (touched: PublishScope) => this.publish(touched);
     const fetchAndUpsert = (orderId: string) =>
       this.fetchAndUpsertOrder(orderId, "webhook");
     return this.runEffect(
@@ -1102,7 +1116,7 @@ export class ShopAgent extends Agent {
             return;
           }
           yield* fetchAndUpsert(orderId);
-          yield* notifyChanged();
+          yield* publish([orderId]);
         }),
       )(input),
     );
@@ -1117,7 +1131,7 @@ export class ShopAgent extends Agent {
    */
   @callable()
   resyncOrder(input: Domain.ResyncOrderInput): Promise<void> {
-    const notifyChanged = () => this.notifyChanged();
+    const publish = (touched: PublishScope) => this.publish(touched);
     const fetchAndUpsert = (orderId: string) =>
       this.fetchAndUpsertOrder(orderId, "manual");
     return this.runEffect(
@@ -1126,7 +1140,7 @@ export class ShopAgent extends Agent {
       })(({ orderId }) =>
         Effect.gen(function* () {
           yield* fetchAndUpsert(orderId);
-          yield* notifyChanged();
+          yield* publish([orderId]);
         }),
       )(input),
     );
@@ -1135,7 +1149,7 @@ export class ShopAgent extends Agent {
   /** `orders/delete` carries `{ id }` only — there is nothing to fetch. */
   deleteOrder(input: Domain.ResyncOrderInput): Promise<void> {
     const shop = this.name;
-    const notifyChanged = () => this.notifyChanged();
+    const publish = (touched: PublishScope) => this.publish(touched);
     return this.runEffect(
       callableEffect(
         "ShopAgent.deleteOrder",
@@ -1147,39 +1161,67 @@ export class ShopAgent extends Agent {
           yield* Effect.logInfo(
             `ShopAgent.deleteOrder: shop=${shop} orderId=${orderId}`,
           ).pipe(Effect.annotateLogs({ shop, orderId }));
-          yield* notifyChanged();
+          yield* publish([orderId]);
+        }),
+      )(input),
+    );
+  }
+
+  private readOrders({ limit, cursor, state }: Domain.ListOrdersInput) {
+    return Effect.gen(function* () {
+      const repository = yield* OrderRepository;
+      return {
+        page: yield* repository.listOrders({ limit, cursor, state }),
+        syncState: yield* repository.getSyncState(),
+      } satisfies Domain.OrdersView;
+    });
+  }
+
+  /**
+   * Plain RPC, not `@callable()`: the loader half of the orders index, read
+   * through `ShopAgentClient` so the first page paints during SSR. The socket
+   * half is {@link subscribeOrders}, the same read plus the subscription.
+   */
+  listOrders(input: Domain.ListOrdersInput): Promise<Domain.OrdersView> {
+    return this.runEffect(
+      callableEffect(
+        "ShopAgent.listOrders",
+        Domain.ListOrdersInput,
+      )((input) => this.readOrders(input))(input),
+    );
+  }
+
+  /**
+   * The orders view's `subscribe<Feature>` method — reads the page and
+   * subscribes the calling connection in one round trip. Combining the read and
+   * subscription prevents a write between separate calls from being missed.
+   * `orderId: null` subscribes to every order-state push.
+   */
+  @callable()
+  subscribeOrders(
+    input: Domain.SubscribeOrdersInput,
+  ): Promise<Domain.OrdersView> {
+    const readOrders = (input: Domain.ListOrdersInput) =>
+      this.readOrders(input);
+    return this.runEffect(
+      callableEffect("ShopAgent.subscribeOrders", Domain.SubscribeOrdersInput, {
+        onExcessProperty: "error",
+      })(({ subscriberId, ...input }) =>
+        Effect.gen(function* () {
+          const { connection } = getCurrentAgent<ShopAgent>();
+          if (connection) connection.setState({ subscriberId, orderId: null });
+          return yield* readOrders(input);
         }),
       )(input),
     );
   }
 
   /**
-   * The orders view's `activate<Feature>` method — reads the page and
-   * subscribes the calling connection in one round trip. Combining the read and
-   * subscription prevents a write between separate calls from being missed.
+   * Plain RPC, not `@callable()`: workflow definitions are configuration, so
+   * `/app/workflows` reads them through its loader via `ShopAgentClient` (the
+   * loader-versus-socket rule documented there). Only the mutations stay on
+   * the socket.
    */
-  @callable()
-  activateOrders(
-    input: Domain.ActivateOrdersInput,
-  ): Promise<Domain.OrdersView> {
-    return this.runEffect(
-      callableEffect("ShopAgent.activateOrders", Domain.ActivateOrdersInput, {
-        onExcessProperty: "error",
-      })(({ limit, cursor, state, sessionToken }) =>
-        Effect.gen(function* () {
-          const { connection } = getCurrentAgent<ShopAgent>();
-          if (connection) connection.setState({ sessionToken });
-          const repository = yield* OrderRepository;
-          return {
-            page: yield* repository.listOrders({ limit, cursor, state }),
-            syncState: yield* repository.getSyncState(),
-          } satisfies Domain.OrdersView;
-        }),
-      )(input),
-    );
-  }
-
-  @callable()
   listWorkflows(
     input: typeof Domain.ListWorkflowsInput.Encoded,
   ): Promise<readonly Domain.WorkflowSummary[]> {
@@ -1206,8 +1248,9 @@ export class ShopAgent extends Agent {
    * A step whose team is archived or missing resolves to `teamName: null` —
    * flagged, never blocked, since the risk is at routing time, not in the
    * editor, and unarchiving the team restores validity with no edit.
+   *
+   * Plain RPC, not `@callable()`, for the reason on {@link listWorkflows}.
    */
-  @callable()
   getWorkflowDetail(
     input: typeof Domain.WorkflowIdInput.Encoded,
   ): Promise<Domain.WorkflowDetailView | null> {
@@ -1247,7 +1290,6 @@ export class ShopAgent extends Agent {
   createWorkflow(
     input: typeof Domain.CreateWorkflowInput.Encoded,
   ): Promise<Domain.WorkflowResult> {
-    const notifyChanged = () => this.notifyChanged();
     return this.runEffect(
       callableEffect("ShopAgent.createWorkflow", Domain.CreateWorkflowInput, {
         onExcessProperty: "error",
@@ -1258,7 +1300,7 @@ export class ShopAgent extends Agent {
               repository.createWorkflow({ name, scope, tags }),
             ),
           ),
-        ).pipe(Effect.tap(notifyChanged)),
+        ),
       )(input),
     );
   }
@@ -1267,7 +1309,6 @@ export class ShopAgent extends Agent {
   updateWorkflow(
     input: typeof Domain.UpdateWorkflowInput.Encoded,
   ): Promise<Domain.WorkflowResult> {
-    const notifyChanged = () => this.notifyChanged();
     return this.runEffect(
       callableEffect("ShopAgent.updateWorkflow", Domain.UpdateWorkflowInput, {
         onExcessProperty: "error",
@@ -1278,7 +1319,7 @@ export class ShopAgent extends Agent {
               repository.updateWorkflow({ workflowId, name, tags }),
             ),
           ),
-        ).pipe(Effect.tap(notifyChanged)),
+        ),
       )(input),
     );
   }
@@ -1287,7 +1328,6 @@ export class ShopAgent extends Agent {
   setWorkflowArchived(
     input: typeof Domain.SetWorkflowArchivedInput.Encoded,
   ): Promise<Domain.WorkflowResult> {
-    const notifyChanged = () => this.notifyChanged();
     return this.runEffect(
       callableEffect(
         "ShopAgent.setWorkflowArchived",
@@ -1300,7 +1340,7 @@ export class ShopAgent extends Agent {
               repository.setWorkflowArchived({ workflowId, archived }),
             ),
           ),
-        ).pipe(Effect.tap(notifyChanged)),
+        ),
       )(input),
     );
   }
@@ -1366,40 +1406,80 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * The detail page's `activate<Feature>` read: the order, its line items, and
+   * The detail page's `subscribe<Feature>` read: the order, its line items, and
    * every run on them, and the calling connection subscribed to pushes in the
-   * same round trip (the convention documented on `activateOrders`). Without
+   * same round trip (the convention documented on `subscribeOrders`). Without
    * the attach, a webhook landing on the open order would update SQLite and
    * push to nobody. Addressed by `legacyId` because that is what the route
-   * carries (see `Domain.ActivateOrderInput`). `null` when the order is not
+   * carries (see `Domain.SubscribeOrderInput`). `null` when the order is not
    * stored, which the page renders as not-found rather than as a failure.
    */
-  @callable()
-  activateOrder(
-    input: typeof Domain.ActivateOrderInput.Encoded,
+  private readOrderDetail({ legacyId }: Domain.GetOrderDetailInput) {
+    return Effect.gen(function* () {
+      const orders = yield* OrderRepository;
+      const runs = yield* WorkflowRunRepository;
+      const detail = yield* orders.getOrderByLegacyId(legacyId);
+      if (Option.isNone(detail)) return null;
+      const { order, lineItems } = detail.value;
+      const workflows =
+        yield* (yield* WorkflowRepository).listActiveWorkflowDetails();
+      return {
+        order,
+        lineItems,
+        runs: yield* runs.listRunsForOrder({ orderId: order.id }),
+        orderWorkflow:
+          workflows.find(({ workflow }) => workflow.scope === "order")
+            ?.workflow ?? null,
+        routableWorkflows: workflows
+          .filter(
+            ({ workflow, steps }) =>
+              workflow.scope === "item" && steps.length > 0,
+          )
+          .map(({ workflow }) => workflow),
+      } satisfies Domain.OrderDetailView;
+    });
+  }
+
+  /**
+   * Plain RPC, not `@callable()`: the loader half of the order detail page,
+   * as {@link listOrders} is for the index.
+   */
+  getOrderDetail(
+    input: Domain.GetOrderDetailInput,
   ): Promise<Domain.OrderDetailView | null> {
     return this.runEffect(
-      callableEffect("ShopAgent.activateOrder", Domain.ActivateOrderInput, {
+      callableEffect(
+        "ShopAgent.getOrderDetail",
+        Domain.GetOrderDetailInput,
+      )((input) => this.readOrderDetail(input))(input),
+    );
+  }
+
+  @callable()
+  subscribeOrder(
+    input: typeof Domain.SubscribeOrderInput.Encoded,
+  ): Promise<Domain.OrderDetailView | null> {
+    const readOrderDetail = (input: Domain.GetOrderDetailInput) =>
+      this.readOrderDetail(input);
+    return this.runEffect(
+      callableEffect("ShopAgent.subscribeOrder", Domain.SubscribeOrderInput, {
         onExcessProperty: "error",
-      })(({ legacyId, sessionToken }) =>
+      })(({ subscriberId, ...input }) =>
         Effect.gen(function* () {
+          const view = yield* readOrderDetail(input);
+          /**
+           * Subscribed after the read because the scope is the GID and the
+           * route only carries the legacy id. An unstored order subscribes
+           * index-wide (`null`): a later sync that stores it must reach this
+           * page, and there is no GID to narrow to.
+           */
           const { connection } = getCurrentAgent<ShopAgent>();
-          if (connection) connection.setState({ sessionToken });
-          const orders = yield* OrderRepository;
-          const runs = yield* WorkflowRunRepository;
-          const detail = yield* orders.getOrderByLegacyId(legacyId);
-          if (Option.isNone(detail)) return null;
-          const { order, lineItems } = detail.value;
-          const workflows =
-            yield* (yield* WorkflowRepository).listActiveWorkflowDetails();
-          return {
-            order,
-            lineItems,
-            runs: yield* runs.listRunsForOrder({ orderId: order.id }),
-            orderWorkflow:
-              workflows.find(({ workflow }) => workflow.scope === "order")
-                ?.workflow ?? null,
-          } satisfies Domain.OrderDetailView;
+          if (connection)
+            connection.setState({
+              subscriberId,
+              orderId: view?.order.id ?? null,
+            });
+          return view;
         }),
       )(input),
     );
@@ -1434,7 +1514,7 @@ export class ShopAgent extends Agent {
   attachWorkflow(
     input: typeof Domain.AttachWorkflowInput.Encoded,
   ): Promise<Domain.AttachResult> {
-    const notifyChanged = () => this.notifyChanged();
+    const publish = (touched: PublishScope) => this.publish(touched);
     const activeTeams = () => this.activeTeams();
     return this.runEffect(
       callableEffect("ShopAgent.attachWorkflow", Domain.AttachWorkflowInput, {
@@ -1469,7 +1549,7 @@ export class ShopAgent extends Agent {
           });
           if (Option.isNone(run))
             return { _tag: "AlreadyExists" } satisfies Domain.AttachResult;
-          yield* notifyChanged();
+          yield* publish([target.value.order.id]);
           return { _tag: "Ok", run: run.value } satisfies Domain.AttachResult;
         }),
       )(input),
@@ -1481,7 +1561,7 @@ export class ShopAgent extends Agent {
     input: typeof Domain.RunIdInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
-    const notifyChanged = () => this.notifyChanged();
+    const publish = () => this.publish("all");
     const routingContext = () => this.routingContext();
     return this.runEffect(
       callableEffect("ShopAgent.cancelRun", Domain.RunIdInput, {
@@ -1502,7 +1582,7 @@ export class ShopAgent extends Agent {
               ).pipe(Effect.annotateLogs({ shop, runId })),
             ),
           ),
-        ).pipe(Effect.tap(notifyChanged)),
+        ).pipe(Effect.tap(publish)),
       )(input),
     );
   }
@@ -1511,7 +1591,7 @@ export class ShopAgent extends Agent {
   uncancelRun(
     input: typeof Domain.RunIdInput.Encoded,
   ): Promise<Domain.RunResult> {
-    const notifyChanged = () => this.notifyChanged();
+    const publish = () => this.publish("all");
     return this.runEffect(
       callableEffect("ShopAgent.uncancelRun", Domain.RunIdInput, {
         onExcessProperty: "error",
@@ -1520,7 +1600,7 @@ export class ShopAgent extends Agent {
           WorkflowRunRepository.pipe(
             Effect.flatMap((repository) => repository.uncancelRun({ runId })),
           ),
-        ).pipe(Effect.tap(notifyChanged)),
+        ).pipe(Effect.tap(publish)),
       )(input),
     );
   }
@@ -1589,7 +1669,7 @@ export class ShopAgent extends Agent {
     input: typeof Domain.StartStepInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
-    const notifyChanged = () => this.notifyChanged();
+    const publish = () => this.publish("all");
     return this.runEffect(
       callableEffect(
         "ShopAgent.startStep",
@@ -1608,7 +1688,7 @@ export class ShopAgent extends Agent {
               `ShopAgent.startStep: shop=${shop} step=${runStepId} memberId=${memberId}`,
             ).pipe(Effect.annotateLogs({ shop, step: runStepId, memberId }));
           }),
-        ).pipe(Effect.tap(notifyChanged)),
+        ).pipe(Effect.tap(publish)),
       )(input),
     );
   }
@@ -1618,7 +1698,7 @@ export class ShopAgent extends Agent {
     input: typeof Domain.SetStepNoteInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
-    const notifyChanged = () => this.notifyChanged();
+    const publish = () => this.publish("all");
     return this.runEffect(
       callableEffect(
         "ShopAgent.setStepNote",
@@ -1638,7 +1718,7 @@ export class ShopAgent extends Agent {
               `ShopAgent.setStepNote: shop=${shop} step=${runStepId} memberId=${memberId}`,
             ).pipe(Effect.annotateLogs({ shop, step: runStepId, memberId }));
           }),
-        ).pipe(Effect.tap(notifyChanged)),
+        ).pipe(Effect.tap(publish)),
       )(input),
     );
   }
@@ -1647,7 +1727,7 @@ export class ShopAgent extends Agent {
     input: typeof Domain.BlockRunInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
-    const notifyChanged = () => this.notifyChanged();
+    const publish = () => this.publish("all");
     return this.runEffect(
       callableEffect(
         "ShopAgent.blockRun",
@@ -1667,7 +1747,7 @@ export class ShopAgent extends Agent {
               `ShopAgent.blockRun: shop=${shop} runId=${runId} memberId=${memberId}`,
             ).pipe(Effect.annotateLogs({ shop, runId, memberId }));
           }),
-        ).pipe(Effect.tap(notifyChanged)),
+        ).pipe(Effect.tap(publish)),
       )(input),
     );
   }
@@ -1676,7 +1756,7 @@ export class ShopAgent extends Agent {
     input: typeof Domain.CompleteStepInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
-    const notifyChanged = () => this.notifyChanged();
+    const publish = () => this.publish("all");
     const routingContext = () => this.routingContext();
     return this.runEffect(
       callableEffect(
@@ -1697,7 +1777,7 @@ export class ShopAgent extends Agent {
               `ShopAgent.completeStep: shop=${shop} step=${runStepId} memberId=${memberId}`,
             ).pipe(Effect.annotateLogs({ shop, step: runStepId, memberId }));
           }),
-        ).pipe(Effect.tap(notifyChanged)),
+        ).pipe(Effect.tap(publish)),
       )(input),
     );
   }
@@ -1705,7 +1785,7 @@ export class ShopAgent extends Agent {
   dismissFlag(
     input: typeof Domain.DismissFlagInput.Encoded,
   ): Promise<Domain.RunResult> {
-    const notifyChanged = () => this.notifyChanged();
+    const publish = () => this.publish("all");
     return this.runEffect(
       callableEffect(
         "ShopAgent.dismissFlag",
@@ -1717,7 +1797,7 @@ export class ShopAgent extends Agent {
               repository.dismissFlag({ runId, teamIds }),
             ),
           ),
-        ).pipe(Effect.tap(notifyChanged)),
+        ).pipe(Effect.tap(publish)),
       )(input),
     );
   }
@@ -1756,7 +1836,6 @@ export class ShopAgent extends Agent {
   addStep(
     input: typeof Domain.AddStepInput.Encoded,
   ): Promise<Domain.StepResult> {
-    const notifyChanged = () => this.notifyChanged();
     const activeTeam = (teamId: string) => this.activeTeam(teamId);
     const workflowWritable = (workflowId: string) =>
       this.workflowWritable(workflowId);
@@ -1776,7 +1855,6 @@ export class ShopAgent extends Agent {
               teamId: team.id,
               instructions: instructions ?? null,
             });
-            yield* notifyChanged();
             return { _tag: "Ok", step };
           }),
         ),
@@ -1790,7 +1868,6 @@ export class ShopAgent extends Agent {
     input: typeof Domain.AddParallelStepInput.Encoded,
   ): Promise<Domain.StepResult> {
     const shop = this.name;
-    const notifyChanged = () => this.notifyChanged();
     const activeTeam = (teamId: string) => this.activeTeam(teamId);
     const workflowWritable = (workflowId: string) =>
       this.workflowWritable(workflowId);
@@ -1814,7 +1891,6 @@ export class ShopAgent extends Agent {
             yield* Effect.logInfo(
               `ShopAgent.addParallelStep: shop=${shop} workflowId=${workflowId} stage=${String(stage)}`,
             ).pipe(Effect.annotateLogs({ shop, workflowId, stage }));
-            yield* notifyChanged();
             return { _tag: "Ok", step };
           }),
         ),
@@ -1826,7 +1902,6 @@ export class ShopAgent extends Agent {
   updateStep(
     input: typeof Domain.UpdateStepInput.Encoded,
   ): Promise<Domain.StepResult> {
-    const notifyChanged = () => this.notifyChanged();
     const activeTeam = (teamId: string) => this.activeTeam(teamId);
     const workflowWritable = (workflowId: string) =>
       this.workflowWritable(workflowId);
@@ -1849,7 +1924,6 @@ export class ShopAgent extends Agent {
               teamId: team.id,
               instructions,
             });
-            yield* notifyChanged();
             return { _tag: "Ok", step };
           }),
         ),
@@ -1861,7 +1935,6 @@ export class ShopAgent extends Agent {
   moveStep(
     input: typeof Domain.MoveStepInput.Encoded,
   ): Promise<Domain.StepResult> {
-    const notifyChanged = () => this.notifyChanged();
     const workflowWritable = (workflowId: string) =>
       this.workflowWritable(workflowId);
     return this.runEffect(
@@ -1876,7 +1949,6 @@ export class ShopAgent extends Agent {
             const blocked = yield* workflowWritable(existing.value.workflowId);
             if (blocked !== null) return blocked;
             yield* repository.moveStep({ stepId, direction });
-            yield* notifyChanged();
             return { _tag: "Ok", step: null };
           }),
         ),
@@ -1889,7 +1961,6 @@ export class ShopAgent extends Agent {
     input: typeof Domain.SeparateStepInput.Encoded,
   ): Promise<Domain.StepResult> {
     const shop = this.name;
-    const notifyChanged = () => this.notifyChanged();
     const workflowWritable = (workflowId: string) =>
       this.workflowWritable(workflowId);
     return this.runEffect(
@@ -1913,7 +1984,6 @@ export class ShopAgent extends Agent {
                 stage: existing.value.stage,
               }),
             );
-            yield* notifyChanged();
             return { _tag: "Ok", step: null };
           }),
         ),
@@ -1925,7 +1995,6 @@ export class ShopAgent extends Agent {
   removeStep(
     input: typeof Domain.StepIdInput.Encoded,
   ): Promise<Domain.StepResult> {
-    const notifyChanged = () => this.notifyChanged();
     const workflowWritable = (workflowId: string) =>
       this.workflowWritable(workflowId);
     return this.runEffect(
@@ -1940,7 +2009,6 @@ export class ShopAgent extends Agent {
             const blocked = yield* workflowWritable(existing.value.workflowId);
             if (blocked !== null) return blocked;
             yield* repository.removeStep({ stepId });
-            yield* notifyChanged();
             return { _tag: "Ok", step: null };
           }),
         ),
@@ -2012,23 +2080,20 @@ export class ShopAgent extends Agent {
     input: typeof Domain.SeedWorkflowsInput.Encoded,
   ): Promise<void> {
     const environment = this.env.ENVIRONMENT;
-    const notifyChanged = () => this.notifyChanged();
     return this.runEffect(
       callableEffect("ShopAgent.seedWorkflows", Domain.SeedWorkflowsInput, {
         onExcessProperty: "error",
       })((seed) =>
-        Effect.gen(function* () {
-          if (environment === "local") {
-            yield* (yield* WorkflowRepository).replaceWorkflows(seed);
-            yield* notifyChanged();
-          } else
-            yield* Effect.fail(
+        environment === "local"
+          ? WorkflowRepository.pipe(
+              Effect.flatMap((repository) => repository.replaceWorkflows(seed)),
+            )
+          : Effect.fail(
               new WorkflowRepositoryError({
                 message: `ShopAgent.seedWorkflows: environment=${environment}: seeding is local-only`,
                 cause: environment,
               }),
-            );
-        }),
+            ),
       )(input),
     );
   }
@@ -2044,7 +2109,7 @@ export class ShopAgent extends Agent {
   @callable()
   seedOrders(input: typeof Domain.SeedOrdersInput.Encoded): Promise<void> {
     const environment = this.env.ENVIRONMENT;
-    const notifyChanged = () => this.notifyChanged();
+    const publish = () => this.publish("all");
     const reconciler = () => this.reconciler("manual");
     const routingContext = () => this.routingContext();
     return this.runEffect(
@@ -2151,7 +2216,7 @@ export class ShopAgent extends Agent {
               yield* completeOpenRuns(id);
             }
           }
-          yield* notifyChanged();
+          yield* publish();
         }),
       )(input),
     );

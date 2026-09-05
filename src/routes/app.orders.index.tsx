@@ -1,15 +1,18 @@
 import * as React from "react";
 
 import { useAppBridge } from "@shopify/app-bridge-react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Match, Option, Schema } from "effect";
+import { createServerFn } from "@tanstack/react-start";
+import { Effect, Match, Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
 import { formatDateTime, formatNumber } from "@/lib/format";
 import { ORDER_SYNC_WINDOW_DAYS } from "@/lib/orderSyncConstants";
-import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
+import { ShopAgentClient } from "@/lib/ShopAgentClient";
+import { withSocketRecovery } from "@/lib/ShopAgentContext";
+import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
+import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
 
 const ORDERS_PAGE_SIZE = 25;
 const TAG_BADGE_LIMIT = 3;
@@ -42,19 +45,6 @@ const decodeOrdersView = Schema.decodeUnknownPromise(
 const decodeSyncState = Schema.decodeUnknownPromise(
   Schema.toType(Domain.SyncState),
 );
-
-const decodeAgentMessage = (data: string) => {
-  const parsed = ((): unknown => {
-    try {
-      return JSON.parse(data);
-    } catch {
-      return undefined;
-    }
-  })();
-  return Schema.decodeUnknownOption(Domain.AgentMessage)(parsed, {
-    onExcessProperty: "error",
-  });
-};
 
 /** The detail page is addressed by `legacyId`; see `Domain.GetOrderDetailInput`. */
 export const orderDetailHref = ({ legacyId }: Domain.ShopOrder) =>
@@ -127,8 +117,37 @@ const countText = (
     : `${count} stored.`;
 };
 
+/**
+ * The loader half of the subscribed page: the first page of the current filter,
+ * read Worker-side so it paints during SSR. The socket's `subscribeOrders`
+ * takes over on identify (see `useSubscribedQuery`). Paging past the first page is
+ * component state, so only the filter is a loader dep.
+ */
+const OrdersLoaderInput = Schema.Struct({
+  state: Schema.NullOr(Domain.ProductionState),
+});
+
+const getLoaderData = createServerFn({ method: "GET" })
+  .validator(Schema.toStandardSchemaV1(OrdersLoaderInput))
+  .middleware([shopifyServerFnMiddleware])
+  .handler(({ data: { state }, context: { runEffect, session } }) =>
+    runEffect(
+      ShopAgentClient.pipe(
+        Effect.flatMap((client) =>
+          client.listOrders(session.shop, {
+            limit: ORDERS_PAGE_SIZE,
+            cursor: null,
+            state,
+          }),
+        ),
+      ),
+    ),
+  );
+
 export const Route = createFileRoute("/app/orders/")({
-  validateSearch: Schema.decodeUnknownSync(OrdersSearch),
+  validateSearch: Schema.toStandardSchemaV1(OrdersSearch),
+  loaderDeps: ({ search }) => ({ state: search.state ?? null }),
+  loader: ({ deps }) => getLoaderData({ data: deps }),
   component: RouteComponent,
 });
 
@@ -138,50 +157,31 @@ export const Route = createFileRoute("/app/orders/")({
  * Everything per order — line items, personalization, workflows — lives on
  * `/app/orders/$orderId`.
  *
- * No route loader. Unlike `/app`, nothing here is worth a server round trip:
- * every read is an authenticated socket RPC on a connection the Worker already
- * gated, and the same socket delivers the invalidations that keep the table
- * live while a bulk stream and webhooks write underneath it. The cost is no SSR
- * paint, which is why the empty and connecting states are explicit. This is
- * the socket half of the loader-versus-socket rule on `ShopAgentClient`.
- *
- * Invalidations are throttled because a bulk sync plus a burst of order webhooks
- * can poke many times in a second, and
- * `invalidateQueries` defaults to `cancelRefetch: true` while a Durable Object
- * RPC cannot be aborted — so N pokes would start N reads and discard N-1. A
- * trailing throttle collapses a burst into one refetch and still guarantees a
- * final read after the last poke.
+ * A subscribed page (the socket half of the loader-versus-socket rule on
+ * `ShopAgentClient`): the loader paints the first page, then `useSubscribedQuery`
+ * reads through `subscribeOrders` and refetches on every order-state push,
+ * so the table stays current while a bulk stream and webhooks write
+ * underneath it.
  */
 function RouteComponent() {
   const { shop } = Route.useRouteContext();
   const { state = null } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
-  const queryClient = useQueryClient();
   const shopify = useAppBridge();
-  const { agent, identified } = useShopAgent();
-  const agentRef = React.useRef(agent);
-  agentRef.current = agent;
-  /**
-   * Mount-scoped, exactly as on the home route: the `/app` socket outlives this
-   * route, so a stale `deactivate` from a mount that has already been replaced
-   * must not clear the newer mount's attachment. The query calls
-   * `ShopAgent.activateOrders`, which reads and attaches in one round trip.
-   */
-  const sessionTokenRef = React.useRef<string | null>(null);
-  sessionTokenRef.current ??= crypto.randomUUID();
-  const sessionToken = sessionTokenRef.current;
-  const deactivateTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
+  const loaderData = Route.useLoaderData();
   /**
    * The repository pages forward only (keyset on `processedAt, id`), so
    * "previous" is a stack of the cursors already visited: the top is the
-   * current page, the one beneath it is where "previous" goes.
+   * current page, the one beneath it is where "previous" goes. The cursor is
+   * read fresh on every fetch rather than keyed, so an invalidation re-reads the page
+   * being viewed.
    */
   const [cursors, setCursors] = React.useState<readonly (string | null)[]>([
     null,
   ]);
   const cursor = cursors.at(-1) ?? null;
+  const cursorRef = React.useRef(cursor);
+  cursorRef.current = cursor;
   const [syncing, setSyncing] = React.useState(false);
 
   /** A filter change is a new list, so the cursor stack starts over. */
@@ -190,75 +190,29 @@ function RouteComponent() {
     void navigate({ search: next === null ? {} : { state: next } });
   };
 
-  // oxlint-disable-next-line @tanstack/query/exhaustive-deps -- agent.stub is the stable per-shop socket and sessionToken is mount-scoped connection metadata; the cache identity is the shop plus the state filter, and `cursor` is read fresh on every fetch so a poke re-reads the page being viewed
-  const ordersQuery = useQuery({
+  const {
+    data: view,
+    query: ordersQuery,
+    invalidate,
+    agent,
+    identified,
+  } = useSubscribedQuery({
     queryKey: ordersQueryKey(shop, state),
-    staleTime: Infinity,
-    gcTime: 30 * 60 * 1000,
-    queryFn: () =>
-      agent
-        ? withSocketRecovery(agent)(() =>
-            agent.stub.activateOrders({
-              limit: ORDERS_PAGE_SIZE,
-              cursor,
-              state,
-              sessionToken,
-            }),
-          ).then(decodeOrdersView)
-        : Promise.reject(new Error("Still connecting. Try again in a moment.")),
-    enabled: identified,
+    subscribe: (stub, subscriberId) =>
+      stub
+        .subscribeOrders({
+          limit: ORDERS_PAGE_SIZE,
+          cursor: cursorRef.current,
+          state,
+          subscriberId,
+        })
+        .then(decodeOrdersView),
+    initialData: loaderData,
   });
-
-  const invalidate = React.useCallback(
-    () =>
-      queryClient.invalidateQueries({ queryKey: ordersQueryKey(shop, state) }),
-    [queryClient, shop, state],
-  );
 
   React.useEffect(() => {
     if (identified) void invalidate();
   }, [identified, invalidate, cursor]);
-
-  React.useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const onMessage = (event: MessageEvent) => {
-      if (typeof event.data !== "string") return;
-      if (Option.isNone(decodeAgentMessage(event.data))) return;
-      if (timer) return;
-      timer = setTimeout(() => {
-        timer = null;
-        void invalidate();
-      }, 500);
-    };
-    agent?.addEventListener("message", onMessage);
-    return () => {
-      if (timer) clearTimeout(timer);
-      agent?.removeEventListener("message", onMessage);
-    };
-  }, [agent, invalidate]);
-
-  /**
-   * Deferred by one task and cancelled if the effect sets up again, so React
-   * Strict Mode's setup → cleanup → setup probe cannot detach the attachment
-   * the first read just created. A real unmount has no following setup, so its
-   * deferred deactivate still runs. Best-effort and outside `withSocketRecovery`
-   * for the reason the home route documents: the attachment is
-   * connection-scoped, so any failure means it is already gone.
-   */
-  React.useEffect(() => {
-    if (deactivateTimerRef.current) {
-      clearTimeout(deactivateTimerRef.current);
-      deactivateTimerRef.current = null;
-    }
-    return () => {
-      deactivateTimerRef.current = setTimeout(() => {
-        deactivateTimerRef.current = null;
-        const closing = agentRef.current;
-        if (closing?.identified)
-          void closing.stub.deactivate({ sessionToken }).catch(() => null);
-      }, 0);
-    };
-  }, [sessionToken]);
 
   const startSync = () => {
     if (!agent) return;
@@ -277,7 +231,6 @@ function RouteComponent() {
       });
   };
 
-  const view = ordersQuery.data;
   const syncInFlight = view !== undefined && view.syncState.workflowId !== null;
   const orders = view?.page.orders ?? [];
 
@@ -292,7 +245,7 @@ function RouteComponent() {
       {...(slotted ? { slot: "primary-action" as const } : {})}
       variant="primary"
       loading={syncing}
-      disabled={!identified || syncing || view === undefined || syncInFlight}
+      disabled={!identified || syncing || syncInFlight}
       onClick={startSync}
     >
       {`Sync last ${String(ORDER_SYNC_WINDOW_DAYS)} days`}
@@ -314,8 +267,6 @@ function RouteComponent() {
             : "Could not load orders."}
         </s-banner>
       );
-    if (view === undefined)
-      return <s-paragraph color="subdued">Loading orders…</s-paragraph>;
     if (orders.length === 0 && state === "ready_to_ship")
       return (
         <s-paragraph color="subdued">

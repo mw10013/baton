@@ -489,9 +489,9 @@ describe("ShopAgent workflow run callables", () => {
       workflowId: item.workflow.id,
     });
     if (attached._tag !== "Ok") throw new Error(attached._tag);
-    const detail = await agent.activateOrder({
+    const detail = await agent.subscribeOrder({
       legacyId: "1",
-      sessionToken: "t",
+      subscriberId: "t",
     });
     strictEqual(detail?.orderWorkflow?.id, pack.workflow.id);
     strictEqual(detail?.runs.length, 1);
