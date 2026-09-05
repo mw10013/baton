@@ -25,7 +25,9 @@ const getLoaderData = createServerFn({ method: "GET" })
         const shop = yield* Schema.decodeUnknownEffect(Domain.Shop)(
           session.shop,
         );
-        return { entitlements: yield* resolveEntitlements(shop) };
+        return {
+          entitlements: yield* resolveEntitlements(shop),
+        } satisfies Domain.AppIndexLoaderData;
       }),
     ),
   );

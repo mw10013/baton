@@ -57,7 +57,7 @@ export const teamArchiveResultMessage = Match.typeTags<
   NotFound: () => TEAM_GONE,
 });
 
-const getTeams = createServerFn({ method: "GET" })
+const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(teamsSearchSchema))
   .middleware([shopifyServerFnMiddleware])
   .handler(({ data, context: { runEffect, session } }) =>
@@ -67,7 +67,7 @@ const getTeams = createServerFn({ method: "GET" })
           shop: yield* sessionShop(session.shop),
           includeArchived: data.archived === true,
         });
-        return { teams };
+        return { teams } satisfies Domain.TeamsIndexLoaderData;
       }),
     ),
   );
@@ -104,7 +104,7 @@ const setTeamArchivedFn = createServerFn({ method: "POST" })
 export const Route = createFileRoute("/app/teams/")({
   validateSearch: Schema.toStandardSchemaV1(teamsSearchSchema),
   loaderDeps: ({ search }) => ({ archived: search.archived }),
-  loader: ({ deps }) => getTeams({ data: deps }),
+  loader: ({ deps }) => getLoaderData({ data: deps }),
   component: RouteComponent,
 });
 

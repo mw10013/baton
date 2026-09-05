@@ -49,6 +49,31 @@ export class ShopAgentClientError extends Schema.TaggedError<ShopAgentClientErro
  * `Shopify.ts`'s internal `SHOP_AGENT` uses (`idFromName`, uninstall `destroy`,
  * stub-by-id) stay raw: none decodes a wire result, and routing them through
  * this service would invert the layer graph.
+ *
+ * ## Loader reads versus socket reads
+ *
+ * This service is the seam for the *loader* half of a two-idiom rule, and the
+ * rule is the reason a method appears here rather than as `@callable()` on
+ * the object:
+ *
+ * - **Configuration a page reads and one person edits** (members, teams, the
+ *   steps a team owns, the member queue) goes through a route `loader` — via
+ *   `Repository` for D1 rows, via this service for Durable Object rows. The
+ *   page paints during SSR, and its own mutations refresh it with
+ *   `router.invalidate()`. The route's server function is the module-private
+ *   `getLoaderData` (see `Domain.AdminShopLoaderData` for the contract
+ *   naming), so a route never invents a bespoke fetch name.
+ * - **Operational state other actors change underneath the page** (orders,
+ *   which webhooks, the bulk sync stream, and members' step actions all
+ *   write) goes through the `/app` socket as an `activate<Feature>` query:
+ *   `staleTime: Infinity`, a `message` listener that invalidates on
+ *   `Domain.InvalidatedMessage`, and a connection attachment so
+ *   `ShopAgent.notifyChanged` reaches it. All three, or none — a socket
+ *   `useQuery` with no listener never refetches, which is the bug that moved
+ *   `listStepsOwnedBy` from the socket to this service.
+ *
+ * The `@callable()` set on `ShopAgent` is exactly what the browser may reach
+ * over the socket; a read that only loaders need is plain RPC and lives here.
  */
 export class ShopAgentClient extends Context.Service<
   ShopAgentClient,
@@ -60,6 +85,10 @@ export class ShopAgentClient extends Context.Service<
       shop: string,
       input: Domain.ListQueueInput,
     ) => Effect.Effect<readonly Domain.QueueItem[], ShopAgentClientError>;
+    readonly listStepsOwnedBy: (
+      shop: string,
+      input: Domain.TeamIdInput,
+    ) => Effect.Effect<readonly Domain.OwnedStep[], ShopAgentClientError>;
     readonly startStep: (
       shop: string,
       input: Domain.StartStepInput,
@@ -137,6 +166,8 @@ export class ShopAgentClient extends Context.Service<
        * and needs no such care.
        */
       const queueItems = Schema.toType(Schema.Array(Domain.QueueItem));
+      /** Same reason: `workflowArchived` is `SqliteBoolean`, already decoded. */
+      const ownedSteps = Schema.toType(Schema.Array(Domain.OwnedStep));
       return ShopAgentClient.of({
         getShopInfo: Effect.fn("ShopAgentClient.getShopInfo")((shop: string) =>
           call("getShopInfo", Domain.ShopInfo, shop, (stub) =>
@@ -147,6 +178,12 @@ export class ShopAgentClient extends Context.Service<
           (shop: string, input: Domain.ListQueueInput) =>
             call("listQueue", queueItems, shop, (stub) =>
               stub.listQueue(input),
+            ),
+        ),
+        listStepsOwnedBy: Effect.fn("ShopAgentClient.listStepsOwnedBy")(
+          (shop: string, input: Domain.TeamIdInput) =>
+            call("listStepsOwnedBy", ownedSteps, shop, (stub) =>
+              stub.listStepsOwnedBy(input),
             ),
         ),
         startStep: Effect.fn("ShopAgentClient.startStep")(

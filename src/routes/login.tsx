@@ -17,7 +17,7 @@ const getLoaderData = createServerFn({ method: "GET" }).handler(
     runEffect(
       Effect.map(
         Config.boolean("DEMO_MODE").pipe(Config.withDefault(false)),
-        (isDemoMode) => ({ isDemoMode }),
+        (isDemoMode) => ({ isDemoMode }) satisfies Domain.LoginLoaderData,
       ),
     ),
 );

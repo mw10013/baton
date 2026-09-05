@@ -39,7 +39,7 @@ const MEMBER_GONE = "That member no longer exists.";
  * Filtered here rather than in the component so the client never receives
  * archived rows it will not show.
  */
-const getMembers = createServerFn({ method: "GET" })
+const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(membersSearchSchema))
   .middleware([shopifyServerFnMiddleware])
   .handler(({ data, context: { runEffect, session } }) =>
@@ -52,7 +52,7 @@ const getMembers = createServerFn({ method: "GET" })
             data.archived === true
               ? members
               : members.filter((member) => member.archivedAt === null),
-        };
+        } satisfies Domain.MembersLoaderData;
       }),
     ),
   );
@@ -91,7 +91,7 @@ const setMemberArchivedFn = createServerFn({ method: "POST" })
 export const Route = createFileRoute("/app/members")({
   validateSearch: Schema.toStandardSchemaV1(membersSearchSchema),
   loaderDeps: ({ search }) => ({ archived: search.archived }),
-  loader: ({ deps }) => getMembers({ data: deps }),
+  loader: ({ deps }) => getLoaderData({ data: deps }),
   component: RouteComponent,
 });
 

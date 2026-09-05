@@ -50,7 +50,7 @@ const textOrNull = (value: string) =>
  * browser sends only the shop and the id of what it clicked; scope is
  * enforced on the object against the resolved teams.
  */
-const getQueue = createServerFn({ method: "GET" })
+const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(ShopParamInput))
   .middleware([memberServerFnMiddleware])
   .handler(({ data, context: { runEffect, user } }) =>
@@ -63,7 +63,7 @@ const getQueue = createServerFn({ method: "GET" })
         const items = yield* (yield* ShopAgentClient).listQueue(shop, {
           teamIds: teams.map((team) => team.id),
         });
-        return { shop, teams, items };
+        return { shop, teams, items } satisfies Domain.QueueLoaderData;
       }),
     ),
   );
@@ -166,7 +166,7 @@ const dismissFlagFn = createServerFn({ method: "POST" })
   );
 
 export const Route = createFileRoute("/shop/$shop/queue")({
-  loader: ({ params }) => getQueue({ data: { shop: params.shop } }),
+  loader: ({ params }) => getLoaderData({ data: { shop: params.shop } }),
   component: RouteComponent,
 });
 

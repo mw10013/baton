@@ -142,7 +142,8 @@ export const Route = createFileRoute("/app/orders/")({
  * every read is an authenticated socket RPC on a connection the Worker already
  * gated, and the same socket delivers the invalidations that keep the table
  * live while a bulk stream and webhooks write underneath it. The cost is no SSR
- * paint, which is why the empty and connecting states are explicit.
+ * paint, which is why the empty and connecting states are explicit. This is
+ * the socket half of the loader-versus-socket rule on `ShopAgentClient`.
  *
  * Invalidations are throttled because a bulk sync plus a burst of order webhooks
  * can poke many times in a second, and

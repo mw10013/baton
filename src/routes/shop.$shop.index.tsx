@@ -1,3 +1,5 @@
+import type * as Domain from "@/lib/Domain";
+
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
@@ -10,7 +12,7 @@ import { ShopAgentClient } from "@/lib/ShopAgentClient";
 
 const ShopParamInput = Schema.Struct({ shop: Schema.String });
 
-const getShopPage = createServerFn({ method: "GET" })
+const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(ShopParamInput))
   .middleware([memberServerFnMiddleware])
   .handler(({ data, context: { runEffect, user } }) =>
@@ -25,13 +27,13 @@ const getShopPage = createServerFn({ method: "GET" })
           shop,
           teams,
           shopInfo: yield* shopAgentClient.getShopInfo(shop),
-        };
+        } satisfies Domain.ShopIndexLoaderData;
       }),
     ),
   );
 
 export const Route = createFileRoute("/shop/$shop/")({
-  loader: ({ params }) => getShopPage({ data: { shop: params.shop } }),
+  loader: ({ params }) => getLoaderData({ data: { shop: params.shop } }),
   component: RouteComponent,
 });
 

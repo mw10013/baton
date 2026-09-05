@@ -1176,6 +1176,20 @@ export const adminShopEntitlements = Match.typeTags<
   Unrecognized: () => null,
 });
 
+/**
+ * `<RoutePrefix>LoaderData` names the data contract for a route's loader,
+ * owned by that route. The prefix derives mechanically from the route id —
+ * tail segment (`admin.shop.$shop` → `AdminShop`), parent + `Index` for index
+ * routes (`app.index` → `AppIndex`), extended leftward on collision — never
+ * from UX vocabulary. Ownership, not exclusivity: socket refetches, api
+ * routes, and tests may consume a contract as-is, but only the owning route
+ * drives its shape; the route's server fn binds to it as the module-private
+ * `getLoaderData`, one fixed name per route so nobody has to coin a fetch
+ * name per page. When another consumer needs the shape to change, promote
+ * the contract to a domain-named type instead of bending it. Same convention
+ * as the sibling `../bang` project. Loader-vs-socket placement is documented
+ * on `ShopAgentClient`.
+ */
 export type AdminShopLoaderData =
   | { readonly _tag: "NotFound" }
   | {
@@ -1185,6 +1199,49 @@ export type AdminShopLoaderData =
       readonly entitlements: Entitlements | null;
       readonly derivedShopAgentId: string;
     };
+
+/** `/app` home (`app.index`). */
+export interface AppIndexLoaderData {
+  readonly entitlements: Entitlements;
+}
+
+/** `/login` (`login`). */
+export interface LoginLoaderData {
+  readonly isDemoMode: boolean;
+}
+
+/** `/app/members` (`app.members`). */
+export interface MembersLoaderData {
+  readonly members: readonly Member[];
+}
+
+/** `/app/teams` (`app.teams.index`). */
+export interface TeamsIndexLoaderData {
+  readonly teams: readonly TeamSummary[];
+}
+
+/**
+ * `/app/teams/$teamId` (`app.teams.$teamId`; a param tail contributes its
+ * noun, `Team`). `ownedSteps` is Durable Object data joined into a D1 page by
+ * the loader — see the loader-versus-socket rule on `ShopAgentClient`.
+ */
+export interface TeamLoaderData extends TeamDetail {
+  readonly ownedSteps: readonly OwnedStep[];
+}
+
+/** `/shop/$shop` (`shop.$shop.index`). */
+export interface ShopIndexLoaderData {
+  readonly shop: Shop;
+  readonly teams: MemberAccess["teams"];
+  readonly shopInfo: ShopInfo;
+}
+
+/** `/shop/$shop/queue` (`shop.$shop.queue`). */
+export interface QueueLoaderData {
+  readonly shop: Shop;
+  readonly teams: MemberAccess["teams"];
+  readonly items: readonly QueueItem[];
+}
 
 /**
  * Per-connection attachment: the mount-scoped `sessionToken` that guards a

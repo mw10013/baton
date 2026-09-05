@@ -2157,14 +2157,21 @@ export class ShopAgent extends Agent {
     );
   }
 
-  @callable()
+  /**
+   * Plain RPC, not `@callable()`: the team detail page reads this through its
+   * loader via `ShopAgentClient`, so nothing browser-side calls it. Step
+   * ownership is configuration that only changes on the workflow pages, and a
+   * loader read refreshes with `router.invalidate` and paints during SSR,
+   * which a socket query without a push listener cannot do.
+   */
   listStepsOwnedBy(
     input: typeof Domain.TeamIdInput.Encoded,
   ): Promise<readonly Domain.OwnedStep[]> {
     return this.runEffect(
-      callableEffect("ShopAgent.listStepsOwnedBy", Domain.TeamIdInput, {
-        onExcessProperty: "error",
-      })(({ teamId }) =>
+      callableEffect(
+        "ShopAgent.listStepsOwnedBy",
+        Domain.TeamIdInput,
+      )(({ teamId }) =>
         WorkflowRepository.pipe(
           Effect.flatMap((repository) =>
             repository.listStepsOwnedBy({ teamId }),
