@@ -14,7 +14,15 @@
 // file.
 
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
-import { Console, Effect, FileSystem, Path, Result, Schema } from "effect";
+import {
+  Console,
+  Effect,
+  FileSystem,
+  Path,
+  Result,
+  Schedule,
+  Schema,
+} from "effect";
 import { Argument, CliError, Command, Flag } from "effect/unstable/cli";
 import {
   FetchHttpClient,
@@ -57,6 +65,8 @@ interface Ref {
   readonly private?: boolean;
   /** Fetched by scripts/refs-shopify-docs.ts instead of a tarball download. */
   readonly shopifyDocs?: boolean;
+  /** A section of a docs site that serves first-party markdown, fetched by `manualInto`. */
+  readonly manual?: Manual;
   /**
    * A competitor Shopify app's public web presence, fetched by `competitorInto` below.
    * These have no upstream version to pin to, so `refs check` reports only how old the copy is.
@@ -188,6 +198,18 @@ const REFS: readonly Ref[] = [
     name: "shopify-docs",
     shopifyDocs: true,
     optIn: true,
+  },
+  {
+    // The merchant-facing Shopify Flow manual: triggers, conditions, actions, and the
+    // workflow editor, which is the reference for what Baton's own workflows have to
+    // interoperate with. ~230 pages fetched one at a time (see `manualInto`), about two
+    // minutes, so not opt-in.
+    name: "flow-manual",
+    manual: {
+      sitemap: "https://help.shopify.com/sitemap-en.xml",
+      prefix: "https://help.shopify.com/en/manual/shopify-flow",
+      assetBase: "https://cdn.shopify.com/shopifycloud/help-center",
+    },
   },
   // The five anchor apps from the production-workflow competitor research. Each is fetched
   // and aged on its own; `refs check` reports how long ago each copy was taken.
@@ -365,6 +387,7 @@ const resolve = Effect.fn(function* (ref: Ref) {
   // unset, and each ref ages independently off its own `fetchedAt`.
   if (ref.competitor)
     return { ref, target: `${APP_STORE_ORIGIN}/${ref.competitor.listing}` };
+  if (ref.manual) return { ref, target: ref.manual.prefix };
   if (ref.pin)
     return { ref, target: (ref.tag ?? "{v}").replace("{v}", ref.pin) };
   if (!ref.version || !(ref.tag ?? ref.npm))
@@ -462,9 +485,10 @@ const fillStaging = Effect.fn(function* (
       Effect.mapError((error) => new RefsError({ reason: error.message })),
     );
   if (ref.competitor) return yield* competitorInto(staging, ref.competitor);
+  if (ref.manual) return yield* manualInto(staging, ref.manual);
   if (!(ref.repo ?? ref.npm))
     return yield* new RefsError({
-      reason: `${ref.name} needs a repo, an npm package, shopifyDocs, or a competitor`,
+      reason: `${ref.name} needs a repo, an npm package, shopifyDocs, a manual, or a competitor`,
     });
   return yield* downloadInto(staging, ref, target);
 });
@@ -968,15 +992,115 @@ const competitorInto = (staging: string, competitor: Competitor) =>
     yield* localizeImages(staging, sources);
   }).pipe(Effect.provide(FetchHttpClient.layer));
 
+// ---------------------------------------------------------------------------
+// First-party markdown manuals
+// ---------------------------------------------------------------------------
+
+/**
+ * A docs site that, like shopify.dev, answers `<page>.md` with the page's own markdown.
+ * help.shopify.com is one: its HTML sits behind a Cloudflare bot challenge that answers
+ * anything but a real browser with a 403, but the `.md` URLs are open, and they are higher
+ * fidelity than converted HTML anyway. So there is no crawl, and discovery is a prefix
+ * filter over the site's plain XML sitemap.
+ */
+interface Manual {
+  /** Absolute sitemap URL (uncompressed XML). */
+  readonly sitemap: string;
+  /** Absolute URL of the section root; it and every page under it are fetched. */
+  readonly prefix: string;
+  /**
+   * Origin-and-path that root-relative image links are rebased onto before the image pass.
+   * The `.md` pages link figures as `/manual/apps/flow/x.png`, which on help.shopify.com
+   * itself is another 403 from the challenge; the browser actually loads them from
+   * `https://cdn.shopify.com/shopifycloud/help-center/manual/apps/flow/x.png`, and that
+   * CDN is open to plain HTTP.
+   */
+  readonly assetBase: string;
+}
+
+/** Rebase root-relative image links (`](/path)`) onto the manual's asset CDN. */
+const rebaseImages = (markdown: string, assetBase: string) =>
+  markdown.replaceAll(
+    /(?<open>!\[[^\]]*\]\()(?<path>\/[^)\s]+)/gu,
+    `$<open>${assetBase}$<path>`,
+  );
+
+/**
+ * help.shopify.com rate-limits `.md` fetches: measured at ~65 requests in a burst before
+ * every response is a 429, clearing within a few seconds. Pages are fetched one at a time
+ * with a pause between them, and a 429 is retried on a jittered exponential backoff
+ * (2s, 4s, 8s, 16s, 32s) before it counts as failed. Well under `pnpm refs fetch
+ * shopify-docs` territory: 230 pages take about two minutes.
+ */
+const MANUAL_PAUSE = "300 millis";
+const manualRetry = Schedule.exponential("2 seconds").pipe(
+  Schedule.jittered,
+  Schedule.upTo({ times: 5 }),
+);
+
+/** Sitemap entries at or under `prefix`, with a trailing slash or `.md` normalized away. */
+const manualUrls = Effect.fn(function* ({ sitemap, prefix }: Manual) {
+  const xml = yield* requestText(sitemap);
+  const urls = new Set<string>([prefix]);
+  for (const match of xml.matchAll(/<loc>(?<url>[^<]+)<\/loc>/gu)) {
+    const url = (match.groups?.url ?? "")
+      .trim()
+      .replace(/\.md$/u, "")
+      .replace(/\/$/u, "");
+    if (url === prefix || url.startsWith(`${prefix}/`)) urls.add(url);
+  }
+  return [...urls].toSorted();
+});
+
+/**
+ * Fetch every page of the section as markdown, laid out relative to the section root:
+ * `<prefix>` -> `index.md`, `<prefix>/reference/triggers` -> `reference/triggers.md`.
+ * Each file gets a `source_url` front-matter line so a reader can get back to the page,
+ * and the figures are pulled into `_assets/` by the same image pass the competitor refs
+ * use. A single failed page fails the fetch: partial manuals are worse than stale ones, and
+ * `fetchRef` leaves the previous copy in place.
+ */
+const manualInto = (staging: string, manual: Manual) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const urls = yield* manualUrls(manual);
+    const sources = new Map<string, string>();
+    yield* Console.log(
+      `  ${new URL(manual.prefix).hostname}: ${String(urls.length)} page(s)`,
+    );
+    yield* Effect.forEach(
+      urls,
+      Effect.fn(function* (url) {
+        const rel = url.slice(manual.prefix.length).replace(/^\//u, "");
+        const target = path.join(staging, `${rel === "" ? "index" : rel}.md`);
+        const markdown = yield* requestText(`${url}.md`).pipe(
+          Effect.retry(manualRetry),
+        );
+        yield* Effect.sleep(MANUAL_PAUSE);
+        yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+        yield* fs.writeFileString(
+          target,
+          `---\nsource_url: ${url}\n---\n\n${rebaseImages(markdown, manual.assetBase).trimStart()}`,
+        );
+        sources.set(target, url);
+      }),
+      { concurrency: 1 },
+    );
+    yield* localizeImages(staging, sources);
+  }).pipe(Effect.provide(FetchHttpClient.layer));
+
 /** Entry URL for the stamp, for the refs fetched from the web rather than a tarball. */
 const stampUrl = (ref: Ref) => {
   if (ref.competitor) return `${APP_STORE_ORIGIN}/${ref.competitor.listing}`;
+  if (ref.manual) return ref.manual.prefix;
   return ref.shopifyDocs ? ShopifyDocs.ORIGIN : undefined;
 };
 
 /** How a ref without a package.json pin gets its content, for the fetch's first line. */
 const sourceKind = (ref: Ref) => {
   if (ref.shopifyDocs) return "docs";
+  if (ref.manual) return "manual";
   if (ref.competitor) return "snapshot";
   if (ref.npm) return "npm";
   if (ref.branch) return "branch";

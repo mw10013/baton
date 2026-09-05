@@ -43,6 +43,7 @@ Downloaded source code of libraries are in `refs/` for reference.
 - **Shopify Bridge**: `refs/shopify-bridge/`
 - **Shopify CLI**: `refs/shopify-cli/`
 - **Shopify Docs**: `refs/shopify-docs/`
+- **Shopify Flow manual** (merchant help center): `refs/flow-manual/` (markdown; `reference/` has triggers, conditions, actions)
 - **Workers SDK**: `refs/workers-sdk/`
 - **Vitest**: `refs/vitest/`
 - **Competitor apps** (opt-in): `refs/route-to-ship/`, `refs/kanbanify/`, `refs/makers-production-view/`, `refs/makerbatch/`, `refs/benchcue/`
