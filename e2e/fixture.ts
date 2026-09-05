@@ -1,5 +1,6 @@
 import type {
   SeedMember,
+  SeedOrder,
   SeedTeam,
   SeedWorkflow,
   SeedWorkflowStep,
@@ -188,4 +189,44 @@ export const workflows: readonly SeedWorkflow[] = [
   },
 ];
 
-export const fixture = { members, teams, workflows } as const;
+/**
+ * Orders written straight into the shop's object, bypassing Shopify, so the
+ * lifecycle states show without tagging sandbox products. `#9001` has one of
+ * two units refunded (`unfulfilledQuantity` below `currentQuantity`), so its
+ * run and the order page read "×1 to make". `#9002` is fully made and still
+ * unfulfilled, so the Ready-to-ship filter has a row. `#9003` is in
+ * production with nothing special.
+ */
+export const orders: readonly SeedOrder[] = [
+  {
+    n: 9001,
+    note: "One unit refunded after ordering",
+    lineItems: [
+      {
+        title: "Product 01",
+        quantity: 2,
+        currentQuantity: 2,
+        unfulfilledQuantity: 1,
+        tags: ["workflow-01"],
+        customAttributes: [{ key: "Engraving", value: "Seed 9001" }],
+      },
+    ],
+  },
+  {
+    n: 9002,
+    done: true,
+    lineItems: [
+      { title: "Product 01", quantity: 1, tags: ["workflow-01"] },
+      { title: "Product 02", quantity: 1, tags: ["workflow-02"] },
+    ],
+  },
+  {
+    n: 9003,
+    lineItems: [
+      { title: "Product 03", quantity: 3, tags: ["workflow-03"] },
+      { title: "Untagged", quantity: 1, tags: [] },
+    ],
+  },
+];
+
+export const fixture = { members, teams, workflows, orders } as const;

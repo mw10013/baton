@@ -49,6 +49,28 @@ export interface SeedWorkflowStep {
   readonly instructions?: string;
 }
 
+/** A line item of a seeded order; `tags` are the product tags routing matches. Quantities default down the chain `quantity` → `currentQuantity` → `unfulfilledQuantity`. */
+export interface SeedLineItem {
+  readonly title: string;
+  readonly quantity: number;
+  readonly currentQuantity?: number;
+  readonly unfulfilledQuantity?: number;
+  readonly tags: readonly string[];
+  readonly customAttributes?: readonly {
+    readonly key: string;
+    readonly value: string | null;
+  }[];
+}
+
+/** An order to seed; `n` becomes `#n`. `done` completes every run it routes to. */
+export interface SeedOrder {
+  readonly n: number;
+  readonly fulfillmentStatus?: string;
+  readonly done?: boolean;
+  readonly note?: string;
+  readonly lineItems: readonly SeedLineItem[];
+}
+
 /** A workflow definition to create, steps inline and in order. `scope: "order"` needs `tags: []`. */
 export interface SeedWorkflow {
   readonly name: string;
@@ -79,11 +101,18 @@ export const seedMembers = async (
   members: readonly SeedMember[],
   teams: readonly SeedTeam[] = [],
   workflows: readonly SeedWorkflow[] = [],
+  orders: readonly SeedOrder[] = [],
 ): Promise<void> => {
   const response = await fetch(`${config.appUrl}/api/dev/seed`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ shop: config.shop, members, teams, workflows }),
+    body: JSON.stringify({
+      shop: config.shop,
+      members,
+      teams,
+      workflows,
+      orders,
+    }),
   });
   if (!response.ok)
     throw new Error(

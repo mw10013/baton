@@ -646,7 +646,10 @@ describe("WorkflowRunRepository order runs", () => {
         const removed = yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 1 }),
           [
-            lineItem(1, ["necklace"], { currentQuantity: 0 }),
+            lineItem(1, ["necklace"], {
+              currentQuantity: 0,
+              unfulfilledQuantity: 0,
+            }),
             ...ORDER_ITEMS.slice(1),
           ],
         );
@@ -816,8 +819,14 @@ describe("WorkflowRunRepository order runs", () => {
         const zeroed = yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 1 }),
           [
-            lineItem(1, ["necklace"], { currentQuantity: 0 }),
-            lineItem(2, ["necklace"], { currentQuantity: 1 }),
+            lineItem(1, ["necklace"], {
+              currentQuantity: 0,
+              unfulfilledQuantity: 0,
+            }),
+            lineItem(2, ["necklace"], {
+              currentQuantity: 1,
+              unfulfilledQuantity: 1,
+            }),
             lineItem(3, []),
           ],
         );
@@ -1001,8 +1010,8 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         const zeroed = yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 1 }),
           [
-            lineItem(1, ["a"], { currentQuantity: 0 }),
-            lineItem(2, ["b"], { currentQuantity: 0 }),
+            lineItem(1, ["a"], { currentQuantity: 0, unfulfilledQuantity: 0 }),
+            lineItem(2, ["b"], { currentQuantity: 0, unfulfilledQuantity: 0 }),
           ],
         );
         deepStrictEqual(zeroed, {
@@ -1055,8 +1064,8 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         const counts = yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 1 }),
           [
-            lineItem(1, ["a"], { currentQuantity: 3 }),
-            lineItem(2, ["b"], { currentQuantity: 3 }),
+            lineItem(1, ["a"], { currentQuantity: 3, unfulfilledQuantity: 3 }),
+            lineItem(2, ["b"], { currentQuantity: 3, unfulfilledQuantity: 3 }),
           ],
         );
         deepStrictEqual(counts, {
@@ -1094,6 +1103,384 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         strictEqual((yield* runsForOrder()).length, 2);
       }),
     ));
+
+  describe("eligibility split", () => {
+    it("unpaid after an edit keeps open runs, creates nothing, then routes the new line once paid", () =>
+      runInRepository(
+        Effect.gen(function* () {
+          yield* seed;
+          yield* upsertAndReconcile(order(), [
+            lineItem(1, ["a"]),
+            lineItem(2, ["b"]),
+          ]);
+          const [pendingRun, activeRun] = yield* runsForOrder();
+          if (pendingRun === undefined || activeRun === undefined)
+            throw new Error("expected two runs");
+          yield* complete(activeRun, 1, [TEAM_A.id]);
+          const threeLines = [
+            lineItem(1, ["a"]),
+            lineItem(2, ["b"]),
+            lineItem(3, ["a"]),
+          ];
+          const unpaid = yield* upsertAndReconcile(
+            order({
+              updatedAt: PROCESSED_AT + 1,
+              fullyPaid: false,
+              financialStatus: "PENDING",
+            }),
+            threeLines,
+          );
+          deepStrictEqual(unpaid, {
+            created: 0,
+            cancelled: 0,
+            flagged: 0,
+            orderRuns: 0,
+          });
+          const during = yield* runsForOrder();
+          strictEqual(during.length, 2);
+          strictEqual(
+            during.find((d) => d.run.id === pendingRun.run.id)?.run.status,
+            "pending",
+          );
+          const active = during.find((d) => d.run.id === activeRun.run.id);
+          strictEqual(active?.run.status, "active");
+          strictEqual(active?.run.flag, null);
+          const paid = yield* upsertAndReconcile(
+            order({ updatedAt: PROCESSED_AT + 2 }),
+            threeLines,
+          );
+          strictEqual(paid.created, 1);
+          strictEqual((yield* runsForOrder()).length, 3);
+        }),
+      ));
+
+    it("unpaid after an edit still cancels a pending run and flags an active one for a zeroed line", () =>
+      runInRepository(
+        Effect.gen(function* () {
+          yield* seed;
+          yield* upsertAndReconcile(order(), [
+            lineItem(1, ["a"]),
+            lineItem(2, ["b"]),
+          ]);
+          const [pendingRun, activeRun] = yield* runsForOrder();
+          if (pendingRun === undefined || activeRun === undefined)
+            throw new Error("expected two runs");
+          yield* complete(activeRun, 1, [TEAM_A.id]);
+          const counts = yield* upsertAndReconcile(
+            order({
+              updatedAt: PROCESSED_AT + 1,
+              fullyPaid: false,
+              financialStatus: "PARTIALLY_REFUNDED",
+            }),
+            [
+              lineItem(1, ["a"], {
+                currentQuantity: 0,
+                unfulfilledQuantity: 0,
+              }),
+              lineItem(2, ["b"], {
+                currentQuantity: 0,
+                unfulfilledQuantity: 0,
+              }),
+            ],
+          );
+          deepStrictEqual(counts, {
+            created: 0,
+            cancelled: 1,
+            flagged: 1,
+            orderRuns: 0,
+          });
+          const after = yield* runsForOrder();
+          strictEqual(
+            after.find((d) => d.run.id === pendingRun.run.id)?.run.status,
+            "cancelled",
+          );
+          strictEqual(
+            after.find((d) => d.run.id === activeRun.run.id)?.run.flag,
+            "item_removed",
+          );
+        }),
+      ));
+
+    it("a paid re-read after going unpaid flags an open order run item_added for the late line", () =>
+      runInRepository(
+        Effect.gen(function* () {
+          yield* seedOrderWorkflow;
+          yield* upsertAndReconcile(order(), ORDER_ITEMS);
+          yield* finishItemRuns();
+          const [orderRun] = yield* orderRuns();
+          if (orderRun === undefined) throw new Error("no order run");
+          const withLate = [...ORDER_ITEMS, lineItem(4, ["necklace"])];
+          const unpaid = yield* upsertAndReconcile(
+            order({
+              updatedAt: PROCESSED_AT + 1,
+              fullyPaid: false,
+              financialStatus: "PENDING",
+            }),
+            withLate,
+          );
+          strictEqual(unpaid.created, 0);
+          strictEqual((yield* orderRuns())[0]?.run.flag, null);
+          const paid = yield* upsertAndReconcile(
+            order({ updatedAt: PROCESSED_AT + 2 }),
+            withLate,
+          );
+          strictEqual(paid.created, 1);
+          const flagged = (yield* orderRuns())[0];
+          strictEqual(flagged?.run.flag, "item_added");
+          deepStrictEqual(flagged?.run.flagDetail, { item: "Item 4" });
+        }),
+      ));
+  });
+
+  describe("units to make", () => {
+    it("a refund that lowers unfulfilledQuantity alone updates pending silently and flags active", () =>
+      runInRepository(
+        Effect.gen(function* () {
+          yield* seed;
+          yield* upsertAndReconcile(order(), [
+            lineItem(1, ["a"]),
+            lineItem(2, ["b"]),
+          ]);
+          const [pendingRun, activeRun] = yield* runsForOrder();
+          if (pendingRun === undefined || activeRun === undefined)
+            throw new Error("expected two runs");
+          strictEqual(pendingRun.run.quantity, 2);
+          yield* complete(activeRun, 1, [TEAM_A.id]);
+          const counts = yield* upsertAndReconcile(
+            order({ updatedAt: PROCESSED_AT + 1 }),
+            [
+              lineItem(1, ["a"], {
+                unfulfilledQuantity: 1,
+                nonFulfillableQuantity: 1,
+              }),
+              lineItem(2, ["b"], {
+                unfulfilledQuantity: 1,
+                nonFulfillableQuantity: 1,
+              }),
+            ],
+          );
+          deepStrictEqual(counts, {
+            created: 0,
+            cancelled: 0,
+            flagged: 1,
+            orderRuns: 0,
+          });
+          const after = yield* runsForOrder();
+          const p = after.find((d) => d.run.id === pendingRun.run.id);
+          const a = after.find((d) => d.run.id === activeRun.run.id);
+          strictEqual(p?.run.quantity, 1);
+          strictEqual(p?.run.flag, null);
+          strictEqual(a?.run.quantity, 1);
+          strictEqual(a?.run.flag, "quantity_changed");
+          deepStrictEqual(a?.run.flagDetail, { from: 2, to: 1 });
+        }),
+      ));
+
+    it("a full refund with currentQuantity intact cancels pending and flags active item_removed", () =>
+      runInRepository(
+        Effect.gen(function* () {
+          yield* seed;
+          yield* upsertAndReconcile(order(), [
+            lineItem(1, ["a"]),
+            lineItem(2, ["b"]),
+          ]);
+          const [pendingRun, activeRun] = yield* runsForOrder();
+          if (pendingRun === undefined || activeRun === undefined)
+            throw new Error("expected two runs");
+          yield* complete(activeRun, 1, [TEAM_A.id]);
+          const counts = yield* upsertAndReconcile(
+            order({ updatedAt: PROCESSED_AT + 1 }),
+            [
+              lineItem(1, ["a"], {
+                unfulfilledQuantity: 0,
+                nonFulfillableQuantity: 2,
+              }),
+              lineItem(2, ["b"], {
+                unfulfilledQuantity: 0,
+                nonFulfillableQuantity: 2,
+              }),
+            ],
+          );
+          deepStrictEqual(counts, {
+            created: 0,
+            cancelled: 1,
+            flagged: 1,
+            orderRuns: 0,
+          });
+          const after = yield* runsForOrder();
+          strictEqual(
+            after.find((d) => d.run.id === pendingRun.run.id)?.run.status,
+            "cancelled",
+          );
+          strictEqual(
+            after.find((d) => d.run.id === activeRun.run.id)?.run.flag,
+            "item_removed",
+          );
+        }),
+      ));
+
+    it("inserts snapshot unfulfilledQuantity, and the order run's items omit a fully refunded line", () =>
+      runInRepository(
+        Effect.gen(function* () {
+          yield* seedOrderWorkflow;
+          const runs = yield* WorkflowRunRepository;
+          yield* upsertAndReconcile(order(), [
+            lineItem(1, ["necklace"], {
+              currentQuantity: 3,
+              unfulfilledQuantity: 2,
+              nonFulfillableQuantity: 1,
+            }),
+            lineItem(2, ["necklace"]),
+            lineItem(3, []),
+          ]);
+          const [first] = yield* itemRuns();
+          strictEqual(first?.run.quantity, 2);
+          yield* finishItemRuns();
+          yield* upsertAndReconcile(order({ updatedAt: PROCESSED_AT + 1 }), [
+            lineItem(1, ["necklace"], {
+              currentQuantity: 3,
+              unfulfilledQuantity: 2,
+              nonFulfillableQuantity: 1,
+            }),
+            lineItem(2, ["necklace"]),
+            lineItem(3, [], {
+              unfulfilledQuantity: 0,
+              nonFulfillableQuantity: 2,
+            }),
+          ]);
+          const [packing] = yield* runs.listQueue({ teamIds: [TEAM_C.id] });
+          deepStrictEqual(
+            packing?.items.map((item) => [item.title, item.quantity]),
+            [
+              ["Item 1", 2],
+              ["Item 2", 2],
+            ],
+          );
+        }),
+      ));
+  });
+
+  describe("fulfilled before done", () => {
+    it("FULFILLED cancels pending item runs, flags active item and open order runs, creates nothing", () =>
+      runInRepository(
+        Effect.gen(function* () {
+          yield* seedOrderWorkflow;
+          const runs = yield* WorkflowRunRepository;
+          const { workflows } = yield* routingContext();
+          const necklace = workflows.find((w) => w.workflow.scope === "item");
+          if (necklace === undefined) throw new Error("no item workflow");
+          yield* upsertAndReconcile(order(), ORDER_ITEMS);
+          yield* finishItemRuns();
+          const [orderRun] = yield* orderRuns();
+          if (orderRun === undefined) throw new Error("no order run");
+          yield* runs.startStep({
+            runStepId: orderRun.steps[0]?.id ?? "",
+            memberId: memberId("member-1"),
+            teamIds: [TEAM_C.id],
+          });
+          // A pending and an active item run alongside the two done ones.
+          const pendingRun = Option.getOrThrow(
+            yield* runs.createRun({
+              workflow: necklace,
+              activeTeams: ACTIVE_TEAMS,
+              order: order(),
+              lineItem: lineItem(3, []),
+              source: "manual",
+            }),
+          );
+          const late = lineItem(4, ["necklace"]);
+          yield* upsertAndReconcile(order({ updatedAt: PROCESSED_AT + 1 }), [
+            ...ORDER_ITEMS,
+            late,
+          ]);
+          const activeRun = (yield* itemRuns()).find(
+            (d) => d.run.lineItemId === late.id,
+          );
+          if (activeRun === undefined) throw new Error("no late run");
+          yield* runs.startStep({
+            runStepId: activeRun.steps[0]?.id ?? "",
+            memberId: memberId("member-1"),
+            teamIds: [TEAM_A.id],
+          });
+          const counts = yield* upsertAndReconcile(
+            order({
+              updatedAt: PROCESSED_AT + 2,
+              fulfillmentStatus: "FULFILLED",
+            }),
+            [
+              ...ORDER_ITEMS.map((item) =>
+                lineItem(Number(item.id.split("/").at(-1)), item.productTags, {
+                  unfulfilledQuantity: 0,
+                }),
+              ),
+              lineItem(4, ["necklace"], { unfulfilledQuantity: 0 }),
+              lineItem(5, ["necklace"]),
+            ],
+          );
+          deepStrictEqual(counts, {
+            created: 0,
+            cancelled: 1,
+            flagged: 2,
+            orderRuns: 0,
+          });
+          const after = yield* runsForOrder();
+          strictEqual(
+            after.find((d) => d.run.id === pendingRun.id)?.run.status,
+            "cancelled",
+          );
+          strictEqual(
+            after.find((d) => d.run.id === activeRun.run.id)?.run.flag,
+            "order_fulfilled",
+          );
+          strictEqual(
+            after.find((d) => d.run.id === orderRun.run.id)?.run.flag,
+            "order_fulfilled",
+          );
+          for (const done of after.filter((d) => d.run.status === "done"))
+            strictEqual(done.run.flag, null);
+          strictEqual(after.length, 5);
+        }),
+      ));
+
+    it("PARTIALLY_FULFILLED touches only the shipped line, via item_removed", () =>
+      runInRepository(
+        Effect.gen(function* () {
+          yield* seed;
+          yield* upsertAndReconcile(order(), [
+            lineItem(1, ["a"]),
+            lineItem(2, ["b"]),
+          ]);
+          const [shippedRun, otherRun] = yield* runsForOrder();
+          if (shippedRun === undefined || otherRun === undefined)
+            throw new Error("expected two runs");
+          yield* complete(shippedRun, 1, [TEAM_A.id]);
+          const counts = yield* upsertAndReconcile(
+            order({
+              updatedAt: PROCESSED_AT + 1,
+              fulfillmentStatus: "PARTIALLY_FULFILLED",
+            }),
+            [
+              lineItem(1, ["a"], { unfulfilledQuantity: 0 }),
+              lineItem(2, ["b"]),
+            ],
+          );
+          deepStrictEqual(counts, {
+            created: 0,
+            cancelled: 0,
+            flagged: 1,
+            orderRuns: 0,
+          });
+          const after = yield* runsForOrder();
+          strictEqual(
+            after.find((d) => d.run.id === shippedRun.run.id)?.run.flag,
+            "item_removed",
+          );
+          const other = after.find((d) => d.run.id === otherRun.run.id);
+          strictEqual(other?.run.status, "pending");
+          strictEqual(other?.run.flag, null);
+        }),
+      ));
+  });
 
   it("on order cancel: pending cancelled, active flagged, done untouched", () =>
     runInRepository(
@@ -1601,7 +1988,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         });
         const counts = yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 1 }),
-          [lineItem(1, ["s"], { currentQuantity: 0 })],
+          [lineItem(1, ["s"], { currentQuantity: 0, unfulfilledQuantity: 0 })],
         );
         deepStrictEqual(counts, {
           created: 0,

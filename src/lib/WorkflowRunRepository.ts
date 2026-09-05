@@ -98,16 +98,12 @@ export const matchesLineItem = (
   order: Domain.ShopOrder,
   lineItem: Domain.OrderLineItem,
 ) =>
-  lineItem.currentQuantity > 0 &&
-  lineItem.unfulfilledQuantity > 0 &&
+  Domain.unitsToMake(lineItem) > 0 &&
   order.processedAt >= workflow.createdAt &&
   lineItem.productTags.some((tag) => {
     const folded = tag.trim().toLowerCase();
     return workflow.tags.some((candidate) => candidate === folded);
   });
-
-export const isEligibleOrder = (order: Domain.ShopOrder) =>
-  order.fullyPaid && order.cancelledAt === null;
 
 const json = (value: unknown) => JSON.stringify(value);
 
@@ -462,18 +458,20 @@ export class WorkflowRunRepository extends Context.Service<
        * page, each with the worst status across its non-cancelled runs
        * (`pending` < `active` < `done`) or null when no item workflow touched
        * it. Read live rather than snapshotted so a late item shows on the
-       * card as soon as reconcile stores it.
+       * card as soon as reconcile stores it. `quantity` is `unfulfilledQuantity`
+       * (`Domain.unitsToMake`) and fully refunded or shipped lines are dropped,
+       * so a packer never packs a unit nobody will receive.
        */
       const orderItems = (orderIds: readonly string[]) =>
         orderIds.length === 0
           ? Effect.succeed([])
           : sql`
               select li.orderId, li.id as lineItemId, li.title, li.variantTitle,
-                li.currentQuantity as quantity, li.customAttributes, r.status as runStatus
+                li.unfulfilledQuantity as quantity, li.customAttributes, r.status as runStatus
               from OrderLineItem li
               left join WorkflowRun r on r.lineItemId = li.id and r.status <> 'cancelled'
               where li.orderId in (select value from json_each(${json(orderIds)}))
-                and li.currentQuantity > 0
+                and li.unfulfilledQuantity > 0
               order by li.orderId, li.title
             `.pipe(
               Effect.flatMap(
@@ -612,7 +610,7 @@ export class WorkflowRunRepository extends Context.Service<
                 ${runId}, ${workflow.id}, ${workflow.name}, ${order.id},
                 ${order.name}, ${lineItem?.id ?? null}, ${lineItem?.title ?? null},
                 ${lineItem?.variantTitle ?? null}, ${lineItem?.sku ?? null},
-                ${lineItem?.currentQuantity ?? null},
+                ${lineItem === null ? null : Domain.unitsToMake(lineItem)},
                 ${lineItem === null ? null : json(lineItem.customAttributes)},
                 ${source}, 'pending', null, null, null, ${now}, ${now}, null
               )
@@ -650,7 +648,7 @@ export class WorkflowRunRepository extends Context.Service<
        * Never opens a transaction of its own. Returns how many order runs
        * started (0 or 1).
        *
-       * Ready = order eligible (paid, not cancelled), the order workflow
+       * Ready = `canStartRuns` (paid, not cancelled), the order workflow
        * routable and older than the order (the same age rule as item
        * routing), at least one item run `done`, no item run open, and no
        * order run for this workflow in any status — a cancelled order run
@@ -680,7 +678,7 @@ export class WorkflowRunRepository extends Context.Service<
         const [order] = yield* decodeOrders(
           yield* sql`select ${orderColumns} from ShopOrder where id = ${orderId}`,
         );
-        if (order === undefined || !isEligibleOrder(order)) return 0;
+        if (order === undefined || !Domain.canStartRuns(order)) return 0;
         const [ready] = yield* sql`
           select
             exists (
@@ -735,6 +733,17 @@ export class WorkflowRunRepository extends Context.Service<
       });
 
       return WorkflowRunRepository.of({
+        /**
+         * Two gates, deliberately split. `Domain.isCancelled` and
+         * `Domain.isFulfilled` are the stop gates and return early;
+         * `Domain.canStartRuns` (paid) gates only run *creation* and the
+         * order-run trigger. Adjusting open runs against their line items and
+         * flagging order runs happen whether or not the order is currently
+         * paid, so an edit that pushes a paid order back to unpaid keeps its
+         * runs, still tracks removals and quantity changes, and simply creates
+         * nothing new until the balance lands — a payment wobble must never
+         * cancel work in progress.
+         */
         reconcileOrder: Effect.fn("WorkflowRunRepository.reconcileOrder")(
           function* ({
             orderId,
@@ -746,20 +755,52 @@ export class WorkflowRunRepository extends Context.Service<
               yield* sql`select ${orderColumns} from ShopOrder where id = ${orderId}`,
             );
             if (order === undefined) return NO_COUNTS;
-            if (!isEligibleOrder(order))
+            const earlyExit = (status: "cancelled" | "fulfilled") =>
+              Effect.logInfo(
+                `WorkflowRunRepository.reconcileOrder: orderId=${orderId} status=${status}`,
+              ).pipe(Effect.annotateLogs({ orderId, status }));
+            if (Domain.isCancelled(order)) {
+              yield* earlyExit("cancelled");
               return {
                 ...NO_COUNTS,
                 cancelled: yield* cancelPending(orderId, now),
-                flagged:
-                  order.cancelledAt === null
-                    ? 0
-                    : yield* flagActive(
-                        sql`orderId = ${orderId}`,
-                        "order_cancelled",
-                        {},
-                        now,
-                      ),
+                flagged: yield* flagActive(
+                  sql`orderId = ${orderId}`,
+                  "order_cancelled",
+                  {},
+                  now,
+                ),
               };
+            }
+            /**
+             * Nothing left to make or pack. Pending item runs go silently
+             * (no one started them); active item runs and every open order
+             * run are flagged because their premise cannot be restored.
+             * `PARTIALLY_FULFILLED` never lands here: the shipped line's
+             * `unfulfilledQuantity` is 0 and `adjust` handles it per line.
+             */
+            if (Domain.isFulfilled(order)) {
+              yield* earlyExit("fulfilled");
+              const cancelled = yield* cancelPending(orderId, now);
+              const flaggedItems = yield* flagActive(
+                sql`orderId = ${orderId} and lineItemId is not null`,
+                "order_fulfilled",
+                {},
+                now,
+              );
+              const flaggedOrderRuns = yield* flagOpenOrderRuns(
+                orderId,
+                "order_fulfilled",
+                {},
+                now,
+              );
+              return {
+                ...NO_COUNTS,
+                cancelled,
+                flagged: flaggedItems + flaggedOrderRuns,
+              };
+            }
+            const canStart = Domain.canStartRuns(order);
             const lineItems = yield* decodeLineItems(
               yield* sql`select * from OrderLineItem where orderId = ${orderId}`,
             );
@@ -772,38 +813,44 @@ export class WorkflowRunRepository extends Context.Service<
             const routable = workflows.filter((workflow) =>
               isRoutable(workflow, activeTeams),
             );
-            const inserted = yield* Effect.forEach(
-              lineItems.flatMap((lineItem) =>
-                routable
-                  .filter(
-                    (workflow) =>
-                      workflow.workflow.scope === "item" &&
-                      matchesLineItem(workflow, order, lineItem),
-                  )
-                  .map((workflow) => ({ workflow, lineItem })),
-              ),
-              ({ workflow, lineItem }) =>
-                insertRun({
-                  workflow,
-                  activeTeams,
-                  order,
-                  lineItem,
-                  source: "tag",
-                }).pipe(
-                  Effect.map(
-                    Option.map((run) => ({ run, item: lineItem.title })),
+            const inserted = canStart
+              ? yield* Effect.forEach(
+                  lineItems.flatMap((lineItem) =>
+                    routable
+                      .filter(
+                        (workflow) =>
+                          workflow.workflow.scope === "item" &&
+                          matchesLineItem(workflow, order, lineItem),
+                      )
+                      .map((workflow) => ({ workflow, lineItem })),
                   ),
-                ),
-            ).pipe(Effect.map((results) => results.filter(Option.isSome)));
+                  ({ workflow, lineItem }) =>
+                    insertRun({
+                      workflow,
+                      activeTeams,
+                      order,
+                      lineItem,
+                      source: "tag",
+                    }).pipe(
+                      Effect.map(
+                        Option.map((run) => ({ run, item: lineItem.title })),
+                      ),
+                    ),
+                ).pipe(Effect.map((results) => results.filter(Option.isSome)))
+              : [];
             const created = inserted.length;
             const itemRuns = runs.filter((run) => run.lineItemId !== null);
             const orderRuns = runs.filter((run) => run.lineItemId === null);
-            /** `removed` names the item so the order run's flag can carry it. */
+            /**
+             * Tracks `Domain.unitsToMake`, so a refund that zeroes or lowers
+             * `unfulfilledQuantity` reads exactly like a removal or an edit.
+             * `removed` names the item so the order run's flag can carry it.
+             */
             const adjust = (run: Domain.WorkflowRun) => {
               const lineItem = lineItems.find(
                 (item) => item.id === run.lineItemId,
               );
-              if (lineItem === undefined || lineItem.currentQuantity === 0)
+              if (lineItem === undefined || Domain.unitsToMake(lineItem) === 0)
                 return run.status === "pending"
                   ? sql`
                       update WorkflowRun
@@ -828,7 +875,8 @@ export class WorkflowRunRepository extends Context.Service<
                         removed: flagged > 0 ? run.lineItemTitle : null,
                       })),
                     );
-              if (lineItem.currentQuantity === run.quantity)
+              const units = Domain.unitsToMake(lineItem);
+              if (units === run.quantity)
                 return Effect.succeed({
                   cancelled: 0,
                   flagged: 0,
@@ -836,7 +884,7 @@ export class WorkflowRunRepository extends Context.Service<
                 });
               return sql`
                 update WorkflowRun
-                set quantity = ${lineItem.currentQuantity}, updatedAt = ${now}
+                set quantity = ${units}, updatedAt = ${now}
                 where id = ${run.id}
               `.pipe(
                 Effect.andThen(
@@ -845,10 +893,7 @@ export class WorkflowRunRepository extends Context.Service<
                     : flagActive(
                         sql`id = ${run.id}`,
                         "quantity_changed",
-                        {
-                          from: run.quantity ?? 0,
-                          to: lineItem.currentQuantity,
-                        },
+                        { from: run.quantity ?? 0, to: units },
                         now,
                       ),
                 ),
@@ -883,11 +928,13 @@ export class WorkflowRunRepository extends Context.Service<
                     { item: orderRunFlag[1] },
                     now,
                   );
-            const startedOrderRuns = yield* startOrderRunIfReady({
-              orderId,
-              workflows,
-              activeTeams,
-            });
+            const startedOrderRuns = canStart
+              ? yield* startOrderRunIfReady({
+                  orderId,
+                  workflows,
+                  activeTeams,
+                })
+              : 0;
             return adjusted.reduce<ReconcileCounts>(
               (counts, delta) => ({
                 ...counts,

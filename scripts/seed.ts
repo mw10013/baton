@@ -31,5 +31,5 @@ if (!response.ok)
 const count = <T>(rows: readonly T[], archived: (row: T) => boolean) =>
   `${String(rows.length)} (${String(rows.filter(archived).length)} archived)`;
 console.log(
-  `seeded ${shop}: members ${count(fixture.members, (m) => typeof m !== "string" && m.archived)}, teams ${count(fixture.teams, (t) => t.archived === true)}, workflows ${count(fixture.workflows, (w) => w.archived === true)}`,
+  `seeded ${shop}: members ${count(fixture.members, (m) => typeof m !== "string" && m.archived)}, teams ${count(fixture.teams, (t) => t.archived === true)}, workflows ${count(fixture.workflows, (w) => w.archived === true)}, orders ${String(fixture.orders.length)}`,
 );

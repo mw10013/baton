@@ -792,6 +792,12 @@ export type ShopOrder = typeof ShopOrder.Type;
  * resync overwrites it. Once tag-based routing exists, the routing row must
  * copy the tags it actually matched, so that a merchant retagging a product
  * cannot silently rewrite history.
+ *
+ * `unfulfilledQuantity` is the number of units still to be made
+ * ({@link unitsToMake}): Shopify lowers it when a unit ships **or is
+ * refunded** while leaving `currentQuantity` alone for a refund, so it is the
+ * one count a maker should never overshoot. `currentQuantity` stays as
+ * "ordered" for display.
  */
 export const OrderLineItem = Schema.Struct({
   id: Schema.String,
@@ -811,11 +817,72 @@ export const OrderLineItem = Schema.Struct({
 });
 export type OrderLineItem = typeof OrderLineItem.Type;
 
+/**
+ * The creation gate, and only that: whether reconcile may *start* new runs on
+ * the order. Deliberately not the stop gate — an edit that pushes a paid order
+ * back to `fullyPaid = false` must leave work in progress alone, so only
+ * {@link isCancelled} cancels or flags existing runs. `AUTHORIZED` is not
+ * treated as paid; manual-capture shops would need a clause here.
+ */
+export const canStartRuns = (order: ShopOrder) =>
+  order.fullyPaid && order.cancelledAt === null;
+
+/** The stop gate: the one order state that cancels pending runs and flags active ones. */
+export const isCancelled = (order: ShopOrder) => order.cancelledAt !== null;
+
+/** Shopify reported every fulfillable unit shipped; nothing is left to make or pack. */
+export const isFulfilled = (order: ShopOrder) =>
+  order.fulfillmentStatus === "FULFILLED";
+
+/**
+ * Units a maker should see and a run should snapshot. `unfulfilledQuantity`,
+ * not `currentQuantity`: a refund lowers the former and leaves the latter, so
+ * counting `currentQuantity` would have a maker build a unit nobody will
+ * receive. `currentQuantity > 0` is implied.
+ */
+export const unitsToMake = (lineItem: OrderLineItem) =>
+  lineItem.unfulfilledQuantity;
+
 export const OrderDetail = Schema.Struct({
   order: ShopOrder,
   lineItems: Schema.Array(OrderLineItem),
 });
 export type OrderDetail = typeof OrderDetail.Type;
+
+/** Ids of seeded orders carry this prefix so a reseed replaces only fixture rows and never a synced order. */
+export const SEED_ORDER_ID_PREFIX = "gid://shopify/Order/seed-";
+
+/**
+ * Local-only order fixture, written through the ordinary upsert-and-reconcile
+ * path so runs route exactly as they would for a webhook. `unfulfilledQuantity`
+ * defaults to `currentQuantity`, which defaults to `quantity`; lowering one
+ * seeds a refund or a partial shipment. `done` completes every step of every
+ * run the order routes to, so a "Ready to ship" row exists without a person
+ * clicking through the queue.
+ */
+export const SeedOrdersInput = Schema.Struct({
+  memberId: MemberId,
+  orders: Schema.Array(
+    Schema.Struct({
+      /** Numeric suffix: the id becomes `SEED_ORDER_ID_PREFIX + n` and the name `#<n>`. */
+      n: Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0)),
+      fulfillmentStatus: Schema.optionalKey(Schema.String),
+      done: Schema.optionalKey(Schema.Boolean),
+      note: Schema.optionalKey(Schema.String),
+      lineItems: Schema.Array(
+        Schema.Struct({
+          title: Schema.String,
+          quantity: Schema.Number,
+          currentQuantity: Schema.optionalKey(Schema.Number),
+          unfulfilledQuantity: Schema.optionalKey(Schema.Number),
+          tags: Schema.Array(Schema.String),
+          customAttributes: Schema.optionalKey(Schema.Array(OrderAttribute)),
+        }),
+      ),
+    }),
+  ),
+});
+export type SeedOrdersInput = typeof SeedOrdersInput.Type;
 
 /**
  * The single `SyncState` row: the reservation held while a window sync is in
@@ -842,6 +909,21 @@ export const SyncState = Schema.Struct({
 export type SyncState = typeof SyncState.Type;
 
 /**
+ * Never stored: computed from the order row and its run counts on every read,
+ * which is what makes the packer's round trip automatic — fulfil in Shopify,
+ * `orders/updated` stores `FULFILLED`, the next read says `shipped`, and the
+ * order leaves the Ready-to-ship list without anyone touching Baton.
+ */
+export const ProductionState = Schema.Literals([
+  "not_routed",
+  "in_production",
+  "ready_to_ship",
+  "shipped",
+  "cancelled",
+]);
+export type ProductionState = typeof ProductionState.Type;
+
+/**
  * Keyset cursor over `(processedAt desc, id desc)`, encoded as
  * `<processedAt>:<id>`. Not an offset: the bulk stream and webhooks both insert
  * while a merchant pages, and `limit/offset` would drop or repeat rows under
@@ -863,6 +945,8 @@ export const ActivateOrdersInput = Schema.Struct({
     Schema.isBetween({ minimum: 1, maximum: 50 }),
   ),
   cursor: Schema.NullOr(OrdersCursor),
+  /** `null` is every order; only `ready_to_ship` has a SQL form today (see `OrderRepository.listOrders`). */
+  state: Schema.NullOr(ProductionState),
   sessionToken: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
 });
 export type ActivateOrdersInput = typeof ActivateOrdersInput.Type;
@@ -899,6 +983,48 @@ export const OrderRow = Schema.Struct({
   runs: RunCounts,
 });
 export type OrderRow = typeof OrderRow.Type;
+
+/**
+ * `null` is an unpaid order with no runs: nothing to say, and not a state a
+ * person acts on. Cancelled wins over everything because it is the only stop
+ * gate; `shipped` is checked before the run counts so an order fulfilled with
+ * runs still open reads as shipped (the runs carry the `order_fulfilled`
+ * flag). The SQL form of `ready_to_ship` in `OrderRepository.listOrders`
+ * restates the last two branches and must move with them.
+ */
+export const productionState = ({
+  order,
+  runs,
+}: OrderRow): ProductionState | null =>
+  Match.value({
+    cancelled: isCancelled(order),
+    none: runs.open === 0 && runs.done === 0,
+    canStart: canStartRuns(order),
+    fulfilled: isFulfilled(order),
+    open: runs.open > 0,
+  }).pipe(
+    Match.withReturnType<ProductionState | null>(),
+    Match.when({ cancelled: true }, () => "cancelled"),
+    Match.when({ none: true, canStart: true }, () => "not_routed"),
+    Match.when({ none: true }, () => null),
+    Match.when({ fulfilled: true }, () => "shipped"),
+    Match.when({ open: true }, () => "in_production"),
+    Match.orElse(() => "ready_to_ship"),
+  );
+
+/** The index's per-order aggregate, recomputed from a detail page's run list so both pages share one definition. */
+export const runCounts = (runs: readonly WorkflowRun[]): RunCounts =>
+  runs.reduce<RunCounts>(
+    (counts, run) => {
+      const open = run.status === "pending" || run.status === "active";
+      return {
+        open: counts.open + (open ? 1 : 0),
+        done: counts.done + (run.status === "done" ? 1 : 0),
+        flagged: counts.flagged + (open && run.flag !== null ? 1 : 0),
+      };
+    },
+    { open: 0, done: 0, flagged: 0 },
+  );
 
 export const OrdersPage = Schema.Struct({
   orders: Schema.Array(OrderRow),
@@ -1157,6 +1283,12 @@ export type RunStatus = typeof RunStatus.Type;
  * item, manual attach, un-cancel) after the order run started, so "all items
  * made" no longer holds. Unlike item-run flags it lands on a `pending` order
  * run too, because there is no silent adjustment that restores the premise.
+ *
+ * `order_fulfilled` is set by reconcile alone when the stored order reaches
+ * exactly `FULFILLED` while runs are open: active item runs and open order
+ * runs (pending too, for the `item_added` reason) get it; pending item runs
+ * are cancelled instead. A partial fulfilment never sets it — the shipped
+ * line's `unfulfilledQuantity` hits zero and reads as `item_removed`.
  */
 export const RunFlag = Schema.Literals([
   "item_removed",
@@ -1165,6 +1297,7 @@ export const RunFlag = Schema.Literals([
   "order_deleted",
   "blocked",
   "item_added",
+  "order_fulfilled",
 ]);
 export type RunFlag = typeof RunFlag.Type;
 

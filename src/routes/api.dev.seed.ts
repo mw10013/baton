@@ -59,6 +59,11 @@ const DevSeedInput = Schema.Struct({
       }),
     ),
   ),
+  /**
+   * Seeded after workflows so they route. `done` orders are completed as the
+   * first listed member, so every finished step names a real member.
+   */
+  orders: Schema.optionalKey(Domain.SeedOrdersInput.fields.orders),
 });
 
 /**
@@ -119,6 +124,7 @@ export const Route = createFileRoute("/api/dev/seed")({
                 members: memberInputs,
                 teams,
                 workflows,
+                orders,
               } = yield* Schema.decodeUnknownEffect(DevSeedInput)(
                 yield* Effect.tryPromise(() => request.json()),
               );
@@ -234,12 +240,28 @@ export const Route = createFileRoute("/api/dev/seed")({
                   workflows: seedWorkflows,
                 }),
               );
+              const seedMemberId = members[0]
+                ? memberIds.get(members[0].email)
+                : undefined;
+              if (seedMemberId === undefined && (orders ?? []).length > 0)
+                return new Response("orders need at least one seeded member", {
+                  status: 400,
+                });
+              // Always called: an empty fixture must clear the previous run's orders.
+              if (seedMemberId !== undefined)
+                yield* Effect.tryPromise(() =>
+                  env.SHOP_AGENT.getByName(shop).seedOrders({
+                    memberId: seedMemberId,
+                    orders: orders ?? [],
+                  }),
+                );
               return Response.json({
                 ok: true,
                 shop,
                 members,
                 teams,
                 workflows,
+                orders,
               });
             }).pipe(
               Effect.catchTag("SchemaError", (error) =>

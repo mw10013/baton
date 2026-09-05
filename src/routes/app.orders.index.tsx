@@ -2,8 +2,8 @@ import * as React from "react";
 
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
-import { Option, Schema } from "effect";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Match, Option, Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
 import { formatDateTime, formatNumber } from "@/lib/format";
@@ -14,7 +14,18 @@ import { SocketBanner } from "@/lib/SocketBanner";
 const ORDERS_PAGE_SIZE = 25;
 const TAG_BADGE_LIMIT = 3;
 
-const ordersQueryKey = (shop: string) => ["orders", shop] as const;
+/**
+ * Keyed by the state filter as well as the shop: a filtered page and the
+ * unfiltered one are different reads, and the order page's invalidation of
+ * `["orders", shop]` is a prefix match so it still reaches both.
+ */
+const ordersQueryKey = (shop: string, state: Domain.ProductionState | null) =>
+  ["orders", shop, state] as const;
+
+/** `?state=ready_to_ship` is the packer's view; absent means every order. */
+const OrdersSearch = Schema.Struct({
+  state: Schema.optionalKey(Domain.ProductionState),
+});
 
 /**
  * `Schema.toType`, not the schema itself. A Durable Object RPC result has
@@ -50,28 +61,36 @@ export const orderDetailHref = ({ legacyId }: Domain.ShopOrder) =>
   `/app/orders/${legacyId}`;
 
 /**
- * The production-state badge, derived from the run counts the repository
- * aggregates per order. "Not routed" is the one an admin has to act on: a
- * paid, uncancelled order with no run means no workflow matched it, and
- * nothing else on the page or in the Shopify admin surfaces that. Unpaid or
- * cancelled orders are not eligible for runs (`workflow-runs-spec`), so an
- * empty cell there is correct rather than alarming.
+ * The production-state badge, from `Domain.productionState` over the row.
+ * "Not routed" is the one an admin has to act on: a paid, uncancelled order
+ * with no run means no workflow matched it, and nothing else on the page or
+ * in the Shopify admin surfaces that. An unpaid order with no runs cannot
+ * start any, so its empty cell is correct rather than alarming. "Ready to
+ * ship" is derived, never stored: it clears on its own once Shopify reports
+ * the fulfilment.
  */
-const runsBadge = ({ order, runs }: Domain.OrderRow) => {
-  const eligible = order.fullyPaid && order.cancelledAt === null;
-  if (runs.open === 0 && runs.done === 0)
-    return eligible ? <s-badge tone="warning">Not routed</s-badge> : null;
-  const label =
-    runs.open === 0
-      ? "Done"
-      : `${formatNumber(runs.open)} active${runs.done > 0 ? ` · ${formatNumber(runs.done)} done` : ""}`;
-  return (
-    <s-stack direction="inline" gap="small-300">
-      <s-badge tone={runs.open === 0 ? "neutral" : "info"}>{label}</s-badge>
-      {runs.flagged > 0 && <s-badge tone="warning">Flagged</s-badge>}
-    </s-stack>
+const stateBadge = (row: Domain.OrderRow) =>
+  Match.value(Domain.productionState(row)).pipe(
+    Match.withReturnType<React.ReactNode>(),
+    Match.when(null, () => null),
+    Match.when("not_routed", () => (
+      <s-badge tone="warning">Not routed</s-badge>
+    )),
+    Match.when("in_production", () => (
+      <s-stack direction="inline" gap="small-300">
+        <s-badge tone="info">
+          {`${formatNumber(row.runs.open)} active${row.runs.done > 0 ? ` · ${formatNumber(row.runs.done)} done` : ""}`}
+        </s-badge>
+        {row.runs.flagged > 0 && <s-badge tone="warning">Flagged</s-badge>}
+      </s-stack>
+    )),
+    Match.when("ready_to_ship", () => (
+      <s-badge tone="success">Ready to ship</s-badge>
+    )),
+    Match.when("shipped", () => <s-badge tone="neutral">Shipped</s-badge>),
+    Match.when("cancelled", () => <s-badge tone="neutral">Cancelled</s-badge>),
+    Match.exhaustive,
   );
-};
 
 const tagBadges = (tags: readonly string[]) => (
   <s-stack direction="inline" gap="small-300">
@@ -97,7 +116,19 @@ const syncStatusText = (
     : `Last synced ${formatDateTime(view.syncState.lastFullSyncAt)}.`;
 };
 
+const countText = (
+  view: Domain.OrdersView | undefined,
+  state: Domain.ProductionState | null,
+) => {
+  if (view === undefined) return null;
+  const count = formatNumber(view.page.orderCount);
+  return state === "ready_to_ship"
+    ? `${count} orders made and waiting to be fulfilled in Shopify.`
+    : `${count} stored.`;
+};
+
 export const Route = createFileRoute("/app/orders/")({
+  validateSearch: Schema.decodeUnknownSync(OrdersSearch),
   component: RouteComponent,
 });
 
@@ -122,6 +153,8 @@ export const Route = createFileRoute("/app/orders/")({
  */
 function RouteComponent() {
   const { shop } = Route.useRouteContext();
+  const { state = null } = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
   const queryClient = useQueryClient();
   const shopify = useAppBridge();
   const { agent, identified } = useShopAgent();
@@ -150,9 +183,15 @@ function RouteComponent() {
   const cursor = cursors.at(-1) ?? null;
   const [syncing, setSyncing] = React.useState(false);
 
-  // oxlint-disable-next-line @tanstack/query/exhaustive-deps -- agent.stub is the stable per-shop socket and sessionToken is mount-scoped connection metadata; the cache identity is the shop, and `cursor` is read fresh on every fetch so a poke re-reads the page being viewed
+  /** A filter change is a new list, so the cursor stack starts over. */
+  const setState = (next: Domain.ProductionState | null) => {
+    setCursors([null]);
+    void navigate({ search: next === null ? {} : { state: next } });
+  };
+
+  // oxlint-disable-next-line @tanstack/query/exhaustive-deps -- agent.stub is the stable per-shop socket and sessionToken is mount-scoped connection metadata; the cache identity is the shop plus the state filter, and `cursor` is read fresh on every fetch so a poke re-reads the page being viewed
   const ordersQuery = useQuery({
-    queryKey: ordersQueryKey(shop),
+    queryKey: ordersQueryKey(shop, state),
     staleTime: Infinity,
     gcTime: 30 * 60 * 1000,
     queryFn: () =>
@@ -161,6 +200,7 @@ function RouteComponent() {
             agent.stub.activateOrders({
               limit: ORDERS_PAGE_SIZE,
               cursor,
+              state,
               sessionToken,
             }),
           ).then(decodeOrdersView)
@@ -169,8 +209,9 @@ function RouteComponent() {
   });
 
   const invalidate = React.useCallback(
-    () => queryClient.invalidateQueries({ queryKey: ordersQueryKey(shop) }),
-    [queryClient, shop],
+    () =>
+      queryClient.invalidateQueries({ queryKey: ordersQueryKey(shop, state) }),
+    [queryClient, shop, state],
   );
 
   React.useEffect(() => {
@@ -274,6 +315,12 @@ function RouteComponent() {
       );
     if (view === undefined)
       return <s-paragraph color="subdued">Loading orders…</s-paragraph>;
+    if (orders.length === 0 && state === "ready_to_ship")
+      return (
+        <s-paragraph color="subdued">
+          No orders are made and waiting to be fulfilled.
+        </s-paragraph>
+      );
     if (orders.length === 0)
       return (
         <s-stack gap="base">
@@ -313,14 +360,9 @@ function RouteComponent() {
           {orders.map((row) => (
             <s-table-row key={row.order.id} id={row.order.id}>
               <s-table-cell>
-                <s-stack direction="inline" gap="small-300">
-                  <s-link href={orderDetailHref(row.order)}>
-                    {row.order.name}
-                  </s-link>
-                  {row.order.cancelledAt !== null && (
-                    <s-badge tone="critical">Cancelled</s-badge>
-                  )}
-                </s-stack>
+                <s-link href={orderDetailHref(row.order)}>
+                  {row.order.name}
+                </s-link>
               </s-table-cell>
               <s-table-cell>
                 {formatDateTime(row.order.processedAt)}
@@ -335,7 +377,7 @@ function RouteComponent() {
                   </s-badge>
                 )}
               </s-table-cell>
-              <s-table-cell>{runsBadge(row)}</s-table-cell>
+              <s-table-cell>{stateBadge(row)}</s-table-cell>
               <s-table-cell>{formatNumber(row.itemUnits)}</s-table-cell>
               <s-table-cell>{tagBadges(row.order.tags)}</s-table-cell>
             </s-table-row>
@@ -345,10 +387,25 @@ function RouteComponent() {
     );
   };
 
+  const filterButton = (
+    label: string,
+    value: Domain.ProductionState | null,
+  ) => (
+    <s-button
+      variant={state === value ? "primary" : "secondary"}
+      disabled={state === value}
+      onClick={() => {
+        setState(value);
+      }}
+    >
+      {label}
+    </s-button>
+  );
+
   return (
     <s-page heading="Orders" inlineSize="large">
       <SocketBanner />
-      {orders.length > 0 && syncButton(true)}
+      {(orders.length > 0 || state !== null) && syncButton(true)}
 
       <s-section padding="none" accessibilityLabel="Orders">
         <s-box padding="base">
@@ -357,12 +414,14 @@ function RouteComponent() {
               view?.syncState.lastError !== undefined && (
                 <s-banner tone="critical">{view.syncState.lastError}</s-banner>
               )}
+            <s-stack direction="inline" gap="small-300">
+              {filterButton("All", null)}
+              {filterButton("Ready to ship", "ready_to_ship")}
+            </s-stack>
             <s-paragraph color="subdued">
               {[
                 syncStatusText(view, ordersQuery.isError),
-                view === undefined
-                  ? null
-                  : `${formatNumber(view.page.orderCount)} stored.`,
+                countText(view, state),
               ]
                 .filter((part) => part !== null)
                 .join(" ")}

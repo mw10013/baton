@@ -63,7 +63,19 @@ const RUN_FLAG_LABEL = {
   order_deleted: "Order deleted",
   blocked: "Blocked",
   item_added: "New item",
+  order_fulfilled: "Already shipped in Shopify",
 } as const satisfies Record<Domain.RunFlag, string>;
+
+const PRODUCTION_STATE_BADGE = {
+  not_routed: { label: "Not routed", tone: "warning" },
+  in_production: { label: "In production", tone: "info" },
+  ready_to_ship: { label: "Ready to ship", tone: "success" },
+  shipped: { label: "Shipped", tone: "neutral" },
+  cancelled: { label: "Cancelled", tone: "critical" },
+} as const satisfies Record<
+  Domain.ProductionState,
+  { label: string; tone: string }
+>;
 
 const flagLabel = (run: Domain.WorkflowRun) => {
   if (run.flag === null) return null;
@@ -413,6 +425,15 @@ function RouteComponent() {
     );
 
   const { order, lineItems, runs, orderWorkflow } = detail;
+  /**
+   * The same aggregate the index computes in SQL, rebuilt from the run list
+   * this page already carries so both pages read one `productionState`.
+   */
+  const state = Domain.productionState({
+    order,
+    itemUnits: 0,
+    runs: Domain.runCounts(runs.map(({ run }) => run)),
+  });
   const orderRuns = runs.filter(({ run }) => Domain.isOrderRun(run));
   const itemRunCount = runs.length - orderRuns.length;
   /** Mirrors the trigger's age rule: a manual attach opts an older order in. */
@@ -467,6 +488,7 @@ function RouteComponent() {
 
   const renderLineItem = (item: Domain.OrderLineItem) => {
     const removed = item.currentQuantity === 0;
+    const toMake = Domain.unitsToMake(item);
     const itemRuns = runs.filter(({ run }) => run.lineItemId === item.id);
     return (
       <s-section
@@ -476,7 +498,12 @@ function RouteComponent() {
       >
         <s-stack gap="base">
           <s-stack direction="inline" gap="base" alignItems="center">
-            <s-text>{`\u00D7 ${formatNumber(item.currentQuantity)}`}</s-text>
+            {/* Ordered vs. to make differ after a refund or partial shipment. */}
+            <s-text>
+              {toMake === item.currentQuantity
+                ? `\u00D7 ${formatNumber(item.currentQuantity)}`
+                : `\u00D7 ${formatNumber(toMake)} to make (${formatNumber(item.currentQuantity)} ordered)`}
+            </s-text>
             {item.sku !== null && (
               <s-text color="subdued">{`SKU ${item.sku}`}</s-text>
             )}
@@ -569,9 +596,9 @@ function RouteComponent() {
       <s-link slot="breadcrumb-actions" href="/app/orders">
         Orders
       </s-link>
-      {order.cancelledAt !== null && (
-        <s-badge slot="accessory" tone="critical">
-          Cancelled
+      {state !== null && (
+        <s-badge slot="accessory" tone={PRODUCTION_STATE_BADGE[state].tone}>
+          {PRODUCTION_STATE_BADGE[state].label}
         </s-badge>
       )}
       <s-button
@@ -594,8 +621,19 @@ function RouteComponent() {
       </s-button>
 
       <SocketBanner />
-      {(banner !== null || !order.lineItemsComplete) && (
+      {(banner !== null ||
+        !order.lineItemsComplete ||
+        state === "ready_to_ship") && (
         <s-stack slot="supplemental-start" gap="base">
+          {state === "ready_to_ship" && (
+            <s-banner tone="success">
+              Every run is done.{" "}
+              <s-link href={adminOrderUrl(order)} target={resourceLinkTarget}>
+                Fulfil this order in the Shopify admin
+              </s-link>
+              ; it will show as Shipped here once Shopify reports it.
+            </s-banner>
+          )}
           {!order.lineItemsComplete && (
             <s-banner tone="warning">
               This order has more line items than one fetch returns; the list

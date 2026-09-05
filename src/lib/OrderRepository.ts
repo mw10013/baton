@@ -1,6 +1,6 @@
 import type { SqlError } from "effect/unstable/sql";
 
-import { Context, Effect, Layer, Option, Schema } from "effect";
+import { Context, Effect, Layer, Match, Option, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 
 import * as Domain from "@/lib/Domain";
@@ -114,9 +114,18 @@ export class OrderRepository extends Context.Service<
     readonly getOrderUpdatedAt: (
       orderId: string,
     ) => Effect.Effect<Option.Option<number>, SqlError.SqlError>;
+    /**
+     * `state` filters by `Domain.productionState`. Only `ready_to_ship` has a
+     * SQL form: it is the one state a person pages through (the packer's
+     * list), and the only one whose definition needs the run table; every
+     * other state is display-only and computed on the client from the row.
+     * The fragment restates `productionState`'s last branches (not cancelled,
+     * not `FULFILLED`, some `done` run, no open run) and must move with them.
+     */
     readonly listOrders: (input: {
       readonly limit: number;
       readonly cursor: string | null;
+      readonly state: Domain.ProductionState | null;
     }) => Effect.Effect<
       Domain.OrdersPage,
       SqlError.SqlError | OrderRepositoryError
@@ -404,10 +413,29 @@ export class OrderRepository extends Context.Service<
         listOrders: Effect.fn("OrderRepository.listOrders")(function* ({
           limit,
           cursor,
+          state,
         }: {
           readonly limit: number;
           readonly cursor: string | null;
+          readonly state: Domain.ProductionState | null;
         }) {
+          const stateFilter = Match.value(state).pipe(
+            Match.when("ready_to_ship", () =>
+              sql.and([
+                "cancelledAt is null",
+                "fulfillmentStatus <> 'FULFILLED'",
+                `exists (
+                  select 1 from WorkflowRun r
+                  where r.orderId = ShopOrder.id and r.status = 'done'
+                )`,
+                `not exists (
+                  select 1 from WorkflowRun r
+                  where r.orderId = ShopOrder.id and r.status in ('pending', 'active')
+                )`,
+              ]),
+            ),
+            Match.orElse(() => sql.literal("1 = 1")),
+          );
           /**
            * Keyset, never `limit/offset`: the bulk stream and webhooks insert
            * while a merchant pages, and an offset would skip or repeat rows
@@ -426,7 +454,7 @@ export class OrderRepository extends Context.Service<
           const page = yield* decodeOrders(
             yield* sql`
               select ${orderColumns} from ShopOrder
-              where ${keyset}
+              where ${sql.and([keyset, stateFilter])}
               order by processedAt desc, id desc
               limit ${limit + 1}
             `,
@@ -474,7 +502,9 @@ export class OrderRepository extends Context.Service<
               } satisfies Domain.RunCounts,
             ]),
           );
-          const [countRow] = yield* sql`select count(*) from ShopOrder`.values;
+          const [countRow] =
+            yield* sql`select count(*) from ShopOrder where ${stateFilter}`
+              .values;
           const last = orders.at(-1);
           return {
             orders: orders.map((order) => ({

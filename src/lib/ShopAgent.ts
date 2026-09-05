@@ -263,7 +263,7 @@ const initializeSchema = Effect.gen(function* () {
       customAttributes text,
       source text not null check (source in ('tag', 'manual')),
       status text not null check (status in ('pending', 'active', 'done', 'cancelled')),
-      flag text check (flag in ('item_removed', 'quantity_changed', 'order_cancelled', 'order_deleted', 'blocked', 'item_added')),
+      flag text check (flag in ('item_removed', 'quantity_changed', 'order_cancelled', 'order_deleted', 'blocked', 'item_added', 'order_fulfilled')),
       flagAt integer,
       flagDetail text,
       createdAt integer not null,
@@ -1165,13 +1165,13 @@ export class ShopAgent extends Agent {
     return this.runEffect(
       callableEffect("ShopAgent.activateOrders", Domain.ActivateOrdersInput, {
         onExcessProperty: "error",
-      })(({ limit, cursor, sessionToken }) =>
+      })(({ limit, cursor, state, sessionToken }) =>
         Effect.gen(function* () {
           const { connection } = getCurrentAgent<ShopAgent>();
           if (connection) connection.setState({ sessionToken });
           const repository = yield* OrderRepository;
           return {
-            page: yield* repository.listOrders({ limit, cursor }),
+            page: yield* repository.listOrders({ limit, cursor, state }),
             syncState: yield* repository.getSyncState(),
           } satisfies Domain.OrdersView;
         }),
@@ -2028,6 +2028,130 @@ export class ShopAgent extends Agent {
                 cause: environment,
               }),
             );
+        }),
+      )(input),
+    );
+  }
+
+  /**
+   * Development seed for orders, same gate and reasoning as `seedWorkflows`.
+   * Goes through `upsertOrder` + `reconcileOrder` rather than raw inserts so
+   * the fixture exercises routing, and `done` finishes steps through
+   * `completeStep` with the step's own team so the order-run trigger fires
+   * the way it does on the floor. Only rows under `SEED_ORDER_ID_PREFIX` are
+   * replaced; synced orders are left alone.
+   */
+  @callable()
+  seedOrders(input: typeof Domain.SeedOrdersInput.Encoded): Promise<void> {
+    const environment = this.env.ENVIRONMENT;
+    const notifyChanged = () => this.notifyChanged();
+    const reconciler = () => this.reconciler("manual");
+    const routingContext = () => this.routingContext();
+    return this.runEffect(
+      callableEffect("ShopAgent.seedOrders", Domain.SeedOrdersInput, {
+        onExcessProperty: "error",
+      })(({ memberId, orders }) =>
+        Effect.gen(function* () {
+          if (environment !== "local")
+            yield* Effect.fail(
+              new WorkflowRepositoryError({
+                message: `ShopAgent.seedOrders: environment=${environment}: seeding is local-only`,
+                cause: environment,
+              }),
+            );
+          const sql = yield* SqlClient.SqlClient;
+          const orderRepository = yield* OrderRepository;
+          const runs = yield* WorkflowRunRepository;
+          const reconcile = yield* reconciler();
+          const routing = yield* routingContext();
+          const now = yield* Clock.currentTimeMillis;
+          const completeOpenRuns = (orderId: string) =>
+            Effect.gen(function* () {
+              const open = (yield* runs.listRunsForOrder({ orderId })).filter(
+                ({ run }) =>
+                  run.status === "pending" || run.status === "active",
+              );
+              for (const { run, steps } of open) {
+                yield* Effect.forEach(
+                  steps,
+                  (step) =>
+                    runs.completeStep({
+                      runStepId: step.id,
+                      memberId,
+                      teamIds: [step.teamId],
+                      routing,
+                    }),
+                  { discard: true },
+                );
+                yield* Effect.logInfo(
+                  `ShopAgent.seedOrders: orderId=${orderId} runId=${run.id}: completed`,
+                ).pipe(Effect.annotateLogs({ orderId, runId: run.id }));
+              }
+            });
+          const seeded = yield* sql`
+            select id from ShopOrder where id like ${`${Domain.SEED_ORDER_ID_PREFIX}%`}
+          `.values;
+          for (const [id] of seeded)
+            yield* orderRepository.deleteOrder(String(id));
+          for (const [index, seed] of orders.entries()) {
+            const id = `${Domain.SEED_ORDER_ID_PREFIX}${String(seed.n)}`;
+            // At or after `now`, never before: the workflows this fixture
+            // routes to were created moments ago and the age rule skips an
+            // order processed before its workflow. Spaced a second apart so
+            // the index's keyset order matches `orders` order, newest last.
+            const processedAt = now + index * 1000;
+            const order: Domain.ShopOrder = {
+              id,
+              legacyId: `seed-${String(seed.n)}`,
+              name: `#${String(seed.n)}`,
+              createdAt: processedAt,
+              processedAt,
+              updatedAt: now,
+              cancelledAt: null,
+              closedAt: null,
+              financialStatus: "PAID",
+              fulfillmentStatus: seed.fulfillmentStatus ?? "UNFULFILLED",
+              fullyPaid: true,
+              tags: ["seed"],
+              note: seed.note ?? null,
+              customAttributes: [],
+              lineItemsComplete: true,
+              syncedAt: now,
+              syncSource: "manual",
+            };
+            yield* orderRepository.upsertOrder({
+              order,
+              raw: "{}",
+              lineItems: seed.lineItems.map((item, position) => {
+                const currentQuantity = item.currentQuantity ?? item.quantity;
+                return {
+                  id: `${id}/line-${String(position + 1)}`,
+                  orderId: id,
+                  productId: null,
+                  variantId: null,
+                  title: item.title,
+                  variantTitle: null,
+                  sku: null,
+                  quantity: item.quantity,
+                  currentQuantity,
+                  unfulfilledQuantity:
+                    item.unfulfilledQuantity ?? currentQuantity,
+                  nonFulfillableQuantity: 0,
+                  productTags: item.tags,
+                  customAttributes: item.customAttributes ?? [],
+                  requiresShipping: true,
+                } satisfies Domain.OrderLineItem;
+              }),
+              afterWrite: reconcile(order),
+            });
+            // Item runs first; the last completion starts the order run, which
+            // the second pass then finishes.
+            if (seed.done === true) {
+              yield* completeOpenRuns(id);
+              yield* completeOpenRuns(id);
+            }
+          }
+          yield* notifyChanged();
         }),
       )(input),
     );

@@ -1,17 +1,23 @@
 import type * as Domain from "@/lib/Domain";
 
 import { SqliteClient } from "@effect/sql-sqlite-do";
-import { assertNone, assertSome, strictEqual } from "@effect/vitest/utils";
+import {
+  assertNone,
+  assertSome,
+  deepStrictEqual,
+  strictEqual,
+} from "@effect/vitest/utils";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { Effect, Layer, Option } from "effect";
+import { SqlClient } from "effect/unstable/sql";
 import { describe, it } from "vitest";
 
 import { OrderRepository } from "@/lib/OrderRepository";
 import { runShopAgentMigrations } from "@/lib/ShopAgent";
 
 const runInRepository = <A, E>(
-  program: Effect.Effect<A, E, OrderRepository>,
+  program: Effect.Effect<A, E, OrderRepository | SqlClient.SqlClient>,
 ): Promise<A> =>
   runInDurableObject(
     env.TEST_SQL_DO.get(env.TEST_SQL_DO.idFromName(crypto.randomUUID())),
@@ -192,12 +198,17 @@ describe("OrderRepository.listOrders", () => {
             [aLineItem(n, { orderId: orderId(n) })],
           ),
         );
-        const first = yield* repository.listOrders({ limit: 2, cursor: null });
+        const first = yield* repository.listOrders({
+          limit: 2,
+          cursor: null,
+          state: null,
+        });
         return {
           first,
           second: yield* repository.listOrders({
             limit: 2,
             cursor: first.nextCursor,
+            state: null,
           }),
         };
       }),
@@ -211,6 +222,96 @@ describe("OrderRepository.listOrders", () => {
     strictEqual(second.orders.length, 1);
     strictEqual(second.orders[0]?.order.name, "#1001");
     strictEqual(second.nextCursor, null);
+  });
+});
+
+describe("OrderRepository.listOrders state filter", () => {
+  /**
+   * The SQL form of `Domain.productionState`'s `ready_to_ship`: some done
+   * run, no open run, not cancelled, not `FULFILLED`. Runs are written
+   * directly because `WorkflowRunRepository` is not in this test's layer and
+   * the filter only reads status.
+   */
+  it("ready_to_ship returns exactly the made-and-unshipped orders, counts them, and pages", async () => {
+    const { first, second, all } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        const sql = yield* SqlClient.SqlClient;
+        const cases: readonly {
+          readonly n: number;
+          readonly order?: Partial<Domain.ShopOrder>;
+          readonly statuses: readonly Domain.RunStatus[];
+        }[] = [
+          { n: 1, statuses: ["done"] }, // ready
+          { n: 2, statuses: ["done", "cancelled"] }, // ready
+          { n: 3, statuses: ["done", "active"] }, // in production
+          { n: 4, statuses: ["done", "pending"] }, // in production
+          { n: 5, statuses: [] }, // not routed
+          { n: 6, order: { cancelledAt: 5 }, statuses: ["done"] }, // cancelled
+          {
+            n: 7,
+            order: { fulfillmentStatus: "FULFILLED" },
+            statuses: ["done"],
+          }, // shipped
+          { n: 8, statuses: ["done", "done"] }, // ready
+        ];
+        for (const { n, order, statuses } of cases) {
+          yield* upsert(
+            repository,
+            anOrder({
+              id: orderId(n),
+              legacyId: String(n),
+              name: `#100${String(n)}`,
+              processedAt: n * 1000,
+              fullyPaid: true,
+              ...order,
+            }),
+            [aLineItem(n, { orderId: orderId(n) })],
+          );
+          for (const [index, status] of statuses.entries())
+            yield* sql`
+              insert into WorkflowRun (
+                id, workflowId, workflowName, orderId, orderName, lineItemId,
+                lineItemTitle, variantTitle, sku, quantity, customAttributes,
+                source, status, flag, flagAt, flagDetail, createdAt, updatedAt,
+                cancelledAt
+              ) values (
+                ${`run-${String(n)}-${String(index)}`}, 'wf', 'Workflow',
+                ${orderId(n)}, ${`#100${String(n)}`},
+                ${`${lineItemId(n)}-${String(index)}`}, 'Item', null, null, 1,
+                '[]', 'tag', ${status}, null, null, null, 0, 0, null
+              )
+            `;
+        }
+        const first = yield* repository.listOrders({
+          limit: 2,
+          cursor: null,
+          state: "ready_to_ship",
+        });
+        const second = yield* repository.listOrders({
+          limit: 2,
+          cursor: first.nextCursor,
+          state: "ready_to_ship",
+        });
+        const all = yield* repository.listOrders({
+          limit: 10,
+          cursor: null,
+          state: null,
+        });
+        return { first, second, all };
+      }),
+    );
+    strictEqual(first.orderCount, 3);
+    deepStrictEqual(
+      first.orders.map(({ order }) => order.name),
+      ["#1008", "#1002"],
+    );
+    deepStrictEqual(
+      second.orders.map(({ order }) => order.name),
+      ["#1001"],
+    );
+    strictEqual(second.nextCursor, null);
+    strictEqual(all.orderCount, 8);
   });
 });
 

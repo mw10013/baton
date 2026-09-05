@@ -34,15 +34,10 @@ topics = ["app/uninstalled"]
 
 [[webhooks.subscriptions]]
 uri = "/webhooks/orders"
-topics = [
-  "orders/create",
-  "orders/updated",
-  "orders/paid",
-  "orders/cancelled",
-  "orders/fulfilled",
-  "orders/partially_fulfilled",
-  "orders/delete",
-]
+# `orders/updated` already fires for paid, cancelled, edited, refunded, and
+# fulfilled; the topic-specific ones delivered the same change twice with the
+# same `updated_at`, which the stale guard only catches after the first fetch.
+topics = ["orders/create", "orders/updated", "orders/delete"]
 # `updated_at` is load-bearing, not informational: Shopify debounces consecutive
 # identical trimmed payloads, so a subscription whose fields never change would
 # silently drop updates.

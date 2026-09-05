@@ -17,6 +17,8 @@ import * as Domain from "@/lib/Domain";
 import { OrderRepository } from "@/lib/OrderRepository";
 import { handleWebhook, ResponseError, Shopify } from "@/lib/Shopify";
 
+// oxlint-disable-next-line import/no-unassigned-import -- `?raw` is a Vite asset import
+import appToml from "../../shopify.app.toml?raw";
 import { shopifyTestLayer } from "./shopify-test-layer";
 
 const SECRET = "test_api_secret";
@@ -424,6 +426,26 @@ const orderWebhookRequest = ({
   });
 
 describe("orders webhooks", () => {
+  /**
+   * `orders/updated` fires for every change the app acts on (paid, cancelled,
+   * edited, refunded, fulfilled); the topic-specific ones re-delivered the same
+   * change with the same `updated_at`. Read from the toml so re-adding one is
+   * a conscious edit here too.
+   */
+  it("subscribes to create, updated, and delete only", () => {
+    const block = appToml
+      .split("[[webhooks.subscriptions]]")
+      .find((section) => section.includes('uri = "/webhooks/orders"'));
+    const topics = [
+      ...(block ?? "").matchAll(/"(?<topic>orders\/[a-z_]+)"/gu),
+    ].map((match) => match.groups?.topic);
+    deepStrictEqual(topics, [
+      "orders/create",
+      "orders/updated",
+      "orders/delete",
+    ]);
+  });
+
   /**
    * Deliveries are unordered and retries replay the original payload, so a
    * payload no newer than the stored row must not spend an Admin API call — and

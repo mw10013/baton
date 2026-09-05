@@ -184,10 +184,12 @@ const flagMessage = (run: Domain.WorkflowRun) =>
     ? null
     : Match.value(run.flag).pipe(
         Match.withReturnType<string>(),
+        // Also covers a full refund and a line shipped ahead: all three zero
+        // the units to make, and the maker's response is the same.
         Match.when("item_removed", () =>
           Domain.isOrderRun(run)
-            ? `Item removed from this order: ${run.flagDetail?.item ?? ""}`
-            : "This item was removed from the order.",
+            ? `No longer needed: ${run.flagDetail?.item ?? ""}`
+            : "No longer needed: this item was removed, refunded, or shipped.",
         ),
         Match.when(
           "quantity_changed",
@@ -201,6 +203,10 @@ const flagMessage = (run: Domain.WorkflowRun) =>
         ),
         Match.when("order_cancelled", () => "The order was cancelled."),
         Match.when("order_deleted", () => "The order was deleted."),
+        Match.when(
+          "order_fulfilled",
+          () => "This order was already shipped in Shopify.",
+        ),
         Match.when("blocked", () =>
           run.flagDetail?.reason === undefined
             ? "Blocked."
