@@ -7,6 +7,7 @@ import { Effect, Match, Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
 import { formatDateTime, formatNumber } from "@/lib/format";
+import { adminOrderUrl, useResourceLinkTarget } from "@/lib/orderLinks";
 import { ORDER_SYNC_WINDOW_DAYS } from "@/lib/orderSyncConstants";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { withSocketRecovery } from "@/lib/ShopAgentContext";
@@ -18,17 +19,62 @@ const ORDERS_PAGE_SIZE = 25;
 const TAG_BADGE_LIMIT = 3;
 
 /**
- * Keyed by the state filter as well as the shop: a filtered page and the
- * unfiltered one are different reads, and the order page's invalidation of
- * `["orders", shop]` is a prefix match so it still reaches both.
+ * Keyed by both filters as well as the shop: each filter combination is a
+ * different read, and the order page's invalidation of `["orders", shop]` is
+ * a prefix match so it still reaches every one of them.
  */
-const ordersQueryKey = (shop: string, state: Domain.ProductionState | null) =>
-  ["orders", shop, state] as const;
+const ordersQueryKey = (
+  shop: string,
+  state: Domain.ProductionState | null,
+  paid: boolean | null,
+) => ["orders", shop, state, paid] as const;
 
-/** `?state=ready_to_ship` is the packer's view; absent means every order. */
+/**
+ * `?state=` picks a stage of the strip (`ready_to_ship` is the packer's view);
+ * `?paid=` crosses it with the payment gate. Absent means every order.
+ */
 const OrdersSearch = Schema.Struct({
   state: Schema.optionalKey(Domain.ProductionState),
+  paid: Schema.optionalKey(Schema.Boolean),
 });
+
+/**
+ * The stage strip, in lifecycle order. `cancelled` is deliberately absent: it
+ * is rare, shows as a badge, and is not a stage an order moves through.
+ * Only the open stages carry a count (see `Domain.OpenStageCounts`).
+ */
+const STAGES: readonly {
+  readonly state: Domain.ProductionState | null;
+  readonly label: string;
+  readonly hint: string;
+  readonly count: keyof Domain.OpenStageCounts | null;
+}[] = [
+  { state: null, label: "All orders", hint: "everything stored", count: null },
+  {
+    state: "not_routed",
+    label: "Not routed",
+    hint: "paid, no workflow matched",
+    count: "not_routed",
+  },
+  {
+    state: "in_production",
+    label: "In production",
+    hint: "at least one run open",
+    count: "in_production",
+  },
+  {
+    state: "ready_to_ship",
+    label: "Ready to ship",
+    hint: "made, waiting on fulfilment",
+    count: "ready_to_ship",
+  },
+  {
+    state: "shipped",
+    label: "Shipped",
+    hint: "fulfilled in Shopify",
+    count: null,
+  },
+];
 
 /**
  * `Schema.toType`, not the schema itself. A Durable Object RPC result has
@@ -106,16 +152,57 @@ const syncStatusText = (
     : `Last synced ${formatDateTime(view.syncState.lastFullSyncAt)}.`;
 };
 
-const countText = (
+/**
+ * One sentence under the filters saying what the current stage means, with
+ * the count where one is cheap to know. "All" and "Shipped" have no count on
+ * purpose: that would be a full read of the shop's history on every refresh
+ * of a subscribed page.
+ */
+const orders = (n: number) =>
+  `${formatNumber(n)} ${n === 1 ? "order" : "orders"}`;
+
+const stageText = (
   view: Domain.OrdersView | undefined,
   state: Domain.ProductionState | null,
 ) => {
   if (view === undefined) return null;
-  const count = formatNumber(view.page.orderCount);
-  return state === "ready_to_ship"
-    ? `${count} orders made and waiting to be fulfilled in Shopify.`
-    : `${count} stored.`;
+  const counts = view.page.openCounts;
+  return Match.value(state).pipe(
+    Match.withReturnType<string | null>(),
+    Match.when(null, () => null),
+    Match.when(
+      "not_routed",
+      () =>
+        `${orders(counts.not_routed)} paid with no matching workflow. Attach one from the order page.`,
+    ),
+    Match.when(
+      "in_production",
+      () => `${orders(counts.in_production)} with work in progress.`,
+    ),
+    Match.when(
+      "ready_to_ship",
+      () =>
+        `${orders(counts.ready_to_ship)} made and waiting to be fulfilled in Shopify.`,
+    ),
+    Match.when("shipped", () => "Orders fulfilled in Shopify."),
+    Match.when("cancelled", () => "Orders cancelled in Shopify."),
+    Match.exhaustive,
+  );
 };
+
+const emptyText = (state: Domain.ProductionState | null) =>
+  Match.value(state).pipe(
+    Match.when("not_routed", () => "Every paid order has a workflow."),
+    Match.when("in_production", () => "Nothing is in production."),
+    Match.when(
+      "ready_to_ship",
+      () => "No orders are made and waiting to be fulfilled.",
+    ),
+    Match.when("shipped", () => "No orders have been fulfilled yet."),
+    Match.when("cancelled", () => "No cancelled orders."),
+    Match.when(null, () => "No orders match these filters."),
+    Match.exhaustive,
+  );
 
 /**
  * The loader half of the subscribed page: the first page of the current filter,
@@ -125,12 +212,13 @@ const countText = (
  */
 const OrdersLoaderInput = Schema.Struct({
   state: Schema.NullOr(Domain.ProductionState),
+  paid: Schema.NullOr(Schema.Boolean),
 });
 
 const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(OrdersLoaderInput))
   .middleware([shopifyServerFnMiddleware])
-  .handler(({ data: { state }, context: { runEffect, session } }) =>
+  .handler(({ data: { state, paid }, context: { runEffect, session } }) =>
     runEffect(
       ShopAgentClient.pipe(
         Effect.flatMap((client) =>
@@ -138,6 +226,7 @@ const getLoaderData = createServerFn({ method: "GET" })
             limit: ORDERS_PAGE_SIZE,
             cursor: null,
             state,
+            paid,
           }),
         ),
       ),
@@ -146,7 +235,10 @@ const getLoaderData = createServerFn({ method: "GET" })
 
 export const Route = createFileRoute("/app/orders/")({
   validateSearch: Schema.toStandardSchemaV1(OrdersSearch),
-  loaderDeps: ({ search }) => ({ state: search.state ?? null }),
+  loaderDeps: ({ search }) => ({
+    state: search.state ?? null,
+    paid: search.paid ?? null,
+  }),
   loader: ({ deps }) => getLoaderData({ data: deps }),
   component: RouteComponent,
 });
@@ -165,9 +257,10 @@ export const Route = createFileRoute("/app/orders/")({
  */
 function RouteComponent() {
   const { shop } = Route.useRouteContext();
-  const { state = null } = Route.useSearch();
+  const { state = null, paid = null } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const shopify = useAppBridge();
+  const resourceLinkTarget = useResourceLinkTarget();
   const loaderData = Route.useLoaderData();
   /**
    * The repository pages forward only (keyset on `processedAt, id`), so
@@ -185,9 +278,17 @@ function RouteComponent() {
   const [syncing, setSyncing] = React.useState(false);
 
   /** A filter change is a new list, so the cursor stack starts over. */
-  const setState = (next: Domain.ProductionState | null) => {
+  const setFilters = (next: {
+    readonly state: Domain.ProductionState | null;
+    readonly paid: boolean | null;
+  }) => {
     setCursors([null]);
-    void navigate({ search: next === null ? {} : { state: next } });
+    void navigate({
+      search: {
+        ...(next.state === null ? {} : { state: next.state }),
+        ...(next.paid === null ? {} : { paid: next.paid }),
+      },
+    });
   };
 
   const {
@@ -197,13 +298,14 @@ function RouteComponent() {
     agent,
     identified,
   } = useSubscribedQuery({
-    queryKey: ordersQueryKey(shop, state),
+    queryKey: ordersQueryKey(shop, state, paid),
     subscribe: (stub, subscriberId) =>
       stub
         .subscribeOrders({
           limit: ORDERS_PAGE_SIZE,
           cursor: cursorRef.current,
           state,
+          paid,
           subscriberId,
         })
         .then(decodeOrdersView),
@@ -267,12 +369,8 @@ function RouteComponent() {
             : "Could not load orders."}
         </s-banner>
       );
-    if (orders.length === 0 && state === "ready_to_ship")
-      return (
-        <s-paragraph color="subdued">
-          No orders are made and waiting to be fulfilled.
-        </s-paragraph>
-      );
+    if (orders.length === 0 && (state !== null || paid !== null))
+      return <s-paragraph color="subdued">{emptyText(state)}</s-paragraph>;
     if (orders.length === 0)
       return (
         <s-stack gap="base">
@@ -307,6 +405,7 @@ function RouteComponent() {
             Items
           </s-table-header>
           <s-table-header listSlot="labeled">Tags</s-table-header>
+          <s-table-header listSlot="labeled">Shopify</s-table-header>
         </s-table-header-row>
         <s-table-body>
           {orders.map((row) => (
@@ -332,6 +431,20 @@ function RouteComponent() {
               <s-table-cell>{stateBadge(row)}</s-table-cell>
               <s-table-cell>{formatNumber(row.itemUnits)}</s-table-cell>
               <s-table-cell>{tagBadges(row.order.tags)}</s-table-cell>
+              {/* The packer's handoff: a made order is fulfilled in the
+                  Shopify admin, never here, so the ready-to-ship row links
+                  straight to it. Other rows get the same link under a
+                  neutral label. */}
+              <s-table-cell>
+                <s-link
+                  href={adminOrderUrl(row.order)}
+                  target={resourceLinkTarget}
+                >
+                  {Domain.productionState(row) === "ready_to_ship"
+                    ? "Fulfil in Shopify"
+                    : "View in Shopify"}
+                </s-link>
+              </s-table-cell>
             </s-table-row>
           ))}
         </s-table-body>
@@ -339,45 +452,110 @@ function RouteComponent() {
     );
   };
 
-  const filterButton = (
-    label: string,
-    value: Domain.ProductionState | null,
-  ) => (
+  /**
+   * The stage strip: the filter *is* the lifecycle, one tile per stage in the
+   * order an order moves through them, so it doubles as a status summary.
+   * `s-clickable` rather than `s-button` because a tile carries three lines
+   * (count, label, hint) and a selected background; the pressed state is on
+   * the element for assistive tech. The count is blank, not zero, for stages
+   * that are not counted (see `STAGES`).
+   */
+  const stageTile = ({
+    state: value,
+    label,
+    hint,
+    count,
+  }: (typeof STAGES)[number]) => {
+    const selected = state === value;
+    const n = count === null ? null : view?.page.openCounts[count];
+    return (
+      <s-clickable
+        key={value ?? "all"}
+        padding="base"
+        background={selected ? "subdued" : "transparent"}
+        borderRadius="base"
+        accessibilityLabel={`${label}${n === undefined || n === null ? "" : `, ${formatNumber(n)}`}`}
+        aria-pressed={selected}
+        onClick={() => {
+          setFilters({ state: value, paid });
+        }}
+      >
+        <s-stack gap="small-500">
+          <s-heading>
+            {n === undefined || n === null ? "\u00A0" : formatNumber(n)}
+          </s-heading>
+          <s-text type={selected ? "strong" : "generic"}>{label}</s-text>
+          <s-text color="subdued">{hint}</s-text>
+        </s-stack>
+      </s-clickable>
+    );
+  };
+
+  const paidButton = (label: string, value: boolean | null) => (
     <s-button
-      variant={state === value ? "primary" : "secondary"}
-      disabled={state === value}
+      variant={paid === value ? "primary" : "secondary"}
+      disabled={paid === value}
       onClick={() => {
-        setState(value);
+        setFilters({ state, paid: value });
       }}
     >
       {label}
     </s-button>
   );
 
+  const filtered = state !== null || paid !== null;
+
   return (
     <s-page heading="Orders" inlineSize="large">
       <SocketBanner />
-      {(orders.length > 0 || state !== null) && syncButton(true)}
+      {(orders.length > 0 || filtered) && syncButton(true)}
 
       <s-section padding="none" accessibilityLabel="Orders">
-        <s-box padding="base">
+        <s-box padding="base" paddingBlockEnd="none">
           <s-stack gap="small-300">
             {view?.syncState.lastError !== null &&
               view?.syncState.lastError !== undefined && (
                 <s-banner tone="critical">{view.syncState.lastError}</s-banner>
               )}
-            <s-stack direction="inline" gap="small-300">
-              {filterButton("All", null)}
-              {filterButton("Ready to ship", "ready_to_ship")}
-            </s-stack>
             <s-paragraph color="subdued">
-              {[
-                syncStatusText(view, ordersQuery.isError),
-                countText(view, state),
-              ]
-                .filter((part) => part !== null)
-                .join(" ")}
+              {syncStatusText(view, ordersQuery.isError)}
             </s-paragraph>
+          </s-stack>
+        </s-box>
+        <s-box padding="small">
+          <s-grid
+            gridTemplateColumns="repeat(auto-fit, minmax(9rem, 1fr))"
+            gap="small-300"
+          >
+            {STAGES.map(stageTile)}
+          </s-grid>
+        </s-box>
+        <s-divider />
+        <s-box padding="base">
+          <s-stack gap="small-300">
+            <s-stack direction="inline" gap="base" alignItems="center">
+              <s-text color="subdued">Payment</s-text>
+              <s-stack direction="inline" gap="small-300">
+                {paidButton("All", null)}
+                {paidButton("Paid", true)}
+                {paidButton("Not paid", false)}
+              </s-stack>
+              {filtered && (
+                <s-button
+                  variant="tertiary"
+                  onClick={() => {
+                    setFilters({ state: null, paid: null });
+                  }}
+                >
+                  Clear filters
+                </s-button>
+              )}
+            </s-stack>
+            {stageText(view, state) !== null && (
+              <s-paragraph color="subdued">
+                {stageText(view, state)}
+              </s-paragraph>
+            )}
           </s-stack>
         </s-box>
         {renderOrders()}

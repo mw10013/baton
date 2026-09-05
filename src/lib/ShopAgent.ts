@@ -193,6 +193,9 @@ const initializeSchema = Effect.gen(function* () {
     );
     create index if not exists ShopOrder_processedAt
       on ShopOrder (processedAt desc, id desc);
+    create index if not exists ShopOrder_open_idx
+      on ShopOrder (processedAt desc, id desc)
+      where fulfillmentStatus <> 'FULFILLED' and cancelledAt is null;
     create table if not exists OrderLineItem (
       id text primary key,
       orderId text not null references ShopOrder(id) on delete cascade,
@@ -1167,11 +1170,11 @@ export class ShopAgent extends Agent {
     );
   }
 
-  private readOrders({ limit, cursor, state }: Domain.ListOrdersInput) {
+  private readOrders({ limit, cursor, state, paid }: Domain.ListOrdersInput) {
     return Effect.gen(function* () {
       const repository = yield* OrderRepository;
       return {
-        page: yield* repository.listOrders({ limit, cursor, state }),
+        page: yield* repository.listOrders({ limit, cursor, state, paid }),
         syncState: yield* repository.getSyncState(),
       } satisfies Domain.OrdersView;
     });
@@ -2174,9 +2177,9 @@ export class ShopAgent extends Agent {
               updatedAt: now,
               cancelledAt: null,
               closedAt: null,
-              financialStatus: "PAID",
+              financialStatus: seed.unpaid === true ? "PENDING" : "PAID",
               fulfillmentStatus: seed.fulfillmentStatus ?? "UNFULFILLED",
-              fullyPaid: true,
+              fullyPaid: seed.unpaid !== true,
               tags: ["seed"],
               note: seed.note ?? null,
               customAttributes: [],

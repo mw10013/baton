@@ -54,6 +54,23 @@ const decodeCursor = (cursor: string) => {
 
 const json = (value: unknown) => JSON.stringify(value);
 
+/**
+ * The open-order predicate, character for character what the partial
+ * `ShopOrder_open_idx` in `ShopAgent.ts` is declared over: SQLite only uses a
+ * partial index when the query's `where` provably implies the index's, and it
+ * proves that by matching terms, not by reasoning about them. The run
+ * fragments are correlated to the outer `ShopOrder` row and served by
+ * `WorkflowRun_orderId_idx`. A `cancelled` run counts as no run at all,
+ * matching `Domain.productionState`'s `none`.
+ */
+const OPEN = "fulfillmentStatus <> 'FULFILLED' and cancelledAt is null";
+const ANY_RUN = `select 1 from WorkflowRun r
+  where r.orderId = ShopOrder.id and r.status in ('pending', 'active', 'done')`;
+const OPEN_RUN = `select 1 from WorkflowRun r
+  where r.orderId = ShopOrder.id and r.status in ('pending', 'active')`;
+const DONE_RUN = `select 1 from WorkflowRun r
+  where r.orderId = ShopOrder.id and r.status = 'done'`;
+
 const bit = (value: boolean) => (value ? 1 : 0);
 
 export class OrderRepository extends Context.Service<
@@ -115,17 +132,18 @@ export class OrderRepository extends Context.Service<
       orderId: string,
     ) => Effect.Effect<Option.Option<number>, SqlError.SqlError>;
     /**
-     * `state` filters by `Domain.productionState`. Only `ready_to_ship` has a
-     * SQL form: it is the one state a person pages through (the packer's
-     * list), and the only one whose definition needs the run table; every
-     * other state is display-only and computed on the client from the row.
-     * The fragment restates `productionState`'s last branches (not cancelled,
-     * not `FULFILLED`, some `done` run, no open run) and must move with them.
+     * `state` filters by `Domain.productionState` and `paid` by `fullyPaid`;
+     * each SQL fragment restates a branch of `productionState` and must move
+     * with it. The three open stages and the `openCounts` aggregate spell out
+     * `fulfillmentStatus <> 'FULFILLED' and cancelledAt is null` verbatim so
+     * SQLite can prove they are served by the partial `ShopOrder_open_idx`,
+     * which is what keeps a count from reading the shop's whole history.
      */
     readonly listOrders: (input: {
       readonly limit: number;
       readonly cursor: string | null;
       readonly state: Domain.ProductionState | null;
+      readonly paid: boolean | null;
     }) => Effect.Effect<
       Domain.OrdersPage,
       SqlError.SqlError | OrderRepositoryError
@@ -414,27 +432,44 @@ export class OrderRepository extends Context.Service<
           limit,
           cursor,
           state,
+          paid,
         }: {
           readonly limit: number;
           readonly cursor: string | null;
           readonly state: Domain.ProductionState | null;
+          readonly paid: boolean | null;
         }) {
           const stateFilter = Match.value(state).pipe(
+            Match.when("not_routed", () =>
+              sql.and([OPEN, "fullyPaid = 1", `not exists (${ANY_RUN})`]),
+            ),
+            Match.when("in_production", () =>
+              sql.and([OPEN, `exists (${OPEN_RUN})`]),
+            ),
             Match.when("ready_to_ship", () =>
               sql.and([
-                "cancelledAt is null",
-                "fulfillmentStatus <> 'FULFILLED'",
-                `exists (
-                  select 1 from WorkflowRun r
-                  where r.orderId = ShopOrder.id and r.status = 'done'
-                )`,
-                `not exists (
-                  select 1 from WorkflowRun r
-                  where r.orderId = ShopOrder.id and r.status in ('pending', 'active')
-                )`,
+                OPEN,
+                `exists (${DONE_RUN})`,
+                `not exists (${OPEN_RUN})`,
               ]),
             ),
-            Match.orElse(() => sql.literal("1 = 1")),
+            Match.when("shipped", () =>
+              sql.and([
+                "cancelledAt is null",
+                "fulfillmentStatus = 'FULFILLED'",
+              ]),
+            ),
+            Match.when("cancelled", () =>
+              sql.literal("cancelledAt is not null"),
+            ),
+            Match.when(null, () => sql.literal("1 = 1")),
+            Match.exhaustive,
+          );
+          const paidFilter = Match.value(paid).pipe(
+            Match.when(true, () => sql.literal("fullyPaid = 1")),
+            Match.when(false, () => sql.literal("fullyPaid = 0")),
+            Match.when(null, () => sql.literal("1 = 1")),
+            Match.exhaustive,
           );
           /**
            * Keyset, never `limit/offset`: the bulk stream and webhooks insert
@@ -454,7 +489,7 @@ export class OrderRepository extends Context.Service<
           const page = yield* decodeOrders(
             yield* sql`
               select ${orderColumns} from ShopOrder
-              where ${sql.and([keyset, stateFilter])}
+              where ${sql.and([keyset, stateFilter, paidFilter])}
               order by processedAt desc, id desc
               limit ${limit + 1}
             `,
@@ -502,9 +537,19 @@ export class OrderRepository extends Context.Service<
               } satisfies Domain.RunCounts,
             ]),
           );
-          const [countRow] =
-            yield* sql`select count(*) from ShopOrder where ${stateFilter}`
-              .values;
+          /**
+           * One pass over the open orders for all three counts, each term the
+           * same predicate as the matching `stateFilter` branch. Unpaid open
+           * orders with no runs are the `null` state and fall in no bucket.
+           */
+          const [countRow] = yield* sql`
+            select
+              sum(fullyPaid = 1 and not exists (${sql.literal(ANY_RUN)})),
+              sum(exists (${sql.literal(OPEN_RUN)})),
+              sum(exists (${sql.literal(DONE_RUN)}) and not exists (${sql.literal(OPEN_RUN)}))
+            from ShopOrder
+            where ${sql.literal(OPEN)}
+          `.values;
           const last = orders.at(-1);
           return {
             orders: orders.map((order) => ({
@@ -517,7 +562,11 @@ export class OrderRepository extends Context.Service<
               page.length > limit && last !== undefined
                 ? encodeCursor(last)
                 : null,
-            orderCount: Number(countRow?.[0] ?? 0),
+            openCounts: {
+              not_routed: Number(countRow?.[0] ?? 0),
+              in_production: Number(countRow?.[1] ?? 0),
+              ready_to_ship: Number(countRow?.[2] ?? 0),
+            },
           } satisfies Domain.OrdersPage;
         }),
 

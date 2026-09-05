@@ -64,9 +64,9 @@ describe("Domain.productionState", () => {
       "shipped",
     ],
     [
-      "fulfilled, no runs",
+      "fulfilled, no runs (history the window sync pulls in)",
       row(NONE, { fulfillmentStatus: "FULFILLED" }),
-      "not_routed",
+      "shipped",
     ],
     [
       "cancelled with runs",

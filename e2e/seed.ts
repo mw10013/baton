@@ -66,6 +66,7 @@ export interface SeedLineItem {
 export interface SeedOrder {
   readonly n: number;
   readonly fulfillmentStatus?: string;
+  readonly unpaid?: boolean;
   readonly done?: boolean;
   readonly note?: string;
   readonly lineItems: readonly SeedLineItem[];

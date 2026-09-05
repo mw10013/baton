@@ -867,6 +867,8 @@ export const SeedOrdersInput = Schema.Struct({
       /** Numeric suffix: the id becomes `SEED_ORDER_ID_PREFIX + n` and the name `#<n>`. */
       n: Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0)),
       fulfillmentStatus: Schema.optionalKey(Schema.String),
+      /** `PENDING`, `fullyPaid: false`: no runs are created, so the row reads as unrouted-but-unpaid. */
+      unpaid: Schema.optionalKey(Schema.Boolean),
       done: Schema.optionalKey(Schema.Boolean),
       note: Schema.optionalKey(Schema.String),
       lineItems: Schema.Array(
@@ -945,8 +947,10 @@ export const ListOrdersInput = Schema.Struct({
     Schema.isBetween({ minimum: 1, maximum: 50 }),
   ),
   cursor: Schema.NullOr(OrdersCursor),
-  /** `null` is every order; only `ready_to_ship` has a SQL form today (see `OrderRepository.listOrders`). */
+  /** `null` is every order; each state has a SQL form in `OrderRepository.listOrders` that restates `productionState`. */
   state: Schema.NullOr(ProductionState),
+  /** `null` is any payment state; `true`/`false` filters on `fullyPaid`, the run-creation gate. */
+  paid: Schema.NullOr(Schema.Boolean),
 });
 export type ListOrdersInput = typeof ListOrdersInput.Type;
 
@@ -992,10 +996,12 @@ export type OrderRow = typeof OrderRow.Type;
 /**
  * `null` is an unpaid order with no runs: nothing to say, and not a state a
  * person acts on. Cancelled wins over everything because it is the only stop
- * gate; `shipped` is checked before the run counts so an order fulfilled with
- * runs still open reads as shipped (the runs carry the `order_fulfilled`
- * flag). The SQL form of `ready_to_ship` in `OrderRepository.listOrders`
- * restates the last two branches and must move with them.
+ * gate; `shipped` is checked next, before the run counts, so an order
+ * fulfilled with runs still open reads as shipped (the runs carry the
+ * `order_fulfilled` flag) and an order fulfilled with no runs at all — every
+ * historical order the window sync pulls in — reads as shipped rather than
+ * as a "Not routed" warning nobody can act on. The SQL forms in
+ * `OrderRepository.listOrders` restate these branches and must move with them.
  */
 export const productionState = ({
   order,
@@ -1003,16 +1009,16 @@ export const productionState = ({
 }: OrderRow): ProductionState | null =>
   Match.value({
     cancelled: isCancelled(order),
+    fulfilled: isFulfilled(order),
     none: runs.open === 0 && runs.done === 0,
     canStart: canStartRuns(order),
-    fulfilled: isFulfilled(order),
     open: runs.open > 0,
   }).pipe(
     Match.withReturnType<ProductionState | null>(),
     Match.when({ cancelled: true }, () => "cancelled"),
+    Match.when({ fulfilled: true }, () => "shipped"),
     Match.when({ none: true, canStart: true }, () => "not_routed"),
     Match.when({ none: true }, () => null),
-    Match.when({ fulfilled: true }, () => "shipped"),
     Match.when({ open: true }, () => "in_production"),
     Match.orElse(() => "ready_to_ship"),
   );
@@ -1031,11 +1037,27 @@ export const runCounts = (runs: readonly WorkflowRun[]): RunCounts =>
     { open: 0, done: 0, flagged: 0 },
   );
 
+/**
+ * How many orders sit in each *open* stage, for the stage strip on the index.
+ * Only the open stages are counted: they are read through the partial index
+ * over unfulfilled, uncancelled orders, so the count costs one row per open
+ * order, not one per order ever stored. "All" and "Shipped" carry no count —
+ * on a shop with years of history that would be a full-table read on every
+ * refresh of a subscribed page. Independent of the `paid` filter so the strip
+ * reads the same whichever payment view is showing.
+ */
+export const OpenStageCounts = Schema.Struct({
+  not_routed: Schema.Number,
+  in_production: Schema.Number,
+  ready_to_ship: Schema.Number,
+});
+export type OpenStageCounts = typeof OpenStageCounts.Type;
+
 export const OrdersPage = Schema.Struct({
   orders: Schema.Array(OrderRow),
   limit: Schema.Number,
   nextCursor: Schema.NullOr(OrdersCursor),
-  orderCount: Schema.Number,
+  openCounts: OpenStageCounts,
 });
 export type OrdersPage = typeof OrdersPage.Type;
 

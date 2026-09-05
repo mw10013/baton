@@ -195,7 +195,8 @@ export const workflows: readonly SeedWorkflow[] = [
  * two units refunded (`unfulfilledQuantity` below `currentQuantity`), so its
  * run and the order page read "×1 to make". `#9002` is fully made and still
  * unfulfilled, so the Ready-to-ship filter has a row. `#9003` is in
- * production with nothing special.
+ * production with nothing special. `#9004` is unpaid, so nothing routes and
+ * the Not-paid filter has a row.
  */
 export const orders: readonly SeedOrder[] = [
   {
@@ -226,6 +227,11 @@ export const orders: readonly SeedOrder[] = [
       { title: "Product 03", quantity: 3, tags: ["workflow-03"] },
       { title: "Untagged", quantity: 1, tags: [] },
     ],
+  },
+  {
+    n: 9004,
+    unpaid: true,
+    lineItems: [{ title: "Product 01", quantity: 1, tags: ["workflow-01"] }],
   },
 ];
 
