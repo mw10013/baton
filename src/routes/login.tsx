@@ -1,6 +1,6 @@
 import { useForm } from "@tanstack/react-form";
 import { useMutation } from "@tanstack/react-query";
-import { createFileRoute, useHydrated } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Config, Effect, Schema } from "effect";
 
@@ -85,7 +85,6 @@ export const Route = createFileRoute("/login")({
 
 function RouteComponent() {
   const { isDemoMode } = Route.useLoaderData();
-  const hydrated = useHydrated();
   const login = useServerFn(loginFn);
   const loginMutation = useMutation({
     mutationFn: (data: typeof Domain.LoginInput.Encoded) => login({ data }),
@@ -166,7 +165,6 @@ function RouteComponent() {
                   <s-button
                     type="submit"
                     variant="primary"
-                    disabled={!hydrated}
                     {...(loginMutation.isPending ? { loading: true } : {})}
                   >
                     Send magic link

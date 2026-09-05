@@ -1,10 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import {
-  createFileRoute,
-  redirect,
-  useHydrated,
-  useRouter,
-} from "@tanstack/react-router";
+import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Effect } from "effect";
 
@@ -39,12 +34,11 @@ export const Route = createFileRoute("/admin/")({
  * Admin landing page. Sign-out is a server fn (not a POST route): the
  * `tanstackStartCookies` plugin forwards better-auth's cleared session cookie
  * through TanStack's request storage from a server fn, the same path
- * `/shop` uses. `disabled={!hydrated}` because SSR'd markup is React-dead
- * until hydration and the click would be silently dropped.
+ * `/shop` uses. Pre-hydration clicks are blocked by the `inert` `<body>` in
+ * `src/routes/__root.tsx`, so no control here gates on hydration.
  */
 function RouteComponent() {
   const router = useRouter();
-  const hydrated = useHydrated();
   const signOut = useServerFn(signOutFn);
   const signOutMutation = useMutation({ mutationFn: () => signOut({}) });
   return (
@@ -52,7 +46,6 @@ function RouteComponent() {
       <s-button
         slot="secondary-actions"
         variant="secondary"
-        disabled={!hydrated}
         {...(signOutMutation.isPending ? { loading: true } : {})}
         onClick={() => {
           signOutMutation.mutate();

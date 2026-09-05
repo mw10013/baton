@@ -5,6 +5,8 @@ import {
   type Page,
 } from "@playwright/test";
 
+import { awaitHydration } from "./hydration";
+
 /**
  * The embedded app's iframe — its `src` carries `embedded=1` (admin chrome is the
  * top-level `page`). Re-resolved on every call on purpose: App Bridge re-renders
@@ -19,19 +21,13 @@ export const appFrame = (page: Page): FrameLocator =>
  * Land on the authed home and return once it is safe to interact INSIDE the
  * iframe.
  *
- * The gate is the `data-app-interactive` marker (`src/routes/app.tsx`),
- * which flips with the `useHydrated()` commit that also clears the wrapper's
- * `inert`. It is load-bearing because Playwright's actionability is inert-blind
- * (verified in `refs/playwright`: `injectedScript.ts` never reads `inert`; its
- * `enabled` check only looks at `aria-disabled`; the hit-test is pure geometry).
- * So a click on an inert-wrapped element passes every actionability check,
- * Playwright dispatches it, and the browser swallows the activation — a silent
- * drop, no error. Waiting for the marker is the only honest "in-iframe is
- * interactive now" signal; `useHydrated()` itself exposes no DOM marker.
+ * The gate is `awaitHydration` (`e2e/hydration.ts`) against the iframe: the
+ * `data-hydrated` marker on the embedded document's `<body>`, which flips in
+ * the commit that clears its `inert`.
  *
- * Hoisted sidebar links do NOT need this — they render outside the inert wrapper
- * and only after hydration, so their visibility is itself the gate (see
- * `clickHoisted`).
+ * Hoisted sidebar links do NOT need this — App Bridge lifts them into the
+ * admin document, outside the inert body, and they render only after
+ * hydration, so their visibility is itself the gate (see `clickHoisted`).
  *
  * `goto` uses `waitUntil: "commit"`, NOT the default `"load"`. A `goto` is bound
  * to one navigation and throws if that navigation is superseded before it
@@ -42,8 +38,8 @@ export const appFrame = (page: Page): FrameLocator =>
  * in; the same bounce, landing a beat later, instead stalls the hydration wait
  * to its full timeout). `"commit"` resolves the instant the response commits,
  * before the SPA runs the redirect, so it can never be aborted. No readiness is
- * lost: unlike `goto`, the `data-app-interactive` `waitFor` below is a retrying
- * poll over the live DOM, so it rides through the redirect and is the real gate.
+ * lost: unlike `goto`, the `awaitHydration` below is a retrying poll over the
+ * live DOM, so it rides through the redirect and is the real gate.
  *
  * Local previews serve Vite's unbundled module graph (~186 requests/load)
  * through a Cloudflare quick tunnel. Individual module requests can remain
@@ -53,9 +49,8 @@ export const appFrame = (page: Page): FrameLocator =>
  * `readyState=complete` and a stall has no page-level symptom. After 15s,
  * reload the admin document once to retry that module graph. Instrumented
  * healthy runs (2026-07-17) put the marker at 4.3–6.2s from goto, so 15s is
- * ~2.4× the healthy max, not a hedge. The second `waitFor` uses
- * Playwright's default operation
- * timeout (`0`) and is therefore bounded by the remaining per-test timeout
+ * ~2.4× the healthy max, not a hedge. The second wait uses Playwright's
+ * default operation timeout and is therefore bounded by the remaining per-test timeout
  * (each multi-load spec pins one via `test.setTimeout`; the global default
  * 30s would preempt this rescue and turn it into a "Target closed" error as
  * teardown closes the context).
@@ -74,12 +69,12 @@ export const appFrame = (page: Page): FrameLocator =>
 export async function gotoApp(page: Page): Promise<FrameLocator> {
   await page.goto("", { waitUntil: "commit" });
   const frame = appFrame(page);
-  const hydrated = frame.locator('[data-app-interactive="true"]');
-  await hydrated
+  await frame
+    .locator('body[data-hydrated="true"]')
     .waitFor({ state: "attached", timeout: 15_000 })
     .catch(async () => {
       await page.reload({ waitUntil: "commit" });
-      await hydrated.waitFor({ state: "attached" });
+      await awaitHydration(frame);
     });
   return frame;
 }

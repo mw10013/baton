@@ -197,26 +197,14 @@ function RouteComponent() {
 }
 
 /**
- * Maps Shopify navigation events into TanStack navigation and keeps app
- * content inert until hydration completes. App Bridge itself is loaded by the
- * route's `head` option (see `Route` above), not here.
- *
- * The same `useHydrated()` flip that clears `inert` is also exposed as
- * `data-app-interactive="true"` on the wrapper, giving e2e a DOM signal that
- * the `inert` barrier has lifted (`useHydrated()` itself has no marker).
- * Named "interactive", not "hydrated", on purpose: the root route's
- * `data-hydrated` flips in the same commit, but only this attribute is bound
- * to `inert` by construction — same variable, same element — so it stays
- * correct if `inert` ever gains another condition. Playwright's actionability
- * is inert-blind, so in-iframe specs wait for this marker before interacting.
- * Written as `hydrated ? "true" : undefined` so the attribute is absent
- * pre-hydration — a bare boolean would render the truthy string
- * `data-app-interactive="false"`.
+ * Maps Shopify navigation events into TanStack navigation. App Bridge itself
+ * is loaded by the route's `head` option (see `Route` above), not here.
+ * Pre-hydration input is blocked by the `inert` `<body>` in
+ * `src/routes/__root.tsx`; nothing here gates on hydration.
  *
  * Polaris is loaded globally by the root route.
  */
 function AppProvider({ children }: { readonly children: React.ReactNode }) {
-  const hydrated = useHydrated();
   const navigate = useNavigate();
 
   React.useEffect(() => {
@@ -231,11 +219,7 @@ function AppProvider({ children }: { readonly children: React.ReactNode }) {
     };
   }, [navigate]);
 
-  return (
-    <div inert={!hydrated} data-app-interactive={hydrated ? "true" : undefined}>
-      {children}
-    </div>
-  );
+  return children;
 }
 
 /**
@@ -277,7 +261,7 @@ function AppProvider({ children }: { readonly children: React.ReactNode }) {
  * ref and queues never-transmitted calls until the next socket opens.
  *
  * `s-app-nav` is gated on `hydrated`: App Bridge hoists it OUT of the
- * iframe into the admin chrome, escaping the route shell's `inert` wrapper, so a
+ * iframe into the admin chrome, escaping the root document's `inert` body, so a
  * pre-hydration click on a hoisted `s-link` lands before the
  * `shopify:navigate` → `navigate` bridge is wired and falls through to a full
  * iframe re-embed (bounce / dropped click). Not rendering the nav until

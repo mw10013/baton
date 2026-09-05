@@ -1,10 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import {
-  createFileRoute,
-  Link,
-  redirect,
-  useHydrated,
-} from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Effect } from "effect";
 
@@ -47,7 +42,6 @@ export const Route = createFileRoute("/shop/")({
 
 function RouteComponent() {
   const { email, shops } = Route.useLoaderData();
-  const hydrated = useHydrated();
   const signOut = useServerFn(signOutFn);
   const signOutMutation = useMutation({ mutationFn: () => signOut({}) });
 
@@ -73,7 +67,6 @@ function RouteComponent() {
         <s-stack alignItems="start">
           <s-button
             variant="tertiary"
-            disabled={!hydrated}
             {...(signOutMutation.isPending ? { loading: true } : {})}
             onClick={() => {
               signOutMutation.mutate();

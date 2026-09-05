@@ -52,35 +52,42 @@ function RouteComponent() {
 }
 
 /**
- * `data-hydrated` is the document-wide "React has attached its listeners"
- * signal e2e waits on before its first interaction. Until then the SSR'd
- * markup is painted but React-dead: a click on an `onClick` button is a no-op,
- * and a submit inside a `<form onSubmit>` falls through to the browser's
- * native GET submission (verified: `/login?email=...`), because the
- * `preventDefault` does not exist yet. Playwright cannot tell — its
- * actionability checks are satisfied by the SSR'd DOM — so a spec that
- * interacts straight after `goto` fails much later, at an assertion for a
- * result the click never requested. `useHydrated()` exposes no DOM marker of
- * its own. The product-side guard for the same window is
- * `disabled={!hydrated}` on each non-embedded `onClick`/submit control.
+ * The hydration boundary for the whole document. Until React's first commit
+ * the SSR'd markup is painted but React-dead: an `onClick` is a no-op, a
+ * `<form onSubmit>` falls through to the browser's native GET submission
+ * (verified: `/login?email=...`), and text typed into a controlled input is
+ * discarded when React takes over. `inert` on `<body>` blocks pointer,
+ * keyboard, focus, and form activation for that window, for embedded and
+ * non-embedded routes alike, so no route needs its own wrapper and no control
+ * needs a `disabled={!hydrated}` guard — per-control guards were tried and
+ * dropped: they are easy to miss on the next button, and a control that
+ * flashes disabled on every load is worse UX than a page that ignores input
+ * for a moment. Accepted cost: `inert` also hides the subtree from the
+ * accessibility tree and find-in-page until the commit — well under a second
+ * locally, 4–6s measured over a Cloudflare quick tunnel.
  *
- * Distinct from `data-app-interactive` in `src/routes/app.tsx`, which marks
- * the same commit but additionally gates that route's `inert` wrapper;
- * embedded specs must keep waiting on that one, because being hydrated is not
- * the same as being interactive inside the iframe.
+ * `data-hydrated="true"` is the DOM signal e2e waits on (`awaitHydration` in
+ * `e2e/hydration.ts`). Playwright's actionability checks are inert-blind, so
+ * a click inside an inert subtree is dispatched and silently swallowed; the
+ * marker is the only honest readiness signal. It lives on the same element as
+ * `inert` so the two cannot drift, and is written `hydrated ? "true" :
+ * undefined` so it is absent pre-hydration (a bare boolean renders the truthy
+ * string `"false"`). It cannot cause a hydration mismatch: it is `undefined`
+ * on both the server and the first client render.
+ *
+ * `useHydrated()` is read elsewhere only where this boundary cannot reach:
+ * the App-Bridge-hoisted nav and the browser-only token query in
+ * `src/routes/app.tsx`, and the SSR-mismatch `ClientOnly` in
+ * `src/lib/SocketBanner.tsx`.
  */
 function RootDocument({ children }: { children: React.ReactNode }) {
   const hydrated = useHydrated();
   return (
-    <html
-      lang="en"
-      suppressHydrationWarning
-      data-hydrated={hydrated ? "true" : undefined}
-    >
+    <html lang="en" suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
-      <body>
+      <body inert={!hydrated} data-hydrated={hydrated ? "true" : undefined}>
         {children}
         {/* App Bridge renders in <head> via the /app route's head option and
             must stay the document's first script tag; Polaris loads after it
