@@ -34,17 +34,26 @@ export type SeedMember =
 export interface SeedTeam {
   readonly name: string;
   readonly members: readonly string[];
+  readonly archived?: boolean;
 }
 
-/** A step of a seeded workflow; `team` names one of the seeded `teams`. */
+/**
+ * A step of a seeded workflow; `team` names one of the seeded `teams`. A step
+ * with no `stage` follows the previous one; give several steps the same
+ * `stage` to make them ready together.
+ */
 export interface SeedWorkflowStep {
   readonly name: string;
   readonly team: string;
+  readonly stage?: number;
+  readonly instructions?: string;
 }
 
-/** A workflow definition to create, steps inline and in order. */
+/** A workflow definition to create, steps inline and in order. `scope: "order"` needs `tags: []`. */
 export interface SeedWorkflow {
   readonly name: string;
+  readonly scope?: "item" | "order";
+  readonly archived?: boolean;
   readonly tags: readonly string[];
   readonly steps: readonly SeedWorkflowStep[];
 }

@@ -407,6 +407,81 @@ describe("WorkflowRepository", () => {
       }),
     ));
 
+  it("replaceWorkflows seeds archived rows and refuses a fixture the ordinary path could not produce", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const repo = yield* WorkflowRepository;
+        yield* repo.replaceWorkflows({
+          workflows: [
+            {
+              name: name("Live"),
+              tags: tags(["live"]),
+              steps: [{ name: stepName("a"), teamId: teamId("t1") }],
+            },
+            {
+              name: name("Gone"),
+              archived: true,
+              tags: tags(["gone"]),
+              steps: [{ name: stepName("a"), teamId: teamId("t1") }],
+            },
+            {
+              name: name("Order"),
+              scope: "order",
+              tags: tags([]),
+              steps: [{ name: stepName("a"), teamId: teamId("t1") }],
+            },
+            {
+              name: name("Old order"),
+              scope: "order",
+              archived: true,
+              tags: tags([]),
+              steps: [],
+            },
+          ],
+        });
+        deepStrictEqual(
+          (yield* repo.listActiveWorkflowDetails())
+            .map(({ workflow }) => workflow.name)
+            .toSorted(),
+          ["Live", "Order"],
+        );
+        const all = yield* repo.listWorkflows({ includeArchived: true });
+        deepStrictEqual(
+          all
+            .filter((w) => w.archivedAt !== null)
+            .map((w) => w.name)
+            .toSorted(),
+          ["Gone", "Old order"],
+        );
+        const refused = (workflows: Domain.SeedWorkflowsInput["workflows"]) =>
+          repo.replaceWorkflows({ workflows }).pipe(Effect.flip);
+        strictEqual(
+          (yield* refused([
+            {
+              name: name("Tagged order"),
+              scope: "order",
+              tags: tags(["x"]),
+              steps: [],
+            },
+          ]))._tag,
+          "WorkflowRepositoryError",
+        );
+        strictEqual(
+          (yield* refused([
+            { name: name("O1"), scope: "order", tags: tags([]), steps: [] },
+            { name: name("O2"), scope: "order", tags: tags([]), steps: [] },
+          ]))._tag,
+          "WorkflowRepositoryError",
+        );
+        // Refusals happen before the transaction: the previous seed survives.
+        strictEqual(all.length, 4);
+        strictEqual(
+          (yield* repo.listWorkflows({ includeArchived: true })).length,
+          4,
+        );
+      }),
+    ));
+
   it("updateStep rewrites name and team; enforces the step limit", () =>
     runInRepository(
       Effect.gen(function* () {

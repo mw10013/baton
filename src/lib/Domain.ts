@@ -597,13 +597,18 @@ export type UpdateStepInput = typeof UpdateStepInput.Type;
  * `Team.id` the caller has already created, so the active-team check
  * `AddStepInput` exists to trigger has nothing left to catch. A step with no
  * `stage` gets the previous step's stage + 1 (linear); the repository
- * validates the stage invariant before writing.
+ * validates the stage invariant before writing. `archived` seeds the row
+ * already archived, so a fixture can show archived workflows without a click;
+ * the repository still enforces one active order workflow and no tags on an
+ * order workflow, since a fixture that breaks either would leave the app in a
+ * state the ordinary write path can never produce.
  */
 export const SeedWorkflowsInput = Schema.Struct({
   workflows: Schema.Array(
     Schema.Struct({
       name: WorkflowName,
       scope: Schema.optionalKey(WorkflowScope),
+      archived: Schema.optionalKey(Schema.Boolean),
       tags: ProductTags,
       steps: Schema.Array(
         Schema.Struct({

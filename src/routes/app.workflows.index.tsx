@@ -152,7 +152,12 @@ function RouteComponent() {
     (workflow) => workflow.archivedAt === null,
   );
 
-  const renderRow = (workflow: Domain.WorkflowSummary) => (
+  /**
+   * `withTags` is per section, not per row: an order workflow can never carry
+   * tags (the repository refuses them), so its table has no tags column at
+   * all rather than a placeholder in one.
+   */
+  const renderRow = (workflow: Domain.WorkflowSummary, withTags: boolean) => (
     <s-table-row key={workflow.id} id={workflow.id}>
       <s-table-cell>
         <s-stack direction="inline" gap="small-300">
@@ -167,17 +172,15 @@ function RouteComponent() {
           )}
         </s-stack>
       </s-table-cell>
-      <s-table-cell>
-        {workflow.scope === "order" ? (
-          <s-text color="subdued">Whole order</s-text>
-        ) : (
+      {withTags && (
+        <s-table-cell>
           <s-stack direction="inline" gap="small-300">
             {workflow.tags.map((tag) => (
               <s-badge key={tag}>{tag}</s-badge>
             ))}
           </s-stack>
-        )}
-      </s-table-cell>
+        </s-table-cell>
+      )}
       <s-table-cell>{workflow.stepCount}</s-table-cell>
       <s-table-cell>{workflow.activeRunCount}</s-table-cell>
       <s-table-cell>{formatDateTime(workflow.updatedAt)}</s-table-cell>
@@ -198,17 +201,22 @@ function RouteComponent() {
     </s-table-row>
   );
 
-  const renderTable = (rows: readonly Domain.WorkflowSummary[]) => (
+  const renderTable = (
+    rows: readonly Domain.WorkflowSummary[],
+    withTags: boolean,
+  ) => (
     <s-table>
       <s-table-header-row>
         <s-table-header listSlot="primary">Name</s-table-header>
-        <s-table-header>Product tags</s-table-header>
+        {withTags && <s-table-header>Product tags</s-table-header>}
         <s-table-header>Steps</s-table-header>
         <s-table-header>Active runs</s-table-header>
         <s-table-header>Updated</s-table-header>
         <s-table-header> </s-table-header>
       </s-table-header-row>
-      <s-table-body>{rows.map(renderRow)}</s-table-body>
+      <s-table-body>
+        {rows.map((workflow) => renderRow(workflow, withTags))}
+      </s-table-body>
     </s-table>
   );
 
@@ -230,7 +238,7 @@ function RouteComponent() {
           any product in Shopify and its line items will follow that workflow.
         </s-paragraph>
       );
-    return renderTable(workflows);
+    return renderTable(workflows, true);
   };
 
   /**
@@ -251,7 +259,7 @@ function RouteComponent() {
               packing that happen once per order after every item is made.
             </s-paragraph>
           ) : (
-            renderTable(orderWorkflows)
+            renderTable(orderWorkflows, false)
           )}
         </s-stack>
       </s-section>

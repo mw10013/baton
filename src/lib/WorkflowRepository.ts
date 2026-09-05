@@ -543,6 +543,26 @@ export class WorkflowRepository extends Context.Service<
                 message: `replaceWorkflows: workflow=${invalid.name}: stages must be dense from 1 and non-decreasing`,
                 cause: invalid.steps.map((step) => step.stage),
               });
+            // The two invariants the ordinary write path enforces that a
+            // fixture could otherwise silently break.
+            const taggedOrder = staged.find(
+              (workflow) =>
+                workflow.scope === "order" && workflow.tags.length > 0,
+            );
+            if (taggedOrder !== undefined)
+              return yield* new WorkflowRepositoryError({
+                message: `replaceWorkflows: workflow=${taggedOrder.name}: an order workflow has no tags`,
+                cause: taggedOrder.tags,
+              });
+            const activeOrder = staged.filter(
+              (workflow) =>
+                workflow.scope === "order" && workflow.archived !== true,
+            );
+            if (activeOrder.length > 1)
+              return yield* new WorkflowRepositoryError({
+                message: `replaceWorkflows: ${String(activeOrder.length)} active order workflows; at most one`,
+                cause: activeOrder.map((workflow) => workflow.name),
+              });
             return yield* sql.withTransaction(
               Effect.gen(function* () {
                 yield* sql`delete from WorkflowRun`;
@@ -553,7 +573,7 @@ export class WorkflowRepository extends Context.Service<
                     insert into Workflow
                       (id, name, scope, tags, createdAt, updatedAt, archivedAt)
                     values
-                      (${workflowId}, ${workflow.name}, ${workflow.scope ?? "item"}, ${json(workflow.tags)}, ${now}, ${now}, null)
+                      (${workflowId}, ${workflow.name}, ${workflow.scope ?? "item"}, ${json(workflow.tags)}, ${now}, ${now}, ${workflow.archived === true ? now : null})
                   `;
                   for (const step of workflow.steps)
                     yield* sql`

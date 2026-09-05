@@ -21,11 +21,17 @@ const DevSeedInput = Schema.Struct({
       Schema.Struct({ email: Domain.Email, archived: Schema.Boolean }),
     ]),
   ),
+  /**
+   * `archived` is applied after the team's membership is written, for the
+   * same reason as an archived member: `setTeamMember` refuses an archived
+   * team, and a real archive keeps its edges.
+   */
   teams: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
         name: Domain.TeamName,
         members: Schema.Array(Domain.Email),
+        archived: Schema.optionalKey(Schema.Boolean),
       }),
     ),
   ),
@@ -40,6 +46,7 @@ const DevSeedInput = Schema.Struct({
       Schema.Struct({
         name: Domain.WorkflowName,
         scope: Schema.optionalKey(Domain.WorkflowScope),
+        archived: Schema.optionalKey(Schema.Boolean),
         tags: Domain.ProductTags,
         steps: Schema.Array(
           Schema.Struct({
@@ -167,6 +174,12 @@ export const Route = createFileRoute("/api/dev/seed")({
                     inTeam: true,
                   });
                 }
+                if (team.archived === true)
+                  yield* repository.setTeamArchived({
+                    shop,
+                    id: teamId,
+                    archived: true,
+                  });
               }
               for (const { email, archived } of members)
                 if (archived)
@@ -180,6 +193,7 @@ export const Route = createFileRoute("/api/dev/seed")({
               const seedWorkflows: {
                 name: string;
                 scope?: Domain.WorkflowScope;
+                archived?: boolean;
                 tags: readonly string[];
                 steps: SeedStep[];
               }[] = [];
@@ -206,6 +220,9 @@ export const Route = createFileRoute("/api/dev/seed")({
                   ...(workflow.scope === undefined
                     ? {}
                     : { scope: workflow.scope }),
+                  ...(workflow.archived === undefined
+                    ? {}
+                    : { archived: workflow.archived }),
                   tags: workflow.tags,
                   steps,
                 });
