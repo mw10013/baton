@@ -903,10 +903,11 @@ export const TeamStepCounts = Schema.Struct({
 });
 export type TeamStepCounts = typeof TeamStepCounts.Type;
 
-/** A step of the workflow or of its draft that points at a team; the team page lists both sides. */
+/** A step of the workflow or of its draft that points at a team; the team page lists both sides. `scope` selects the detail route the link targets (`/app/workflows` vs `/app/order-workflow`). */
 export const OwnedStep = Schema.Struct({
   workflowId: WorkflowId,
   workflowName: WorkflowName,
+  scope: WorkflowScope,
   side: Schema.Literals(["workflow", "draft"]),
   stepName: StepName,
 });
@@ -1507,13 +1508,21 @@ export type OrdersIndexLoaderData = OrdersView;
 /** `/app/orders/$orderId` (`app.orders.$orderId`); `null` is not stored. */
 export type OrderLoaderData = OrderDetailView | null;
 
-/** `/app/workflows` (`app.workflows.index`). */
+/** `/app/workflows` (`app.workflows.index`). Item scope only; the order workflow lives on `/app/order-workflow`. */
 export interface WorkflowsIndexLoaderData {
   readonly workflows: readonly WorkflowSummary[];
 }
 
-/** `/app/workflows/$workflowId` (`app.workflows.$workflowId`); `null` is not found. */
+/** `/app/order-workflow` (`app.order-workflow.index`). Same shape as the workflows index; the page filters to order scope. */
+export interface OrderWorkflowIndexLoaderData {
+  readonly workflows: readonly WorkflowSummary[];
+}
+
+/** `/app/workflows/$workflowId` (`app.workflows.$workflowId`); `null` is not found. Item scope only; order scope lives under `/app/order-workflow/$workflowId`. */
 export type WorkflowLoaderData = WorkflowDetailView | null;
+
+/** `/app/order-workflow/$workflowId` (`app.order-workflow.$workflowId`); `null` is not found. */
+export type OrderWorkflowLoaderData = WorkflowDetailView | null;
 
 /**
  * `/app/members` (`app.members`). `soleMemberships` are the teams each member

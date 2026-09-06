@@ -1376,14 +1376,14 @@ export class WorkflowRepository extends Context.Service<
               "Invalid OwnedStep row",
             )(
               yield* sql`
-                select workflowId, workflowName, side, stepName from (
-                  select w.id as workflowId, w.name as workflowName,
+                select workflowId, workflowName, scope, side, stepName from (
+                  select w.id as workflowId, w.name as workflowName, w.scope as scope,
                     'workflow' as side, 0 as sideOrder, s.name as stepName, s.position
                   from WorkflowStep s
                   join Workflow w on w.id = s.workflowId
                   where s.teamId = ${teamId}
                   union all
-                  select w.id, w.name, 'draft', 1, s.name, s.position
+                  select w.id, w.name, w.scope, 'draft', 1, s.name, s.position
                   from WorkflowDraftStep s
                   join Workflow w on w.id = s.workflowId
                   where s.teamId = ${teamId}
