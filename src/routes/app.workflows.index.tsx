@@ -52,7 +52,32 @@ export const workflowResultMessage = Match.typeTags<
     `This shop has reached its limit of ${String(limit)} active workflows.`,
   OrderWorkflowExists: () =>
     "This shop already has an order workflow. Archive it first to create or restore another.",
+  Active: () => "Turn this workflow off before archiving it.",
 });
+
+/** Archived, else Active or Off: the switch means nothing on a hidden row. */
+const stateBadge = (workflow: Domain.WorkflowSummary) => {
+  if (workflow.archivedAt !== null)
+    return <s-badge tone="info">Archived</s-badge>;
+  if (workflow.active) return <s-badge tone="success">Active</s-badge>;
+  return <s-badge>Off</s-badge>;
+};
+
+/**
+ * One place for every status badge. Flow hides a pending draft from its
+ * list; Baton shows it, because a production floor needs to know the live
+ * definition is not the one being edited. "No steps" covers both a
+ * never-applied workflow and an applied empty one.
+ */
+const statusBadges = (workflow: Domain.WorkflowSummary) => (
+  <s-stack direction="inline" gap="small-300">
+    {stateBadge(workflow)}
+    {workflow.hasDraft && <s-badge tone="caution">Draft pending</s-badge>}
+    {workflow.archivedAt === null && workflow.stepCount === 0 && (
+      <s-badge tone="warning">No steps</s-badge>
+    )}
+  </s-stack>
+);
 
 export const ORDER_WORKFLOW_TRIGGER =
   "Starts when every item on an order that has a workflow is done. One order workflow per shop.";
@@ -150,6 +175,7 @@ function RouteComponent() {
   const workflows = allWorkflows.filter(
     (workflow) => workflow.scope === "item",
   );
+  /** The slot is taken by any non-archived order workflow, on or off. */
   const orderWorkflowActive = orderWorkflows.some(
     (workflow) => workflow.archivedAt === null,
   );
@@ -162,18 +188,9 @@ function RouteComponent() {
   const renderRow = (workflow: Domain.WorkflowSummary, withTags: boolean) => (
     <s-table-row key={workflow.id} id={workflow.id}>
       <s-table-cell>
-        <s-stack direction="inline" gap="small-300">
-          <s-link href={`/app/workflows/${workflow.id}`}>
-            {workflow.name}
-          </s-link>
-          {workflow.archivedAt !== null && (
-            <s-badge tone="info">Archived</s-badge>
-          )}
-          {workflow.archivedAt === null && workflow.stepCount === 0 && (
-            <s-badge tone="warning">No steps</s-badge>
-          )}
-        </s-stack>
+        <s-link href={`/app/workflows/${workflow.id}`}>{workflow.name}</s-link>
       </s-table-cell>
+      <s-table-cell>{statusBadges(workflow)}</s-table-cell>
       {withTags && (
         <s-table-cell>
           <s-stack direction="inline" gap="small-300">
@@ -189,7 +206,10 @@ function RouteComponent() {
       <s-table-cell>
         <s-button
           variant="tertiary"
-          disabled={archiveMutation.isPending}
+          disabled={archiveMutation.isPending || workflow.active}
+          {...(workflow.active
+            ? { accessibilityLabel: "Archive (turn off first)" }
+            : {})}
           onClick={() => {
             archiveMutation.mutate({
               workflowId: workflow.id,
@@ -199,6 +219,7 @@ function RouteComponent() {
         >
           {workflow.archivedAt === null ? "Archive" : "Restore"}
         </s-button>
+        {workflow.active && <s-text color="subdued">Turn off first</s-text>}
       </s-table-cell>
     </s-table-row>
   );
@@ -210,6 +231,7 @@ function RouteComponent() {
     <s-table>
       <s-table-header-row>
         <s-table-header listSlot="primary">Name</s-table-header>
+        <s-table-header>Status</s-table-header>
         {withTags && <s-table-header>Product tags</s-table-header>}
         <s-table-header>Steps</s-table-header>
         <s-table-header>Active runs</s-table-header>

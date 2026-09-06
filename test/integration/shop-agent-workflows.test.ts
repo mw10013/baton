@@ -12,7 +12,7 @@ import * as Domain from "@/lib/Domain";
 import { makeEnvLayer } from "@/lib/LayerEx";
 import { OrderRepository } from "@/lib/OrderRepository";
 import { Repository } from "@/lib/Repository";
-import { runShopAgentMigrations } from "@/lib/ShopAgent";
+import { runShopAgentMigrations, type ShopAgent } from "@/lib/ShopAgent";
 
 const layer = Repository.layerNoDeps.pipe(
   Layer.provide(
@@ -63,6 +63,18 @@ const isArchived = async (shop: string, teamId: string) => {
   return teams.find((t) => t.id === teamId)?.archivedAt !== null;
 };
 
+/** Apply the draft and turn the workflow on, the two steps a fresh workflow needs before it routes or attaches. */
+const goLive = async (
+  agent: Pick<ShopAgent, "applyDraft" | "setWorkflowActive">,
+  workflowId: string,
+) => {
+  const applied = await agent.applyDraft({ workflowId });
+  if (applied._tag !== "Ok") throw new Error(`apply: ${applied._tag}`);
+  const on = await agent.setWorkflowActive({ workflowId, active: true });
+  if (on._tag !== "Ok") throw new Error(`turn on: ${on._tag}`);
+  return on.workflow;
+};
+
 afterEach(async () => {
   await env.D1.exec("delete from TeamMember");
   await env.D1.exec("delete from Team");
@@ -84,7 +96,11 @@ describe("ShopAgent workflow callables", () => {
     });
     expect(created._tag).toBe("Ok");
     if (created._tag !== "Ok") return;
-    expect(created.workflow.tags).toEqual(["engraving"]);
+    const fresh = await agent.getWorkflowDetail({
+      workflowId: created.workflow.id,
+    });
+    expect(fresh?.draft?.version.tags).toEqual(["engraving"]);
+    expect(fresh?.live).toBe(null);
 
     const unknown = await agent.addStep({
       workflowId: created.workflow.id,
@@ -103,7 +119,7 @@ describe("ShopAgent workflow callables", () => {
     const detail = await agent.getWorkflowDetail({
       workflowId: created.workflow.id,
     });
-    expect(detail?.steps.map((s) => s.teamName)).toEqual(["Engraving"]);
+    expect(detail?.draft?.steps.map((s) => s.teamName)).toEqual(["Engraving"]);
     expect(detail?.activeTeams.map((t) => t.id)).toEqual([team.id]);
   });
 
@@ -178,7 +194,7 @@ describe("ShopAgent workflow callables", () => {
     const detail = await agent.getWorkflowDetail({
       workflowId: created.workflow.id,
     });
-    expect(detail?.steps[0]?.teamName).toBe(null);
+    expect(detail?.draft?.steps[0]?.teamName).toBe(null);
     expect(detail?.activeTeams).toEqual([]);
 
     const archived = await agent.setWorkflowArchived({
@@ -204,8 +220,11 @@ describe("ShopAgent workflow callables", () => {
 
     const dupe = await agent.createWorkflow({ name: "w", tags: [] });
     strictEqual(dupe._tag, "NameTaken");
+    // Never applied: the list counts saved steps, and there are none.
     const list = await agent.listWorkflows({ includeArchived: true });
-    expect(list.map((w) => [w.name, w.stepCount])).toEqual([["W", 1]]);
+    expect(list.map((w) => [w.name, w.stepCount, w.hasDraft])).toEqual([
+      ["W", 0, true],
+    ]);
   });
 
   it("addParallelStep and separateStep map missing stage / step / team and archived to results", async () => {
@@ -255,7 +274,7 @@ describe("ShopAgent workflow callables", () => {
     const separated = await agent.separateStep({ stepId: parallel.step.id });
     strictEqual(separated._tag, "Ok");
     const detail = await agent.getWorkflowDetail({ workflowId });
-    expect(detail?.steps.map((s) => [s.name, s.stage])).toEqual([
+    expect(detail?.draft?.steps.map((s) => [s.name, s.stage])).toEqual([
       ["A", 1],
       ["B", 2],
     ]);
@@ -272,6 +291,92 @@ describe("ShopAgent workflow callables", () => {
       stepId: parallel.step.id,
     });
     strictEqual(separateOnArchived._tag, "Archived");
+  });
+
+  it("applyDraft / discardDraft / setWorkflowActive / updateWorkflowTags map failures to results; runs date their version", async () => {
+    const shop = "wf-versions.myshopify.com";
+    const team = await seedTeam(shop, "T");
+    await seedOrder(shop, Date.now() - 24 * 60 * 60 * 1000);
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const created = await agent.createWorkflow({ name: "W", tags: ["a"] });
+    if (created._tag !== "Ok") throw new Error(created._tag);
+    const workflowId = created.workflow.id;
+
+    expect(await agent.applyDraft({ workflowId })).toEqual({ _tag: "NoSteps" });
+    expect(await agent.discardDraft({ workflowId })).toEqual({
+      _tag: "NoSavedVersion",
+    });
+    expect(await agent.setWorkflowActive({ workflowId, active: true })).toEqual(
+      { _tag: "NoSavedVersion" },
+    );
+    expect(await agent.applyDraft({ workflowId: "nope" })).toEqual({
+      _tag: "NotFound",
+    });
+
+    await agent.addStep({ workflowId, name: "S", teamId: team.id });
+    const tagged = await agent.updateWorkflowTags({
+      workflowId,
+      tags: ["B", "b"],
+    });
+    strictEqual(tagged._tag, "Ok");
+    const applied = await agent.applyDraft({ workflowId });
+    if (applied._tag !== "Ok") throw new Error(applied._tag);
+    strictEqual(applied.workflow.draftVersionId, null);
+    const live = await agent.getWorkflowDetail({ workflowId });
+    expect(live?.live?.version.tags).toEqual(["b"]);
+    expect(live?.draft).toBe(null);
+    expect(await agent.applyDraft({ workflowId })).toEqual({ _tag: "NoDraft" });
+    expect(await agent.discardDraft({ workflowId })).toEqual({
+      _tag: "NoDraft",
+    });
+
+    const on = await agent.setWorkflowActive({ workflowId, active: true });
+    strictEqual(on._tag, "Ok");
+    const attached = await agent.attachWorkflow({
+      lineItemId: "gid://shopify/LineItem/1",
+      workflowId,
+    });
+    if (attached._tag !== "Ok") throw new Error(attached._tag);
+    strictEqual(attached.run.versionId, applied.workflow.savedVersionId);
+    const [run] = await agent.listRunsForOrder({
+      orderId: "gid://shopify/Order/1",
+    });
+    strictEqual(run?.versionAppliedAt, live?.live?.version.appliedAt);
+
+    // Fork, then discard: back to one side.
+    await agent.updateWorkflowTags({ workflowId, tags: ["c"] });
+    const forked = await agent.getWorkflowDetail({ workflowId });
+    expect(forked?.draft?.version.tags).toEqual(["c"]);
+    expect(forked?.live?.version.tags).toEqual(["b"]);
+    const discarded = await agent.discardDraft({ workflowId });
+    strictEqual(discarded._tag, "Ok");
+    const afterDiscard = await agent.getWorkflowDetail({ workflowId });
+    expect(afterDiscard?.draft).toBe(null);
+
+    // Team archived under the live step: turn-on names the step.
+    await agent.setWorkflowActive({ workflowId, active: false });
+    await Effect.runPromise(
+      Repository.pipe(
+        Effect.flatMap((repo) =>
+          repo.setTeamArchived({
+            shop: shopOf(shop),
+            id: team.id,
+            archived: true,
+          }),
+        ),
+        Effect.provide(layer),
+      ),
+    );
+    expect(await agent.setWorkflowActive({ workflowId, active: true })).toEqual(
+      { _tag: "TeamNotActive", stepNames: ["S"] },
+    );
+    await agent.setWorkflowArchived({ workflowId, archived: true });
+    expect(await agent.setWorkflowActive({ workflowId, active: true })).toEqual(
+      { _tag: "Archived" },
+    );
+    expect(await agent.updateWorkflowTags({ workflowId, tags: [] })).toEqual({
+      _tag: "Archived",
+    });
   });
 
   it("callable inputs reject excess properties", () => {
@@ -367,6 +472,20 @@ describe("ShopAgent workflow run callables", () => {
     });
     strictEqual(noSteps._tag, "WorkflowNotRoutable");
     await agent.addStep({ workflowId, name: "Engrave", teamId: team.id });
+    // A draft is not attachable; neither is an applied but off workflow.
+    const draftOnly = await agent.attachWorkflow({
+      lineItemId: "gid://shopify/LineItem/1",
+      workflowId,
+    });
+    strictEqual(draftOnly._tag, "WorkflowNotRoutable");
+    const applied = await agent.applyDraft({ workflowId });
+    strictEqual(applied._tag, "Ok");
+    const off = await agent.attachWorkflow({
+      lineItemId: "gid://shopify/LineItem/1",
+      workflowId,
+    });
+    strictEqual(off._tag, "WorkflowNotRoutable");
+    await agent.setWorkflowActive({ workflowId, active: true });
 
     const unknownItem = await agent.attachWorkflow({
       lineItemId: "nope",
@@ -398,6 +517,10 @@ describe("ShopAgent workflow run callables", () => {
     const summaries = await agent.listWorkflows({ includeArchived: false });
     strictEqual(summaries[0]?.activeRunCount, 1);
 
+    expect(
+      await agent.setWorkflowArchived({ workflowId, archived: true }),
+    ).toEqual({ _tag: "Active" });
+    await agent.setWorkflowActive({ workflowId, active: false });
     await agent.setWorkflowArchived({ workflowId, archived: true });
     const archived = await agent.attachWorkflow({
       lineItemId: "gid://shopify/LineItem/1",
@@ -418,6 +541,7 @@ describe("ShopAgent workflow run callables", () => {
       name: "Engrave",
       teamId: team.id,
     });
+    await goLive(agent, created.workflow.id);
     const attached = await agent.attachWorkflow({
       lineItemId: "gid://shopify/LineItem/1",
       workflowId: created.workflow.id,
@@ -468,6 +592,7 @@ describe("ShopAgent workflow run callables", () => {
       name: "Engrave",
       teamId: engraving.id,
     });
+    await goLive(agent, item.workflow.id);
     const pack = await agent.createWorkflow({
       name: "Pack",
       scope: "order",
@@ -483,6 +608,7 @@ describe("ShopAgent workflow run callables", () => {
       name: "QC",
       teamId: packing.id,
     });
+    await goLive(agent, pack.workflow.id);
 
     const attached = await agent.attachWorkflow({
       lineItemId: "gid://shopify/LineItem/1",
@@ -567,6 +693,7 @@ describe("ShopAgent workflow run callables", () => {
       name: "Engrave",
       teamId: team.id,
     });
+    await goLive(agent, created.workflow.id);
     const attached = await agent.attachWorkflow({
       lineItemId: "gid://shopify/LineItem/1",
       workflowId: created.workflow.id,

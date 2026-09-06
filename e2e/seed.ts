@@ -77,8 +77,13 @@ export interface SeedWorkflow {
   readonly name: string;
   readonly scope?: "item" | "order";
   readonly archived?: boolean;
+  /** On/off switch; defaults to on when there are steps and the entry is not archived. */
+  readonly active?: boolean;
   readonly tags: readonly string[];
+  /** The applied (live) version; empty seeds a never-applied empty draft instead. */
   readonly steps: readonly SeedWorkflowStep[];
+  /** A pending draft beside the live version. */
+  readonly draft?: readonly SeedWorkflowStep[];
 }
 
 /**

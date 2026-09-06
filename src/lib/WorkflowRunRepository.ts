@@ -75,26 +75,33 @@ export interface RoutingContext {
 }
 
 /**
- * The definition-side half of the routing predicate: archived, empty, or
- * pointing a step at a team that is no longer active all mean "routes
- * nothing". Shared by tag routing and manual attach — the latter skips the
- * line-item half (tags, quantity, fulfilment, age) but never this half.
+ * The definition-side half of the routing predicate: archived, switched off,
+ * a draft rather than the saved version, empty, or pointing a step at a team
+ * that is no longer active all mean "routes nothing". Shared by tag routing
+ * and manual attach — the latter skips the line-item half (tags, quantity,
+ * fulfilment, age) but never this half.
  */
 export const isRoutable = (
-  { workflow, steps }: Domain.WorkflowDetail,
+  { workflow, version, steps }: Domain.WorkflowDetail,
   activeTeams: RoutingContext["activeTeams"],
 ) =>
   workflow.archivedAt === null &&
+  workflow.active &&
+  version.id === workflow.savedVersionId &&
+  version.appliedAt !== null &&
   steps.length > 0 &&
   steps.every((step) => activeTeams.some((team) => team.id === step.teamId));
 
 /**
- * The line-item half. `processedAt >= createdAt` is the age rule: a bulk
- * stream of thirty days of history must not start work on orders placed
- * before the workflow existed, whichever path delivers them.
+ * The line-item half. `processedAt >= workflow.createdAt` is the age rule: a
+ * bulk stream of thirty days of history must not start work on orders placed
+ * before the workflow existed, whichever path delivers them. It is the
+ * workflow's creation, not the version's `appliedAt`: a re-apply must not
+ * stop routing orders that arrived while the draft was being written. Tags
+ * are the saved version's.
  */
 export const matchesLineItem = (
-  { workflow }: Domain.WorkflowDetail,
+  { workflow, version }: Domain.WorkflowDetail,
   order: Domain.ShopOrder,
   lineItem: Domain.OrderLineItem,
 ) =>
@@ -102,7 +109,7 @@ export const matchesLineItem = (
   order.processedAt >= workflow.createdAt &&
   lineItem.productTags.some((tag) => {
     const folded = tag.trim().toLowerCase();
-    return workflow.tags.some((candidate) => candidate === folded);
+    return version.tags.some((candidate) => candidate === folded);
   });
 
 const json = (value: unknown) => JSON.stringify(value);
@@ -350,11 +357,6 @@ export class WorkflowRunRepository extends Context.Service<
           ),
         );
 
-      const stepsOf = (runId: string) =>
-        sql`select * from WorkflowRunStep where runId = ${runId} order by position`.pipe(
-          Effect.flatMap(decodeSteps),
-        );
-
       /**
        * A step is ready when it is open and nothing in an earlier stage of
        * the same run is still open. One definition, interpolated as a literal
@@ -426,15 +428,37 @@ export class WorkflowRunRepository extends Context.Service<
               order by runId, position
             `.pipe(Effect.flatMap(decodeSteps));
 
+      /** `versionAppliedAt` is one extra read over the runs' versions; a version row is never deleted once applied, so null means only a bad fixture. */
       const withSteps = (runs: readonly Domain.WorkflowRun[]) =>
-        stepsForRuns(runs.map((run) => run.id)).pipe(
-          Effect.map((steps) =>
-            runs.map((run): Domain.WorkflowRunDetail => ({
-              run,
-              steps: steps.filter((step) => step.runId === run.id),
-            })),
-          ),
-        );
+        Effect.gen(function* () {
+          const steps = yield* stepsForRuns(runs.map((run) => run.id));
+          const versions =
+            runs.length === 0
+              ? []
+              : yield* sql`
+                  select id, appliedAt from WorkflowVersion
+                  where id in (select value from json_each(${json([...new Set(runs.map((run) => run.versionId))])}))
+                `.pipe(
+                  Effect.flatMap(
+                    decode(
+                      Schema.Array(
+                        Schema.Struct({
+                          id: Schema.String,
+                          appliedAt: Schema.NullOr(Schema.Number),
+                        }),
+                      ),
+                      "Invalid WorkflowVersion row",
+                    ),
+                  ),
+                );
+          return runs.map((run): Domain.WorkflowRunDetail => ({
+            run,
+            steps: steps.filter((step) => step.runId === run.id),
+            versionAppliedAt:
+              versions.find((version) => version.id === run.versionId)
+                ?.appliedAt ?? null,
+          }));
+        });
 
       const RUN_STATUS_RANK: Record<Domain.RunStatus, number> = {
         pending: 0,
@@ -585,7 +609,7 @@ export class WorkflowRunRepository extends Context.Service<
        */
       const insertRun = Effect.fn("WorkflowRunRepository.insertRun")(
         function* ({
-          workflow: { workflow, steps },
+          workflow: { workflow, version, steps },
           activeTeams,
           order,
           lineItem,
@@ -602,12 +626,12 @@ export class WorkflowRunRepository extends Context.Service<
           const [run] = yield* decodeRuns(
             yield* sql`
               insert into WorkflowRun (
-                id, workflowId, workflowName, orderId, orderName, lineItemId,
+                id, workflowId, workflowName, versionId, orderId, orderName, lineItemId,
                 lineItemTitle, variantTitle, sku, quantity, customAttributes,
                 source, status, flag, flagAt, flagDetail, createdAt, updatedAt,
                 cancelledAt
               ) values (
-                ${runId}, ${workflow.id}, ${workflow.name}, ${order.id},
+                ${runId}, ${workflow.id}, ${workflow.name}, ${version.id}, ${order.id},
                 ${order.name}, ${lineItem?.id ?? null}, ${lineItem?.title ?? null},
                 ${lineItem?.variantTitle ?? null}, ${lineItem?.sku ?? null},
                 ${lineItem === null ? null : Domain.unitsToMake(lineItem)},
@@ -1010,10 +1034,8 @@ export class WorkflowRunRepository extends Context.Service<
         }) {
           const run = yield* findRun(runId);
           if (Option.isNone(run)) return Option.none();
-          return Option.some({
-            run: run.value,
-            steps: yield* stepsOf(runId),
-          } satisfies Domain.WorkflowRunDetail);
+          const [detail] = yield* withSteps([run.value]);
+          return Option.fromUndefinedOr(detail);
         }),
 
         cancelRun: Effect.fn("WorkflowRunRepository.cancelRun")(function* ({

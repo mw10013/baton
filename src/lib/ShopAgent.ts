@@ -47,9 +47,15 @@ import { runShopAgentOrdersStream } from "@/lib/ShopAgentOrdersStream";
 import { Shopify } from "@/lib/Shopify";
 import { ShopifyAdmin } from "@/lib/ShopifyAdmin";
 import {
+  type NoDraftError,
+  type NoSavedVersionError,
+  type NoStepsError,
   type OrderWorkflowExistsError,
   type StageNotFoundError,
   type StepNotFoundError,
+  type TeamNotActiveError,
+  type WorkflowActiveError,
+  type WorkflowArchivedError,
   type WorkflowLimitError,
   type WorkflowNameTakenError,
   type WorkflowNotFoundError,
@@ -127,23 +133,40 @@ const callableEffect =
  * on; `id desc` is in it so the tiebreak is index-ordered too, since a shop
  * can place several orders in the same millisecond.
  *
- * `Workflow` / `WorkflowStep` are the production-workflow *definitions* a
- * merchant configures (name, product tags, ordered steps). `WorkflowStep.teamId`
- * is a D1 `Team.id` with no foreign key because none is possible: `Team` lives
- * in D1 and this table in the object's private SQLite, and SQLite foreign keys
- * do not cross databases. Integrity is application-level — `addStep` /
- * `updateStep` verify the team is active before writing, and `archiveTeam`
- * refuses while any step still points at it (`countStepsOwnedBy`, served by
- * `WorkflowStep_teamId_idx`). `unique (workflowId, position)` is what forces
+ * `Workflow` / `WorkflowVersion` / `WorkflowStep` are the production-workflow
+ * *definitions* a merchant configures. `Workflow` is identity (name, scope,
+ * the `active` switch, archive) plus two pointers; `WorkflowVersion` is
+ * content (product tags, and steps via `WorkflowStep.versionId`). Routing
+ * reads the version at `savedVersionId`; the editor writes the one at
+ * `draftVersionId`. The first edit to a saved version forks a draft, Apply
+ * promotes it (retire the old, stamp `appliedAt`, swap the pointers, one
+ * transaction), Discard deletes it (steps cascade). A workflow has at most
+ * one draft (`appliedAt` null) and at most one live version (`appliedAt` set,
+ * `retiredAt` null); every other version is retired and kept forever so a
+ * run's `versionId` stays resolvable. The two `check`s on `Workflow` catch
+ * the impossible states: a workflow with neither pointer, and one switched on
+ * with nothing to route. The pointers are not foreign keys because each row
+ * would need the other to exist first; the repository keeps them consistent
+ * inside transactions. `active` is stored, never derived, and no version
+ * event touches it.
+ *
+ * `WorkflowStep.teamId` is a D1 `Team.id` with no foreign key because none is
+ * possible: `Team` lives in D1 and this table in the object's private SQLite,
+ * and SQLite foreign keys do not cross databases. Integrity is
+ * application-level — `addStep` / `updateStep` verify the team is active
+ * before writing, and `archiveTeam` refuses while any step of a live or draft
+ * version still points at it (`countStepsOwnedBy`, served by
+ * `WorkflowStep_teamId_idx`). `unique (versionId, position)` is what forces
  * `moveStep` to go through a scratch position inside one transaction — and,
- * now that every layout edit rewrites the whole workflow, why
+ * now that every layout edit rewrites the whole version, why
  * `WorkflowRepository.writeLayout` first parks every step at `-position`
- * before assigning final positions and stages. `stage` groups steps that are
- * ready together: along `position` stages are dense `1..m` and
- * non-decreasing, an invariant kept by the pure `WorkflowLayout` module
- * rather than by SQL. `instructions` is merchant text copied onto each run.
- * Epoch-ms integers like `ShopOrder`, not D1 `Team`'s ISO text: the two stores
- * already differ, and one store should not mix.
+ * before assigning final positions and stages; it also makes the saved-step →
+ * draft-step mapping by position exact when the editor sends a saved step id.
+ * `stage` groups steps that are ready together: along `position` stages are
+ * dense `1..m` and non-decreasing, an invariant kept by the pure
+ * `WorkflowLayout` module rather than by SQL. `instructions` is merchant text
+ * copied onto each run. Epoch-ms integers like `ShopOrder`, not D1 `Team`'s
+ * ISO text: the two stores already differ, and one store should not mix.
  *
  * `WorkflowRun` / `WorkflowRunStep` are the *instances*: one workflow applied
  * to one line item **or to one order**, with the definition's steps copied
@@ -151,9 +174,10 @@ const callableEffect =
  * three line-item snapshot columns null together (the `check`), and starts
  * once every item run on the order is finished with at least one done. Every
  * display field is a snapshot and there is no foreign key to `ShopOrder`,
- * `OrderLineItem`, or `Workflow` — a run must survive an order delete, a
- * line item dropped by an edit, and a definition rename, because it is the
- * record of work someone may already have started. `unique (lineItemId,
+ * `OrderLineItem`, `Workflow`, or `WorkflowVersion` — a run must survive an
+ * order delete, a line item dropped by an edit, and a definition rename,
+ * because it is the record of work someone may already have started.
+ * `versionId` records which version the steps were copied from. `unique (lineItemId,
  * workflowId)` spans every status so a cancelled run keeps its key: neither
  * the sync nor manual attach can create a second one, and recovery from a
  * mistaken cancel is un-cancel. SQLite treats nulls as distinct in that
@@ -233,29 +257,45 @@ const initializeSchema = Effect.gen(function* () {
       id text primary key,
       name text not null check (name = trim(name) and length(name) > 0),
       scope text not null default 'item' check (scope in ('item', 'order')),
-      tags text not null,
+      active integer not null default 0 check (active in (0, 1)),
+      savedVersionId text,
+      draftVersionId text,
       createdAt integer not null,
       updatedAt integer not null,
-      archivedAt integer
+      archivedAt integer,
+      check (savedVersionId is not null or draftVersionId is not null),
+      check (active = 0 or savedVersionId is not null)
     );
     create unique index if not exists Workflow_name_uidx
       on Workflow (name collate nocase);
-    create table if not exists WorkflowStep (
+    create table if not exists WorkflowVersion (
       id text primary key,
       workflowId text not null references Workflow (id) on delete cascade,
+      tags text not null,
+      createdAt integer not null,
+      appliedAt integer,
+      retiredAt integer,
+      check (retiredAt is null or appliedAt is not null)
+    );
+    create index if not exists WorkflowVersion_workflowId_idx
+      on WorkflowVersion (workflowId);
+    create table if not exists WorkflowStep (
+      id text primary key,
+      versionId text not null references WorkflowVersion (id) on delete cascade,
       position integer not null,
       stage integer not null,
       name text not null check (name = trim(name) and length(name) > 0),
       teamId text not null,
       instructions text,
       createdAt integer not null,
-      unique (workflowId, position)
+      unique (versionId, position)
     );
     create index if not exists WorkflowStep_teamId_idx on WorkflowStep (teamId);
     create table if not exists WorkflowRun (
       id text primary key,
       workflowId text not null,
       workflowName text not null,
+      versionId text not null,
       orderId text not null,
       orderName text not null,
       lineItemId text,
@@ -401,6 +441,7 @@ const workflowResult = <R>(
     | WorkflowNotFoundError
     | WorkflowLimitError
     | OrderWorkflowExistsError
+    | WorkflowActiveError
     | SqlError.SqlError
     | WorkflowRepositoryError,
     R
@@ -421,6 +462,117 @@ const workflowResult = <R>(
         Effect.succeed<Domain.WorkflowResult>({ _tag: "Limit", limit }),
       OrderWorkflowExistsError: () =>
         Effect.succeed<Domain.WorkflowResult>({ _tag: "OrderWorkflowExists" }),
+      WorkflowActiveError: () =>
+        Effect.succeed<Domain.WorkflowResult>({ _tag: "Active" }),
+    }),
+  );
+
+const applyResult = <R>(
+  effect: Effect.Effect<
+    Domain.Workflow,
+    | WorkflowNotFoundError
+    | NoDraftError
+    | NoStepsError
+    | TeamNotActiveError
+    | SqlError.SqlError
+    | WorkflowRepositoryError
+    | RepositoryError
+    | Schema.SchemaError,
+    R
+  >,
+): Effect.Effect<
+  Domain.ApplyResult,
+  | SqlError.SqlError
+  | WorkflowRepositoryError
+  | RepositoryError
+  | Schema.SchemaError,
+  R
+> =>
+  effect.pipe(
+    Effect.map((workflow): Domain.ApplyResult => ({ _tag: "Ok", workflow })),
+    Effect.catchTags({
+      WorkflowNotFoundError: () =>
+        Effect.succeed<Domain.ApplyResult>({ _tag: "NotFound" }),
+      NoDraftError: () =>
+        Effect.succeed<Domain.ApplyResult>({ _tag: "NoDraft" }),
+      NoStepsError: () =>
+        Effect.succeed<Domain.ApplyResult>({ _tag: "NoSteps" }),
+      TeamNotActiveError: ({ stepNames }) =>
+        Effect.succeed<Domain.ApplyResult>({
+          _tag: "TeamNotActive",
+          stepNames,
+        }),
+    }),
+  );
+
+const discardResult = <R>(
+  effect: Effect.Effect<
+    Domain.Workflow,
+    | WorkflowNotFoundError
+    | NoDraftError
+    | NoSavedVersionError
+    | SqlError.SqlError
+    | WorkflowRepositoryError,
+    R
+  >,
+): Effect.Effect<
+  Domain.DiscardResult,
+  SqlError.SqlError | WorkflowRepositoryError,
+  R
+> =>
+  effect.pipe(
+    Effect.map((workflow): Domain.DiscardResult => ({ _tag: "Ok", workflow })),
+    Effect.catchTags({
+      WorkflowNotFoundError: () =>
+        Effect.succeed<Domain.DiscardResult>({ _tag: "NotFound" }),
+      NoDraftError: () =>
+        Effect.succeed<Domain.DiscardResult>({ _tag: "NoDraft" }),
+      NoSavedVersionError: () =>
+        Effect.succeed<Domain.DiscardResult>({ _tag: "NoSavedVersion" }),
+    }),
+  );
+
+const activateResult = <R>(
+  effect: Effect.Effect<
+    Domain.Workflow,
+    | WorkflowNotFoundError
+    | WorkflowArchivedError
+    | NoSavedVersionError
+    | NoStepsError
+    | TeamNotActiveError
+    | OrderWorkflowExistsError
+    | SqlError.SqlError
+    | WorkflowRepositoryError
+    | RepositoryError
+    | Schema.SchemaError,
+    R
+  >,
+): Effect.Effect<
+  Domain.ActivateResult,
+  | SqlError.SqlError
+  | WorkflowRepositoryError
+  | RepositoryError
+  | Schema.SchemaError,
+  R
+> =>
+  effect.pipe(
+    Effect.map((workflow): Domain.ActivateResult => ({ _tag: "Ok", workflow })),
+    Effect.catchTags({
+      WorkflowNotFoundError: () =>
+        Effect.succeed<Domain.ActivateResult>({ _tag: "NotFound" }),
+      WorkflowArchivedError: () =>
+        Effect.succeed<Domain.ActivateResult>({ _tag: "Archived" }),
+      NoSavedVersionError: () =>
+        Effect.succeed<Domain.ActivateResult>({ _tag: "NoSavedVersion" }),
+      NoStepsError: () =>
+        Effect.succeed<Domain.ActivateResult>({ _tag: "NoSteps" }),
+      TeamNotActiveError: ({ stepNames }) =>
+        Effect.succeed<Domain.ActivateResult>({
+          _tag: "TeamNotActive",
+          stepNames,
+        }),
+      OrderWorkflowExistsError: () =>
+        Effect.succeed<Domain.ActivateResult>({ _tag: "OrderWorkflowExists" }),
     }),
   );
 
@@ -678,8 +830,10 @@ export class ShopAgent extends Agent {
    * sync, which touches a window of orders, and the run mutations, whose
    * repository reports a `RunResult` without the order. An index subscription
    * (`orderId: null`) is published to either way; a detail subscription only
-   * for its own order. Workflow configuration never publishes: it is loader
-   * data.
+   * for its own order. Workflow configuration is loader data and does not
+   * publish, with one exception: Apply and the on/off switch change what
+   * routes, which the order page's `orderWorkflow` / `routableWorkflows`
+   * show, so those two publish `"all"`.
    */
   private publish(touched: PublishScope) {
     return this.connections().pipe(
@@ -1276,12 +1430,22 @@ export class ShopAgent extends Agent {
               .filter((team) => team.archivedAt === null)
               .map((team) => [team.id, team.name]),
           );
+          const side = (
+            versionSteps: Domain.WorkflowVersionSteps | null,
+          ): Domain.WorkflowVersionView | null =>
+            versionSteps === null
+              ? null
+              : {
+                  version: versionSteps.version,
+                  steps: versionSteps.steps.map((step) => ({
+                    ...step,
+                    teamName: nameOf.get(step.teamId) ?? null,
+                  })),
+                };
           return {
             workflow: detail.value.workflow,
-            steps: detail.value.steps.map((step) => ({
-              ...step,
-              teamName: nameOf.get(step.teamId) ?? null,
-            })),
+            live: side(detail.value.live),
+            draft: side(detail.value.draft),
             activeTeams: [...nameOf].map(([id, name]) => ({ id, name })),
           } satisfies Domain.WorkflowDetailView;
         }),
@@ -1315,14 +1479,135 @@ export class ShopAgent extends Agent {
     return this.runEffect(
       callableEffect("ShopAgent.updateWorkflow", Domain.UpdateWorkflowInput, {
         onExcessProperty: "error",
-      })(({ workflowId, name, tags }) =>
+      })(({ workflowId, name }) =>
         workflowResult(
           WorkflowRepository.pipe(
             Effect.flatMap((repository) =>
-              repository.updateWorkflow({ workflowId, name, tags }),
+              repository.updateWorkflow({ workflowId, name }),
             ),
           ),
         ),
+      )(input),
+    );
+  }
+
+  /** Tags are version content: the write lands on the draft (forked if needed) and is not live until Apply. */
+  @callable()
+  updateWorkflowTags(
+    input: typeof Domain.UpdateWorkflowTagsInput.Encoded,
+  ): Promise<Domain.StepResult> {
+    const workflowWritable = (workflowId: string) =>
+      this.workflowWritable(workflowId);
+    return this.runEffect(
+      callableEffect(
+        "ShopAgent.updateWorkflowTags",
+        Domain.UpdateWorkflowTagsInput,
+        { onExcessProperty: "error" },
+      )(({ workflowId, tags }) =>
+        stepResult(
+          Effect.gen(function* () {
+            const blocked = yield* workflowWritable(workflowId);
+            if (blocked !== null) return blocked;
+            yield* (yield* WorkflowRepository).updateWorkflowTags({
+              workflowId,
+              tags,
+            });
+            return { _tag: "Ok", step: null };
+          }),
+        ),
+      )(input),
+    );
+  }
+
+  /**
+   * Promotes the draft. Publishes because the next order routes against the
+   * new version, which the order page's workflow pickers reflect.
+   */
+  @callable()
+  applyDraft(
+    input: typeof Domain.ApplyDraftInput.Encoded,
+  ): Promise<Domain.ApplyResult> {
+    const shop = this.name;
+    const publish = () => this.publish("all");
+    const activeTeams = () => this.activeTeams();
+    return this.runEffect(
+      callableEffect("ShopAgent.applyDraft", Domain.ApplyDraftInput, {
+        onExcessProperty: "error",
+      })(({ workflowId }) =>
+        applyResult(
+          Effect.gen(function* () {
+            const workflow = yield* (yield* WorkflowRepository).applyDraft({
+              workflowId,
+              activeTeams: yield* activeTeams(),
+            });
+            yield* Effect.logInfo(
+              `ShopAgent.applyDraft: shop=${shop} workflowId=${workflowId} versionId=${workflow.savedVersionId ?? ""}`,
+            ).pipe(
+              Effect.annotateLogs({
+                shop,
+                workflowId,
+                versionId: workflow.savedVersionId,
+              }),
+            );
+            return workflow;
+          }),
+        ).pipe(Effect.tap(publish)),
+      )(input),
+    );
+  }
+
+  @callable()
+  discardDraft(
+    input: typeof Domain.DiscardDraftInput.Encoded,
+  ): Promise<Domain.DiscardResult> {
+    const shop = this.name;
+    return this.runEffect(
+      callableEffect("ShopAgent.discardDraft", Domain.DiscardDraftInput, {
+        onExcessProperty: "error",
+      })(({ workflowId }) =>
+        discardResult(
+          Effect.gen(function* () {
+            const workflow = yield* (yield* WorkflowRepository).discardDraft({
+              workflowId,
+            });
+            yield* Effect.logInfo(
+              `ShopAgent.discardDraft: shop=${shop} workflowId=${workflowId}`,
+            ).pipe(Effect.annotateLogs({ shop, workflowId }));
+            return workflow;
+          }),
+        ),
+      )(input),
+    );
+  }
+
+  /** The on/off switch. Publishes for the reason on {@link applyDraft}. */
+  @callable()
+  setWorkflowActive(
+    input: typeof Domain.SetWorkflowActiveInput.Encoded,
+  ): Promise<Domain.ActivateResult> {
+    const shop = this.name;
+    const publish = () => this.publish("all");
+    const activeTeams = () => this.activeTeams();
+    return this.runEffect(
+      callableEffect(
+        "ShopAgent.setWorkflowActive",
+        Domain.SetWorkflowActiveInput,
+        { onExcessProperty: "error" },
+      )(({ workflowId, active }) =>
+        activateResult(
+          Effect.gen(function* () {
+            const workflow =
+              yield* (yield* WorkflowRepository).setWorkflowActive({
+                workflowId,
+                active,
+                activeTeams: yield* activeTeams(),
+              });
+            yield* Effect.logInfo(
+              `ShopAgent.setWorkflowActive: shop=${shop} workflowId=${workflowId} active=${String(active)}`,
+            ).pipe(Effect.annotateLogs({ shop, workflowId, active }));
+            return workflow;
+          }),
+        ).pipe(Effect.tap(publish)),
       )(input),
     );
   }
@@ -1529,22 +1814,32 @@ export class ShopAgent extends Agent {
           );
           if (Option.isNone(target))
             return { _tag: "LineItemNotFound" } satisfies Domain.AttachResult;
-          const workflow = yield* (yield* WorkflowRepository).getWorkflow({
+          const found = yield* (yield* WorkflowRepository).getWorkflow({
             workflowId,
           });
           const teams = yield* activeTeams();
-          // An order workflow starts by rule, never by attaching it to one
-          // line item (deferred; see the `WorkflowScope` doc).
+          // The saved version is the only one that can route; a draft or a
+          // never-applied workflow is not attachable. An order workflow
+          // starts by rule, never by attaching it to one line item (deferred;
+          // see the `WorkflowScope` doc).
+          const detail: Domain.WorkflowDetail | null =
+            Option.isSome(found) && found.value.live !== null
+              ? {
+                  workflow: found.value.workflow,
+                  version: found.value.live.version,
+                  steps: found.value.live.steps,
+                }
+              : null;
           if (
-            Option.isNone(workflow) ||
-            workflow.value.workflow.scope !== "item" ||
-            !isRoutable(workflow.value, teams)
+            detail === null ||
+            detail.workflow.scope !== "item" ||
+            !isRoutable(detail, teams)
           )
             return {
               _tag: "WorkflowNotRoutable",
             } satisfies Domain.AttachResult;
           const run = yield* (yield* WorkflowRunRepository).createRun({
-            workflow: workflow.value,
+            workflow: detail,
             activeTeams: teams,
             order: target.value.order,
             lineItem: target.value.lineItem,
@@ -1822,6 +2117,7 @@ export class ShopAgent extends Agent {
     });
   }
 
+  /** Only archive blocks a write: every other state forks a draft instead. */
   private workflowWritable(workflowId: string) {
     return WorkflowRepository.pipe(
       Effect.flatMap((repository) => repository.getWorkflow({ workflowId })),
@@ -1917,7 +2213,7 @@ export class ShopAgent extends Agent {
             const repository = yield* WorkflowRepository;
             const existing = yield* repository.getStep({ stepId });
             if (Option.isNone(existing)) return { _tag: "NotFound" };
-            const blocked = yield* workflowWritable(existing.value.workflowId);
+            const blocked = yield* workflowWritable(existing.value.workflow.id);
             if (blocked !== null) return blocked;
             const team = yield* activeTeam(teamId);
             if (team === null) return { _tag: "TeamNotActive" };
@@ -1949,7 +2245,7 @@ export class ShopAgent extends Agent {
             const repository = yield* WorkflowRepository;
             const existing = yield* repository.getStep({ stepId });
             if (Option.isNone(existing)) return { _tag: "NotFound" };
-            const blocked = yield* workflowWritable(existing.value.workflowId);
+            const blocked = yield* workflowWritable(existing.value.workflow.id);
             if (blocked !== null) return blocked;
             yield* repository.moveStep({ stepId, direction });
             return { _tag: "Ok", step: null };
@@ -1975,16 +2271,16 @@ export class ShopAgent extends Agent {
             const repository = yield* WorkflowRepository;
             const existing = yield* repository.getStep({ stepId });
             if (Option.isNone(existing)) return { _tag: "NotFound" };
-            const blocked = yield* workflowWritable(existing.value.workflowId);
+            const blocked = yield* workflowWritable(existing.value.workflow.id);
             if (blocked !== null) return blocked;
             yield* repository.separateStep({ stepId });
             yield* Effect.logInfo(
-              `ShopAgent.separateStep: shop=${shop} workflowId=${existing.value.workflowId} stage=${String(existing.value.stage)}`,
+              `ShopAgent.separateStep: shop=${shop} workflowId=${existing.value.workflow.id} stage=${String(existing.value.step.stage)}`,
             ).pipe(
               Effect.annotateLogs({
                 shop,
-                workflowId: existing.value.workflowId,
-                stage: existing.value.stage,
+                workflowId: existing.value.workflow.id,
+                stage: existing.value.step.stage,
               }),
             );
             return { _tag: "Ok", step: null };
@@ -2009,7 +2305,7 @@ export class ShopAgent extends Agent {
             const repository = yield* WorkflowRepository;
             const existing = yield* repository.getStep({ stepId });
             if (Option.isNone(existing)) return { _tag: "NotFound" };
-            const blocked = yield* workflowWritable(existing.value.workflowId);
+            const blocked = yield* workflowWritable(existing.value.workflow.id);
             if (blocked !== null) return blocked;
             yield* repository.removeStep({ stepId });
             return { _tag: "Ok", step: null };

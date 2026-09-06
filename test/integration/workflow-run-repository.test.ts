@@ -110,10 +110,61 @@ const lineItem = (
   ...overrides,
 });
 
+/** Apply the draft and switch the workflow on: what the ordinary path needs before anything routes. Returns the live workflow row. */
+const goLive = (workflowId: string) =>
+  Effect.gen(function* () {
+    const workflows = yield* WorkflowRepository;
+    yield* workflows.applyDraft({ workflowId, activeTeams: ACTIVE_TEAMS });
+    return yield* workflows.setWorkflowActive({
+      workflowId,
+      active: true,
+      activeTeams: ACTIVE_TEAMS,
+    });
+  });
+
+/** Turn off, then archive: archive refuses an active workflow. */
+const archive = (workflowId: string) =>
+  Effect.gen(function* () {
+    const workflows = yield* WorkflowRepository;
+    yield* workflows.setWorkflowActive({
+      workflowId,
+      active: false,
+      activeTeams: ACTIVE_TEAMS,
+    });
+    yield* workflows.setWorkflowArchived({ workflowId, archived: true });
+  });
+
+/** Restore, then turn on: restore leaves a workflow off. */
+const restore = (workflowId: string) =>
+  Effect.gen(function* () {
+    const workflows = yield* WorkflowRepository;
+    yield* workflows.setWorkflowArchived({ workflowId, archived: false });
+    yield* workflows.setWorkflowActive({
+      workflowId,
+      active: true,
+      activeTeams: ACTIVE_TEAMS,
+    });
+  });
+
+/** The saved version as the routing shape, for manual attach. */
+const savedDetail = (workflowId: string) =>
+  Effect.gen(function* () {
+    const workflows = yield* WorkflowRepository;
+    const { workflow, live } = Option.getOrThrow(
+      yield* workflows.getWorkflow({ workflowId }),
+    );
+    if (live === null) throw new Error("not applied");
+    return {
+      workflow,
+      version: live.version,
+      steps: live.steps,
+    } satisfies Domain.WorkflowDetail;
+  });
+
 /**
- * Two workflows, tags `a` and `b`, two steps each (Team A then Team B), and
- * an order with one line item per tag. `updatedAt` advances on every upsert
- * so the guard never refuses a rewrite.
+ * Two workflows, tags `a` and `b`, two steps each (Team A then Team B),
+ * applied and on, and an order with one line item per tag. `updatedAt`
+ * advances on every upsert so the guard never refuses a rewrite.
  */
 const seed = Effect.gen(function* () {
   const workflows = yield* WorkflowRepository;
@@ -133,7 +184,7 @@ const seed = Effect.gen(function* () {
         name: stepName("Finish"),
         teamId: TEAM_B.id,
       });
-      return created;
+      return yield* goLive(created.id);
     });
   const a = yield* createWorkflow("a");
   const b = yield* createWorkflow("b");
@@ -264,7 +315,10 @@ const seedOrderWorkflow = Effect.gen(function* () {
     name: stepName("Pack"),
     teamId: TEAM_C.id,
   });
-  return { necklace, pack };
+  return {
+    necklace: yield* goLive(necklace.id),
+    pack: yield* goLive(pack.id),
+  };
 });
 
 const ORDER_ITEMS = [
@@ -456,18 +510,11 @@ describe("WorkflowRunRepository order runs", () => {
     runInRepository(
       Effect.gen(function* () {
         const { pack } = yield* seedOrderWorkflow;
-        const workflows = yield* WorkflowRepository;
         yield* upsertAndReconcile(order(), ORDER_ITEMS);
-        yield* workflows.setWorkflowArchived({
-          workflowId: pack.id,
-          archived: true,
-        });
+        yield* archive(pack.id);
         yield* finishItemRuns();
         strictEqual((yield* orderRuns()).length, 0);
-        yield* workflows.setWorkflowArchived({
-          workflowId: pack.id,
-          archived: false,
-        });
+        yield* restore(pack.id);
         // Team C inactive: not routable.
         yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 1 }),
@@ -957,14 +1004,11 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
       Effect.gen(function* () {
         const { a } = yield* seed;
         const runs = yield* WorkflowRunRepository;
-        const workflows = yield* WorkflowRepository;
         const old = order({ processedAt: a.createdAt - 1 });
         const items = [lineItem(1, ["a"])];
         const counts = yield* upsertAndReconcile(old, items);
         strictEqual(counts.created, 0);
-        const detail = Option.getOrThrow(
-          yield* workflows.getWorkflow({ workflowId: a.id }),
-        );
+        const detail = yield* savedDetail(a.id);
         const attached = yield* runs.createRun({
           workflow: detail,
           activeTeams: ACTIVE_TEAMS,
@@ -1527,18 +1571,21 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
       }),
     ));
 
-  it("routes nothing for an archived workflow, zero steps, or an inactive team", () =>
+  it("routes nothing for an archived or off workflow, a never-applied one, or an inactive team", () =>
     runInRepository(
       Effect.gen(function* () {
         const { a, b } = yield* seed;
         const workflows = yield* WorkflowRepository;
-        yield* workflows.setWorkflowArchived({
-          workflowId: a.id,
-          archived: true,
-        });
+        yield* archive(a.id);
+        // Draft only: has steps, never applied.
         const c = yield* workflows.createWorkflow({
-          name: name("Empty"),
+          name: name("Drafted"),
           tags: tags(["c"]),
+        });
+        yield* workflows.addStep({
+          workflowId: c.id,
+          name: stepName("Cut"),
+          teamId: TEAM_A.id,
         });
         const items = [
           lineItem(1, ["a"]),
@@ -1549,12 +1596,25 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           TEAM_A,
         ]);
         strictEqual(inactiveTeam.created, 0);
-        yield* workflows.setWorkflowArchived({
-          workflowId: a.id,
-          archived: false,
+        // b switched off: nothing routes even with every team active.
+        yield* workflows.setWorkflowActive({
+          workflowId: b.id,
+          active: false,
+          activeTeams: ACTIVE_TEAMS,
         });
-        const restored = yield* upsertAndReconcile(
+        const off = yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 1 }),
+          items,
+        );
+        strictEqual(off.created, 0);
+        yield* workflows.setWorkflowActive({
+          workflowId: b.id,
+          active: true,
+          activeTeams: ACTIVE_TEAMS,
+        });
+        yield* restore(a.id);
+        const restored = yield* upsertAndReconcile(
+          order({ updatedAt: PROCESSED_AT + 2 }),
           items,
         );
         strictEqual(restored.created, 2);
@@ -2052,6 +2112,73 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           includeArchived: false,
         });
         strictEqual(summaries.find((w) => w.id === a.id)?.activeRunCount, 1);
+      }),
+    ));
+
+  it("a run records the saved version and its applied date; an edit after turn-on still routes the saved steps", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { a } = yield* seed;
+        const workflows = yield* WorkflowRepository;
+        yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
+        const [first] = yield* runsForOrder();
+        if (first === undefined) throw new Error("no run");
+        strictEqual(first.run.versionId, a.savedVersionId);
+        strictEqual(first.versionAppliedAt !== null, true);
+        deepStrictEqual(
+          first.steps.map((s) => s.name),
+          ["Cut", "Finish"],
+        );
+
+        // Fork: a third step on the draft, saved version unchanged.
+        yield* workflows.addStep({
+          workflowId: a.id,
+          name: stepName("Pack"),
+          teamId: TEAM_C.id,
+        });
+        const forked = Option.getOrThrow(
+          yield* workflows.getWorkflow({ workflowId: a.id }),
+        );
+        strictEqual(forked.workflow.savedVersionId, a.savedVersionId);
+        strictEqual(forked.draft?.steps.length, 3);
+        const second = yield* upsertAndReconcile(
+          order({ updatedAt: PROCESSED_AT + 1 }),
+          [lineItem(1, ["a"]), lineItem(2, ["a"])],
+        );
+        strictEqual(second.created, 1);
+        const late = (yield* runsForOrder()).find(
+          (d) => d.run.lineItemId === lineItem(2, []).id,
+        );
+        strictEqual(late?.run.versionId, a.savedVersionId);
+        deepStrictEqual(
+          late?.steps.map((s) => s.name),
+          ["Cut", "Finish"],
+        );
+
+        // Apply while on: the next order gets three steps, the earlier runs
+        // keep their old version id and copied steps.
+        const applied = yield* workflows.applyDraft({
+          workflowId: a.id,
+          activeTeams: ACTIVE_TEAMS,
+        });
+        strictEqual(applied.active, true);
+        strictEqual(applied.savedVersionId !== a.savedVersionId, true);
+        const third = yield* upsertAndReconcile(
+          order({ updatedAt: PROCESSED_AT + 2 }),
+          [lineItem(1, ["a"]), lineItem(2, ["a"]), lineItem(3, ["a"])],
+        );
+        strictEqual(third.created, 1);
+        const all = yield* runsForOrder();
+        const newest = all.find((d) => d.run.lineItemId === lineItem(3, []).id);
+        strictEqual(newest?.run.versionId, applied.savedVersionId);
+        deepStrictEqual(
+          newest?.steps.map((s) => s.name),
+          ["Cut", "Finish", "Pack"],
+        );
+        const oldest = all.find((d) => d.run.id === first.run.id);
+        strictEqual(oldest?.run.versionId, a.savedVersionId);
+        strictEqual(oldest?.steps.length, 2);
+        strictEqual(oldest?.versionAppliedAt, first.versionAppliedAt);
       }),
     ));
 });

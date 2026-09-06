@@ -447,14 +447,29 @@ export const ProductTags = Schema.Array(Schema.String).pipe(
 export type ProductTags = typeof ProductTags.Type;
 
 /**
- * A production workflow *definition*: which product tags select it, and (in
- * `WorkflowStep`) the ordered stops a matching line item will pass through.
- * Encoded side is the Durable Object row (epoch-ms integers, JSON `tags`).
+ * A production workflow *definition*: the identity row. Its content — which
+ * product tags select it and the ordered stops a matching line item passes
+ * through — lives on a {@link WorkflowVersion}, because the version routing
+ * reads (`savedVersionId`, "Live") must be a different row from the one the
+ * editor writes (`draftVersionId`, "Draft"). The first edit to a saved version
+ * forks a draft, Apply promotes the draft in one statement, Discard deletes it;
+ * an order arriving between two edits sees a whole definition, never a half
+ * one. Encoded side is the Durable Object row (epoch-ms integers).
  *
- * No `status` column: `archivedAt is null and stepCount > 0 and every step's
- * team is active` *is* "routes". Archive, never delete, so a future running
- * instance can always resolve the name it was copied from. Editing a definition
- * never rewrites history because instances copy their steps at creation.
+ * `active` is the explicit on/off switch, stored and never derived, separate
+ * from `archivedAt` (hidden from the list, name still reserved) and from any
+ * version event. Routing needs `archivedAt is null and active and a saved
+ * version with steps whose teams are active`. Archive, never delete, so a run
+ * can always resolve the name it was copied from; a rename is immediate and
+ * cosmetic because runs snapshot `workflowName`.
+ *
+ * Invariants: at most one draft (`draftVersionId` null or a version with
+ * `appliedAt` null), at most one live (`savedVersionId` null or a version
+ * with `appliedAt` set and `retiredAt` null), every other version retired,
+ * and a version with `appliedAt` set is never written again. A fresh
+ * workflow has no saved version and an empty draft: not routable until the
+ * first Apply. Neither pointer is a foreign key — each row needs the other to
+ * exist first — so the repository keeps them consistent inside transactions.
  */
 /**
  * `item`: runs once per matching line item (tag routed). `order`: runs once
@@ -464,11 +479,18 @@ export type ProductTags = typeof ProductTags.Type;
 export const WorkflowScope = Schema.Literals(["item", "order"]);
 export type WorkflowScope = typeof WorkflowScope.Type;
 
+export const WorkflowVersionId = Schema.NonEmptyString.pipe(
+  Schema.brand("WorkflowVersionId"),
+);
+export type WorkflowVersionId = typeof WorkflowVersionId.Type;
+
 export const Workflow = Schema.Struct({
   id: WorkflowId,
   name: WorkflowName,
   scope: WorkflowScope,
-  tags: Schema.fromJsonString(ProductTags),
+  active: SqliteBoolean,
+  savedVersionId: Schema.NullOr(WorkflowVersionId),
+  draftVersionId: Schema.NullOr(WorkflowVersionId),
   createdAt: Schema.Number,
   updatedAt: Schema.Number,
   archivedAt: Schema.NullOr(Schema.Number),
@@ -476,10 +498,32 @@ export const Workflow = Schema.Struct({
 export type Workflow = typeof Workflow.Type;
 
 /**
+ * One immutable-once-applied snapshot of a workflow's content: `tags` (which
+ * select line items, so a tag change is a routing change and goes through
+ * Apply) and, via `WorkflowStep.versionId`, its steps. `appliedAt` null is a
+ * draft; `retiredAt` set is history, kept forever so a run's `versionId` stays
+ * resolvable and a version-history view needs no schema change.
+ */
+export const WorkflowVersion = Schema.Struct({
+  id: WorkflowVersionId,
+  workflowId: WorkflowId,
+  tags: Schema.fromJsonString(ProductTags),
+  createdAt: Schema.Number,
+  appliedAt: Schema.NullOr(Schema.Number),
+  retiredAt: Schema.NullOr(Schema.Number),
+});
+export type WorkflowVersion = typeof WorkflowVersion.Type;
+
+/**
  * `teamId` is a live pointer to a D1 `Team`, not a snapshot: renaming a team
  * renames every step it owns, and a step can only be *saved* against an active
  * team. It carries no `teamName` — the name is joined at read time, and only
  * the eventual instance rows snapshot it.
+ *
+ * A step belongs to a version, never directly to a workflow. Forking a draft
+ * copies every saved step under a new id, so an editor that showed the live
+ * steps may send a saved step's id; the repository maps it to the draft step
+ * at the same `position`.
  *
  * `stage` groups steps that are ready together: along `position` the stages
  * are dense `1..m` and non-decreasing (`1 1 2 3 3`), so every step belongs to
@@ -489,7 +533,7 @@ export type Workflow = typeof Workflow.Type;
  */
 export const WorkflowStep = Schema.Struct({
   id: WorkflowStepId,
-  workflowId: WorkflowId,
+  versionId: WorkflowVersionId,
   position: Schema.Number,
   stage: Schema.Number,
   name: StepName,
@@ -499,34 +543,62 @@ export const WorkflowStep = Schema.Struct({
 });
 export type WorkflowStep = typeof WorkflowStep.Type;
 
+/** List row. `tags` and `stepCount` describe the saved version (empty and 0 when never applied); `hasDraft` says the live definition is not the one being edited. */
 export const WorkflowSummary = Schema.Struct({
   ...Workflow.fields,
+  hasDraft: SqliteBoolean,
+  tags: Schema.fromJsonString(ProductTags),
   stepCount: Schema.Number,
   activeRunCount: Schema.Number,
 });
 export type WorkflowSummary = typeof WorkflowSummary.Type;
 
+/** The routing shape: a workflow with its saved version and that version's steps. Drafts never appear here. */
 export const WorkflowDetail = Schema.Struct({
   workflow: Workflow,
+  version: WorkflowVersion,
   steps: Schema.Array(WorkflowStep),
 });
 export type WorkflowDetail = typeof WorkflowDetail.Type;
 
+export const WorkflowVersionSteps = Schema.Struct({
+  version: WorkflowVersion,
+  steps: Schema.Array(WorkflowStep),
+});
+export type WorkflowVersionSteps = typeof WorkflowVersionSteps.Type;
+
+/** What `WorkflowRepository.getWorkflow` returns: both sides, either of which may be absent. */
+export const WorkflowVersions = Schema.Struct({
+  workflow: Workflow,
+  live: Schema.NullOr(WorkflowVersionSteps),
+  draft: Schema.NullOr(WorkflowVersionSteps),
+});
+export type WorkflowVersions = typeof WorkflowVersions.Type;
+
 /**
- * What the detail page renders, in one socket round trip. `teamName` is
- * `null` when the step's team is archived or gone — a flag, not a block: the
- * workflow shows "needs attention", the step renders with an empty picker, and
- * everything else stays editable. `activeTeams` rides along so the team picker
- * needs no second call.
+ * What the detail page renders, in one socket round trip: the live side
+ * (read-only, what routes) and the draft side (what the editor writes), each
+ * with its steps. `teamName` is `null` when the step's team is archived or
+ * gone — a flag, not a block: the workflow shows "needs attention", the step
+ * renders with an empty picker, and everything else stays editable.
+ * `activeTeams` rides along so the team picker needs no second call.
  */
+const StepWithTeamName = Schema.Struct({
+  ...WorkflowStep.fields,
+  teamName: Schema.NullOr(TeamName),
+});
+export type StepWithTeamName = typeof StepWithTeamName.Type;
+
+export const WorkflowVersionView = Schema.Struct({
+  version: WorkflowVersion,
+  steps: Schema.Array(StepWithTeamName),
+});
+export type WorkflowVersionView = typeof WorkflowVersionView.Type;
+
 export const WorkflowDetailView = Schema.Struct({
   workflow: Workflow,
-  steps: Schema.Array(
-    Schema.Struct({
-      ...WorkflowStep.fields,
-      teamName: Schema.NullOr(TeamName),
-    }),
-  ),
+  live: Schema.NullOr(WorkflowVersionView),
+  draft: Schema.NullOr(WorkflowVersionView),
   activeTeams: Schema.Array(Schema.Struct({ id: TeamId, name: TeamName })),
 });
 export type WorkflowDetailView = typeof WorkflowDetailView.Type;
@@ -549,12 +621,31 @@ export const CreateWorkflowInput = Schema.Struct({
 });
 export type CreateWorkflowInput = typeof CreateWorkflowInput.Type;
 
+/** Name only: a rename is immediate. Tags are version content and go through {@link UpdateWorkflowTagsInput}. */
 export const UpdateWorkflowInput = Schema.Struct({
   workflowId: BoundedId,
   name: WorkflowName,
-  tags: ProductTags,
 });
 export type UpdateWorkflowInput = typeof UpdateWorkflowInput.Type;
+
+/** Lands on the draft (forking one from the saved version if none exists), never on what routes. */
+export const UpdateWorkflowTagsInput = Schema.Struct({
+  workflowId: BoundedId,
+  tags: ProductTags,
+});
+export type UpdateWorkflowTagsInput = typeof UpdateWorkflowTagsInput.Type;
+
+export const ApplyDraftInput = WorkflowIdInput;
+export type ApplyDraftInput = typeof ApplyDraftInput.Type;
+
+export const DiscardDraftInput = WorkflowIdInput;
+export type DiscardDraftInput = typeof DiscardDraftInput.Type;
+
+export const SetWorkflowActiveInput = Schema.Struct({
+  workflowId: BoundedId,
+  active: Schema.Boolean,
+});
+export type SetWorkflowActiveInput = typeof SetWorkflowActiveInput.Type;
 
 export const SetWorkflowArchivedInput = Schema.Struct({
   workflowId: BoundedId,
@@ -602,22 +693,30 @@ export type UpdateStepInput = typeof UpdateStepInput.Type;
  * the repository still enforces one active order workflow and no tags on an
  * order workflow, since a fixture that breaks either would leave the app in a
  * state the ordinary write path can never produce.
+ *
+ * `steps` become the applied (live) version; a fixture with no steps is
+ * seeded as a never-applied empty draft instead, the state the ordinary path
+ * produces for a fresh workflow. `active` defaults to `true` when the entry
+ * has steps and is not archived. `draft` seeds a second step list as a
+ * pending draft, for fixtures that show the draft UI.
  */
+const SeedWorkflowStep = Schema.Struct({
+  name: StepName,
+  teamId: TeamId,
+  stage: Schema.optionalKey(Schema.Number),
+  instructions: Schema.optionalKey(StepInstructions),
+});
+
 export const SeedWorkflowsInput = Schema.Struct({
   workflows: Schema.Array(
     Schema.Struct({
       name: WorkflowName,
       scope: Schema.optionalKey(WorkflowScope),
       archived: Schema.optionalKey(Schema.Boolean),
+      active: Schema.optionalKey(Schema.Boolean),
       tags: ProductTags,
-      steps: Schema.Array(
-        Schema.Struct({
-          name: StepName,
-          teamId: TeamId,
-          stage: Schema.optionalKey(Schema.Number),
-          instructions: Schema.optionalKey(StepInstructions),
-        }),
-      ),
+      steps: Schema.Array(SeedWorkflowStep),
+      draft: Schema.optionalKey(Schema.Array(SeedWorkflowStep)),
     }),
   ),
 });
@@ -654,8 +753,46 @@ export const WorkflowResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("Limit"), limit: Schema.Number }),
   Schema.Struct({ _tag: Schema.Literal("OrderWorkflowExists") }),
+  /** Archive refused while the workflow is on: turn it off first. */
+  Schema.Struct({ _tag: Schema.Literal("Active") }),
 ]);
 export type WorkflowResult = typeof WorkflowResult.Type;
+
+/** `TeamNotActive` names the offending steps so the page can say which to reassign. */
+export const ApplyResult = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("Ok"), workflow: Workflow }),
+  Schema.Struct({ _tag: Schema.Literal("NotFound") }),
+  Schema.Struct({ _tag: Schema.Literal("NoDraft") }),
+  Schema.Struct({ _tag: Schema.Literal("NoSteps") }),
+  Schema.Struct({
+    _tag: Schema.Literal("TeamNotActive"),
+    stepNames: Schema.Array(StepName),
+  }),
+]);
+export type ApplyResult = typeof ApplyResult.Type;
+
+/** `NoSavedVersion`: a never-applied workflow has nothing to fall back to, so its draft cannot be discarded. */
+export const DiscardResult = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("Ok"), workflow: Workflow }),
+  Schema.Struct({ _tag: Schema.Literal("NotFound") }),
+  Schema.Struct({ _tag: Schema.Literal("NoDraft") }),
+  Schema.Struct({ _tag: Schema.Literal("NoSavedVersion") }),
+]);
+export type DiscardResult = typeof DiscardResult.Type;
+
+export const ActivateResult = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("Ok"), workflow: Workflow }),
+  Schema.Struct({ _tag: Schema.Literal("NotFound") }),
+  Schema.Struct({ _tag: Schema.Literal("Archived") }),
+  Schema.Struct({ _tag: Schema.Literal("NoSavedVersion") }),
+  Schema.Struct({ _tag: Schema.Literal("NoSteps") }),
+  Schema.Struct({
+    _tag: Schema.Literal("TeamNotActive"),
+    stepNames: Schema.Array(StepName),
+  }),
+  Schema.Struct({ _tag: Schema.Literal("OrderWorkflowExists") }),
+]);
+export type ActivateResult = typeof ActivateResult.Type;
 
 export const StepResult = Schema.Union([
   Schema.Struct({
@@ -676,10 +813,12 @@ export const TeamArchiveResult = Schema.Union([
 ]);
 export type TeamArchiveResult = typeof TeamArchiveResult.Type;
 
+/** Steps of live and draft versions only: a team referenced by nothing but retired versions is history and must not block `archiveTeam`. */
 export const OwnedStep = Schema.Struct({
   workflowId: WorkflowId,
   workflowName: WorkflowName,
   workflowArchived: SqliteBoolean,
+  versionState: Schema.Literals(["live", "draft"]),
   stepName: StepName,
 });
 export type OwnedStep = typeof OwnedStep.Type;
@@ -1455,6 +1594,8 @@ export const WorkflowRun = Schema.Struct({
   id: WorkflowRunId,
   workflowId: WorkflowId,
   workflowName: WorkflowName,
+  /** The version the steps were copied from; lineage, not a foreign key, since a run outlives everything. */
+  versionId: WorkflowVersionId,
   orderId: Schema.String,
   orderName: Schema.String,
   lineItemId: Schema.NullOr(Schema.String),
@@ -1504,9 +1645,11 @@ export const WorkflowRunStep = Schema.Struct({
 });
 export type WorkflowRunStep = typeof WorkflowRunStep.Type;
 
+/** `versionAppliedAt` is joined from `WorkflowVersion` at read time (null only if the version row is gone), so the order page can date the definition the run follows. */
 export const WorkflowRunDetail = Schema.Struct({
   run: WorkflowRun,
   steps: Schema.Array(WorkflowRunStep),
+  versionAppliedAt: Schema.NullOr(Schema.Number),
 });
 export type WorkflowRunDetail = typeof WorkflowRunDetail.Type;
 

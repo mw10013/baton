@@ -279,6 +279,15 @@ describe("runShopAgentOrdersStream with afterWrite", () => {
           name: Schema.decodeUnknownSync(Domain.StepName)("Engrave"),
           teamId: team.id,
         });
+        yield* workflows.applyDraft({
+          workflowId: workflow.id,
+          activeTeams: [team],
+        });
+        yield* workflows.setWorkflowActive({
+          workflowId: workflow.id,
+          active: true,
+          activeTeams: [team],
+        });
         const context = {
           workflows: yield* workflows.listActiveWorkflowDetails(),
           activeTeams: [team],

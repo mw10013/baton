@@ -272,12 +272,12 @@ describe("OrderRepository.listOrders filters", () => {
       for (const [index, status] of statuses.entries())
         yield* sql`
           insert into WorkflowRun (
-            id, workflowId, workflowName, orderId, orderName, lineItemId,
+            id, workflowId, workflowName, versionId, orderId, orderName, lineItemId,
             lineItemTitle, variantTitle, sku, quantity, customAttributes,
             source, status, flag, flagAt, flagDetail, createdAt, updatedAt,
             cancelledAt
           ) values (
-            ${`run-${String(n)}-${String(index)}`}, 'wf', 'Workflow',
+            ${`run-${String(n)}-${String(index)}`}, 'wf', 'Workflow', 'v1',
             ${orderId(n)}, ${`#10${String(n).padStart(2, "0")}`},
             ${`${lineItemId(n)}-${String(index)}`}, 'Item', null, null, 1,
             '[]', 'tag', ${status}, null, null, null, 0, 0, null

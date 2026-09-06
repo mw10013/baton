@@ -8,6 +8,7 @@ import { Effect, Match, Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
 import { fieldError } from "@/lib/form";
+import { formatDateTime } from "@/lib/format";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
@@ -22,9 +23,11 @@ import {
 
 const WorkflowForm = Schema.Struct({
   name: Schema.String.check(Schema.isNonEmpty({ message: "Name is required" })),
-  tags: Schema.String,
 });
 type WorkflowForm = typeof WorkflowForm.Type;
+
+const TagsForm = Schema.Struct({ tags: Schema.String });
+type TagsForm = typeof TagsForm.Type;
 
 const decodeWorkflowResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.WorkflowResult),
@@ -32,6 +35,52 @@ const decodeWorkflowResult = Schema.decodeUnknownPromise(
 const decodeStepResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.StepResult),
 );
+const decodeApplyResult = Schema.decodeUnknownPromise(
+  Schema.toType(Domain.ApplyResult),
+);
+const decodeDiscardResult = Schema.decodeUnknownPromise(
+  Schema.toType(Domain.DiscardResult),
+);
+const decodeActivateResult = Schema.decodeUnknownPromise(
+  Schema.toType(Domain.ActivateResult),
+);
+
+const stepList = (stepNames: readonly string[]) => stepNames.join(", ");
+
+const applyResultMessage = Match.typeTags<Domain.ApplyResult, string | null>()({
+  Ok: () => null,
+  NotFound: () => "That workflow no longer exists.",
+  NoDraft: () => "There are no draft changes to apply.",
+  NoSteps: () => "Add at least one step before applying.",
+  TeamNotActive: ({ stepNames }) =>
+    `These steps point at an archived team: ${stepList(stepNames)}. Reassign them or restore the team before applying.`,
+});
+
+const discardResultMessage = Match.typeTags<
+  Domain.DiscardResult,
+  string | null
+>()({
+  Ok: () => null,
+  NotFound: () => "That workflow no longer exists.",
+  NoDraft: () => "There are no draft changes to discard.",
+  NoSavedVersion: () =>
+    "This workflow has never been applied, so there is nothing to go back to.",
+});
+
+/** Also the reason shown next to a disabled Turn on, computed client-side from the same conditions the object checks. */
+const activateResultMessage = Match.typeTags<
+  Domain.ActivateResult,
+  string | null
+>()({
+  Ok: () => null,
+  NotFound: () => "That workflow no longer exists.",
+  Archived: () => "Restore this workflow before turning it on.",
+  NoSavedVersion: () => "Apply the draft before turning this workflow on.",
+  NoSteps: () => "The live version has no steps.",
+  TeamNotActive: ({ stepNames }) =>
+    `Live steps point at an archived team: ${stepList(stepNames)}.`,
+  OrderWorkflowExists: () => "Another order workflow is on. Turn it off first.",
+});
 
 /** A blank instructions field means "no instructions", which the wire carries as `null`, never `""`. */
 const instructionsOrNull = (value: string) =>
@@ -42,8 +91,78 @@ const stepResultMessage = Match.typeTags<Domain.StepResult, string | null>()({
   NotFound: () => "That step or workflow no longer exists.",
   Limit: ({ limit }) => `A workflow can have at most ${String(limit)} steps.`,
   TeamNotActive: () => "Choose an active team for this step.",
-  Archived: () => "Restore this workflow before editing its steps.",
+  Archived: () => "Restore this workflow before editing it.",
 });
+
+const orphaned = (side: Domain.WorkflowVersionView | null) =>
+  (side?.steps ?? []).filter((step) => step.teamName === null);
+
+const turnOnBlockerOf = ({
+  archived,
+  live,
+  liveOrphans,
+}: {
+  readonly archived: boolean;
+  readonly live: Domain.WorkflowVersionView | null;
+  readonly liveOrphans: readonly Domain.StepWithTeamName[];
+}): Domain.ActivateResult | null => {
+  if (archived) return { _tag: "Archived" };
+  if (live === null) return { _tag: "NoSavedVersion" };
+  if (live.steps.length === 0) return { _tag: "NoSteps" };
+  if (liveOrphans.length > 0)
+    return {
+      _tag: "TeamNotActive",
+      stepNames: liveOrphans.map((step) => step.name),
+    };
+  return null;
+};
+
+/** The saved version, read-only: what routes. */
+const liveTable = (side: Domain.WorkflowVersionView) => (
+  <s-table>
+    <s-table-header-row>
+      <s-table-header>#</s-table-header>
+      <s-table-header listSlot="primary">Step</s-table-header>
+      <s-table-header>Team</s-table-header>
+    </s-table-header-row>
+    <s-table-body>
+      {WorkflowLayout.stagesOf(side.steps).flatMap((group) =>
+        group.map((step) => (
+          <s-table-row key={step.id} id={`live-${step.id}`}>
+            <s-table-cell>
+              <s-stack direction="inline" gap="small-300" alignItems="center">
+                <s-text>{step.stage}</s-text>
+                {group.length > 1 && <s-badge tone="info">together</s-badge>}
+              </s-stack>
+            </s-table-cell>
+            <s-table-cell>
+              <s-stack gap="small-500">
+                <s-text>{step.name}</s-text>
+                {step.instructions !== null && (
+                  <s-text color="subdued">{step.instructions}</s-text>
+                )}
+              </s-stack>
+            </s-table-cell>
+            <s-table-cell>
+              {step.teamName ?? <s-badge tone="warning">Team archived</s-badge>}
+            </s-table-cell>
+          </s-table-row>
+        )),
+      )}
+    </s-table-body>
+  </s-table>
+);
+
+const tagBadges = (tags: readonly string[]) =>
+  tags.length === 0 ? (
+    <s-text color="subdued">No product tags</s-text>
+  ) : (
+    <s-stack direction="inline" gap="small-300">
+      {tags.map((tag) => (
+        <s-badge key={tag}>{tag}</s-badge>
+      ))}
+    </s-stack>
+  );
 
 const connecting = () =>
   Promise.reject(new Error("Still connecting. Try again in a moment."));
@@ -74,6 +193,13 @@ export const Route = createFileRoute("/app/workflows/$workflowId")({
  * socket RPC, and `router.invalidate()` re-reads after each. Every write
  * returns a tagged result that is copy-mapped here rather than thrown, so a
  * taken name lands on the field and a limit lands in the banner.
+ *
+ * Two sides. **Live** is the saved version, read-only, what routes. **Draft**
+ * is what the editor writes: the draft's steps when one exists, otherwise the
+ * live steps — the first edit forks a draft in the object, and the re-read
+ * after the mutation shows it. Apply and Discard are the only ways a draft
+ * ends. Both confirm inline rather than in a modal: Apply on an active
+ * workflow changes what the next order follows, and Discard throws work away.
  */
 function RouteComponent() {
   const { workflowId } = Route.useParams();
@@ -81,6 +207,10 @@ function RouteComponent() {
   const detail = Route.useLoaderData();
   const { agent, identified } = useShopAgent();
   const [banner, setBanner] = React.useState<string | null>(null);
+  /** Which destructive footer action is awaiting its inline confirmation. */
+  const [confirming, setConfirming] = React.useState<
+    "apply" | "discard" | null
+  >(null);
   const [newStep, setNewStep] = React.useState({
     name: "",
     teamId: "",
@@ -111,16 +241,24 @@ function RouteComponent() {
   };
 
   const updateMutation = useMutation({
-    mutationFn: ({ name, tags }: WorkflowForm) =>
-      call((stub) =>
-        stub.updateWorkflow({
-          workflowId,
-          name,
-          tags: detail?.workflow.scope === "order" ? [] : splitTags(tags),
-        }),
-      ).then(decodeWorkflowResult),
+    mutationFn: ({ name }: WorkflowForm) =>
+      call((stub) => stub.updateWorkflow({ workflowId, name })).then(
+        decodeWorkflowResult,
+      ),
     onSuccess: async (result) => {
       setBanner(workflowResultMessage(result));
+      await invalidate();
+    },
+    onError,
+  });
+
+  const tagsMutation = useMutation({
+    mutationFn: ({ tags }: TagsForm) =>
+      call((stub) =>
+        stub.updateWorkflowTags({ workflowId, tags: splitTags(tags) }),
+      ).then(decodeStepResult),
+    onSuccess: async (result) => {
+      setBanner(stepResultMessage(result));
       await invalidate();
     },
     onError,
@@ -133,6 +271,44 @@ function RouteComponent() {
       ),
     onSuccess: async (result) => {
       setBanner(workflowResultMessage(result));
+      await invalidate();
+    },
+    onError,
+  });
+
+  const activeMutation = useMutation({
+    mutationFn: (active: boolean) =>
+      call((stub) => stub.setWorkflowActive({ workflowId, active })).then(
+        decodeActivateResult,
+      ),
+    onSuccess: async (result) => {
+      setBanner(activateResultMessage(result));
+      await invalidate();
+    },
+    onError,
+  });
+
+  const applyMutation = useMutation({
+    mutationFn: () =>
+      call((stub) => stub.applyDraft({ workflowId })).then(decodeApplyResult),
+    onSuccess: async (result) => {
+      setBanner(applyResultMessage(result));
+      setConfirming(null);
+      await invalidate();
+    },
+    onError,
+  });
+
+  const discardMutation = useMutation({
+    mutationFn: () =>
+      call((stub) => stub.discardDraft({ workflowId })).then(
+        decodeDiscardResult,
+      ),
+    onSuccess: async (result) => {
+      setBanner(discardResultMessage(result));
+      setConfirming(null);
+      setEditing(null);
+      setParallel(null);
       await invalidate();
     },
     onError,
@@ -209,7 +385,6 @@ function RouteComponent() {
   const form = useForm({
     defaultValues: {
       name: detail?.workflow.name ?? "",
-      tags: detail?.workflow.tags.join(", ") ?? "",
     } satisfies WorkflowForm,
     validators: { onSubmit: Schema.toStandardSchemaV1(WorkflowForm) },
     onSubmit: ({ value }) => {
@@ -217,11 +392,27 @@ function RouteComponent() {
     },
   });
 
+  /** The editable side: the draft when one exists, otherwise the live version (whose first edit forks). */
+  const editable = detail?.draft ?? detail?.live ?? null;
+
+  const tagsForm = useForm({
+    defaultValues: {
+      tags: editable?.version.tags.join(", ") ?? "",
+    } satisfies TagsForm,
+    validators: { onSubmit: Schema.toStandardSchemaV1(TagsForm) },
+    onSubmit: ({ value }) => {
+      void tagsMutation.mutateAsync(value);
+    },
+  });
+
   const loadedId = detail?.workflow.id;
   React.useEffect(() => {
-    if (loadedId !== undefined) form.reset();
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- reset the form once per loaded workflow, not on every render of the form object
-  }, [loadedId, detail?.workflow.updatedAt]);
+    if (loadedId !== undefined) {
+      form.reset();
+      tagsForm.reset();
+    }
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- reset the forms once per loaded workflow, not on every render of the form objects
+  }, [loadedId, detail?.workflow.updatedAt, editable?.version.id]);
 
   if (detail === null)
     return (
@@ -235,10 +426,13 @@ function RouteComponent() {
       </s-page>
     );
 
-  const { workflow, steps, activeTeams } = detail;
+  const { workflow, live, draft, activeTeams } = detail;
+  const steps = editable?.steps ?? [];
   const archived = workflow.archivedAt !== null;
   const orderScope = workflow.scope === "order";
-  const orphanedSteps = steps.filter((step) => step.teamName === null);
+  const hasDraft = draft !== null;
+  const draftOrphans = orphaned(editable);
+  const liveOrphans = orphaned(live);
   const stepsLocked =
     archived ||
     addStepMutation.isPending ||
@@ -246,8 +440,20 @@ function RouteComponent() {
     separateStepMutation.isPending ||
     updateStepMutation.isPending ||
     moveStepMutation.isPending ||
-    removeStepMutation.isPending;
+    removeStepMutation.isPending ||
+    applyMutation.isPending ||
+    discardMutation.isPending;
   const stages = WorkflowLayout.stagesOf(steps);
+  /**
+   * Why Turn on would be refused, decided here from the same facts the
+   * object checks, so the button can be disabled with its reason instead of
+   * failing after a round trip. `OrderWorkflowExists` is only known
+   * server-side and surfaces as a banner.
+   */
+  const turnOnBlocker = turnOnBlockerOf({ archived, live, liveOrphans });
+  const turnOnReason =
+    turnOnBlocker === null ? null : activateResultMessage(turnOnBlocker);
+  const switching = activeMutation.isPending;
 
   const teamSelect = (
     value: string,
@@ -291,7 +497,7 @@ function RouteComponent() {
   );
 
   const stepRow = (
-    step: (typeof steps)[number],
+    step: Domain.StepWithTeamName,
     index: number,
     shared: boolean,
   ) =>
@@ -539,16 +745,144 @@ function RouteComponent() {
     </s-table-row>
   );
 
+  /** The Apply / Discard row, with the inline confirmation for whichever was clicked. */
+  const draftFooter = () => {
+    if (archived) return null;
+    if (confirming === "apply")
+      return (
+        <s-banner tone="warning" heading="Apply changes?">
+          <s-stack gap="small-300">
+            <s-paragraph>
+              This workflow is on. New orders will follow the applied steps
+              immediately.
+            </s-paragraph>
+            <s-stack direction="inline" gap="small-300">
+              <s-button
+                variant="primary"
+                {...(applyMutation.isPending ? { loading: true } : {})}
+                onClick={() => {
+                  applyMutation.mutate();
+                }}
+              >
+                Apply now
+              </s-button>
+              <s-button
+                variant="tertiary"
+                onClick={() => {
+                  setConfirming(null);
+                }}
+              >
+                Cancel
+              </s-button>
+            </s-stack>
+          </s-stack>
+        </s-banner>
+      );
+    if (confirming === "discard")
+      return (
+        <s-banner tone="critical" heading="Discard draft changes?">
+          <s-stack gap="small-300">
+            <s-paragraph>
+              The draft goes back to the live version. This cannot be undone.
+            </s-paragraph>
+            <s-stack direction="inline" gap="small-300">
+              <s-button
+                variant="primary"
+                tone="critical"
+                {...(discardMutation.isPending ? { loading: true } : {})}
+                onClick={() => {
+                  discardMutation.mutate();
+                }}
+              >
+                Discard
+              </s-button>
+              <s-button
+                variant="tertiary"
+                onClick={() => {
+                  setConfirming(null);
+                }}
+              >
+                Cancel
+              </s-button>
+            </s-stack>
+          </s-stack>
+        </s-banner>
+      );
+    return (
+      <s-stack direction="inline" gap="base" alignItems="center">
+        <s-button
+          variant="primary"
+          disabled={!identified || !hasDraft || stepsLocked}
+          {...(applyMutation.isPending ? { loading: true } : {})}
+          onClick={() => {
+            if (workflow.active) setConfirming("apply");
+            else applyMutation.mutate();
+          }}
+        >
+          Apply changes
+        </s-button>
+        {live !== null && (
+          <s-button
+            variant="tertiary"
+            tone="critical"
+            disabled={!identified || !hasDraft || stepsLocked}
+            onClick={() => {
+              setConfirming("discard");
+            }}
+          >
+            Discard changes
+          </s-button>
+        )}
+        {!hasDraft && (
+          <s-text color="subdued">
+            {live === null
+              ? "Add steps, then apply to make this workflow routable."
+              : "No draft changes."}
+          </s-text>
+        )}
+      </s-stack>
+    );
+  };
+
   return (
     <s-page heading={workflow.name} inlineSize="base">
       <s-link slot="breadcrumb-actions" href="/app/workflows">
         Workflows
       </s-link>
-      {(archived || orderScope) && (
-        <s-stack slot="accessory" direction="inline" gap="small-300">
-          {orderScope && <s-badge tone="info">Order workflow</s-badge>}
-          {archived && <s-badge tone="info">Archived</s-badge>}
-        </s-stack>
+      <s-stack slot="accessory" direction="inline" gap="small-300">
+        {workflow.active ? (
+          <s-badge tone="success">Active</s-badge>
+        ) : (
+          <s-badge>Off</s-badge>
+        )}
+        {orderScope && <s-badge tone="info">Order workflow</s-badge>}
+        {archived && <s-badge tone="info">Archived</s-badge>}
+        {hasDraft && <s-badge tone="caution">Draft pending</s-badge>}
+      </s-stack>
+      {workflow.active ? (
+        <s-button
+          slot="primary-action"
+          variant="primary"
+          disabled={!identified || switching}
+          {...(switching ? { loading: true } : {})}
+          onClick={() => {
+            activeMutation.mutate(false);
+          }}
+        >
+          Turn off
+        </s-button>
+      ) : (
+        <s-button
+          slot="primary-action"
+          variant="primary"
+          disabled={!identified || switching || turnOnBlocker !== null}
+          {...(switching ? { loading: true } : {})}
+          onClick={() => {
+            activeMutation.mutate(true);
+          }}
+        >
+          Turn on
+        </s-button>
       )}
       <SocketBanner />
 
@@ -558,16 +892,9 @@ function RouteComponent() {
             <s-paragraph color="subdued">{ORDER_WORKFLOW_TRIGGER}</s-paragraph>
           )}
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
-          {!archived && steps.length === 0 && (
-            <s-banner tone="warning" heading="Needs attention">
-              {orderScope
-                ? "This workflow has no steps, so it will not start on any order."
-                : "This workflow has no steps, so it will not route any line items."}
-            </s-banner>
-          )}
-          {!archived && orphanedSteps.length > 0 && (
-            <s-banner tone="warning" heading="Needs attention">
-              {`${String(orphanedSteps.length)} step${orphanedSteps.length === 1 ? "" : "s"} point at an archived team. Reassign or restore the team; routing skips this workflow until then.`}
+          {!workflow.active && turnOnReason !== null && !archived && (
+            <s-banner tone="info" heading="Turn on is unavailable">
+              {turnOnReason}
             </s-banner>
           )}
           <form
@@ -592,23 +919,7 @@ function RouteComponent() {
                   />
                 )}
               </form.Field>
-              {!orderScope && (
-                <form.Field name="tags">
-                  {(field) => (
-                    <s-text-field
-                      label="Product tags"
-                      details="Comma-separated. Add any of these tags to a product in Shopify and its line items follow this workflow."
-                      name={field.name}
-                      value={field.state.value}
-                      onInput={(event) => {
-                        field.handleChange(event.currentTarget.value);
-                      }}
-                      onBlur={field.handleBlur}
-                    />
-                  )}
-                </form.Field>
-              )}
-              <s-stack direction="inline" gap="base" alignItems="start">
+              <s-stack direction="inline" gap="base" alignItems="center">
                 <s-button
                   type="submit"
                   variant="primary"
@@ -619,20 +930,55 @@ function RouteComponent() {
                 </s-button>
                 <s-button
                   variant="secondary"
-                  disabled={!identified || archiveMutation.isPending}
+                  disabled={
+                    !identified || archiveMutation.isPending || workflow.active
+                  }
                   onClick={() => {
                     archiveMutation.mutate(!archived);
                   }}
                 >
                   {archived ? "Restore" : "Archive"}
                 </s-button>
+                {workflow.active && (
+                  <s-text color="subdued">Turn off first to archive.</s-text>
+                )}
               </s-stack>
             </s-stack>
           </form>
         </s-stack>
       </s-section>
 
-      <s-section heading="Steps" accessibilityLabel="Workflow steps">
+      <s-section heading="Live" accessibilityLabel="Live version">
+        <s-stack gap="base">
+          {live === null ? (
+            <s-paragraph color="subdued">
+              Not applied yet. Apply the draft below to make this workflow
+              routable.
+            </s-paragraph>
+          ) : (
+            <>
+              <s-paragraph color="subdued">
+                {`Applied ${formatDateTime(live.version.appliedAt ?? live.version.createdAt)}. This is what new orders follow${workflow.active ? "" : " once the workflow is on"}.`}
+              </s-paragraph>
+              {hasDraft && (
+                <s-paragraph color="subdued">
+                  Draft changes below are not live until you apply them.
+                </s-paragraph>
+              )}
+              {!orderScope && tagBadges(live.version.tags)}
+              {live.steps.length === 0 ? (
+                <s-paragraph color="subdued">
+                  The live version has no steps.
+                </s-paragraph>
+              ) : (
+                liveTable(live)
+              )}
+            </>
+          )}
+        </s-stack>
+      </s-section>
+
+      <s-section heading="Draft" accessibilityLabel="Draft version">
         <s-stack gap="base">
           <s-paragraph color="subdued">
             Steps with the same number happen at the same time. The next number
@@ -641,8 +987,54 @@ function RouteComponent() {
           </s-paragraph>
           {archived && (
             <s-paragraph color="subdued">
-              Restore this workflow to edit its steps.
+              Restore this workflow to edit it.
             </s-paragraph>
+          )}
+          {!archived && steps.length === 0 && (
+            <s-banner tone="warning" heading="No steps">
+              {orderScope
+                ? "Add at least one step, then apply. Without steps this workflow will not start on any order."
+                : "Add at least one step, then apply. Without steps this workflow will not route any line items."}
+            </s-banner>
+          )}
+          {!archived && draftOrphans.length > 0 && (
+            <s-banner tone="warning" heading="Needs attention">
+              {`${String(draftOrphans.length)} step${draftOrphans.length === 1 ? "" : "s"} point at an archived team. Reassign or restore the team before applying.`}
+            </s-banner>
+          )}
+          {!orderScope && (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void tagsForm.handleSubmit();
+              }}
+            >
+              <s-stack direction="inline" gap="base" alignItems="end">
+                <tagsForm.Field name="tags">
+                  {(field) => (
+                    <s-text-field
+                      label="Product tags"
+                      details="Comma-separated. Add any of these tags to a product in Shopify and its line items follow this workflow. Saved to the draft."
+                      name={field.name}
+                      value={field.state.value}
+                      disabled={archived}
+                      onInput={(event) => {
+                        field.handleChange(event.currentTarget.value);
+                      }}
+                      onBlur={field.handleBlur}
+                    />
+                  )}
+                </tagsForm.Field>
+                <s-button
+                  type="submit"
+                  variant="secondary"
+                  disabled={!identified || archived || stepsLocked}
+                  {...(tagsMutation.isPending ? { loading: true } : {})}
+                >
+                  Save tags
+                </s-button>
+              </s-stack>
+            </form>
           )}
           {steps.length > 0 && (
             <s-table>
@@ -727,6 +1119,7 @@ function RouteComponent() {
               </s-stack>
             )
           )}
+          {draftFooter()}
         </s-stack>
       </s-section>
     </s-page>

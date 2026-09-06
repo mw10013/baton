@@ -135,17 +135,25 @@ export const workflows: readonly SeedWorkflow[] = [
     ],
   },
   {
-    // instructions on every step
+    // instructions on every step; a pending draft adds a third step so the
+    // list shows "Draft pending" and the detail page shows both sides
     name: "Workflow 05",
     tags: ["workflow-05"],
     steps: [
       step("Step 1", 5, { instructions: instructions("Step 1") }),
       step("Step 2", 6, { instructions: instructions("Step 2") }),
     ],
+    draft: [
+      step("Step 1", 5, { instructions: instructions("Step 1") }),
+      step("Step 2", 6, { instructions: instructions("Step 2") }),
+      step("Step 3", 1),
+    ],
   },
   {
-    // two parallel stages, mixed instructions
+    // two parallel stages, mixed instructions; seeded off so the list has an
+    // "Off" row and nothing routes to it until it is turned on
     name: "Workflow 06",
+    active: false,
     tags: ["workflow-06"],
     steps: [
       step("Step 1", 6, { stage: 1 }),

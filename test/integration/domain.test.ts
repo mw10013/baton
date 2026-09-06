@@ -88,6 +88,7 @@ const run = (
   id: Schema.decodeUnknownSync(Domain.WorkflowRunId)("r"),
   workflowId: Schema.decodeUnknownSync(Domain.WorkflowId)("w"),
   workflowName: Schema.decodeUnknownSync(Domain.WorkflowName)("W"),
+  versionId: Schema.decodeUnknownSync(Domain.WorkflowVersionId)("v"),
   orderId: "o",
   orderName: "#1",
   lineItemId: null,

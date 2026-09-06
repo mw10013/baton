@@ -7,6 +7,13 @@ import { D1Primary } from "@/lib/D1Primary";
 import * as Domain from "@/lib/Domain";
 import { Repository } from "@/lib/Repository";
 
+const SeedStepByTeamName = Schema.Struct({
+  name: Domain.StepName,
+  team: Domain.TeamName,
+  stage: Schema.optionalKey(Schema.Number),
+  instructions: Schema.optionalKey(Domain.StepInstructions),
+});
+
 const DevSeedInput = Schema.Struct({
   shop: Domain.Shop,
   /**
@@ -47,15 +54,12 @@ const DevSeedInput = Schema.Struct({
         name: Domain.WorkflowName,
         scope: Schema.optionalKey(Domain.WorkflowScope),
         archived: Schema.optionalKey(Schema.Boolean),
+        /** Defaults to on when the entry has steps and is not archived; see `Domain.SeedWorkflowsInput`. */
+        active: Schema.optionalKey(Schema.Boolean),
         tags: Domain.ProductTags,
-        steps: Schema.Array(
-          Schema.Struct({
-            name: Domain.StepName,
-            team: Domain.TeamName,
-            stage: Schema.optionalKey(Schema.Number),
-            instructions: Schema.optionalKey(Domain.StepInstructions),
-          }),
-        ),
+        steps: Schema.Array(SeedStepByTeamName),
+        /** A pending draft beside the applied `steps`. */
+        draft: Schema.optionalKey(Schema.Array(SeedStepByTeamName)),
       }),
     ),
   ),
@@ -200,19 +204,25 @@ export const Route = createFileRoute("/api/dev/seed")({
                 name: string;
                 scope?: Domain.WorkflowScope;
                 archived?: boolean;
+                active?: boolean;
                 tags: readonly string[];
                 steps: SeedStep[];
+                draft?: SeedStep[];
               }[] = [];
-              for (const workflow of workflows ?? []) {
-                const steps: SeedStep[] = [];
-                for (const step of workflow.steps) {
+              /** Team names → ids; the first step naming an unseeded team is the whole error. */
+              const resolveSteps = (
+                workflowName: string,
+                steps: readonly (typeof SeedStepByTeamName.Type)[],
+              ): SeedStep[] | Response => {
+                const resolved: SeedStep[] = [];
+                for (const step of steps) {
                   const teamId = teamIds.get(step.team);
                   if (teamId === undefined)
                     return new Response(
-                      `workflow ${workflow.name} step ${step.name} references unseeded team ${step.team}`,
+                      `workflow ${workflowName} step ${step.name} references unseeded team ${step.team}`,
                       { status: 400 },
                     );
-                  steps.push({
+                  resolved.push({
                     name: step.name,
                     teamId,
                     ...(step.stage === undefined ? {} : { stage: step.stage }),
@@ -221,6 +231,16 @@ export const Route = createFileRoute("/api/dev/seed")({
                       : { instructions: step.instructions }),
                   });
                 }
+                return resolved;
+              };
+              for (const workflow of workflows ?? []) {
+                const steps = resolveSteps(workflow.name, workflow.steps);
+                if (steps instanceof Response) return steps;
+                const draft =
+                  workflow.draft === undefined
+                    ? undefined
+                    : resolveSteps(workflow.name, workflow.draft);
+                if (draft instanceof Response) return draft;
                 seedWorkflows.push({
                   name: workflow.name,
                   ...(workflow.scope === undefined
@@ -229,8 +249,12 @@ export const Route = createFileRoute("/api/dev/seed")({
                   ...(workflow.archived === undefined
                     ? {}
                     : { archived: workflow.archived }),
+                  ...(workflow.active === undefined
+                    ? {}
+                    : { active: workflow.active }),
                   tags: workflow.tags,
                   steps,
+                  ...(draft === undefined ? {} : { draft }),
                 });
               }
               // Always called, even with no workflows: an empty fixture must

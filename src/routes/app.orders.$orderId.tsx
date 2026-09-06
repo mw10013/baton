@@ -322,6 +322,28 @@ function RouteComponent() {
     !runs.some(({ run }) => !Domain.isOrderRun(run) && run.source === "manual");
   const busy = attachMutation.isPending || runMutation.isPending;
 
+  /**
+   * Which version a run follows. "Definition has changed since" compares
+   * against the workflow's current saved version, known here only for
+   * workflows that route now; an off or archived workflow shows the date
+   * alone.
+   */
+  const versionLine = ({ run, versionAppliedAt }: Domain.WorkflowRunDetail) => {
+    if (versionAppliedAt === null) return null;
+    const current = [orderWorkflow, ...routableWorkflows].find(
+      (workflow) => workflow?.id === run.workflowId,
+    );
+    const changed =
+      current !== undefined &&
+      current !== null &&
+      current.savedVersionId !== run.versionId;
+    return (
+      <s-text color="subdued">
+        {`From version applied ${formatDateTime(versionAppliedAt)}${changed ? " · definition has changed since" : ""}`}
+      </s-text>
+    );
+  };
+
   const renderRun = (run: Domain.WorkflowRunDetail) => (
     <s-stack key={run.run.id} gap="small-300">
       <s-stack direction="inline" gap="small-300" alignItems="center">
@@ -356,6 +378,7 @@ function RouteComponent() {
         )}
       </s-stack>
       {stepTrail(run)}
+      {versionLine(run)}
     </s-stack>
   );
 
