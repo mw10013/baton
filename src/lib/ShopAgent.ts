@@ -48,7 +48,6 @@ import { Shopify } from "@/lib/Shopify";
 import { ShopifyAdmin } from "@/lib/ShopifyAdmin";
 import {
   type NoDraftError,
-  type NoSavedVersionError,
   type NoStepsError,
   type OrderWorkflowExistsError,
   type StageNotFoundError,
@@ -63,8 +62,8 @@ import {
   WorkflowRepositoryError,
 } from "@/lib/WorkflowRepository";
 import {
-  isRoutable,
-  type RoutingContext,
+  canStart,
+  type StartContext,
   type RunNotAllowedError,
   type RunNotFoundError,
   type RunTerminalError,
@@ -133,35 +132,31 @@ const callableEffect =
  * on; `id desc` is in it so the tiebreak is index-ordered too, since a shop
  * can place several orders in the same millisecond.
  *
- * `Workflow` / `WorkflowVersion` / `WorkflowStep` are the production-workflow
- * *definitions* a merchant configures. `Workflow` is identity (name, scope,
- * the `active` switch, archive) plus two pointers; `WorkflowVersion` is
- * content (product tags, and steps via `WorkflowStep.versionId`). Routing
- * reads the version at `savedVersionId`; the editor writes the one at
- * `draftVersionId`. The first edit to a saved version forks a draft, Apply
- * promotes it (retire the old, stamp `appliedAt`, swap the pointers, one
- * transaction), Discard deletes it (steps cascade). A workflow has at most
- * one draft (`appliedAt` null) and at most one live version (`appliedAt` set,
- * `retiredAt` null); every other version is retired and kept forever so a
- * run's `versionId` stays resolvable. The two `check`s on `Workflow` catch
- * the impossible states: a workflow with neither pointer, and one switched on
- * with nothing to route. The pointers are not foreign keys because each row
- * would need the other to exist first; the repository keeps them consistent
- * inside transactions. `active` is stored, never derived, and no version
- * event touches it.
+ * `Workflow` / `WorkflowStep` are the production-workflow *definitions* a
+ * merchant configures: what starts runs. `WorkflowDraft` / `WorkflowDraftStep`
+ * are the merchant's private copy under edit (see the vocabulary on
+ * `Domain.Workflow`): Edit copies the workflow's tags and steps into the
+ * draft, every editor write lands on the draft, Apply replaces the workflow's
+ * tags and steps with the draft's and deletes it, Discard deletes it — each in
+ * one transaction, so run creation sees the old definition or the new one and
+ * never a half-edit. A workflow has at most one draft (`workflowId` is the
+ * draft's primary key), and the draft's steps cascade with it. Steps live in
+ * two tables rather than one with a flag so a step-id write can never be
+ * ambiguous about its side and `unique (workflowId, position)` holds on each
+ * side independently. No history is kept: a run survives every later edit
+ * because it snapshots its steps and names, not because old definitions are
+ * retained. `active` is stored, never derived, and no draft event touches it.
  *
  * `WorkflowStep.teamId` is a D1 `Team.id` with no foreign key because none is
  * possible: `Team` lives in D1 and this table in the object's private SQLite,
  * and SQLite foreign keys do not cross databases. Integrity is
  * application-level — `addStep` / `updateStep` verify the team is active
- * before writing, and `archiveTeam` refuses while any step of a live or draft
- * version still points at it (`countStepsOwnedBy`, served by
- * `WorkflowStep_teamId_idx`). `unique (versionId, position)` is what forces
- * `moveStep` to go through a scratch position inside one transaction — and,
- * now that every layout edit rewrites the whole version, why
- * `WorkflowRepository.writeLayout` first parks every step at `-position`
- * before assigning final positions and stages; it also makes the saved-step →
- * draft-step mapping by position exact when the editor sends a saved step id.
+ * before writing, and `archiveTeam` refuses while any step of a workflow or
+ * of a draft still points at it (`countStepsOwnedBy`, served by the two
+ * `teamId` indexes). `unique (workflowId, position)` is what forces every
+ * layout edit to go through a scratch position inside one transaction — why
+ * `WorkflowRepository.writeLayout` first parks every draft step at
+ * `-position` before assigning final positions and stages.
  * `stage` groups steps that are ready together: along `position` stages are
  * dense `1..m` and non-decreasing, an invariant kept by the pure
  * `WorkflowLayout` module rather than by SQL. `instructions` is merchant text
@@ -174,10 +169,9 @@ const callableEffect =
  * three line-item snapshot columns null together (the `check`), and starts
  * once every item run on the order is finished with at least one done. Every
  * display field is a snapshot and there is no foreign key to `ShopOrder`,
- * `OrderLineItem`, `Workflow`, or `WorkflowVersion` — a run must survive an
- * order delete, a line item dropped by an edit, and a definition rename,
- * because it is the record of work someone may already have started.
- * `versionId` records which version the steps were copied from. `unique (lineItemId,
+ * `OrderLineItem`, or `Workflow` — a run must survive an order delete, a
+ * line item dropped by an edit, and a definition edit or rename, because it
+ * is the record of work someone may already have started. `unique (lineItemId,
  * workflowId)` spans every status so a cancelled run keeps its key: neither
  * the sync nor manual attach can create a second one, and recovery from a
  * mistaken cancel is un-cancel. SQLite treats nulls as distinct in that
@@ -258,44 +252,45 @@ const initializeSchema = Effect.gen(function* () {
       name text not null check (name = trim(name) and length(name) > 0),
       scope text not null default 'item' check (scope in ('item', 'order')),
       active integer not null default 0 check (active in (0, 1)),
-      savedVersionId text,
-      draftVersionId text,
-      createdAt integer not null,
-      updatedAt integer not null,
       archivedAt integer,
-      check (savedVersionId is not null or draftVersionId is not null),
-      check (active = 0 or savedVersionId is not null)
+      tags text not null default '[]',
+      createdAt integer not null,
+      updatedAt integer not null
     );
     create unique index if not exists Workflow_name_uidx
       on Workflow (name collate nocase);
-    create table if not exists WorkflowVersion (
-      id text primary key,
-      workflowId text not null references Workflow (id) on delete cascade,
-      tags text not null,
-      createdAt integer not null,
-      appliedAt integer,
-      retiredAt integer,
-      check (retiredAt is null or appliedAt is not null)
-    );
-    create index if not exists WorkflowVersion_workflowId_idx
-      on WorkflowVersion (workflowId);
     create table if not exists WorkflowStep (
       id text primary key,
-      versionId text not null references WorkflowVersion (id) on delete cascade,
+      workflowId text not null references Workflow (id) on delete cascade,
       position integer not null,
       stage integer not null,
       name text not null check (name = trim(name) and length(name) > 0),
       teamId text not null,
       instructions text,
-      createdAt integer not null,
-      unique (versionId, position)
+      unique (workflowId, position)
     );
     create index if not exists WorkflowStep_teamId_idx on WorkflowStep (teamId);
+    create table if not exists WorkflowDraft (
+      workflowId text primary key references Workflow (id) on delete cascade,
+      tags text not null default '[]',
+      createdAt integer not null,
+      updatedAt integer not null
+    );
+    create table if not exists WorkflowDraftStep (
+      id text primary key,
+      workflowId text not null references WorkflowDraft (workflowId) on delete cascade,
+      position integer not null,
+      stage integer not null,
+      name text not null check (name = trim(name) and length(name) > 0),
+      teamId text not null,
+      instructions text,
+      unique (workflowId, position)
+    );
+    create index if not exists WorkflowDraftStep_teamId_idx on WorkflowDraftStep (teamId);
     create table if not exists WorkflowRun (
       id text primary key,
       workflowId text not null,
       workflowName text not null,
-      versionId text not null,
       orderId text not null,
       orderName text not null,
       lineItemId text,
@@ -510,7 +505,6 @@ const discardResult = <R>(
     Domain.Workflow,
     | WorkflowNotFoundError
     | NoDraftError
-    | NoSavedVersionError
     | SqlError.SqlError
     | WorkflowRepositoryError,
     R
@@ -527,8 +521,24 @@ const discardResult = <R>(
         Effect.succeed<Domain.DiscardResult>({ _tag: "NotFound" }),
       NoDraftError: () =>
         Effect.succeed<Domain.DiscardResult>({ _tag: "NoDraft" }),
-      NoSavedVersionError: () =>
-        Effect.succeed<Domain.DiscardResult>({ _tag: "NoSavedVersion" }),
+    }),
+  );
+
+const draftResult = <R>(
+  effect: Effect.Effect<
+    Domain.DraftResult,
+    WorkflowNotFoundError | SqlError.SqlError | WorkflowRepositoryError,
+    R
+  >,
+): Effect.Effect<
+  Domain.DraftResult,
+  SqlError.SqlError | WorkflowRepositoryError,
+  R
+> =>
+  effect.pipe(
+    Effect.catchTags({
+      WorkflowNotFoundError: () =>
+        Effect.succeed<Domain.DraftResult>({ _tag: "NotFound" }),
     }),
   );
 
@@ -537,7 +547,6 @@ const activateResult = <R>(
     Domain.Workflow,
     | WorkflowNotFoundError
     | WorkflowArchivedError
-    | NoSavedVersionError
     | NoStepsError
     | TeamNotActiveError
     | OrderWorkflowExistsError
@@ -562,8 +571,6 @@ const activateResult = <R>(
         Effect.succeed<Domain.ActivateResult>({ _tag: "NotFound" }),
       WorkflowArchivedError: () =>
         Effect.succeed<Domain.ActivateResult>({ _tag: "Archived" }),
-      NoSavedVersionError: () =>
-        Effect.succeed<Domain.ActivateResult>({ _tag: "NoSavedVersion" }),
       NoStepsError: () =>
         Effect.succeed<Domain.ActivateResult>({ _tag: "NoSteps" }),
       TeamNotActiveError: ({ stepNames }) =>
@@ -582,6 +589,7 @@ const stepResult = <R>(
     | StepNotFoundError
     | StageNotFoundError
     | WorkflowNotFoundError
+    | NoDraftError
     | WorkflowLimitError
     | SqlError.SqlError
     | WorkflowRepositoryError
@@ -605,6 +613,8 @@ const stepResult = <R>(
         Effect.succeed<Domain.StepResult>({ _tag: "NotFound" }),
       WorkflowNotFoundError: () =>
         Effect.succeed<Domain.StepResult>({ _tag: "NotFound" }),
+      NoDraftError: () =>
+        Effect.succeed<Domain.StepResult>({ _tag: "NoDraft" }),
       WorkflowLimitError: ({ limit }) =>
         Effect.succeed<Domain.StepResult>({ _tag: "Limit", limit }),
     }),
@@ -618,7 +628,7 @@ const inUseResult = (count: number): Domain.TeamArchiveResult => ({
 /**
  * Same shape as {@link workflowResult}: expected run failures become values.
  * `WorkflowRepositoryError` and `SchemaError` ride along because the actions
- * that can start an order run load the routing context (active definitions
+ * that can start an order run load the start context (active definitions
  * from this object, teams from D1) first.
  */
 const runResult = <R>(
@@ -832,7 +842,7 @@ export class ShopAgent extends Agent {
    * (`orderId: null`) is published to either way; a detail subscription only
    * for its own order. Workflow configuration is loader data and does not
    * publish, with one exception: Apply and the on/off switch change what
-   * routes, which the order page's `orderWorkflow` / `routableWorkflows`
+   * starts runs, which the order page's `orderWorkflow` / `itemWorkflows`
    * show, so those two publish `"all"`.
    */
   private publish(touched: PublishScope) {
@@ -1403,7 +1413,7 @@ export class ShopAgent extends Agent {
    * runtime already holds `Repository`, and one round trip returns the steps,
    * their resolved team names, and the active-team roster the picker needs.
    * A step whose team is archived or missing resolves to `teamName: null` —
-   * flagged, never blocked, since the risk is at routing time, not in the
+   * flagged, never blocked, since the risk is when a run starts, not in the
    * editor, and unarchiving the team restores validity with no edit.
    *
    * Plain RPC, not `@callable()`, for the reason on {@link listWorkflows}.
@@ -1430,22 +1440,21 @@ export class ShopAgent extends Agent {
               .filter((team) => team.archivedAt === null)
               .map((team) => [team.id, team.name]),
           );
-          const side = (
-            versionSteps: Domain.WorkflowVersionSteps | null,
-          ): Domain.WorkflowVersionView | null =>
-            versionSteps === null
-              ? null
-              : {
-                  version: versionSteps.version,
-                  steps: versionSteps.steps.map((step) => ({
-                    ...step,
-                    teamName: nameOf.get(step.teamId) ?? null,
-                  })),
-                };
+          const withTeamNames = (steps: readonly Domain.WorkflowStep[]) =>
+            steps.map((step) => ({
+              ...step,
+              teamName: nameOf.get(step.teamId) ?? null,
+            }));
           return {
             workflow: detail.value.workflow,
-            live: side(detail.value.live),
-            draft: side(detail.value.draft),
+            steps: withTeamNames(detail.value.steps),
+            draft:
+              detail.value.draft === null
+                ? null
+                : {
+                    draft: detail.value.draft.draft,
+                    steps: withTeamNames(detail.value.draft.steps),
+                  },
             activeTeams: [...nameOf].map(([id, name]) => ({ id, name })),
           } satisfies Domain.WorkflowDetailView;
         }),
@@ -1491,7 +1500,7 @@ export class ShopAgent extends Agent {
     );
   }
 
-  /** Tags are version content: the write lands on the draft (forked if needed) and is not live until Apply. */
+  /** Tags select line items, so the write lands on the draft and reaches the workflow only through Apply. */
   @callable()
   updateWorkflowTags(
     input: typeof Domain.UpdateWorkflowTagsInput.Encoded,
@@ -1519,9 +1528,38 @@ export class ShopAgent extends Agent {
     );
   }
 
+  /** Edit: creates the draft (or returns the existing one). Refused on an archived workflow, like every other edit. */
+  @callable()
+  createDraft(
+    input: typeof Domain.CreateDraftInput.Encoded,
+  ): Promise<Domain.DraftResult> {
+    const shop = this.name;
+    return this.runEffect(
+      callableEffect("ShopAgent.createDraft", Domain.CreateDraftInput, {
+        onExcessProperty: "error",
+      })(({ workflowId }) =>
+        draftResult(
+          Effect.gen(function* () {
+            const repository = yield* WorkflowRepository;
+            const existing = yield* repository.getWorkflow({ workflowId });
+            if (Option.isNone(existing))
+              return { _tag: "NotFound" } satisfies Domain.DraftResult;
+            if (existing.value.workflow.archivedAt !== null)
+              return { _tag: "Archived" } satisfies Domain.DraftResult;
+            const draft = yield* repository.createDraft({ workflowId });
+            yield* Effect.logInfo(
+              `ShopAgent.createDraft: shop=${shop} workflowId=${workflowId}`,
+            ).pipe(Effect.annotateLogs({ shop, workflowId }));
+            return { _tag: "Ok", draft } satisfies Domain.DraftResult;
+          }),
+        ),
+      )(input),
+    );
+  }
+
   /**
-   * Promotes the draft. Publishes because the next order routes against the
-   * new version, which the order page's workflow pickers reflect.
+   * Apply changes. Publishes because the next order starts against the new
+   * steps and tags, which the order page's workflow pickers reflect.
    */
   @callable()
   applyDraft(
@@ -1541,14 +1579,8 @@ export class ShopAgent extends Agent {
               activeTeams: yield* activeTeams(),
             });
             yield* Effect.logInfo(
-              `ShopAgent.applyDraft: shop=${shop} workflowId=${workflowId} versionId=${workflow.savedVersionId ?? ""}`,
-            ).pipe(
-              Effect.annotateLogs({
-                shop,
-                workflowId,
-                versionId: workflow.savedVersionId,
-              }),
-            );
+              `ShopAgent.applyDraft: shop=${shop} workflowId=${workflowId}`,
+            ).pipe(Effect.annotateLogs({ shop, workflowId }));
             return workflow;
           }),
         ).pipe(Effect.tap(publish)),
@@ -1645,31 +1677,31 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Loads what routing needs — every active definition with its steps, and
+   * Loads what starting runs needs — every active definition with its steps, and
    * the active team roster from D1 — *before* any transaction opens, and
    * returns a per-order effect the caller hands to `upsertOrder.afterWrite`.
-   * The D1 read is the one await routing needs that is not storage, and it
+   * The D1 read is the one await run creation needs that is not storage, and it
    * cannot happen inside the Durable Object transaction; loading once per
    * webhook or per bulk stream also bounds the cost for a thousand-order file,
    * at the accepted price of a snapshot that a mid-stream team archive would
    * not refresh.
    */
-  private routingContext() {
+  private startContext() {
     const activeTeams = () => this.activeTeams();
     return Effect.gen(function* () {
       return {
         workflows:
           yield* (yield* WorkflowRepository).listActiveWorkflowDetails(),
         activeTeams: yield* activeTeams(),
-      } satisfies RoutingContext;
+      } satisfies StartContext;
     });
   }
 
   private reconciler(source: Domain.OrderSyncSource) {
     const shop = this.name;
-    const routingContext = () => this.routingContext();
+    const startContext = () => this.startContext();
     return Effect.gen(function* () {
-      const context = yield* routingContext();
+      const context = yield* startContext();
       const runs = yield* WorkflowRunRepository;
       return (order: Domain.ShopOrder) =>
         runs.reconcileOrder({ ...context, orderId: order.id }).pipe(
@@ -1718,7 +1750,7 @@ export class ShopAgent extends Agent {
         orderWorkflow:
           workflows.find(({ workflow }) => workflow.scope === "order")
             ?.workflow ?? null,
-        routableWorkflows: workflows
+        itemWorkflows: workflows
           .filter(
             ({ workflow, steps }) =>
               workflow.scope === "item" && steps.length > 0,
@@ -1793,8 +1825,8 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Manual attach applies only the definition half of the routing predicate
-   * (`isRoutable`): an admin choosing a workflow for a line item by hand is
+   * Manual attach applies only the definition half of the start predicate
+   * (`canStart`): an admin choosing a workflow for a line item by hand is
    * exactly the override for a missing tag, a fulfilled line, or an order
    * older than the workflow. The run key still refuses a duplicate.
    */
@@ -1818,25 +1850,19 @@ export class ShopAgent extends Agent {
             workflowId,
           });
           const teams = yield* activeTeams();
-          // The saved version is the only one that can route; a draft or a
-          // never-applied workflow is not attachable. An order workflow
-          // starts by rule, never by attaching it to one line item (deferred;
-          // see the `WorkflowScope` doc).
-          const detail: Domain.WorkflowDetail | null =
-            Option.isSome(found) && found.value.live !== null
-              ? {
-                  workflow: found.value.workflow,
-                  version: found.value.live.version,
-                  steps: found.value.live.steps,
-                }
-              : null;
+          // Only the workflow's own steps can start a run; a draft is never
+          // attachable. An order workflow starts by rule, never by attaching
+          // it to one line item (deferred; see the `WorkflowScope` doc).
+          const detail: Domain.WorkflowDetail | null = Option.isSome(found)
+            ? { workflow: found.value.workflow, steps: found.value.steps }
+            : null;
           if (
             detail === null ||
             detail.workflow.scope !== "item" ||
-            !isRoutable(detail, teams)
+            !canStart(detail, teams)
           )
             return {
-              _tag: "WorkflowNotRoutable",
+              _tag: "WorkflowCannotStart",
             } satisfies Domain.AttachResult;
           const run = yield* (yield* WorkflowRunRepository).createRun({
             workflow: detail,
@@ -1860,7 +1886,7 @@ export class ShopAgent extends Agent {
   ): Promise<Domain.RunResult> {
     const shop = this.name;
     const publish = () => this.publish("all");
-    const routingContext = () => this.routingContext();
+    const startContext = () => this.startContext();
     return this.runEffect(
       callableEffect("ShopAgent.cancelRun", Domain.RunIdInput, {
         onExcessProperty: "error",
@@ -1868,9 +1894,9 @@ export class ShopAgent extends Agent {
         runResult(
           WorkflowRunRepository.pipe(
             Effect.flatMap((repository) =>
-              routingContext().pipe(
-                Effect.flatMap((routing) =>
-                  repository.cancelRun({ runId, routing }),
+              startContext().pipe(
+                Effect.flatMap((startContext) =>
+                  repository.cancelRun({ runId, startContext }),
                 ),
               ),
             ),
@@ -2055,7 +2081,7 @@ export class ShopAgent extends Agent {
   ): Promise<Domain.RunResult> {
     const shop = this.name;
     const publish = () => this.publish("all");
-    const routingContext = () => this.routingContext();
+    const startContext = () => this.startContext();
     return this.runEffect(
       callableEffect(
         "ShopAgent.completeStep",
@@ -2069,7 +2095,7 @@ export class ShopAgent extends Agent {
                 memberId,
               ).pipe(Effect.orDie),
               teamIds,
-              routing: yield* routingContext(),
+              startContext: yield* startContext(),
             });
             yield* Effect.logInfo(
               `ShopAgent.completeStep: shop=${shop} step=${runStepId} memberId=${memberId}`,
@@ -2117,7 +2143,7 @@ export class ShopAgent extends Agent {
     });
   }
 
-  /** Only archive blocks a write: every other state forks a draft instead. */
+  /** Archive blocks every edit; a missing draft surfaces from the repository as `NoDraft`. */
   private workflowWritable(workflowId: string) {
     return WorkflowRepository.pipe(
       Effect.flatMap((repository) => repository.getWorkflow({ workflowId })),
@@ -2400,7 +2426,7 @@ export class ShopAgent extends Agent {
   /**
    * Development seed for orders, same gate and reasoning as `seedWorkflows`.
    * Goes through `upsertOrder` + `reconcileOrder` rather than raw inserts so
-   * the fixture exercises routing, and `done` finishes steps through
+   * the fixture exercises run creation, and `done` finishes steps through
    * `completeStep` with the step's own team so the order-run trigger fires
    * the way it does on the floor. Only rows under `SEED_ORDER_ID_PREFIX` are
    * replaced; synced orders are left alone.
@@ -2410,7 +2436,7 @@ export class ShopAgent extends Agent {
     const environment = this.env.ENVIRONMENT;
     const publish = () => this.publish("all");
     const reconciler = () => this.reconciler("manual");
-    const routingContext = () => this.routingContext();
+    const loadStartContext = () => this.startContext();
     return this.runEffect(
       callableEffect("ShopAgent.seedOrders", Domain.SeedOrdersInput, {
         onExcessProperty: "error",
@@ -2427,7 +2453,7 @@ export class ShopAgent extends Agent {
           const orderRepository = yield* OrderRepository;
           const runs = yield* WorkflowRunRepository;
           const reconcile = yield* reconciler();
-          const routing = yield* routingContext();
+          const startContext = yield* loadStartContext();
           const now = yield* Clock.currentTimeMillis;
           const completeOpenRuns = (orderId: string) =>
             Effect.gen(function* () {
@@ -2443,7 +2469,7 @@ export class ShopAgent extends Agent {
                       runStepId: step.id,
                       memberId,
                       teamIds: [step.teamId],
-                      routing,
+                      startContext,
                     }),
                   { discard: true },
                 );
@@ -2460,7 +2486,7 @@ export class ShopAgent extends Agent {
           for (const [index, seed] of orders.entries()) {
             const id = `${Domain.SEED_ORDER_ID_PREFIX}${String(seed.n)}`;
             // At or after `now`, never before: the workflows this fixture
-            // routes to were created moments ago and the age rule skips an
+            // starts were created moments ago and the age rule skips an
             // order processed before its workflow. Spaced a second apart so
             // the index's keyset order matches `orders` order, newest last.
             const processedAt = now + index * 1000;

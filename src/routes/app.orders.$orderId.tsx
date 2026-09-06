@@ -39,8 +39,8 @@ const attachResultMessage = Match.typeTags<
   Ok: () => null,
   AlreadyExists: () => "That workflow is already attached to this line item.",
   LineItemNotFound: () => "That line item no longer exists.",
-  WorkflowNotRoutable: () =>
-    "That workflow cannot route work: it is archived, has no steps, or points at an archived team.",
+  WorkflowCannotStart: () =>
+    "That workflow cannot start: it is archived, off, has no steps, or points at an archived team.",
 });
 
 const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
@@ -69,7 +69,7 @@ const RUN_FLAG_LABEL = {
 } as const satisfies Record<Domain.RunFlag, string>;
 
 const PRODUCTION_STATE_BADGE = {
-  not_routed: { label: "Not routed", tone: "warning" },
+  no_workflow: { label: "No workflow", tone: "warning" },
   in_production: { label: "In production", tone: "info" },
   ready_to_ship: { label: "Ready to ship", tone: "success" },
   shipped: { label: "Shipped", tone: "neutral" },
@@ -303,7 +303,7 @@ function RouteComponent() {
       </s-page>
     );
 
-  const { order, lineItems, runs, orderWorkflow, routableWorkflows } = detail;
+  const { order, lineItems, runs, orderWorkflow, itemWorkflows } = detail;
   /**
    * The same aggregate the index computes in SQL, rebuilt from the run list
    * this page already carries so both pages read one `productionState`.
@@ -323,26 +323,24 @@ function RouteComponent() {
   const busy = attachMutation.isPending || runMutation.isPending;
 
   /**
-   * Which version a run follows. "Definition has changed since" compares
-   * against the workflow's current saved version, known here only for
-   * workflows that route now; an off or archived workflow shows the date
-   * alone.
+   * "<Workflow> started for N items": one line per item workflow with an
+   * open or done run on this order, the merchant-copy verb from
+   * `Domain.Workflow`. Cancelled runs are not "started" for this purpose.
    */
-  const versionLine = ({ run, versionAppliedAt }: Domain.WorkflowRunDetail) => {
-    if (versionAppliedAt === null) return null;
-    const current = [orderWorkflow, ...routableWorkflows].find(
-      (workflow) => workflow?.id === run.workflowId,
-    );
-    const changed =
-      current !== undefined &&
-      current !== null &&
-      current.savedVersionId !== run.versionId;
-    return (
-      <s-text color="subdued">
-        {`From version applied ${formatDateTime(versionAppliedAt)}${changed ? " · definition has changed since" : ""}`}
-      </s-text>
-    );
-  };
+  const startedLines = [
+    ...runs
+      .filter(
+        ({ run }) => !Domain.isOrderRun(run) && run.status !== "cancelled",
+      )
+      .reduce<Map<string, number>>(
+        (acc, { run }) =>
+          acc.set(run.workflowName, (acc.get(run.workflowName) ?? 0) + 1),
+        new Map(),
+      ),
+  ].map(
+    ([name, count]) =>
+      `${name} started for ${formatNumber(count)} item${count === 1 ? "" : "s"}`,
+  );
 
   const renderRun = (run: Domain.WorkflowRunDetail) => (
     <s-stack key={run.run.id} gap="small-300">
@@ -378,7 +376,6 @@ function RouteComponent() {
         )}
       </s-stack>
       {stepTrail(run)}
-      {versionLine(run)}
     </s-stack>
   );
 
@@ -459,7 +456,7 @@ function RouteComponent() {
                     }));
                   }}
                 >
-                  {routableWorkflows.map((workflow) => (
+                  {itemWorkflows.map((workflow) => (
                     <s-option key={workflow.id} value={workflow.id}>
                       {workflow.name}
                     </s-option>
@@ -519,8 +516,24 @@ function RouteComponent() {
       <SocketBanner />
       {(banner !== null ||
         !order.lineItemsComplete ||
-        state === "ready_to_ship") && (
+        state === "ready_to_ship" ||
+        state === "no_workflow" ||
+        startedLines.length > 0) && (
         <s-stack slot="supplemental-start" gap="base">
+          {state === "no_workflow" && (
+            <s-paragraph color="subdued">
+              No workflow's product tags match the items in this order.
+            </s-paragraph>
+          )}
+          {startedLines.length > 0 && (
+            <s-stack gap="small-500">
+              {startedLines.map((line) => (
+                <s-text key={line} color="subdued">
+                  {line}
+                </s-text>
+              ))}
+            </s-stack>
+          )}
           {state === "ready_to_ship" && (
             <s-banner tone="success">
               Every run is done.{" "}

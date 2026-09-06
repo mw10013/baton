@@ -49,7 +49,7 @@ export interface SeedWorkflowStep {
   readonly instructions?: string;
 }
 
-/** A line item of a seeded order; `tags` are the product tags routing matches. Quantities default down the chain `quantity` → `currentQuantity` → `unfulfilledQuantity`. */
+/** A line item of a seeded order; `tags` are the product tags a workflow matches on. Quantities default down the chain `quantity` → `currentQuantity` → `unfulfilledQuantity`. */
 export interface SeedLineItem {
   readonly title: string;
   readonly quantity: number;
@@ -80,10 +80,13 @@ export interface SeedWorkflow {
   /** On/off switch; defaults to on when there are steps and the entry is not archived. */
   readonly active?: boolean;
   readonly tags: readonly string[];
-  /** The applied (live) version; empty seeds a never-applied empty draft instead. */
+  /** The workflow's steps; empty seeds an empty draft beside it instead. */
   readonly steps: readonly SeedWorkflowStep[];
-  /** A pending draft beside the live version. */
-  readonly draft?: readonly SeedWorkflowStep[];
+  /** A pending draft beside the workflow; `tags` default to the workflow's. */
+  readonly draft?: {
+    readonly tags?: readonly string[];
+    readonly steps: readonly SeedWorkflowStep[];
+  };
 }
 
 /**

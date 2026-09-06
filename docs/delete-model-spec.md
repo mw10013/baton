@@ -34,7 +34,7 @@ Already in place for a step whose team is archived or missing:
 - `ShopAgent.getWorkflowDetail` resolves `teamName: null` for a step whose team is not active.
 - `app.workflows.$workflowId.tsx` shows a needs-attention banner listing those steps, on the workflow and on the draft.
 - `applyDraft` and `setWorkflowActive` refuse with `TeamNotActive { stepNames }`.
-- `isRoutable` in `WorkflowRunRepository.ts` requires every step's team to be in `activeTeams`.
+- `canStart` in `WorkflowRunRepository.ts` requires every step's team to be in `activeTeams`.
 - `ShopAgent.activeTeam` validates the team on `addStep` / `updateStep` against the live D1 roster.
 
 Team delete becomes one more way to enter this state, with the copy changed from "archived" to "deleted" / "unassigned".
@@ -54,7 +54,7 @@ Team delete becomes one more way to enter this state, with the copy changed from
 3. **Team delete nulls the pointer.** Every workflow step, every draft step, and every open run step that pointed at the team becomes unassigned. Finished run steps keep their `teamName` snapshot untouched.
 4. **Member delete removes membership.** `TeamMember` cascades. Run history keeps the actor as an email snapshot, not a live join.
 5. **Attention state is derived, never stored.** No run error status, no flag to set and clear. A workflow, run, or team "needs attention" when a read finds the condition; fixing the condition clears it with no extra write.
-6. **Empty teams are a warning, never a run-level problem.** A team with no members is valid. Steps assigned to it are routable but nobody can work them; the team page and the steps show "No members". Adding one member fixes everything with zero data changes.
+6. **Empty teams are a warning, never a run-level problem.** A team with no members is valid. A workflow with steps assigned to it can still start runs, but nobody can work those steps; the team page and the steps show "No members". Adding one member fixes everything with zero data changes.
 7. **Blockers become warnings.** No delete is refused for being "in use". The confirm dialog tells the merchant what will break; the merchant decides.
 
 ### Merchant model, one sentence each
@@ -75,7 +75,7 @@ deleteWorkflow(workflowId), one DO transaction:
 ```
 
 - Confirm dialog: "Delete <name>? N runs in progress and M finished runs will be deleted. This can't be undone." Counts come from a read at dialog-open time; staleness is harmless because the delete removes whatever exists at commit time.
-- Items mid-production drop out of the floor's view. Re-routing them is manual (`source = 'manual'` runs via attach). The age rule (`processedAt >= workflow.createdAt`) means a replacement workflow will not pick them up automatically. Accepted.
+- Items mid-production drop out of the floor's view. Starting a replacement workflow for them is manual (`source = 'manual'` runs via attach). The age rule (`processedAt >= workflow.createdAt`) means a replacement workflow will not pick them up automatically. Accepted.
 - Turn off remains the non-destructive move: stops new runs, open runs finish. The Turn off dialog says so.
 - Name is freed immediately; the one-order-workflow slot is freed immediately. Uniqueness is now among existing rows only.
 - Removes: `Workflow.archivedAt`, `setWorkflowArchived`, `WorkflowActiveError`, `workflowWritable` (collapses to NotFound), `includeArchived`, `Archived` result tags, Archive/Restore UI, archived-last ordering, `archived` seed fixtures for workflows.
@@ -100,17 +100,17 @@ deleteTeam(teamId):
 
 The reverse order (DO first, D1 second) has a real hole: a step written between the DO cleanup and the D1 delete would validate fine and then dangle forever with nothing scheduled to clean it. D1-first closes that. The remaining risk is step 2 failing after step 1 succeeded (DO unreachable). Mitigation is the next point.
 
-**Dangling pointers are treated as null on every read.** `teamId` pointing at a team that no longer exists in D1 renders and routes exactly like `teamId is null`: unassigned, needs attention, not routable, not in any queue. This makes the cross-store window harmless, makes a failed step 2 self-healing (the next read shows the truth; a later `deleteTeam` retry or a lazy repair on `getWorkflowDetail` can null it properly), and means the confirm-dialog pre-check has no correctness job at all.
+**Dangling pointers are treated as null on every read.** `teamId` pointing at a team that no longer exists in D1 renders and behaves exactly like `teamId is null`: unassigned, needs attention, the workflow cannot start runs, the step is in no queue. This makes the cross-store window harmless, makes a failed step 2 self-healing (the next read shows the truth; a later `deleteTeam` retry or a lazy repair on `getWorkflowDetail` can null it properly), and means the confirm-dialog pre-check has no correctness job at all.
 
 **Guard removed.** `archiveTeam`'s count → archive → re-check sequence goes. `countStepsOwnedBy` / `listStepsOwnedBy` stay, extended to count open run steps too, and feed the dialog instead of a refusal.
 
-**Confirm dialog:** "Delete <team>? N workflow steps and M in-progress steps are assigned to it. They will become unassigned. Workflows with unassigned steps stop routing, and in-progress steps wait until you assign a team."
+**Confirm dialog:** "Delete <team>? N workflow steps and M in-progress steps are assigned to it. They will become unassigned. Workflows with unassigned steps stop starting for new orders, and in-progress steps wait until you assign a team."
 
 **Bulk reassign in the dialog: not required.** Discussed and set aside (mw, 2026-09-05): nulling plus the derived warning plus per-step assign is enough. Can be added later if a real merchant hits a large cascade.
 
 **Per-step "Assign team" on open run steps: required.** This is the remedy that makes team delete safe. Small operation: `assignRunStepTeam({ runStepId, teamId })` sets `teamId` and `teamName` from the live roster on an open run step. Guard: team exists in D1 (same `activeTeam` check as `addStep`). UI: on the order page run card, an unassigned open step shows a team picker.
 
-**Empty team.** Team page shows "No members" badge. Workflow step assigned to a team with no members shows a warning. `isRoutable` does **not** check membership; `applyDraft` and `setWorkflowActive` do **not** refuse over it. A run whose ready step belongs to an empty team is simply in nobody's queue until someone joins.
+**Empty team.** Team page shows "No members" badge. Workflow step assigned to a team with no members shows a warning. `canStart` does **not** check membership; `applyDraft` and `setWorkflowActive` do **not** refuse over it. A run whose ready step belongs to an empty team is simply in nobody's queue until someone joins.
 
 ### Members
 

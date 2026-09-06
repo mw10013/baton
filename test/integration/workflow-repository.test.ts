@@ -41,12 +41,11 @@ const T2 = { id: teamId("t2") };
 const T3 = { id: teamId("t3") };
 const ALL_TEAMS = [T1, T2, T3];
 
-/** The side the editor shows: the draft when one exists, otherwise the live version. */
-const editable = (versions: Option.Option<Domain.WorkflowVersions>) => {
-  const { live, draft } = Option.getOrThrow(versions);
-  const side = draft ?? live;
-  if (side === null) throw new Error("no version");
-  return side;
+/** The side the editor shows: the draft, which a fresh workflow always has. */
+const editable = (found: Option.Option<Domain.WorkflowWithDraft>) => {
+  const { draft } = Option.getOrThrow(found);
+  if (draft === null) throw new Error("no draft");
+  return draft;
 };
 
 describe("Domain workflow schemas", () => {
@@ -93,7 +92,7 @@ describe("WorkflowRepository", () => {
           tags: tags(["Engraving", "engrave"]),
         });
         deepStrictEqual<readonly string[]>(
-          editable(yield* repo.getWorkflow({ workflowId: created.id })).version
+          editable(yield* repo.getWorkflow({ workflowId: created.id })).draft
             .tags,
           ["engraving", "engrave"],
         );
@@ -139,7 +138,9 @@ describe("WorkflowRepository", () => {
           tags: tags(["X"]),
         });
         deepStrictEqual<readonly string[]>(retagged.tags, ["x"]);
-        strictEqual(retagged.id, updated.draftVersionId);
+        strictEqual(retagged.workflowId, updated.id);
+        // Tags reach the workflow only through Apply.
+        deepStrictEqual<readonly string[]>(updated.tags, []);
         const taken = yield* repo
           .updateWorkflow({ workflowId: a.id, name: name("b") })
           .pipe(Effect.flip);
@@ -593,10 +594,15 @@ describe("WorkflowRepository", () => {
         strictEqual(yield* repo.countStepsOwnedBy({ teamId: "none" }), 0);
         const owned = yield* repo.listStepsOwnedBy({ teamId: "t1" });
         deepStrictEqual(
-          owned.map((o) => [o.workflowName, o.stepName, o.workflowArchived]),
+          owned.map((o) => [
+            o.workflowName,
+            o.stepName,
+            o.workflowArchived,
+            o.side,
+          ]),
           [
-            ["A", "A1", false],
-            ["B", "B1", true],
+            ["A", "A1", false, "draft"],
+            ["B", "B1", true, "draft"],
           ],
         );
       }),
@@ -693,7 +699,7 @@ describe("WorkflowRepository", () => {
       }),
     ));
 
-  it("deleting a workflow cascades its steps", () =>
+  it("deleting a workflow cascades its draft and steps", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -712,7 +718,13 @@ describe("WorkflowRepository", () => {
         assertNone(yield* repo.getStep({ stepId: s.id }));
         assertNone(yield* repo.getWorkflow({ workflowId: w.id }));
         strictEqual(
-          Number((yield* sql`select count(*) as n from WorkflowVersion`)[0]?.n),
+          Number((yield* sql`select count(*) as n from WorkflowDraft`)[0]?.n),
+          0,
+        );
+        strictEqual(
+          Number(
+            (yield* sql`select count(*) as n from WorkflowDraftStep`)[0]?.n,
+          ),
           0,
         );
       }),
@@ -731,8 +743,19 @@ const twoSteps = (workflowId: string) =>
     });
   });
 
-describe("WorkflowRepository versions", () => {
-  it("create → no saved version, one empty draft, off, not routable; apply refused without steps", () =>
+const found = (workflowId: string) =>
+  Effect.map(
+    WorkflowRepository.pipe(
+      Effect.flatMap((repo) => repo.getWorkflow({ workflowId })),
+    ),
+    Option.getOrThrow,
+  );
+
+const stepNames = (steps: readonly { readonly name: string }[]) =>
+  steps.map((s) => s.name);
+
+describe("WorkflowRepository workflow and draft", () => {
+  it("create → no steps, empty tags, an empty draft, off, not listed for starting; apply refused without steps; discard allowed", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -741,20 +764,18 @@ describe("WorkflowRepository versions", () => {
           tags: tags(["a"]),
         });
         strictEqual(w.active, false);
-        strictEqual(w.savedVersionId, null);
-        strictEqual(w.draftVersionId !== null, true);
-        const { live, draft } = Option.getOrThrow(
-          yield* repo.getWorkflow({ workflowId: w.id }),
-        );
-        strictEqual(live, null);
-        deepStrictEqual<readonly string[]>(draft?.version.tags ?? [], ["a"]);
-        strictEqual(draft?.version.appliedAt, null);
-        deepStrictEqual(draft?.steps, []);
+        deepStrictEqual<readonly string[]>(w.tags, []);
+        const fresh = yield* found(w.id);
+        deepStrictEqual(fresh.steps, []);
+        deepStrictEqual<readonly string[]>(fresh.draft?.draft.tags ?? [], [
+          "a",
+        ]);
+        deepStrictEqual(fresh.draft?.steps, []);
         deepStrictEqual(yield* repo.listActiveWorkflowDetails(), []);
         const [row] = yield* repo.listWorkflows({ includeArchived: false });
         deepStrictEqual(
-          [row?.hasDraft, row?.stepCount, row?.tags, row?.active],
-          [true, 0, [], false],
+          [row?.hasDraft, row?.stepCount, row?.tags],
+          [true, 0, []],
         );
         const empty = yield* repo
           .applyDraft({ workflowId: w.id, activeTeams: ALL_TEAMS })
@@ -767,11 +788,21 @@ describe("WorkflowRepository versions", () => {
             activeTeams: ALL_TEAMS,
           })
           .pipe(Effect.flip);
-        strictEqual(on._tag, "NoSavedVersionError");
+        strictEqual(on._tag, "NoStepsError");
+        // Discard on a never-applied workflow: zero steps, no draft.
+        const discarded = yield* repo.discardDraft({ workflowId: w.id });
+        strictEqual(discarded.id, w.id);
+        const after = yield* found(w.id);
+        strictEqual(after.draft, null);
+        deepStrictEqual(after.steps, []);
+        const again = yield* repo
+          .discardDraft({ workflowId: w.id })
+          .pipe(Effect.flip);
+        strictEqual(again._tag, "NoDraftError");
       }),
     ));
 
-  it("apply promotes the draft: appliedAt set, pointers swapped, list and routing read the saved version", () =>
+  it("apply replaces the workflow's tags and steps with the draft's, carries step ids over, and deletes the draft", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -780,49 +811,77 @@ describe("WorkflowRepository versions", () => {
           tags: tags(["a"]),
         });
         yield* twoSteps(w.id);
-        const draftId = w.draftVersionId;
+        const before = yield* found(w.id);
+        const draftIds = before.draft?.steps.map((s) => s.id) ?? [];
         const applied = yield* repo.applyDraft({
           workflowId: w.id,
           activeTeams: ALL_TEAMS,
         });
-        strictEqual(applied.savedVersionId, draftId);
-        strictEqual(applied.draftVersionId, null);
+        deepStrictEqual<readonly string[]>(applied.tags, ["a"]);
         strictEqual(applied.active, false);
-        const { live, draft } = Option.getOrThrow(
-          yield* repo.getWorkflow({ workflowId: w.id }),
-        );
-        strictEqual(draft, null);
-        strictEqual(live?.version.appliedAt !== null, true);
-        strictEqual(live?.version.retiredAt, null);
+        const after = yield* found(w.id);
+        strictEqual(after.draft, null);
+        deepStrictEqual(stepNames(after.steps), ["Cut", "Finish"]);
         deepStrictEqual(
-          live?.steps.map((s) => s.name),
-          ["Cut", "Finish"],
+          after.steps.map((s) => s.id),
+          draftIds,
         );
-        // Off: still invisible to routing until turned on.
+        const [row] = yield* repo.listWorkflows({ includeArchived: false });
+        deepStrictEqual(
+          [row?.hasDraft, row?.stepCount, row?.tags],
+          [false, 2, ["a"]],
+        );
+        // Off: still invisible to run creation until turned on.
         deepStrictEqual(yield* repo.listActiveWorkflowDetails(), []);
-        const on = yield* repo.setWorkflowActive({
+        yield* repo.setWorkflowActive({
           workflowId: w.id,
           active: true,
           activeTeams: ALL_TEAMS,
         });
-        strictEqual(on.active, true);
         const [detail] = yield* repo.listActiveWorkflowDetails();
-        strictEqual(detail?.version.id, draftId);
-        deepStrictEqual<readonly string[]>(detail?.version.tags ?? [], ["a"]);
-        strictEqual(detail?.steps.length, 2);
-        const [row] = yield* repo.listWorkflows({ includeArchived: false });
-        deepStrictEqual(
-          [row?.hasDraft, row?.stepCount, row?.tags, row?.active],
-          [false, 2, ["a"], true],
+        deepStrictEqual(stepNames(detail?.steps ?? []), ["Cut", "Finish"]);
+        deepStrictEqual<readonly string[]>(detail?.workflow.tags ?? [], ["a"]);
+        // No draft: apply and discard refuse, and so does every step write.
+        strictEqual(
+          (yield* repo
+            .applyDraft({ workflowId: w.id, activeTeams: ALL_TEAMS })
+            .pipe(Effect.flip))._tag,
+          "NoDraftError",
         );
-        const again = yield* repo
-          .applyDraft({ workflowId: w.id, activeTeams: ALL_TEAMS })
-          .pipe(Effect.flip);
-        strictEqual(again._tag, "NoDraftError");
+        strictEqual(
+          (yield* repo.discardDraft({ workflowId: w.id }).pipe(Effect.flip))
+            ._tag,
+          "NoDraftError",
+        );
+        strictEqual(
+          (yield* repo
+            .addStep({
+              workflowId: w.id,
+              name: stepName("Pack"),
+              teamId: T3.id,
+            })
+            .pipe(Effect.flip))._tag,
+          "NoDraftError",
+        );
+        strictEqual(
+          (yield* repo
+            .updateWorkflowTags({ workflowId: w.id, tags: tags(["b"]) })
+            .pipe(Effect.flip))._tag,
+          "NoDraftError",
+        );
+        // A workflow step id is never writable.
+        const [first] = after.steps;
+        strictEqual(
+          (yield* repo
+            .removeStep({ stepId: first?.id ?? "" })
+            .pipe(Effect.flip))._tag,
+          "StepNotFoundError",
+        );
+        assertNone(yield* repo.getStep({ stepId: first?.id ?? "" }));
       }),
     ));
 
-  it("first edit forks a draft; a saved step id maps to the draft step at the same position; the saved version is untouched", () =>
+  it("createDraft copies the workflow's tags and steps under new ids and is idempotent; edits never touch the workflow", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -837,92 +896,68 @@ describe("WorkflowRepository versions", () => {
           active: true,
           activeTeams: ALL_TEAMS,
         });
-        const before = Option.getOrThrow(
-          yield* repo.getWorkflow({ workflowId: w.id }),
+        const draft = yield* repo.createDraft({ workflowId: w.id });
+        deepStrictEqual<readonly string[]>(draft.tags, ["a"]);
+        const again = yield* repo.createDraft({ workflowId: w.id });
+        strictEqual(again.createdAt, draft.createdAt);
+        const forked = yield* found(w.id);
+        deepStrictEqual(stepNames(forked.draft?.steps ?? []), [
+          "Cut",
+          "Finish",
+        ]);
+        const workflowIds = forked.steps.map((s) => s.id);
+        const draftIds = forked.draft?.steps.map((s) => s.id) ?? [];
+        strictEqual(
+          draftIds.some((id) => workflowIds.includes(id)),
+          false,
         );
-        const savedCut = before.live?.steps[0];
-        if (savedCut === undefined) throw new Error("no saved step");
-
-        // Edit by the SAVED step id, with no draft yet.
-        const edited = yield* repo.updateStep({
-          stepId: savedCut.id,
-          name: stepName("Cut carefully"),
+        deepStrictEqual(
+          forked.draft?.steps.map((s) => [s.position, s.stage, s.teamId]),
+          forked.steps.map((s) => [s.position, s.stage, s.teamId]),
+        );
+        // Every edit lands on the draft; the workflow and what starts runs
+        // are untouched.
+        const [cut, finish] = draftIds;
+        yield* repo.updateStep({
+          stepId: cut ?? "",
+          name: stepName("Cut2"),
           teamId: T3.id,
           instructions: null,
         });
-        strictEqual(edited.id !== savedCut.id, true);
-        strictEqual(edited.position, 1);
-
-        const after = Option.getOrThrow(
-          yield* repo.getWorkflow({ workflowId: w.id }),
-        );
-        strictEqual(after.workflow.draftVersionId, edited.versionId);
-        strictEqual(
-          after.workflow.savedVersionId,
-          before.workflow.savedVersionId,
-        );
-        // Live unchanged, under its original step ids.
-        deepStrictEqual(
-          after.live?.steps.map((s) => [s.id, s.name, s.teamId]),
-          before.live?.steps.map((s) => [s.id, s.name, s.teamId]),
-        );
-        // Draft: same shape, new ids, the edit applied.
-        deepStrictEqual(
-          after.draft?.steps.map((s) => [s.position, s.stage, s.name]),
-          [
-            [1, 1, "Cut carefully"],
-            [2, 2, "Finish"],
-          ],
-        );
-        strictEqual(
-          after.draft?.steps.every(
-            (s) => !before.live?.steps.some((l) => l.id === s.id),
-          ),
-          true,
-        );
-        deepStrictEqual<readonly string[]>(after.draft?.version.tags ?? [], [
-          "a",
-        ]);
-        // Routing still reads the saved version.
-        const [detail] = yield* repo.listActiveWorkflowDetails();
-        strictEqual(detail?.version.id, before.workflow.savedVersionId);
-        strictEqual(detail?.steps[0]?.name, "Cut");
-
-        // Other saved-id writes map too, always by position: after the
-        // move, saved position 1 is the draft's "Finish".
-        const savedFinish = before.live?.steps[1];
-        if (savedFinish === undefined) throw new Error("no saved step");
-        yield* repo.moveStep({ stepId: savedFinish.id, direction: "up" });
-        deepStrictEqual(
-          editable(yield* repo.getWorkflow({ workflowId: w.id })).steps.map(
-            (s) => s.name,
-          ),
-          ["Finish", "Cut carefully"],
-        );
-        yield* repo.removeStep({ stepId: savedCut.id });
-        deepStrictEqual(
-          editable(yield* repo.getWorkflow({ workflowId: w.id })).steps.map(
-            (s) => s.name,
-          ),
-          ["Cut carefully"],
-        );
+        yield* repo.moveStep({ stepId: finish ?? "", direction: "up" });
+        yield* repo.separateStep({ stepId: finish ?? "" });
+        const pack = yield* repo.addStep({
+          workflowId: w.id,
+          name: stepName("Pack"),
+          teamId: T3.id,
+        });
+        yield* repo.addParallelStep({
+          workflowId: w.id,
+          stage: pack.stage,
+          name: stepName("Label"),
+          teamId: T1.id,
+        });
         yield* repo.updateWorkflowTags({ workflowId: w.id, tags: tags(["b"]) });
-        const tagged = Option.getOrThrow(
-          yield* repo.getWorkflow({ workflowId: w.id }),
+        const edited = yield* found(w.id);
+        deepStrictEqual(
+          edited.draft?.steps.map((s) => `${s.name}${String(s.stage)}`),
+          ["Cut21", "Finish2", "Pack3", "Label3"],
         );
-        deepStrictEqual<readonly string[]>(tagged.live?.version.tags ?? [], [
-          "a",
-        ]);
-        deepStrictEqual<readonly string[]>(tagged.draft?.version.tags ?? [], [
+        deepStrictEqual<readonly string[]>(edited.draft?.draft.tags ?? [], [
           "b",
         ]);
-        // getStep resolves the owning workflow for either side.
-        const owner = yield* repo.getStep({ stepId: savedCut.id });
-        strictEqual(Option.getOrThrow(owner).workflow.id, w.id);
+        deepStrictEqual(stepNames(edited.steps), ["Cut", "Finish"]);
+        deepStrictEqual<readonly string[]>(edited.workflow.tags, ["a"]);
+        const [detail] = yield* repo.listActiveWorkflowDetails();
+        deepStrictEqual(stepNames(detail?.steps ?? []), ["Cut", "Finish"]);
+        const missing = yield* repo
+          .createDraft({ workflowId: "nope" })
+          .pipe(Effect.flip);
+        strictEqual(missing._tag, "WorkflowNotFoundError");
       }),
     ));
 
-  it("re-apply retires the old version and keeps it; a retired step id is not found; discard deletes the draft", () =>
+  it("apply while on replaces the steps in place and leaves active alone; discard deletes the draft and leaves the workflow", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -932,150 +967,162 @@ describe("WorkflowRepository versions", () => {
           tags: tags(["a"]),
         });
         yield* twoSteps(w.id);
-        const v1 = (yield* repo.applyDraft({
-          workflowId: w.id,
-          activeTeams: ALL_TEAMS,
-        })).savedVersionId;
+        yield* repo.applyDraft({ workflowId: w.id, activeTeams: ALL_TEAMS });
         yield* repo.setWorkflowActive({
           workflowId: w.id,
           active: true,
           activeTeams: ALL_TEAMS,
         });
-        const v1Steps = Option.getOrThrow(
-          yield* repo.getWorkflow({ workflowId: w.id }),
-        ).live?.steps;
+        yield* repo.createDraft({ workflowId: w.id });
         yield* repo.addStep({
           workflowId: w.id,
           name: stepName("Pack"),
           teamId: T3.id,
         });
-        const forked = yield* repo.getWorkflow({ workflowId: w.id });
-        const v2 = Option.getOrThrow(forked).workflow.draftVersionId;
+        yield* repo.updateWorkflowTags({ workflowId: w.id, tags: tags(["b"]) });
         const applied = yield* repo.applyDraft({
           workflowId: w.id,
           activeTeams: ALL_TEAMS,
         });
-        strictEqual(applied.savedVersionId, v2);
-        strictEqual(applied.draftVersionId, null);
         strictEqual(applied.active, true);
-        const versions = yield* sql`
-          select id, appliedAt, retiredAt from WorkflowVersion
-          where workflowId = ${w.id} order by createdAt
-        `;
-        strictEqual(versions.length, 2);
-        strictEqual(versions[0]?.id, v1);
-        strictEqual(versions[0]?.retiredAt !== null, true);
-        strictEqual(versions[1]?.id, v2);
-        strictEqual(versions[1]?.appliedAt !== null, true);
-        strictEqual(versions[1]?.retiredAt, null);
-        // The retired version keeps its steps but refuses edits.
-        const retiredStep = v1Steps?.[0];
-        if (retiredStep === undefined) throw new Error("no retired step");
+        deepStrictEqual<readonly string[]>(applied.tags, ["b"]);
+        const after = yield* found(w.id);
+        strictEqual(after.draft, null);
+        deepStrictEqual(stepNames(after.steps), ["Cut", "Finish", "Pack"]);
         strictEqual(
-          Option.isSome(yield* repo.getStep({ stepId: retiredStep.id })),
-          true,
-        );
-        const refused = yield* repo
-          .removeStep({ stepId: retiredStep.id })
-          .pipe(Effect.flip);
-        strictEqual(refused._tag, "StepNotFoundError");
-        const [detail] = yield* repo.listActiveWorkflowDetails();
-        deepStrictEqual(
-          detail?.steps.map((s) => s.name),
-          ["Cut", "Finish", "Pack"],
+          Number(
+            (yield* sql`select count(*) as n from WorkflowDraftStep`)[0]?.n,
+          ),
+          0,
         );
 
-        // Discard: fork, delete, steps cascade, saved untouched.
+        // Discard: draft and draft steps gone, workflow untouched.
+        yield* repo.createDraft({ workflowId: w.id });
         yield* repo.addStep({
           workflowId: w.id,
-          name: stepName("Extra"),
-          teamId: T1.id,
+          name: stepName("Ship"),
+          teamId: T3.id,
         });
-        const withDraft = Option.getOrThrow(
-          yield* repo.getWorkflow({ workflowId: w.id }),
-        );
-        const draftId = withDraft.workflow.draftVersionId;
-        strictEqual(draftId !== null, true);
+        yield* repo.updateWorkflowTags({ workflowId: w.id, tags: tags(["c"]) });
         const discarded = yield* repo.discardDraft({ workflowId: w.id });
-        strictEqual(discarded.draftVersionId, null);
-        strictEqual(discarded.savedVersionId, v2);
+        deepStrictEqual<readonly string[]>(discarded.tags, ["b"]);
+        strictEqual(discarded.active, true);
+        const back = yield* found(w.id);
+        strictEqual(back.draft, null);
+        deepStrictEqual(stepNames(back.steps), ["Cut", "Finish", "Pack"]);
         strictEqual(
           Number(
-            (yield* sql`select count(*) as n from WorkflowStep where versionId = ${draftId}`)[0]
-              ?.n,
+            (yield* sql`select count(*) as n from WorkflowDraftStep`)[0]?.n,
           ),
           0,
         );
-        strictEqual(
-          Number(
-            (yield* sql`select count(*) as n from WorkflowVersion where id = ${draftId}`)[0]
-              ?.n,
-          ),
-          0,
-        );
-        const noDraft = yield* repo
-          .discardDraft({ workflowId: w.id })
-          .pipe(Effect.flip);
-        strictEqual(noDraft._tag, "NoDraftError");
-        // A never-applied workflow has nothing to fall back to.
-        const fresh = yield* repo.createWorkflow({
-          name: name("Fresh"),
-          tags: tags([]),
-        });
-        const noSaved = yield* repo
-          .discardDraft({ workflowId: fresh.id })
-          .pipe(Effect.flip);
-        strictEqual(noSaved._tag, "NoSavedVersionError");
       }),
     ));
 
-  it("turn on refused: archived, zero steps, inactive team, second active order workflow; apply refuses an inactive team", () =>
+  it("apply refuses an empty draft and an inactive team, on and off alike; the workflow keeps its steps", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
-        const turnOn = (workflowId: string, activeTeams = ALL_TEAMS) =>
-          repo
-            .setWorkflowActive({ workflowId, active: true, activeTeams })
-            .pipe(Effect.flip);
         const w = yield* repo.createWorkflow({
           name: name("A"),
-          tags: tags(["a"]),
+          tags: tags([]),
         });
         yield* twoSteps(w.id);
-        const orphan = yield* repo
-          .applyDraft({ workflowId: w.id, activeTeams: [T1] })
-          .pipe(Effect.flip);
-        strictEqual(orphan._tag, "TeamNotActiveError");
-        deepStrictEqual<readonly string[]>(
-          orphan._tag === "TeamNotActiveError" ? orphan.stepNames : [],
-          ["Finish"],
-        );
         yield* repo.applyDraft({ workflowId: w.id, activeTeams: ALL_TEAMS });
-        const inactive = yield* turnOn(w.id, [T1]);
-        strictEqual(inactive._tag, "TeamNotActiveError");
-        yield* repo.setWorkflowArchived({ workflowId: w.id, archived: true });
-        strictEqual((yield* turnOn(w.id))._tag, "WorkflowArchivedError");
-        yield* repo.setWorkflowArchived({ workflowId: w.id, archived: false });
+        const check = Effect.gen(function* () {
+          yield* repo.createDraft({ workflowId: w.id });
+          const orphan = yield* repo
+            .applyDraft({ workflowId: w.id, activeTeams: [T1] })
+            .pipe(Effect.flip);
+          strictEqual(orphan._tag, "TeamNotActiveError");
+          if (orphan._tag === "TeamNotActiveError")
+            deepStrictEqual<readonly string[]>(orphan.stepNames, ["Finish"]);
+          const draftSteps = (yield* found(w.id)).draft?.steps ?? [];
+          for (const step of draftSteps)
+            yield* repo.removeStep({ stepId: step.id });
+          const empty = yield* repo
+            .applyDraft({ workflowId: w.id, activeTeams: ALL_TEAMS })
+            .pipe(Effect.flip);
+          strictEqual(empty._tag, "NoStepsError");
+          deepStrictEqual(stepNames((yield* found(w.id)).steps), [
+            "Cut",
+            "Finish",
+          ]);
+          yield* repo.discardDraft({ workflowId: w.id });
+        });
+        yield* check;
         yield* repo.setWorkflowActive({
           workflowId: w.id,
           active: true,
           activeTeams: ALL_TEAMS,
         });
+        yield* check;
+        strictEqual((yield* found(w.id)).workflow.active, true);
+      }),
+    ));
 
-        // Zero steps on the saved version can only come from the seed.
-        yield* repo.replaceWorkflows({
-          workflows: [
-            {
-              name: name("Pack"),
-              scope: "order",
-              tags: tags([]),
-              steps: [{ name: stepName("Pack"), teamId: T1.id }],
-            },
-          ],
+  it("turn on refused: archived, zero steps, inactive team, second active order workflow; the draft is never consulted", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const repo = yield* WorkflowRepository;
+        const on = (workflowId: string, activeTeams = ALL_TEAMS) =>
+          repo.setWorkflowActive({ workflowId, active: true, activeTeams });
+        const empty = yield* repo.createWorkflow({
+          name: name("Empty"),
+          tags: tags([]),
         });
-        const [pack] = yield* repo.listWorkflows({ includeArchived: true });
-        if (pack === undefined) throw new Error("no pack");
-        strictEqual(pack.active, true);
+        strictEqual(
+          (yield* on(empty.id).pipe(Effect.flip))._tag,
+          "NoStepsError",
+        );
+        // Draft steps do not count: only the workflow's own do.
+        yield* twoSteps(empty.id);
+        strictEqual(
+          (yield* on(empty.id).pipe(Effect.flip))._tag,
+          "NoStepsError",
+        );
+
+        const a = yield* repo.createWorkflow({
+          name: name("A"),
+          tags: tags(["a"]),
+        });
+        yield* twoSteps(a.id);
+        yield* repo.applyDraft({ workflowId: a.id, activeTeams: ALL_TEAMS });
+        const orphan = yield* on(a.id, [T1]).pipe(Effect.flip);
+        strictEqual(orphan._tag, "TeamNotActiveError");
+        if (orphan._tag === "TeamNotActiveError")
+          deepStrictEqual<readonly string[]>(orphan.stepNames, ["Finish"]);
+        yield* repo.setWorkflowArchived({ workflowId: a.id, archived: true });
+        strictEqual(
+          (yield* on(a.id).pipe(Effect.flip))._tag,
+          "WorkflowArchivedError",
+        );
+        yield* repo.setWorkflowArchived({ workflowId: a.id, archived: false });
+        const onA = yield* on(a.id);
+        strictEqual(onA.active, true);
+        // A draft on an active workflow changes nothing about the switch.
+        yield* repo.createDraft({ workflowId: a.id });
+        const off = yield* repo.setWorkflowActive({
+          workflowId: a.id,
+          active: false,
+          activeTeams: ALL_TEAMS,
+        });
+        strictEqual(off.active, false);
+        strictEqual((yield* found(a.id)).draft !== null, true);
+        strictEqual((yield* on(a.id)).active, true);
+
+        const pack = yield* repo.createWorkflow({
+          name: name("Pack"),
+          scope: "order",
+          tags: tags([]),
+        });
+        yield* twoSteps(pack.id);
+        yield* repo.applyDraft({ workflowId: pack.id, activeTeams: ALL_TEAMS });
+        yield* on(pack.id);
+        yield* repo.setWorkflowArchived({
+          workflowId: pack.id,
+          archived: true,
+        });
         yield* repo.setWorkflowActive({
           workflowId: pack.id,
           active: false,
@@ -1090,21 +1137,63 @@ describe("WorkflowRepository versions", () => {
           scope: "order",
           tags: tags([]),
         });
-        strictEqual((yield* turnOn(ship.id))._tag, "NoSavedVersionError");
-        yield* repo.addStep({
-          workflowId: ship.id,
-          name: stepName("Ship"),
-          teamId: T1.id,
-        });
+        yield* twoSteps(ship.id);
         yield* repo.applyDraft({ workflowId: ship.id, activeTeams: ALL_TEAMS });
-        yield* repo.setWorkflowActive({
+        yield* on(ship.id);
+        yield* repo.setWorkflowArchived({
           workflowId: ship.id,
-          active: true,
+          archived: true,
+        });
+      }).pipe(
+        // The order-slot half is exercised below with two live order
+        // workflows; archive-while-active is refused, so wrap the failure.
+        Effect.catchTag("WorkflowActiveError", () => Effect.void),
+      ),
+    ));
+
+  it("one active order workflow at a time: turning the second on is refused until the first is off", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const repo = yield* WorkflowRepository;
+        const on = (workflowId: string) =>
+          repo.setWorkflowActive({
+            workflowId,
+            active: true,
+            activeTeams: ALL_TEAMS,
+          });
+        const pack = yield* repo.createWorkflow({
+          name: name("Pack"),
+          scope: "order",
+          tags: tags([]),
+        });
+        yield* twoSteps(pack.id);
+        yield* repo.applyDraft({ workflowId: pack.id, activeTeams: ALL_TEAMS });
+        yield* on(pack.id);
+        // A second non-archived order workflow needs the slot: archive the
+        // first (off first), create the second, restore is then refused.
+        yield* repo.setWorkflowActive({
+          workflowId: pack.id,
+          active: false,
           activeTeams: ALL_TEAMS,
         });
-        // Pack cannot even be restored while Ship holds the slot; turn Ship
-        // off and restore Pack, then Pack's turn-on is blocked by the
-        // *active* slot only once Ship is back on.
+        yield* repo.setWorkflowArchived({
+          workflowId: pack.id,
+          archived: true,
+        });
+        const ship = yield* repo.createWorkflow({
+          name: name("Ship"),
+          scope: "order",
+          tags: tags([]),
+        });
+        yield* twoSteps(ship.id);
+        yield* repo.applyDraft({ workflowId: ship.id, activeTeams: ALL_TEAMS });
+        yield* on(ship.id);
+        strictEqual(
+          (yield* repo
+            .setWorkflowArchived({ workflowId: pack.id, archived: false })
+            .pipe(Effect.flip))._tag,
+          "OrderWorkflowExistsError",
+        );
         yield* repo.setWorkflowActive({
           workflowId: ship.id,
           active: false,
@@ -1118,17 +1207,7 @@ describe("WorkflowRepository versions", () => {
           workflowId: pack.id,
           archived: false,
         });
-        yield* repo
-          .setWorkflowArchived({
-            workflowId: ship.id,
-            archived: false,
-          })
-          .pipe(Effect.flip);
-        yield* repo.setWorkflowActive({
-          workflowId: pack.id,
-          active: true,
-          activeTeams: ALL_TEAMS,
-        });
+        strictEqual((yield* on(pack.id)).active, true);
       }),
     ));
 
@@ -1138,7 +1217,7 @@ describe("WorkflowRepository versions", () => {
         const repo = yield* WorkflowRepository;
         const w = yield* repo.createWorkflow({
           name: name("A"),
-          tags: tags(["a"]),
+          tags: tags([]),
         });
         yield* twoSteps(w.id);
         yield* repo.applyDraft({ workflowId: w.id, activeTeams: ALL_TEAMS });
@@ -1147,20 +1226,18 @@ describe("WorkflowRepository versions", () => {
           active: true,
           activeTeams: ALL_TEAMS,
         });
-        const refused = yield* repo
-          .setWorkflowArchived({ workflowId: w.id, archived: true })
-          .pipe(Effect.flip);
-        strictEqual(refused._tag, "WorkflowActiveError");
+        strictEqual(
+          (yield* repo
+            .setWorkflowArchived({ workflowId: w.id, archived: true })
+            .pipe(Effect.flip))._tag,
+          "WorkflowActiveError",
+        );
         yield* repo.setWorkflowActive({
           workflowId: w.id,
           active: false,
           activeTeams: ALL_TEAMS,
         });
-        const archived = yield* repo.setWorkflowArchived({
-          workflowId: w.id,
-          archived: true,
-        });
-        strictEqual(archived.active, false);
+        yield* repo.setWorkflowArchived({ workflowId: w.id, archived: true });
         const restored = yield* repo.setWorkflowArchived({
           workflowId: w.id,
           archived: false,
@@ -1170,139 +1247,144 @@ describe("WorkflowRepository versions", () => {
       }),
     ));
 
-  it("archiveTeam guard counts live and draft steps, never retired ones", () =>
+  it("archiveTeam guard counts workflow and draft steps with their side", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
         const w = yield* repo.createWorkflow({
           name: name("A"),
-          tags: tags(["a"]),
+          tags: tags([]),
         });
-        yield* repo.addStep({
-          workflowId: w.id,
-          name: stepName("Cut"),
-          teamId: T1.id,
-        });
-        // Draft step counts.
+        yield* twoSteps(w.id);
         strictEqual(yield* repo.countStepsOwnedBy({ teamId: T1.id }), 1);
-        deepStrictEqual(
-          (yield* repo.listStepsOwnedBy({ teamId: T1.id })).map(
-            (o) => o.versionState,
-          ),
-          ["draft"],
-        );
         yield* repo.applyDraft({ workflowId: w.id, activeTeams: ALL_TEAMS });
-        // Live step counts.
         strictEqual(yield* repo.countStepsOwnedBy({ teamId: T1.id }), 1);
+        yield* repo.createDraft({ workflowId: w.id });
+        // Both sides count: the workflow's Cut and the draft's copy.
+        strictEqual(yield* repo.countStepsOwnedBy({ teamId: T1.id }), 2);
         deepStrictEqual(
-          (yield* repo.listStepsOwnedBy({ teamId: T1.id })).map(
-            (o) => o.versionState,
-          ),
-          ["live"],
+          (yield* repo.listStepsOwnedBy({ teamId: T1.id })).map((o) => [
+            o.stepName,
+            o.side,
+          ]),
+          [
+            ["Cut", "workflow"],
+            ["Cut", "draft"],
+          ],
         );
-        // Fork and reassign in the draft: both versions count until apply.
-        const live = Option.getOrThrow(
-          yield* repo.getWorkflow({ workflowId: w.id }),
-        ).live?.steps[0];
-        if (live === undefined) throw new Error("no step");
-        yield* repo.updateStep({
-          stepId: live.id,
-          name: stepName("Cut"),
-          teamId: T2.id,
-          instructions: null,
-        });
+        const draftSteps = (yield* found(w.id)).draft?.steps ?? [];
+        for (const step of draftSteps)
+          if (step.teamId === T1.id)
+            yield* repo.updateStep({
+              stepId: step.id,
+              name: step.name,
+              teamId: T3.id,
+              instructions: null,
+            });
         strictEqual(yield* repo.countStepsOwnedBy({ teamId: T1.id }), 1);
-        strictEqual(yield* repo.countStepsOwnedBy({ teamId: T2.id }), 1);
-        deepStrictEqual(
-          (yield* repo.listStepsOwnedBy({ teamId: T1.id })).map(
-            (o) => o.versionState,
-          ),
-          ["live"],
-        );
-        yield* repo.applyDraft({ workflowId: w.id, activeTeams: ALL_TEAMS });
-        // T1 is now referenced only by the retired version: free to archive.
-        strictEqual(yield* repo.countStepsOwnedBy({ teamId: T1.id }), 0);
-        deepStrictEqual(yield* repo.listStepsOwnedBy({ teamId: T1.id }), []);
-        strictEqual(yield* repo.countStepsOwnedBy({ teamId: T2.id }), 1);
+        yield* repo.discardDraft({ workflowId: w.id });
+        strictEqual(yield* repo.countStepsOwnedBy({ teamId: T1.id }), 1);
+        strictEqual(yield* repo.countStepsOwnedBy({ teamId: T3.id }), 0);
       }),
     ));
 
-  it("seed: active defaults, explicit off, pending draft, empty steps as unapplied draft, archived", () =>
+  it("seed: active defaults, explicit off, pending draft with its own tags, empty steps as an empty draft, archived", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
-        const step = (n: string, team = T1.id) => ({
+        const step = (n: string, teamId: Domain.TeamId) => ({
           name: stepName(n),
-          teamId: team,
+          teamId,
         });
         yield* repo.replaceWorkflows({
           workflows: [
-            { name: name("On"), tags: tags(["on"]), steps: [step("a")] },
+            { name: name("On"), tags: tags(["on"]), steps: [step("a", T1.id)] },
             {
               name: name("Off"),
               active: false,
               tags: tags(["off"]),
-              steps: [step("a")],
+              steps: [step("a", T1.id)],
             },
             {
-              name: name("Drafted"),
-              tags: tags(["d"]),
-              steps: [step("a")],
-              draft: [step("a"), step("b", T2.id)],
+              name: name("Pending"),
+              tags: tags(["p"]),
+              steps: [step("a", T1.id)],
+              draft: {
+                tags: tags(["p2"]),
+                steps: [step("a", T1.id), step("b", T2.id)],
+              },
+            },
+            {
+              name: name("Same tags"),
+              tags: tags(["s"]),
+              steps: [step("a", T1.id)],
+              draft: { steps: [step("a", T2.id)] },
             },
             { name: name("Empty"), tags: tags(["e"]), steps: [] },
             {
               name: name("Gone"),
               archived: true,
               tags: tags(["g"]),
-              steps: [step("a")],
+              steps: [step("a", T1.id)],
             },
           ],
         });
         const rows = yield* repo.listWorkflows({ includeArchived: true });
-        const byName = new Map(rows.map((row) => [String(row.name), row]));
-        const shape = (n: string) => {
-          const row = byName.get(n);
-          return [
-            row?.active,
-            row?.savedVersionId !== null,
-            row?.hasDraft,
-            row?.stepCount,
-            row?.archivedAt !== null,
-          ];
-        };
-        deepStrictEqual(shape("On"), [true, true, false, 1, false]);
-        deepStrictEqual(shape("Off"), [false, true, false, 1, false]);
-        deepStrictEqual(shape("Drafted"), [true, true, true, 1, false]);
-        deepStrictEqual(shape("Empty"), [false, false, true, 0, false]);
-        deepStrictEqual(shape("Gone"), [false, true, false, 1, true]);
-        const drafted = Option.getOrThrow(
-          yield* repo.getWorkflow({
-            workflowId: byName.get("Drafted")?.id ?? "",
-          }),
-        );
-        deepStrictEqual(
-          drafted.draft?.steps.map((s) => [s.name, s.stage]),
+        deepStrictEqual<readonly (readonly unknown[])[]>(
+          rows.map((w) => [
+            w.name,
+            w.active,
+            w.hasDraft,
+            w.stepCount,
+            w.archivedAt !== null,
+            w.tags,
+          ]),
           [
-            ["a", 1],
-            ["b", 2],
+            ["Empty", false, true, 0, false, ["e"]],
+            ["Off", false, false, 1, false, ["off"]],
+            ["On", true, false, 1, false, ["on"]],
+            ["Pending", true, true, 1, false, ["p"]],
+            ["Same tags", true, true, 1, false, ["s"]],
+            ["Gone", false, false, 1, true, ["g"]],
           ],
         );
-        strictEqual(drafted.live?.version.appliedAt !== null, true);
-        deepStrictEqual(
-          (yield* repo.listActiveWorkflowDetails()).map(
-            ({ workflow }) => workflow.name,
-          ),
-          ["Drafted", "On"],
+        const pending = rows.find((w) => w.name === "Pending");
+        const pendingDetail = yield* found(pending?.id ?? "");
+        deepStrictEqual(stepNames(pendingDetail.steps), ["a"]);
+        deepStrictEqual(stepNames(pendingDetail.draft?.steps ?? []), [
+          "a",
+          "b",
+        ]);
+        deepStrictEqual<readonly string[]>(
+          pendingDetail.draft?.draft.tags ?? [],
+          ["p2"],
         );
-        const refused = yield* repo
-          .replaceWorkflows({
-            workflows: [
-              { name: name("Bad"), active: true, tags: tags([]), steps: [] },
-            ],
-          })
-          .pipe(Effect.flip);
-        strictEqual(refused._tag, "WorkflowRepositoryError");
+        const same = rows.find((w) => w.name === "Same tags");
+        deepStrictEqual<readonly string[]>(
+          (yield* found(same?.id ?? "")).draft?.draft.tags ?? [],
+          ["s"],
+        );
+        const empty = rows.find((w) => w.name === "Empty");
+        const emptyDetail = yield* found(empty?.id ?? "");
+        deepStrictEqual(emptyDetail.steps, []);
+        deepStrictEqual(emptyDetail.draft?.steps, []);
+        deepStrictEqual(
+          (yield* repo.listActiveWorkflowDetails())
+            .map(({ workflow }) => workflow.name)
+            .toSorted(),
+          ["On", "Pending", "Same tags"],
+        );
+        // An active fixture with no steps or archived is refused.
+        strictEqual(
+          (yield* repo
+            .replaceWorkflows({
+              workflows: [
+                { name: name("Bad"), active: true, tags: tags([]), steps: [] },
+              ],
+            })
+            .pipe(Effect.flip))._tag,
+          "WorkflowRepositoryError",
+        );
       }),
     ));
 });

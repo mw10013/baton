@@ -248,13 +248,13 @@ describe("OrderRepository.listOrders filters", () => {
       { n: 2, statuses: ["done", "cancelled"] }, // ready
       { n: 3, statuses: ["done", "active"] }, // in production
       { n: 4, statuses: ["done", "pending"] }, // in production
-      { n: 5, statuses: [] }, // not routed
+      { n: 5, statuses: [] }, // no workflow
       { n: 6, order: { cancelledAt: 5 }, statuses: ["done"] }, // cancelled
       { n: 7, order: { fulfillmentStatus: "FULFILLED" }, statuses: ["done"] }, // shipped
       { n: 8, statuses: ["done", "done"] }, // ready
       { n: 9, order: { fullyPaid: false }, statuses: [] }, // null: unpaid, nothing to say
-      { n: 10, statuses: ["cancelled"] }, // not routed: a cancelled run is no run
-      { n: 11, order: { fulfillmentStatus: "FULFILLED" }, statuses: [] }, // shipped, never routed
+      { n: 10, statuses: ["cancelled"] }, // no workflow: a cancelled run is no run
+      { n: 11, order: { fulfillmentStatus: "FULFILLED" }, statuses: [] }, // shipped, never started
     ];
     for (const { n, order, statuses } of cases) {
       yield* upsert(
@@ -272,12 +272,12 @@ describe("OrderRepository.listOrders filters", () => {
       for (const [index, status] of statuses.entries())
         yield* sql`
           insert into WorkflowRun (
-            id, workflowId, workflowName, versionId, orderId, orderName, lineItemId,
+            id, workflowId, workflowName, orderId, orderName, lineItemId,
             lineItemTitle, variantTitle, sku, quantity, customAttributes,
             source, status, flag, flagAt, flagDetail, createdAt, updatedAt,
             cancelledAt
           ) values (
-            ${`run-${String(n)}-${String(index)}`}, 'wf', 'Workflow', 'v1',
+            ${`run-${String(n)}-${String(index)}`}, 'wf', 'Workflow',
             ${orderId(n)}, ${`#10${String(n).padStart(2, "0")}`},
             ${`${lineItemId(n)}-${String(index)}`}, 'Item', null, null, 1,
             '[]', 'tag', ${status}, null, null, null, 0, 0, null
@@ -295,7 +295,7 @@ describe("OrderRepository.listOrders filters", () => {
           repository.listOrders({ limit: 20, cursor: null, state, paid: null });
         return {
           all: yield* list(null),
-          not_routed: yield* list("not_routed"),
+          no_workflow: yield* list("no_workflow"),
           in_production: yield* list("in_production"),
           ready_to_ship: yield* list("ready_to_ship"),
           shipped: yield* list("shipped"),
@@ -304,7 +304,7 @@ describe("OrderRepository.listOrders filters", () => {
       }),
     );
     strictEqual(pages.all.orders.length, 11);
-    deepStrictEqual(names(pages.not_routed), ["#1010", "#1005"]);
+    deepStrictEqual(names(pages.no_workflow), ["#1010", "#1005"]);
     deepStrictEqual(names(pages.in_production), ["#1004", "#1003"]);
     deepStrictEqual(names(pages.ready_to_ship), ["#1008", "#1002", "#1001"]);
     deepStrictEqual(names(pages.shipped), ["#1011", "#1007"]);
@@ -342,7 +342,7 @@ describe("OrderRepository.listOrders filters", () => {
         };
       }),
     );
-    const expected = { not_routed: 2, in_production: 2, ready_to_ship: 3 };
+    const expected = { no_workflow: 2, in_production: 2, ready_to_ship: 3 };
     deepStrictEqual(ready.openCounts, expected);
     deepStrictEqual(unpaid.openCounts, expected);
   });

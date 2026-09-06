@@ -51,10 +51,10 @@ const STAGES: readonly {
 }[] = [
   { state: null, label: "All orders", hint: "everything stored", count: null },
   {
-    state: "not_routed",
-    label: "Not routed",
-    hint: "paid, no workflow matched",
-    count: "not_routed",
+    state: "no_workflow",
+    label: "No workflow",
+    hint: "paid, nothing matched",
+    count: "no_workflow",
   },
   {
     state: "in_production",
@@ -98,7 +98,7 @@ export const orderDetailHref = ({ legacyId }: Domain.ShopOrder) =>
 
 /**
  * The production-state badge, from `Domain.productionState` over the row.
- * "Not routed" is the one an admin has to act on: a paid, uncancelled order
+ * "No workflow" is the one an admin has to act on: a paid, uncancelled order
  * with no run means no workflow matched it, and nothing else on the page or
  * in the Shopify admin surfaces that. An unpaid order with no runs cannot
  * start any, so its empty cell is correct rather than alarming. "Ready to
@@ -109,8 +109,8 @@ const stateBadge = (row: Domain.OrderRow) =>
   Match.value(Domain.productionState(row)).pipe(
     Match.withReturnType<React.ReactNode>(),
     Match.when(null, () => null),
-    Match.when("not_routed", () => (
-      <s-badge tone="warning">Not routed</s-badge>
+    Match.when("no_workflow", () => (
+      <s-badge tone="warning">No workflow</s-badge>
     )),
     Match.when("in_production", () => (
       <s-stack direction="inline" gap="small-300">
@@ -171,9 +171,9 @@ const stageText = (
     Match.withReturnType<string | null>(),
     Match.when(null, () => null),
     Match.when(
-      "not_routed",
+      "no_workflow",
       () =>
-        `${orders(counts.not_routed)} paid with no matching workflow. Attach one from the order page.`,
+        `${orders(counts.no_workflow)} paid with no matching workflow. Attach one from the order page.`,
     ),
     Match.when(
       "in_production",
@@ -192,7 +192,7 @@ const stageText = (
 
 const emptyText = (state: Domain.ProductionState | null) =>
   Match.value(state).pipe(
-    Match.when("not_routed", () => "Every paid order has a workflow."),
+    Match.when("no_workflow", () => "Every paid order has a workflow."),
     Match.when("in_production", () => "Nothing is in production."),
     Match.when(
       "ready_to_ship",

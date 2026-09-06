@@ -440,7 +440,7 @@ export class OrderRepository extends Context.Service<
           readonly paid: boolean | null;
         }) {
           const stateFilter = Match.value(state).pipe(
-            Match.when("not_routed", () =>
+            Match.when("no_workflow", () =>
               sql.and([OPEN, "fullyPaid = 1", `not exists (${ANY_RUN})`]),
             ),
             Match.when("in_production", () =>
@@ -563,7 +563,7 @@ export class OrderRepository extends Context.Service<
                 ? encodeCursor(last)
                 : null,
             openCounts: {
-              not_routed: Number(countRow?.[0] ?? 0),
+              no_workflow: Number(countRow?.[0] ?? 0),
               in_production: Number(countRow?.[1] ?? 0),
               ready_to_ship: Number(countRow?.[2] ?? 0),
             },

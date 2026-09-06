@@ -65,9 +65,9 @@ const stateBadge = (workflow: Domain.WorkflowSummary) => {
 
 /**
  * One place for every status badge. Flow hides a pending draft from its
- * list; Baton shows it, because a production floor needs to know the live
- * definition is not the one being edited. "No steps" covers both a
- * never-applied workflow and an applied empty one.
+ * list; Baton shows it, because a production floor needs to know that what
+ * starts runs today is not what is being edited (see `Domain.Workflow`).
+ * "No steps" is a workflow whose draft has never been applied.
  */
 const statusBadges = (workflow: Domain.WorkflowSummary) => (
   <s-stack direction="inline" gap="small-300">
@@ -79,8 +79,8 @@ const statusBadges = (workflow: Domain.WorkflowSummary) => (
   </s-stack>
 );
 
-export const ORDER_WORKFLOW_TRIGGER =
-  "Starts when every item on an order that has a workflow is done. One order workflow per shop.";
+/** The order-scope trigger line, in the merchant copy of `Domain.Workflow`; the wait for item runs stays internal. */
+export const ORDER_WORKFLOW_TRIGGER = "Starts for every paid order.";
 
 /**
  * Workflow definitions are configuration one person edits, so the read is a
@@ -264,7 +264,9 @@ function RouteComponent() {
     return (
       <s-section heading="Order workflow" accessibilityLabel="Order workflow">
         <s-stack gap="base">
-          <s-paragraph color="subdued">{ORDER_WORKFLOW_TRIGGER}</s-paragraph>
+          <s-paragraph color="subdued">
+            {`${ORDER_WORKFLOW_TRIGGER} Its steps become ready once every item on the order that has a workflow is done. One order workflow per shop.`}
+          </s-paragraph>
           {orderWorkflows.length === 0 ? (
             <s-paragraph color="subdued">
               No order workflow yet. Create one above to add steps such as
@@ -343,7 +345,7 @@ function RouteComponent() {
                       {(field) => (
                         <s-text-field
                           label="Product tags"
-                          details="Comma-separated. Matching ignores case."
+                          details="Comma-separated. Starts for any item whose product has at least one of these tags. Case doesn't matter."
                           name={field.name}
                           value={field.state.value}
                           onInput={(event) => {

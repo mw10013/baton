@@ -143,15 +143,17 @@ export const workflows: readonly SeedWorkflow[] = [
       step("Step 1", 5, { instructions: instructions("Step 1") }),
       step("Step 2", 6, { instructions: instructions("Step 2") }),
     ],
-    draft: [
-      step("Step 1", 5, { instructions: instructions("Step 1") }),
-      step("Step 2", 6, { instructions: instructions("Step 2") }),
-      step("Step 3", 1),
-    ],
+    draft: {
+      steps: [
+        step("Step 1", 5, { instructions: instructions("Step 1") }),
+        step("Step 2", 6, { instructions: instructions("Step 2") }),
+        step("Step 3", 1),
+      ],
+    },
   },
   {
     // two parallel stages, mixed instructions; seeded off so the list has an
-    // "Off" row and nothing routes to it until it is turned on
+    // "Off" row and it starts nothing until it is turned on
     name: "Workflow 06",
     active: false,
     tags: ["workflow-06"],
@@ -171,7 +173,7 @@ export const workflows: readonly SeedWorkflow[] = [
     steps: [step("Step 1", 7), step("Step 2", 1)],
   },
   {
-    // zero steps: "not routing" without being archived
+    // zero steps: "No steps" without being archived
     name: "Workflow 08",
     tags: ["workflow-08"],
     steps: [],

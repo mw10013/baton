@@ -66,7 +66,7 @@ export interface ReconcileCounts {
   readonly orderRuns: number;
 }
 
-export interface RoutingContext {
+export interface StartContext {
   readonly workflows: readonly Domain.WorkflowDetail[];
   readonly activeTeams: readonly {
     readonly id: Domain.TeamId;
@@ -75,33 +75,32 @@ export interface RoutingContext {
 }
 
 /**
- * The definition-side half of the routing predicate: archived, switched off,
- * a draft rather than the saved version, empty, or pointing a step at a team
- * that is no longer active all mean "routes nothing". Shared by tag routing
- * and manual attach — the latter skips the line-item half (tags, quantity,
- * fulfilment, age) but never this half.
+ * The definition-side half of whether a workflow starts a run (vocabulary on
+ * `Domain.Workflow`): archived, switched off, empty, or pointing a step at a
+ * team that is no longer active all mean "starts nothing". Shared by the tag
+ * match on upsert and by manual attach — the latter skips the line-item half
+ * (tags, quantity, fulfilment, age) but never this half. Drafts never reach
+ * here: `WorkflowDetail` carries workflow steps only.
  */
-export const isRoutable = (
-  { workflow, version, steps }: Domain.WorkflowDetail,
-  activeTeams: RoutingContext["activeTeams"],
+export const canStart = (
+  { workflow, steps }: Domain.WorkflowDetail,
+  activeTeams: StartContext["activeTeams"],
 ) =>
   workflow.archivedAt === null &&
   workflow.active &&
-  version.id === workflow.savedVersionId &&
-  version.appliedAt !== null &&
   steps.length > 0 &&
   steps.every((step) => activeTeams.some((team) => team.id === step.teamId));
 
 /**
- * The line-item half. `processedAt >= workflow.createdAt` is the age rule: a
- * bulk stream of thirty days of history must not start work on orders placed
- * before the workflow existed, whichever path delivers them. It is the
- * workflow's creation, not the version's `appliedAt`: a re-apply must not
- * stop routing orders that arrived while the draft was being written. Tags
- * are the saved version's.
+ * The line-item half: the tag test. `processedAt >= workflow.createdAt` is
+ * the age rule: a bulk stream of thirty days of history must not start work
+ * on orders placed before the workflow existed, whichever path delivers
+ * them. It is the workflow's creation, not the last Apply: a re-apply must
+ * not stop starting runs for orders that arrived while the draft was being
+ * written.
  */
 export const matchesLineItem = (
-  { workflow, version }: Domain.WorkflowDetail,
+  { workflow }: Domain.WorkflowDetail,
   order: Domain.ShopOrder,
   lineItem: Domain.OrderLineItem,
 ) =>
@@ -109,7 +108,7 @@ export const matchesLineItem = (
   order.processedAt >= workflow.createdAt &&
   lineItem.productTags.some((tag) => {
     const folded = tag.trim().toLowerCase();
-    return version.tags.some((candidate) => candidate === folded);
+    return workflow.tags.some((candidate) => candidate === folded);
   });
 
 const json = (value: unknown) => JSON.stringify(value);
@@ -136,7 +135,7 @@ export class WorkflowRunRepository extends Context.Service<
      * stored.
      */
     readonly reconcileOrder: (
-      input: RoutingContext & { readonly orderId: string },
+      input: StartContext & { readonly orderId: string },
     ) => Effect.Effect<
       ReconcileCounts,
       SqlError.SqlError | WorkflowRunRepositoryError
@@ -148,7 +147,7 @@ export class WorkflowRunRepository extends Context.Service<
      */
     readonly createRun: (input: {
       readonly workflow: Domain.WorkflowDetail;
-      readonly activeTeams: RoutingContext["activeTeams"];
+      readonly activeTeams: StartContext["activeTeams"];
       readonly order: Domain.ShopOrder;
       readonly lineItem: Domain.OrderLineItem;
       readonly source: Domain.RunSource;
@@ -172,12 +171,12 @@ export class WorkflowRunRepository extends Context.Service<
       SqlError.SqlError | WorkflowRunRepositoryError
     >;
     /**
-     * `routing` lets cancelling the last open item run start the order run;
+     * `startContext` lets cancelling the last open item run start the order run;
      * absent (tests that only exercise steps), the trigger is skipped.
      */
     readonly cancelRun: (input: {
       readonly runId: string;
-      readonly routing?: RoutingContext;
+      readonly startContext?: StartContext;
     }) => Effect.Effect<
       void,
       | SqlError.SqlError
@@ -222,14 +221,14 @@ export class WorkflowRunRepository extends Context.Service<
     >;
     /**
      * Also backfills `startedAt` / `startedBy` when Done arrives without a
-     * Start, so every finished step records who. With `routing`, a completion
+     * Start, so every finished step records who. With `startContext`, a completion
      * that finishes the last item run on an order starts the order run.
      */
     readonly completeStep: (input: {
       readonly runStepId: string;
       readonly memberId: Domain.MemberId;
       readonly teamIds: readonly string[];
-      readonly routing?: RoutingContext;
+      readonly startContext?: StartContext;
     }) => Effect.Effect<
       void,
       | SqlError.SqlError
@@ -428,35 +427,12 @@ export class WorkflowRunRepository extends Context.Service<
               order by runId, position
             `.pipe(Effect.flatMap(decodeSteps));
 
-      /** `versionAppliedAt` is one extra read over the runs' versions; a version row is never deleted once applied, so null means only a bad fixture. */
       const withSteps = (runs: readonly Domain.WorkflowRun[]) =>
         Effect.gen(function* () {
           const steps = yield* stepsForRuns(runs.map((run) => run.id));
-          const versions =
-            runs.length === 0
-              ? []
-              : yield* sql`
-                  select id, appliedAt from WorkflowVersion
-                  where id in (select value from json_each(${json([...new Set(runs.map((run) => run.versionId))])}))
-                `.pipe(
-                  Effect.flatMap(
-                    decode(
-                      Schema.Array(
-                        Schema.Struct({
-                          id: Schema.String,
-                          appliedAt: Schema.NullOr(Schema.Number),
-                        }),
-                      ),
-                      "Invalid WorkflowVersion row",
-                    ),
-                  ),
-                );
           return runs.map((run): Domain.WorkflowRunDetail => ({
             run,
             steps: steps.filter((step) => step.runId === run.id),
-            versionAppliedAt:
-              versions.find((version) => version.id === run.versionId)
-                ?.appliedAt ?? null,
           }));
         });
 
@@ -609,14 +585,14 @@ export class WorkflowRunRepository extends Context.Service<
        */
       const insertRun = Effect.fn("WorkflowRunRepository.insertRun")(
         function* ({
-          workflow: { workflow, version, steps },
+          workflow: { workflow, steps },
           activeTeams,
           order,
           lineItem,
           source,
         }: {
           readonly workflow: Domain.WorkflowDetail;
-          readonly activeTeams: RoutingContext["activeTeams"];
+          readonly activeTeams: StartContext["activeTeams"];
           readonly order: Domain.ShopOrder;
           readonly lineItem: Domain.OrderLineItem | null;
           readonly source: Domain.RunSource;
@@ -626,12 +602,12 @@ export class WorkflowRunRepository extends Context.Service<
           const [run] = yield* decodeRuns(
             yield* sql`
               insert into WorkflowRun (
-                id, workflowId, workflowName, versionId, orderId, orderName, lineItemId,
+                id, workflowId, workflowName, orderId, orderName, lineItemId,
                 lineItemTitle, variantTitle, sku, quantity, customAttributes,
                 source, status, flag, flagAt, flagDetail, createdAt, updatedAt,
                 cancelledAt
               ) values (
-                ${runId}, ${workflow.id}, ${workflow.name}, ${version.id}, ${order.id},
+                ${runId}, ${workflow.id}, ${workflow.name}, ${order.id},
                 ${order.name}, ${lineItem?.id ?? null}, ${lineItem?.title ?? null},
                 ${lineItem?.variantTitle ?? null}, ${lineItem?.sku ?? null},
                 ${lineItem === null ? null : Domain.unitsToMake(lineItem)},
@@ -672,9 +648,9 @@ export class WorkflowRunRepository extends Context.Service<
        * Never opens a transaction of its own. Returns how many order runs
        * started (0 or 1).
        *
-       * Ready = `canStartRuns` (paid, not cancelled), the order workflow
-       * routable and older than the order (the same age rule as item
-       * routing), at least one item run `done`, no item run open, and no
+       * Ready = `canStartRuns` (paid, not cancelled), the order workflow able
+       * to start and older than the order (the same age rule as item runs),
+       * at least one item run `done`, no item run open, and no
        * order run for this workflow in any status — a cancelled order run
        * keeps its key, so recovery is un-cancel, never a second start. A
        * stock-only order (no item runs) never triggers.
@@ -683,7 +659,7 @@ export class WorkflowRunRepository extends Context.Service<
        * opts the order in. Manual attach already overrides the age rule for
        * the item — an admin choosing to work an old order by hand — and the
        * item's completion would otherwise dead-end there, with the placeholder
-       * promising packing that never comes. Tag-routed runs cannot exist on an
+       * promising packing that never comes. Tag-started runs cannot exist on an
        * order older than their workflow, so this only ever fires on orders a
        * person deliberately pulled into production.
        */
@@ -693,12 +669,12 @@ export class WorkflowRunRepository extends Context.Service<
         orderId,
         workflows,
         activeTeams,
-      }: RoutingContext & { readonly orderId: string }) {
+      }: StartContext & { readonly orderId: string }) {
         const orderWorkflow = workflows.find(
           ({ workflow }) => workflow.scope === "order",
         );
         if (orderWorkflow === undefined) return 0;
-        if (!isRoutable(orderWorkflow, activeTeams)) return 0;
+        if (!canStart(orderWorkflow, activeTeams)) return 0;
         const [order] = yield* decodeOrders(
           yield* sql`select ${orderColumns} from ShopOrder where id = ${orderId}`,
         );
@@ -773,7 +749,7 @@ export class WorkflowRunRepository extends Context.Service<
             orderId,
             workflows,
             activeTeams,
-          }: RoutingContext & { readonly orderId: string }) {
+          }: StartContext & { readonly orderId: string }) {
             const now = yield* Clock.currentTimeMillis;
             const [order] = yield* decodeOrders(
               yield* sql`select ${orderColumns} from ShopOrder where id = ${orderId}`,
@@ -824,7 +800,7 @@ export class WorkflowRunRepository extends Context.Service<
                 flagged: flaggedItems + flaggedOrderRuns,
               };
             }
-            const canStart = Domain.canStartRuns(order);
+            const orderCanStart = Domain.canStartRuns(order);
             const lineItems = yield* decodeLineItems(
               yield* sql`select * from OrderLineItem where orderId = ${orderId}`,
             );
@@ -834,13 +810,13 @@ export class WorkflowRunRepository extends Context.Service<
                 where orderId = ${orderId} and status in ('pending', 'active')
               `,
             );
-            const routable = workflows.filter((workflow) =>
-              isRoutable(workflow, activeTeams),
+            const startable = workflows.filter((workflow) =>
+              canStart(workflow, activeTeams),
             );
-            const inserted = canStart
+            const inserted = orderCanStart
               ? yield* Effect.forEach(
                   lineItems.flatMap((lineItem) =>
-                    routable
+                    startable
                       .filter(
                         (workflow) =>
                           workflow.workflow.scope === "item" &&
@@ -952,7 +928,7 @@ export class WorkflowRunRepository extends Context.Service<
                     { item: orderRunFlag[1] },
                     now,
                   );
-            const startedOrderRuns = canStart
+            const startedOrderRuns = orderCanStart
               ? yield* startOrderRunIfReady({
                   orderId,
                   workflows,
@@ -1040,10 +1016,10 @@ export class WorkflowRunRepository extends Context.Service<
 
         cancelRun: Effect.fn("WorkflowRunRepository.cancelRun")(function* ({
           runId,
-          routing,
+          startContext,
         }: {
           readonly runId: string;
-          readonly routing?: RoutingContext;
+          readonly startContext?: StartContext;
         }) {
           yield* sql.withTransaction(
             Effect.gen(function* () {
@@ -1056,9 +1032,9 @@ export class WorkflowRunRepository extends Context.Service<
                 set status = 'cancelled', cancelledAt = ${now}, updatedAt = ${now}
                 where id = ${runId}
               `;
-              if (routing !== undefined && !Domain.isOrderRun(run))
+              if (startContext !== undefined && !Domain.isOrderRun(run))
                 yield* startOrderRunIfReady({
-                  ...routing,
+                  ...startContext,
                   orderId: run.orderId,
                 });
             }),
@@ -1199,12 +1175,12 @@ export class WorkflowRunRepository extends Context.Service<
             runStepId,
             memberId,
             teamIds,
-            routing,
+            startContext,
           }: {
             readonly runStepId: string;
             readonly memberId: Domain.MemberId;
             readonly teamIds: readonly string[];
-            readonly routing?: RoutingContext;
+            readonly startContext?: StartContext;
           }) {
             yield* sql.withTransaction(
               Effect.gen(function* () {
@@ -1223,9 +1199,9 @@ export class WorkflowRunRepository extends Context.Service<
                   where id = ${runStepId}
                 `;
                 yield* recomputeStatus(run.id, now);
-                if (routing !== undefined && !Domain.isOrderRun(run))
+                if (startContext !== undefined && !Domain.isOrderRun(run))
                   yield* startOrderRunIfReady({
-                    ...routing,
+                    ...startContext,
                     orderId: run.orderId,
                   });
               }),
