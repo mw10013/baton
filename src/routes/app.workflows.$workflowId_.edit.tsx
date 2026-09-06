@@ -318,6 +318,32 @@ function RouteComponent() {
     if (loadedName !== undefined) setName(loadedName);
   }, [loadedName]);
 
+  /**
+   * The step panel's fields are local state copied from the step on select,
+   * so a reload that changes the step underneath — a team deleted in another
+   * tab, an edit from another session — would leave the panel showing values
+   * the server no longer has. Re-copy whenever the loaded step's values
+   * change; the deps are the values, not the object, so a reload that
+   * changes nothing leaves typing alone.
+   */
+  const loadedSteps = detail?.draft?.steps ?? detail?.steps;
+  const loadedStep =
+    loadedSteps?.find((step) => step.id === selectedStepId) ?? null;
+  const loadedStepName = loadedStep?.name;
+  const loadedStepTeamId =
+    loadedStep === null || Domain.isUnassigned(loadedStep)
+      ? ""
+      : (loadedStep.teamId ?? "");
+  const loadedStepInstructions = loadedStep?.instructions ?? "";
+  React.useEffect(() => {
+    if (loadedStepName === undefined) return;
+    setEdit({
+      name: loadedStepName,
+      teamId: loadedStepTeamId,
+      instructions: loadedStepInstructions,
+    });
+  }, [loadedStepName, loadedStepTeamId, loadedStepInstructions]);
+
   if (detail === null)
     return (
       <s-page heading="Workflow not found">
@@ -364,6 +390,24 @@ function RouteComponent() {
     discardMutation.isPending;
   const sharesStage = (step: Domain.StepWithTeamName) =>
     steps.some((other) => other.id !== step.id && other.stage === step.stage);
+  /**
+   * What a move will do, said on the button. `WorkflowLayout.move` swaps
+   * with the neighbour and takes its stage, so past a stage boundary the
+   * click merges the step into that stage rather than reordering it. The
+   * label changes at the boundary so the merchant is never surprised.
+   */
+  const moveLabel = (
+    step: Domain.StepWithTeamName,
+    direction: "up" | "down",
+  ) => {
+    const index = steps.findIndex((candidate) => candidate.id === step.id);
+    const neighbour = steps[direction === "up" ? index - 1 : index + 1];
+    if (neighbour === undefined || neighbour.stage === step.stage)
+      return direction === "up" ? "Move earlier" : "Move later";
+    return direction === "up"
+      ? "Join the previous stage"
+      : "Join the next stage";
+  };
 
   const selectStep = (stepId: string) => {
     const step = steps.find((candidate) => candidate.id === stepId);
@@ -741,7 +785,7 @@ function RouteComponent() {
                   });
                 }}
               >
-                Move earlier
+                {moveLabel(selected, "up")}
               </s-button>
               <s-button
                 variant="tertiary"
@@ -753,7 +797,7 @@ function RouteComponent() {
                   });
                 }}
               >
-                Move later
+                {moveLabel(selected, "down")}
               </s-button>
             </s-stack>
             {sharesStage(selected) && (

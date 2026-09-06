@@ -27,10 +27,15 @@ import {
 
 const WorkflowParams = Schema.Struct({ workflowId: Schema.String });
 
-/** `tab=draft` is the Draft tab; anything else, including a draft that no longer exists, is the live workflow. */
-const WorkflowSearch = Schema.Struct({
-  tab: Schema.optional(Schema.Literal("draft")),
-});
+/**
+ * `tab=draft` is the Draft tab; anything else, including a value the page
+ * does not know or a draft that no longer exists, is the live workflow.
+ * Hand-written so an unknown value falls back instead of failing the route.
+ */
+const validateSearch = ({
+  tab,
+}: Record<string, unknown>): { readonly tab?: "draft" } =>
+  tab === "draft" ? { tab } : {};
 
 const RENAME_MODAL = "rename-workflow";
 const DELETE_MODAL = "delete-workflow";
@@ -72,7 +77,7 @@ const getLoaderData = createServerFn({ method: "GET" })
   );
 
 export const Route = createFileRoute("/app/workflows/$workflowId")({
-  validateSearch: Schema.toStandardSchemaV1(WorkflowSearch),
+  validateSearch,
   loader: ({ params }) => getLoaderData({ data: params }),
   component: RouteComponent,
 });

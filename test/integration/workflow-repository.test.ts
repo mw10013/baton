@@ -99,11 +99,9 @@ describe("WorkflowRepository", () => {
           name: name("Engraving"),
           tags: tags(["Engraving", "engrave"]),
         });
-        deepStrictEqual<readonly string[]>(
-          editable(yield* repo.getWorkflow({ workflowId: created.id })).draft
-            .tags,
-          ["engraving", "engrave"],
-        );
+        const fresh = yield* found(created.id);
+        deepStrictEqual(tagsOf(fresh.workflow), ["engraving", "engrave"]);
+        strictEqual(fresh.draft, null);
         const dupe = yield* repo
           .createWorkflow({ name: name("engraving"), tags: tags([]) })
           .pipe(Effect.flip);
@@ -793,7 +791,7 @@ const stepNames = (steps: readonly { readonly name: string }[]) =>
   steps.map((s) => s.name);
 
 describe("WorkflowRepository workflow and draft", () => {
-  it("create → no steps, empty tags, an empty draft, off, not listed for starting; apply refused without steps; discard allowed", () =>
+  it("create → no steps, its tags, no draft, off, not listed for starting; apply refused without a draft or steps; discard allowed", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -802,19 +800,22 @@ describe("WorkflowRepository workflow and draft", () => {
           tags: tags(["a"]),
         });
         strictEqual(w.active, false);
-        deepStrictEqual(tagsOf(w), []);
+        deepStrictEqual(tagsOf(w), ["a"]);
         const fresh = yield* found(w.id);
         deepStrictEqual(fresh.steps, []);
-        deepStrictEqual<readonly string[]>(fresh.draft?.draft.tags ?? [], [
-          "a",
-        ]);
-        deepStrictEqual(fresh.draft?.steps, []);
+        strictEqual(fresh.draft, null);
         deepStrictEqual(yield* repo.listActiveWorkflowDetails(), []);
         const [row] = yield* repo.listWorkflows({ teams: ALL_TEAMS });
         deepStrictEqual(
           [row?.hasDraft, row?.stepCount, tagsOf(row)],
-          [true, 0, []],
+          [false, 0, ["a"]],
         );
+        const noDraft = yield* repo
+          .applyDraft({ workflowId: w.id, teams: ALL_TEAMS })
+          .pipe(Effect.flip);
+        strictEqual(noDraft._tag, "NoDraftError");
+        // The first change makes the draft; it starts from the workflow's tags.
+        yield* repo.updateWorkflowTags({ workflowId: w.id, tags: tags(["b"]) });
         const empty = yield* repo
           .applyDraft({ workflowId: w.id, teams: ALL_TEAMS })
           .pipe(Effect.flip);
@@ -1310,7 +1311,7 @@ describe("WorkflowRepository workflow and draft", () => {
       }),
     ));
 
-  it("seed: active defaults, explicit off, pending draft with its own tags, empty steps as an empty draft, unassigned", () =>
+  it("seed: active defaults, explicit off, pending draft with its own tags, empty steps with no draft, unassigned", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -1361,7 +1362,7 @@ describe("WorkflowRepository workflow and draft", () => {
             tagsOf(w),
           ]),
           [
-            ["Empty", false, true, 0, false, ["e"]],
+            ["Empty", false, false, 0, false, ["e"]],
             ["Lost", false, false, 1, true, ["g"]],
             ["Off", false, false, 1, false, ["off"]],
             ["On", true, false, 1, false, ["on"]],
@@ -1388,7 +1389,7 @@ describe("WorkflowRepository workflow and draft", () => {
         const empty = rows.find((w) => w.name === "Empty");
         const emptyDetail = yield* found(empty?.id ?? "");
         deepStrictEqual(emptyDetail.steps, []);
-        deepStrictEqual(emptyDetail.draft?.steps, []);
+        strictEqual(emptyDetail.draft, null);
         deepStrictEqual(
           (yield* repo.listActiveWorkflowDetails())
             .map(({ workflow }) => workflow.name)

@@ -223,10 +223,11 @@ export class WorkflowRepository extends Context.Service<
       input: Domain.SeedWorkflowsInput,
     ) => Effect.Effect<void, SqlError.SqlError | WorkflowRepositoryError>;
     /**
-     * Inserts the workflow (off, no steps, no tags) and one empty draft
-     * carrying `tags`, in a transaction: the tags the merchant typed on the
-     * create form select line items, so like every tag they reach the
-     * workflow only through Apply. `scope` defaults to `item`. An order
+     * Inserts the workflow: off, no steps, carrying `tags`, and **no draft**.
+     * The draft is the editor's record of unsaved changes and is created by
+     * the first change (`ensureDraft`), so a fresh workflow has none and the
+     * editor opens on "No changes yet" rather than on a Draft badge and a
+     * Discard button for nothing. `scope` defaults to `item`. An order
      * workflow must have no tags (a `WorkflowRepositoryError`: the UI never
      * sends any, so it is a programming error) and is refused while another
      * one exists.
@@ -941,8 +942,8 @@ export class WorkflowRepository extends Context.Service<
         /**
          * A fixture's `steps` become the workflow's steps, switched on unless
          * `active: false` or a step is unassigned. A fixture with no steps and
-         * no `draft` gets an empty draft — the state the ordinary path leaves
-         * a fresh workflow in. `draft` seeds a pending draft beside the
+         * no `draft` has no draft either, the state `createWorkflow` leaves a
+         * fresh workflow in. `draft` seeds a pending draft beside the
          * workflow.
          */
         replaceWorkflows: Effect.fn("WorkflowRepository.replaceWorkflows")(
@@ -970,20 +971,15 @@ export class WorkflowRepository extends Context.Service<
                   },
                 ];
               }, []);
-            // A fixture with no steps and no draft gets an empty draft, the
-            // state the ordinary path leaves a fresh workflow in.
             const draftOf = (
               workflow: Domain.SeedWorkflowsInput["workflows"][number],
-            ) => {
-              if (workflow.draft !== undefined)
-                return {
-                  tags: workflow.draft.tags ?? workflow.tags,
-                  steps: stage(workflow.draft.steps),
-                };
-              return workflow.steps.length === 0
-                ? { tags: workflow.tags, steps: [] }
-                : null;
-            };
+            ) =>
+              workflow.draft === undefined
+                ? null
+                : {
+                    tags: workflow.draft.tags ?? workflow.tags,
+                    steps: stage(workflow.draft.steps),
+                  };
             const staged = workflows.map((workflow) => ({
               ...workflow,
               steps: stage(workflow.steps),
@@ -1087,8 +1083,7 @@ export class WorkflowRepository extends Context.Service<
          * `insert or ignore ... returning` is the whole name check, as
          * `Repository.createTeam` does: a fresh uuid leaves the name index as
          * the only reachable unique constraint, so an empty result means
-         * exactly "taken". The draft insert is skipped when the name was
-         * taken.
+         * exactly "taken".
          */
         createWorkflow: Effect.fn("WorkflowRepository.createWorkflow")(
           function* (input: Domain.CreateWorkflowInput) {
@@ -1104,24 +1099,16 @@ export class WorkflowRepository extends Context.Service<
                 limit: Domain.WorkflowLimits.maxWorkflows,
               });
             const now = yield* Clock.currentTimeMillis;
-            const workflowId = crypto.randomUUID();
-            return yield* sql.withTransaction(
-              Effect.gen(function* () {
-                const [workflow] = yield* decodeWorkflows(
-                  yield* sql`
-                    insert or ignore into Workflow
-                      (id, name, scope, active, tags, createdAt, updatedAt)
-                    values
-                      (${workflowId}, ${name}, ${scope}, 0, '[]', ${now}, ${now})
-                    returning *
-                  `,
-                );
-                if (workflow === undefined)
-                  return yield* new WorkflowNameTakenError({ name });
-                yield* insertDraft({ workflowId, tags, now });
-                return workflow;
-              }),
+            const [workflow] = yield* decodeWorkflows(
+              yield* sql`
+                insert or ignore into Workflow
+                  (id, name, scope, active, tags, createdAt, updatedAt)
+                values
+                  (${crypto.randomUUID()}, ${name}, ${scope}, 0, ${json(tags)}, ${now}, ${now})
+                returning *
+              `,
             );
+            return workflow ?? (yield* new WorkflowNameTakenError({ name }));
           },
         ),
 

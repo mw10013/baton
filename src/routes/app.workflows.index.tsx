@@ -24,12 +24,22 @@ const CREATE_MODAL = "create-workflow";
  * The status tabs and the tag filter are in the URL, so a filtered list is a
  * link someone can send. The search text is not: it changes on every
  * keystroke and is nobody's destination.
+ *
+ * Hand-written rather than a schema so a value the page does not know —
+ * a stale link, a hand-edited URL — reads as "no filter" instead of failing
+ * the route: a wrong filter is not an error condition.
  */
-const WorkflowsSearch = Schema.Struct({
-  status: Schema.optionalKey(Schema.Literals(["active", "off"])),
-  tag: Schema.optionalKey(Schema.String),
+interface WorkflowsSearch {
+  readonly status?: "active" | "off";
+  readonly tag?: string;
+}
+const validateSearch = ({
+  status,
+  tag,
+}: Record<string, unknown>): WorkflowsSearch => ({
+  ...(status === "active" || status === "off" ? { status } : {}),
+  ...(typeof tag === "string" && tag.length > 0 ? { tag } : {}),
 });
-type WorkflowsSearch = typeof WorkflowsSearch.Type;
 
 const decodeWorkflowResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.WorkflowResult),
@@ -83,7 +93,7 @@ const getLoaderData = createServerFn({ method: "GET" })
   );
 
 export const Route = createFileRoute("/app/workflows/")({
-  validateSearch: Schema.toStandardSchemaV1(WorkflowsSearch),
+  validateSearch,
   loader: () => getLoaderData(),
   component: RouteComponent,
 });

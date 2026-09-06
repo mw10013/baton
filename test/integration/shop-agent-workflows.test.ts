@@ -117,9 +117,9 @@ describe("ShopAgent workflow callables", () => {
     const fresh = await agent.getWorkflowDetail({
       workflowId: created.workflow.id,
     });
-    expect(fresh?.draft?.draft.tags).toEqual(["engraving"]);
+    expect(fresh?.draft).toBe(null);
     expect(fresh?.steps).toEqual([]);
-    expect(tagsOf(fresh?.workflow)).toEqual([]);
+    expect(tagsOf(fresh?.workflow)).toEqual(["engraving"]);
 
     const unknown = await agent.addStep({
       workflowId: created.workflow.id,
@@ -338,10 +338,15 @@ describe("ShopAgent workflow callables", () => {
     if (created._tag !== "Ok") throw new Error(created._tag);
     const workflowId = created.workflow.id;
 
-    expect(await agent.applyDraft({ workflowId })).toEqual({ _tag: "NoSteps" });
+    // Fresh: no draft yet, so Apply has nothing; turn-on has no steps.
+    expect(await agent.applyDraft({ workflowId })).toEqual({ _tag: "NoDraft" });
     expect(await agent.setWorkflowActive({ workflowId, active: true })).toEqual(
       { _tag: "NoSteps" },
     );
+    expect(await agent.createDraft({ workflowId })).toMatchObject({
+      _tag: "Ok",
+    });
+    expect(await agent.applyDraft({ workflowId })).toEqual({ _tag: "NoSteps" });
     expect(await agent.applyDraft({ workflowId: "nope" })).toEqual({
       _tag: "NotFound",
     });

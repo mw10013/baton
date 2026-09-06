@@ -77,7 +77,7 @@ export interface SeedWorkflow {
   /** On/off switch; defaults to on when there are steps and every step is assigned. */
   readonly active?: boolean;
   readonly tags: readonly string[];
-  /** The workflow's steps; empty seeds an empty draft beside it instead. */
+  /** The workflow's steps; may be empty. */
   readonly steps: readonly SeedWorkflowStep[];
   /** A pending draft beside the workflow; `tags` default to the workflow's. */
   readonly draft?: {

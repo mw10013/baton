@@ -798,9 +798,9 @@ export type UpdateStepInput = typeof UpdateStepInput.Type;
  * fixture that breaks either would leave the app in a state the ordinary
  * write path can never produce.
  *
- * `steps` become the workflow's steps; a fixture with no steps is seeded
- * with an empty draft beside it, the state the ordinary path produces for a
- * fresh workflow. `active` defaults to `true` when the entry has steps and
+ * `steps` become the workflow's steps; a fixture with no steps and no
+ * `draft` has no draft, the state the ordinary path produces for a fresh
+ * workflow. `active` defaults to `true` when the entry has steps and
  * every step is assigned. `draft` seeds a pending draft (its own tags,
  * defaulting to the workflow's, and steps) for fixtures that show the draft
  * UI.
