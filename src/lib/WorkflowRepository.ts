@@ -136,20 +136,16 @@ export class WorkflowRepository extends Context.Service<
       readonly Domain.WorkflowSummary[],
       SqlError.SqlError | WorkflowRepositoryError
     >;
-    /** The delete dialog's counts: open and finished runs of the workflow. `None` when the workflow does not exist. */
-    readonly countRuns: (input: {
-      readonly workflowId: string;
-    }) => Effect.Effect<
-      Option.Option<Domain.WorkflowDeleteCounts>,
-      SqlError.SqlError | WorkflowRepositoryError
-    >;
     /**
-     * Delete a workflow and its runs go with it: every run (open and
-     * finished, item and order scope) and its steps, then the workflow, whose
-     * steps, draft, and draft steps cascade — one transaction, no trace. No
-     * turn-off-first rule; the confirm dialog carries the counts. `WorkflowRun`
-     * has no foreign key to `Workflow` (a run snapshots its definition), so
-     * the run delete is explicit.
+     * Deletes the definition only: the workflow row, and its steps, draft,
+     * and draft steps by cascade. Every run stays, open and finished, item
+     * and order scope, and keeps working — a run snapshots `workflowName`
+     * and each step's `name`, `stage`, `instructions`, and `teamName`, and
+     * no read joins a run back to `Workflow`, so an orphan run renders,
+     * queues, starts, completes, blocks, and cancels unchanged.
+     * `WorkflowRun.workflowId` stays `not null` because it is the conflict
+     * key of `unique (lineItemId, workflowId)` and `WorkflowRun_order_uidx`.
+     * No turn-off-first rule.
      */
     readonly deleteWorkflow: (input: {
       readonly workflowId: string;
@@ -723,8 +719,6 @@ export class WorkflowRepository extends Context.Service<
                   ...Domain.Workflow.fields,
                   hasDraft: Domain.WorkflowSummary.fields.hasDraft,
                   stepCount: Schema.Number,
-                  openRuns: Schema.Number,
-                  finishedRuns: Schema.Number,
                 }),
               ),
               "Invalid WorkflowSummary row",
@@ -732,11 +726,7 @@ export class WorkflowRepository extends Context.Service<
               yield* sql`
                 select w.*,
                   exists (select 1 from WorkflowDraft d where d.workflowId = w.id) as hasDraft,
-                  (select count(*) from WorkflowStep s where s.workflowId = w.id) as stepCount,
-                  (select count(*) from WorkflowRun r
-                    where r.workflowId = w.id and r.status in ('pending', 'active')) as openRuns,
-                  (select count(*) from WorkflowRun r
-                    where r.workflowId = w.id and r.status in ('done', 'cancelled')) as finishedRuns
+                  (select count(*) from WorkflowStep s where s.workflowId = w.id) as stepCount
                 from Workflow w
                 order by w.name collate nocase
               `,
@@ -762,38 +752,11 @@ export class WorkflowRepository extends Context.Service<
           },
         ),
 
-        countRuns: Effect.fn("WorkflowRepository.countRuns")(function* ({
-          workflowId,
-        }: {
-          readonly workflowId: string;
-        }) {
-          const workflow = yield* findWorkflow(workflowId);
-          if (Option.isNone(workflow)) return Option.none();
-          const [counts] = yield* decode(
-            Schema.Array(Domain.WorkflowDeleteCounts),
-            "Invalid run count row",
-          )(
-            yield* sql`
-              select
-                (select count(*) from WorkflowRun
-                  where workflowId = ${workflowId} and status in ('pending', 'active')) as openRuns,
-                (select count(*) from WorkflowRun
-                  where workflowId = ${workflowId} and status in ('done', 'cancelled')) as finishedRuns
-            `,
-          );
-          return Option.fromUndefinedOr(counts);
-        }),
-
         deleteWorkflow: Effect.fn("WorkflowRepository.deleteWorkflow")(
           function* ({ workflowId }: { readonly workflowId: string }) {
             yield* sql.withTransaction(
               Effect.gen(function* () {
                 yield* requireWorkflow(workflowId);
-                yield* sql`
-                  delete from WorkflowRunStep
-                  where runId in (select id from WorkflowRun where workflowId = ${workflowId})
-                `;
-                yield* sql`delete from WorkflowRun where workflowId = ${workflowId}`;
                 yield* sql`delete from Workflow where id = ${workflowId}`;
               }),
             );

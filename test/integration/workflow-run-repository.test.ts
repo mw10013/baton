@@ -2112,25 +2112,6 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
       }),
     ));
 
-  it("listWorkflows reports openRuns over pending and active runs, finishedRuns over the rest", () =>
-    runInRepository(
-      Effect.gen(function* () {
-        const { a } = yield* seed;
-        const runs = yield* WorkflowRunRepository;
-        const workflows = yield* WorkflowRepository;
-        yield* upsertAndReconcile(order(), [
-          lineItem(1, ["a"]),
-          lineItem(2, ["a"]),
-        ]);
-        const [first] = yield* runsForOrder();
-        if (first === undefined) throw new Error("no run");
-        yield* runs.cancelRun({ runId: first.run.id });
-        const summaries = yield* workflows.listWorkflows({ teams: TEAMS });
-        strictEqual(summaries.find((w) => w.id === a.id)?.openRuns, 1);
-        strictEqual(summaries.find((w) => w.id === a.id)?.finishedRuns, 1);
-      }),
-    ));
-
   it("an edit after turn-on still starts the workflow's steps; apply while on replaces them and earlier runs keep their copies", () =>
     runInRepository(
       Effect.gen(function* () {
@@ -2191,13 +2172,12 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         strictEqual(oldest?.steps.length, 2);
       }),
     ));
-  it("deleteWorkflow removes its runs and run steps, open and finished, and leaves another workflow's runs alone", () =>
+  it("deleteWorkflow leaves its runs and run steps, open and finished; the queue, order view, start, complete, block, and cancel still work on them", () =>
     runInRepository(
       Effect.gen(function* () {
         const { a, b } = yield* seed;
         const workflows = yield* WorkflowRepository;
         const runs = yield* WorkflowRunRepository;
-        const sql = yield* SqlClient.SqlClient;
         yield* upsertAndReconcile(order(), [
           lineItem(1, ["a"]),
           lineItem(2, ["a"]),
@@ -2205,8 +2185,9 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         ]);
         const all = yield* runsForOrder();
         const aRuns = all.filter((d) => d.run.workflowId === a.id);
-        const [finished] = aRuns;
-        if (finished === undefined) throw new Error("no run");
+        const [finished, stillOpen] = aRuns;
+        if (finished === undefined || stillOpen === undefined)
+          throw new Error("no run");
         for (const step of finished.steps)
           yield* runs.completeStep({
             runStepId: step.id,
@@ -2214,31 +2195,162 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
             memberEmail: emailOf("m1@example.com"),
             teamIds: step.teamId === null ? [] : [step.teamId],
           });
-        deepStrictEqual(
-          Option.getOrThrow(yield* workflows.countRuns({ workflowId: a.id })),
-          { openRuns: 1, finishedRuns: 1 },
-        );
+
         yield* workflows.deleteWorkflow({ workflowId: a.id });
+
+        // Every run stays, and the order view still reads the snapshots.
         const remaining = yield* runsForOrder();
         deepStrictEqual(
-          remaining.map((d) => d.run.workflowId),
-          [b.id],
+          remaining.map((d) => d.run.id).toSorted(),
+          all.map((d) => d.run.id).toSorted(),
         );
-        strictEqual(
-          Number(
-            (yield* sql`
-              select count(*) as n from WorkflowRunStep
-              where runId in (select value from json_each(${JSON.stringify(aRuns.map((d) => d.run.id))}))
-            `)[0]?.n,
-          ),
-          0,
+        const orphan = remaining.find((d) => d.run.id === stillOpen.run.id);
+        strictEqual(orphan?.run.workflowName, a.name);
+        deepStrictEqual(
+          orphan?.steps.map((step) => [step.name, step.teamName]),
+          [
+            ["Cut", TEAM_A.name],
+            ["Finish", TEAM_B.name],
+          ],
         );
+        const done = remaining.find((d) => d.run.id === finished.run.id);
+        strictEqual(done?.run.status, "done");
         strictEqual(
-          Option.isNone(yield* workflows.countRuns({ workflowId: a.id })),
+          done?.steps.every((step) => step.completedAt !== null),
           true,
         );
-        // The name is free at once.
+
+        // The orphan is still queued, and every step write still lands.
+        const [queued] = yield* runs.listQueue({ teamIds: [TEAM_A.id] });
+        strictEqual(queued?.run.id, stillOpen.run.id);
+        const [cut, finish] = stillOpen.steps;
+        if (cut === undefined || finish === undefined)
+          throw new Error("no steps");
+        yield* runs.startStep({
+          runStepId: cut.id,
+          memberId: memberId("m1"),
+          memberEmail: emailOf("m1@example.com"),
+          teamIds: [TEAM_A.id],
+        });
+        yield* runs.completeStep({
+          runStepId: cut.id,
+          memberId: memberId("m1"),
+          memberEmail: emailOf("m1@example.com"),
+          teamIds: [TEAM_A.id],
+        });
+        yield* runs.assignRunStepTeam({
+          runStepId: finish.id,
+          team: TEAM_C,
+        });
+        const [reassigned] = yield* runs.listQueue({ teamIds: [TEAM_C.id] });
+        strictEqual(reassigned?.steps[0]?.id, finish.id);
+        yield* runs.blockRun({
+          runId: stillOpen.run.id,
+          memberId: memberId("m1"),
+          memberEmail: emailOf("m1@example.com"),
+          teamIds: [TEAM_C.id],
+          reason: note("waiting on stock"),
+        });
+        yield* runs.cancelRun({ runId: stillOpen.run.id });
+        strictEqual(
+          Option.getOrThrow(yield* runs.getRun({ runId: stillOpen.run.id })).run
+            .status,
+          "cancelled",
+        );
+
+        // Another workflow's runs are untouched, and the name is free at once.
+        strictEqual(
+          remaining.filter((d) => d.run.workflowId === b.id).length,
+          1,
+        );
         yield* workflows.createWorkflow({ name: a.name, tags: tags(["a"]) });
+      }),
+    ));
+
+  it("a run of a deleted workflow sits alongside a new run on the same line item", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { a } = yield* seed;
+        const workflows = yield* WorkflowRepository;
+        const runs = yield* WorkflowRunRepository;
+        const items = [lineItem(1, ["a"])];
+        yield* upsertAndReconcile(order(), items);
+        const [orphaned] = yield* runsForOrder();
+        if (orphaned === undefined) throw new Error("no run");
+        yield* workflows.deleteWorkflow({ workflowId: a.id });
+
+        // A fresh workflow on the same item: a different workflowId, so
+        // `unique (lineItemId, workflowId)` lets both runs stand.
+        const replacement = yield* workflows.createWorkflow({
+          name: name("Workflow a2"),
+          tags: tags(["a"]),
+        });
+        yield* workflows.addStep({
+          workflowId: replacement.id,
+          name: stepName("Cut"),
+          teamId: TEAM_A.id,
+        });
+        yield* goLive(replacement.id);
+        const attached = yield* runs.createRun({
+          workflow: yield* savedDetail(replacement.id),
+          teams: TEAMS,
+          order: order(),
+          lineItem: items[0] ?? lineItem(1, ["a"]),
+          source: "manual",
+        });
+        strictEqual(Option.isSome(attached), true);
+        const both = yield* runsForOrder();
+        deepStrictEqual(
+          both.map((d) => d.run.workflowId).toSorted(),
+          [a.id, replacement.id].toSorted(),
+        );
+        strictEqual(
+          both.find((d) => d.run.id === orphaned.run.id)?.run.workflowName,
+          a.name,
+        );
+      }),
+    ));
+
+  it("deleting the active order workflow leaves its open order run and frees the slot for a new one", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { pack } = yield* seedOrderWorkflow;
+        const workflows = yield* WorkflowRepository;
+        yield* upsertAndReconcile(order(), ORDER_ITEMS);
+        yield* finishItemRuns();
+        const [orderRun] = yield* orderRuns();
+        if (orderRun === undefined) throw new Error("no order run");
+        strictEqual(orderRun.run.status, "pending");
+
+        yield* workflows.deleteWorkflow({ workflowId: pack.id });
+        const [kept] = yield* orderRuns();
+        strictEqual(kept?.run.id, orderRun.run.id);
+        strictEqual(kept?.run.status, "pending");
+        strictEqual(kept?.run.workflowName, pack.name);
+        deepStrictEqual(
+          kept?.steps.map((step) => step.name),
+          ["QC", "Pack"],
+        );
+
+        // The order-workflow slot is free at once, and it is the new workflow
+        // the next order's start context will read.
+        const replacement = yield* workflows.createWorkflow({
+          name: name("Pack 2"),
+          scope: "order",
+          tags: tags([]),
+        });
+        yield* workflows.addStep({
+          workflowId: replacement.id,
+          name: stepName("Ship"),
+          teamId: TEAM_C.id,
+        });
+        yield* goLive(replacement.id);
+        deepStrictEqual(
+          (yield* loadStartContext).workflows
+            .filter((detail) => detail.workflow.scope === "order")
+            .map((detail) => detail.workflow.name),
+          [replacement.name],
+        );
       }),
     ));
 

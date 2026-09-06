@@ -500,10 +500,13 @@ export type WorkflowScope = typeof WorkflowScope.Type;
  * a run. Not used, in code or copy: version, live, saved, published,
  * retired, applied (as a state), route, routing, routable.
  *
- * Merchant copy: **delete a workflow and its runs go with it** — open and
- * finished, item and order scope, no trace, on or off alike; the confirm
- * dialog states the counts. **Turn off** is
- * the non-destructive move: new runs stop, open runs finish. The name and the
+ * Merchant copy, the whole model in four sentences: **delete a workflow and
+ * its runs stay on their orders**, open ones finish; **turn off** stops new
+ * runs and open ones finish; **any open step on a run can be assigned to
+ * another team**, a finished step is history; **deleting configuration never
+ * deletes work**. Delete removes the definition, its steps, and its draft,
+ * nothing else — a run is self-sufficient, so it needs no confirm counts and
+ * the dialog says only that it can't be undone. The name and the
  * order-workflow slot are freed at once, so uniqueness is among existing rows
  * only. A rename is immediate and cosmetic because runs snapshot
  * `workflowName`.
@@ -581,17 +584,6 @@ export const WorkflowDraftStep = WorkflowStep;
 export type WorkflowDraftStep = typeof WorkflowDraftStep.Type;
 
 /**
- * What the delete confirm dialog states: the runs that go with the workflow.
- * Read at dialog-open time; staleness is harmless because the delete removes
- * whatever exists at commit time.
- */
-export const WorkflowDeleteCounts = Schema.Struct({
-  openRuns: Schema.Number,
-  finishedRuns: Schema.Number,
-});
-export type WorkflowDeleteCounts = typeof WorkflowDeleteCounts.Type;
-
-/**
  * List row. `tags` and `stepCount` describe the workflow; `hasDraft` says
  * what starts runs today is not what is being edited. `needsAttention` is the
  * derived badge from {@link Workflow}: a step unassigned or on a team with no
@@ -601,7 +593,6 @@ export const WorkflowSummary = Schema.Struct({
   ...Workflow.fields,
   hasDraft: SqliteBoolean,
   stepCount: Schema.Number,
-  ...WorkflowDeleteCounts.fields,
   needsAttention: Schema.Boolean,
 });
 export type WorkflowSummary = typeof WorkflowSummary.Type;
@@ -635,8 +626,7 @@ export type WorkflowWithDraft = typeof WorkflowWithDraft.Type;
  * editor; the step renders with an empty picker and everything else stays
  * editable. `memberCount` is the team's live headcount (`null` when
  * unassigned) so the page can warn "No members on <team>". `teams` rides
- * along so the team picker needs no second call. `runCounts` feeds the
- * delete confirm dialog.
+ * along so the team picker needs no second call.
  */
 const StepWithTeamName = Schema.Struct({
   ...WorkflowStep.fields,
@@ -656,7 +646,6 @@ export const WorkflowDetailView = Schema.Struct({
   steps: Schema.Array(StepWithTeamName),
   draft: Schema.NullOr(WorkflowDraftView),
   teams: Schema.Array(TeamRoster),
-  runCounts: WorkflowDeleteCounts,
 });
 export type WorkflowDetailView = typeof WorkflowDetailView.Type;
 
@@ -923,14 +912,19 @@ export const OwnedStep = Schema.Struct({
 });
 export type OwnedStep = typeof OwnedStep.Type;
 
-/** The remedy that makes team delete safe: assign a team to an unassigned open run step. */
+/** Assign a team to any open run step: the remedy that makes team delete safe, and the merchant's way to move work between teams. */
 export const AssignRunStepTeamInput = Schema.Struct({
   runStepId: BoundedId,
   teamId: BoundedId,
 });
 export type AssignRunStepTeamInput = typeof AssignRunStepTeamInput.Type;
 
-/** `StepFinished`: a completed step keeps its snapshot and is never reassigned. */
+/**
+ * Any open step reassigns, started or not: only `teamId` / `teamName` move,
+ * so `startedBy` / `startedByEmail` stay and history keeps whoever began it.
+ * `StepFinished` refuses a completed step because the write would overwrite
+ * `teamName`, the record of which team completed it.
+ */
 export const AssignRunStepTeamResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Assigned") }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),

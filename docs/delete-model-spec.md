@@ -66,6 +66,8 @@ Team delete becomes one more way to enter this state, with the copy changed from
 
 ### Workflows
 
+> **Superseded by `workflow-delete-runs-spec.md` (2026-09-06):** deleting a workflow now removes the definition only — every run stays on its order and keeps working — and the confirm dialog carries no run counts. The rest of this section still describes the shipped shape.
+
 ```text
 deleteWorkflow(workflowId), one DO transaction:
   delete from WorkflowRunStep where runId in (select id from WorkflowRun where workflowId = ?)   (or rely on cascade)

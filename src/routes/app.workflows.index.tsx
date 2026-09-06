@@ -61,25 +61,12 @@ export const deleteWorkflowResultMessage = Match.typeTags<
   NotFound: () => "That workflow no longer exists.",
 });
 
-const plural = (count: number, noun: string) =>
-  `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
-
 /**
- * The delete dialog's body, in the merchant copy of `Domain.Workflow`: the
- * runs that go with the workflow, stated only when there are any.
+ * The delete dialog's body, both surfaces. It says nothing about runs
+ * because none are lost: a delete removes the definition only, and every run
+ * stays on its order (the merchant copy of `Domain.Workflow`).
  */
-export const deleteWorkflowWarning = ({
-  openRuns,
-  finishedRuns,
-}: Domain.WorkflowDeleteCounts) => {
-  const parts = [
-    ...(openRuns > 0 ? [`${plural(openRuns, "run")} in progress`] : []),
-    ...(finishedRuns > 0 ? [plural(finishedRuns, "finished run")] : []),
-  ];
-  return parts.length === 0
-    ? "It has never started a run. This can't be undone."
-    : `${parts.join(" and ")} will be deleted with it. This can't be undone.`;
-};
+export const DELETE_WORKFLOW_WARNING = "This can't be undone.";
 
 /**
  * One place for every status badge. Flow hides a pending draft from its
@@ -226,7 +213,6 @@ function RouteComponent() {
         </s-table-cell>
       )}
       <s-table-cell>{workflow.stepCount}</s-table-cell>
-      <s-table-cell>{workflow.openRuns}</s-table-cell>
       <s-table-cell>{formatDateTime(workflow.updatedAt)}</s-table-cell>
       <s-table-cell>
         <s-button
@@ -243,13 +229,13 @@ function RouteComponent() {
     </s-table-row>
   );
 
-  /** Confirm inline, under the row: the counts come from the same loader read as the row. */
+  /** Confirm inline, under the row. */
   const confirmRow = (workflow: Domain.WorkflowSummary, withTags: boolean) => (
     <s-table-row key={`${workflow.id}-confirm`} id={`${workflow.id}-confirm`}>
       <s-table-cell>
         <s-banner tone="critical" heading={`Delete ${workflow.name}?`}>
           <s-stack gap="small-300">
-            <s-paragraph>{deleteWorkflowWarning(workflow)}</s-paragraph>
+            <s-paragraph>{DELETE_WORKFLOW_WARNING}</s-paragraph>
             <s-stack direction="inline" gap="small-300">
               <s-button
                 variant="primary"
@@ -279,7 +265,6 @@ function RouteComponent() {
       <s-table-cell> </s-table-cell>
       <s-table-cell> </s-table-cell>
       <s-table-cell> </s-table-cell>
-      <s-table-cell> </s-table-cell>
     </s-table-row>
   );
 
@@ -293,7 +278,6 @@ function RouteComponent() {
         <s-table-header>Status</s-table-header>
         {withTags && <s-table-header>Product tags</s-table-header>}
         <s-table-header>Steps</s-table-header>
-        <s-table-header>Active runs</s-table-header>
         <s-table-header>Updated</s-table-header>
         <s-table-header> </s-table-header>
       </s-table-header-row>
@@ -443,7 +427,7 @@ function RouteComponent() {
         <s-stack gap="base">
           <s-paragraph color="subdued">
             Turn a workflow off to stop new runs while open runs finish. Delete
-            it and its runs go with it.
+            it and its runs stay on their orders; open ones finish.
           </s-paragraph>
           {renderWorkflows()}
         </s-stack>

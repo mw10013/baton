@@ -154,9 +154,9 @@ const callableEffect =
  * `null` is **unassigned**, the state a team delete leaves behind, and every
  * read treats an id no D1 row carries the same way, so the cross-store window
  * between the two writes is harmless. No workflow history is kept — a delete
- * removes the definition, its draft, and every run it ever started, because a
- * run is self-sufficient with respect to its workflow and nothing else refers
- * back. `unique (workflowId, position)` is what forces every
+ * removes the definition, its steps, and its draft; the runs it started stay,
+ * because a run is self-sufficient with respect to its workflow and nothing
+ * reads back through `workflowId`. `unique (workflowId, position)` is what forces every
  * layout edit to go through a scratch position inside one transaction — why
  * `WorkflowRepository.writeLayout` first parks every draft step at
  * `-position` before assigning final positions and stages.
@@ -1441,7 +1441,6 @@ export class ShopAgent extends Agent {
           const repository = yield* WorkflowRepository;
           const detail = yield* repository.getWorkflow({ workflowId });
           if (Option.isNone(detail)) return null;
-          const runCounts = yield* repository.countRuns({ workflowId });
           const roster = yield* teams();
           const teamOf = new Map(roster.map((team) => [team.id, team]));
           const withTeamNames = (
@@ -1467,13 +1466,6 @@ export class ShopAgent extends Agent {
                     steps: withTeamNames(detail.value.draft.steps),
                   },
             teams: roster,
-            runCounts: Option.getOrElse(
-              runCounts,
-              (): Domain.WorkflowDeleteCounts => ({
-                openRuns: 0,
-                finishedRuns: 0,
-              }),
-            ),
           } satisfies Domain.WorkflowDetailView;
         }),
       )(input),
@@ -1654,12 +1646,13 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Delete a workflow and its runs go with it (vocabulary on
+   * Delete a workflow and its runs stay on their orders (vocabulary on
    * `Domain.Workflow`). `removeWorkflow`, not `deleteWorkflow`: the Agents
    * SDK base class already has a `deleteWorkflow(workflowId)` that drops a
    * Cloudflare Workflow instance's tracking row (`onWorkflowComplete` calls
    * it), the same collision `getWorkflowDetail` sidesteps. Publishes because
-   * every order page showing one of the deleted runs must repaint.
+   * the workflows list and any order page's attach picker — which lists
+   * workflows — must repaint.
    */
   @callable()
   removeWorkflow(
@@ -2355,9 +2348,12 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * The remedy for an unassigned open run step (see `deleteTeam`). The team
-   * is checked against the live D1 roster here, as `addStep` does, and its
-   * name is snapshotted onto the step from that same read.
+   * Points any open run step at a team, started or not: the remedy for an
+   * unassigned step (see `deleteTeam`) and the merchant's way to move work
+   * between teams. The team is checked against the live D1 roster here, as
+   * `addStep` does, and its name is snapshotted onto the step from that same
+   * read. Only `teamId` / `teamName` change, so a started step keeps
+   * `startedBy*`; a finished step is refused (`StepFinished`).
    */
   @callable()
   assignRunStepTeam(

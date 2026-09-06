@@ -135,12 +135,21 @@ const fact = (label: string, value: React.ReactNode) =>
  * The two derived attention states render here against the live roster the
  * view carries: an open step whose team is gone is red with an "Assign team"
  * picker (the remedy that makes a team delete safe), and a ready step on a
- * team with no members warns. Finished steps always show their snapshot.
+ * team with no members warns, linking to the team so the fix is one click.
+ * Finished steps always show their snapshot.
+ *
+ * Every *open* step of an open run can be assigned to another team, started
+ * or not (`Domain.AssignRunStepTeamResult`), but a row per step would bury
+ * the trail, so the already-assigned ones sit behind a closed "Reassign"
+ * disclosure. Unassigned steps stay outside it, always visible: they are the
+ * attention state, and the disclosure would hide the one thing that must be
+ * acted on.
  */
 const stepTrail = (
   { run, steps }: Domain.WorkflowRunDetail,
   teams: readonly Domain.TeamRoster[],
   assign: (runStepId: string) => React.ReactNode,
+  reassign: { readonly expanded: boolean; readonly handleToggle: () => void },
 ) => {
   const lowestOpenStage = steps
     .filter((step) => step.completedAt === null)
@@ -164,20 +173,27 @@ const stepTrail = (
   const unassigned = open
     ? steps.filter((step) => Domain.isRunStepUnassigned(step, teams))
     : [];
+  /** The roster row, not the snapshot name, so the warning can link to the team page. */
   const emptyTeams = open
     ? [
-        ...new Set(
-          steps
-            .filter(
-              (step) =>
-                isReady(step) &&
-                teams.some(
-                  (team) => team.id === step.teamId && team.memberCount === 0,
-                ),
-            )
-            .map((step) => step.teamName),
-        ),
+        ...new Map(
+          steps.filter(isReady).flatMap((step) => {
+            const team = teams.find(
+              (candidate) =>
+                candidate.id === step.teamId && candidate.memberCount === 0,
+            );
+            return team === undefined ? [] : [[team.id, team] as const];
+          }),
+        ).values(),
       ]
+    : [];
+  /** Open and already on a team: reassignable, but behind the disclosure. */
+  const reassignable = open
+    ? steps.filter(
+        (step) =>
+          step.completedAt === null &&
+          !unassigned.some((other) => other.id === step.id),
+      )
     : [];
   return (
     <s-stack gap="small-500">
@@ -214,10 +230,39 @@ const stepTrail = (
           {assign(step.id)}
         </s-stack>
       ))}
+      {reassignable.length > 0 && (
+        <s-stack gap="small-500">
+          <s-stack direction="inline" justifyContent="start">
+            <s-button variant="tertiary" onClick={reassign.handleToggle}>
+              {reassign.expanded ? "Hide reassign" : "Reassign"}
+            </s-button>
+          </s-stack>
+          {reassign.expanded &&
+            reassignable.map((step) => (
+              <s-stack
+                key={step.id}
+                direction="inline"
+                gap="small-300"
+                alignItems="center"
+              >
+                <s-text>{`${step.name} \u00B7 ${step.teamName ?? ""}`}</s-text>
+                {assign(step.id)}
+              </s-stack>
+            ))}
+        </s-stack>
+      )}
       {emptyTeams.length > 0 && (
-        <s-text color="subdued">
-          {`No members on ${emptyTeams.join(", ")}. Nobody can work this until someone joins.`}
-        </s-text>
+        <s-paragraph color="subdued">
+          {"No members on "}
+          {emptyTeams.map((team, index) => (
+            <React.Fragment key={team.id}>
+              {index > 0 && ", "}
+              <s-link href={`/app/teams/${team.id}`}>{team.name}</s-link>
+            </React.Fragment>
+          ))}
+          . Nobody can work this until someone joins, or you assign another
+          team.
+        </s-paragraph>
       )}
       {steps
         .filter((step) => step.note !== null)
@@ -271,10 +316,14 @@ function RouteComponent() {
   const [attachChoice, setAttachChoice] = React.useState<
     Record<string, string>
   >({});
-  /** The "Assign team" picker's choice per unassigned run step. */
+  /** The "Assign team" picker's choice per open run step. */
   const [assignChoice, setAssignChoice] = React.useState<
     Record<string, string>
   >({});
+  /** Which runs have their "Reassign" disclosure open; closed is the default. */
+  const [reassigning, setReassigning] = React.useState<ReadonlySet<string>>(
+    new Set(),
+  );
 
   const {
     data: detail,
@@ -405,7 +454,11 @@ function RouteComponent() {
     runMutation.isPending ||
     assignMutation.isPending;
 
-  /** The remedy for an unassigned open step: a team picker and an Assign button, inline under the trail. */
+  /**
+   * A team picker and an Assign button for one open step, inline under the
+   * trail. The picker starts empty so Assign stays disabled until a team is
+   * chosen; picking the step's current team is a harmless no-op write.
+   */
   const assignTeam = (runStepId: string) => (
     <s-grid
       gridTemplateColumns="minmax(0, 16rem) auto"
@@ -496,7 +549,16 @@ function RouteComponent() {
           </s-button>
         )}
       </s-stack>
-      {stepTrail(run, teams, assignTeam)}
+      {stepTrail(run, teams, assignTeam, {
+        expanded: reassigning.has(run.run.id),
+        handleToggle: () => {
+          setReassigning((open) => {
+            const next = new Set(open);
+            if (!next.delete(run.run.id)) next.add(run.run.id);
+            return next;
+          });
+        },
+      })}
     </s-stack>
   );
 

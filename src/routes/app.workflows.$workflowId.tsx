@@ -16,7 +16,7 @@ import * as WorkflowLayout from "@/lib/WorkflowLayout";
 
 import {
   deleteWorkflowResultMessage,
-  deleteWorkflowWarning,
+  DELETE_WORKFLOW_WARNING,
   ORDER_WORKFLOW_TRIGGER,
   splitTags,
   workflowResultMessage,
@@ -338,7 +338,7 @@ function RouteComponent() {
     onError,
   });
 
-  /** Delete a workflow and its runs go with it; on success the page is gone, so navigate home. */
+  /** Delete removes the definition only, runs stay; on success the page is gone, so navigate home. */
   const deleteMutation = useMutation({
     mutationFn: () =>
       call((stub) => stub.removeWorkflow({ workflowId })).then(
@@ -512,7 +512,7 @@ function RouteComponent() {
       </s-page>
     );
 
-  const { workflow, draft, teams, runCounts } = detail;
+  const { workflow, draft, teams } = detail;
   const steps = draft?.steps ?? [];
   const orderScope = workflow.scope === "order";
   const hasDraft = draft !== null;
@@ -982,7 +982,7 @@ function RouteComponent() {
           {confirming === "delete" && (
             <s-banner tone="critical" heading={`Delete ${workflow.name}?`}>
               <s-stack gap="small-300">
-                <s-paragraph>{deleteWorkflowWarning(runCounts)}</s-paragraph>
+                <s-paragraph>{DELETE_WORKFLOW_WARNING}</s-paragraph>
                 <s-stack direction="inline" gap="small-300">
                   <s-button
                     variant="primary"
@@ -1056,8 +1056,7 @@ function RouteComponent() {
                 </s-button>
                 {workflow.active && (
                   <s-text color="subdued">
-                    Turn off to stop new runs and let open ones finish. Delete
-                    removes its runs too.
+                    Turn off stops new runs; open ones finish.
                   </s-text>
                 )}
               </s-stack>

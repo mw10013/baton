@@ -241,7 +241,6 @@ describe("ShopAgent workflow callables", () => {
     });
     expect(detail?.draft?.steps[0]?.teamName).toBe(null);
     expect(detail?.teams).toEqual([]);
-    expect(detail?.runCounts).toEqual({ openRuns: 0, finishedRuns: 0 });
 
     const dupe = await agent.createWorkflow({ name: "w", tags: [] });
     strictEqual(dupe._tag, "NameTaken");
@@ -544,18 +543,18 @@ describe("ShopAgent workflow run callables", () => {
     expect(listed.map((d) => [d.run.id, d.steps.length])).toEqual([
       [attached.run.id, 1],
     ]);
-    const summaries = await agent.listWorkflows();
-    strictEqual(summaries[0]?.openRuns, 1);
-    const detail = await agent.getWorkflowDetail({ workflowId });
-    expect(detail?.runCounts).toEqual({ openRuns: 1, finishedRuns: 0 });
-
-    // Delete while on and with a run: no refusal, and the run goes with it.
+    // Delete while on and with a run: no refusal, and the run stays on the
+    // order with its snapshots. Re-attaching the deleted workflow cannot
+    // start anything, because the definition is gone.
     expect(await agent.removeWorkflow({ workflowId })).toEqual({
       _tag: "Deleted",
     });
+    const kept = await agent.listRunsForOrder({
+      orderId: "gid://shopify/Order/1",
+    });
     expect(
-      await agent.listRunsForOrder({ orderId: "gid://shopify/Order/1" }),
-    ).toEqual([]);
+      kept.map((d) => [d.run.id, d.run.workflowName, d.steps.length]),
+    ).toEqual([[attached.run.id, attached.run.workflowName, 1]]);
     const gone = await agent.attachWorkflow({
       lineItemId: "gid://shopify/LineItem/1",
       workflowId,
@@ -867,15 +866,42 @@ describe("ShopAgent workflow run callables", () => {
     expect(after?.teams.map((t) => [t.name, t.memberCount])).toEqual([
       ["B", 0],
     ]);
+    // A *started* step reassigns too: only teamId/teamName move, so history
+    // keeps whoever began it and the new team finishes what they started.
     expect(
-      await agent.completeStep({
+      await agent.startStep({
         runStepId,
         memberId: "m1",
         memberEmail: "m1@example.com",
         teamIds: [b.id],
       }),
     ).toEqual({ _tag: "Ok" });
-    expect(await agent.assignRunStepTeam({ runStepId, teamId: b.id })).toEqual({
+    const c = await seedTeam(shop, "C");
+    expect(await agent.assignRunStepTeam({ runStepId, teamId: c.id })).toEqual({
+      _tag: "Assigned",
+    });
+    expect(await agent.listQueue({ teamIds: [b.id] })).toEqual([]);
+    const [moved] = await agent.listQueue({ teamIds: [c.id] });
+    strictEqual(moved?.steps[0]?.id, runStepId);
+    strictEqual(moved?.steps[0]?.teamName, "C");
+    strictEqual(moved?.steps[0]?.startedByEmail, "m1@example.com");
+    strictEqual(moved?.steps[0]?.startedAt !== null, true);
+
+    expect(
+      await agent.completeStep({
+        runStepId,
+        memberId: "m2",
+        memberEmail: "m2@example.com",
+        teamIds: [c.id],
+      }),
+    ).toEqual({ _tag: "Ok" });
+    const finished = await agent.getOrderDetail({ legacyId: "1" });
+    strictEqual(
+      finished?.runs[0]?.steps[0]?.completedByEmail,
+      "m2@example.com",
+    );
+    strictEqual(finished?.runs[0]?.steps[0]?.startedByEmail, "m1@example.com");
+    expect(await agent.assignRunStepTeam({ runStepId, teamId: c.id })).toEqual({
       _tag: "StepFinished",
     });
     expect(

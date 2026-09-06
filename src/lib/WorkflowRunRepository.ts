@@ -40,7 +40,11 @@ export class StepNotReadyError extends Schema.TaggedError<StepNotReadyError>()(
   { runStepId: Schema.String },
 ) {}
 
-/** `assignRunStepTeam` on a completed step: a finished step keeps its snapshot and is never reassigned. */
+/**
+ * `assignRunStepTeam` on a completed step. Any *open* step reassigns,
+ * started or not; a finished step is refused because the write would
+ * overwrite `teamName`, the record of which team completed it.
+ */
 export class StepFinishedError extends Schema.TaggedError<StepFinishedError>()(
   "StepFinishedError",
   { runStepId: Schema.String },
@@ -293,12 +297,15 @@ export class WorkflowRunRepository extends Context.Service<
       | RunNotAllowedError
     >;
     /**
-     * The remedy that makes a team delete safe: points an *open* run step at
-     * `team`, snapshotting the name from the live roster the caller
-     * resolved, and puts the step in that team's queue. The team's existence
-     * is the caller's check (`Team` is a D1 row this store cannot see).
-     * Allowed on any open step, assigned or not — the merchant may also move
-     * work between teams by hand.
+     * Points any *open* run step at `team`, snapshotting the name from the
+     * live roster the caller resolved, and puts the step in that team's
+     * queue. The team's existence is the caller's check (`Team` is a D1 row
+     * this store cannot see). Allowed on any open step, assigned or not and
+     * started or not — it is both the remedy that makes a team delete safe
+     * and the merchant's way to move work between teams. Only `teamId` /
+     * `teamName` are written, so a started step keeps `startedBy` /
+     * `startedByEmail` and history still names whoever began it. A finished
+     * step is refused (`StepFinishedError`).
      */
     readonly assignRunStepTeam: (input: {
       readonly runStepId: string;
