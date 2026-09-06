@@ -351,16 +351,16 @@ describe("ShopAgent workflow callables", () => {
     // Discard is always allowed: a never-applied workflow keeps zero steps.
     const discardedEmpty = await agent.discardDraft({ workflowId });
     strictEqual(discardedEmpty._tag, "Ok");
-    expect(
-      await agent.addStep({ workflowId, name: "S", teamId: team.id }),
-    ).toEqual({ _tag: "NoDraft" });
-    expect(await agent.updateWorkflowTags({ workflowId, tags: ["a"] })).toEqual(
-      { _tag: "NoDraft" },
-    );
-    const edit = await agent.createDraft({ workflowId });
-    strictEqual(edit._tag, "Ok");
+    // No draft: the step write makes one rather than refusing.
+    const lazy = await agent.addStep({
+      workflowId,
+      name: "S",
+      teamId: team.id,
+    });
+    strictEqual(lazy._tag, "Ok");
+    const lazyDetail = await agent.getWorkflowDetail({ workflowId });
+    strictEqual(lazyDetail?.draft?.steps.length, 1);
 
-    await agent.addStep({ workflowId, name: "S", teamId: team.id });
     const tagged = await agent.updateWorkflowTags({
       workflowId,
       tags: ["B", "b"],

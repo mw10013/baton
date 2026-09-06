@@ -605,7 +605,6 @@ const stepResult = <R>(
     | StepNotFoundError
     | StageNotFoundError
     | WorkflowNotFoundError
-    | NoDraftError
     | WorkflowLimitError
     | SqlError.SqlError
     | WorkflowRepositoryError
@@ -629,8 +628,6 @@ const stepResult = <R>(
         Effect.succeed<Domain.StepResult>({ _tag: "NotFound" }),
       WorkflowNotFoundError: () =>
         Effect.succeed<Domain.StepResult>({ _tag: "NotFound" }),
-      NoDraftError: () =>
-        Effect.succeed<Domain.StepResult>({ _tag: "NoDraft" }),
       WorkflowLimitError: ({ limit }) =>
         Effect.succeed<Domain.StepResult>({ _tag: "Limit", limit }),
     }),

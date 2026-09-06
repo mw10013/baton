@@ -800,7 +800,7 @@ describe("WorkflowRepository workflow and draft", () => {
         const [detail] = yield* repo.listActiveWorkflowDetails();
         deepStrictEqual(stepNames(detail?.steps ?? []), ["Cut", "Finish"]);
         deepStrictEqual(tagsOf(detail?.workflow), ["a"]);
-        // No draft: apply and discard refuse, and so does every step write.
+        // No draft: apply and discard refuse. There is nothing to promote or throw away.
         strictEqual(
           (yield* repo
             .applyDraft({ workflowId: w.id, teams: ALL_TEAMS })
@@ -812,22 +812,36 @@ describe("WorkflowRepository workflow and draft", () => {
             ._tag,
           "NoDraftError",
         );
-        strictEqual(
-          (yield* repo
-            .addStep({
-              workflowId: w.id,
-              name: stepName("Pack"),
-              teamId: T3.id,
-            })
-            .pipe(Effect.flip))._tag,
-          "NoDraftError",
-        );
-        strictEqual(
-          (yield* repo
-            .updateWorkflowTags({ workflowId: w.id, tags: tags(["b"]) })
-            .pipe(Effect.flip))._tag,
-          "NoDraftError",
-        );
+        // A step write with no draft creates one, as a copy of the workflow.
+        yield* repo.addStep({
+          workflowId: w.id,
+          name: stepName("Pack"),
+          teamId: T3.id,
+        });
+        const lazy = yield* found(w.id);
+        deepStrictEqual(stepNames(lazy.draft?.steps ?? []), [
+          "Cut",
+          "Finish",
+          "Pack",
+        ]);
+        deepStrictEqual<readonly string[]>(lazy.draft?.draft.tags ?? [], ["a"]);
+        // The workflow itself is untouched until Apply.
+        deepStrictEqual(stepNames(lazy.steps), ["Cut", "Finish"]);
+        // A tag write lands on that same draft rather than starting a second one.
+        yield* repo.updateWorkflowTags({
+          workflowId: w.id,
+          tags: tags(["b"]),
+        });
+        const retagged = yield* found(w.id);
+        deepStrictEqual<readonly string[]>(retagged.draft?.draft.tags ?? [], [
+          "b",
+        ]);
+        deepStrictEqual(stepNames(retagged.draft?.steps ?? []), [
+          "Cut",
+          "Finish",
+          "Pack",
+        ]);
+        deepStrictEqual(tagsOf(retagged.workflow), ["a"]);
         // A workflow step id is never writable.
         const [first] = after.steps;
         strictEqual(

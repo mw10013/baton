@@ -729,7 +729,7 @@ export const UpdateWorkflowInput = Schema.Struct({
 });
 export type UpdateWorkflowInput = typeof UpdateWorkflowInput.Type;
 
-/** Lands on the draft, never on the workflow; `NoDraft` when Edit has not been clicked. */
+/** Lands on the draft, never on the workflow; the draft is created if this is the first change. */
 export const UpdateWorkflowTagsInput = Schema.Struct({
   workflowId: BoundedId,
   tags: ProductTags,
@@ -909,8 +909,6 @@ export const StepResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Limit"), limit: Schema.Number }),
   /** The picked team no longer exists in D1: it was deleted under the editor. */
   Schema.Struct({ _tag: Schema.Literal("TeamNotFound") }),
-  /** No draft exists: the editor must Edit first. */
-  Schema.Struct({ _tag: Schema.Literal("NoDraft") }),
 ]);
 export type StepResult = typeof StepResult.Type;
 

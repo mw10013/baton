@@ -67,7 +67,11 @@ export class OrderWorkflowExistsError extends Schema.TaggedError<OrderWorkflowEx
   { workflowId: Schema.String },
 ) {}
 
-/** A step or tag write, Apply, or Discard without a draft: Edit has not been clicked. */
+/**
+ * Apply or Discard without a draft: there is nothing to promote or throw
+ * away. Step and tag writes never raise this — they create the draft they
+ * need (see `ensureDraft`).
+ */
 export class NoDraftError extends Schema.TaggedError<NoDraftError>()(
   "NoDraftError",
   { workflowId: Schema.String },
@@ -220,16 +224,13 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowNameTakenError
       | WorkflowNotFoundError
     >;
-    /** Writes `tags` on the draft; `NoDraftError` without one. Non-empty tags on an order workflow are refused. */
+    /** Writes `tags` on the draft, creating it if this is the first change. Non-empty tags on an order workflow are refused. */
     readonly updateWorkflowTags: (input: {
       readonly workflowId: string;
       readonly tags: Domain.ProductTags;
     }) => Effect.Effect<
       Domain.WorkflowDraft,
-      | SqlError.SqlError
-      | WorkflowRepositoryError
-      | WorkflowNotFoundError
-      | NoDraftError
+      SqlError.SqlError | WorkflowRepositoryError | WorkflowNotFoundError
     >;
     /**
      * The on/off switch. On requires: at least one step, every step assigned
@@ -253,9 +254,11 @@ export class WorkflowRepository extends Context.Service<
       | StepUnassignedError
     >;
     /**
-     * Edit. Returns the existing draft when there is one (the merchant is
-     * resuming); otherwise inserts a draft with the workflow's tags and a
-     * copy of every workflow step under a new id, in one transaction.
+     * The draft, made explicitly. Returns the existing one when there is one;
+     * otherwise inserts a draft with the workflow's tags and a copy of every
+     * workflow step under a new id, in one transaction. The editor does not
+     * call this — its writes create the draft themselves — so this is for a
+     * caller that wants a draft without changing anything.
      */
     readonly createDraft: (input: {
       readonly workflowId: string;
@@ -292,7 +295,7 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowNotFoundError
       | NoDraftError
     >;
-    /** New step in a new last stage of the draft; `NoDraftError` without one. */
+    /** New step in a new last stage of the draft, creating the draft if this is the first change. */
     readonly addStep: (input: {
       readonly workflowId: string;
       readonly name: Domain.StepName;
@@ -303,7 +306,6 @@ export class WorkflowRepository extends Context.Service<
       | SqlError.SqlError
       | WorkflowRepositoryError
       | WorkflowNotFoundError
-      | NoDraftError
       | WorkflowLimitError
     >;
     /** New step into an existing `stage` of the draft, after that stage's last step. */
@@ -318,7 +320,6 @@ export class WorkflowRepository extends Context.Service<
       | SqlError.SqlError
       | WorkflowRepositoryError
       | WorkflowNotFoundError
-      | NoDraftError
       | WorkflowLimitError
       | StageNotFoundError
     >;
@@ -597,6 +598,44 @@ export class WorkflowRepository extends Context.Service<
       const touchWorkflow = (workflowId: string, now: number) =>
         sql`update Workflow set updatedAt = ${now} where id = ${workflowId}`;
 
+      /**
+       * The draft every editor write lands on, created on demand. Opening the
+       * editor is not an edit: nothing is written until the merchant changes
+       * something, and by then the draft has to exist for the change to go
+       * anywhere. So step and tag writes come through here instead of
+       * refusing with `NoDraftError`, and a draft that did not exist starts
+       * as a copy of the workflow — its tags, and every step under a new id.
+       * Apply and Discard still require one.
+       *
+       * No transaction of its own: every caller already opened one, and
+       * Durable Object SQLite refuses to nest.
+       */
+      const ensureDraft = (workflowId: string) =>
+        Effect.gen(function* () {
+          const workflow = yield* requireWorkflow(workflowId);
+          const existing = yield* findDraft(workflowId);
+          if (Option.isSome(existing)) return existing.value;
+          const draft = yield* insertDraft({
+            workflowId,
+            tags: workflow.scope === "order" ? [] : workflow.tags,
+            now: yield* Clock.currentTimeMillis,
+          });
+          yield* Effect.forEach(
+            yield* workflowSteps(workflowId),
+            (step) =>
+              insertDraftStepRow({
+                workflowId,
+                position: sql`${step.position}`,
+                stage: sql`${step.stage}`,
+                name: step.name,
+                teamId: step.teamId,
+                instructions: step.instructions,
+              }),
+            { discard: true },
+          );
+          return draft;
+        });
+
       const touchDraft = (workflowId: string, now: number) =>
         sql`update WorkflowDraft set updatedAt = ${now} where workflowId = ${workflowId}`;
 
@@ -654,7 +693,7 @@ export class WorkflowRepository extends Context.Service<
           }),
         );
 
-      /** Shared by `addStep` and `addParallelStep`: the draft must exist, the step ceiling, and the insert itself. */
+      /** Shared by `addStep` and `addParallelStep`: the draft (created if this is the first change), the step ceiling, and the insert itself. */
       const insertStep = ({
         workflowId,
         position,
@@ -671,8 +710,7 @@ export class WorkflowRepository extends Context.Service<
         readonly instructions: Domain.StepInstructions | null;
       }) =>
         Effect.gen(function* () {
-          yield* requireWorkflow(workflowId);
-          yield* requireDraft(workflowId);
+          yield* ensureDraft(workflowId);
           if (
             (yield* countDraftSteps(workflowId)) >=
             Domain.WorkflowLimits.maxSteps
@@ -1017,18 +1055,28 @@ export class WorkflowRepository extends Context.Service<
             readonly workflowId: string;
             readonly tags: Domain.ProductTags;
           }) {
-            const existing = yield* requireWorkflow(workflowId);
-            yield* requireNoTagsForOrderScope(existing.scope, tags);
-            yield* requireDraft(workflowId);
-            const now = yield* Clock.currentTimeMillis;
-            const [draft] = yield* decodeDrafts(
-              yield* sql`
-                update WorkflowDraft set tags = ${json(tags)}, updatedAt = ${now}
-                where workflowId = ${workflowId}
-                returning *
-              `,
+            return yield* sql.withTransaction(
+              Effect.gen(function* () {
+                const existing = yield* requireWorkflow(workflowId);
+                yield* requireNoTagsForOrderScope(existing.scope, tags);
+                yield* ensureDraft(workflowId);
+                const now = yield* Clock.currentTimeMillis;
+                const [draft] = yield* decodeDrafts(
+                  yield* sql`
+                    update WorkflowDraft set tags = ${json(tags)}, updatedAt = ${now}
+                    where workflowId = ${workflowId}
+                    returning *
+                  `,
+                );
+                return (
+                  draft ??
+                  (yield* new WorkflowRepositoryError({
+                    message: "WorkflowDraft update returned no row",
+                    cause: workflowId,
+                  }))
+                );
+              }),
             );
-            return draft ?? (yield* new NoDraftError({ workflowId }));
           },
         ),
 
@@ -1070,34 +1118,7 @@ export class WorkflowRepository extends Context.Service<
         }: {
           readonly workflowId: string;
         }) {
-          return yield* sql.withTransaction(
-            Effect.gen(function* () {
-              const workflow = yield* requireWorkflow(workflowId);
-              const existing = yield* findDraft(workflowId);
-              if (Option.isSome(existing)) return existing.value;
-              const now = yield* Clock.currentTimeMillis;
-              const draft = yield* insertDraft({
-                workflowId,
-                tags: workflow.scope === "order" ? [] : workflow.tags,
-                now,
-              });
-              const steps = yield* workflowSteps(workflowId);
-              yield* Effect.forEach(
-                steps,
-                (step) =>
-                  insertDraftStepRow({
-                    workflowId,
-                    position: sql`${step.position}`,
-                    stage: sql`${step.stage}`,
-                    name: step.name,
-                    teamId: step.teamId,
-                    instructions: step.instructions,
-                  }),
-                { discard: true },
-              );
-              return draft;
-            }),
-          );
+          return yield* sql.withTransaction(ensureDraft(workflowId));
         }),
 
         applyDraft: Effect.fn("WorkflowRepository.applyDraft")(function* ({
@@ -1200,8 +1221,7 @@ export class WorkflowRepository extends Context.Service<
           }) {
             return yield* sql.withTransaction(
               Effect.gen(function* () {
-                yield* requireWorkflow(workflowId);
-                yield* requireDraft(workflowId);
+                yield* ensureDraft(workflowId);
                 const before = yield* layoutOf(workflowId);
                 if (!before.some((p) => p.stage === stage))
                   return yield* new StageNotFoundError({ workflowId, stage });

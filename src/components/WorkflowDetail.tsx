@@ -94,7 +94,6 @@ const stepResultMessage = Match.typeTags<Domain.StepResult, string | null>()({
   NotFound: () => "That step or workflow no longer exists.",
   Limit: ({ limit }) => `A workflow can have at most ${String(limit)} steps.`,
   TeamNotFound: () => "That team no longer exists. Choose another.",
-  NoDraft: () => "Click Edit to start a draft before changing steps.",
 });
 
 const unassigned = (steps: readonly Domain.StepWithTeamName[]) =>
