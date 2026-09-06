@@ -736,6 +736,10 @@ export const UpdateWorkflowTagsInput = Schema.Struct({
 });
 export type UpdateWorkflowTagsInput = typeof UpdateWorkflowTagsInput.Type;
 
+/** The copy's name and the decision to leave its tags empty are the repository's ({@link WorkflowResult} carries the copy). */
+export const DuplicateWorkflowInput = WorkflowIdInput;
+export type DuplicateWorkflowInput = typeof DuplicateWorkflowInput.Type;
+
 export const CreateDraftInput = WorkflowIdInput;
 export type CreateDraftInput = typeof CreateDraftInput.Type;
 

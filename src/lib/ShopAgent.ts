@@ -1498,6 +1498,33 @@ export class ShopAgent extends Agent {
     );
   }
 
+  /** Duplicate: the copy is off, keeps the steps, and takes no product tags (`WorkflowRepository.duplicateWorkflow`). */
+  @callable()
+  duplicateWorkflow(
+    input: typeof Domain.DuplicateWorkflowInput.Encoded,
+  ): Promise<Domain.WorkflowResult> {
+    const shop = this.name;
+    return this.runEffect(
+      callableEffect(
+        "ShopAgent.duplicateWorkflow",
+        Domain.DuplicateWorkflowInput,
+        { onExcessProperty: "error" },
+      )(({ workflowId }) =>
+        workflowResult(
+          Effect.gen(function* () {
+            const copy = yield* (yield* WorkflowRepository).duplicateWorkflow({
+              workflowId,
+            });
+            yield* Effect.logInfo(
+              `ShopAgent.duplicateWorkflow: shop=${shop} workflowId=${workflowId} copyId=${copy.id}`,
+            ).pipe(Effect.annotateLogs({ shop, workflowId, copyId: copy.id }));
+            return copy;
+          }),
+        ),
+      )(input),
+    );
+  }
+
   @callable()
   updateWorkflow(
     input: typeof Domain.UpdateWorkflowInput.Encoded,

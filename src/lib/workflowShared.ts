@@ -1,6 +1,6 @@
-import type * as Domain from "@/lib/Domain";
-
 import { Match } from "effect";
+
+import * as Domain from "@/lib/Domain";
 
 /** Comma-separated text → tag list; the Durable Object normalises again. */
 export const splitTags = (text: string) =>
@@ -40,3 +40,82 @@ export const DELETE_WORKFLOW_WARNING = "This can't be undone.";
 
 /** The order-scope trigger line, in the merchant copy of `Domain.Workflow`; the wait for item runs stays internal. */
 export const ORDER_WORKFLOW_TRIGGER = "Starts for every paid order.";
+
+/**
+ * The item-scope trigger line: what has to be true of an order for this
+ * workflow to start. Product tags are the whole selector, so a workflow
+ * without any never starts and says so.
+ */
+export const itemTriggerLine = (tags: readonly string[]) => {
+  if (tags.length === 0)
+    return "No product tags yet, so this never starts. Add one to say which items follow it.";
+  const quoted = tags.map((tag) => `“${tag}”`);
+  const list =
+    quoted.length === 1
+      ? quoted[0]
+      : `${quoted.slice(0, -1).join(", ")} or ${quoted.at(-1) ?? ""}`;
+  return `Starts when an order contains a product tagged ${list ?? ""}.`;
+};
+
+const stepList = (steps: readonly Domain.StepWithTeamName[]) =>
+  steps.map((step) => step.name).join(", ");
+
+/**
+ * Why Turn on would be refused, decided from the workflow's own steps — the
+ * same facts the object checks — so the button can be disabled with its
+ * reason instead of failing after a round trip. An empty team is not a
+ * blocker: the run starts and waits for a member.
+ */
+export const turnOnBlocker = (
+  steps: readonly Domain.StepWithTeamName[],
+): Domain.ActivateResult | null => {
+  if (steps.length === 0) return { _tag: "NoSteps" };
+  const orphans = steps.filter(Domain.isUnassigned);
+  if (orphans.length > 0)
+    return {
+      _tag: "StepUnassigned",
+      stepNames: orphans.map((step) => step.name),
+    };
+  return null;
+};
+
+/** Why Apply would be refused, from the draft's steps; the same checks on and off. */
+export const applyBlocker = (
+  steps: readonly Domain.StepWithTeamName[],
+): Domain.ApplyResult | null => {
+  if (steps.length === 0) return { _tag: "NoSteps" };
+  const orphans = steps.filter(Domain.isUnassigned);
+  if (orphans.length > 0)
+    return {
+      _tag: "StepUnassigned",
+      stepNames: orphans.map((step) => step.name),
+    };
+  return null;
+};
+
+/**
+ * What needs attention about these steps, one sentence each: a step nobody
+ * owns, and a step owned by a team nobody is on. Empty when there is nothing
+ * to say, so the caller renders no banner at all.
+ */
+export const attentionLines = (
+  steps: readonly Domain.StepWithTeamName[],
+): readonly string[] => {
+  const orphans = steps.filter(Domain.isUnassigned);
+  const empty = steps.filter(Domain.hasEmptyTeam);
+  const teamNames = [
+    ...new Set(empty.map((step) => step.teamName ?? "").filter(Boolean)),
+  ];
+  return [
+    ...(orphans.length > 0
+      ? [`No team on ${stepList(orphans)}. Assign one before you apply.`]
+      : []),
+    ...(teamNames.length > 0
+      ? [
+          `Nobody is on ${teamNames.join(", ")}. ${
+            empty.length === 1 ? "That step" : "Those steps"
+          } will sit unclaimed until someone joins.`,
+        ]
+      : []),
+  ];
+};

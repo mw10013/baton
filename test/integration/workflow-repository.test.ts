@@ -8,7 +8,7 @@ import { describe, it } from "vitest";
 
 import * as Domain from "@/lib/Domain";
 import { runShopAgentMigrations } from "@/lib/ShopAgent";
-import { WorkflowRepository } from "@/lib/WorkflowRepository";
+import { copyName, WorkflowRepository } from "@/lib/WorkflowRepository";
 
 const runInRepository = <A, E>(
   program: Effect.Effect<A, E, WorkflowRepository | SqlClient.SqlClient>,
@@ -690,6 +690,85 @@ describe("WorkflowRepository", () => {
     ));
 });
 
+describe("WorkflowRepository duplicate", () => {
+  it("copies the steps and their stages, drops the tags, lands off with no draft", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const repo = yield* WorkflowRepository;
+        const w = yield* repo.createWorkflow({
+          name: name("Engraved ring"),
+          tags: tags(["engraved"]),
+        });
+        yield* twoSteps(w.id);
+        const [first] = editable(
+          yield* repo.getWorkflow({ workflowId: w.id }),
+        ).steps;
+        yield* repo.addParallelStep({
+          workflowId: w.id,
+          stage: first?.stage ?? 1,
+          name: stepName("Polish"),
+          teamId: T3.id,
+        });
+        yield* repo.applyDraft({ workflowId: w.id, teams: ALL_TEAMS });
+        yield* repo.setWorkflowActive({
+          workflowId: w.id,
+          active: true,
+          teams: ALL_TEAMS,
+        });
+
+        const copy = yield* repo.duplicateWorkflow({ workflowId: w.id });
+        strictEqual(copy.name, "Engraved ring copy");
+        strictEqual(copy.active, false);
+        deepStrictEqual(tagsOf(copy), []);
+        const copied = Option.getOrThrow(
+          yield* repo.getWorkflow({ workflowId: copy.id }),
+        );
+        strictEqual(copied.draft, null);
+        const source = Option.getOrThrow(
+          yield* repo.getWorkflow({ workflowId: w.id }),
+        );
+        deepStrictEqual(
+          copied.steps.map((s) => [s.name, s.stage, s.teamId]),
+          source.steps.map((s) => [s.name, s.stage, s.teamId]),
+        );
+        // New rows, not the source's.
+        strictEqual(
+          copied.steps.some((s) => source.steps.some((o) => o.id === s.id)),
+          false,
+        );
+        // The source is untouched and still on.
+        strictEqual(source.workflow.active, true);
+        deepStrictEqual(tagsOf(source.workflow), ["engraved"]);
+        // A second duplicate takes the next free name.
+        const second = yield* repo.duplicateWorkflow({ workflowId: w.id });
+        strictEqual(second.name, "Engraved ring copy 2");
+        const missing = yield* repo
+          .duplicateWorkflow({ workflowId: "nope" })
+          .pipe(Effect.flip);
+        strictEqual(missing._tag, "WorkflowNotFoundError");
+      }),
+    ));
+});
+
+describe("copyName", () => {
+  it("takes the first free suffix and trims the base to fit the 64-character limit", () => {
+    strictEqual(copyName("Engraved ring", []), "Engraved ring copy");
+    strictEqual(
+      copyName("Engraved ring", ["Engraved ring copy"]),
+      "Engraved ring copy 2",
+    );
+    // The index is `collate nocase`, so a differently-cased name is taken.
+    strictEqual(
+      copyName("Engraved ring", ["engraved ring COPY", "Engraved ring copy 2"]),
+      "Engraved ring copy 3",
+    );
+    const long = "x".repeat(64);
+    const copied = copyName(long, []);
+    strictEqual(copied.length, 64);
+    strictEqual(copied.endsWith(" copy"), true);
+  });
+});
+
 /** Two draft steps on a fresh workflow, ready to apply. */
 const twoSteps = (workflowId: string) =>
   Effect.gen(function* () {
@@ -842,19 +921,31 @@ describe("WorkflowRepository workflow and draft", () => {
           "Pack",
         ]);
         deepStrictEqual(tagsOf(retagged.workflow), ["a"]);
-        // A workflow step id is never writable.
+        // A step id from the live workflow starts the draft and edits its
+        // copy; an id neither side carries is still not found.
         const [first] = after.steps;
+        yield* repo.updateStep({
+          stepId: first?.id ?? "",
+          name: stepName("Cut2"),
+          teamId: T1.id,
+          instructions: null,
+        });
+        const started = yield* found(w.id);
+        deepStrictEqual(stepNames(started.draft?.steps ?? []), [
+          "Cut2",
+          "Finish",
+          "Pack",
+        ]);
+        deepStrictEqual(stepNames(started.steps), ["Cut", "Finish"]);
         strictEqual(
-          (yield* repo
-            .removeStep({ stepId: first?.id ?? "" })
-            .pipe(Effect.flip))._tag,
+          (yield* repo.removeStep({ stepId: "nope" }).pipe(Effect.flip))._tag,
           "StepNotFoundError",
         );
-        assertNone(yield* repo.getStep({ stepId: first?.id ?? "" }));
+        assertNone(yield* repo.getStep({ stepId: "nope" }));
       }),
     ));
 
-  it("createDraft copies the workflow's tags and steps under new ids and is idempotent; edits never touch the workflow", () =>
+  it("createDraft copies the workflow's tags and steps under their own ids and is idempotent; edits never touch the workflow", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -880,10 +971,10 @@ describe("WorkflowRepository workflow and draft", () => {
         ]);
         const workflowIds = forked.steps.map((s) => s.id);
         const draftIds = forked.draft?.steps.map((s) => s.id) ?? [];
-        strictEqual(
-          draftIds.some((id) => workflowIds.includes(id)),
-          false,
-        );
+        // A step keeps one identity: the draft's copy carries the workflow
+        // step's id, which is what lets the editor edit a step it is looking
+        // at before any draft exists.
+        deepStrictEqual(draftIds, workflowIds);
         deepStrictEqual(
           forked.draft?.steps.map((s) => [s.position, s.stage, s.teamId]),
           forked.steps.map((s) => [s.position, s.stage, s.teamId]),

@@ -38,7 +38,7 @@ export class WorkflowNotFoundError extends Schema.TaggedError<WorkflowNotFoundEr
   { workflowId: Schema.String },
 ) {}
 
-/** A draft step id the editor sent that no `WorkflowDraftStep` row carries — including a workflow step's id, which is never writable. */
+/** A step id the editor sent that neither the draft nor the workflow carries — a step some other tab already removed, or a stale id. */
 export class StepNotFoundError extends Schema.TaggedError<StepNotFoundError>()(
   "StepNotFoundError",
   { stepId: Schema.String },
@@ -94,6 +94,34 @@ export class StepUnassignedError extends Schema.TaggedError<StepUnassignedError>
 ) {}
 
 const json = (value: unknown) => JSON.stringify(value);
+
+/** `Workflow_name_uidx` is `collate nocase`, so names collide case-insensitively. */
+const MAX_NAME_LENGTH = 64;
+
+/**
+ * The name a duplicate takes: `<name> copy`, then `<name> copy 2`, and so on
+ * until one is free, with the base trimmed so the result fits
+ * `Domain.WorkflowName`. Duplicate is one click and must not fail on a name
+ * the merchant never chose, so it picks a free one instead of colliding.
+ *
+ * `taken.length + 1` candidates against `taken.length` taken names always
+ * leave one free, so the fallback is unreachable.
+ */
+export const copyName = (name: string, taken: readonly string[]): string => {
+  const used = new Set(taken.map((existing) => existing.toLowerCase()));
+  const withSuffix = (suffix: string) =>
+    `${name.slice(0, MAX_NAME_LENGTH - suffix.length).trimEnd()}${suffix}`;
+  const candidates = [
+    withSuffix(" copy"),
+    ...Array.from({ length: taken.length }, (_, index) =>
+      withSuffix(` copy ${String(index + 2)}`),
+    ),
+  ];
+  return (
+    candidates.find((candidate) => !used.has(candidate.toLowerCase())) ??
+    withSuffix(` copy ${String(taken.length + 2)}`)
+  );
+};
 
 /** Seed fixtures carry positions and stages but no ids; the index stands in. */
 const validLayout = (
@@ -213,6 +241,29 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowLimitError
       | OrderWorkflowExistsError
     >;
+    /**
+     * A copy of the workflow: {@link copyName}, its steps with their stages
+     * under new ids, off, with **no product tags** and no draft.
+     *
+     * Tags are deliberately not copied. Matching is per workflow with no
+     * arbitration (`WorkflowRunRepository.matchesLineItem`), so a copy
+     * carrying the original's tags would start a second, near-identical run
+     * on the same line item the moment it was turned on. Leaving them empty
+     * puts the one decision the merchant has to make in front of them
+     * instead: the copy's trigger line says it never starts until it has a
+     * tag.
+     */
+    readonly duplicateWorkflow: (input: {
+      readonly workflowId: string;
+    }) => Effect.Effect<
+      Domain.Workflow,
+      | SqlError.SqlError
+      | WorkflowRepositoryError
+      | WorkflowNotFoundError
+      | WorkflowNameTakenError
+      | WorkflowLimitError
+      | OrderWorkflowExistsError
+    >;
     /** Rename only; immediate, since runs snapshot the name. `scope` is not editable. */
     readonly updateWorkflow: (input: {
       readonly workflowId: string;
@@ -323,7 +374,11 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowLimitError
       | StageNotFoundError
     >;
-    /** A draft step and its workflow. Workflow steps are not found here: they are never written. */
+    /**
+     * A step the editor can act on, with its workflow: the draft's row when
+     * there is a draft, otherwise the workflow's own — the same id either way
+     * (`ensureDraft`). A read, so it creates nothing.
+     */
     readonly getStep: (input: { readonly stepId: string }) => Effect.Effect<
       Option.Option<{
         readonly step: Domain.WorkflowDraftStep;
@@ -331,7 +386,11 @@ export class WorkflowRepository extends Context.Service<
       }>,
       SqlError.SqlError | WorkflowRepositoryError
     >;
-    /** The step-id writes below take draft step ids only. `instructions: null` clears. */
+    /**
+     * The step-id writes below all land on the draft, creating it from the
+     * workflow when this is the first change (`requireEditableStep`).
+     * `instructions: null` clears.
+     */
     readonly updateStep: (input: {
       readonly stepId: string;
       readonly name: Domain.StepName;
@@ -339,7 +398,10 @@ export class WorkflowRepository extends Context.Service<
       readonly instructions: Domain.StepInstructions | null;
     }) => Effect.Effect<
       Domain.WorkflowDraftStep,
-      SqlError.SqlError | WorkflowRepositoryError | StepNotFoundError
+      | SqlError.SqlError
+      | WorkflowRepositoryError
+      | WorkflowNotFoundError
+      | StepNotFoundError
     >;
     /** A move past either edge is a no-op, not an error. Across a stage boundary the step joins the neighbour's stage. */
     readonly moveStep: (input: {
@@ -347,20 +409,29 @@ export class WorkflowRepository extends Context.Service<
       readonly direction: Domain.StepDirection;
     }) => Effect.Effect<
       void,
-      SqlError.SqlError | WorkflowRepositoryError | StepNotFoundError
+      | SqlError.SqlError
+      | WorkflowRepositoryError
+      | WorkflowNotFoundError
+      | StepNotFoundError
     >;
     /** The step leaves its stage into a new one of its own right after it; no-op when already alone. */
     readonly separateStep: (input: {
       readonly stepId: string;
     }) => Effect.Effect<
       void,
-      SqlError.SqlError | WorkflowRepositoryError | StepNotFoundError
+      | SqlError.SqlError
+      | WorkflowRepositoryError
+      | WorkflowNotFoundError
+      | StepNotFoundError
     >;
     readonly removeStep: (input: {
       readonly stepId: string;
     }) => Effect.Effect<
       void,
-      SqlError.SqlError | WorkflowRepositoryError | StepNotFoundError
+      | SqlError.SqlError
+      | WorkflowRepositoryError
+      | WorkflowNotFoundError
+      | StepNotFoundError
     >;
     /**
      * Every pointer a team delete would null, per team: workflow steps, draft
@@ -471,6 +542,12 @@ export class WorkflowRepository extends Context.Service<
           ),
         );
 
+      const findWorkflowStep = (stepId: string) =>
+        sql`select * from WorkflowStep where id = ${stepId}`.pipe(
+          Effect.flatMap(decodeSteps),
+          Effect.map(([step]) => Option.fromUndefinedOr(step)),
+        );
+
       const workflowSteps = (workflowId: string) =>
         sql`
           select * from WorkflowStep
@@ -560,6 +637,7 @@ export class WorkflowRepository extends Context.Service<
         });
 
       const insertDraftStepRow = ({
+        id,
         workflowId,
         position,
         stage,
@@ -567,6 +645,8 @@ export class WorkflowRepository extends Context.Service<
         teamId,
         instructions,
       }: {
+        /** The workflow step's id when the draft is copying it, so a step keeps one identity; a new one otherwise. */
+        readonly id?: string;
         readonly workflowId: string;
         readonly position: Statement.Fragment;
         readonly stage: Statement.Fragment;
@@ -580,7 +660,7 @@ export class WorkflowRepository extends Context.Service<
               insert into WorkflowDraftStep
                 (id, workflowId, position, stage, name, teamId, instructions)
               values (
-                ${crypto.randomUUID()}, ${workflowId}, ${position}, ${stage},
+                ${id ?? crypto.randomUUID()}, ${workflowId}, ${position}, ${stage},
                 ${name}, ${teamId}, ${instructions}
               )
               returning *
@@ -604,8 +684,12 @@ export class WorkflowRepository extends Context.Service<
        * something, and by then the draft has to exist for the change to go
        * anywhere. So step and tag writes come through here instead of
        * refusing with `NoDraftError`, and a draft that did not exist starts
-       * as a copy of the workflow — its tags, and every step under a new id.
-       * Apply and Discard still require one.
+       * as a copy of the workflow — its tags, and every step **under the
+       * step's own id**. That identity is what lets the editor edit a step it
+       * is looking at before any draft exists: the id it sends names the
+       * workflow step now and the draft's copy of it a moment later, and
+       * Apply carries the same ids back (see `requireEditableStep`).
+       * Apply and Discard still require a draft.
        *
        * No transaction of its own: every caller already opened one, and
        * Durable Object SQLite refuses to nest.
@@ -624,6 +708,7 @@ export class WorkflowRepository extends Context.Service<
             yield* workflowSteps(workflowId),
             (step) =>
               insertDraftStepRow({
+                id: step.id,
                 workflowId,
                 position: sql`${step.position}`,
                 stage: sql`${step.stage}`,
@@ -634,6 +719,26 @@ export class WorkflowRepository extends Context.Service<
             { discard: true },
           );
           return draft;
+        });
+
+      /**
+       * The draft row a step-id write targets. Until a draft exists the
+       * editor is looking at the workflow's own steps, so the id it sends is
+       * a workflow step's: that write is the first change, and `ensureDraft`
+       * copies the steps under their own ids, so the same id names the
+       * draft's copy immediately afterwards. An id neither table carries is
+       * `StepNotFoundError` as before — including a step this draft has
+       * already removed.
+       */
+      const requireEditableStep = (stepId: string) =>
+        Effect.gen(function* () {
+          const drafted = yield* findDraftStep(stepId);
+          if (Option.isSome(drafted)) return drafted.value;
+          const live = yield* findWorkflowStep(stepId);
+          if (Option.isNone(live))
+            return yield* new StepNotFoundError({ stepId });
+          yield* ensureDraft(live.value.workflowId);
+          return yield* requireDraftStep(stepId);
         });
 
       const touchDraft = (workflowId: string, now: number) =>
@@ -686,7 +791,7 @@ export class WorkflowRepository extends Context.Service<
       ) =>
         sql.withTransaction(
           Effect.gen(function* () {
-            const step = yield* requireDraftStep(stepId);
+            const step = yield* requireEditableStep(stepId);
             const layout = yield* layoutOf(step.workflowId);
             yield* writeLayout(step.workflowId, edit(layout));
             yield* touchDraft(step.workflowId, yield* Clock.currentTimeMillis);
@@ -1020,6 +1125,66 @@ export class WorkflowRepository extends Context.Service<
           },
         ),
 
+        duplicateWorkflow: Effect.fn("WorkflowRepository.duplicateWorkflow")(
+          function* ({ workflowId }: { readonly workflowId: string }) {
+            const source = yield* requireWorkflow(workflowId);
+            if (source.scope === "order") yield* requireOrderWorkflowSlot;
+            const open = yield* count(sql`select count(*) from Workflow`);
+            if (open >= Domain.WorkflowLimits.maxWorkflows)
+              return yield* new WorkflowLimitError({
+                limit: Domain.WorkflowLimits.maxWorkflows,
+              });
+            const taken = yield* sql`select name from Workflow`.pipe(
+              Effect.map((rows) => rows.map((row) => String(row.name))),
+            );
+            /** Trimmed to fit and non-empty by construction; the decode is what carries the brand. */
+            const name = yield* Schema.decodeUnknownEffect(Domain.WorkflowName)(
+              copyName(source.name, taken),
+            ).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new WorkflowRepositoryError({
+                    message: "Duplicate produced an invalid workflow name",
+                    cause,
+                  }),
+              ),
+            );
+            const steps = yield* workflowSteps(workflowId);
+            const now = yield* Clock.currentTimeMillis;
+            const copyId = crypto.randomUUID();
+            return yield* sql.withTransaction(
+              Effect.gen(function* () {
+                const [workflow] = yield* decodeWorkflows(
+                  yield* sql`
+                    insert or ignore into Workflow
+                      (id, name, scope, active, tags, createdAt, updatedAt)
+                    values
+                      (${copyId}, ${name}, ${source.scope}, 0, '[]', ${now}, ${now})
+                    returning *
+                  `,
+                );
+                if (workflow === undefined)
+                  return yield* new WorkflowNameTakenError({ name });
+                yield* Effect.forEach(
+                  steps,
+                  (step) =>
+                    sql`
+                      insert into WorkflowStep
+                        (id, workflowId, position, stage, name, teamId, instructions)
+                      values (
+                        ${crypto.randomUUID()}, ${copyId}, ${step.position},
+                        ${step.stage}, ${step.name}, ${step.teamId},
+                        ${step.instructions}
+                      )
+                    `,
+                  { discard: true },
+                );
+                return workflow;
+              }),
+            );
+          },
+        ),
+
         /**
          * `update or ignore` turns a name collision into zero returned rows.
          * Existence is checked first, so no rows afterwards means exactly
@@ -1254,12 +1419,15 @@ export class WorkflowRepository extends Context.Service<
         }: {
           readonly stepId: string;
         }) {
-          const step = yield* findDraftStep(stepId);
+          const drafted = yield* findDraftStep(stepId);
+          const step = Option.isSome(drafted)
+            ? drafted
+            : yield* findWorkflowStep(stepId);
           if (Option.isNone(step)) return Option.none();
           const workflow = yield* findWorkflow(step.value.workflowId);
           if (Option.isNone(workflow))
             return yield* new WorkflowRepositoryError({
-              message: "WorkflowDraftStep.workflowId resolves to no Workflow",
+              message: "Step.workflowId resolves to no Workflow",
               cause: stepId,
             });
           return Option.some({ step: step.value, workflow: workflow.value });
@@ -1278,6 +1446,7 @@ export class WorkflowRepository extends Context.Service<
         }) {
           return yield* sql.withTransaction(
             Effect.gen(function* () {
+              yield* requireEditableStep(stepId);
               const [step] = yield* decodeSteps(
                 yield* sql`
                   update WorkflowDraftStep
@@ -1327,7 +1496,7 @@ export class WorkflowRepository extends Context.Service<
         }) {
           yield* sql.withTransaction(
             Effect.gen(function* () {
-              const step = yield* requireDraftStep(stepId);
+              const step = yield* requireEditableStep(stepId);
               const layout = yield* layoutOf(step.workflowId);
               yield* sql`delete from WorkflowDraftStep where id = ${stepId}`;
               yield* writeLayout(

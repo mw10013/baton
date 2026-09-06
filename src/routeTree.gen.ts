@@ -42,6 +42,7 @@ import { Route as ShopShopIndexRouteImport } from './routes/shop.$shop.index'
 import { Route as ShopShopQueueRouteImport } from './routes/shop.$shop.queue'
 import { Route as WebhooksAppScopes_updateRouteImport } from './routes/webhooks.app.scopes_update'
 import { Route as WebhooksAppUninstalledRouteImport } from './routes/webhooks.app.uninstalled'
+import { Route as AppWorkflowsWorkflowIdEditRouteImport } from './routes/app.workflows.$workflowId_.edit'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -211,6 +212,12 @@ const WebhooksAppUninstalledRoute = WebhooksAppUninstalledRouteImport.update({
   path: '/webhooks/app/uninstalled',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppWorkflowsWorkflowIdEditRoute =
+  AppWorkflowsWorkflowIdEditRouteImport.update({
+    id: '/workflows/$workflowId_/edit',
+    path: '/workflows/$workflowId/edit',
+    getParentRoute: () => AppRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -246,6 +253,7 @@ export interface FileRoutesByFullPath {
   '/app/teams/': typeof AppTeamsIndexRoute
   '/app/workflows/': typeof AppWorkflowsIndexRoute
   '/shop/$shop/': typeof ShopShopIndexRoute
+  '/app/workflows/$workflowId/edit': typeof AppWorkflowsWorkflowIdEditRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -277,6 +285,7 @@ export interface FileRoutesByTo {
   '/app/teams': typeof AppTeamsIndexRoute
   '/app/workflows': typeof AppWorkflowsIndexRoute
   '/shop/$shop': typeof ShopShopIndexRoute
+  '/app/workflows/$workflowId/edit': typeof AppWorkflowsWorkflowIdEditRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -313,6 +322,7 @@ export interface FileRoutesById {
   '/app/teams/': typeof AppTeamsIndexRoute
   '/app/workflows/': typeof AppWorkflowsIndexRoute
   '/shop/$shop/': typeof ShopShopIndexRoute
+  '/app/workflows/$workflowId_/edit': typeof AppWorkflowsWorkflowIdEditRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -350,6 +360,7 @@ export interface FileRouteTypes {
     | '/app/teams/'
     | '/app/workflows/'
     | '/shop/$shop/'
+    | '/app/workflows/$workflowId/edit'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -381,6 +392,7 @@ export interface FileRouteTypes {
     | '/app/teams'
     | '/app/workflows'
     | '/shop/$shop'
+    | '/app/workflows/$workflowId/edit'
   id:
     | '__root__'
     | '/'
@@ -416,6 +428,7 @@ export interface FileRouteTypes {
     | '/app/teams/'
     | '/app/workflows/'
     | '/shop/$shop/'
+    | '/app/workflows/$workflowId_/edit'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -668,6 +681,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WebhooksAppUninstalledRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/app/workflows/$workflowId_/edit': {
+      id: '/app/workflows/$workflowId_/edit'
+      path: '/workflows/$workflowId/edit'
+      fullPath: '/app/workflows/$workflowId/edit'
+      preLoaderRoute: typeof AppWorkflowsWorkflowIdEditRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
@@ -700,6 +720,7 @@ interface AppRouteChildren {
   AppOrdersIndexRoute: typeof AppOrdersIndexRoute
   AppTeamsIndexRoute: typeof AppTeamsIndexRoute
   AppWorkflowsIndexRoute: typeof AppWorkflowsIndexRoute
+  AppWorkflowsWorkflowIdEditRoute: typeof AppWorkflowsWorkflowIdEditRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -713,6 +734,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppOrdersIndexRoute: AppOrdersIndexRoute,
   AppTeamsIndexRoute: AppTeamsIndexRoute,
   AppWorkflowsIndexRoute: AppWorkflowsIndexRoute,
+  AppWorkflowsWorkflowIdEditRoute: AppWorkflowsWorkflowIdEditRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
