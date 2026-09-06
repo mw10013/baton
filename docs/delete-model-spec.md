@@ -1,29 +1,29 @@
-# Delete model: where the code is, where it goes — research
+# Delete model: workflows, teams, members — spec
 
-Research date: 2026-09-05. Written for a fresh session. Supersedes the policy sections of `delete-vs-archive-research.md` (keep that file for the Flow / Route to Ship evidence and the live pipeline-delete experiment; the decisions below win where they differ).
+Spec date: 2026-09-05. Status: **ready to implement after `workflow-draft-spec.md` has landed** (2026-09-06). Written to be handed to an implementer with no other context than this repo and `CLAUDE.md`. Back-end code follows Effect v4 idioms as already used in `src/lib/Repository.ts`, `src/lib/WorkflowRepository.ts`, and `src/lib/ShopAgent.ts`: `Context.Service` repositories, `Effect.fn` named operations, `Schema.TaggedError` failures, `sql.withTransaction` for multi-statement writes, results crossing the socket as tagged unions rendered with `Match.tag`.
 
 ## Where the code is right now
 
-### The working set is the versions spec, not delete
+### Prerequisite: the draft model
 
-The uncommitted changes across `src/lib/Domain.ts`, `ShopAgent.ts`, `WorkflowRepository.ts`, `WorkflowRunRepository.ts`, the workflows routes, seed, and tests (about 2,900 added lines) implement `workflow-versions-spec.md`: `WorkflowVersion`, saved/draft pointers, `applyDraft`, `discardDraft`, `setWorkflowActive`, `versionId` on runs, Live/Draft sections on the detail page. Verified 2026-09-05: `pnpm typecheck` clean, `pnpm lint` clean, `pnpm test` 227/227 passing. These changes stay; commit them as the versions feature before starting delete.
+This work starts after `workflow-draft-spec.md` has landed: `Workflow` + `WorkflowStep` (what starts runs) and `WorkflowDraft` + `WorkflowDraftStep` (what the editor writes), `createDraft` / `applyDraft` / `discardDraft` / `setWorkflowActive`. "Step" below means a row in either step table unless stated.
 
 Nothing of the delete policy exists yet. Archive is still the model for all three entities:
 
 | Entity   | Store     | Archive today                                                                                                                                                                                                                                                               |
 | -------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Workflow | DO SQLite | `Workflow.archivedAt`; `WorkflowRepository.setWorkflowArchived` refuses while `active = 1` (`WorkflowActiveError`); `ShopAgent.workflowWritable` refuses step edits on archived; `includeArchived` on `listWorkflows`; name uniqueness `collate nocase` spans archived rows |
-| Team     | D1        | `Team.archivedAt`; `Repository.setTeamArchived`; `ShopAgent.archiveTeam` guard: refuses while any live/draft step points at it (`countStepsOwnedBy`, count → archive → re-check); `TeamArchiveResult.InUse`                                                                 |
+| Team     | D1        | `Team.archivedAt`; `Repository.setTeamArchived`; `ShopAgent.archiveTeam` guard: refuses while any workflow or draft step points at it (`countStepsOwnedBy`, count → archive → re-check); `TeamArchiveResult.InUse`                                                          |
 | Member   | D1        | `Member.archivedAt`; `Repository.setMemberArchived`; `addMember` un-archives on email conflict; archived member cannot sign in; still resolves as actor on run history via live roster join                                                                                 |
 
 ### What runs already snapshot
 
-`WorkflowRun`: `workflowId` (no FK), `workflowName`, `versionId` (no FK), order and line-item snapshot.
+`WorkflowRun`: `workflowId` (no FK), `workflowName`, order and line-item snapshot.
 `WorkflowRunStep`: `name`, `teamId` (no FK, **not null**, live pointer), `teamName` (snapshot), `instructions`, `startedBy` / `completedBy` (bare `Member.id`, **no email snapshot**), block-flag actor likewise.
 
 Consequences:
 
-- A run is self-sufficient with respect to its **workflow**. Deleting the workflow row (versions and steps cascade) leaves every run renderable.
+- A run is self-sufficient with respect to its **workflow**. Deleting the workflow row (steps, draft, draft steps cascade) leaves every run renderable.
 - A run is **not** self-sufficient with respect to its **teams**. `listQueue`, `startStep`, `completeStep`, `blockRun`, `dismissFlag` all select by `teamId in (member's teamIds)`. Remove the team and the step is unworkable by anyone.
 - A run is **not** self-sufficient with respect to its **members**. `startedByEmail` on the queue is a live join against D1 `Member`. Remove the member and history shows nobody.
 
@@ -32,7 +32,7 @@ Consequences:
 Already in place for a step whose team is archived or missing:
 
 - `ShopAgent.getWorkflowDetail` resolves `teamName: null` for a step whose team is not active.
-- `app.workflows.$workflowId.tsx` shows a needs-attention banner listing those steps, per Live and Draft side.
+- `app.workflows.$workflowId.tsx` shows a needs-attention banner listing those steps, on the workflow and on the draft.
 - `applyDraft` and `setWorkflowActive` refuse with `TeamNotActive { stepNames }`.
 - `isRoutable` in `WorkflowRunRepository.ts` requires every step's team to be in `activeTeams`.
 - `ShopAgent.activeTeam` validates the team on `addStep` / `updateStep` against the live D1 roster.
@@ -51,7 +51,7 @@ Team delete becomes one more way to enter this state, with the copy changed from
 
 1. **Delete, never archive.** Workflows, teams, members. `archivedAt` goes away on all three.
 2. **Workflow delete cascades its runs.** Open and finished, item and order scope. No trace remains. No Off-first requirement. Confirm dialog states the counts.
-3. **Team delete nulls the pointer.** Every definition step (live and draft versions) and every open run step that pointed at the team becomes unassigned. Finished run steps keep their `teamName` snapshot untouched.
+3. **Team delete nulls the pointer.** Every workflow step, every draft step, and every open run step that pointed at the team becomes unassigned. Finished run steps keep their `teamName` snapshot untouched.
 4. **Member delete removes membership.** `TeamMember` cascades. Run history keeps the actor as an email snapshot, not a live join.
 5. **Attention state is derived, never stored.** No run error status, no flag to set and clear. A workflow, run, or team "needs attention" when a read finds the condition; fixing the condition clears it with no extra write.
 6. **Empty teams are a warning, never a run-level problem.** A team with no members is valid. Steps assigned to it are routable but nobody can work them; the team page and the steps show "No members". Adding one member fixes everything with zero data changes.
@@ -70,7 +70,7 @@ Team delete becomes one more way to enter this state, with the copy changed from
 deleteWorkflow(workflowId), one DO transaction:
   delete from WorkflowRunStep where runId in (select id from WorkflowRun where workflowId = ?)   (or rely on cascade)
   delete from WorkflowRun where workflowId = ?
-  delete from Workflow where id = ?          (WorkflowVersion, WorkflowStep cascade)
+  delete from Workflow where id = ?          (WorkflowStep, WorkflowDraft, WorkflowDraftStep cascade)
   publish("all")
 ```
 
@@ -86,7 +86,8 @@ deleteWorkflow(workflowId), one DO transaction:
 deleteTeam(teamId):
   1. D1:  delete from Team where id = ? and shop = ?       (TeamMember cascades)
   2. DO:  in one transaction
-            update WorkflowStep    set teamId = null where teamId = ?                       (live and draft versions; retired too, harmless)
+            update WorkflowStep      set teamId = null where teamId = ?
+            update WorkflowDraftStep set teamId = null where teamId = ?
             update WorkflowRunStep set teamId = null where teamId = ? and completedAt is null (open steps only; finished keep the pointer and the name)
           publish("all")
 ```
@@ -127,19 +128,19 @@ deleteMember(memberId):
 
 ### Derived attention state, where it surfaces
 
-| Surface                         | Condition                                    | Copy                                        |
-| ------------------------------- | -------------------------------------------- | ------------------------------------------- |
-| Workflow detail, Live and Draft | step with `teamId null` or unresolvable      | "Unassigned. Assign a team."                |
-| Workflow detail, Live and Draft | step's team has zero members                 | "No members on <team>."                     |
-| Workflow list                   | any of the above on the live version         | badge "Needs attention"                     |
-| Apply / Turn on                 | unassigned step                              | refuse: `StepUnassigned { stepNames }`      |
-| Apply / Turn on                 | empty team                                   | allow (warning only)                        |
-| Order page run card             | open step with `teamId null` or unresolvable | red step, team picker "Assign team"         |
-| Order page run card             | open ready step whose team has zero members  | warning "No members on <team>"              |
-| Orders index                    | order with any run in the above states       | attention count / filter (fits stage strip) |
-| Team page                       | zero members                                 | badge "No members"                          |
+| Surface                             | Condition                                    | Copy                                        |
+| ----------------------------------- | -------------------------------------------- | ------------------------------------------- |
+| Workflow detail, workflow and draft | step with `teamId null` or unresolvable      | "Unassigned. Assign a team."                |
+| Workflow detail, workflow and draft | step's team has zero members                 | "No members on <team>."                     |
+| Workflow list                       | any of the above on the workflow's steps     | badge "Needs attention"                     |
+| Apply / Turn on                     | unassigned step                              | refuse: `StepUnassigned { stepNames }`      |
+| Apply / Turn on                     | empty team                                   | allow (warning only)                        |
+| Order page run card                 | open step with `teamId null` or unresolvable | red step, team picker "Assign team"         |
+| Order page run card                 | open ready step whose team has zero members  | warning "No members on <team>"              |
+| Orders index                        | order with any run in the above states       | attention count / filter (fits stage strip) |
+| Team page                           | zero members                                 | badge "No members"                          |
 
-All computed at read time from `WorkflowStep` / `WorkflowRunStep` joined against the live D1 team roster and membership counts. No new columns for state.
+All computed at read time from `WorkflowStep` / `WorkflowDraftStep` / `WorkflowRunStep` joined against the live D1 team roster and membership counts. No new columns for state.
 
 ### Schema changes
 
@@ -147,7 +148,7 @@ DO SQLite (`initializeSchema`, edit in place, wipe local):
 
 ```sql
 -- Workflow: drop archivedAt
--- WorkflowStep: teamId text            (nullable; null = unassigned)
+-- WorkflowStep, WorkflowDraftStep: teamId text   (nullable; null = unassigned)
 -- WorkflowRunStep: teamId text         (nullable; null = unassigned; finished steps keep the old id)
 --                  startedByEmail text, completedByEmail text   (actor snapshots)
 ```
@@ -163,10 +164,10 @@ Rewrite the JSDoc rationales on `Member`, `Team`, `Workflow` (Domain.ts) and the
 
 ### Surfaces to touch (inventory, 2026-09-05)
 
-- `src/lib/Domain.ts`: drop `archivedAt` from three schemas; `WorkflowStep.teamId` / `WorkflowRunStep.teamId` nullable; new `AssignRunStepTeamInput`, `DeleteWorkflowInput`, `DeleteTeamInput`, `DeleteMemberInput`; drop `SetWorkflowArchivedInput`, `TeamArchiveResult`, `Archived` tags; `TeamNotActive` becomes `StepUnassigned`.
+- `src/lib/Domain.ts`: drop `archivedAt` from three schemas; `WorkflowStep.teamId` / `WorkflowDraftStep.teamId` / `WorkflowRunStep.teamId` nullable; new `AssignRunStepTeamInput`, `DeleteWorkflowInput`, `DeleteTeamInput`, `DeleteMemberInput`; drop `SetWorkflowArchivedInput`, `TeamArchiveResult`, `Archived` tags; `TeamNotActive` becomes `StepUnassigned`.
 - `src/lib/Repository.ts` (D1): `deleteTeam`, `deleteMember` replace `setTeamArchived`, `setMemberArchived`; `listTeams` / `listMembers` lose `includeArchived`; `addMember` loses the un-archive branch; `findMemberAccess` / sign-in lose the archived filter; add `countTeamMembers` or fold member count into `listTeams` (already `TeamSummary.memberCount`).
-- `src/lib/WorkflowRepository.ts`: `deleteWorkflow`; `unassignTeam(teamId)`; drop `setWorkflowArchived`, `WorkflowActiveError`, `includeArchived`; `countStepsOwnedBy` / `listStepsOwnedBy` include open run steps (or a sibling in the run repository).
-- `src/lib/WorkflowRunRepository.ts`: `deleteRunsForWorkflow` (or inside `deleteWorkflow`); `assignRunStepTeam`; `isRoutable` drops `archivedAt`, treats null/unresolvable team as not routable; `listQueue` reads `startedByEmail` from the row; `startStep` / `completeStep` / `blockRun` write actor emails.
+- `src/lib/WorkflowRepository.ts`: `deleteWorkflow`; `unassignTeam(teamId)` over `WorkflowStep` and `WorkflowDraftStep`; drop `setWorkflowArchived`, `WorkflowActiveError`, `includeArchived`; `applyDraft` and `setWorkflowActive` refuse with `StepUnassigned` instead of `TeamNotActive`; `countStepsOwnedBy` / `listStepsOwnedBy` include open run steps (or a sibling in the run repository).
+- `src/lib/WorkflowRunRepository.ts`: `deleteRunsForWorkflow` (or inside `deleteWorkflow`); `assignRunStepTeam`; `canStart` drops `archivedAt`, treats null/unresolvable team as cannot-start; `listQueue` reads `startedByEmail` from the row; `startStep` / `completeStep` / `blockRun` write actor emails.
 - `src/lib/ShopAgent.ts`: `deleteWorkflow`, `deleteTeam` (D1 then DO, as above), `assignRunStepTeam` callables; drop `setWorkflowArchived`, `archiveTeam`, `workflowWritable`'s archive branch; `activeTeam` becomes `teamExists`; `getWorkflowDetail` marks unassigned / dangling / empty-team steps.
 - Routes: `app.workflows.index.tsx` (Delete action, attention badge, no Archive/Restore), `app.workflows.$workflowId.tsx` (Delete with counts dialog, unassigned copy), `app.teams.index.tsx` (Delete with counts dialog, "No members" badge, no InUse refusal), `app.teams.$teamId.tsx`, `app.members.tsx` (Delete, empty-team warning, no `?archived` view), `app.orders.$orderId.tsx` (Assign team picker on unassigned open steps), orders index attention filter.
 - Seed: `api.dev.seed.ts`, `e2e/fixture.ts`, `e2e/seed.ts` drop `archived` on members, teams, workflows; add a fixture with an unassigned step and one with an empty team so both warnings are visible after `pnpm seed`.
@@ -174,18 +175,49 @@ Rewrite the JSDoc rationales on `Member`, `Team`, `Workflow` (Domain.ts) and the
 
 ### Order of work
 
-1. Commit the working set as the versions feature (it is complete and green).
+1. Land `workflow-draft-spec.md`.
 2. Workflow delete with run cascade, confirm dialog with counts, drop `Workflow.archivedAt` and the archive UI. Independent of teams and members.
 3. Actor email snapshot on run steps; `listQueue` reads it.
 4. Member delete replaces member archive; drop `Member.archivedAt`; dialog's empty-team warning.
-5. Nullable `teamId` on both step tables; dangling-equals-null on every read; derived attention state in detail page, list, order page, `isRoutable`, Apply / Turn on.
+5. Nullable `teamId` on both step tables; dangling-equals-null on every read; derived attention state in detail page, list, order page, `canStart`, Apply / Turn on.
 6. `assignRunStepTeam` and the order-page picker.
 7. Team delete (D1 then DO), drop `Team.archivedAt` and the guard; "No members" badge.
 8. JSDoc and schema comment rewrites; seed fixtures; tests; `pnpm fmt`.
 
-### Open questions
+### Domain results
 
-None blocking. Two things to confirm at implementation time:
+- `DeleteWorkflowResult = Deleted | NotFound`; `DeleteTeamResult = Deleted | NotFound`; `DeleteMemberResult = Deleted | NotFound`.
+- `AssignRunStepTeamResult = Assigned | NotFound | TeamNotFound | StepFinished`.
+- `ApplyResult` and `ActivateResult`: `TeamNotActive` becomes `StepUnassigned { stepNames }`; `ActivateResult` loses `Archived`.
+- Counts for the dialogs: `WorkflowDeleteCounts { openRuns, finishedRuns }` from a read callable; `TeamDeleteCounts { workflowSteps, draftSteps, openRunSteps }` from `countStepsOwnedBy` extended; `MemberDeleteWarning { emptiedTeams: string[] }`.
+- `StepWithTeamName.teamName` becomes `NullOr(String)` (already) and gains `memberCount: NullOr(Number)` so the empty-team warning is derived at read time.
 
-- Whether retired versions' steps should also be nulled on team delete (harmless either way; nulling keeps the rule simple: "every `WorkflowStep` row").
-- Whether the orders index attention filter is in scope for the first pass or follows the order page.
+### Vocabulary
+
+Merchant copy, to be stated in the `Team` and `Member` JSDocs in `Domain.ts` and linked from routes (what, not why):
+
+- Delete a workflow and its runs go with it.
+- Delete a team and its steps become **unassigned** until you **assign a team**.
+- Delete a member and they leave their teams.
+- A team with nobody on it shows **No members**.
+- **Needs attention** is the badge for a workflow, run, or team in any of these states. It is derived on read, never stored.
+
+### Tests
+
+`test/integration` (Vitest) and the affected e2e specs. Required cases:
+
+1. Delete workflow with open and finished runs → workflow, steps, draft, draft steps, runs, run steps all gone; a second workflow's runs untouched; name reusable immediately.
+2. Delete workflow that is the active order workflow → slot freed; a new order workflow can be created and turned on.
+3. Delete team with steps on the workflow, on a draft, and on an open run → all three `teamId` null; finished run step keeps `teamId` and `teamName`; `TeamMember` rows gone.
+4. Delete team where the DO step fails after the D1 step → reads treat the dangling id as unassigned; a retry of `deleteTeam` nulls it.
+5. `canStart` false for a workflow with an unassigned step; `applyDraft` and `setWorkflowActive` refuse with `StepUnassigned` naming the steps; an empty team does not refuse either.
+6. `assignRunStepTeam` on an open unassigned step sets `teamId` and `teamName` from D1; refused on a finished step and on an unknown team; the step then appears in the new team's queue.
+7. `startStep` / `completeStep` / `blockRun` write actor emails; `listQueue` returns them after the member is deleted.
+8. Delete member → `TeamMember` cascades, sign-in refused, run history still shows the email; re-adding the email mints a new id.
+9. Attention state: workflow list badge, detail banners on both sides, order page red step, team page "No members", each derived from the same read and cleared by assigning a team or adding a member with no other write.
+10. Seed fixtures: one workflow with an unassigned step, one team with no members, no `archived` keys anywhere.
+
+### Decisions on the former open questions (2026-09-05, mw)
+
+- **Team delete nulls every `WorkflowStep` and every `WorkflowDraftStep` row.** One statement per table, no other join.
+- **Orders index attention filter follows the order page.** The order page picker is the remedy; the index filter is discovery. Ship discovery only once the remedy exists (steps 5 and 6), then add the filter as its own small change.
