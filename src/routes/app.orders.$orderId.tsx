@@ -28,6 +28,9 @@ const decodeAttachResult = Schema.decodeUnknownPromise(
 const decodeRunResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.RunResult),
 );
+const decodeAssignResult = Schema.decodeUnknownPromise(
+  Schema.toType(Domain.AssignRunStepTeamResult),
+);
 
 const connecting = () =>
   Promise.reject(new Error("Still connecting. Try again in a moment."));
@@ -40,7 +43,17 @@ const attachResultMessage = Match.typeTags<
   AlreadyExists: () => "That workflow is already attached to this line item.",
   LineItemNotFound: () => "That line item no longer exists.",
   WorkflowCannotStart: () =>
-    "That workflow cannot start: it is archived, off, has no steps, or points at an archived team.",
+    "That workflow cannot start: it is off, has no steps, or has an unassigned step.",
+});
+
+const assignResultMessage = Match.typeTags<
+  Domain.AssignRunStepTeamResult,
+  string | null
+>()({
+  Assigned: () => null,
+  NotFound: () => "That step no longer exists.",
+  TeamNotFound: () => "That team no longer exists. Choose another.",
+  StepFinished: () => "That step is already done and keeps its team.",
 });
 
 const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
@@ -118,8 +131,17 @@ const fact = (label: string, value: React.ReactNode) =>
  * earlier stage is still open, matching the queue; several can be ready at
  * once. The prefix is the stage number, and the summary counts stages, so
  * two steps that happen together read as one stop.
+ *
+ * The two derived attention states render here against the live roster the
+ * view carries: an open step whose team is gone is red with an "Assign team"
+ * picker (the remedy that makes a team delete safe), and a ready step on a
+ * team with no members warns. Finished steps always show their snapshot.
  */
-const stepTrail = ({ run, steps }: Domain.WorkflowRunDetail) => {
+const stepTrail = (
+  { run, steps }: Domain.WorkflowRunDetail,
+  teams: readonly Domain.TeamRoster[],
+  assign: (runStepId: string) => React.ReactNode,
+) => {
   const lowestOpenStage = steps
     .filter((step) => step.completedAt === null)
     .reduce<number | null>(
@@ -138,23 +160,65 @@ const stepTrail = ({ run, steps }: Domain.WorkflowRunDetail) => {
     if (lowestOpenStage === null) return null;
     return `Stage ${String(lowestOpenStage)} of ${String(stageCount)}`;
   })();
+  const open = run.status === "pending" || run.status === "active";
+  const unassigned = open
+    ? steps.filter((step) => Domain.isRunStepUnassigned(step, teams))
+    : [];
+  const emptyTeams = open
+    ? [
+        ...new Set(
+          steps
+            .filter(
+              (step) =>
+                isReady(step) &&
+                teams.some(
+                  (team) => team.id === step.teamId && team.memberCount === 0,
+                ),
+            )
+            .map((step) => step.teamName),
+        ),
+      ]
+    : [];
   return (
     <s-stack gap="small-500">
       {progress !== null && <s-text color="subdued">{progress}</s-text>}
       <s-stack direction="inline" gap="small-300" alignItems="center">
-        {steps.map((step, index) => (
-          <React.Fragment key={step.id}>
-            {index > 0 && <s-text color="subdued">·</s-text>}
-            <s-text
-              color={step.completedAt === null ? undefined : "subdued"}
-              type={isReady(step) ? "strong" : undefined}
-            >
-              {`${String(step.stage)} ${step.name}${stepMark(step)}`}
-            </s-text>
-            <s-text color="subdued">{`(${step.teamName})`}</s-text>
-          </React.Fragment>
-        ))}
+        {steps.map((step, index) => {
+          const lost = unassigned.some((other) => other.id === step.id);
+          return (
+            <React.Fragment key={step.id}>
+              {index > 0 && <s-text color="subdued">·</s-text>}
+              <s-text
+                color={step.completedAt === null ? undefined : "subdued"}
+                type={isReady(step) ? "strong" : undefined}
+              >
+                {`${String(step.stage)} ${step.name}${stepMark(step)}`}
+              </s-text>
+              {lost ? (
+                <s-badge tone="critical">Unassigned</s-badge>
+              ) : (
+                <s-text color="subdued">{`(${step.teamName})`}</s-text>
+              )}
+            </React.Fragment>
+          );
+        })}
       </s-stack>
+      {unassigned.map((step) => (
+        <s-stack
+          key={step.id}
+          direction="inline"
+          gap="small-300"
+          alignItems="center"
+        >
+          <s-text type="strong">{`${step.name}: assign a team.`}</s-text>
+          {assign(step.id)}
+        </s-stack>
+      ))}
+      {emptyTeams.length > 0 && (
+        <s-text color="subdued">
+          {`No members on ${emptyTeams.join(", ")}. Nobody can work this until someone joins.`}
+        </s-text>
+      )}
       {steps
         .filter((step) => step.note !== null)
         .map((step) => (
@@ -205,6 +269,10 @@ function RouteComponent() {
   const resourceLinkTarget = useResourceLinkTarget();
   const [banner, setBanner] = React.useState<string | null>(null);
   const [attachChoice, setAttachChoice] = React.useState<
+    Record<string, string>
+  >({});
+  /** The "Assign team" picker's choice per unassigned run step. */
+  const [assignChoice, setAssignChoice] = React.useState<
     Record<string, string>
   >({});
 
@@ -266,6 +334,16 @@ function RouteComponent() {
     onError,
   });
 
+  const assignMutation = useMutation({
+    mutationFn: (input: typeof Domain.AssignRunStepTeamInput.Encoded) =>
+      call((stub) => stub.assignRunStepTeam(input)).then(decodeAssignResult),
+    onSuccess: async (result) => {
+      setBanner(assignResultMessage(result));
+      await invalidate();
+    },
+    onError,
+  });
+
   const resyncMutation = useMutation({
     mutationFn: (orderId: string) =>
       call((stub) => stub.resyncOrder({ orderId })),
@@ -303,7 +381,8 @@ function RouteComponent() {
       </s-page>
     );
 
-  const { order, lineItems, runs, orderWorkflow, itemWorkflows } = detail;
+  const { order, lineItems, runs, orderWorkflow, itemWorkflows, teams } =
+    detail;
   /**
    * The same aggregate the index computes in SQL, rebuilt from the run list
    * this page already carries so both pages read one `productionState`.
@@ -312,6 +391,7 @@ function RouteComponent() {
     order,
     itemUnits: 0,
     runs: Domain.runCounts(runs.map(({ run }) => run)),
+    attention: false,
   });
   const orderRuns = runs.filter(({ run }) => Domain.isOrderRun(run));
   const itemRunCount = runs.length - orderRuns.length;
@@ -320,7 +400,48 @@ function RouteComponent() {
     orderWorkflow !== null &&
     order.processedAt < orderWorkflow.createdAt &&
     !runs.some(({ run }) => !Domain.isOrderRun(run) && run.source === "manual");
-  const busy = attachMutation.isPending || runMutation.isPending;
+  const busy =
+    attachMutation.isPending ||
+    runMutation.isPending ||
+    assignMutation.isPending;
+
+  /** The remedy for an unassigned open step: a team picker and an Assign button, inline under the trail. */
+  const assignTeam = (runStepId: string) => (
+    <s-grid
+      gridTemplateColumns="minmax(0, 16rem) auto"
+      gap="small-300"
+      alignItems="end"
+      justifyContent="start"
+    >
+      <s-select
+        label="Assign team"
+        labelAccessibilityVisibility="exclusive"
+        placeholder="Assign team"
+        value={assignChoice[runStepId] ?? ""}
+        disabled={!identified || busy}
+        onChange={(event) => {
+          const teamId = event.currentTarget.value;
+          setAssignChoice((choice) => ({ ...choice, [runStepId]: teamId }));
+        }}
+      >
+        {teams.map((team) => (
+          <s-option key={team.id} value={team.id}>
+            {team.memberCount === 0 ? `${team.name} (no members)` : team.name}
+          </s-option>
+        ))}
+      </s-select>
+      <s-button
+        variant="secondary"
+        disabled={!identified || busy || !assignChoice[runStepId]}
+        onClick={() => {
+          const teamId = assignChoice[runStepId];
+          if (teamId) assignMutation.mutate({ runStepId, teamId });
+        }}
+      >
+        Assign
+      </s-button>
+    </s-grid>
+  );
 
   /**
    * "<Workflow> started for N items": one line per item workflow with an
@@ -375,7 +496,7 @@ function RouteComponent() {
           </s-button>
         )}
       </s-stack>
-      {stepTrail(run)}
+      {stepTrail(run, teams, assignTeam)}
     </s-stack>
   );
 

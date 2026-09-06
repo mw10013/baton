@@ -52,9 +52,7 @@ import {
   type OrderWorkflowExistsError,
   type StageNotFoundError,
   type StepNotFoundError,
-  type TeamNotActiveError,
-  type WorkflowActiveError,
-  type WorkflowArchivedError,
+  type StepUnassignedError,
   type WorkflowLimitError,
   type WorkflowNameTakenError,
   type WorkflowNotFoundError,
@@ -150,10 +148,15 @@ const callableEffect =
  * `WorkflowStep.teamId` is a D1 `Team.id` with no foreign key because none is
  * possible: `Team` lives in D1 and this table in the object's private SQLite,
  * and SQLite foreign keys do not cross databases. Integrity is
- * application-level — `addStep` / `updateStep` verify the team is active
- * before writing, and `archiveTeam` refuses while any step of a workflow or
- * of a draft still points at it (`countStepsOwnedBy`, served by the two
- * `teamId` indexes). `unique (workflowId, position)` is what forces every
+ * application-level — `addStep` / `updateStep` verify the team exists before
+ * writing, and `deleteTeam` nulls every pointer right after the D1 row goes
+ * (`unassignTeam`, served by the `teamId` indexes). Nullable on purpose:
+ * `null` is **unassigned**, the state a team delete leaves behind, and every
+ * read treats an id no D1 row carries the same way, so the cross-store window
+ * between the two writes is harmless. No workflow history is kept — a delete
+ * removes the definition, its draft, and every run it ever started, because a
+ * run is self-sufficient with respect to its workflow and nothing else refers
+ * back. `unique (workflowId, position)` is what forces every
  * layout edit to go through a scratch position inside one transaction — why
  * `WorkflowRepository.writeLayout` first parks every draft step at
  * `-position` before assigning final positions and stages.
@@ -179,12 +182,18 @@ const callableEffect =
  * run single-use per `(orderId, workflowId)`. `status` is denormalized from the steps for
  * the queue and the definitions badge; every step write recomputes it in the
  * same transaction. `(teamId, completedAt)` serves the member queue, which
- * asks for open steps by team. A run step is *ready* when it is open and no
- * step in an earlier `stage` of the same run is still open, so several steps
- * of one run can be ready at once; `startedAt` / `startedBy` record Start and
- * make the run `active` before anything is completed; `note` is worker text
- * about this particular item. `flag = 'blocked'` is the one flag a person
- * sets (with an optional reason in `flagDetail`) rather than reconcile.
+ * asks for open steps by team. `WorkflowRunStep.teamId` is nullable for the
+ * same reason as `WorkflowStep.teamId`: a team delete nulls it on open steps
+ * (unassigned, in nobody's queue until a person assigns a team) and leaves
+ * finished steps alone, whose `teamName` snapshot is all history needs.
+ * `startedByEmail` / `completedByEmail` snapshot the actor the same way, so
+ * a member delete never leaves history resolving to nobody. A run step is
+ * *ready* when it is open and no step in an earlier `stage` of the same run
+ * is still open, so several steps of one run can be ready at once;
+ * `startedAt` / `startedBy` record Start and make the run `active` before
+ * anything is completed; `note` is worker text about this particular item.
+ * `flag = 'blocked'` is the one flag a person sets (with an optional reason
+ * and `byEmail` in `flagDetail`) rather than reconcile.
  */
 const initializeSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -252,7 +261,6 @@ const initializeSchema = Effect.gen(function* () {
       name text not null check (name = trim(name) and length(name) > 0),
       scope text not null default 'item' check (scope in ('item', 'order')),
       active integer not null default 0 check (active in (0, 1)),
-      archivedAt integer,
       tags text not null default '[]',
       createdAt integer not null,
       updatedAt integer not null
@@ -265,7 +273,7 @@ const initializeSchema = Effect.gen(function* () {
       position integer not null,
       stage integer not null,
       name text not null check (name = trim(name) and length(name) > 0),
-      teamId text not null,
+      teamId text,
       instructions text,
       unique (workflowId, position)
     );
@@ -282,7 +290,7 @@ const initializeSchema = Effect.gen(function* () {
       position integer not null,
       stage integer not null,
       name text not null check (name = trim(name) and length(name) > 0),
-      teamId text not null,
+      teamId text,
       instructions text,
       unique (workflowId, position)
     );
@@ -322,13 +330,15 @@ const initializeSchema = Effect.gen(function* () {
       position integer not null,
       stage integer not null,
       name text not null,
-      teamId text not null,
+      teamId text,
       teamName text not null,
       instructions text,
       startedAt integer,
       startedBy text,
+      startedByEmail text,
       completedAt integer,
       completedBy text,
+      completedByEmail text,
       note text,
       unique (runId, position)
     );
@@ -436,7 +446,6 @@ const workflowResult = <R>(
     | WorkflowNotFoundError
     | WorkflowLimitError
     | OrderWorkflowExistsError
-    | WorkflowActiveError
     | SqlError.SqlError
     | WorkflowRepositoryError,
     R
@@ -457,8 +466,6 @@ const workflowResult = <R>(
         Effect.succeed<Domain.WorkflowResult>({ _tag: "Limit", limit }),
       OrderWorkflowExistsError: () =>
         Effect.succeed<Domain.WorkflowResult>({ _tag: "OrderWorkflowExists" }),
-      WorkflowActiveError: () =>
-        Effect.succeed<Domain.WorkflowResult>({ _tag: "Active" }),
     }),
   );
 
@@ -468,7 +475,7 @@ const applyResult = <R>(
     | WorkflowNotFoundError
     | NoDraftError
     | NoStepsError
-    | TeamNotActiveError
+    | StepUnassignedError
     | SqlError.SqlError
     | WorkflowRepositoryError
     | RepositoryError
@@ -492,9 +499,9 @@ const applyResult = <R>(
         Effect.succeed<Domain.ApplyResult>({ _tag: "NoDraft" }),
       NoStepsError: () =>
         Effect.succeed<Domain.ApplyResult>({ _tag: "NoSteps" }),
-      TeamNotActiveError: ({ stepNames }) =>
+      StepUnassignedError: ({ stepNames }) =>
         Effect.succeed<Domain.ApplyResult>({
-          _tag: "TeamNotActive",
+          _tag: "StepUnassigned",
           stepNames,
         }),
     }),
@@ -546,9 +553,8 @@ const activateResult = <R>(
   effect: Effect.Effect<
     Domain.Workflow,
     | WorkflowNotFoundError
-    | WorkflowArchivedError
     | NoStepsError
-    | TeamNotActiveError
+    | StepUnassignedError
     | OrderWorkflowExistsError
     | SqlError.SqlError
     | WorkflowRepositoryError
@@ -569,13 +575,11 @@ const activateResult = <R>(
     Effect.catchTags({
       WorkflowNotFoundError: () =>
         Effect.succeed<Domain.ActivateResult>({ _tag: "NotFound" }),
-      WorkflowArchivedError: () =>
-        Effect.succeed<Domain.ActivateResult>({ _tag: "Archived" }),
       NoStepsError: () =>
         Effect.succeed<Domain.ActivateResult>({ _tag: "NoSteps" }),
-      TeamNotActiveError: ({ stepNames }) =>
+      StepUnassignedError: ({ stepNames }) =>
         Effect.succeed<Domain.ActivateResult>({
-          _tag: "TeamNotActive",
+          _tag: "StepUnassigned",
           stepNames,
         }),
       OrderWorkflowExistsError: () =>
@@ -619,11 +623,6 @@ const stepResult = <R>(
         Effect.succeed<Domain.StepResult>({ _tag: "Limit", limit }),
     }),
   );
-
-const inUseResult = (count: number): Domain.TeamArchiveResult => ({
-  _tag: "InUse",
-  count,
-});
 
 /**
  * Same shape as {@link workflowResult}: expected run failures become values.
@@ -1334,11 +1333,25 @@ export class ShopAgent extends Agent {
     );
   }
 
-  private readOrders({ limit, cursor, state, paid }: Domain.ListOrdersInput) {
+  private readOrders({
+    limit,
+    cursor,
+    state,
+    paid,
+    attention,
+  }: Domain.ListOrdersInput) {
+    const teams = () => this.teams();
     return Effect.gen(function* () {
       const repository = yield* OrderRepository;
       return {
-        page: yield* repository.listOrders({ limit, cursor, state, paid }),
+        page: yield* repository.listOrders({
+          limit,
+          cursor,
+          state,
+          paid,
+          attention,
+          teams: yield* teams(),
+        }),
         syncState: yield* repository.getSyncState(),
       } satisfies Domain.OrdersView;
     });
@@ -1389,19 +1402,14 @@ export class ShopAgent extends Agent {
    * loader-versus-socket rule documented there). Only the mutations stay on
    * the socket.
    */
-  listWorkflows(
-    input: typeof Domain.ListWorkflowsInput.Encoded,
-  ): Promise<readonly Domain.WorkflowSummary[]> {
+  listWorkflows(): Promise<readonly Domain.WorkflowSummary[]> {
+    const teams = () => this.teams();
     return this.runEffect(
-      callableEffect("ShopAgent.listWorkflows", Domain.ListWorkflowsInput, {
-        onExcessProperty: "error",
-      })(({ includeArchived }) =>
-        WorkflowRepository.pipe(
-          Effect.flatMap((repository) =>
-            repository.listWorkflows({ includeArchived }),
-          ),
-        ),
-      )(input),
+      Effect.gen(function* () {
+        return yield* (yield* WorkflowRepository).listWorkflows({
+          teams: yield* teams(),
+        });
+      }).pipe(Effect.withLogSpan("ShopAgent.listWorkflows")),
     );
   }
 
@@ -1411,40 +1419,43 @@ export class ShopAgent extends Agent {
    *
    * Joins team names from D1 inside the object rather than in a server fn: the
    * runtime already holds `Repository`, and one round trip returns the steps,
-   * their resolved team names, and the active-team roster the picker needs.
-   * A step whose team is archived or missing resolves to `teamName: null` —
-   * flagged, never blocked, since the risk is when a run starts, not in the
-   * editor, and unarchiving the team restores validity with no edit.
+   * their resolved team names and member counts, and the roster the picker
+   * needs. Both attention states are derived here and never stored: a step
+   * whose `teamId` is null or names no team resolves to `teamName: null`
+   * (unassigned — flagged, never blocked in the editor, since the risk is
+   * when a run starts); a step on a team with no members carries
+   * `memberCount: 0`. Assigning a team or adding a member clears either with
+   * no other write.
    *
    * Plain RPC, not `@callable()`, for the reason on {@link listWorkflows}.
    */
   getWorkflowDetail(
     input: typeof Domain.WorkflowIdInput.Encoded,
   ): Promise<Domain.WorkflowDetailView | null> {
-    const name = this.name;
+    const teams = () => this.teams();
     return this.runEffect(
       callableEffect("ShopAgent.getWorkflowDetail", Domain.WorkflowIdInput, {
         onExcessProperty: "error",
       })(({ workflowId }) =>
         Effect.gen(function* () {
-          const detail = yield* (yield* WorkflowRepository).getWorkflow({
-            workflowId,
-          });
+          const repository = yield* WorkflowRepository;
+          const detail = yield* repository.getWorkflow({ workflowId });
           if (Option.isNone(detail)) return null;
-          const teams = yield* (yield* Repository).listTeams({
-            shop: yield* Schema.decodeUnknownEffect(Domain.Shop)(name),
-            includeArchived: true,
-          });
-          const nameOf = new Map(
-            teams
-              .filter((team) => team.archivedAt === null)
-              .map((team) => [team.id, team.name]),
-          );
-          const withTeamNames = (steps: readonly Domain.WorkflowStep[]) =>
-            steps.map((step) => ({
-              ...step,
-              teamName: nameOf.get(step.teamId) ?? null,
-            }));
+          const runCounts = yield* repository.countRuns({ workflowId });
+          const roster = yield* teams();
+          const teamOf = new Map(roster.map((team) => [team.id, team]));
+          const withTeamNames = (
+            steps: readonly Domain.WorkflowStep[],
+          ): Domain.StepWithTeamName[] =>
+            steps.map((step) => {
+              const team =
+                step.teamId === null ? undefined : teamOf.get(step.teamId);
+              return {
+                ...step,
+                teamName: team?.name ?? null,
+                memberCount: team?.memberCount ?? null,
+              };
+            });
           return {
             workflow: detail.value.workflow,
             steps: withTeamNames(detail.value.steps),
@@ -1455,7 +1466,14 @@ export class ShopAgent extends Agent {
                     draft: detail.value.draft.draft,
                     steps: withTeamNames(detail.value.draft.steps),
                   },
-            activeTeams: [...nameOf].map(([id, name]) => ({ id, name })),
+            teams: roster,
+            runCounts: Option.getOrElse(
+              runCounts,
+              (): Domain.WorkflowDeleteCounts => ({
+                openRuns: 0,
+                finishedRuns: 0,
+              }),
+            ),
           } satisfies Domain.WorkflowDetailView;
         }),
       )(input),
@@ -1505,8 +1523,6 @@ export class ShopAgent extends Agent {
   updateWorkflowTags(
     input: typeof Domain.UpdateWorkflowTagsInput.Encoded,
   ): Promise<Domain.StepResult> {
-    const workflowWritable = (workflowId: string) =>
-      this.workflowWritable(workflowId);
     return this.runEffect(
       callableEffect(
         "ShopAgent.updateWorkflowTags",
@@ -1515,8 +1531,6 @@ export class ShopAgent extends Agent {
       )(({ workflowId, tags }) =>
         stepResult(
           Effect.gen(function* () {
-            const blocked = yield* workflowWritable(workflowId);
-            if (blocked !== null) return blocked;
             yield* (yield* WorkflowRepository).updateWorkflowTags({
               workflowId,
               tags,
@@ -1528,7 +1542,7 @@ export class ShopAgent extends Agent {
     );
   }
 
-  /** Edit: creates the draft (or returns the existing one). Refused on an archived workflow, like every other edit. */
+  /** Edit: creates the draft (or returns the existing one). */
   @callable()
   createDraft(
     input: typeof Domain.CreateDraftInput.Encoded,
@@ -1541,11 +1555,6 @@ export class ShopAgent extends Agent {
         draftResult(
           Effect.gen(function* () {
             const repository = yield* WorkflowRepository;
-            const existing = yield* repository.getWorkflow({ workflowId });
-            if (Option.isNone(existing))
-              return { _tag: "NotFound" } satisfies Domain.DraftResult;
-            if (existing.value.workflow.archivedAt !== null)
-              return { _tag: "Archived" } satisfies Domain.DraftResult;
             const draft = yield* repository.createDraft({ workflowId });
             yield* Effect.logInfo(
               `ShopAgent.createDraft: shop=${shop} workflowId=${workflowId}`,
@@ -1567,7 +1576,7 @@ export class ShopAgent extends Agent {
   ): Promise<Domain.ApplyResult> {
     const shop = this.name;
     const publish = () => this.publish("all");
-    const activeTeams = () => this.activeTeams();
+    const teams = () => this.teams();
     return this.runEffect(
       callableEffect("ShopAgent.applyDraft", Domain.ApplyDraftInput, {
         onExcessProperty: "error",
@@ -1576,7 +1585,7 @@ export class ShopAgent extends Agent {
           Effect.gen(function* () {
             const workflow = yield* (yield* WorkflowRepository).applyDraft({
               workflowId,
-              activeTeams: yield* activeTeams(),
+              teams: yield* teams(),
             });
             yield* Effect.logInfo(
               `ShopAgent.applyDraft: shop=${shop} workflowId=${workflowId}`,
@@ -1619,7 +1628,7 @@ export class ShopAgent extends Agent {
   ): Promise<Domain.ActivateResult> {
     const shop = this.name;
     const publish = () => this.publish("all");
-    const activeTeams = () => this.activeTeams();
+    const teams = () => this.teams();
     return this.runEffect(
       callableEffect(
         "ShopAgent.setWorkflowActive",
@@ -1632,7 +1641,7 @@ export class ShopAgent extends Agent {
               yield* (yield* WorkflowRepository).setWorkflowActive({
                 workflowId,
                 active,
-                activeTeams: yield* activeTeams(),
+                teams: yield* teams(),
               });
             yield* Effect.logInfo(
               `ShopAgent.setWorkflowActive: shop=${shop} workflowId=${workflowId} active=${String(active)}`,
@@ -1644,35 +1653,56 @@ export class ShopAgent extends Agent {
     );
   }
 
+  /**
+   * Delete a workflow and its runs go with it (vocabulary on
+   * `Domain.Workflow`). `removeWorkflow`, not `deleteWorkflow`: the Agents
+   * SDK base class already has a `deleteWorkflow(workflowId)` that drops a
+   * Cloudflare Workflow instance's tracking row (`onWorkflowComplete` calls
+   * it), the same collision `getWorkflowDetail` sidesteps. Publishes because
+   * every order page showing one of the deleted runs must repaint.
+   */
   @callable()
-  setWorkflowArchived(
-    input: typeof Domain.SetWorkflowArchivedInput.Encoded,
-  ): Promise<Domain.WorkflowResult> {
+  removeWorkflow(
+    input: typeof Domain.DeleteWorkflowInput.Encoded,
+  ): Promise<Domain.DeleteWorkflowResult> {
+    const shop = this.name;
+    const publish = () => this.publish("all");
     return this.runEffect(
-      callableEffect(
-        "ShopAgent.setWorkflowArchived",
-        Domain.SetWorkflowArchivedInput,
-        { onExcessProperty: "error" },
-      )(({ workflowId, archived }) =>
-        workflowResult(
-          WorkflowRepository.pipe(
-            Effect.flatMap((repository) =>
-              repository.setWorkflowArchived({ workflowId, archived }),
-            ),
+      callableEffect("ShopAgent.removeWorkflow", Domain.DeleteWorkflowInput, {
+        onExcessProperty: "error",
+      })(({ workflowId }) =>
+        Effect.gen(function* () {
+          yield* (yield* WorkflowRepository).deleteWorkflow({ workflowId });
+          yield* Effect.logInfo(
+            `ShopAgent.removeWorkflow: shop=${shop} workflowId=${workflowId}`,
+          ).pipe(Effect.annotateLogs({ shop, workflowId }));
+          yield* publish();
+          return { _tag: "Deleted" } satisfies Domain.DeleteWorkflowResult;
+        }).pipe(
+          Effect.catchTag("WorkflowNotFoundError", () =>
+            Effect.succeed<Domain.DeleteWorkflowResult>({ _tag: "NotFound" }),
           ),
         ),
       )(input),
     );
   }
 
-  private activeTeams() {
+  /**
+   * The live D1 roster with member counts, read fresh on every call: it is
+   * what every step pointer is resolved against (an id not in it is
+   * unassigned) and what the empty-team warnings are computed from.
+   */
+  private teams() {
     const name = this.name;
     return Effect.gen(function* () {
       const teams = yield* (yield* Repository).listTeams({
         shop: yield* Schema.decodeUnknownEffect(Domain.Shop)(name),
-        includeArchived: false,
       });
-      return teams.map(({ id, name }) => ({ id, name }));
+      return teams.map(({ id, name, memberCount }): Domain.TeamRoster => ({
+        id,
+        name,
+        memberCount,
+      }));
     });
   }
 
@@ -1683,16 +1713,16 @@ export class ShopAgent extends Agent {
    * The D1 read is the one await run creation needs that is not storage, and it
    * cannot happen inside the Durable Object transaction; loading once per
    * webhook or per bulk stream also bounds the cost for a thousand-order file,
-   * at the accepted price of a snapshot that a mid-stream team archive would
+   * at the accepted price of a snapshot that a mid-stream team delete would
    * not refresh.
    */
   private startContext() {
-    const activeTeams = () => this.activeTeams();
+    const teams = () => this.teams();
     return Effect.gen(function* () {
       return {
         workflows:
           yield* (yield* WorkflowRepository).listActiveWorkflowDetails(),
-        activeTeams: yield* activeTeams(),
+        teams: yield* teams(),
       } satisfies StartContext;
     });
   }
@@ -1735,6 +1765,7 @@ export class ShopAgent extends Agent {
    * stored, which the page renders as not-found rather than as a failure.
    */
   private readOrderDetail({ legacyId }: Domain.GetOrderDetailInput) {
+    const teams = () => this.teams();
     return Effect.gen(function* () {
       const orders = yield* OrderRepository;
       const runs = yield* WorkflowRunRepository;
@@ -1747,6 +1778,7 @@ export class ShopAgent extends Agent {
         order,
         lineItems,
         runs: yield* runs.listRunsForOrder({ orderId: order.id }),
+        teams: yield* teams(),
         orderWorkflow:
           workflows.find(({ workflow }) => workflow.scope === "order")
             ?.workflow ?? null,
@@ -1835,7 +1867,7 @@ export class ShopAgent extends Agent {
     input: typeof Domain.AttachWorkflowInput.Encoded,
   ): Promise<Domain.AttachResult> {
     const publish = (touched: PublishScope) => this.publish(touched);
-    const activeTeams = () => this.activeTeams();
+    const teams = () => this.teams();
     return this.runEffect(
       callableEffect("ShopAgent.attachWorkflow", Domain.AttachWorkflowInput, {
         onExcessProperty: "error",
@@ -1849,7 +1881,7 @@ export class ShopAgent extends Agent {
           const found = yield* (yield* WorkflowRepository).getWorkflow({
             workflowId,
           });
-          const teams = yield* activeTeams();
+          const roster = yield* teams();
           // Only the workflow's own steps can start a run; a draft is never
           // attachable. An order workflow starts by rule, never by attaching
           // it to one line item (deferred; see the `WorkflowScope` doc).
@@ -1859,14 +1891,14 @@ export class ShopAgent extends Agent {
           if (
             detail === null ||
             detail.workflow.scope !== "item" ||
-            !canStart(detail, teams)
+            !canStart(detail, roster)
           )
             return {
               _tag: "WorkflowCannotStart",
             } satisfies Domain.AttachResult;
           const run = yield* (yield* WorkflowRunRepository).createRun({
             workflow: detail,
-            activeTeams: teams,
+            teams: roster,
             order: target.value.order,
             lineItem: target.value.lineItem,
             source: "manual",
@@ -1936,16 +1968,10 @@ export class ShopAgent extends Agent {
    * `ShopAgentClient` path exists to carry. Decoded lax: the caller is the
    * Worker, not a browser.
    */
-  /**
-   * `startedByEmail` is joined here from D1's `Member` roster — one read per
-   * call, mapped by id — because the run rows hold only member ids and the
-   * repository never sees D1. The roster includes archived members, so an
-   * email keeps resolving after the member is archived.
-   */
+  /** No D1 read: `startedByEmail` is a snapshot on the row, so the queue reads the same after the member is deleted. */
   listQueue(
     input: typeof Domain.ListQueueInput.Encoded,
   ): Promise<readonly Domain.QueueItem[]> {
-    const name = this.name;
     return this.runEffect(
       callableEffect(
         "ShopAgent.listQueue",
@@ -1955,23 +1981,8 @@ export class ShopAgent extends Agent {
           const rows = yield* (yield* WorkflowRunRepository).listQueue({
             teamIds,
           });
-          if (rows.length === 0) return [];
-          const members = yield* (yield* Repository).listMembers(
-            yield* Schema.decodeUnknownEffect(Domain.Shop)(name),
-          );
-          const emailOf = new Map(
-            members.map((member) => [member.id, member.email]),
-          );
           return rows.flatMap((row): Domain.QueueItem[] => {
-            const [first, ...rest] = row.steps.map(
-              (step): Domain.QueueStep => ({
-                ...step,
-                startedByEmail:
-                  step.startedBy === null
-                    ? null
-                    : (emailOf.get(step.startedBy) ?? null),
-              }),
-            );
+            const [first, ...rest] = row.steps;
             return first === undefined
               ? []
               : [
@@ -1998,7 +2009,7 @@ export class ShopAgent extends Agent {
       callableEffect(
         "ShopAgent.startStep",
         Domain.StartStepInput,
-      )(({ runStepId, memberId, teamIds }) =>
+      )(({ runStepId, memberId, memberEmail, teamIds }) =>
         runResult(
           Effect.gen(function* () {
             yield* (yield* WorkflowRunRepository).startStep({
@@ -2006,6 +2017,7 @@ export class ShopAgent extends Agent {
               memberId: yield* Schema.decodeUnknownEffect(Domain.MemberId)(
                 memberId,
               ).pipe(Effect.orDie),
+              memberEmail,
               teamIds,
             });
             yield* Effect.logInfo(
@@ -2056,7 +2068,7 @@ export class ShopAgent extends Agent {
       callableEffect(
         "ShopAgent.blockRun",
         Domain.BlockRunInput,
-      )(({ runId, memberId, teamIds, reason }) =>
+      )(({ runId, memberId, memberEmail, teamIds, reason }) =>
         runResult(
           Effect.gen(function* () {
             yield* (yield* WorkflowRunRepository).blockRun({
@@ -2064,6 +2076,7 @@ export class ShopAgent extends Agent {
               memberId: yield* Schema.decodeUnknownEffect(Domain.MemberId)(
                 memberId,
               ).pipe(Effect.orDie),
+              memberEmail,
               teamIds,
               reason,
             });
@@ -2086,7 +2099,7 @@ export class ShopAgent extends Agent {
       callableEffect(
         "ShopAgent.completeStep",
         Domain.CompleteStepInput,
-      )(({ runStepId, memberId, teamIds }) =>
+      )(({ runStepId, memberId, memberEmail, teamIds }) =>
         runResult(
           Effect.gen(function* () {
             yield* (yield* WorkflowRunRepository).completeStep({
@@ -2094,6 +2107,7 @@ export class ShopAgent extends Agent {
               memberId: yield* Schema.decodeUnknownEffect(Domain.MemberId)(
                 memberId,
               ).pipe(Effect.orDie),
+              memberEmail,
               teamIds,
               startContext: yield* startContext(),
             });
@@ -2128,32 +2142,15 @@ export class ShopAgent extends Agent {
 
   /**
    * The team check lives here, not in the repository: `Team` is a D1 row the
-   * Durable Object's SQLite cannot reference, so "active team" is an
-   * application invariant. Checked against the live roster on every write,
-   * and serialized against `archiveTeam` by the object's input gate.
+   * Durable Object's SQLite cannot reference, so "team exists" is an
+   * application invariant. Checked against the live roster on every write.
+   * `deleteTeam` reads D1 first and nulls pointers second precisely so a
+   * write that passes this check can still be caught by the nulling — see
+   * that method.
    */
-  private activeTeam(teamId: string) {
-    const name = this.name;
-    return Effect.gen(function* () {
-      const teams = yield* (yield* Repository).listTeams({
-        shop: yield* Schema.decodeUnknownEffect(Domain.Shop)(name),
-        includeArchived: false,
-      });
-      return teams.find((team) => team.id === teamId) ?? null;
-    });
-  }
-
-  /** Archive blocks every edit; a missing draft surfaces from the repository as `NoDraft`. */
-  private workflowWritable(workflowId: string) {
-    return WorkflowRepository.pipe(
-      Effect.flatMap((repository) => repository.getWorkflow({ workflowId })),
-      Effect.map(
-        Option.match({
-          onNone: (): Domain.StepResult => ({ _tag: "NotFound" }),
-          onSome: ({ workflow }): Domain.StepResult | null =>
-            workflow.archivedAt === null ? null : { _tag: "Archived" },
-        }),
-      ),
+  private teamExists(teamId: string) {
+    return this.teams().pipe(
+      Effect.map((teams) => teams.find((team) => team.id === teamId) ?? null),
     );
   }
 
@@ -2161,19 +2158,15 @@ export class ShopAgent extends Agent {
   addStep(
     input: typeof Domain.AddStepInput.Encoded,
   ): Promise<Domain.StepResult> {
-    const activeTeam = (teamId: string) => this.activeTeam(teamId);
-    const workflowWritable = (workflowId: string) =>
-      this.workflowWritable(workflowId);
+    const teamExists = (teamId: string) => this.teamExists(teamId);
     return this.runEffect(
       callableEffect("ShopAgent.addStep", Domain.AddStepInput, {
         onExcessProperty: "error",
       })(({ workflowId, name, teamId, instructions }) =>
         stepResult(
           Effect.gen(function* () {
-            const blocked = yield* workflowWritable(workflowId);
-            if (blocked !== null) return blocked;
-            const team = yield* activeTeam(teamId);
-            if (team === null) return { _tag: "TeamNotActive" };
+            const team = yield* teamExists(teamId);
+            if (team === null) return { _tag: "TeamNotFound" };
             const step = yield* (yield* WorkflowRepository).addStep({
               workflowId,
               name,
@@ -2193,19 +2186,15 @@ export class ShopAgent extends Agent {
     input: typeof Domain.AddParallelStepInput.Encoded,
   ): Promise<Domain.StepResult> {
     const shop = this.name;
-    const activeTeam = (teamId: string) => this.activeTeam(teamId);
-    const workflowWritable = (workflowId: string) =>
-      this.workflowWritable(workflowId);
+    const teamExists = (teamId: string) => this.teamExists(teamId);
     return this.runEffect(
       callableEffect("ShopAgent.addParallelStep", Domain.AddParallelStepInput, {
         onExcessProperty: "error",
       })(({ workflowId, stage, name, teamId, instructions }) =>
         stepResult(
           Effect.gen(function* () {
-            const blocked = yield* workflowWritable(workflowId);
-            if (blocked !== null) return blocked;
-            const team = yield* activeTeam(teamId);
-            if (team === null) return { _tag: "TeamNotActive" };
+            const team = yield* teamExists(teamId);
+            if (team === null) return { _tag: "TeamNotFound" };
             const step = yield* (yield* WorkflowRepository).addParallelStep({
               workflowId,
               stage,
@@ -2227,9 +2216,7 @@ export class ShopAgent extends Agent {
   updateStep(
     input: typeof Domain.UpdateStepInput.Encoded,
   ): Promise<Domain.StepResult> {
-    const activeTeam = (teamId: string) => this.activeTeam(teamId);
-    const workflowWritable = (workflowId: string) =>
-      this.workflowWritable(workflowId);
+    const teamExists = (teamId: string) => this.teamExists(teamId);
     return this.runEffect(
       callableEffect("ShopAgent.updateStep", Domain.UpdateStepInput, {
         onExcessProperty: "error",
@@ -2237,12 +2224,8 @@ export class ShopAgent extends Agent {
         stepResult(
           Effect.gen(function* () {
             const repository = yield* WorkflowRepository;
-            const existing = yield* repository.getStep({ stepId });
-            if (Option.isNone(existing)) return { _tag: "NotFound" };
-            const blocked = yield* workflowWritable(existing.value.workflow.id);
-            if (blocked !== null) return blocked;
-            const team = yield* activeTeam(teamId);
-            if (team === null) return { _tag: "TeamNotActive" };
+            const team = yield* teamExists(teamId);
+            if (team === null) return { _tag: "TeamNotFound" };
             const step = yield* repository.updateStep({
               stepId,
               name,
@@ -2260,20 +2243,13 @@ export class ShopAgent extends Agent {
   moveStep(
     input: typeof Domain.MoveStepInput.Encoded,
   ): Promise<Domain.StepResult> {
-    const workflowWritable = (workflowId: string) =>
-      this.workflowWritable(workflowId);
     return this.runEffect(
       callableEffect("ShopAgent.moveStep", Domain.MoveStepInput, {
         onExcessProperty: "error",
       })(({ stepId, direction }) =>
         stepResult(
           Effect.gen(function* () {
-            const repository = yield* WorkflowRepository;
-            const existing = yield* repository.getStep({ stepId });
-            if (Option.isNone(existing)) return { _tag: "NotFound" };
-            const blocked = yield* workflowWritable(existing.value.workflow.id);
-            if (blocked !== null) return blocked;
-            yield* repository.moveStep({ stepId, direction });
+            yield* (yield* WorkflowRepository).moveStep({ stepId, direction });
             return { _tag: "Ok", step: null };
           }),
         ),
@@ -2286,8 +2262,6 @@ export class ShopAgent extends Agent {
     input: typeof Domain.SeparateStepInput.Encoded,
   ): Promise<Domain.StepResult> {
     const shop = this.name;
-    const workflowWritable = (workflowId: string) =>
-      this.workflowWritable(workflowId);
     return this.runEffect(
       callableEffect("ShopAgent.separateStep", Domain.SeparateStepInput, {
         onExcessProperty: "error",
@@ -2297,8 +2271,6 @@ export class ShopAgent extends Agent {
             const repository = yield* WorkflowRepository;
             const existing = yield* repository.getStep({ stepId });
             if (Option.isNone(existing)) return { _tag: "NotFound" };
-            const blocked = yield* workflowWritable(existing.value.workflow.id);
-            if (blocked !== null) return blocked;
             yield* repository.separateStep({ stepId });
             yield* Effect.logInfo(
               `ShopAgent.separateStep: shop=${shop} workflowId=${existing.value.workflow.id} stage=${String(existing.value.step.stage)}`,
@@ -2320,20 +2292,13 @@ export class ShopAgent extends Agent {
   removeStep(
     input: typeof Domain.StepIdInput.Encoded,
   ): Promise<Domain.StepResult> {
-    const workflowWritable = (workflowId: string) =>
-      this.workflowWritable(workflowId);
     return this.runEffect(
       callableEffect("ShopAgent.removeStep", Domain.StepIdInput, {
         onExcessProperty: "error",
       })(({ stepId }) =>
         stepResult(
           Effect.gen(function* () {
-            const repository = yield* WorkflowRepository;
-            const existing = yield* repository.getStep({ stepId });
-            if (Option.isNone(existing)) return { _tag: "NotFound" };
-            const blocked = yield* workflowWritable(existing.value.workflow.id);
-            if (blocked !== null) return blocked;
-            yield* repository.removeStep({ stepId });
+            yield* (yield* WorkflowRepository).removeStep({ stepId });
             return { _tag: "Ok", step: null };
           }),
         ),
@@ -2342,45 +2307,98 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Lives in the object rather than a server fn so the guard is race-free:
-   * count → D1 archive → re-check all run in one single-threaded object,
-   * serialized against `addStep`/`updateStep` by the input gate. In the Worker
-   * that sequence could interleave with a step being saved against the team
-   * between the count and the write. The re-check is belt and braces for the
-   * cross-store gap that remains (D1 is not in the object's transaction);
-   * if a step landed anyway the archive is flipped back. Restore has nothing
-   * to guard and stays a plain server fn.
+   * Delete a team and its steps become unassigned. Two stores, two writes,
+   * D1 first: the two cannot share a transaction, and the order is what
+   * closes the race with a concurrent `addStep` / `updateStep` pointing at
+   * this team. Its `teamExists` check reads D1; if that read lands after the
+   * D1 delete the write is refused, and if it lands before but the step
+   * write lands before the nulling, the nulling catches it — the object is
+   * single-threaded, so nothing interleaves with the nulling itself. The
+   * reverse order would let a step written between the nulling and the D1
+   * delete validate fine and dangle forever. What remains is the nulling
+   * failing after the D1 row is gone; every read already treats an id no
+   * team carries as unassigned, so that state is self-healing, and a retry
+   * of this call (which reports `NotFound` for the row but still runs the
+   * nulling) repairs it. Nothing is refused for being in use: the confirm
+   * dialog states the counts and the merchant decides.
    */
   @callable()
-  archiveTeam(
-    input: typeof Domain.TeamIdInput.Encoded,
-  ): Promise<Domain.TeamArchiveResult> {
+  deleteTeam(
+    input: typeof Domain.DeleteTeamInput.Encoded,
+  ): Promise<Domain.DeleteTeamResult> {
     const name = this.name;
+    const publish = () => this.publish("all");
     return this.runEffect(
-      callableEffect("ShopAgent.archiveTeam", Domain.TeamIdInput, {
+      callableEffect("ShopAgent.deleteTeam", Domain.DeleteTeamInput, {
         onExcessProperty: "error",
       })(({ teamId }) =>
         Effect.gen(function* () {
-          const workflows = yield* WorkflowRepository;
-          const teams = yield* Repository;
           const shop = yield* Schema.decodeUnknownEffect(Domain.Shop)(name);
           const id = yield* Schema.decodeUnknownEffect(Domain.TeamId)(teamId);
-          const inUse = yield* workflows.countStepsOwnedBy({ teamId });
-          if (inUse > 0) return inUseResult(inUse);
-          const archived = yield* teams
-            .setTeamArchived({ shop, id, archived: true })
+          const deleted = yield* (yield* Repository)
+            .deleteTeam({ shop, id })
             .pipe(
-              Effect.as<Domain.TeamArchiveResult>({ _tag: "Ok" }),
+              Effect.as<Domain.DeleteTeamResult>({ _tag: "Deleted" }),
               Effect.catchTag("TeamNotFoundError", () =>
-                Effect.succeed<Domain.TeamArchiveResult>({ _tag: "NotFound" }),
+                Effect.succeed<Domain.DeleteTeamResult>({ _tag: "NotFound" }),
               ),
             );
-          if (archived._tag !== "Ok") return archived;
-          const recheck = yield* workflows.countStepsOwnedBy({ teamId });
-          if (recheck === 0) return archived;
-          yield* teams.setTeamArchived({ shop, id, archived: false });
-          return inUseResult(recheck);
+          yield* (yield* WorkflowRepository).unassignTeam({ teamId });
+          yield* Effect.logInfo(
+            `ShopAgent.deleteTeam: shop=${shop} teamId=${teamId} status=${deleted._tag}`,
+          ).pipe(Effect.annotateLogs({ shop, teamId, status: deleted._tag }));
+          yield* publish();
+          return deleted;
         }),
+      )(input),
+    );
+  }
+
+  /**
+   * The remedy for an unassigned open run step (see `deleteTeam`). The team
+   * is checked against the live D1 roster here, as `addStep` does, and its
+   * name is snapshotted onto the step from that same read.
+   */
+  @callable()
+  assignRunStepTeam(
+    input: typeof Domain.AssignRunStepTeamInput.Encoded,
+  ): Promise<Domain.AssignRunStepTeamResult> {
+    const shop = this.name;
+    const publish = () => this.publish("all");
+    const teamExists = (teamId: string) => this.teamExists(teamId);
+    return this.runEffect(
+      callableEffect(
+        "ShopAgent.assignRunStepTeam",
+        Domain.AssignRunStepTeamInput,
+        { onExcessProperty: "error" },
+      )(({ runStepId, teamId }) =>
+        Effect.gen(function* () {
+          const team = yield* teamExists(teamId);
+          if (team === null)
+            return {
+              _tag: "TeamNotFound",
+            } satisfies Domain.AssignRunStepTeamResult;
+          yield* (yield* WorkflowRunRepository).assignRunStepTeam({
+            runStepId,
+            team: { id: team.id, name: team.name },
+          });
+          yield* Effect.logInfo(
+            `ShopAgent.assignRunStepTeam: shop=${shop} step=${runStepId} teamId=${teamId}`,
+          ).pipe(Effect.annotateLogs({ shop, step: runStepId, teamId }));
+          yield* publish();
+          return { _tag: "Assigned" } satisfies Domain.AssignRunStepTeamResult;
+        }).pipe(
+          Effect.catchTags({
+            RunNotFoundError: () =>
+              Effect.succeed<Domain.AssignRunStepTeamResult>({
+                _tag: "NotFound",
+              }),
+            StepFinishedError: () =>
+              Effect.succeed<Domain.AssignRunStepTeamResult>({
+                _tag: "StepFinished",
+              }),
+          }),
+        ),
       )(input),
     );
   }
@@ -2394,7 +2412,7 @@ export class ShopAgent extends Agent {
    *
    * Gated on `ENVIRONMENT === "local"` here as well as at the route that calls
    * it (`src/routes/api.dev.seed.ts`): this is the one write path into
-   * `Workflow` that skips the name, limit, and active-team checks, and the
+   * `Workflow` that skips the name, limit, and team checks, and the
    * guard belongs with the bypass, not only with its current caller. An
    * ordinary failure rather than `Effect.die` — `runEffect` collapses failures
    * and defects into the same thrown `Error` at the RPC seam, so a defect buys
@@ -2440,7 +2458,7 @@ export class ShopAgent extends Agent {
     return this.runEffect(
       callableEffect("ShopAgent.seedOrders", Domain.SeedOrdersInput, {
         onExcessProperty: "error",
-      })(({ memberId, orders }) =>
+      })(({ memberId, memberEmail, orders }) =>
         Effect.gen(function* () {
           if (environment !== "local")
             yield* Effect.fail(
@@ -2468,7 +2486,8 @@ export class ShopAgent extends Agent {
                     runs.completeStep({
                       runStepId: step.id,
                       memberId,
-                      teamIds: [step.teamId],
+                      memberEmail,
+                      teamIds: step.teamId === null ? [] : [step.teamId],
                       startContext,
                     }),
                   { discard: true },
@@ -2568,6 +2587,16 @@ export class ShopAgent extends Agent {
           ),
         ),
       )(input),
+    );
+  }
+
+  /** Plain RPC for the same reason as {@link listStepsOwnedBy}: the delete dialogs' counts, read by the team pages' loaders. */
+  countStepsByTeam(): Promise<readonly Domain.TeamStepCounts[]> {
+    return this.runEffect(
+      WorkflowRepository.pipe(
+        Effect.flatMap((repository) => repository.countStepsByTeam()),
+        Effect.withLogSpan("ShopAgent.countStepsByTeam"),
+      ),
     );
   }
 }

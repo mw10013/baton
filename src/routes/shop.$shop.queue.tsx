@@ -44,11 +44,12 @@ const textOrNull = (value: string) =>
   value.trim().length === 0 ? null : value;
 
 /**
- * `teamIds` and `memberId` never come from the browser: `requireMember`
- * resolves them from the session and the URL shop, and the Durable Object
- * trusts them because the Worker is its only caller for these methods. The
- * browser sends only the shop and the id of what it clicked; scope is
- * enforced on the object against the resolved teams.
+ * `teamIds`, `memberId`, and `memberEmail` never come from the browser:
+ * `requireMember` and the session resolve them from the URL shop and the
+ * cookie, and the Durable Object trusts them because the Worker is its only
+ * caller for these methods. The browser sends only the shop and the id of
+ * what it clicked; scope is enforced on the object against the resolved
+ * teams, and the email is what the run step snapshots as the actor.
  */
 const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(ShopParamInput))
@@ -81,6 +82,7 @@ const startStepFn = createServerFn({ method: "POST" })
         return yield* (yield* ShopAgentClient).startStep(shop, {
           runStepId: data.runStepId,
           memberId,
+          memberEmail: user.email,
           teamIds: teams.map((team) => team.id),
         });
       }),
@@ -100,6 +102,7 @@ const completeStepFn = createServerFn({ method: "POST" })
         return yield* (yield* ShopAgentClient).completeStep(shop, {
           runStepId: data.runStepId,
           memberId,
+          memberEmail: user.email,
           teamIds: teams.map((team) => team.id),
         });
       }),
@@ -139,6 +142,7 @@ const blockRunFn = createServerFn({ method: "POST" })
         return yield* (yield* ShopAgentClient).blockRun(shop, {
           runId: data.runId,
           memberId,
+          memberEmail: user.email,
           teamIds: teams.map((team) => team.id),
           reason: textOrNull(data.reason),
         });

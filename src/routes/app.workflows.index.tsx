@@ -14,10 +14,6 @@ import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
 
-const workflowsSearchSchema = Schema.Struct({
-  archived: Schema.optional(Schema.Boolean),
-});
-
 const CreateWorkflowForm = Schema.Struct({
   name: Schema.String.check(Schema.isNonEmpty({ message: "Name is required" })),
   scope: Domain.WorkflowScope,
@@ -31,6 +27,9 @@ type CreateWorkflowForm = typeof CreateWorkflowForm.Type;
  * `decodeOrdersView` in `app.orders.index.tsx`.
  */ const decodeWorkflowResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.WorkflowResult),
+);
+const decodeDeleteWorkflowResult = Schema.decodeUnknownPromise(
+  Schema.toType(Domain.DeleteWorkflowResult),
 );
 
 /** Comma-separated text → tag list; the Durable Object normalises again. */
@@ -46,35 +45,61 @@ export const workflowResultMessage = Match.typeTags<
 >()({
   Ok: () => null,
   NameTaken: () =>
-    "A workflow with that name already exists. It may be archived — show archived workflows to restore it, or choose another name.",
+    "A workflow with that name already exists. Choose another name.",
   NotFound: () => "That workflow no longer exists.",
   Limit: ({ limit }) =>
-    `This shop has reached its limit of ${String(limit)} active workflows.`,
+    `This shop has reached its limit of ${String(limit)} workflows.`,
   OrderWorkflowExists: () =>
-    "This shop already has an order workflow. Archive it first to create or restore another.",
-  Active: () => "Turn this workflow off before archiving it.",
+    "This shop already has an order workflow. Delete it first to create another.",
 });
 
-/** Archived, else Active or Off: the switch means nothing on a hidden row. */
-const stateBadge = (workflow: Domain.WorkflowSummary) => {
-  if (workflow.archivedAt !== null)
-    return <s-badge tone="info">Archived</s-badge>;
-  if (workflow.active) return <s-badge tone="success">Active</s-badge>;
-  return <s-badge>Off</s-badge>;
+export const deleteWorkflowResultMessage = Match.typeTags<
+  Domain.DeleteWorkflowResult,
+  string | null
+>()({
+  Deleted: () => null,
+  NotFound: () => "That workflow no longer exists.",
+});
+
+const plural = (count: number, noun: string) =>
+  `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
+
+/**
+ * The delete dialog's body, in the merchant copy of `Domain.Workflow`: the
+ * runs that go with the workflow, stated only when there are any.
+ */
+export const deleteWorkflowWarning = ({
+  openRuns,
+  finishedRuns,
+}: Domain.WorkflowDeleteCounts) => {
+  const parts = [
+    ...(openRuns > 0 ? [`${plural(openRuns, "run")} in progress`] : []),
+    ...(finishedRuns > 0 ? [plural(finishedRuns, "finished run")] : []),
+  ];
+  return parts.length === 0
+    ? "It has never started a run. This can't be undone."
+    : `${parts.join(" and ")} will be deleted with it. This can't be undone.`;
 };
 
 /**
  * One place for every status badge. Flow hides a pending draft from its
  * list; Baton shows it, because a production floor needs to know that what
  * starts runs today is not what is being edited (see `Domain.Workflow`).
- * "No steps" is a workflow whose draft has never been applied.
+ * "No steps" is a workflow whose draft has never been applied. "Needs
+ * attention" is derived by the object on every read: an unassigned step or a
+ * team with no members.
  */
 const statusBadges = (workflow: Domain.WorkflowSummary) => (
   <s-stack direction="inline" gap="small-300">
-    {stateBadge(workflow)}
+    {workflow.active ? (
+      <s-badge tone="success">Active</s-badge>
+    ) : (
+      <s-badge>Off</s-badge>
+    )}
     {workflow.hasDraft && <s-badge tone="caution">Draft pending</s-badge>}
-    {workflow.archivedAt === null && workflow.stepCount === 0 && (
-      <s-badge tone="warning">No steps</s-badge>
+    {workflow.stepCount === 0 && <s-badge tone="warning">No steps</s-badge>}
+    {workflow.needsAttention && (
+      <s-badge tone="warning">Needs attention</s-badge>
     )}
   </s-stack>
 );
@@ -88,14 +113,12 @@ export const ORDER_WORKFLOW_TRIGGER = "Starts for every paid order.";
  * `router.invalidate()` after each write. Only the writes use the socket.
  */
 const getLoaderData = createServerFn({ method: "GET" })
-  .validator(Schema.toStandardSchemaV1(workflowsSearchSchema))
   .middleware([shopifyServerFnMiddleware])
-  .handler(({ data, context: { runEffect, session } }) =>
+  .handler(({ context: { runEffect, session } }) =>
     runEffect(
       Effect.gen(function* () {
         const workflows = yield* (yield* ShopAgentClient).listWorkflows(
           session.shop,
-          { includeArchived: data.archived === true },
         );
         return { workflows } satisfies Domain.WorkflowsIndexLoaderData;
       }),
@@ -103,19 +126,19 @@ const getLoaderData = createServerFn({ method: "GET" })
   );
 
 export const Route = createFileRoute("/app/workflows/")({
-  validateSearch: Schema.toStandardSchemaV1(workflowsSearchSchema),
-  loaderDeps: ({ search }) => ({ archived: search.archived }),
-  loader: ({ deps }) => getLoaderData({ data: deps }),
+  loader: () => getLoaderData(),
   component: RouteComponent,
 });
 
 function RouteComponent() {
-  const { archived } = Route.useSearch();
-  const includeArchived = archived === true;
   const router = useRouter();
   const { workflows: allWorkflows } = Route.useLoaderData();
   const { agent, identified } = useShopAgent();
   const [banner, setBanner] = React.useState<string | null>(null);
+  /** Which workflow's delete is awaiting its inline confirmation. */
+  const [confirming, setConfirming] = React.useState<Domain.WorkflowId | null>(
+    null,
+  );
 
   const invalidate = () => router.invalidate({ sync: true });
 
@@ -144,14 +167,18 @@ function RouteComponent() {
     },
   });
 
-  const archiveMutation = useMutation({
-    mutationFn: (input: typeof Domain.SetWorkflowArchivedInput.Encoded) =>
+  const deleteMutation = useMutation({
+    mutationFn: (input: typeof Domain.DeleteWorkflowInput.Encoded) =>
       agent
         ? withSocketRecovery(agent)(() =>
-            agent.stub.setWorkflowArchived(input),
-          ).then(decodeWorkflowResult)
+            agent.stub.removeWorkflow(input),
+          ).then(decodeDeleteWorkflowResult)
         : Promise.reject(new Error("Still connecting. Try again in a moment.")),
-    onSuccess: onResult,
+    onSuccess: async (result) => {
+      setBanner(deleteWorkflowResultMessage(result));
+      setConfirming(null);
+      await invalidate();
+    },
     onError: (error) => {
       setBanner(error.message);
     },
@@ -175,10 +202,8 @@ function RouteComponent() {
   const workflows = allWorkflows.filter(
     (workflow) => workflow.scope === "item",
   );
-  /** The slot is taken by any non-archived order workflow, on or off. */
-  const orderWorkflowActive = orderWorkflows.some(
-    (workflow) => workflow.archivedAt === null,
-  );
+  /** The slot is taken by any order workflow, on or off. */
+  const orderWorkflowActive = orderWorkflows.length > 0;
 
   /**
    * `withTags` is per section, not per row: an order workflow can never carry
@@ -201,26 +226,60 @@ function RouteComponent() {
         </s-table-cell>
       )}
       <s-table-cell>{workflow.stepCount}</s-table-cell>
-      <s-table-cell>{workflow.activeRunCount}</s-table-cell>
+      <s-table-cell>{workflow.openRuns}</s-table-cell>
       <s-table-cell>{formatDateTime(workflow.updatedAt)}</s-table-cell>
       <s-table-cell>
         <s-button
           variant="tertiary"
-          disabled={archiveMutation.isPending || workflow.active}
-          {...(workflow.active
-            ? { accessibilityLabel: "Archive (turn off first)" }
-            : {})}
+          tone="critical"
+          disabled={!identified || deleteMutation.isPending}
           onClick={() => {
-            archiveMutation.mutate({
-              workflowId: workflow.id,
-              archived: workflow.archivedAt === null,
-            });
+            setConfirming(workflow.id);
           }}
         >
-          {workflow.archivedAt === null ? "Archive" : "Restore"}
+          Delete
         </s-button>
-        {workflow.active && <s-text color="subdued">Turn off first</s-text>}
       </s-table-cell>
+    </s-table-row>
+  );
+
+  /** Confirm inline, under the row: the counts come from the same loader read as the row. */
+  const confirmRow = (workflow: Domain.WorkflowSummary, withTags: boolean) => (
+    <s-table-row key={`${workflow.id}-confirm`} id={`${workflow.id}-confirm`}>
+      <s-table-cell>
+        <s-banner tone="critical" heading={`Delete ${workflow.name}?`}>
+          <s-stack gap="small-300">
+            <s-paragraph>{deleteWorkflowWarning(workflow)}</s-paragraph>
+            <s-stack direction="inline" gap="small-300">
+              <s-button
+                variant="primary"
+                tone="critical"
+                disabled={!identified}
+                {...(deleteMutation.isPending ? { loading: true } : {})}
+                onClick={() => {
+                  deleteMutation.mutate({ workflowId: workflow.id });
+                }}
+              >
+                Delete
+              </s-button>
+              <s-button
+                variant="tertiary"
+                onClick={() => {
+                  setConfirming(null);
+                }}
+              >
+                Cancel
+              </s-button>
+            </s-stack>
+          </s-stack>
+        </s-banner>
+      </s-table-cell>
+      <s-table-cell> </s-table-cell>
+      {withTags && <s-table-cell> </s-table-cell>}
+      <s-table-cell> </s-table-cell>
+      <s-table-cell> </s-table-cell>
+      <s-table-cell> </s-table-cell>
+      <s-table-cell> </s-table-cell>
     </s-table-row>
   );
 
@@ -239,7 +298,12 @@ function RouteComponent() {
         <s-table-header> </s-table-header>
       </s-table-header-row>
       <s-table-body>
-        {rows.map((workflow) => renderRow(workflow, withTags))}
+        {rows.flatMap((workflow) => [
+          renderRow(workflow, withTags),
+          ...(confirming === workflow.id
+            ? [confirmRow(workflow, withTags)]
+            : []),
+        ])}
       </s-table-body>
     </s-table>
   );
@@ -331,7 +395,7 @@ function RouteComponent() {
                       The whole order, after every item is made
                       <s-text slot="details">
                         {orderWorkflowActive
-                          ? "This shop already has an order workflow. Archive it to create another."
+                          ? "This shop already has an order workflow. Delete it to create another."
                           : ORDER_WORKFLOW_TRIGGER}
                       </s-text>
                     </s-choice>
@@ -377,16 +441,10 @@ function RouteComponent() {
 
       <s-section heading="Workflows" accessibilityLabel="Workflows">
         <s-stack gap="base">
-          <s-checkbox
-            label="Show archived"
-            checked={includeArchived}
-            onChange={() => {
-              void router.navigate({
-                to: "/app/workflows",
-                search: { archived: includeArchived ? undefined : true },
-              });
-            }}
-          />
+          <s-paragraph color="subdued">
+            Turn a workflow off to stop new runs while open runs finish. Delete
+            it and its runs go with it.
+          </s-paragraph>
           {renderWorkflows()}
         </s-stack>
       </s-section>

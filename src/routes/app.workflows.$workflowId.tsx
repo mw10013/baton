@@ -15,6 +15,8 @@ import { SocketBanner } from "@/lib/SocketBanner";
 import * as WorkflowLayout from "@/lib/WorkflowLayout";
 
 import {
+  deleteWorkflowResultMessage,
+  deleteWorkflowWarning,
   ORDER_WORKFLOW_TRIGGER,
   splitTags,
   workflowResultMessage,
@@ -46,6 +48,9 @@ const decodeActivateResult = Schema.decodeUnknownPromise(
 const decodeDraftResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.DraftResult),
 );
+const decodeDeleteWorkflowResult = Schema.decodeUnknownPromise(
+  Schema.toType(Domain.DeleteWorkflowResult),
+);
 
 const stepList = (stepNames: readonly string[]) => stepNames.join(", ");
 
@@ -54,8 +59,8 @@ const applyResultMessage = Match.typeTags<Domain.ApplyResult, string | null>()({
   NotFound: () => "That workflow no longer exists.",
   NoDraft: () => "There are no draft changes to apply.",
   NoSteps: () => "Add at least one step before applying.",
-  TeamNotActive: ({ stepNames }) =>
-    `These steps point at an archived team: ${stepList(stepNames)}. Reassign them or restore the team before applying.`,
+  StepUnassigned: ({ stepNames }) =>
+    `These steps are unassigned: ${stepList(stepNames)}. Assign a team before applying.`,
 });
 
 const discardResultMessage = Match.typeTags<
@@ -70,7 +75,6 @@ const discardResultMessage = Match.typeTags<
 const draftResultMessage = Match.typeTags<Domain.DraftResult, string | null>()({
   Ok: () => null,
   NotFound: () => "That workflow no longer exists.",
-  Archived: () => "Restore this workflow before editing it.",
 });
 
 /** Also the reason shown next to a disabled Turn on, computed client-side from the same conditions the object checks. */
@@ -80,10 +84,9 @@ const activateResultMessage = Match.typeTags<
 >()({
   Ok: () => null,
   NotFound: () => "That workflow no longer exists.",
-  Archived: () => "Restore this workflow before turning it on.",
   NoSteps: () => "This workflow has no steps. Edit to add some, then apply.",
-  TeamNotActive: ({ stepNames }) =>
-    `These steps point at an archived team: ${stepList(stepNames)}.`,
+  StepUnassigned: ({ stepNames }) =>
+    `These steps are unassigned: ${stepList(stepNames)}. Assign a team.`,
   OrderWorkflowExists: () => "Another order workflow is on. Turn it off first.",
 });
 
@@ -95,33 +98,31 @@ const stepResultMessage = Match.typeTags<Domain.StepResult, string | null>()({
   Ok: () => null,
   NotFound: () => "That step or workflow no longer exists.",
   Limit: ({ limit }) => `A workflow can have at most ${String(limit)} steps.`,
-  TeamNotActive: () => "Choose an active team for this step.",
-  Archived: () => "Restore this workflow before editing it.",
+  TeamNotFound: () => "That team no longer exists. Choose another.",
   NoDraft: () => "Click Edit to start a draft before changing steps.",
 });
 
-const orphaned = (steps: readonly Domain.StepWithTeamName[]) =>
-  steps.filter((step) => step.teamName === null);
+const unassigned = (steps: readonly Domain.StepWithTeamName[]) =>
+  steps.filter(Domain.isUnassigned);
+
+const onEmptyTeam = (steps: readonly Domain.StepWithTeamName[]) =>
+  steps.filter(Domain.hasEmptyTeam);
 
 /**
  * Why Turn on would be refused, decided from the workflow's own steps — the
  * same facts the object checks — so the button can be disabled with its
  * reason instead of failing after a round trip. `OrderWorkflowExists` is
- * only known server-side and surfaces as a banner.
+ * only known server-side and surfaces as a banner. An empty team is not a
+ * blocker: the run starts and waits for a member.
  */
-const turnOnBlockerOf = ({
-  archived,
-  steps,
-}: {
-  readonly archived: boolean;
-  readonly steps: readonly Domain.StepWithTeamName[];
-}): Domain.ActivateResult | null => {
-  if (archived) return { _tag: "Archived" };
+const turnOnBlockerOf = (
+  steps: readonly Domain.StepWithTeamName[],
+): Domain.ActivateResult | null => {
   if (steps.length === 0) return { _tag: "NoSteps" };
-  const orphans = orphaned(steps);
+  const orphans = unassigned(steps);
   if (orphans.length > 0)
     return {
-      _tag: "TeamNotActive",
+      _tag: "StepUnassigned",
       stepNames: orphans.map((step) => step.name),
     };
   return null;
@@ -132,13 +133,61 @@ const applyBlockerOf = (
   steps: readonly Domain.StepWithTeamName[],
 ): Domain.ApplyResult | null => {
   if (steps.length === 0) return { _tag: "NoSteps" };
-  const orphans = orphaned(steps);
+  const orphans = unassigned(steps);
   if (orphans.length > 0)
     return {
-      _tag: "TeamNotActive",
+      _tag: "StepUnassigned",
       stepNames: orphans.map((step) => step.name),
     };
   return null;
+};
+
+/** The team cell: the name, or the derived attention state in its place. */
+const teamCell = (step: Domain.StepWithTeamName) => {
+  if (Domain.isUnassigned(step))
+    return <s-badge tone="critical">Unassigned</s-badge>;
+  return (
+    <s-stack direction="inline" gap="small-300" alignItems="center">
+      <s-text>{step.teamName}</s-text>
+      {Domain.hasEmptyTeam(step) && (
+        <s-badge tone="warning">No members</s-badge>
+      )}
+    </s-stack>
+  );
+};
+
+/** The needs-attention banner for one side of the page, or nothing when there is nothing to say. */
+const attentionBanner = (
+  steps: readonly Domain.StepWithTeamName[],
+  side: "workflow" | "draft",
+) => {
+  const orphans = unassigned(steps);
+  const empty = onEmptyTeam(steps);
+  if (orphans.length === 0 && empty.length === 0) return null;
+  const lines = [
+    ...(orphans.length > 0
+      ? [
+          `Unassigned: ${stepList(orphans.map((step) => step.name))}. Assign a team${side === "draft" ? " before applying" : ""}.`,
+        ]
+      : []),
+    ...(empty.length > 0
+      ? [
+          `No members on ${stepList([...new Set(empty.map((step) => step.teamName ?? ""))])}. Nobody can work ${empty.length === 1 ? "that step" : "those steps"} until someone joins.`,
+        ]
+      : []),
+  ];
+  return (
+    <s-banner
+      tone={orphans.length > 0 ? "critical" : "warning"}
+      heading="Needs attention"
+    >
+      <s-stack gap="small-500">
+        {lines.map((line) => (
+          <s-text key={line}>{line}</s-text>
+        ))}
+      </s-stack>
+    </s-banner>
+  );
 };
 
 /** "Starts when …": the item-scope trigger line in the merchant copy of `Domain.Workflow`. */
@@ -180,9 +229,7 @@ const workflowTable = (steps: readonly Domain.StepWithTeamName[]) => (
                 )}
               </s-stack>
             </s-table-cell>
-            <s-table-cell>
-              {step.teamName ?? <s-badge tone="warning">Team archived</s-badge>}
-            </s-table-cell>
+            <s-table-cell>{teamCell(step)}</s-table-cell>
           </s-table-row>
         )),
       )}
@@ -234,9 +281,9 @@ function RouteComponent() {
   const detail = Route.useLoaderData();
   const { agent, identified } = useShopAgent();
   const [banner, setBanner] = React.useState<string | null>(null);
-  /** Which destructive footer action is awaiting its inline confirmation. */
+  /** Which destructive action is awaiting its inline confirmation. */
   const [confirming, setConfirming] = React.useState<
-    "apply" | "discard" | null
+    "apply" | "discard" | "delete" | null
   >(null);
   const [newStep, setNewStep] = React.useState({
     name: "",
@@ -291,14 +338,19 @@ function RouteComponent() {
     onError,
   });
 
-  const archiveMutation = useMutation({
-    mutationFn: (archived: boolean) =>
-      call((stub) => stub.setWorkflowArchived({ workflowId, archived })).then(
-        decodeWorkflowResult,
+  /** Delete a workflow and its runs go with it; on success the page is gone, so navigate home. */
+  const deleteMutation = useMutation({
+    mutationFn: () =>
+      call((stub) => stub.removeWorkflow({ workflowId })).then(
+        decodeDeleteWorkflowResult,
       ),
     onSuccess: async (result) => {
-      setBanner(workflowResultMessage(result));
-      await invalidate();
+      if (result._tag === "Deleted") {
+        await router.navigate({ to: "/app/workflows" });
+        return;
+      }
+      setBanner(deleteWorkflowResultMessage(result));
+      setConfirming(null);
     },
     onError,
   });
@@ -460,14 +512,11 @@ function RouteComponent() {
       </s-page>
     );
 
-  const { workflow, draft, activeTeams } = detail;
+  const { workflow, draft, teams, runCounts } = detail;
   const steps = draft?.steps ?? [];
-  const archived = workflow.archivedAt !== null;
   const orderScope = workflow.scope === "order";
   const hasDraft = draft !== null;
-  const draftOrphans = orphaned(steps);
   const stepsLocked =
-    archived ||
     addStepMutation.isPending ||
     addParallelStepMutation.isPending ||
     separateStepMutation.isPending ||
@@ -477,7 +526,7 @@ function RouteComponent() {
     applyMutation.isPending ||
     discardMutation.isPending;
   const stages = WorkflowLayout.stagesOf(steps);
-  const turnOnBlocker = turnOnBlockerOf({ archived, steps: detail.steps });
+  const turnOnBlocker = turnOnBlockerOf(detail.steps);
   const turnOnReason =
     turnOnBlocker === null ? null : activateResultMessage(turnOnBlocker);
   const applyBlocker = applyBlockerOf(steps);
@@ -486,12 +535,6 @@ function RouteComponent() {
   const switching = activeMutation.isPending;
   /** The title bar's accessory slot takes exactly one badge and flattens anything else to text, so only the state goes here; the rest sit at the top of Details. */
   const stateBadge = () => {
-    if (archived)
-      return (
-        <s-badge slot="accessory" tone="info">
-          Archived
-        </s-badge>
-      );
     if (workflow.active)
       return (
         <s-badge slot="accessory" tone="success">
@@ -516,9 +559,9 @@ function RouteComponent() {
         onChange(event.currentTarget.value);
       }}
     >
-      {activeTeams.map((team) => (
+      {teams.map((team) => (
         <s-option key={team.id} value={team.id}>
-          {team.name}
+          {team.memberCount === 0 ? `${team.name} (no members)` : team.name}
         </s-option>
       ))}
     </s-select>
@@ -628,9 +671,7 @@ function RouteComponent() {
             )}
           </s-stack>
         </s-table-cell>
-        <s-table-cell>
-          {step.teamName ?? <s-badge tone="warning">Team archived</s-badge>}
-        </s-table-cell>
+        <s-table-cell>{teamCell(step)}</s-table-cell>
         <s-table-cell>
           <s-stack direction="inline" gap="small-300">
             <s-button
@@ -675,12 +716,12 @@ function RouteComponent() {
                 setEditing({
                   stepId: step.id,
                   name: step.name,
-                  teamId: step.teamName === null ? "" : step.teamId,
+                  teamId: Domain.isUnassigned(step) ? "" : (step.teamId ?? ""),
                   instructions: step.instructions ?? "",
                 });
               }}
             >
-              Edit
+              {Domain.isUnassigned(step) ? "Assign team" : "Edit"}
             </s-button>
             <s-button
               variant="tertiary"
@@ -776,7 +817,7 @@ function RouteComponent() {
           <s-table-cell>
             <s-button
               variant="tertiary"
-              disabled={stepsLocked || activeTeams.length === 0}
+              disabled={stepsLocked || teams.length === 0}
               onClick={() => {
                 setParallel({ stage, name: "", teamId: "", instructions: "" });
               }}
@@ -793,7 +834,6 @@ function RouteComponent() {
 
   /** The Apply / Discard row, with the inline confirmation for whichever was clicked. */
   const draftFooter = () => {
-    if (archived) return null;
     if (confirming === "apply")
       return (
         <s-banner tone="warning" heading="Apply changes?">
@@ -916,7 +956,7 @@ function RouteComponent() {
           Turn on
         </s-button>
       )}
-      {!hasDraft && !archived && (
+      {!hasDraft && (
         <s-button
           slot="secondary-actions"
           disabled={!identified || editMutation.isPending}
@@ -939,11 +979,40 @@ function RouteComponent() {
             </s-stack>
           )}
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
-          {!workflow.active && turnOnReason !== null && !archived && (
+          {confirming === "delete" && (
+            <s-banner tone="critical" heading={`Delete ${workflow.name}?`}>
+              <s-stack gap="small-300">
+                <s-paragraph>{deleteWorkflowWarning(runCounts)}</s-paragraph>
+                <s-stack direction="inline" gap="small-300">
+                  <s-button
+                    variant="primary"
+                    tone="critical"
+                    disabled={!identified}
+                    {...(deleteMutation.isPending ? { loading: true } : {})}
+                    onClick={() => {
+                      deleteMutation.mutate();
+                    }}
+                  >
+                    Delete
+                  </s-button>
+                  <s-button
+                    variant="tertiary"
+                    onClick={() => {
+                      setConfirming(null);
+                    }}
+                  >
+                    Cancel
+                  </s-button>
+                </s-stack>
+              </s-stack>
+            </s-banner>
+          )}
+          {!workflow.active && turnOnReason !== null && (
             <s-banner tone="info" heading="Turn on is unavailable">
               {turnOnReason}
             </s-banner>
           )}
+          {attentionBanner(detail.steps, "workflow")}
           <form
             onSubmit={(event) => {
               event.preventDefault();
@@ -977,17 +1046,19 @@ function RouteComponent() {
                 </s-button>
                 <s-button
                   variant="secondary"
-                  disabled={
-                    !identified || archiveMutation.isPending || workflow.active
-                  }
+                  tone="critical"
+                  disabled={!identified || deleteMutation.isPending}
                   onClick={() => {
-                    archiveMutation.mutate(!archived);
+                    setConfirming("delete");
                   }}
                 >
-                  {archived ? "Restore" : "Archive"}
+                  Delete
                 </s-button>
                 {workflow.active && (
-                  <s-text color="subdued">Turn off first to archive.</s-text>
+                  <s-text color="subdued">
+                    Turn off to stop new runs and let open ones finish. Delete
+                    removes its runs too.
+                  </s-text>
                 )}
               </s-stack>
             </s-stack>
@@ -1023,23 +1094,14 @@ function RouteComponent() {
               number waits until all of them are done. Name the step by the
               work, not the team.
             </s-paragraph>
-            {archived && (
-              <s-paragraph color="subdued">
-                Restore this workflow to edit it.
-              </s-paragraph>
-            )}
-            {!archived && steps.length === 0 && (
+            {steps.length === 0 && (
               <s-banner tone="warning" heading="No steps">
                 {orderScope
                   ? "Add at least one step, then apply. Without steps this workflow cannot be turned on."
                   : "Add at least one step, then apply. Without steps this workflow cannot start for any item."}
               </s-banner>
             )}
-            {!archived && draftOrphans.length > 0 && (
-              <s-banner tone="warning" heading="Needs attention">
-                {`${String(draftOrphans.length)} step${draftOrphans.length === 1 ? "" : "s"} point at an archived team. Reassign or restore the team before applying.`}
-              </s-banner>
-            )}
+            {attentionBanner(steps, "draft")}
             {!orderScope && (
               <form
                 onSubmit={(event) => {
@@ -1055,7 +1117,6 @@ function RouteComponent() {
                         details="Comma-separated. Starts for any item whose product has at least one of these tags. Case doesn't matter. Written to the draft."
                         name={field.name}
                         value={field.state.value}
-                        disabled={archived}
                         onInput={(event) => {
                           field.handleChange(event.currentTarget.value);
                         }}
@@ -1066,7 +1127,7 @@ function RouteComponent() {
                   <s-button
                     type="submit"
                     variant="secondary"
-                    disabled={!identified || archived || stepsLocked}
+                    disabled={!identified || stepsLocked}
                     {...(tagsMutation.isPending ? { loading: true } : {})}
                   >
                     Save tags
@@ -1093,12 +1154,12 @@ function RouteComponent() {
                         group.length > 1,
                       ),
                     ),
-                    ...(archived ? [] : [parallelRow(group[0]?.stage ?? 1)]),
+                    parallelRow(group[0]?.stage ?? 1),
                   ])}
                 </s-table-body>
               </s-table>
             )}
-            {activeTeams.length === 0 ? (
+            {teams.length === 0 ? (
               <s-stack gap="small-300">
                 <s-paragraph color="subdued">
                   Create a team before adding steps.
@@ -1106,58 +1167,56 @@ function RouteComponent() {
                 <s-link href="/app/teams">Teams</s-link>
               </s-stack>
             ) : (
-              !archived && (
-                <s-stack gap="small-300">
-                  <s-stack direction="inline" gap="base" alignItems="end">
-                    <s-text-field
-                      label="New step"
-                      placeholder="e.g. Engrave"
-                      value={newStep.name}
-                      disabled={stepsLocked}
-                      onInput={(event) => {
-                        setNewStep({
-                          ...newStep,
-                          name: event.currentTarget.value,
-                        });
-                      }}
-                    />
-                    {teamSelect(
-                      newStep.teamId,
-                      (teamId) => {
-                        setNewStep({ ...newStep, teamId });
-                      },
-                      "Team for new step",
-                    )}
-                    <s-button
-                      variant="secondary"
-                      disabled={
-                        stepsLocked ||
-                        newStep.name.trim().length === 0 ||
-                        newStep.teamId === ""
-                      }
-                      {...(addStepMutation.isPending ? { loading: true } : {})}
-                      onClick={() => {
-                        addStepMutation.mutate({
-                          name: newStep.name,
-                          teamId: newStep.teamId,
-                          ...(instructionsOrNull(newStep.instructions) === null
-                            ? {}
-                            : { instructions: newStep.instructions }),
-                        });
-                      }}
-                    >
-                      Add step
-                    </s-button>
-                  </s-stack>
-                  {instructionsField(
-                    newStep.instructions,
-                    (instructions) => {
-                      setNewStep({ ...newStep, instructions });
+              <s-stack gap="small-300">
+                <s-stack direction="inline" gap="base" alignItems="end">
+                  <s-text-field
+                    label="New step"
+                    placeholder="e.g. Engrave"
+                    value={newStep.name}
+                    disabled={stepsLocked}
+                    onInput={(event) => {
+                      setNewStep({
+                        ...newStep,
+                        name: event.currentTarget.value,
+                      });
+                    }}
+                  />
+                  {teamSelect(
+                    newStep.teamId,
+                    (teamId) => {
+                      setNewStep({ ...newStep, teamId });
                     },
-                    "Instructions for new step",
+                    "Team for new step",
                   )}
+                  <s-button
+                    variant="secondary"
+                    disabled={
+                      stepsLocked ||
+                      newStep.name.trim().length === 0 ||
+                      newStep.teamId === ""
+                    }
+                    {...(addStepMutation.isPending ? { loading: true } : {})}
+                    onClick={() => {
+                      addStepMutation.mutate({
+                        name: newStep.name,
+                        teamId: newStep.teamId,
+                        ...(instructionsOrNull(newStep.instructions) === null
+                          ? {}
+                          : { instructions: newStep.instructions }),
+                      });
+                    }}
+                  >
+                    Add step
+                  </s-button>
                 </s-stack>
-              )
+                {instructionsField(
+                  newStep.instructions,
+                  (instructions) => {
+                    setNewStep({ ...newStep, instructions });
+                  },
+                  "Instructions for new step",
+                )}
+              </s-stack>
             )}
             {draftFooter()}
           </s-stack>

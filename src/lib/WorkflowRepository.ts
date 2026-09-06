@@ -23,11 +23,10 @@ export class WorkflowRepositoryError extends Schema.TaggedError<WorkflowReposito
 ) {}
 
 /**
- * Another workflow — possibly an archived one — already holds the name,
- * case-insensitively. Archived rows keep their names on purpose: two rows named
- * X, one archived, would make history and pickers ambiguous, and unarchiving
- * is one click. Detected by `insert or ignore ... returning` yielding no row,
- * not by matching constraint text.
+ * Another workflow already holds the name, case-insensitively. Uniqueness is
+ * among existing rows only — a delete frees the name at once. Detected by
+ * `insert or ignore ... returning` yielding no row, not by matching
+ * constraint text.
  */
 export class WorkflowNameTakenError extends Schema.TaggedError<WorkflowNameTakenError>()(
   "WorkflowNameTakenError",
@@ -57,9 +56,9 @@ export class WorkflowLimitError extends Schema.TaggedError<WorkflowLimitError>()
 ) {}
 
 /**
- * Another order workflow holds the slot. Two slots exist: at most one
- * non-archived order workflow (create, restore — an off one still occupies
- * the name and the slot) and at most one *active* order workflow
+ * Another order workflow holds the slot. Two slots exist: at most one order
+ * workflow row (create — an off one still occupies the name and the slot;
+ * delete frees both at once) and at most one *active* order workflow
  * (`setWorkflowActive`). A repository check rather than a SQL constraint so
  * the UI gets a named error.
  */
@@ -79,21 +78,14 @@ export class NoStepsError extends Schema.TaggedError<NoStepsError>()(
   { workflowId: Schema.String },
 ) {}
 
-/** Turn-on refused: an archived workflow is restored first. */
-export class WorkflowArchivedError extends Schema.TaggedError<WorkflowArchivedError>()(
-  "WorkflowArchivedError",
-  { workflowId: Schema.String },
-) {}
-
-/** Archive refused while `active = 1`: the merchant turns the workflow off first, as Flow only deletes inactive workflows. */
-export class WorkflowActiveError extends Schema.TaggedError<WorkflowActiveError>()(
-  "WorkflowActiveError",
-  { workflowId: Schema.String },
-) {}
-
-/** Apply or turn-on refused because these steps point at teams that are not active. */
-export class TeamNotActiveError extends Schema.TaggedError<TeamNotActiveError>()(
-  "TeamNotActiveError",
+/**
+ * Apply or turn-on refused because these steps are unassigned: `teamId` null
+ * (a team delete nulled it) or an id the live roster does not carry (the
+ * cross-store window, read as null). An empty team is deliberately not here —
+ * that is a warning, never a refusal.
+ */
+export class StepUnassignedError extends Schema.TaggedError<StepUnassignedError>()(
+  "StepUnassignedError",
   { workflowId: Schema.String, stepNames: Schema.Array(Domain.StepName) },
 ) {}
 
@@ -114,25 +106,56 @@ const validLayout = (
 const count = (query: Statement.Statement<SqlConnection.Row>) =>
   query.values.pipe(Effect.map((rows) => Number(rows[0]?.[0] ?? 0)));
 
-type ActiveTeams = readonly { readonly id: Domain.TeamId }[];
+/** The live D1 roster as the object passes it in; `memberCount` only matters to the list's attention badge. */
+type Teams = readonly {
+  readonly id: Domain.TeamId;
+  readonly memberCount?: number;
+}[];
 
-/** The names of `steps` whose team is not in `activeTeams`, in position order. */
-const orphanedStepNames = (
+/** Unassigned: `teamId` null, or an id no team in `teams` carries. */
+const isUnassigned = (step: Domain.WorkflowStep, teams: Teams) =>
+  step.teamId === null || !teams.some((team) => team.id === step.teamId);
+
+/** The names of the unassigned `steps`, in position order. */
+const unassignedStepNames = (
   steps: readonly Domain.WorkflowStep[],
-  activeTeams: ActiveTeams,
-) =>
-  steps
-    .filter((step) => !activeTeams.some((team) => team.id === step.teamId))
-    .map((step) => step.name);
+  teams: Teams,
+) => steps.filter((step) => isUnassigned(step, teams)).map((step) => step.name);
 
 export class WorkflowRepository extends Context.Service<
   WorkflowRepository,
   {
+    /**
+     * `teams` is the live roster: `needsAttention` is derived per row from
+     * the workflow's steps against it (unassigned, or on a team with no
+     * members) and never stored.
+     */
     readonly listWorkflows: (input: {
-      readonly includeArchived: boolean;
+      readonly teams: Teams;
     }) => Effect.Effect<
       readonly Domain.WorkflowSummary[],
       SqlError.SqlError | WorkflowRepositoryError
+    >;
+    /** The delete dialog's counts: open and finished runs of the workflow. `None` when the workflow does not exist. */
+    readonly countRuns: (input: {
+      readonly workflowId: string;
+    }) => Effect.Effect<
+      Option.Option<Domain.WorkflowDeleteCounts>,
+      SqlError.SqlError | WorkflowRepositoryError
+    >;
+    /**
+     * Delete a workflow and its runs go with it: every run (open and
+     * finished, item and order scope) and its steps, then the workflow, whose
+     * steps, draft, and draft steps cascade — one transaction, no trace. No
+     * turn-off-first rule; the confirm dialog carries the counts. `WorkflowRun`
+     * has no foreign key to `Workflow` (a run snapshots its definition), so
+     * the run delete is explicit.
+     */
+    readonly deleteWorkflow: (input: {
+      readonly workflowId: string;
+    }) => Effect.Effect<
+      void,
+      SqlError.SqlError | WorkflowRepositoryError | WorkflowNotFoundError
     >;
     /** The workflow with its steps, and the draft with its steps when one exists. */
     readonly getWorkflow: (input: {
@@ -142,8 +165,8 @@ export class WorkflowRepository extends Context.Service<
       SqlError.SqlError | WorkflowRepositoryError
     >;
     /**
-     * Every switched-on, non-archived workflow with its steps, in two
-     * statements rather than one per workflow: this is what an order upsert
+     * Every switched-on workflow with its steps, in two statements rather
+     * than one per workflow: this is what an order upsert
      * loads before starting runs for its line items, and a bulk stream loads
      * it once for thousands of orders. Drafts are invisible here by
      * construction — nothing in run creation reads `WorkflowDraft*`.
@@ -160,10 +183,10 @@ export class WorkflowRepository extends Context.Service<
      * preserve it.
      *
      * `WorkflowRun` needs its own delete: it deliberately has no foreign key
-     * to `Workflow` (a run snapshots its definition so it survives a rename or
-     * an archive), so nothing cascades from the `Workflow` delete to it.
+     * to `Workflow` (a run snapshots its definition so it survives a rename),
+     * so nothing cascades from the `Workflow` delete to it.
      *
-     * Bypasses the name, limit, and active-team checks the ordinary write path
+     * Bypasses the name, limit, and team checks the ordinary write path
      * enforces: positions come from array order and `teamId` from `Team` rows
      * the caller created moments earlier, so there is nothing left to race.
      * The Durable Object gates the callable on `ENVIRONMENT === "local"`.
@@ -178,7 +201,7 @@ export class WorkflowRepository extends Context.Service<
      * workflow only through Apply. `scope` defaults to `item`. An order
      * workflow must have no tags (a `WorkflowRepositoryError`: the UI never
      * sends any, so it is a programming error) and is refused while another
-     * non-archived one exists.
+     * one exists.
      */
     readonly createWorkflow: (input: {
       readonly name: Domain.WorkflowName;
@@ -215,42 +238,24 @@ export class WorkflowRepository extends Context.Service<
       | NoDraftError
     >;
     /**
-     * Idempotent. Archiving requires the workflow to be off. Nothing points
-     * at a definition — a run copies its steps — so archiving only hides the
-     * workflow and reserves its name. Restoring an order workflow is refused
-     * while another non-archived one holds the slot; restore leaves the
-     * workflow off, and the merchant turns it on deliberately.
-     */
-    readonly setWorkflowArchived: (input: {
-      readonly workflowId: string;
-      readonly archived: boolean;
-    }) => Effect.Effect<
-      Domain.Workflow,
-      | SqlError.SqlError
-      | WorkflowRepositoryError
-      | WorkflowNotFoundError
-      | OrderWorkflowExistsError
-      | WorkflowActiveError
-    >;
-    /**
-     * The on/off switch. On requires: not archived, at least one step, every
-     * step's team in `activeTeams`, and (order scope) no other active order
-     * workflow. Off touches nothing else: open runs are days of physical work
-     * and keep going; only new runs stop. Neither direction creates, applies,
-     * or discards a draft, or looks at whether one exists.
+     * The on/off switch. On requires: at least one step, every step assigned
+     * to a team in `teams`, and (order scope) no other active order workflow.
+     * A team with no members does not refuse. Off touches nothing else: open
+     * runs are days of physical work and keep going; only new runs stop.
+     * Neither direction creates, applies, or discards a draft, or looks at
+     * whether one exists.
      */
     readonly setWorkflowActive: (input: {
       readonly workflowId: string;
       readonly active: boolean;
-      readonly activeTeams: ActiveTeams;
+      readonly teams: Teams;
     }) => Effect.Effect<
       Domain.Workflow,
       | SqlError.SqlError
       | WorkflowRepositoryError
       | WorkflowNotFoundError
-      | WorkflowArchivedError
       | NoStepsError
-      | TeamNotActiveError
+      | StepUnassignedError
       | OrderWorkflowExistsError
     >;
     /**
@@ -267,13 +272,13 @@ export class WorkflowRepository extends Context.Service<
     /**
      * Replaces the workflow's tags and steps with the draft's and deletes the
      * draft, in one transaction: an order sees the old definition or the new
-     * one, never a half-edit. Refused with no draft, an empty draft, or a
-     * step on an inactive team, on and off alike. Does not touch `active`.
-     * Draft step ids carry over to the workflow.
+     * one, never a half-edit. Refused with no draft, an empty draft, or an
+     * unassigned step, on and off alike. Does not touch `active`. Draft step
+     * ids carry over to the workflow.
      */
     readonly applyDraft: (input: {
       readonly workflowId: string;
-      readonly activeTeams: ActiveTeams;
+      readonly teams: Teams;
     }) => Effect.Effect<
       Domain.Workflow,
       | SqlError.SqlError
@@ -281,7 +286,7 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowNotFoundError
       | NoDraftError
       | NoStepsError
-      | TeamNotActiveError
+      | StepUnassignedError
     >;
     /** Deletes the draft (steps cascade). Always allowed; a never-applied workflow is left with zero steps. */
     readonly discardDraft: (input: {
@@ -323,7 +328,7 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowLimitError
       | StageNotFoundError
     >;
-    /** A draft step and its workflow, so a caller can refuse writes on an archived workflow. Workflow steps are not found here: they are never written. */
+    /** A draft step and its workflow. Workflow steps are not found here: they are never written. */
     readonly getStep: (input: { readonly stepId: string }) => Effect.Effect<
       Option.Option<{
         readonly step: Domain.WorkflowDraftStep;
@@ -363,19 +368,32 @@ export class WorkflowRepository extends Context.Service<
       SqlError.SqlError | WorkflowRepositoryError | StepNotFoundError
     >;
     /**
-     * Counts workflow steps and draft steps, of archived workflows too: an
-     * archived workflow can be restored, and its steps would then point at a
-     * team that no longer exists as a place work can go.
+     * Every pointer a team delete would null, per team: workflow steps, draft
+     * steps, and open run steps. Feeds the delete dialogs, never a refusal.
+     * Teams that own nothing are absent.
      */
-    readonly countStepsOwnedBy: (input: {
-      readonly teamId: string;
-    }) => Effect.Effect<number, SqlError.SqlError>;
+    readonly countStepsByTeam: () => Effect.Effect<
+      readonly Domain.TeamStepCounts[],
+      SqlError.SqlError | WorkflowRepositoryError
+    >;
     readonly listStepsOwnedBy: (input: {
       readonly teamId: string;
     }) => Effect.Effect<
       readonly Domain.OwnedStep[],
       SqlError.SqlError | WorkflowRepositoryError
     >;
+    /**
+     * The object-side half of a team delete: every workflow step, draft step,
+     * and *open* run step that points at `teamId` becomes unassigned, in one
+     * transaction. Finished run steps keep the pointer and their `teamName`
+     * snapshot. Idempotent, so a retry after a failed first attempt (D1 row
+     * already gone) still cleans up. Touches `WorkflowRunStep` from here
+     * rather than from the run repository because the three updates must
+     * share one transaction and Durable Object SQLite refuses to nest.
+     */
+    readonly unassignTeam: (input: {
+      readonly teamId: string;
+    }) => Effect.Effect<void, SqlError.SqlError>;
   }
 >()("WorkflowRepository") {
   static readonly layer: Layer.Layer<
@@ -477,14 +495,14 @@ export class WorkflowRepository extends Context.Service<
           sql`select count(*) from WorkflowDraftStep where workflowId = ${workflowId}`,
         );
 
-      /** The non-archived order workflow other than `exceptId`, if any; `activeOnly` narrows to the switched-on one. */
+      /** The order workflow other than `exceptId`, if any; `activeOnly` narrows to the switched-on one. */
       const otherOrderWorkflowId = (
         exceptId: string | null,
         activeOnly: boolean,
       ) =>
         sql`
           select id from Workflow
-          where scope = 'order' and archivedAt is null
+          where scope = 'order'
             and id is not ${exceptId}
             ${activeOnly ? sql`and active = 1` : sql``}
           limit 1
@@ -559,7 +577,7 @@ export class WorkflowRepository extends Context.Service<
         readonly position: Statement.Fragment;
         readonly stage: Statement.Fragment;
         readonly name: Domain.StepName;
-        readonly teamId: Domain.TeamId;
+        readonly teamId: Domain.TeamId | null;
         readonly instructions: Domain.StepInstructions | null;
       }) =>
         Effect.gen(function* () {
@@ -681,30 +699,34 @@ export class WorkflowRepository extends Context.Service<
           return step;
         });
 
-      /** Apply and turn-on share the content checks: at least one step, every team active. */
+      /** Apply and turn-on share the content checks: at least one step, every step assigned. */
       const requireStartableSteps = (
         workflowId: string,
         steps: readonly Domain.WorkflowStep[],
-        activeTeams: ActiveTeams,
+        teams: Teams,
       ) =>
         Effect.gen(function* () {
           if (steps.length === 0)
             return yield* new NoStepsError({ workflowId });
-          const stepNames = orphanedStepNames(steps, activeTeams);
+          const stepNames = unassignedStepNames(steps, teams);
           if (stepNames.length > 0)
-            return yield* new TeamNotActiveError({ workflowId, stepNames });
+            return yield* new StepUnassignedError({ workflowId, stepNames });
           return steps;
         });
 
       return WorkflowRepository.of({
         listWorkflows: Effect.fn("WorkflowRepository.listWorkflows")(
-          function* ({
-            includeArchived,
-          }: {
-            readonly includeArchived: boolean;
-          }) {
-            return yield* decode(
-              Schema.Array(Domain.WorkflowSummary),
+          function* ({ teams }: { readonly teams: Teams }) {
+            const rows = yield* decode(
+              Schema.Array(
+                Schema.Struct({
+                  ...Domain.Workflow.fields,
+                  hasDraft: Domain.WorkflowSummary.fields.hasDraft,
+                  stepCount: Schema.Number,
+                  openRuns: Schema.Number,
+                  finishedRuns: Schema.Number,
+                }),
+              ),
               "Invalid WorkflowSummary row",
             )(
               yield* sql`
@@ -712,11 +734,68 @@ export class WorkflowRepository extends Context.Service<
                   exists (select 1 from WorkflowDraft d where d.workflowId = w.id) as hasDraft,
                   (select count(*) from WorkflowStep s where s.workflowId = w.id) as stepCount,
                   (select count(*) from WorkflowRun r
-                    where r.workflowId = w.id and r.status in ('pending', 'active')) as activeRunCount
+                    where r.workflowId = w.id and r.status in ('pending', 'active')) as openRuns,
+                  (select count(*) from WorkflowRun r
+                    where r.workflowId = w.id and r.status in ('done', 'cancelled')) as finishedRuns
                 from Workflow w
-                ${includeArchived ? sql`` : sql`where w.archivedAt is null`}
-                order by w.archivedAt is not null, w.name collate nocase
+                order by w.name collate nocase
               `,
+            );
+            // Derived, never stored: the badge is computed from the workflow's
+            // steps against the roster on every list read, so assigning a
+            // team or adding a member clears it with no other write.
+            const steps = yield* decodeSteps(
+              yield* sql`select * from WorkflowStep order by workflowId, position`,
+            );
+            const emptyTeam = (step: Domain.WorkflowStep) =>
+              teams.some(
+                (team) => team.id === step.teamId && team.memberCount === 0,
+              );
+            return rows.map((row): Domain.WorkflowSummary => ({
+              ...row,
+              needsAttention: steps.some(
+                (step) =>
+                  step.workflowId === row.id &&
+                  (isUnassigned(step, teams) || emptyTeam(step)),
+              ),
+            }));
+          },
+        ),
+
+        countRuns: Effect.fn("WorkflowRepository.countRuns")(function* ({
+          workflowId,
+        }: {
+          readonly workflowId: string;
+        }) {
+          const workflow = yield* findWorkflow(workflowId);
+          if (Option.isNone(workflow)) return Option.none();
+          const [counts] = yield* decode(
+            Schema.Array(Domain.WorkflowDeleteCounts),
+            "Invalid run count row",
+          )(
+            yield* sql`
+              select
+                (select count(*) from WorkflowRun
+                  where workflowId = ${workflowId} and status in ('pending', 'active')) as openRuns,
+                (select count(*) from WorkflowRun
+                  where workflowId = ${workflowId} and status in ('done', 'cancelled')) as finishedRuns
+            `,
+          );
+          return Option.fromUndefinedOr(counts);
+        }),
+
+        deleteWorkflow: Effect.fn("WorkflowRepository.deleteWorkflow")(
+          function* ({ workflowId }: { readonly workflowId: string }) {
+            yield* sql.withTransaction(
+              Effect.gen(function* () {
+                yield* requireWorkflow(workflowId);
+                yield* sql`
+                  delete from WorkflowRunStep
+                  where runId in (select id from WorkflowRun where workflowId = ${workflowId})
+                `;
+                yield* sql`delete from WorkflowRun where workflowId = ${workflowId}`;
+                yield* sql`delete from Workflow where id = ${workflowId}`;
+              }),
             );
           },
         ),
@@ -744,7 +823,7 @@ export class WorkflowRepository extends Context.Service<
           const workflows = yield* decodeWorkflows(
             yield* sql`
               select * from Workflow
-              where archivedAt is null and active = 1
+              where active = 1
               order by name collate nocase
             `,
           );
@@ -752,7 +831,7 @@ export class WorkflowRepository extends Context.Service<
             yield* sql`
               select s.* from WorkflowStep s
               join Workflow w on w.id = s.workflowId
-              where w.archivedAt is null and w.active = 1
+              where w.active = 1
               order by s.workflowId, s.position
             `,
           );
@@ -764,9 +843,10 @@ export class WorkflowRepository extends Context.Service<
 
         /**
          * A fixture's `steps` become the workflow's steps, switched on unless
-         * `active: false` or archived. A fixture with no steps and no `draft`
-         * gets an empty draft — the state the ordinary path leaves a fresh
-         * workflow in. `draft` seeds a pending draft beside the workflow.
+         * `active: false` or a step is unassigned. A fixture with no steps and
+         * no `draft` gets an empty draft — the state the ordinary path leaves
+         * a fresh workflow in. `draft` seeds a pending draft beside the
+         * workflow.
          */
         replaceWorkflows: Effect.fn("WorkflowRepository.replaceWorkflows")(
           function* ({ workflows }: Domain.SeedWorkflowsInput) {
@@ -813,7 +893,8 @@ export class WorkflowRepository extends Context.Service<
               draft: draftOf(workflow),
               active:
                 workflow.active ??
-                (workflow.steps.length > 0 && workflow.archived !== true),
+                (workflow.steps.length > 0 &&
+                  workflow.steps.every((step) => step.teamId !== null)),
             }));
             const invalid = staged.find(
               (workflow) =>
@@ -838,23 +919,20 @@ export class WorkflowRepository extends Context.Service<
                 message: `replaceWorkflows: workflow=${taggedOrder.name}: an order workflow has no tags`,
                 cause: taggedOrder.tags,
               });
-            const openOrder = staged.filter(
-              (workflow) =>
-                workflow.scope === "order" && workflow.archived !== true,
+            const orderWorkflows = staged.filter(
+              (workflow) => workflow.scope === "order",
             );
-            if (openOrder.length > 1)
+            if (orderWorkflows.length > 1)
               return yield* new WorkflowRepositoryError({
-                message: `replaceWorkflows: ${String(openOrder.length)} non-archived order workflows; at most one`,
-                cause: openOrder.map((workflow) => workflow.name),
+                message: `replaceWorkflows: ${String(orderWorkflows.length)} order workflows; at most one`,
+                cause: orderWorkflows.map((workflow) => workflow.name),
               });
             const badActive = staged.find(
-              (workflow) =>
-                workflow.active &&
-                (workflow.archived === true || workflow.steps.length === 0),
+              (workflow) => workflow.active && workflow.steps.length === 0,
             );
             if (badActive !== undefined)
               return yield* new WorkflowRepositoryError({
-                message: `replaceWorkflows: workflow=${badActive.name}: an active workflow needs steps and must not be archived`,
+                message: `replaceWorkflows: workflow=${badActive.name}: an active workflow needs steps`,
                 cause: badActive.name,
               });
             const writeSteps = (
@@ -881,9 +959,9 @@ export class WorkflowRepository extends Context.Service<
                   const workflowId = crypto.randomUUID();
                   yield* sql`
                     insert into Workflow
-                      (id, name, scope, active, archivedAt, tags, createdAt, updatedAt)
+                      (id, name, scope, active, tags, createdAt, updatedAt)
                     values
-                      (${workflowId}, ${workflow.name}, ${workflow.scope ?? "item"}, ${workflow.active ? 1 : 0}, ${workflow.archived === true ? now : null}, ${json(workflow.tags)}, ${now}, ${now})
+                      (${workflowId}, ${workflow.name}, ${workflow.scope ?? "item"}, ${workflow.active ? 1 : 0}, ${json(workflow.tags)}, ${now}, ${now})
                   `;
                   yield* writeSteps(
                     sql.literal("WorkflowStep"),
@@ -927,9 +1005,7 @@ export class WorkflowRepository extends Context.Service<
           }) {
             yield* requireNoTagsForOrderScope(scope, tags);
             if (scope === "order") yield* requireOrderWorkflowSlot(null, false);
-            const open = yield* count(
-              sql`select count(*) from Workflow where archivedAt is null`,
-            );
+            const open = yield* count(sql`select count(*) from Workflow`);
             if (open >= Domain.WorkflowLimits.maxWorkflows)
               return yield* new WorkflowLimitError({
                 limit: Domain.WorkflowLimits.maxWorkflows,
@@ -941,9 +1017,9 @@ export class WorkflowRepository extends Context.Service<
                 const [workflow] = yield* decodeWorkflows(
                   yield* sql`
                     insert or ignore into Workflow
-                      (id, name, scope, active, archivedAt, tags, createdAt, updatedAt)
+                      (id, name, scope, active, tags, createdAt, updatedAt)
                     values
-                      (${workflowId}, ${name}, ${scope}, 0, null, '[]', ${now}, ${now})
+                      (${workflowId}, ${name}, ${scope}, 0, '[]', ${now}, ${now})
                     returning *
                   `,
                 );
@@ -1006,51 +1082,22 @@ export class WorkflowRepository extends Context.Service<
           },
         ),
 
-        setWorkflowArchived: Effect.fn(
-          "WorkflowRepository.setWorkflowArchived",
-        )(function* ({
-          workflowId,
-          archived,
-        }: {
-          readonly workflowId: string;
-          readonly archived: boolean;
-        }) {
-          const existing = yield* requireWorkflow(workflowId);
-          if (archived && existing.active)
-            return yield* new WorkflowActiveError({ workflowId });
-          if (!archived && existing.scope === "order")
-            yield* requireOrderWorkflowSlot(workflowId, false);
-          const now = yield* Clock.currentTimeMillis;
-          const [workflow] = yield* decodeWorkflows(
-            yield* sql`
-              update Workflow
-              set archivedAt = ${archived ? sql`coalesce(archivedAt, ${now})` : sql`null`},
-                  updatedAt = ${now}
-              where id = ${workflowId}
-              returning *
-            `,
-          );
-          return workflow ?? (yield* new WorkflowNotFoundError({ workflowId }));
-        }),
-
         setWorkflowActive: Effect.fn("WorkflowRepository.setWorkflowActive")(
           function* ({
             workflowId,
             active,
-            activeTeams,
+            teams,
           }: {
             readonly workflowId: string;
             readonly active: boolean;
-            readonly activeTeams: ActiveTeams;
+            readonly teams: Teams;
           }) {
             const existing = yield* requireWorkflow(workflowId);
             if (active) {
-              if (existing.archivedAt !== null)
-                return yield* new WorkflowArchivedError({ workflowId });
               yield* requireStartableSteps(
                 workflowId,
                 yield* workflowSteps(workflowId),
-                activeTeams,
+                teams,
               );
               if (existing.scope === "order")
                 yield* requireOrderWorkflowSlot(workflowId, true);
@@ -1107,10 +1154,10 @@ export class WorkflowRepository extends Context.Service<
 
         applyDraft: Effect.fn("WorkflowRepository.applyDraft")(function* ({
           workflowId,
-          activeTeams,
+          teams,
         }: {
           readonly workflowId: string;
-          readonly activeTeams: ActiveTeams;
+          readonly teams: Teams;
         }) {
           return yield* sql.withTransaction(
             Effect.gen(function* () {
@@ -1118,7 +1165,7 @@ export class WorkflowRepository extends Context.Service<
               const draft = yield* requireDraft(workflowId);
               yield* requireNoTagsForOrderScope(existing.scope, draft.tags);
               const steps = yield* draftSteps(workflowId);
-              yield* requireStartableSteps(workflowId, steps, activeTeams);
+              yield* requireStartableSteps(workflowId, steps, teams);
               const now = yield* Clock.currentTimeMillis;
               yield* sql`delete from WorkflowStep where workflowId = ${workflowId}`;
               yield* sql`
@@ -1328,13 +1375,32 @@ export class WorkflowRepository extends Context.Service<
           );
         }),
 
-        countStepsOwnedBy: Effect.fn("WorkflowRepository.countStepsOwnedBy")(
-          function* ({ teamId }: { readonly teamId: string }) {
-            return yield* count(
-              sql`
-                select
-                  (select count(*) from WorkflowStep where teamId = ${teamId})
-                  + (select count(*) from WorkflowDraftStep where teamId = ${teamId})
+        countStepsByTeam: Effect.fn("WorkflowRepository.countStepsByTeam")(
+          function* () {
+            return yield* decode(
+              Schema.Array(Domain.TeamStepCounts),
+              "Invalid TeamStepCounts row",
+            )(
+              yield* sql`
+                select teamId,
+                  sum(workflowSteps) as workflowSteps,
+                  sum(draftSteps) as draftSteps,
+                  sum(openRunSteps) as openRunSteps
+                from (
+                  select teamId, 1 as workflowSteps, 0 as draftSteps, 0 as openRunSteps
+                  from WorkflowStep where teamId is not null
+                  union all
+                  select teamId, 0, 1, 0
+                  from WorkflowDraftStep where teamId is not null
+                  union all
+                  select s.teamId, 0, 0, 1
+                  from WorkflowRunStep s
+                  join WorkflowRun r on r.id = s.runId
+                  where s.teamId is not null and s.completedAt is null
+                    and r.status in ('pending', 'active')
+                )
+                group by teamId
+                order by teamId
               `,
             );
           },
@@ -1347,25 +1413,40 @@ export class WorkflowRepository extends Context.Service<
               "Invalid OwnedStep row",
             )(
               yield* sql`
-                select workflowId, workflowName, workflowArchived, side, stepName from (
+                select workflowId, workflowName, side, stepName from (
                   select w.id as workflowId, w.name as workflowName,
-                    (w.archivedAt is not null) as workflowArchived,
                     'workflow' as side, 0 as sideOrder, s.name as stepName, s.position
                   from WorkflowStep s
                   join Workflow w on w.id = s.workflowId
                   where s.teamId = ${teamId}
                   union all
-                  select w.id, w.name, (w.archivedAt is not null),
-                    'draft', 1, s.name, s.position
+                  select w.id, w.name, 'draft', 1, s.name, s.position
                   from WorkflowDraftStep s
                   join Workflow w on w.id = s.workflowId
                   where s.teamId = ${teamId}
                 )
-                order by workflowArchived, workflowName collate nocase, sideOrder, position
+                order by workflowName collate nocase, sideOrder, position
               `,
             );
           },
         ),
+
+        unassignTeam: Effect.fn("WorkflowRepository.unassignTeam")(function* ({
+          teamId,
+        }: {
+          readonly teamId: string;
+        }) {
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`update WorkflowStep set teamId = null where teamId = ${teamId}`;
+              yield* sql`update WorkflowDraftStep set teamId = null where teamId = ${teamId}`;
+              yield* sql`
+                update WorkflowRunStep set teamId = null
+                where teamId = ${teamId} and completedAt is null
+              `;
+            }),
+          );
+        }),
       });
     }),
   );

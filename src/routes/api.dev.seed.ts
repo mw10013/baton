@@ -7,38 +7,23 @@ import { D1Primary } from "@/lib/D1Primary";
 import * as Domain from "@/lib/Domain";
 import { Repository } from "@/lib/Repository";
 
+/** `team: null` seeds the step unassigned, the state a team delete leaves behind. */
 const SeedStepByTeamName = Schema.Struct({
   name: Domain.StepName,
-  team: Domain.TeamName,
+  team: Schema.NullOr(Domain.TeamName),
   stage: Schema.optionalKey(Schema.Number),
   instructions: Schema.optionalKey(Domain.StepInstructions),
 });
 
 const DevSeedInput = Schema.Struct({
   shop: Domain.Shop,
-  /**
-   * A bare email is an active member; the object form can seed an archived
-   * one. Archiving is applied after team membership because `setTeamMember`
-   * refuses an archived member, and a fixture wants archived members to keep
-   * their team edges the way a real archive does.
-   */
-  members: Schema.Array(
-    Schema.Union([
-      Domain.Email,
-      Schema.Struct({ email: Domain.Email, archived: Schema.Boolean }),
-    ]),
-  ),
-  /**
-   * `archived` is applied after the team's membership is written, for the
-   * same reason as an archived member: `setTeamMember` refuses an archived
-   * team, and a real archive keeps its edges.
-   */
+  members: Schema.Array(Domain.Email),
+  /** A team with an empty `members` list seeds the "No members" state. */
   teams: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
         name: Domain.TeamName,
         members: Schema.Array(Domain.Email),
-        archived: Schema.optionalKey(Schema.Boolean),
       }),
     ),
   ),
@@ -53,8 +38,7 @@ const DevSeedInput = Schema.Struct({
       Schema.Struct({
         name: Domain.WorkflowName,
         scope: Schema.optionalKey(Domain.WorkflowScope),
-        archived: Schema.optionalKey(Schema.Boolean),
-        /** Defaults to on when the entry has steps and is not archived; see `Domain.SeedWorkflowsInput`. */
+        /** Defaults to on when the entry has steps and every step is assigned; see `Domain.SeedWorkflowsInput`. */
         active: Schema.optionalKey(Schema.Boolean),
         tags: Domain.ProductTags,
         steps: Schema.Array(SeedStepByTeamName),
@@ -128,20 +112,10 @@ export const Route = createFileRoute("/api/dev/seed")({
               return new Response("Not Found", { status: 404 });
             const request = yield* CurrentRequest;
             return yield* Effect.gen(function* () {
-              const {
-                shop,
-                members: memberInputs,
-                teams,
-                workflows,
-                orders,
-              } = yield* Schema.decodeUnknownEffect(DevSeedInput)(
-                yield* Effect.tryPromise(() => request.json()),
-              );
-              const members = memberInputs.map((member) =>
-                typeof member === "string"
-                  ? { email: member, archived: false }
-                  : member,
-              );
+              const { shop, members, teams, workflows, orders } =
+                yield* Schema.decodeUnknownEffect(DevSeedInput)(
+                  yield* Effect.tryPromise(() => request.json()),
+                );
               const sql = yield* D1Primary;
               const repository = yield* Repository;
               // Checked rather than left to the FK: `Member.shop` and
@@ -158,7 +132,7 @@ export const Route = createFileRoute("/api/dev/seed")({
               yield* sql`delete from Team where shop = ${shop}`;
               yield* sql`delete from Member where shop = ${shop}`;
               yield* sql`delete from Verification`;
-              for (const { email } of members) {
+              for (const email of members) {
                 yield* sql`delete from User where email = ${email}`;
                 yield* repository.addMember({ shop, email });
               }
@@ -189,26 +163,12 @@ export const Route = createFileRoute("/api/dev/seed")({
                     inTeam: true,
                   });
                 }
-                if (team.archived === true)
-                  yield* repository.setTeamArchived({
-                    shop,
-                    id: teamId,
-                    archived: true,
-                  });
               }
-              for (const { email, archived } of members)
-                if (archived)
-                  yield* repository.setMemberArchived({
-                    shop,
-                    email,
-                    archived: true,
-                  });
               type SeedStep =
                 (typeof Domain.SeedWorkflowsInput.Encoded)["workflows"][number]["steps"][number];
               const seedWorkflows: {
                 name: string;
                 scope?: Domain.WorkflowScope;
-                archived?: boolean;
                 active?: boolean;
                 tags: readonly string[];
                 steps: SeedStep[];
@@ -221,10 +181,11 @@ export const Route = createFileRoute("/api/dev/seed")({
               ): SeedStep[] | Response => {
                 const resolved: SeedStep[] = [];
                 for (const step of steps) {
-                  const teamId = teamIds.get(step.team);
+                  const teamId =
+                    step.team === null ? null : teamIds.get(step.team);
                   if (teamId === undefined)
                     return new Response(
-                      `workflow ${workflowName} step ${step.name} references unseeded team ${step.team}`,
+                      `workflow ${workflowName} step ${step.name} references unseeded team ${step.team ?? ""}`,
                       { status: 400 },
                     );
                   resolved.push({
@@ -260,9 +221,6 @@ export const Route = createFileRoute("/api/dev/seed")({
                   ...(workflow.scope === undefined
                     ? {}
                     : { scope: workflow.scope }),
-                  ...(workflow.archived === undefined
-                    ? {}
-                    : { archived: workflow.archived }),
                   ...(workflow.active === undefined
                     ? {}
                     : { active: workflow.active }),
@@ -278,18 +236,21 @@ export const Route = createFileRoute("/api/dev/seed")({
                   workflows: seedWorkflows,
                 }),
               );
-              const seedMemberId = members[0]
-                ? memberIds.get(members[0].email)
-                : undefined;
+              const seedMemberEmail = members[0];
+              const seedMemberId =
+                seedMemberEmail === undefined
+                  ? undefined
+                  : memberIds.get(seedMemberEmail);
               if (seedMemberId === undefined && (orders ?? []).length > 0)
                 return new Response("orders need at least one seeded member", {
                   status: 400,
                 });
               // Always called: an empty fixture must clear the previous run's orders.
-              if (seedMemberId !== undefined)
+              if (seedMemberId !== undefined && seedMemberEmail !== undefined)
                 yield* Effect.tryPromise(() =>
                   env.SHOP_AGENT.getByName(shop).seedOrders({
                     memberId: seedMemberId,
+                    memberEmail: seedMemberEmail,
                     orders: orders ?? [],
                   }),
                 );

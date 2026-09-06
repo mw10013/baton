@@ -88,6 +88,9 @@ export class ShopAgentClient extends Context.Service<
       shop: string,
       input: Domain.TeamIdInput,
     ) => Effect.Effect<readonly Domain.OwnedStep[], ShopAgentClientError>;
+    readonly countStepsByTeam: (
+      shop: string,
+    ) => Effect.Effect<readonly Domain.TeamStepCounts[], ShopAgentClientError>;
     readonly listOrders: (
       shop: string,
       input: Domain.ListOrdersInput,
@@ -98,7 +101,6 @@ export class ShopAgentClient extends Context.Service<
     ) => Effect.Effect<Domain.OrderDetailView | null, ShopAgentClientError>;
     readonly listWorkflows: (
       shop: string,
-      input: Domain.ListWorkflowsInput,
     ) => Effect.Effect<readonly Domain.WorkflowSummary[], ShopAgentClientError>;
     readonly getWorkflowDetail: (
       shop: string,
@@ -181,8 +183,8 @@ export class ShopAgentClient extends Context.Service<
        * and needs no such care.
        */
       const queueItems = Schema.toType(Schema.Array(Domain.QueueItem));
-      /** Same reason: `workflowArchived` is `SqliteBoolean`, already decoded. */
       const ownedSteps = Schema.toType(Schema.Array(Domain.OwnedStep));
+      const teamStepCounts = Schema.toType(Schema.Array(Domain.TeamStepCounts));
       const ordersView = Schema.toType(Domain.OrdersView);
       const orderDetail = Schema.toType(Schema.NullOr(Domain.OrderDetailView));
       const workflows = Schema.toType(Schema.Array(Domain.WorkflowSummary));
@@ -207,6 +209,12 @@ export class ShopAgentClient extends Context.Service<
               stub.listStepsOwnedBy(input),
             ),
         ),
+        countStepsByTeam: Effect.fn("ShopAgentClient.countStepsByTeam")(
+          (shop: string) =>
+            call("countStepsByTeam", teamStepCounts, shop, (stub) =>
+              stub.countStepsByTeam(),
+            ),
+        ),
         listOrders: Effect.fn("ShopAgentClient.listOrders")(
           (shop: string, input: Domain.ListOrdersInput) =>
             call("listOrders", ordersView, shop, (stub) =>
@@ -220,9 +228,9 @@ export class ShopAgentClient extends Context.Service<
             ),
         ),
         listWorkflows: Effect.fn("ShopAgentClient.listWorkflows")(
-          (shop: string, input: Domain.ListWorkflowsInput) =>
+          (shop: string) =>
             call("listWorkflows", workflows, shop, (stub) =>
-              stub.listWorkflows(input),
+              stub.listWorkflows(),
             ),
         ),
         getWorkflowDetail: Effect.fn("ShopAgentClient.getWorkflowDetail")(

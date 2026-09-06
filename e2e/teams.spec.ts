@@ -4,7 +4,7 @@ import { clickHoisted, gotoApp } from "./app";
 import { seedConfig, seedMembers } from "./seed";
 
 /**
- * The embedded half of teams: creating, renaming, staffing, and archiving on
+ * The embedded half of teams: creating, renaming, staffing, and deleting on
  * `/app/teams`. What a member then sees of their teams is
  * `member-area.member.spec.ts`, which runs outside the admin entirely.
  *
@@ -24,7 +24,7 @@ const EMPTY_STATE = "No teams yet. Create one above.";
 const TEAM = "E2E Cut";
 const RENAMED = "E2E Cutting";
 
-test("teams screen creates, staffs, renames, and archives a team", async ({
+test("teams screen creates, staffs, renames, and deletes a team", async ({
   page,
 }) => {
   test.setTimeout(90_000);
@@ -64,18 +64,19 @@ test("teams screen creates, staffs, renames, and archives a team", async ({
   await clickHoisted(page.getByRole("link", { name: "Teams", exact: true }));
   await expect(frame.getByRole("link", { name: RENAMED })).toBeVisible();
 
-  /* Archiving is the merchant-facing delete: the team leaves the default list
-     but stays resolvable behind the toggle, which is what keeps historical
-     work readable. */
-  await frame.getByRole("button", { name: "Archive" }).click();
+  /* A fresh team has nobody on it until staffed; this one was staffed above,
+     so the badge must be absent, and the delete dialog names no steps. */
+  await expect(frame.getByText("No members", { exact: true })).toHaveCount(0);
+  await frame.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(
+    frame.locator(`s-banner[heading="Delete ${RENAMED}?"]`),
+  ).toBeVisible();
+  await expect(
+    frame.getByText("No workflow steps are assigned to it."),
+  ).toBeVisible();
+  await frame
+    .getByRole("button", { name: "Delete", exact: true })
+    .last()
+    .click();
   await expect(frame.getByText(EMPTY_STATE)).toBeVisible();
-  await frame.getByLabel("Show archived").check();
-  await expect(frame.getByRole("link", { name: RENAMED })).toBeVisible();
-  /* `exact` matters: "Show archived" and the section's own copy both contain
-     the word, so a substring match is a strict-mode violation, not a badge. */
-  await expect(frame.getByText("Archived", { exact: true })).toBeVisible();
-
-  await frame.getByRole("button", { name: "Restore" }).click();
-  await frame.getByLabel("Show archived").uncheck();
-  await expect(frame.getByRole("link", { name: RENAMED })).toBeVisible();
 });

@@ -30,7 +30,12 @@ const order = (
 const row = (
   runs: Domain.RunCounts,
   overrides: Partial<Domain.ShopOrder> = {},
-): Domain.OrderRow => ({ order: order(overrides), itemUnits: 1, runs });
+): Domain.OrderRow => ({
+  order: order(overrides),
+  itemUnits: 1,
+  runs,
+  attention: false,
+});
 
 const NONE = { open: 0, done: 0, flagged: 0 };
 

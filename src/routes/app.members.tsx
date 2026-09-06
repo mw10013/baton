@@ -1,3 +1,5 @@
+import * as React from "react";
+
 import { useForm } from "@tanstack/react-form";
 import { useMutation } from "@tanstack/react-query";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
@@ -9,10 +11,6 @@ import { fieldError, mutationErrorMessage } from "@/lib/form";
 import { Repository } from "@/lib/Repository";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 
-const membersSearchSchema = Schema.Struct({
-  archived: Schema.optional(Schema.Boolean),
-});
-
 const MemberInput = Schema.Struct({
   email: Schema.String.check(
     Schema.isNonEmpty({ message: "Email is required" }),
@@ -20,10 +18,7 @@ const MemberInput = Schema.Struct({
 });
 type MemberInput = typeof MemberInput.Type;
 
-const MemberArchivedInput = Schema.Struct({
-  email: Schema.String,
-  archived: Schema.Boolean,
-});
+const MemberEmailInput = Schema.Struct({ email: Schema.String });
 
 const decodeEmail = Schema.decodeUnknownEffect(Domain.Email);
 
@@ -35,23 +30,16 @@ const failWith = (message: string) => () => Effect.fail(new Error(message));
 
 const MEMBER_GONE = "That member no longer exists.";
 
-/**
- * Filtered here rather than in the component so the client never receives
- * archived rows it will not show.
- */
 const getLoaderData = createServerFn({ method: "GET" })
-  .validator(Schema.toStandardSchemaV1(membersSearchSchema))
   .middleware([shopifyServerFnMiddleware])
-  .handler(({ data, context: { runEffect, session } }) =>
+  .handler(({ context: { runEffect, session } }) =>
     runEffect(
       Effect.gen(function* () {
         const shop = yield* sessionShop(session.shop);
-        const members = yield* (yield* Repository).listMembers(shop);
+        const repository = yield* Repository;
         return {
-          members:
-            data.archived === true
-              ? members
-              : members.filter((member) => member.archivedAt === null),
+          members: yield* repository.listMembers(shop),
+          soleMemberships: yield* repository.listSoleMemberships(shop),
         } satisfies Domain.MembersLoaderData;
       }),
     ),
@@ -72,35 +60,40 @@ const addMemberFn = createServerFn({ method: "POST" })
     ),
   );
 
-const setMemberArchivedFn = createServerFn({ method: "POST" })
-  .validator(Schema.toStandardSchemaV1(MemberArchivedInput))
+/**
+ * Delete a member and they leave their teams (vocabulary on `Domain.Member`).
+ * A plain server fn: a member owns nothing in the Durable Object, since run
+ * steps snapshot the actor's email, so there is no second store to clean.
+ */
+const deleteMemberFn = createServerFn({ method: "POST" })
+  .validator(Schema.toStandardSchemaV1(MemberEmailInput))
   .middleware([shopifyServerFnMiddleware])
   .handler(({ data, context: { runEffect, session } }) =>
     runEffect(
       Effect.gen(function* () {
         const repository = yield* Repository;
-        yield* repository.setMemberArchived({
+        yield* repository.deleteMember({
           shop: yield* sessionShop(session.shop),
           email: yield* decodeEmail(data.email),
-          archived: data.archived,
         });
       }).pipe(Effect.catchTag("MemberNotFoundError", failWith(MEMBER_GONE))),
     ),
   );
 
 export const Route = createFileRoute("/app/members")({
-  validateSearch: Schema.toStandardSchemaV1(membersSearchSchema),
-  loaderDeps: ({ search }) => ({ archived: search.archived }),
-  loader: ({ deps }) => getLoaderData({ data: deps }),
+  loader: () => getLoaderData(),
   component: RouteComponent,
 });
 
 function RouteComponent() {
-  const { members } = Route.useLoaderData();
-  const { archived } = Route.useSearch();
+  const { members, soleMemberships } = Route.useLoaderData();
   const router = useRouter();
   const addMember = useServerFn(addMemberFn);
-  const setMemberArchived = useServerFn(setMemberArchivedFn);
+  const deleteMember = useServerFn(deleteMemberFn);
+  /** Which member's delete is awaiting its inline confirmation. */
+  const [confirming, setConfirming] = React.useState<Domain.MemberId | null>(
+    null,
+  );
 
   const addMutation = useMutation({
     mutationFn: (data: MemberInput) => addMember({ data }),
@@ -110,10 +103,12 @@ function RouteComponent() {
     },
   });
 
-  const archiveMutation = useMutation({
-    mutationFn: (data: { email: string; archived: boolean }) =>
-      setMemberArchived({ data }),
-    onSuccess: () => router.invalidate({ sync: true }),
+  const deleteMutation = useMutation({
+    mutationFn: (email: string) => deleteMember({ data: { email } }),
+    onSuccess: async () => {
+      setConfirming(null);
+      await router.invalidate({ sync: true });
+    },
   });
 
   const form = useForm({
@@ -126,7 +121,7 @@ function RouteComponent() {
 
   const failedMutation = [
     { mutation: addMutation, fallback: "Could not add the member." },
-    { mutation: archiveMutation, fallback: "Could not update the member." },
+    { mutation: deleteMutation, fallback: "Could not delete the member." },
   ].find(({ mutation }) => mutation.isError);
   const mutationError =
     failedMutation &&
@@ -135,15 +130,65 @@ function RouteComponent() {
       failedMutation.fallback,
     );
 
+  /** The teams this member is the only person on: the delete would empty them. */
+  const emptiedTeams = (member: Domain.Member) =>
+    soleMemberships
+      .filter((row) => row.memberId === member.id)
+      .map((row) => row.teamName);
+
+  const confirmRow = (member: Domain.Member) => {
+    const emptied = emptiedTeams(member);
+    return (
+      <s-table-row key={`${member.id}-confirm`} id={`${member.id}-confirm`}>
+        <s-table-cell>
+          <s-banner
+            tone={emptied.length > 0 ? "warning" : "critical"}
+            heading={`Delete ${member.email}?`}
+          >
+            <s-stack gap="small-300">
+              <s-paragraph>
+                {emptied.length > 0
+                  ? `They leave their teams and can no longer sign in. This will leave ${emptied.join(", ")} with no members.`
+                  : "They leave their teams and can no longer sign in. Their past work stays on the record."}
+              </s-paragraph>
+              <s-stack direction="inline" gap="small-300">
+                <s-button
+                  variant="primary"
+                  tone="critical"
+                  {...(deleteMutation.isPending ? { loading: true } : {})}
+                  onClick={() => {
+                    deleteMutation.mutate(member.email);
+                  }}
+                >
+                  Delete
+                </s-button>
+                <s-button
+                  variant="tertiary"
+                  onClick={() => {
+                    setConfirming(null);
+                  }}
+                >
+                  Cancel
+                </s-button>
+              </s-stack>
+            </s-stack>
+          </s-banner>
+        </s-table-cell>
+        <s-table-cell> </s-table-cell>
+        <s-table-cell> </s-table-cell>
+      </s-table-row>
+    );
+  };
+
   return (
     <s-page heading="Members" inlineSize="large">
       <s-section heading="Add member" accessibilityLabel="Add member">
         <s-stack gap="base">
           <s-paragraph color="subdued">
             Members sign in with their email on the web member area — no Shopify
-            login needed. Adding an email grants access; archiving it revokes
-            access. Archived members keep their history and can be restored, and
-            adding an archived email restores it. Add your own email to sign in
+            login needed. Adding an email grants access; deleting a member
+            removes them from their teams and revokes access. Their past work
+            stays on the record under their email. Add your own email to sign in
             yourself.
           </s-paragraph>
           {mutationError && (
@@ -187,16 +232,6 @@ function RouteComponent() {
 
       <s-section heading="Members" accessibilityLabel="Members">
         <s-stack gap="base">
-          <s-checkbox
-            label="Show archived"
-            checked={archived === true}
-            onChange={() => {
-              void router.navigate({
-                to: "/app/members",
-                search: { archived: archived === true ? undefined : true },
-              });
-            }}
-          />
           {members.length === 0 ? (
             <s-paragraph color="subdued">
               No members yet. Add an email above to grant access.
@@ -209,15 +244,10 @@ function RouteComponent() {
                 <s-table-header> </s-table-header>
               </s-table-header-row>
               <s-table-body>
-                {members.map((member) => (
+                {members.flatMap((member) => [
                   <s-table-row key={member.id} id={member.id}>
                     <s-table-cell>
-                      <s-stack direction="inline" gap="small-300">
-                        <s-text>{member.email}</s-text>
-                        {member.archivedAt !== null && (
-                          <s-badge tone="info">Archived</s-badge>
-                        )}
-                      </s-stack>
+                      <s-text>{member.email}</s-text>
                     </s-table-cell>
                     <s-table-cell>
                       {new Date(member.createdAt).toLocaleDateString()}
@@ -225,22 +255,18 @@ function RouteComponent() {
                     <s-table-cell>
                       <s-button
                         variant="tertiary"
-                        {...(member.archivedAt === null
-                          ? { tone: "critical" as const }
-                          : {})}
-                        disabled={archiveMutation.isPending}
+                        tone="critical"
+                        disabled={deleteMutation.isPending}
                         onClick={() => {
-                          archiveMutation.mutate({
-                            email: member.email,
-                            archived: member.archivedAt === null,
-                          });
+                          setConfirming(member.id);
                         }}
                       >
-                        {member.archivedAt === null ? "Archive" : "Restore"}
+                        Delete
                       </s-button>
                     </s-table-cell>
-                  </s-table-row>
-                ))}
+                  </s-table-row>,
+                  ...(confirming === member.id ? [confirmRow(member)] : []),
+                ])}
               </s-table-body>
             </s-table>
           )}

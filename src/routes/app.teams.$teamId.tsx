@@ -1,3 +1,5 @@
+import * as React from "react";
+
 import { useForm } from "@tanstack/react-form";
 import { useMutation } from "@tanstack/react-query";
 import { createFileRoute, notFound, useRouter } from "@tanstack/react-router";
@@ -8,7 +10,10 @@ import * as Domain from "@/lib/Domain";
 import { fieldError, mutationErrorMessage } from "@/lib/form";
 import { Repository } from "@/lib/Repository";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
+import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
+
+import { deleteTeamResultMessage, deleteTeamWarning } from "./app.teams.index";
 
 const TeamIdInput = Schema.Struct({ teamId: Schema.String });
 
@@ -40,6 +45,10 @@ const failWith = (message: string) => () => Effect.fail(new Error(message));
 const NAME_TAKEN = "A team with that name already exists.";
 const TEAM_GONE = "That team is no longer available.";
 
+const decodeDeleteTeamResult = Schema.decodeUnknownPromise(
+  Schema.toType(Domain.DeleteTeamResult),
+);
+
 const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(TeamIdInput))
   .middleware([shopifyServerFnMiddleware])
@@ -52,11 +61,18 @@ const getLoaderData = createServerFn({ method: "GET" })
           id: yield* decodeTeamId(data.teamId),
         });
         if (Option.isNone(detail)) return yield* Effect.fail(notFound());
-        const ownedSteps = yield* (yield* ShopAgentClient).listStepsOwnedBy(
-          shop,
-          { teamId: detail.value.team.id },
-        );
-        return { ...detail.value, ownedSteps } satisfies Domain.TeamLoaderData;
+        const client = yield* ShopAgentClient;
+        const ownedSteps = yield* client.listStepsOwnedBy(shop, {
+          teamId: detail.value.team.id,
+        });
+        const stepCounts = (yield* client.countStepsByTeam(shop)).find(
+          (row) => row.teamId === detail.value.team.id,
+        ) ?? { workflowSteps: 0, draftSteps: 0, openRunSteps: 0 };
+        return {
+          ...detail.value,
+          ownedSteps,
+          stepCounts,
+        } satisfies Domain.TeamLoaderData;
       }),
     ),
   );
@@ -101,11 +117,14 @@ export const Route = createFileRoute("/app/teams/$teamId")({
 });
 
 function RouteComponent() {
-  const { team, members, ownedSteps } = Route.useLoaderData();
+  const { team, members, ownedSteps, stepCounts } = Route.useLoaderData();
   const router = useRouter();
   const renameTeam = useServerFn(renameTeamFn);
   const setTeamMember = useServerFn(setTeamMemberFn);
-  const archived = team.archivedAt !== null;
+  const { agent, identified } = useShopAgent();
+  const [confirming, setConfirming] = React.useState(false);
+  const [deleteBanner, setDeleteBanner] = React.useState<string | null>(null);
+  const memberCount = members.filter((member) => member.inTeam).length;
 
   const renameMutation = useMutation({
     mutationFn: (name: string) =>
@@ -117,6 +136,27 @@ function RouteComponent() {
     mutationFn: (data: { memberId: string; inTeam: boolean }) =>
       setTeamMember({ data: { teamId: team.id, ...data } }),
     onSuccess: () => router.invalidate({ sync: true }),
+  });
+
+  /** Through the object, D1 then SQLite; see the same mutation on the teams list. */
+  const deleteMutation = useMutation({
+    mutationFn: () => {
+      if (!agent)
+        return Promise.reject(
+          new Error("Still connecting. Try again in a moment."),
+        );
+      return withSocketRecovery(agent)(() =>
+        agent.stub.deleteTeam({ teamId: team.id }),
+      ).then(decodeDeleteTeamResult);
+    },
+    onSuccess: async (result) => {
+      if (result._tag === "Deleted") {
+        await router.navigate({ to: "/app/teams" });
+        return;
+      }
+      setDeleteBanner(deleteTeamResultMessage(result));
+      setConfirming(false);
+    },
   });
 
   const defaultValues: NameInput = { name: team.name };
@@ -131,6 +171,7 @@ function RouteComponent() {
   const failedMutation = [
     { mutation: renameMutation, fallback: "Could not rename the team." },
     { mutation: memberMutation, fallback: "Could not update team members." },
+    { mutation: deleteMutation, fallback: "Could not delete the team." },
   ].find(({ mutation }) => mutation.isError);
   const mutationError =
     failedMutation &&
@@ -163,8 +204,8 @@ function RouteComponent() {
                   <s-link href={`/app/workflows/${owned.workflowId}`}>
                     {owned.workflowName}
                   </s-link>
-                  {owned.workflowArchived && (
-                    <s-badge tone="info">Archived</s-badge>
+                  {owned.side === "draft" && (
+                    <s-badge tone="caution">Draft</s-badge>
                   )}
                 </s-stack>
               </s-table-cell>
@@ -181,15 +222,56 @@ function RouteComponent() {
       <s-link slot="breadcrumb-actions" href="/app/teams">
         Teams
       </s-link>
-      {archived && (
-        <s-badge slot="accessory" tone="info">
-          Archived
+      {memberCount === 0 && (
+        <s-badge slot="accessory" tone="warning">
+          No members
         </s-badge>
       )}
+      <s-button
+        slot="secondary-actions"
+        tone="critical"
+        disabled={!identified || deleteMutation.isPending}
+        onClick={() => {
+          setConfirming(true);
+        }}
+      >
+        Delete
+      </s-button>
       <s-section heading="Name" accessibilityLabel="Team name">
         <s-stack gap="base">
           {mutationError && (
             <s-banner tone="critical">{mutationError}</s-banner>
+          )}
+          {deleteBanner !== null && (
+            <s-banner tone="warning">{deleteBanner}</s-banner>
+          )}
+          {confirming && (
+            <s-banner tone="critical" heading={`Delete ${team.name}?`}>
+              <s-stack gap="small-300">
+                <s-paragraph>{deleteTeamWarning(stepCounts)}</s-paragraph>
+                <s-stack direction="inline" gap="small-300">
+                  <s-button
+                    variant="primary"
+                    tone="critical"
+                    disabled={!identified}
+                    {...(deleteMutation.isPending ? { loading: true } : {})}
+                    onClick={() => {
+                      deleteMutation.mutate();
+                    }}
+                  >
+                    Delete
+                  </s-button>
+                  <s-button
+                    variant="tertiary"
+                    onClick={() => {
+                      setConfirming(false);
+                    }}
+                  >
+                    Cancel
+                  </s-button>
+                </s-stack>
+              </s-stack>
+            </s-banner>
           )}
           <form
             onSubmit={(event) => {
@@ -233,8 +315,8 @@ function RouteComponent() {
       >
         <s-stack gap="base">
           <s-paragraph color="subdued">
-            Steps this team owns. A team cannot be archived while any step still
-            points at it; reassign those steps first.
+            Steps this team owns. Delete the team and these become unassigned
+            until you assign another team.
           </s-paragraph>
           {renderOwnedSteps()}
         </s-stack>
@@ -250,31 +332,25 @@ function RouteComponent() {
           </s-stack>
         ) : (
           <s-stack gap="base">
-            {archived && (
+            {memberCount === 0 && (
               <s-paragraph color="subdued">
-                Restore this team to add members. Removing a member still works
-                while archived.
+                Nobody is on this team, so nobody can work its steps. Add a
+                member below.
               </s-paragraph>
             )}
             {members.map((member) => (
-              <s-stack key={member.id} direction="inline" gap="small-300">
-                <s-checkbox
-                  label={member.email}
-                  checked={member.inTeam}
-                  disabled={
-                    memberMutation.isPending || (archived && !member.inTeam)
-                  }
-                  onChange={() => {
-                    memberMutation.mutate({
-                      memberId: member.id,
-                      inTeam: !member.inTeam,
-                    });
-                  }}
-                />
-                {member.archivedAt !== null && (
-                  <s-badge tone="info">Archived</s-badge>
-                )}
-              </s-stack>
+              <s-checkbox
+                key={member.id}
+                label={member.email}
+                checked={member.inTeam}
+                disabled={memberMutation.isPending}
+                onChange={() => {
+                  memberMutation.mutate({
+                    memberId: member.id,
+                    inTeam: !member.inTeam,
+                  });
+                }}
+              />
             ))}
           </s-stack>
         )}

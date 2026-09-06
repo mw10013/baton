@@ -265,7 +265,7 @@ describe("magic-link sign-in", () => {
         const email = emailOf("revoked@example.com");
         yield* seedMember(email);
         deepStrictEqual(yield* repository.listMemberShops(email), [shop]);
-        yield* repository.setMemberArchived({ shop, email, archived: true });
+        yield* repository.deleteMember({ shop, email });
         deepStrictEqual(yield* repository.listMemberShops(email), []);
       }),
     ),

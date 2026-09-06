@@ -25,26 +25,24 @@ export const seedConfig = (): SeedConfig => {
   };
 };
 
-/** A member to seed; a bare string is active, the object form can archive. */
-export type SeedMember =
-  | string
-  | { readonly email: string; readonly archived: boolean };
+/** A member to seed, by email. */
+export type SeedMember = string;
 
-/** A team to create, plus which of the seeded `members` belong to it. */
+/** A team to create, plus which of the seeded `members` belong to it; an empty list seeds "No members". */
 export interface SeedTeam {
   readonly name: string;
   readonly members: readonly string[];
-  readonly archived?: boolean;
 }
 
 /**
- * A step of a seeded workflow; `team` names one of the seeded `teams`. A step
- * with no `stage` follows the previous one; give several steps the same
- * `stage` to make them ready together.
+ * A step of a seeded workflow; `team` names one of the seeded `teams`, or is
+ * `null` to seed the step unassigned. A step with no `stage` follows the
+ * previous one; give several steps the same `stage` to make them ready
+ * together.
  */
 export interface SeedWorkflowStep {
   readonly name: string;
-  readonly team: string;
+  readonly team: string | null;
   readonly stage?: number;
   readonly instructions?: string;
 }
@@ -76,8 +74,7 @@ export interface SeedOrder {
 export interface SeedWorkflow {
   readonly name: string;
   readonly scope?: "item" | "order";
-  readonly archived?: boolean;
-  /** On/off switch; defaults to on when there are steps and the entry is not archived. */
+  /** On/off switch; defaults to on when there are steps and every step is assigned. */
   readonly active?: boolean;
   readonly tags: readonly string[];
   /** The workflow's steps; empty seeds an empty draft beside it instead. */

@@ -27,15 +27,19 @@ const ordersQueryKey = (
   shop: string,
   state: Domain.ProductionState | null,
   paid: boolean | null,
-) => ["orders", shop, state, paid] as const;
+  attention: boolean,
+) => ["orders", shop, state, paid, attention] as const;
 
 /**
  * `?state=` picks a stage of the strip (`ready_to_ship` is the packer's view);
- * `?paid=` crosses it with the payment gate. Absent means every order.
+ * `?paid=` crosses it with the payment gate; `?attention=true` keeps only
+ * orders with a run that needs attention (`Domain.OrderRow.attention`).
+ * Absent means every order.
  */
 const OrdersSearch = Schema.Struct({
   state: Schema.optionalKey(Domain.ProductionState),
   paid: Schema.optionalKey(Schema.Boolean),
+  attention: Schema.optionalKey(Schema.Boolean),
 });
 
 /**
@@ -213,24 +217,27 @@ const emptyText = (state: Domain.ProductionState | null) =>
 const OrdersLoaderInput = Schema.Struct({
   state: Schema.NullOr(Domain.ProductionState),
   paid: Schema.NullOr(Schema.Boolean),
+  attention: Schema.Boolean,
 });
 
 const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(OrdersLoaderInput))
   .middleware([shopifyServerFnMiddleware])
-  .handler(({ data: { state, paid }, context: { runEffect, session } }) =>
-    runEffect(
-      ShopAgentClient.pipe(
-        Effect.flatMap((client) =>
-          client.listOrders(session.shop, {
-            limit: ORDERS_PAGE_SIZE,
-            cursor: null,
-            state,
-            paid,
-          }),
+  .handler(
+    ({ data: { state, paid, attention }, context: { runEffect, session } }) =>
+      runEffect(
+        ShopAgentClient.pipe(
+          Effect.flatMap((client) =>
+            client.listOrders(session.shop, {
+              limit: ORDERS_PAGE_SIZE,
+              cursor: null,
+              state,
+              paid,
+              attention,
+            }),
+          ),
         ),
       ),
-    ),
   );
 
 export const Route = createFileRoute("/app/orders/")({
@@ -238,6 +245,7 @@ export const Route = createFileRoute("/app/orders/")({
   loaderDeps: ({ search }) => ({
     state: search.state ?? null,
     paid: search.paid ?? null,
+    attention: search.attention ?? false,
   }),
   loader: ({ deps }) => getLoaderData({ data: deps }),
   component: RouteComponent,
@@ -257,7 +265,7 @@ export const Route = createFileRoute("/app/orders/")({
  */
 function RouteComponent() {
   const { shop } = Route.useRouteContext();
-  const { state = null, paid = null } = Route.useSearch();
+  const { state = null, paid = null, attention = false } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const shopify = useAppBridge();
   const resourceLinkTarget = useResourceLinkTarget();
@@ -281,12 +289,14 @@ function RouteComponent() {
   const setFilters = (next: {
     readonly state: Domain.ProductionState | null;
     readonly paid: boolean | null;
+    readonly attention: boolean;
   }) => {
     setCursors([null]);
     void navigate({
       search: {
         ...(next.state === null ? {} : { state: next.state }),
         ...(next.paid === null ? {} : { paid: next.paid }),
+        ...(next.attention ? { attention: true } : {}),
       },
     });
   };
@@ -298,7 +308,7 @@ function RouteComponent() {
     agent,
     identified,
   } = useSubscribedQuery({
-    queryKey: ordersQueryKey(shop, state, paid),
+    queryKey: ordersQueryKey(shop, state, paid, attention),
     subscribe: (stub, subscriberId) =>
       stub
         .subscribeOrders({
@@ -306,6 +316,7 @@ function RouteComponent() {
           cursor: cursorRef.current,
           state,
           paid,
+          attention,
           subscriberId,
         })
         .then(decodeOrdersView),
@@ -428,7 +439,14 @@ function RouteComponent() {
                   </s-badge>
                 )}
               </s-table-cell>
-              <s-table-cell>{stateBadge(row)}</s-table-cell>
+              <s-table-cell>
+                <s-stack direction="inline" gap="small-300">
+                  {stateBadge(row)}
+                  {row.attention && (
+                    <s-badge tone="critical">Needs attention</s-badge>
+                  )}
+                </s-stack>
+              </s-table-cell>
               <s-table-cell>{formatNumber(row.itemUnits)}</s-table-cell>
               <s-table-cell>{tagBadges(row.order.tags)}</s-table-cell>
               {/* The packer's handoff: a made order is fulfilled in the
@@ -477,7 +495,7 @@ function RouteComponent() {
         accessibilityLabel={`${label}${n === undefined || n === null ? "" : `, ${formatNumber(n)}`}`}
         aria-pressed={selected}
         onClick={() => {
-          setFilters({ state: value, paid });
+          setFilters({ state: value, paid, attention });
         }}
       >
         <s-stack gap="small-500">
@@ -496,14 +514,15 @@ function RouteComponent() {
       variant={paid === value ? "primary" : "secondary"}
       disabled={paid === value}
       onClick={() => {
-        setFilters({ state, paid: value });
+        setFilters({ state, paid: value, attention });
       }}
     >
       {label}
     </s-button>
   );
 
-  const filtered = state !== null || paid !== null;
+  const filtered = state !== null || paid !== null || attention;
+  const attentionCount = view?.page.openCounts.attention ?? 0;
 
   return (
     <s-page heading="Orders" inlineSize="large">
@@ -540,11 +559,25 @@ function RouteComponent() {
                 {paidButton("Paid", true)}
                 {paidButton("Not paid", false)}
               </s-stack>
+              {/* Cross-cutting like payment, not a stage: the count is the
+                  open orders with an unassigned or unstaffed step, and the
+                  order page's "Assign team" picker is the remedy. */}
+              {(attention || attentionCount > 0) && (
+                <s-button
+                  variant={attention ? "primary" : "secondary"}
+                  tone="critical"
+                  onClick={() => {
+                    setFilters({ state, paid, attention: !attention });
+                  }}
+                >
+                  {`Needs attention · ${formatNumber(attentionCount)}`}
+                </s-button>
+              )}
               {filtered && (
                 <s-button
                   variant="tertiary"
                   onClick={() => {
-                    setFilters({ state: null, paid: null });
+                    setFilters({ state: null, paid: null, attention: false });
                   }}
                 >
                   Clear filters

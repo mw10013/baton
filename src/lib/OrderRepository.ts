@@ -144,6 +144,9 @@ export class OrderRepository extends Context.Service<
       readonly cursor: string | null;
       readonly state: Domain.ProductionState | null;
       readonly paid: boolean | null;
+      readonly attention: boolean;
+      /** The live D1 roster `attention` is derived against (`Domain.OrderRow.attention`). */
+      readonly teams: readonly Domain.TeamRoster[];
     }) => Effect.Effect<
       Domain.OrdersPage,
       SqlError.SqlError | OrderRepositoryError
@@ -433,12 +436,51 @@ export class OrderRepository extends Context.Service<
           cursor,
           state,
           paid,
+          attention,
+          teams,
         }: {
           readonly limit: number;
           readonly cursor: string | null;
           readonly state: Domain.ProductionState | null;
           readonly paid: boolean | null;
+          readonly attention: boolean;
+          readonly teams: readonly Domain.TeamRoster[];
         }) {
+          /**
+           * `Domain.OrderRow.attention` in SQL, bound to the roster the
+           * caller read from D1: an open step is unassigned when its team id
+           * is null or not in the roster, and a ready step (nothing open in
+           * an earlier stage, as `WorkflowRunRepository` defines it) on a
+           * team with no members is stuck in nobody's queue.
+           */
+          const liveIds = teams.map(({ id }) => id);
+          const emptyIds = teams
+            .filter(({ memberCount }) => memberCount === 0)
+            .map(({ id }) => id);
+          const unassigned =
+            liveIds.length === 0
+              ? sql.literal("1 = 1")
+              : sql`(s.teamId is null or s.teamId not in ${sql.in(liveIds)})`;
+          const emptyReady =
+            emptyIds.length === 0
+              ? sql.literal("1 = 0")
+              : sql`(${sql.in("s.teamId", emptyIds)} and not exists (
+                  select 1 from WorkflowRunStep p
+                  where p.runId = s.runId and p.completedAt is null and p.stage < s.stage
+                ))`;
+          const attentionStep = sql`exists (
+            select 1 from WorkflowRunStep s
+            where s.runId = r.id and s.completedAt is null
+              and ${sql.or([unassigned, emptyReady])}
+          )`;
+          const attentionRun = sql`exists (
+            select 1 from WorkflowRun r
+            where r.orderId = ShopOrder.id and r.status in ('pending', 'active')
+              and ${attentionStep}
+          )`;
+          const attentionFilter = attention
+            ? attentionRun
+            : sql.literal("1 = 1");
           const stateFilter = Match.value(state).pipe(
             Match.when("no_workflow", () =>
               sql.and([OPEN, "fullyPaid = 1", `not exists (${ANY_RUN})`]),
@@ -489,7 +531,7 @@ export class OrderRepository extends Context.Service<
           const page = yield* decodeOrders(
             yield* sql`
               select ${orderColumns} from ShopOrder
-              where ${sql.and([keyset, stateFilter, paidFilter])}
+              where ${sql.and([keyset, stateFilter, paidFilter, attentionFilter])}
               order by processedAt desc, id desc
               limit ${limit + 1}
             `,
@@ -524,6 +566,16 @@ export class OrderRepository extends Context.Service<
                   where ${sql.in("orderId", ids)}
                   group by orderId
                 `.values;
+          const attentionRows =
+            ids.length === 0
+              ? []
+              : yield* sql`
+                  select id from ShopOrder
+                  where ${sql.in("id", ids)} and ${attentionRun}
+                `.values;
+          const needsAttention = new Set(
+            attentionRows.map((row) => String(row[0])),
+          );
           const units = new Map(
             unitRows.map((row) => [String(row[0]), Number(row[1] ?? 0)]),
           );
@@ -546,7 +598,8 @@ export class OrderRepository extends Context.Service<
             select
               sum(fullyPaid = 1 and not exists (${sql.literal(ANY_RUN)})),
               sum(exists (${sql.literal(OPEN_RUN)})),
-              sum(exists (${sql.literal(DONE_RUN)}) and not exists (${sql.literal(OPEN_RUN)}))
+              sum(exists (${sql.literal(DONE_RUN)}) and not exists (${sql.literal(OPEN_RUN)})),
+              sum(${attentionRun})
             from ShopOrder
             where ${sql.literal(OPEN)}
           `.values;
@@ -556,6 +609,7 @@ export class OrderRepository extends Context.Service<
               order,
               itemUnits: units.get(order.id) ?? 0,
               runs: runs.get(order.id) ?? { open: 0, done: 0, flagged: 0 },
+              attention: needsAttention.has(order.id),
             })),
             limit,
             nextCursor:
@@ -566,6 +620,7 @@ export class OrderRepository extends Context.Service<
               no_workflow: Number(countRow?.[0] ?? 0),
               in_production: Number(countRow?.[1] ?? 0),
               ready_to_ship: Number(countRow?.[2] ?? 0),
+              attention: Number(countRow?.[3] ?? 0),
             },
           } satisfies Domain.OrdersPage;
         }),

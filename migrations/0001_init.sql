@@ -11,36 +11,39 @@ create table if not exists ShopSession (
   planHandleExpiresAt integer
 );
 
--- archivedAt (null = active) is the merchant-facing delete: run history in the
--- ShopAgent's SQLite references Member.id (WorkflowRunStep.startedBy /
--- completedBy, the block flag's actor) with no FK, so nothing hard-deletes a
--- member that may have worked. Uniqueness spans active and archived rows so
--- re-adding an archived email restores the same id and history re-attaches.
+-- A row is access and membership, nothing more: deleting it cascades
+-- TeamMember and revokes sign-in on the next request.
+-- Run history in the ShopAgent's SQLite survives because WorkflowRunStep
+-- snapshots the actor's email (startedByEmail / completedByEmail, the block
+-- flag's byEmail) at the moment of the action; the bare startedBy /
+-- completedBy ids carry no FK and simply stop resolving. Uniqueness is among
+-- existing rows only, so re-adding an email mints a new id.
 create table if not exists Member (
   id text primary key,
   shop text not null references ShopSession (shop) on delete cascade,
   email text not null check (email = lower(trim(email))),
   createdAt text not null,
-  archivedAt text,
   unique (shop, email)
 );
 
 -- Teams are shop-scoped groupings of Member rows: identity, not workflow data,
 -- so they live in D1 beside Member rather than in the ShopAgent's SQLite. That
--- buys real referential integrity in both directions (archiving a shop or a
+-- buys real referential integrity in both directions (deleting a shop or a
 -- member cleans up its edges) at the cost of a hard FK from Durable Object rows
 -- to a team, which is deliberately left as an opaque id.
 --
--- archivedAt (null = active) is the merchant-facing delete: a team that ever
--- owned work must stay resolvable by name forever, so nothing hard-deletes one.
--- Uniqueness spans active and archived rows for the same reason -- reusing an
--- archived team's name would make historical records ambiguous.
+-- Every pointer from the ShopAgent's SQLite
+-- (WorkflowStep, WorkflowDraftStep, open WorkflowRunStep) is nulled by
+-- ShopAgent.deleteTeam right after this row goes -- D1 first, then the object,
+-- and every object read treats an id no row carries exactly like null, so the
+-- cross-store window is harmless. History keeps reading because finished run
+-- steps snapshot teamName; nothing resolves a deleted team by id. Uniqueness is
+-- among existing rows only.
 create table if not exists Team (
   id text primary key,
   shop text not null references ShopSession (shop) on delete cascade,
   name text not null check (name = trim(name) and length(name) > 0),
-  createdAt text not null,
-  archivedAt text
+  createdAt text not null
 );
 
 create unique index if not exists Team_shop_name_uidx on Team (shop, name collate nocase);

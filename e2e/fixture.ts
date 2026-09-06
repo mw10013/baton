@@ -26,29 +26,22 @@ import type {
  *   not the stage, so the letter is the only thing telling a worker two cards
  *   are siblings.
  * - Order workflows are `Order Workflow NN`, their own sequence, no tags.
- * - Archived rows carry an `Archived` suffix. A real merchant would not rename
- *   before archiving, but this is not demo data: archived rows surface on
- *   screens with no badge (a step whose team is archived just shows no team,
- *   an archived member appears as an actor on a completed step), and the
- *   suffix is what makes those readings unambiguous.
+ * - The two derived attention states are seeded so both warnings are visible
+ *   after `pnpm seed`: `Team 07 Empty` has nobody on it, and `Workflow 07
+ *   Unassigned` has a step with no team (what a team delete leaves behind).
+ *   Their name suffixes are what make those readings unambiguous.
  *
  * Invariants the ordinary write path enforces and the seed only checks in
  * part, so the fixture must honour them by construction:
  *
- * - An archived team may own steps only in archived workflows
- *   (`ShopAgent.archiveTeam` refuses otherwise). `Team 07 Archived` owns a step
- *   in `Workflow 07 Archived` and nowhere else.
- * - At most one non-archived order workflow, and no tags on any order
- *   workflow (`WorkflowRepository.replaceWorkflows` refuses both).
- * - Archived members and teams are archived after their membership edges are
- *   written (`setTeamMember` refuses archived rows); the seed route orders
- *   that itself.
+ * - At most one order workflow, and no tags on any order workflow
+ *   (`WorkflowRepository.replaceWorkflows` refuses both).
+ * - A workflow with an unassigned step cannot be on; the seed defaults it
+ *   off.
  *
  * Definitions only. Runs come from synced orders whose line items carry a
  * matching tag, so a populated queue also needs the sandbox products tagged
- * `workflow-01` … `workflow-06` by hand in the admin. One archived state cannot
- * be seeded at all: an archived member who has *worked*. Sign in as
- * `member-09@shop.com` before archiving, start a step, then archive.
+ * `workflow-01` … `workflow-06` by hand in the admin.
  */
 
 const ordinal = (i: number) => String(i).padStart(2, "0");
@@ -56,7 +49,7 @@ const member = (i: number) => `member-${ordinal(i)}@shop.com`;
 const team = (i: number) => `Team ${ordinal(i)}`;
 
 export const ADMIN = "admin@shop.com";
-export const TEAM_07_ARCHIVED = `${team(7)} Archived`;
+export const TEAM_07_EMPTY = `${team(7)} Empty`;
 
 /** Members of `Team 01` … `Team 06`; each is the sole ordinary member of theirs. */
 const ACTIVE_ORDINALS = [1, 2, 3, 4, 5, 6] as const;
@@ -64,26 +57,27 @@ const ACTIVE_ORDINALS = [1, 2, 3, 4, 5, 6] as const;
 export const members: readonly SeedMember[] = [
   ADMIN,
   ...ACTIVE_ORDINALS.map(member),
-  member(7), // active member whose only team is archived → "no teams"
-  member(8), // never added to a team
-  { email: member(9), archived: true }, // archived, still on active Team 01
-  { email: member(10), archived: true }, // archived, on the archived team
+  member(8), // never added to a team → "no teams"
 ];
 
 export const teams: readonly SeedTeam[] = [
   ...ACTIVE_ORDINALS.map((i) => ({
     name: team(i),
-    members: [ADMIN, member(i), ...(i === 1 ? [member(9)] : [])],
+    members: [ADMIN, member(i)],
   })),
   {
-    name: TEAM_07_ARCHIVED,
-    members: [member(7), member(10)],
-    archived: true,
+    // nobody on it: "No members" on the team page and on the steps it owns
+    name: TEAM_07_EMPTY,
+    members: [],
   },
 ];
 
-/** Step owner by ordinal; 7 is the archived team, whose name carries the suffix. */
-const owner = (i: number) => (i === 7 ? TEAM_07_ARCHIVED : team(i));
+/** Step owner by ordinal; 7 is the empty team, whose name carries the suffix; 0 is unassigned. */
+const owner = (i: number) => {
+  if (i === 0) return null;
+  if (i === 7) return TEAM_07_EMPTY;
+  return team(i);
+};
 
 const step = (
   name: string,
@@ -166,14 +160,15 @@ export const workflows: readonly SeedWorkflow[] = [
     ],
   },
   {
-    // archived; the only place the archived team may own a step
-    name: "Workflow 07 Archived",
-    archived: true,
+    // one unassigned step (what a team delete leaves) and one on the empty
+    // team: "Needs attention" in the list, both banners on the detail page,
+    // Turn on refused until the step is assigned
+    name: "Workflow 07 Unassigned",
     tags: ["workflow-07"],
-    steps: [step("Step 1", 7), step("Step 2", 1)],
+    steps: [step("Step 1", 0), step("Step 2", 7)],
   },
   {
-    // zero steps: "No steps" without being archived
+    // zero steps: "No steps"
     name: "Workflow 08",
     tags: ["workflow-08"],
     steps: [],
@@ -188,14 +183,6 @@ export const workflows: readonly SeedWorkflow[] = [
       step("Step 2a", 2, { stage: 2 }),
       step("Step 2b", 3, { stage: 2 }),
     ],
-  },
-  {
-    // archived order workflow; restoring it must be refused while 01 is active
-    name: "Order Workflow 02 Archived",
-    scope: "order",
-    archived: true,
-    tags: [],
-    steps: [step("Step 1", 2)],
   },
 ];
 

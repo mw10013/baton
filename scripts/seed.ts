@@ -28,8 +28,6 @@ if (!response.ok)
   throw new Error(
     `seed failed: ${String(response.status)} ${await response.text()}`,
   );
-const count = <T>(rows: readonly T[], archived: (row: T) => boolean) =>
-  `${String(rows.length)} (${String(rows.filter(archived).length)} archived)`;
 console.log(
-  `seeded ${shop}: members ${count(fixture.members, (m) => typeof m !== "string" && m.archived)}, teams ${count(fixture.teams, (t) => t.archived === true)}, workflows ${count(fixture.workflows, (w) => w.archived === true)}, orders ${String(fixture.orders.length)}`,
+  `seeded ${shop}: members ${String(fixture.members.length)}, teams ${String(fixture.teams.length)}, workflows ${String(fixture.workflows.length)}, orders ${String(fixture.orders.length)}`,
 );

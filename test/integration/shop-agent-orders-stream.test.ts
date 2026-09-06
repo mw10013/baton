@@ -281,16 +281,16 @@ describe("runShopAgentOrdersStream with afterWrite", () => {
         });
         yield* workflows.applyDraft({
           workflowId: workflow.id,
-          activeTeams: [team],
+          teams: [team],
         });
         yield* workflows.setWorkflowActive({
           workflowId: workflow.id,
           active: true,
-          activeTeams: [team],
+          teams: [team],
         });
         const context = {
           workflows: yield* workflows.listActiveWorkflowDetails(),
-          activeTeams: [team],
+          teams: [team],
         };
         const afterWrite = (order: Domain.ShopOrder) =>
           runs

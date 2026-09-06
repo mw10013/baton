@@ -53,11 +53,12 @@ const tags = Schema.decodeUnknownSync(Domain.ProductTags);
 const teamId = Schema.decodeUnknownSync(Domain.TeamId);
 const teamName = Schema.decodeUnknownSync(Domain.TeamName);
 const memberId = Schema.decodeUnknownSync(Domain.MemberId);
+const emailOf = Schema.decodeUnknownSync(Domain.Email);
 
 const TEAM_A = { id: teamId("team-a"), name: teamName("Team A") };
 const TEAM_B = { id: teamId("team-b"), name: teamName("Team B") };
 const TEAM_C = { id: teamId("team-c"), name: teamName("Team C") };
-const ACTIVE_TEAMS = [TEAM_A, TEAM_B, TEAM_C];
+const TEAMS = [TEAM_A, TEAM_B, TEAM_C];
 const instructions = Schema.decodeUnknownSync(Domain.StepInstructions);
 const note = Schema.decodeUnknownSync(Domain.StepNote);
 
@@ -114,35 +115,32 @@ const lineItem = (
 const goLive = (workflowId: string) =>
   Effect.gen(function* () {
     const workflows = yield* WorkflowRepository;
-    yield* workflows.applyDraft({ workflowId, activeTeams: ACTIVE_TEAMS });
+    yield* workflows.applyDraft({ workflowId, teams: TEAMS });
     return yield* workflows.setWorkflowActive({
       workflowId,
       active: true,
-      activeTeams: ACTIVE_TEAMS,
+      teams: TEAMS,
     });
   });
 
-/** Turn off, then archive: archive refuses an active workflow. */
-const archive = (workflowId: string) =>
+/** Turn off: new runs stop, open runs keep going. */
+const turnOff = (workflowId: string) =>
   Effect.gen(function* () {
     const workflows = yield* WorkflowRepository;
     yield* workflows.setWorkflowActive({
       workflowId,
       active: false,
-      activeTeams: ACTIVE_TEAMS,
+      teams: TEAMS,
     });
-    yield* workflows.setWorkflowArchived({ workflowId, archived: true });
   });
 
-/** Restore, then turn on: restore leaves a workflow off. */
-const restore = (workflowId: string) =>
+const turnOn = (workflowId: string) =>
   Effect.gen(function* () {
     const workflows = yield* WorkflowRepository;
-    yield* workflows.setWorkflowArchived({ workflowId, archived: false });
     yield* workflows.setWorkflowActive({
       workflowId,
       active: true,
-      activeTeams: ACTIVE_TEAMS,
+      teams: TEAMS,
     });
   });
 
@@ -225,18 +223,18 @@ const stagedRun = () =>
 const loadStartContext = Effect.gen(function* () {
   const workflows =
     yield* (yield* WorkflowRepository).listActiveWorkflowDetails();
-  return { workflows, activeTeams: ACTIVE_TEAMS } satisfies StartContext;
+  return { workflows, teams: TEAMS } satisfies StartContext;
 });
 
 const upsertAndReconcile = (
   shopOrder: Domain.ShopOrder,
   lineItems: readonly Domain.OrderLineItem[],
-  activeTeams: StartContext["activeTeams"] = ACTIVE_TEAMS,
+  teams: StartContext["teams"] = TEAMS,
 ) =>
   Effect.gen(function* () {
     const runs = yield* WorkflowRunRepository;
     const orders = yield* OrderRepository;
-    const context = { ...(yield* loadStartContext), activeTeams };
+    const context = { ...(yield* loadStartContext), teams };
     const counts = yield* Ref.make<ReconcileCounts>({
       created: 0,
       cancelled: 0,
@@ -269,6 +267,7 @@ const complete = (
       runs.completeStep({
         runStepId: detail.steps[position - 1]?.id ?? "",
         memberId: memberId("member-1"),
+        memberEmail: emailOf("member-1@example.com"),
         teamIds,
       }),
     ),
@@ -346,6 +345,7 @@ const finishItemRuns = () =>
         yield* runs.completeStep({
           runStepId: detail.steps[index]?.id ?? "",
           memberId: memberId("member-1"),
+          memberEmail: emailOf("member-1@example.com"),
           teamIds: [team.id],
           startContext: context,
         });
@@ -427,6 +427,7 @@ describe("WorkflowRunRepository order runs", () => {
           yield* runs.completeStep({
             runStepId: second.steps[index]?.id ?? "",
             memberId: memberId("member-1"),
+            memberEmail: emailOf("member-1@example.com"),
             teamIds: [team.id],
             startContext: context,
           });
@@ -448,6 +449,7 @@ describe("WorkflowRunRepository order runs", () => {
           yield* runs.completeStep({
             runStepId: first.steps[index]?.id ?? "",
             memberId: memberId("member-1"),
+            memberEmail: emailOf("member-1@example.com"),
             teamIds: [team.id],
             startContext: context,
           });
@@ -492,6 +494,7 @@ describe("WorkflowRunRepository order runs", () => {
             yield* runs.completeStep({
               runStepId: detail.steps[index]?.id ?? "",
               memberId: memberId("member-1"),
+              memberEmail: emailOf("member-1@example.com"),
               teamIds: [team.id],
             });
         strictEqual((yield* orderRuns()).length, 0);
@@ -504,16 +507,16 @@ describe("WorkflowRunRepository order runs", () => {
       }),
     ));
 
-  it("does not start when the order workflow is archived, cannot start, or newer than the order", () =>
+  it("does not start when the order workflow is off, cannot start, or newer than the order", () =>
     runInRepository(
       Effect.gen(function* () {
         const { pack } = yield* seedOrderWorkflow;
         yield* upsertAndReconcile(order(), ORDER_ITEMS);
-        yield* archive(pack.id);
+        yield* turnOff(pack.id);
         yield* finishItemRuns();
         strictEqual((yield* orderRuns()).length, 0);
-        yield* restore(pack.id);
-        // Team C inactive: cannot start.
+        yield* turnOn(pack.id);
+        // Team C gone from the roster: the step is unassigned, cannot start.
         yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 1 }),
           ORDER_ITEMS,
@@ -554,7 +557,7 @@ describe("WorkflowRunRepository order runs", () => {
         const manual = Option.getOrThrow(
           yield* runs.createRun({
             workflow: necklace,
-            activeTeams: ACTIVE_TEAMS,
+            teams: TEAMS,
             order: old,
             lineItem: lineItem(3, []),
             source: "manual",
@@ -603,6 +606,7 @@ describe("WorkflowRunRepository order runs", () => {
         yield* runs.startStep({
           runStepId: orderRun.steps[0]?.id ?? "",
           memberId: memberId("member-1"),
+          memberEmail: emailOf("member-1@example.com"),
           teamIds: [TEAM_C.id],
         });
         const { workflows } = yield* startContext();
@@ -611,7 +615,7 @@ describe("WorkflowRunRepository order runs", () => {
         const attached = Option.getOrThrow(
           yield* runs.createRun({
             workflow: necklace,
-            activeTeams: ACTIVE_TEAMS,
+            teams: TEAMS,
             order: order(),
             lineItem: lineItem(3, []),
             source: "manual",
@@ -649,6 +653,7 @@ describe("WorkflowRunRepository order runs", () => {
           yield* runs.completeStep({
             runStepId: lateDetail.steps[index]?.id ?? "",
             memberId: memberId("member-1"),
+            memberEmail: emailOf("member-1@example.com"),
             teamIds: [team.id],
           });
 
@@ -661,6 +666,7 @@ describe("WorkflowRunRepository order runs", () => {
           yield* runs.completeStep({
             runStepId: step.id,
             memberId: memberId("member-1"),
+            memberEmail: emailOf("member-1@example.com"),
             teamIds: [TEAM_C.id],
           });
         yield* upsertAndReconcile(order({ updatedAt: PROCESSED_AT + 2 }), [
@@ -717,7 +723,7 @@ describe("WorkflowRunRepository order runs", () => {
         const late = Option.getOrThrow(
           yield* runs.createRun({
             workflow: necklace,
-            activeTeams: ACTIVE_TEAMS,
+            teams: TEAMS,
             order: order(),
             lineItem: lineItem(3, []),
             source: "manual",
@@ -729,6 +735,7 @@ describe("WorkflowRunRepository order runs", () => {
         yield* runs.startStep({
           runStepId: lateDetail.steps[0]?.id ?? "",
           memberId: memberId("member-1"),
+          memberEmail: emailOf("member-1@example.com"),
           teamIds: [TEAM_A.id],
         });
         const gone = yield* upsertAndReconcile(
@@ -778,6 +785,7 @@ describe("WorkflowRunRepository order runs", () => {
         yield* runs.startStep({
           runStepId: orderRun.steps[0]?.id ?? "",
           memberId: memberId("member-1"),
+          memberEmail: emailOf("member-1@example.com"),
           teamIds: [TEAM_C.id],
         });
         yield* upsertAndReconcile(
@@ -859,6 +867,7 @@ describe("WorkflowRunRepository order runs", () => {
         yield* runs.startStep({
           runStepId: second.steps[0]?.id ?? "",
           memberId: memberId("member-1"),
+          memberEmail: emailOf("member-1@example.com"),
           teamIds: [TEAM_A.id],
         });
         const zeroed = yield* upsertAndReconcile(
@@ -1009,7 +1018,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         const detail = yield* savedDetail(a.id);
         const attached = yield* runs.createRun({
           workflow: detail,
-          activeTeams: ACTIVE_TEAMS,
+          teams: TEAMS,
           order: old,
           lineItem: items[0] ?? lineItem(1, ["a"]),
           source: "manual",
@@ -1018,7 +1027,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         strictEqual(Option.getOrThrow(attached).source, "manual");
         const duplicate = yield* runs.createRun({
           workflow: detail,
-          activeTeams: ACTIVE_TEAMS,
+          teams: TEAMS,
           order: old,
           lineItem: items[0] ?? lineItem(1, ["a"]),
           source: "manual",
@@ -1418,13 +1427,14 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           yield* runs.startStep({
             runStepId: orderRun.steps[0]?.id ?? "",
             memberId: memberId("member-1"),
+            memberEmail: emailOf("member-1@example.com"),
             teamIds: [TEAM_C.id],
           });
           // A pending and an active item run alongside the two done ones.
           const pendingRun = Option.getOrThrow(
             yield* runs.createRun({
               workflow: necklace,
-              activeTeams: ACTIVE_TEAMS,
+              teams: TEAMS,
               order: order(),
               lineItem: lineItem(3, []),
               source: "manual",
@@ -1442,6 +1452,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           yield* runs.startStep({
             runStepId: activeRun.steps[0]?.id ?? "",
             memberId: memberId("member-1"),
+            memberEmail: emailOf("member-1@example.com"),
             teamIds: [TEAM_A.id],
           });
           const counts = yield* upsertAndReconcile(
@@ -1569,12 +1580,12 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
       }),
     ));
 
-  it("starts nothing for an archived or off workflow, a never-applied one, or an inactive team", () =>
+  it("starts nothing for an off workflow, a never-applied one, or an unassigned step", () =>
     runInRepository(
       Effect.gen(function* () {
         const { a, b } = yield* seed;
         const workflows = yield* WorkflowRepository;
-        yield* archive(a.id);
+        yield* turnOff(a.id);
         // Draft only: has steps, never applied.
         const c = yield* workflows.createWorkflow({
           name: name("Drafted"),
@@ -1590,15 +1601,13 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           lineItem(2, ["b"]),
           lineItem(3, ["c"]),
         ];
-        const inactiveTeam = yield* upsertAndReconcile(order(), items, [
-          TEAM_A,
-        ]);
-        strictEqual(inactiveTeam.created, 0);
+        const unassigned = yield* upsertAndReconcile(order(), items, [TEAM_A]);
+        strictEqual(unassigned.created, 0);
         // b switched off: nothing starts even with every team active.
         yield* workflows.setWorkflowActive({
           workflowId: b.id,
           active: false,
-          activeTeams: ACTIVE_TEAMS,
+          teams: TEAMS,
         });
         const off = yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 1 }),
@@ -1608,14 +1617,14 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         yield* workflows.setWorkflowActive({
           workflowId: b.id,
           active: true,
-          activeTeams: ACTIVE_TEAMS,
+          teams: TEAMS,
         });
-        yield* restore(a.id);
-        const restored = yield* upsertAndReconcile(
+        yield* turnOn(a.id);
+        const backOn = yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 2 }),
           items,
         );
-        strictEqual(restored.created, 2);
+        strictEqual(backOn.created, 2);
         const all = yield* runsForOrder();
         deepStrictEqual(
           all.map((d) => d.run.workflowId).toSorted(),
@@ -1905,6 +1914,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           .startStep({
             runStepId: artwork,
             memberId: memberId("m1"),
+            memberEmail: emailOf("m1@example.com"),
             teamIds: [TEAM_B.id],
           })
           .pipe(Effect.flip);
@@ -1913,6 +1923,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           .startStep({
             runStepId: produce,
             memberId: memberId("m3"),
+            memberEmail: emailOf("m3@example.com"),
             teamIds: [TEAM_C.id],
           })
           .pipe(Effect.flip);
@@ -1921,6 +1932,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         yield* runs.startStep({
           runStepId: artwork,
           memberId: memberId("m1"),
+          memberEmail: emailOf("m1@example.com"),
           teamIds: [TEAM_A.id],
         });
         const started = Option.getOrThrow(
@@ -1934,6 +1946,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         yield* runs.startStep({
           runStepId: artwork,
           memberId: memberId("m2"),
+          memberEmail: emailOf("m2@example.com"),
           teamIds: [TEAM_A.id],
         });
         const again = Option.getOrThrow(
@@ -1998,6 +2011,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           .blockRun({
             runId: detail.run.id,
             memberId: memberId("m3"),
+            memberEmail: emailOf("m3@example.com"),
             teamIds: [TEAM_C.id],
             reason: null,
           })
@@ -2006,6 +2020,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         yield* runs.blockRun({
           runId: detail.run.id,
           memberId: memberId("m1"),
+          memberEmail: emailOf("m1@example.com"),
           teamIds: [TEAM_A.id],
           reason: note("Out of chain"),
         });
@@ -2016,6 +2031,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         deepStrictEqual<unknown>(blocked.run.flagDetail, {
           reason: "Out of chain",
           by: "m1",
+          byEmail: "m1@example.com",
         });
         const queue = yield* runs.listQueue({ teamIds: [TEAM_B.id] });
         strictEqual(queue[0]?.run.flag, "blocked");
@@ -2029,19 +2045,21 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         yield* runs.blockRun({
           runId: detail.run.id,
           memberId: memberId("m1"),
+          memberEmail: emailOf("m1@example.com"),
           teamIds: [TEAM_A.id],
           reason: null,
         });
         deepStrictEqual<unknown>(
           Option.getOrThrow(yield* runs.getRun({ runId: detail.run.id })).run
             .flagDetail,
-          { by: "m1" },
+          { by: "m1", byEmail: "m1@example.com" },
         );
         // Reconcile overwrites a person's block: a started run is active,
         // so the zeroed line item flags rather than cancels.
         yield* runs.startStep({
           runStepId: detail.steps[0]?.id ?? "",
           memberId: memberId("m1"),
+          memberEmail: emailOf("m1@example.com"),
           teamIds: [TEAM_A.id],
         });
         const counts = yield* upsertAndReconcile(
@@ -2073,6 +2091,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         yield* runs.startStep({
           runStepId: detail.steps[0]?.id ?? "",
           memberId: memberId("m1"),
+          memberEmail: emailOf("m1@example.com"),
           teamIds: [TEAM_A.id],
         });
         const counts = yield* upsertAndReconcile(
@@ -2093,7 +2112,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
       }),
     ));
 
-  it("listWorkflows reports activeRunCount over pending and active runs only", () =>
+  it("listWorkflows reports openRuns over pending and active runs, finishedRuns over the rest", () =>
     runInRepository(
       Effect.gen(function* () {
         const { a } = yield* seed;
@@ -2106,10 +2125,9 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         const [first] = yield* runsForOrder();
         if (first === undefined) throw new Error("no run");
         yield* runs.cancelRun({ runId: first.run.id });
-        const summaries = yield* workflows.listWorkflows({
-          includeArchived: false,
-        });
-        strictEqual(summaries.find((w) => w.id === a.id)?.activeRunCount, 1);
+        const summaries = yield* workflows.listWorkflows({ teams: TEAMS });
+        strictEqual(summaries.find((w) => w.id === a.id)?.openRuns, 1);
+        strictEqual(summaries.find((w) => w.id === a.id)?.finishedRuns, 1);
       }),
     ));
 
@@ -2155,7 +2173,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         // keep their copied steps.
         const applied = yield* workflows.applyDraft({
           workflowId: a.id,
-          activeTeams: ACTIVE_TEAMS,
+          teams: TEAMS,
         });
         strictEqual(applied.active, true);
         const third = yield* upsertAndReconcile(
@@ -2171,6 +2189,183 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         );
         const oldest = all.find((d) => d.run.id === first.run.id);
         strictEqual(oldest?.steps.length, 2);
+      }),
+    ));
+  it("deleteWorkflow removes its runs and run steps, open and finished, and leaves another workflow's runs alone", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { a, b } = yield* seed;
+        const workflows = yield* WorkflowRepository;
+        const runs = yield* WorkflowRunRepository;
+        const sql = yield* SqlClient.SqlClient;
+        yield* upsertAndReconcile(order(), [
+          lineItem(1, ["a"]),
+          lineItem(2, ["a"]),
+          lineItem(3, ["b"]),
+        ]);
+        const all = yield* runsForOrder();
+        const aRuns = all.filter((d) => d.run.workflowId === a.id);
+        const [finished] = aRuns;
+        if (finished === undefined) throw new Error("no run");
+        for (const step of finished.steps)
+          yield* runs.completeStep({
+            runStepId: step.id,
+            memberId: memberId("m1"),
+            memberEmail: emailOf("m1@example.com"),
+            teamIds: step.teamId === null ? [] : [step.teamId],
+          });
+        deepStrictEqual(
+          Option.getOrThrow(yield* workflows.countRuns({ workflowId: a.id })),
+          { openRuns: 1, finishedRuns: 1 },
+        );
+        yield* workflows.deleteWorkflow({ workflowId: a.id });
+        const remaining = yield* runsForOrder();
+        deepStrictEqual(
+          remaining.map((d) => d.run.workflowId),
+          [b.id],
+        );
+        strictEqual(
+          Number(
+            (yield* sql`
+              select count(*) as n from WorkflowRunStep
+              where runId in (select value from json_each(${JSON.stringify(aRuns.map((d) => d.run.id))}))
+            `)[0]?.n,
+          ),
+          0,
+        );
+        strictEqual(
+          Option.isNone(yield* workflows.countRuns({ workflowId: a.id })),
+          true,
+        );
+        // The name is free at once.
+        yield* workflows.createWorkflow({ name: a.name, tags: tags(["a"]) });
+      }),
+    ));
+
+  it("start, complete, and block snapshot the actor's email onto the row; listQueue reads it back with no roster", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seedStaged;
+        const runs = yield* WorkflowRunRepository;
+        const detail = yield* stagedRun();
+        const artwork = detail.steps[0]?.id ?? "";
+        const materials = detail.steps[1]?.id ?? "";
+        yield* runs.startStep({
+          runStepId: artwork,
+          memberId: memberId("m1"),
+          memberEmail: emailOf("m1@example.com"),
+          teamIds: [TEAM_A.id],
+        });
+        // Done without Start backfills the starter's email too.
+        yield* runs.completeStep({
+          runStepId: materials,
+          memberId: memberId("m2"),
+          memberEmail: emailOf("m2@example.com"),
+          teamIds: [TEAM_B.id],
+        });
+        const after = Option.getOrThrow(
+          yield* runs.getRun({ runId: detail.run.id }),
+        );
+        deepStrictEqual(
+          after.steps
+            .slice(0, 2)
+            .map((s) => [s.startedByEmail, s.completedByEmail]),
+          [
+            ["m1@example.com", null],
+            ["m2@example.com", "m2@example.com"],
+          ],
+        );
+        const [queued] = yield* runs.listQueue({ teamIds: [TEAM_A.id] });
+        strictEqual(queued?.steps[0]?.startedByEmail, "m1@example.com");
+      }),
+    ));
+
+  it("unassignTeam nulls open run steps only; the step leaves every queue and cannot be worked; assignRunStepTeam brings it back", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { a } = yield* seed;
+        const runs = yield* WorkflowRunRepository;
+        const workflows = yield* WorkflowRepository;
+        yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
+        const [run] = yield* runsForOrder();
+        if (run === undefined) throw new Error("no run");
+        const [cut, finish] = run.steps;
+        if (cut === undefined || finish === undefined)
+          throw new Error("no steps");
+        // Finish Cut (Team A) so it is the finished step that keeps its pointer.
+        yield* runs.completeStep({
+          runStepId: cut.id,
+          memberId: memberId("m1"),
+          memberEmail: emailOf("m1@example.com"),
+          teamIds: [TEAM_A.id],
+        });
+        yield* workflows.unassignTeam({ teamId: TEAM_A.id });
+        yield* workflows.unassignTeam({ teamId: TEAM_B.id });
+        const nulled = Option.getOrThrow(
+          yield* runs.getRun({ runId: run.run.id }),
+        );
+        deepStrictEqual(
+          nulled.steps.map((s) => [s.teamId, s.teamName]),
+          [
+            [TEAM_A.id, "Team A"],
+            [null, "Team B"],
+          ],
+        );
+        strictEqual(
+          (yield* runs.listQueue({ teamIds: [TEAM_B.id] })).length,
+          0,
+        );
+        const refused = yield* runs
+          .startStep({
+            runStepId: finish.id,
+            memberId: memberId("m2"),
+            memberEmail: emailOf("m2@example.com"),
+            teamIds: [TEAM_B.id],
+          })
+          .pipe(Effect.flip);
+        strictEqual(refused._tag, "RunNotAllowedError");
+        // The definition is unassigned too; the workflow cannot start runs.
+        strictEqual(
+          (yield* workflows.listWorkflows({ teams: TEAMS })).find(
+            (w) => w.id === a.id,
+          )?.needsAttention,
+          true,
+        );
+        const none = yield* upsertAndReconcile(
+          order({ updatedAt: PROCESSED_AT + 1 }),
+          [lineItem(1, ["a"]), lineItem(2, ["a"])],
+        );
+        strictEqual(none.created, 0);
+        // Assign Team C: name snapshotted, step in C's queue, workable.
+        yield* runs.assignRunStepTeam({ runStepId: finish.id, team: TEAM_C });
+        const assigned = Option.getOrThrow(
+          yield* runs.getRun({ runId: run.run.id }),
+        );
+        deepStrictEqual(
+          [assigned.steps[1]?.teamId, assigned.steps[1]?.teamName],
+          [TEAM_C.id, "Team C"],
+        );
+        const [queued] = yield* runs.listQueue({ teamIds: [TEAM_C.id] });
+        strictEqual(queued?.steps[0]?.id, finish.id);
+        yield* runs.completeStep({
+          runStepId: finish.id,
+          memberId: memberId("m3"),
+          memberEmail: emailOf("m3@example.com"),
+          teamIds: [TEAM_C.id],
+        });
+        // A finished step is never reassigned; a missing step is not found.
+        strictEqual(
+          (yield* runs
+            .assignRunStepTeam({ runStepId: finish.id, team: TEAM_A })
+            .pipe(Effect.flip))._tag,
+          "StepFinishedError",
+        );
+        strictEqual(
+          (yield* runs
+            .assignRunStepTeam({ runStepId: "nope", team: TEAM_A })
+            .pipe(Effect.flip))._tag,
+          "RunNotFoundError",
+        );
       }),
     ));
 });

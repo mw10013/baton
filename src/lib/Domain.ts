@@ -254,19 +254,20 @@ export const MemberId = Schema.NonEmptyString.pipe(Schema.brand("MemberId"));
 export type MemberId = typeof MemberId.Type;
 
 /**
- * `archivedAt` null = active. Same reasoning as {@link Team}: a member is
- * archived, never deleted, because the ShopAgent's `WorkflowRunStep.startedBy`
- * / `completedBy` (and the block flag's actor) hold `Member.id` as bare text
- * with no foreign key, so a deleted row would leave history resolving to
- * nobody. An archived member cannot sign in or be added to a team, but still
- * resolves as an actor on run history.
+ * Merchant copy: **delete a member and they leave their teams.**
+ * `TeamMember` cascades; nothing else structural points here.
+ * Run history survives the delete because `WorkflowRunStep` snapshots the
+ * actor's email (`startedByEmail` / `completedByEmail`, and the block flag's
+ * `byEmail`) at the moment of the action, so no live join is ever needed. The
+ * bare `startedBy` / `completedBy` ids stay as text with no foreign key and
+ * simply stop resolving. Re-adding the same email mints a new id; history
+ * keeps the old email as text.
  */
 export const Member = Schema.Struct({
   id: MemberId,
   shop: Shop,
   email: Email,
   createdAt: Schema.String,
-  archivedAt: Schema.NullOr(Schema.String),
 });
 export type Member = typeof Member.Type;
 
@@ -294,16 +295,20 @@ export const TeamName = Schema.String.pipe(
 export type TeamName = typeof TeamName.Type;
 
 /**
- * A shop-scoped grouping of members. `archivedAt` null = active; nothing hard
- * deletes a team, so a step or historical record can always resolve the name it
- * was owned by (`migrations/0001_init.sql`).
+ * A shop-scoped grouping of members. Merchant copy: **delete a team and
+ * its steps become unassigned until you assign a team.**
+ * Every `WorkflowStep`, `WorkflowDraftStep`, and *open* `WorkflowRunStep`
+ * that pointed at the team gets `teamId = null`; finished run steps keep the
+ * id and their `teamName` snapshot, which is why history never needs the row.
+ * A team with nobody on it is valid and shows **No members**: its steps can
+ * still start runs, nobody can work them until someone joins, and adding one
+ * member fixes everything with no data change.
  */
 export const Team = Schema.Struct({
   id: TeamId,
   shop: Shop,
   name: TeamName,
   createdAt: Schema.String,
-  archivedAt: Schema.NullOr(Schema.String),
 });
 export type Team = typeof Team.Type;
 
@@ -312,6 +317,18 @@ export const TeamSummary = Schema.Struct({
   memberCount: Schema.Number,
 });
 export type TeamSummary = typeof TeamSummary.Type;
+
+/**
+ * The live D1 roster as the Durable Object hands it to pages: what the team
+ * pickers list and what the derived attention state is computed against.
+ * `memberCount` is here so "No members on <team>" needs no second read.
+ */
+export const TeamRoster = Schema.Struct({
+  id: TeamId,
+  name: TeamName,
+  memberCount: Schema.Number,
+});
+export type TeamRoster = typeof TeamRoster.Type;
 
 /**
  * The team plus every member of its shop, each flagged with whether they are on
@@ -483,15 +500,26 @@ export type WorkflowScope = typeof WorkflowScope.Type;
  * a run. Not used, in code or copy: version, live, saved, published,
  * retired, applied (as a state), route, routing, routable.
  *
- * `active` is the explicit on/off switch, stored and never derived, separate
- * from `archivedAt` (hidden from the list, name still reserved). A workflow
- * can start runs when `archivedAt is null and active and it has steps whose
- * teams are active`; `active = 1` implies at least one step. Archive, never
- * delete, so a run can always resolve the name it was copied from; a rename
- * is immediate and cosmetic because runs snapshot `workflowName`. `tags` and
- * steps change only through Apply, so an order arriving between two edits
- * sees a whole definition, never a half one. Encoded side is the Durable
- * Object row (epoch-ms integers).
+ * Merchant copy: **delete a workflow and its runs go with it** — open and
+ * finished, item and order scope, no trace, on or off alike; the confirm
+ * dialog states the counts. **Turn off** is
+ * the non-destructive move: new runs stop, open runs finish. The name and the
+ * order-workflow slot are freed at once, so uniqueness is among existing rows
+ * only. A rename is immediate and cosmetic because runs snapshot
+ * `workflowName`.
+ *
+ * `active` is the explicit on/off switch, stored and never derived. A
+ * workflow can start runs when `active and it has steps and every step is
+ * assigned to a team that exists`; `active = 1` implies at least one step.
+ * A step whose team was deleted is **unassigned** (`teamId` null, or an id
+ * no D1 row carries — read as null everywhere). **Needs attention** is the
+ * badge for a workflow, run, or team with an unassigned step or a team with
+ * no members; it is derived on every read, never stored, and the fix is
+ * always **assign a team** or add a member. Unassigned refuses Apply and
+ * Turn on; an empty team is a warning only. `tags` and steps change only
+ * through Apply, so an order arriving between two edits sees a whole
+ * definition, never a half one. Encoded side is the Durable Object row
+ * (epoch-ms integers).
  */
 export const Workflow = Schema.Struct({
   id: WorkflowId,
@@ -501,7 +529,6 @@ export const Workflow = Schema.Struct({
   tags: Schema.fromJsonString(ProductTags),
   createdAt: Schema.Number,
   updatedAt: Schema.Number,
-  archivedAt: Schema.NullOr(Schema.Number),
 });
 export type Workflow = typeof Workflow.Type;
 
@@ -520,9 +547,11 @@ export type WorkflowDraft = typeof WorkflowDraft.Type;
 
 /**
  * `teamId` is a live pointer to a D1 `Team`, not a snapshot: renaming a team
- * renames every step it owns, and a step can only be *applied* against an
- * active team. It carries no `teamName` — the name is joined at read time,
- * and only the eventual instance rows snapshot it.
+ * renames every step it owns, and a step can only be *applied* against a
+ * team that exists. `null` is **unassigned** — what a team delete leaves
+ * behind — and an id no D1 row carries reads the same way. It carries no
+ * `teamName`: the name is joined at read time, and only the eventual
+ * instance rows snapshot it.
  *
  * Workflow steps and draft steps have the same shape but live in two tables
  * (`WorkflowStep`, `WorkflowDraftStep`), so a step-id write can never be
@@ -543,7 +572,7 @@ export const WorkflowStep = Schema.Struct({
   position: Schema.Number,
   stage: Schema.Number,
   name: StepName,
-  teamId: TeamId,
+  teamId: Schema.NullOr(TeamId),
   instructions: Schema.NullOr(StepInstructions),
 });
 export type WorkflowStep = typeof WorkflowStep.Type;
@@ -551,12 +580,29 @@ export type WorkflowStep = typeof WorkflowStep.Type;
 export const WorkflowDraftStep = WorkflowStep;
 export type WorkflowDraftStep = typeof WorkflowDraftStep.Type;
 
-/** List row. `tags` and `stepCount` describe the workflow; `hasDraft` says what starts runs today is not what is being edited. */
+/**
+ * What the delete confirm dialog states: the runs that go with the workflow.
+ * Read at dialog-open time; staleness is harmless because the delete removes
+ * whatever exists at commit time.
+ */
+export const WorkflowDeleteCounts = Schema.Struct({
+  openRuns: Schema.Number,
+  finishedRuns: Schema.Number,
+});
+export type WorkflowDeleteCounts = typeof WorkflowDeleteCounts.Type;
+
+/**
+ * List row. `tags` and `stepCount` describe the workflow; `hasDraft` says
+ * what starts runs today is not what is being edited. `needsAttention` is the
+ * derived badge from {@link Workflow}: a step unassigned or on a team with no
+ * members, computed against the live roster on every list read.
+ */
 export const WorkflowSummary = Schema.Struct({
   ...Workflow.fields,
   hasDraft: SqliteBoolean,
   stepCount: Schema.Number,
-  activeRunCount: Schema.Number,
+  ...WorkflowDeleteCounts.fields,
+  needsAttention: Schema.Boolean,
 });
 export type WorkflowSummary = typeof WorkflowSummary.Type;
 
@@ -583,14 +629,19 @@ export type WorkflowWithDraft = typeof WorkflowWithDraft.Type;
 /**
  * What the detail page renders, in one socket round trip: the workflow
  * (read-only, what starts runs) and the draft (what the editor writes), each
- * with its steps. `teamName` is `null` when the step's team is archived or
- * gone — a flag, not a block: the workflow shows "needs attention", the step
- * renders with an empty picker, and everything else stays editable.
- * `activeTeams` rides along so the team picker needs no second call.
+ * with its steps. Both attention states are derived here against the live
+ * roster and never stored: `teamName` is `null` when the step is unassigned
+ * (`teamId` null, or an id no team carries) — a flag, not a block in the
+ * editor; the step renders with an empty picker and everything else stays
+ * editable. `memberCount` is the team's live headcount (`null` when
+ * unassigned) so the page can warn "No members on <team>". `teams` rides
+ * along so the team picker needs no second call. `runCounts` feeds the
+ * delete confirm dialog.
  */
 const StepWithTeamName = Schema.Struct({
   ...WorkflowStep.fields,
   teamName: Schema.NullOr(TeamName),
+  memberCount: Schema.NullOr(Schema.Number),
 });
 export type StepWithTeamName = typeof StepWithTeamName.Type;
 
@@ -604,19 +655,25 @@ export const WorkflowDetailView = Schema.Struct({
   workflow: Workflow,
   steps: Schema.Array(StepWithTeamName),
   draft: Schema.NullOr(WorkflowDraftView),
-  activeTeams: Schema.Array(Schema.Struct({ id: TeamId, name: TeamName })),
+  teams: Schema.Array(TeamRoster),
+  runCounts: WorkflowDeleteCounts,
 });
 export type WorkflowDetailView = typeof WorkflowDetailView.Type;
 
-const BoundedId = Schema.NonEmptyString.check(Schema.isMaxLength(128));
+/** A step is unassigned when its team is null or resolves to no team; the name is the tell after the roster join. */
+export const isUnassigned = (step: StepWithTeamName) => step.teamName === null;
 
-export const ListWorkflowsInput = Schema.Struct({
-  includeArchived: Schema.Boolean,
-});
-export type ListWorkflowsInput = typeof ListWorkflowsInput.Type;
+/** Assigned to a team nobody is on: a warning, never a blocker. */
+export const hasEmptyTeam = (step: StepWithTeamName) =>
+  step.teamName !== null && step.memberCount === 0;
+
+const BoundedId = Schema.NonEmptyString.check(Schema.isMaxLength(128));
 
 export const WorkflowIdInput = Schema.Struct({ workflowId: BoundedId });
 export type WorkflowIdInput = typeof WorkflowIdInput.Type;
+
+export const DeleteWorkflowInput = WorkflowIdInput;
+export type DeleteWorkflowInput = typeof DeleteWorkflowInput.Type;
 
 /** `scope` omitted means `item`, so every pre-existing caller keeps its shape. */
 export const CreateWorkflowInput = Schema.Struct({
@@ -655,12 +712,6 @@ export const SetWorkflowActiveInput = Schema.Struct({
 });
 export type SetWorkflowActiveInput = typeof SetWorkflowActiveInput.Type;
 
-export const SetWorkflowArchivedInput = Schema.Struct({
-  workflowId: BoundedId,
-  archived: Schema.Boolean,
-});
-export type SetWorkflowArchivedInput = typeof SetWorkflowArchivedInput.Type;
-
 export const AddStepInput = Schema.Struct({
   workflowId: BoundedId,
   name: StepName,
@@ -693,24 +744,25 @@ export type UpdateStepInput = typeof UpdateStepInput.Type;
  * declarative payload written in one transaction, rather than a
  * `createWorkflow` + `addStep`-per-step conversation whose failure midway
  * leaves a half-built definition. `position` is array order; `teamId` is a D1
- * `Team.id` the caller has already created, so the active-team check
- * `AddStepInput` exists to trigger has nothing left to catch. A step with no
- * `stage` gets the previous step's stage + 1 (linear); the repository
- * validates the stage invariant before writing. `archived` seeds the row
- * already archived, so a fixture can show archived workflows without a click;
- * the repository still enforces one active order workflow and no tags on an
- * order workflow, since a fixture that breaks either would leave the app in a
- * state the ordinary write path can never produce.
+ * `Team.id` the caller has already created, so the team check `AddStepInput`
+ * exists to trigger has nothing left to catch — or `null`, which seeds the
+ * step **unassigned** so the needs-attention state is visible after
+ * `pnpm seed`. A step with no `stage` gets the previous step's stage + 1
+ * (linear); the repository validates the stage invariant before writing. The
+ * repository still enforces one active order workflow and no tags on an order
+ * workflow, since a fixture that breaks either would leave the app in a state
+ * the ordinary write path can never produce.
  *
  * `steps` become the workflow's steps; a fixture with no steps is seeded
  * with an empty draft beside it, the state the ordinary path produces for a
- * fresh workflow. `active` defaults to `true` when the entry has steps and is
- * not archived. `draft` seeds a pending draft (its own tags, defaulting to
- * the workflow's, and steps) for fixtures that show the draft UI.
+ * fresh workflow. `active` defaults to `true` when the entry has steps and
+ * every step is assigned. `draft` seeds a pending draft (its own tags,
+ * defaulting to the workflow's, and steps) for fixtures that show the draft
+ * UI.
  */
 const SeedWorkflowStep = Schema.Struct({
   name: StepName,
-  teamId: TeamId,
+  teamId: Schema.NullOr(TeamId),
   stage: Schema.optionalKey(Schema.Number),
   instructions: Schema.optionalKey(StepInstructions),
 });
@@ -720,7 +772,6 @@ export const SeedWorkflowsInput = Schema.Struct({
     Schema.Struct({
       name: WorkflowName,
       scope: Schema.optionalKey(WorkflowScope),
-      archived: Schema.optionalKey(Schema.Boolean),
       active: Schema.optionalKey(Schema.Boolean),
       tags: ProductTags,
       steps: Schema.Array(SeedWorkflowStep),
@@ -766,19 +817,17 @@ export const WorkflowResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("Limit"), limit: Schema.Number }),
   Schema.Struct({ _tag: Schema.Literal("OrderWorkflowExists") }),
-  /** Archive refused while the workflow is on: turn it off first. */
-  Schema.Struct({ _tag: Schema.Literal("Active") }),
 ]);
 export type WorkflowResult = typeof WorkflowResult.Type;
 
-/** `TeamNotActive` names the offending steps so the page can say which to reassign. */
+/** `StepUnassigned` names the offending steps so the page can say which to assign. */
 export const ApplyResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok"), workflow: Workflow }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("NoDraft") }),
   Schema.Struct({ _tag: Schema.Literal("NoSteps") }),
   Schema.Struct({
-    _tag: Schema.Literal("TeamNotActive"),
+    _tag: Schema.Literal("StepUnassigned"),
     stepNames: Schema.Array(StepName),
   }),
 ]);
@@ -796,17 +845,15 @@ export type DiscardResult = typeof DiscardResult.Type;
 export const DraftResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok"), draft: WorkflowDraft }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
-  Schema.Struct({ _tag: Schema.Literal("Archived") }),
 ]);
 export type DraftResult = typeof DraftResult.Type;
 
 export const ActivateResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok"), workflow: Workflow }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
-  Schema.Struct({ _tag: Schema.Literal("Archived") }),
   Schema.Struct({ _tag: Schema.Literal("NoSteps") }),
   Schema.Struct({
-    _tag: Schema.Literal("TeamNotActive"),
+    _tag: Schema.Literal("StepUnassigned"),
     stepNames: Schema.Array(StepName),
   }),
   Schema.Struct({ _tag: Schema.Literal("OrderWorkflowExists") }),
@@ -820,29 +867,77 @@ export const StepResult = Schema.Union([
   }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("Limit"), limit: Schema.Number }),
-  Schema.Struct({ _tag: Schema.Literal("TeamNotActive") }),
-  Schema.Struct({ _tag: Schema.Literal("Archived") }),
+  /** The picked team no longer exists in D1: it was deleted under the editor. */
+  Schema.Struct({ _tag: Schema.Literal("TeamNotFound") }),
   /** No draft exists: the editor must Edit first. */
   Schema.Struct({ _tag: Schema.Literal("NoDraft") }),
 ]);
 export type StepResult = typeof StepResult.Type;
 
-export const TeamArchiveResult = Schema.Union([
-  Schema.Struct({ _tag: Schema.Literal("Ok") }),
-  Schema.Struct({ _tag: Schema.Literal("InUse"), count: Schema.Number }),
+/** Delete a workflow and its runs go with it; nothing refuses. */
+export const DeleteWorkflowResult = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("Deleted") }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
 ]);
-export type TeamArchiveResult = typeof TeamArchiveResult.Type;
+export type DeleteWorkflowResult = typeof DeleteWorkflowResult.Type;
 
-/** A step of the workflow or of its draft that points at a team; both sides block `archiveTeam`. */
+/**
+ * Delete a team and its steps become unassigned; nothing refuses. `Deleted`
+ * is "the D1 row was removed in this call"; a retry after a partial failure
+ * still nulls every pointer and reports `NotFound`.
+ */
+export const DeleteTeamResult = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("Deleted") }),
+  Schema.Struct({ _tag: Schema.Literal("NotFound") }),
+]);
+export type DeleteTeamResult = typeof DeleteTeamResult.Type;
+
+export const DeleteTeamInput = TeamIdInput;
+export type DeleteTeamInput = typeof DeleteTeamInput.Type;
+
+/**
+ * What the team delete dialog states: every pointer the delete will null.
+ * Workflow and draft steps are configuration; `openRunSteps` are work in
+ * progress that will wait until someone assigns a team.
+ */
+export const TeamDeleteCounts = Schema.Struct({
+  workflowSteps: Schema.Number,
+  draftSteps: Schema.Number,
+  openRunSteps: Schema.Number,
+});
+export type TeamDeleteCounts = typeof TeamDeleteCounts.Type;
+
+/** One row per team that owns anything; a team absent from the list owns nothing. */
+export const TeamStepCounts = Schema.Struct({
+  teamId: TeamId,
+  ...TeamDeleteCounts.fields,
+});
+export type TeamStepCounts = typeof TeamStepCounts.Type;
+
+/** A step of the workflow or of its draft that points at a team; the team page lists both sides. */
 export const OwnedStep = Schema.Struct({
   workflowId: WorkflowId,
   workflowName: WorkflowName,
-  workflowArchived: SqliteBoolean,
   side: Schema.Literals(["workflow", "draft"]),
   stepName: StepName,
 });
 export type OwnedStep = typeof OwnedStep.Type;
+
+/** The remedy that makes team delete safe: assign a team to an unassigned open run step. */
+export const AssignRunStepTeamInput = Schema.Struct({
+  runStepId: BoundedId,
+  teamId: BoundedId,
+});
+export type AssignRunStepTeamInput = typeof AssignRunStepTeamInput.Type;
+
+/** `StepFinished`: a completed step keeps its snapshot and is never reassigned. */
+export const AssignRunStepTeamResult = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("Assigned") }),
+  Schema.Struct({ _tag: Schema.Literal("NotFound") }),
+  Schema.Struct({ _tag: Schema.Literal("TeamNotFound") }),
+  Schema.Struct({ _tag: Schema.Literal("StepFinished") }),
+]);
+export type AssignRunStepTeamResult = typeof AssignRunStepTeamResult.Type;
 
 export const ShopSessionRedactedPage = Schema.Struct({
   shopSessions: Schema.Array(ShopSessionRedacted),
@@ -868,9 +963,8 @@ export type ShopInfo = typeof ShopInfo.Type;
 
 /**
  * Which ingestion path last wrote a `ShopOrder` row. Diagnostic, not control
- * flow: every path runs the same guarded upsert, so the value only answers
- * "how did this row get here" while the policies in
- * `docs/shop-agent-orders-sync-research.md` are still being decided.
+ * flow: every path runs the same `updatedAt`-guarded upsert, so the value
+ * only answers "how did this row get here" when a sync looks wrong.
  */
 export const OrderSyncSource = Schema.Literals(["webhook", "bulk", "manual"]);
 export type OrderSyncSource = typeof OrderSyncSource.Type;
@@ -1021,6 +1115,7 @@ export const SEED_ORDER_ID_PREFIX = "gid://shopify/Order/seed-";
  */
 export const SeedOrdersInput = Schema.Struct({
   memberId: MemberId,
+  memberEmail: Email,
   orders: Schema.Array(
     Schema.Struct({
       /** Numeric suffix: the id becomes `SEED_ORDER_ID_PREFIX + n` and the name `#<n>`. */
@@ -1110,6 +1205,8 @@ export const ListOrdersInput = Schema.Struct({
   state: Schema.NullOr(ProductionState),
   /** `null` is any payment state; `true`/`false` filters on `fullyPaid`, the run-creation gate. */
   paid: Schema.NullOr(Schema.Boolean),
+  /** `true` keeps only orders with an open run that needs attention (see `OrderRow.attention`). */
+  attention: Schema.Boolean,
 });
 export type ListOrdersInput = typeof ListOrdersInput.Type;
 
@@ -1149,6 +1246,14 @@ export const OrderRow = Schema.Struct({
   order: ShopOrder,
   itemUnits: Schema.Number,
   runs: RunCounts,
+  /**
+   * **Needs attention**, derived at read time against the live D1 roster and
+   * never stored: an open run has an open step that is unassigned (`teamId`
+   * null or no longer in the roster) or a ready step on a team with no
+   * members. The order page's "Assign team" picker and the members screen
+   * are the remedies; either clears this with no further write.
+   */
+  attention: Schema.Boolean,
 });
 export type OrderRow = typeof OrderRow.Type;
 
@@ -1209,6 +1314,8 @@ export const OpenStageCounts = Schema.Struct({
   no_workflow: Schema.Number,
   in_production: Schema.Number,
   ready_to_ship: Schema.Number,
+  /** Open orders with `OrderRow.attention`; a cross-cutting count, not a stage. */
+  attention: Schema.Number,
 });
 export type OpenStageCounts = typeof OpenStageCounts.Type;
 
@@ -1414,23 +1521,38 @@ export interface WorkflowsIndexLoaderData {
 /** `/app/workflows/$workflowId` (`app.workflows.$workflowId`); `null` is not found. */
 export type WorkflowLoaderData = WorkflowDetailView | null;
 
-/** `/app/members` (`app.members`). */
+/**
+ * `/app/members` (`app.members`). `soleMemberships` are the teams each member
+ * is the only person on, so the delete dialog can warn "This will leave
+ * <team> with no members" — only when true.
+ */
 export interface MembersLoaderData {
   readonly members: readonly Member[];
+  readonly soleMemberships: readonly {
+    readonly memberId: MemberId;
+    readonly teamName: TeamName;
+  }[];
 }
 
-/** `/app/teams` (`app.teams.index`). */
+/**
+ * `/app/teams` (`app.teams.index`). `stepCounts` is Durable Object data
+ * joined into a D1 page by the loader (the loader-versus-socket rule on
+ * `ShopAgentClient`), feeding the delete dialog's counts.
+ */
 export interface TeamsIndexLoaderData {
   readonly teams: readonly TeamSummary[];
+  readonly stepCounts: readonly TeamStepCounts[];
 }
 
 /**
  * `/app/teams/$teamId` (`app.teams.$teamId`; a param tail contributes its
- * noun, `Team`). `ownedSteps` is Durable Object data joined into a D1 page by
- * the loader — see the loader-versus-socket rule on `ShopAgentClient`.
+ * noun, `Team`). `ownedSteps` and `stepCounts` are Durable Object data joined
+ * into a D1 page by the loader — see the loader-versus-socket rule on
+ * `ShopAgentClient`.
  */
 export interface TeamLoaderData extends TeamDetail {
   readonly ownedSteps: readonly OwnedStep[];
+  readonly stepCounts: TeamDeleteCounts;
 }
 
 /** `/shop/$shop` (`shop.$shop.index`). */
@@ -1590,6 +1712,8 @@ export const RunFlagDetail = Schema.Struct({
   to: Schema.optionalKey(Schema.Number),
   reason: Schema.optionalKey(StepNote),
   by: Schema.optionalKey(MemberId),
+  /** The blocker's email, snapshotted like the step actors so a deleted member still reads as who. */
+  byEmail: Schema.optionalKey(Email),
   /** The line item title behind an order run's `item_added` / `item_removed`. */
   item: Schema.optionalKey(Schema.String),
 });
@@ -1638,9 +1762,15 @@ export type WorkflowRun = typeof WorkflowRun.Type;
 export const isOrderRun = (run: WorkflowRun) => run.lineItemId === null;
 
 /**
- * A step copied from the definition at run creation. `teamName` is snapshotted
- * alongside `teamId` so the queue never joins D1; `completedBy` / `startedBy`
- * are D1 `Member.id`s, cross-store and therefore unreferenced.
+ * A step copied from the definition at run creation. `teamName` is
+ * snapshotted alongside `teamId` so the queue never joins D1. `teamId` is the
+ * live pointer that puts the step in a team's queue; a team delete nulls it
+ * on *open* steps only (**unassigned**: red on the order page, in nobody's
+ * queue, waiting for **assign a team**), while a finished step keeps both the
+ * id and the name. `startedBy` / `completedBy` are D1 `Member.id`s,
+ * cross-store and unreferenced; `startedByEmail` / `completedByEmail` are
+ * the snapshots taken at the action that keep history readable after the
+ * member is deleted.
  *
  * A step is *ready* when it is open and nothing in an earlier stage is still
  * open; several steps of one run can be ready at once. `startedAt` is set by
@@ -1652,16 +1782,26 @@ export const WorkflowRunStep = Schema.Struct({
   position: Schema.Number,
   stage: Schema.Number,
   name: StepName,
-  teamId: TeamId,
+  teamId: Schema.NullOr(TeamId),
   teamName: TeamName,
   instructions: Schema.NullOr(StepInstructions),
   startedAt: Schema.NullOr(Schema.Number),
   startedBy: Schema.NullOr(MemberId),
+  startedByEmail: Schema.NullOr(Email),
   completedAt: Schema.NullOr(Schema.Number),
   completedBy: Schema.NullOr(MemberId),
+  completedByEmail: Schema.NullOr(Email),
   note: Schema.NullOr(StepNote),
 });
 export type WorkflowRunStep = typeof WorkflowRunStep.Type;
+
+/** An open run step whose team is gone: `teamId` null, or an id the roster no longer carries. */
+export const isRunStepUnassigned = (
+  step: WorkflowRunStep,
+  teams: readonly { readonly id: TeamId }[],
+) =>
+  step.completedAt === null &&
+  (step.teamId === null || !teams.some((team) => team.id === step.teamId));
 
 /** A run is complete in itself: its steps are copies, and nothing here refers back to the definition. */
 export const WorkflowRunDetail = Schema.Struct({
@@ -1673,12 +1813,11 @@ export type WorkflowRunDetail = typeof WorkflowRunDetail.Type;
 /**
  * One ready step the member may act on. `siblings` are the other steps of
  * the same stage that are *not* in the item — owned by other teams — so a
- * worker can see who they are working alongside. `startedByEmail` is joined
- * from D1 by the Durable Object, since the run rows hold only member ids.
+ * worker can see who they are working alongside. `startedByEmail` is read
+ * off the row, the snapshot taken at Start, never a live join.
  */
 export const QueueStep = Schema.Struct({
   ...WorkflowRunStep.fields,
-  startedByEmail: Schema.NullOr(Email),
   siblings: Schema.Array(Schema.Struct({ name: StepName, teamName: TeamName })),
 });
 export type QueueStep = typeof QueueStep.Type;
@@ -1741,13 +1880,17 @@ export const OrderDetailView = Schema.Struct({
    * the page has exactly one read, one key, and one push.
    */
   itemWorkflows: Schema.Array(Workflow),
+  /** The live roster: the "Assign team" picker's choices, and what decides which open steps are unassigned or on an empty team. */
+  teams: Schema.Array(TeamRoster),
 });
 export type OrderDetailView = typeof OrderDetailView.Type;
 
 /**
- * Member-area inputs. `teamIds` and `memberId` are resolved by `requireMember`
- * in the server fn from the session, never taken from the browser; the Durable
- * Object trusts them because its only caller for these methods is the Worker.
+ * Member-area inputs. `teamIds`, `memberId`, and `memberEmail` are resolved
+ * by `requireMember` and the session in the server fn, never taken from the
+ * browser; the Durable Object trusts them because its only caller for these
+ * methods is the Worker. The email is what the run step snapshots as the
+ * actor.
  */
 export const ListQueueInput = Schema.Struct({
   teamIds: Schema.Array(BoundedId),
@@ -1757,6 +1900,7 @@ export type ListQueueInput = typeof ListQueueInput.Type;
 export const CompleteStepInput = Schema.Struct({
   runStepId: BoundedId,
   memberId: BoundedId,
+  memberEmail: Email,
   teamIds: Schema.Array(BoundedId),
 });
 export type CompleteStepInput = typeof CompleteStepInput.Type;
@@ -1784,12 +1928,13 @@ export type SetStepNoteInput = typeof SetStepNoteInput.Type;
 export const BlockRunInput = Schema.Struct({
   runId: BoundedId,
   memberId: BoundedId,
+  memberEmail: Email,
   teamIds: Schema.Array(BoundedId),
   reason: Schema.NullOr(StepNote),
 });
 export type BlockRunInput = typeof BlockRunInput.Type;
 
-/** `WorkflowCannotStart` = archived, off, zero steps, or a step owned by an inactive team (see {@link Workflow}). */
+/** `WorkflowCannotStart` = off, zero steps, or an unassigned step (see {@link Workflow}). */
 export const AttachResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok"), run: WorkflowRun }),
   Schema.Struct({ _tag: Schema.Literal("AlreadyExists") }),

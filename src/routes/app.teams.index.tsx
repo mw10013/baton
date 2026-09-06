@@ -10,25 +10,16 @@ import * as Domain from "@/lib/Domain";
 import { fieldError, mutationErrorMessage } from "@/lib/form";
 import { formatDateTime } from "@/lib/format";
 import { Repository } from "@/lib/Repository";
+import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
-
-const teamsSearchSchema = Schema.Struct({
-  archived: Schema.optional(Schema.Boolean),
-});
 
 const TeamNameInput = Schema.Struct({
   name: Schema.String.check(Schema.isNonEmpty({ message: "Name is required" })),
 });
 type TeamNameInput = typeof TeamNameInput.Type;
 
-const TeamArchivedInput = Schema.Struct({
-  teamId: Schema.String,
-  archived: Schema.Boolean,
-});
-
 const decodeName = Schema.decodeUnknownEffect(Domain.TeamName);
-const decodeTeamId = Schema.decodeUnknownEffect(Domain.TeamId);
 const sessionShop = (shop: string) =>
   Schema.decodeUnknownEffect(Domain.Shop)(shop);
 
@@ -43,31 +34,66 @@ const failWith = (message: string) => () => Effect.fail(new Error(message));
 const NAME_TAKEN = "A team with that name already exists.";
 const TEAM_GONE = "That team no longer exists.";
 
-const decodeTeamArchiveResult = Schema.decodeUnknownPromise(
-  Schema.toType(Domain.TeamArchiveResult),
+const decodeDeleteTeamResult = Schema.decodeUnknownPromise(
+  Schema.toType(Domain.DeleteTeamResult),
 );
 
-export const teamArchiveResultMessage = Match.typeTags<
-  Domain.TeamArchiveResult,
+export const deleteTeamResultMessage = Match.typeTags<
+  Domain.DeleteTeamResult,
   string | null
 >()({
-  Ok: () => null,
-  InUse: ({ count }) =>
-    `Reassign this team's ${String(count)} workflow step${count === 1 ? "" : "s"} before archiving.`,
+  Deleted: () => null,
   NotFound: () => TEAM_GONE,
 });
 
+const NO_COUNTS: Domain.TeamDeleteCounts = {
+  workflowSteps: 0,
+  draftSteps: 0,
+  openRunSteps: 0,
+};
+
+const plural = (count: number, noun: string) =>
+  `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
+
+/**
+ * The delete dialog's body, in the merchant copy of `Domain.Team`: what will
+ * become unassigned, and what that means. Only true clauses are spoken.
+ */
+export const deleteTeamWarning = (counts: Domain.TeamDeleteCounts) => {
+  const configured = counts.workflowSteps + counts.draftSteps;
+  const parts = [
+    ...(configured > 0 ? [plural(configured, "workflow step")] : []),
+    ...(counts.openRunSteps > 0
+      ? [plural(counts.openRunSteps, "in-progress step")]
+      : []),
+  ];
+  if (parts.length === 0)
+    return "No workflow steps are assigned to it. This can't be undone.";
+  const verb = configured + counts.openRunSteps === 1 ? "is" : "are";
+  const consequences = [
+    ...(configured > 0
+      ? ["Workflows with unassigned steps stop starting for new orders"]
+      : []),
+    ...(counts.openRunSteps > 0
+      ? ["in-progress steps wait until you assign a team"]
+      : []),
+  ];
+  return `${parts.join(" and ")} ${verb} assigned to it. They will become unassigned. ${consequences.join(", and ")}.`;
+};
+
+/** Counts are Durable Object data joined into a D1 page (the loader-versus-socket rule on `ShopAgentClient`). */
 const getLoaderData = createServerFn({ method: "GET" })
-  .validator(Schema.toStandardSchemaV1(teamsSearchSchema))
   .middleware([shopifyServerFnMiddleware])
-  .handler(({ data, context: { runEffect, session } }) =>
+  .handler(({ context: { runEffect, session } }) =>
     runEffect(
       Effect.gen(function* () {
         const teams = yield* (yield* Repository).listTeams({
           shop: yield* sessionShop(session.shop),
-          includeArchived: data.archived === true,
         });
-        return { teams } satisfies Domain.TeamsIndexLoaderData;
+        const stepCounts = yield* (yield* ShopAgentClient).countStepsByTeam(
+          session.shop,
+        );
+        return { teams, stepCounts } satisfies Domain.TeamsIndexLoaderData;
       }),
     ),
   );
@@ -86,36 +112,21 @@ const createTeamFn = createServerFn({ method: "POST" })
     ),
   );
 
-const setTeamArchivedFn = createServerFn({ method: "POST" })
-  .validator(Schema.toStandardSchemaV1(TeamArchivedInput))
-  .middleware([shopifyServerFnMiddleware])
-  .handler(({ data, context: { runEffect, session } }) =>
-    runEffect(
-      Effect.gen(function* () {
-        yield* (yield* Repository).setTeamArchived({
-          shop: yield* sessionShop(session.shop),
-          id: yield* decodeTeamId(data.teamId),
-          archived: data.archived,
-        });
-      }).pipe(Effect.catchTag("TeamNotFoundError", failWith(TEAM_GONE))),
-    ),
-  );
-
 export const Route = createFileRoute("/app/teams/")({
-  validateSearch: Schema.toStandardSchemaV1(teamsSearchSchema),
-  loaderDeps: ({ search }) => ({ archived: search.archived }),
-  loader: ({ deps }) => getLoaderData({ data: deps }),
+  loader: () => getLoaderData(),
   component: RouteComponent,
 });
 
 function RouteComponent() {
-  const { teams } = Route.useLoaderData();
-  const { archived } = Route.useSearch();
+  const { teams, stepCounts } = Route.useLoaderData();
   const router = useRouter();
   const createTeam = useServerFn(createTeamFn);
-  const setTeamArchived = useServerFn(setTeamArchivedFn);
   const { agent, identified } = useShopAgent();
-  const [archiveBanner, setArchiveBanner] = React.useState<string | null>(null);
+  const [deleteBanner, setDeleteBanner] = React.useState<string | null>(null);
+  /** Which team's delete is awaiting its inline confirmation. */
+  const [confirming, setConfirming] = React.useState<Domain.TeamId | null>(
+    null,
+  );
 
   const createMutation = useMutation({
     mutationFn: (data: TeamNameInput) => createTeam({ data }),
@@ -126,25 +137,24 @@ function RouteComponent() {
   });
 
   /**
-   * Archive goes through the Durable Object so its "no workflow step still
-   * points here" guard runs serialized with step writes; restore has nothing
-   * to guard and stays a plain server fn.
+   * Delete goes through the Durable Object: it deletes the D1 row and then
+   * nulls every step pointer in the object's SQLite, in that order, so a step
+   * saved against the team meanwhile is caught by the nulling (see
+   * `ShopAgent.deleteTeam`).
    */
-  const archiveMutation = useMutation({
-    mutationFn: async (data: { teamId: string; archived: boolean }) => {
-      if (!data.archived) {
-        await setTeamArchived({ data });
-        return null;
-      }
-      if (!agent) throw new Error("Still connecting. Try again in a moment.");
+  const deleteMutation = useMutation({
+    mutationFn: (teamId: string) => {
+      if (!agent)
+        return Promise.reject(
+          new Error("Still connecting. Try again in a moment."),
+        );
       return withSocketRecovery(agent)(() =>
-        agent.stub.archiveTeam({ teamId: data.teamId }),
-      ).then(decodeTeamArchiveResult);
+        agent.stub.deleteTeam({ teamId }),
+      ).then(decodeDeleteTeamResult);
     },
     onSuccess: async (result) => {
-      setArchiveBanner(
-        result === null ? null : teamArchiveResultMessage(result),
-      );
+      setDeleteBanner(deleteTeamResultMessage(result));
+      setConfirming(null);
       await router.invalidate({ sync: true });
     },
   });
@@ -159,7 +169,7 @@ function RouteComponent() {
 
   const failedMutation = [
     { mutation: createMutation, fallback: "Could not create the team." },
-    { mutation: archiveMutation, fallback: "Could not update the team." },
+    { mutation: deleteMutation, fallback: "Could not delete the team." },
   ].find(({ mutation }) => mutation.isError);
   const mutationError =
     failedMutation &&
@@ -168,20 +178,59 @@ function RouteComponent() {
       failedMutation.fallback,
     );
 
+  const countsOf = (team: Domain.TeamSummary): Domain.TeamDeleteCounts =>
+    stepCounts.find((row) => row.teamId === team.id) ?? NO_COUNTS;
+
+  const confirmRow = (team: Domain.TeamSummary) => (
+    <s-table-row key={`${team.id}-confirm`} id={`${team.id}-confirm`}>
+      <s-table-cell>
+        <s-banner tone="critical" heading={`Delete ${team.name}?`}>
+          <s-stack gap="small-300">
+            <s-paragraph>{deleteTeamWarning(countsOf(team))}</s-paragraph>
+            <s-stack direction="inline" gap="small-300">
+              <s-button
+                variant="primary"
+                tone="critical"
+                disabled={!identified}
+                {...(deleteMutation.isPending ? { loading: true } : {})}
+                onClick={() => {
+                  deleteMutation.mutate(team.id);
+                }}
+              >
+                Delete
+              </s-button>
+              <s-button
+                variant="tertiary"
+                onClick={() => {
+                  setConfirming(null);
+                }}
+              >
+                Cancel
+              </s-button>
+            </s-stack>
+          </s-stack>
+        </s-banner>
+      </s-table-cell>
+      <s-table-cell> </s-table-cell>
+      <s-table-cell> </s-table-cell>
+      <s-table-cell> </s-table-cell>
+    </s-table-row>
+  );
+
   return (
     <s-page heading="Teams" inlineSize="large">
       <s-section heading="Create team" accessibilityLabel="Create team">
         <s-stack gap="base">
           <s-paragraph color="subdued">
             Teams group members so work can be scoped to them. A member with no
-            team sees nothing to do. Teams are archived, never deleted, so past
-            work stays readable.
+            team sees nothing to do. Delete a team and its steps become
+            unassigned until you assign another team.
           </s-paragraph>
           {mutationError && (
             <s-banner tone="critical">{mutationError}</s-banner>
           )}
-          {archiveBanner !== null && (
-            <s-banner tone="warning">{archiveBanner}</s-banner>
+          {deleteBanner !== null && (
+            <s-banner tone="warning">{deleteBanner}</s-banner>
           )}
           <form
             onSubmit={(event) => {
@@ -221,16 +270,6 @@ function RouteComponent() {
 
       <s-section heading="Teams" accessibilityLabel="Teams">
         <s-stack gap="base">
-          <s-checkbox
-            label="Show archived"
-            checked={archived === true}
-            onChange={() => {
-              void router.navigate({
-                to: "/app/teams",
-                search: { archived: archived === true ? undefined : true },
-              });
-            }}
-          />
           {teams.length === 0 ? (
             <s-paragraph color="subdued">
               No teams yet. Create one above.
@@ -244,15 +283,15 @@ function RouteComponent() {
                 <s-table-header> </s-table-header>
               </s-table-header-row>
               <s-table-body>
-                {teams.map((team) => (
+                {teams.flatMap((team) => [
                   <s-table-row key={team.id} id={team.id}>
                     <s-table-cell>
                       <s-stack direction="inline" gap="small-300">
                         <s-link href={`/app/teams/${team.id}`}>
                           {team.name}
                         </s-link>
-                        {team.archivedAt !== null && (
-                          <s-badge tone="info">Archived</s-badge>
+                        {team.memberCount === 0 && (
+                          <s-badge tone="warning">No members</s-badge>
                         )}
                       </s-stack>
                     </s-table-cell>
@@ -263,22 +302,18 @@ function RouteComponent() {
                     <s-table-cell>
                       <s-button
                         variant="tertiary"
-                        disabled={
-                          archiveMutation.isPending ||
-                          (team.archivedAt === null && !identified)
-                        }
+                        tone="critical"
+                        disabled={deleteMutation.isPending || !identified}
                         onClick={() => {
-                          archiveMutation.mutate({
-                            teamId: team.id,
-                            archived: team.archivedAt === null,
-                          });
+                          setConfirming(team.id);
                         }}
                       >
-                        {team.archivedAt === null ? "Archive" : "Restore"}
+                        Delete
                       </s-button>
                     </s-table-cell>
-                  </s-table-row>
-                ))}
+                  </s-table-row>,
+                  ...(confirming === team.id ? [confirmRow(team)] : []),
+                ])}
               </s-table-body>
             </s-table>
           )}

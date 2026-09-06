@@ -377,7 +377,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
     );
 
     it.effect(
-      "setMemberArchived keeps the row; findMember still finds it with archivedAt set",
+      "deleteMember removes the row, cascades its team edges, and refuses an unknown email",
       () =>
         run(
           Effect.gen(function* () {
@@ -386,119 +386,50 @@ describe("Repository SQL (D1 ShopSession)", () => {
             yield* seed(repo, [shop]);
             const email = emailOf("worker@example.com");
             yield* repo.addMember({ shop, email });
-            const before = Option.getOrThrow(
-              yield* repo.findMember({ shop, email }),
-            );
-            strictEqual(before.archivedAt, null);
-            yield* repo.setMemberArchived({ shop, email, archived: true });
-            const after = Option.getOrThrow(
-              yield* repo.findMember({ shop, email }),
-            );
-            strictEqual(after.id, before.id);
-            assertTrue(after.archivedAt !== null);
-          }),
-        ),
-    );
-
-    it.effect(
-      "setMemberArchived is idempotent: archiving twice keeps the first archivedAt; restoring clears it",
-      () =>
-        run(
-          Effect.gen(function* () {
-            const repo = yield* Repository;
-            const shop = shopOf("m.myshopify.com");
-            yield* seed(repo, [shop]);
-            const email = emailOf("worker@example.com");
-            yield* repo.addMember({ shop, email });
-            yield* repo.setMemberArchived({ shop, email, archived: true });
-            const first = Option.getOrThrow(
-              yield* repo.findMember({ shop, email }),
-            );
-            yield* repo.setMemberArchived({ shop, email, archived: true });
-            const second = Option.getOrThrow(
-              yield* repo.findMember({ shop, email }),
-            );
-            strictEqual(second.archivedAt, first.archivedAt);
-            yield* repo.setMemberArchived({ shop, email, archived: false });
-            strictEqual(
-              Option.getOrThrow(yield* repo.findMember({ shop, email }))
-                .archivedAt,
-              null,
-            );
-          }),
-        ),
-    );
-
-    it.effect(
-      "setMemberArchived on an unknown email fails with MemberNotFoundError",
-      () =>
-        run(
-          Effect.gen(function* () {
-            const repo = yield* Repository;
-            const shop = shopOf("m.myshopify.com");
-            yield* seed(repo, [shop]);
-            const result = yield* repo
-              .setMemberArchived({
-                shop,
-                email: emailOf("nobody@example.com"),
-                archived: true,
-              })
+            const team = yield* repo.createTeam({
+              shop,
+              name: Schema.decodeUnknownSync(Domain.TeamName)("Cut"),
+            });
+            const [member] = yield* repo.listMembers(shop);
+            yield* repo.setTeamMember({
+              shop,
+              teamId: team.id,
+              memberId: member.id,
+              inTeam: true,
+            });
+            yield* repo.deleteMember({ shop, email });
+            assertTrue(Option.isNone(yield* repo.findMember({ shop, email })));
+            strictEqual((yield* repo.listTeams({ shop }))[0].memberCount, 0);
+            const missing = yield* repo
+              .deleteMember({ shop, email })
               .pipe(Effect.flip);
-            strictEqual(result._tag, "MemberNotFoundError");
+            strictEqual(missing._tag, "MemberNotFoundError");
           }),
         ),
     );
 
-    it.effect(
-      "addMember on an archived email restores it with the same id",
-      () =>
-        run(
-          Effect.gen(function* () {
-            const repo = yield* Repository;
-            const shop = shopOf("m.myshopify.com");
-            yield* seed(repo, [shop]);
-            const email = emailOf("worker@example.com");
-            yield* repo.addMember({ shop, email });
-            const original = Option.getOrThrow(
-              yield* repo.findMember({ shop, email }),
-            );
-            yield* repo.setMemberArchived({ shop, email, archived: true });
-            yield* repo.addMember({ shop, email });
-            const restored = Option.getOrThrow(
-              yield* repo.findMember({ shop, email }),
-            );
-            strictEqual(restored.id, original.id);
-            strictEqual(restored.archivedAt, null);
-          }),
-        ),
-    );
-
-    it.effect("listMembers includes archived members, active first", () =>
+    it.effect("addMember after deleteMember mints a new id", () =>
       run(
         Effect.gen(function* () {
           const repo = yield* Repository;
           const shop = shopOf("m.myshopify.com");
           yield* seed(repo, [shop]);
-          const first = emailOf("a@example.com");
-          const second = emailOf("b@example.com");
-          yield* repo.addMember({ shop, email: first });
-          yield* repo.addMember({ shop, email: second });
-          yield* repo.setMemberArchived({ shop, email: first, archived: true });
-          const members = yield* repo.listMembers(shop);
-          strictEqual(
-            members
-              .map(
-                (m) =>
-                  `${m.email}:${m.archivedAt === null ? "active" : "archived"}`,
-              )
-              .join(","),
-            "b@example.com:active,a@example.com:archived",
+          const email = emailOf("worker@example.com");
+          yield* repo.addMember({ shop, email });
+          const original = Option.getOrThrow(
+            yield* repo.findMember({ shop, email }),
           );
+          yield* repo.deleteMember({ shop, email });
+          yield* repo.addMember({ shop, email });
+          const readded = Option.getOrThrow(
+            yield* repo.findMember({ shop, email }),
+          );
+          assertTrue(readded.id !== original.id);
         }),
       ),
     );
 
-    it.effect("listMemberShops omits shops where the member is archived", () =>
+    it.effect("listMemberShops omits shops where the member was deleted", () =>
       run(
         Effect.gen(function* () {
           const repo = yield* Repository;
@@ -506,13 +437,51 @@ describe("Repository SQL (D1 ShopSession)", () => {
           const email = emailOf("multi@example.com");
           yield* repo.addMember({ shop: shopOf("a.myshopify.com"), email });
           yield* repo.addMember({ shop: shopOf("b.myshopify.com"), email });
-          yield* repo.setMemberArchived({
-            shop: shopOf("a.myshopify.com"),
-            email,
-            archived: true,
-          });
+          yield* repo.deleteMember({ shop: shopOf("a.myshopify.com"), email });
           const shops = yield* repo.listMemberShops(email);
           strictEqual(shops.join(","), "b.myshopify.com");
+        }),
+      ),
+    );
+
+    it.effect("listSoleMemberships names the teams a member is alone on", () =>
+      run(
+        Effect.gen(function* () {
+          const repo = yield* Repository;
+          const shop = shopOf("m.myshopify.com");
+          yield* seed(repo, [shop]);
+          const alone = emailOf("alone@example.com");
+          const other = emailOf("other@example.com");
+          yield* repo.addMember({ shop, email: alone });
+          yield* repo.addMember({ shop, email: other });
+          const members = yield* repo.listMembers(shop);
+          const idOf = (email: string) =>
+            members.find((m) => m.email === email)?.id ??
+            Schema.decodeUnknownSync(Domain.MemberId)("nope");
+          const solo = yield* repo.createTeam({
+            shop,
+            name: Schema.decodeUnknownSync(Domain.TeamName)("Solo"),
+          });
+          const shared = yield* repo.createTeam({
+            shop,
+            name: Schema.decodeUnknownSync(Domain.TeamName)("Shared"),
+          });
+          for (const [teamId, email] of [
+            [solo.id, alone],
+            [shared.id, alone],
+            [shared.id, other],
+          ] as const)
+            yield* repo.setTeamMember({
+              shop,
+              teamId,
+              memberId: idOf(email),
+              inTeam: true,
+            });
+          const sole = yield* repo.listSoleMemberships(shop);
+          strictEqual(
+            sole.map((row) => `${row.memberId}:${row.teamName}`).join(","),
+            `${idOf(alone)}:Solo`,
+          );
         }),
       ),
     );
@@ -559,7 +528,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
         return yield* repo.createTeam({ shop, name: teamNameOf(name) });
       });
 
-    it.effect("createTeam trims, lists active-only, and counts members", () =>
+    it.effect("createTeam trims, lists, and counts members", () =>
       run(
         Effect.gen(function* () {
           const repo = yield* Repository;
@@ -576,10 +545,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
             memberId: member.id,
             inTeam: true,
           });
-          const listed = yield* repo.listTeams({
-            shop,
-            includeArchived: false,
-          });
+          const listed = yield* repo.listTeams({ shop });
           strictEqual(listed.length, 1);
           strictEqual(listed[0].memberCount, 1);
         }),
@@ -618,10 +584,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
             id: cut.id,
             name: teamNameOf("Cutting"),
           });
-          const listed = yield* repo.listTeams({
-            shop,
-            includeArchived: false,
-          });
+          const listed = yield* repo.listTeams({ shop });
           strictEqual(listed.map((team) => team.name).join(","), "Cutting,Sew");
           assertTrue(
             (yield* Effect.flip(
@@ -636,32 +599,43 @@ describe("Repository SQL (D1 ShopSession)", () => {
       ),
     );
 
-    it.effect("setTeamArchived hides then restores, keeping the instant", () =>
-      run(
-        Effect.gen(function* () {
-          const repo = yield* Repository;
-          const shop = shopOf("t.myshopify.com");
-          yield* seed(repo, [shop]);
-          const team = yield* seedTeam(shop, "Cut");
-          yield* repo.setTeamArchived({ shop, id: team.id, archived: true });
-          const first = yield* repo.listTeams({ shop, includeArchived: true });
-          strictEqual(
-            (yield* repo.listTeams({ shop, includeArchived: false })).length,
-            0,
-          );
-          yield* repo.setTeamArchived({ shop, id: team.id, archived: true });
-          const second = yield* repo.listTeams({ shop, includeArchived: true });
-          strictEqual(second[0].archivedAt, first[0].archivedAt);
-          yield* repo.setTeamArchived({ shop, id: team.id, archived: false });
-          strictEqual(
-            (yield* repo.listTeams({ shop, includeArchived: false })).length,
-            1,
-          );
-        }),
-      ),
+    it.effect(
+      "deleteTeam removes the row and its edges, frees the name, and refuses an unknown id",
+      () =>
+        run(
+          Effect.gen(function* () {
+            const repo = yield* Repository;
+            const shop = shopOf("t.myshopify.com");
+            yield* seed(repo, [shop]);
+            const team = yield* seedTeam(shop, "Cut");
+            const email = emailOf("worker@example.com");
+            yield* repo.addMember({ shop, email });
+            const [member] = yield* repo.listMembers(shop);
+            yield* repo.setTeamMember({
+              shop,
+              teamId: team.id,
+              memberId: member.id,
+              inTeam: true,
+            });
+            yield* repo.deleteTeam({ shop, id: team.id });
+            strictEqual((yield* repo.listTeams({ shop })).length, 0);
+            strictEqual(
+              Option.getOrThrow(yield* repo.findMemberAccess({ shop, email }))
+                .teams.length,
+              0,
+            );
+            const again = yield* seedTeam(shop, "Cut");
+            assertTrue(again.id !== team.id);
+            assertTrue(
+              (yield* Effect.flip(
+                repo.deleteTeam({ shop, id: team.id }),
+              )) instanceof TeamNotFoundError,
+            );
+          }),
+        ),
     );
 
-    it.effect("setTeamMember refuses cross-shop pairs and archived teams", () =>
+    it.effect("setTeamMember refuses cross-shop pairs", () =>
       run(
         Effect.gen(function* () {
           const repo = yield* Repository;
@@ -682,23 +656,10 @@ describe("Repository SQL (D1 ShopSession)", () => {
               }),
             )) instanceof TeamNotFoundError,
           );
-          yield* repo.addMember({ shop, email });
-          const [member] = yield* repo.listMembers(shop);
-          yield* repo.setTeamArchived({ shop, id: team.id, archived: true });
-          assertTrue(
-            (yield* Effect.flip(
-              repo.setTeamMember({
-                shop,
-                teamId: team.id,
-                memberId: member.id,
-                inTeam: true,
-              }),
-            )) instanceof TeamNotFoundError,
-          );
           yield* repo.setTeamMember({
             shop,
             teamId: team.id,
-            memberId: member.id,
+            memberId: foreign.id,
             inTeam: false,
           });
         }),
@@ -753,129 +714,35 @@ describe("Repository SQL (D1 ShopSession)", () => {
       ),
     );
 
-    it.effect(
-      "archiving a member keeps their team edges; removing via setTeamMember drops memberCount",
-      () =>
-        run(
-          Effect.gen(function* () {
-            const repo = yield* Repository;
-            const shop = shopOf("t.myshopify.com");
-            yield* seed(repo, [shop]);
-            const team = yield* seedTeam(shop, "Cut");
-            const email = emailOf("worker@example.com");
-            yield* repo.addMember({ shop, email });
-            const [member] = yield* repo.listMembers(shop);
-            yield* repo.setTeamMember({
-              shop,
-              teamId: team.id,
-              memberId: member.id,
-              inTeam: true,
-            });
-            yield* repo.setMemberArchived({ shop, email, archived: true });
-            strictEqual(
-              (yield* repo.listTeams({ shop, includeArchived: false }))[0]
-                .memberCount,
-              1,
-            );
-            yield* repo.setTeamMember({
-              shop,
-              teamId: team.id,
-              memberId: member.id,
-              inTeam: false,
-            });
-            strictEqual(
-              (yield* repo.listTeams({ shop, includeArchived: false }))[0]
-                .memberCount,
-              0,
-            );
-          }),
-        ),
+    it.effect("removing via setTeamMember drops memberCount", () =>
+      run(
+        Effect.gen(function* () {
+          const repo = yield* Repository;
+          const shop = shopOf("t.myshopify.com");
+          yield* seed(repo, [shop]);
+          const team = yield* seedTeam(shop, "Cut");
+          const email = emailOf("worker@example.com");
+          yield* repo.addMember({ shop, email });
+          const [member] = yield* repo.listMembers(shop);
+          yield* repo.setTeamMember({
+            shop,
+            teamId: team.id,
+            memberId: member.id,
+            inTeam: true,
+          });
+          strictEqual((yield* repo.listTeams({ shop }))[0].memberCount, 1);
+          yield* repo.setTeamMember({
+            shop,
+            teamId: team.id,
+            memberId: member.id,
+            inTeam: false,
+          });
+          strictEqual((yield* repo.listTeams({ shop }))[0].memberCount, 0);
+        }),
+      ),
     );
 
-    it.effect(
-      "setTeamMember refuses to add an archived member (MemberNotFoundError) and still removes one",
-      () =>
-        run(
-          Effect.gen(function* () {
-            const repo = yield* Repository;
-            const shop = shopOf("t.myshopify.com");
-            yield* seed(repo, [shop]);
-            const team = yield* seedTeam(shop, "Cut");
-            const email = emailOf("worker@example.com");
-            yield* repo.addMember({ shop, email });
-            const [member] = yield* repo.listMembers(shop);
-            yield* repo.setMemberArchived({ shop, email, archived: true });
-            const refused = yield* repo
-              .setTeamMember({
-                shop,
-                teamId: team.id,
-                memberId: member.id,
-                inTeam: true,
-              })
-              .pipe(Effect.flip);
-            strictEqual(refused._tag, "MemberNotFoundError");
-            yield* repo.setMemberArchived({ shop, email, archived: false });
-            yield* repo.setTeamMember({
-              shop,
-              teamId: team.id,
-              memberId: member.id,
-              inTeam: true,
-            });
-            yield* repo.setMemberArchived({ shop, email, archived: true });
-            yield* repo.setTeamMember({
-              shop,
-              teamId: team.id,
-              memberId: member.id,
-              inTeam: false,
-            });
-            strictEqual(
-              (yield* repo.listTeams({ shop, includeArchived: false }))[0]
-                .memberCount,
-              0,
-            );
-          }),
-        ),
-    );
-
-    it.effect(
-      "findTeamDetail lists an archived member only while they are on the team",
-      () =>
-        run(
-          Effect.gen(function* () {
-            const repo = yield* Repository;
-            const shop = shopOf("t.myshopify.com");
-            yield* seed(repo, [shop]);
-            const team = yield* seedTeam(shop, "Cut");
-            const email = emailOf("worker@example.com");
-            yield* repo.addMember({ shop, email });
-            const [member] = yield* repo.listMembers(shop);
-            yield* repo.setTeamMember({
-              shop,
-              teamId: team.id,
-              memberId: member.id,
-              inTeam: true,
-            });
-            yield* repo.setMemberArchived({ shop, email, archived: true });
-            const onTeam = Option.getOrThrow(
-              yield* repo.findTeamDetail({ shop, id: team.id }),
-            );
-            strictEqual(onTeam.members.length, 1);
-            assertTrue(onTeam.members[0].archivedAt !== null);
-            yield* repo.setTeamMember({
-              shop,
-              teamId: team.id,
-              memberId: member.id,
-              inTeam: false,
-            });
-            const offTeam = Option.getOrThrow(
-              yield* repo.findTeamDetail({ shop, id: team.id }),
-            );
-            strictEqual(offTeam.members.length, 0);
-          }),
-        ),
-    );
-
-    it.effect("findMemberAccess is none for an archived member", () =>
+    it.effect("findMemberAccess is none for a deleted member", () =>
       run(
         Effect.gen(function* () {
           const repo = yield* Repository;
@@ -886,7 +753,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
           assertTrue(
             Option.isSome(yield* repo.findMemberAccess({ shop, email })),
           );
-          yield* repo.setMemberArchived({ shop, email, archived: true });
+          yield* repo.deleteMember({ shop, email });
           assertTrue(
             Option.isNone(yield* repo.findMemberAccess({ shop, email })),
           );
@@ -902,60 +769,59 @@ describe("Repository SQL (D1 ShopSession)", () => {
           yield* seed(repo, [shop]);
           yield* seedTeam(shop, "Cut");
           yield* repo.deleteShopSession(shop);
-          strictEqual(
-            (yield* repo.listTeams({ shop, includeArchived: true })).length,
-            0,
-          );
+          strictEqual((yield* repo.listTeams({ shop })).length, 0);
         }),
       ),
     );
 
-    it.effect("findMemberAccess carries active teams and only those", () =>
-      run(
-        Effect.gen(function* () {
-          const repo = yield* Repository;
-          const shop = shopOf("t.myshopify.com");
-          yield* seed(repo, [shop]);
-          const email = emailOf("worker@example.com");
-          yield* repo.addMember({ shop, email });
-          const [member] = yield* repo.listMembers(shop);
-          const teamless = Option.getOrThrow(
-            yield* repo.findMemberAccess({ shop, email }),
-          );
-          strictEqual(teamless.memberId, member.id);
-          strictEqual(teamless.teams.length, 0);
-          const cut = yield* seedTeam(shop, "Cut");
-          const sew = yield* seedTeam(shop, "Sew");
-          for (const team of [cut, sew])
-            yield* repo.setTeamMember({
-              shop,
-              teamId: team.id,
-              memberId: member.id,
-              inTeam: true,
-            });
-          strictEqual(
-            Option.getOrThrow(yield* repo.findMemberAccess({ shop, email }))
-              .teams.map((team) => team.name)
-              .join(","),
-            "Cut,Sew",
-          );
-          yield* repo.setTeamArchived({ shop, id: sew.id, archived: true });
-          strictEqual(
-            Option.getOrThrow(yield* repo.findMemberAccess({ shop, email }))
-              .teams.map((team) => team.name)
-              .join(","),
-            "Cut",
-          );
-          assertTrue(
-            Option.isNone(
-              yield* repo.findMemberAccess({
+    it.effect(
+      "findMemberAccess carries the member's teams and only those",
+      () =>
+        run(
+          Effect.gen(function* () {
+            const repo = yield* Repository;
+            const shop = shopOf("t.myshopify.com");
+            yield* seed(repo, [shop]);
+            const email = emailOf("worker@example.com");
+            yield* repo.addMember({ shop, email });
+            const [member] = yield* repo.listMembers(shop);
+            const teamless = Option.getOrThrow(
+              yield* repo.findMemberAccess({ shop, email }),
+            );
+            strictEqual(teamless.memberId, member.id);
+            strictEqual(teamless.teams.length, 0);
+            const cut = yield* seedTeam(shop, "Cut");
+            const sew = yield* seedTeam(shop, "Sew");
+            for (const team of [cut, sew])
+              yield* repo.setTeamMember({
                 shop,
-                email: emailOf("stranger@example.com"),
-              }),
-            ),
-          );
-        }),
-      ),
+                teamId: team.id,
+                memberId: member.id,
+                inTeam: true,
+              });
+            strictEqual(
+              Option.getOrThrow(yield* repo.findMemberAccess({ shop, email }))
+                .teams.map((team) => team.name)
+                .join(","),
+              "Cut,Sew",
+            );
+            yield* repo.deleteTeam({ shop, id: sew.id });
+            strictEqual(
+              Option.getOrThrow(yield* repo.findMemberAccess({ shop, email }))
+                .teams.map((team) => team.name)
+                .join(","),
+              "Cut",
+            );
+            assertTrue(
+              Option.isNone(
+                yield* repo.findMemberAccess({
+                  shop,
+                  email: emailOf("stranger@example.com"),
+                }),
+              ),
+            );
+          }),
+        ),
     );
   });
 });
