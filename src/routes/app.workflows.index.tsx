@@ -1,40 +1,38 @@
 import * as React from "react";
 
-import { useForm } from "@tanstack/react-form";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { useMutation } from "@tanstack/react-query";
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  useNavigate,
+  useRouter,
+} from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
-import { fieldError } from "@/lib/form";
 import { formatDateTime } from "@/lib/format";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
-import {
-  deleteWorkflowResultMessage,
-  DELETE_WORKFLOW_WARNING,
-  splitTags,
-  workflowResultMessage,
-} from "@/lib/workflowShared";
+import { workflowResultMessage } from "@/lib/workflowShared";
 
-const CreateWorkflowForm = Schema.Struct({
-  name: Schema.String.check(Schema.isNonEmpty({ message: "Name is required" })),
-  tags: Schema.String,
-});
-type CreateWorkflowForm = typeof CreateWorkflowForm.Type;
+const CREATE_MODAL = "create-workflow";
 
 /**
- * `Schema.toType` on the mutation results: the Durable Object already decoded
- * them, so the wire value is the decoded shape. See the same note on
- * `decodeOrdersView` in `app.orders.index.tsx`.
- */ const decodeWorkflowResult = Schema.decodeUnknownPromise(
+ * The status tabs and the tag filter are in the URL, so a filtered list is a
+ * link someone can send. The search text is not: it changes on every
+ * keystroke and is nobody's destination.
+ */
+const WorkflowsSearch = Schema.Struct({
+  status: Schema.optionalKey(Schema.Literals(["active", "off"])),
+  tag: Schema.optionalKey(Schema.String),
+});
+type WorkflowsSearch = typeof WorkflowsSearch.Type;
+
+const decodeWorkflowResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.WorkflowResult),
-);
-const decodeDeleteWorkflowResult = Schema.decodeUnknownPromise(
-  Schema.toType(Domain.DeleteWorkflowResult),
 );
 
 /**
@@ -55,10 +53,10 @@ export const statusBadges = (workflow: Domain.WorkflowSummary) => (
     ) : (
       <s-badge>Off</s-badge>
     )}
-    {workflow.hasDraft && <s-badge tone="caution">Draft pending</s-badge>}
+    {workflow.hasDraft && <s-badge tone="info">Draft</s-badge>}
     {workflow.stepCount === 0 && <s-badge tone="warning">No steps</s-badge>}
     {workflow.needsAttention && (
-      <s-badge tone="warning">Needs attention</s-badge>
+      <s-badge tone="critical">Needs attention</s-badge>
     )}
   </s-stack>
 );
@@ -85,248 +83,281 @@ const getLoaderData = createServerFn({ method: "GET" })
   );
 
 export const Route = createFileRoute("/app/workflows/")({
+  validateSearch: Schema.toStandardSchemaV1(WorkflowsSearch),
   loader: () => getLoaderData(),
   component: RouteComponent,
 });
 
+/**
+ * The workflows list: what exists, what state each one is in, and one way in
+ * to each. Creating asks for a name and nothing else — a workflow's product
+ * tags and steps are decisions made in the editor, in front of the trigger
+ * card that says what they do — so the page carries no form.
+ */
 function RouteComponent() {
-  const router = useRouter();
   const { workflows: allWorkflows } = Route.useLoaderData();
+  const { status, tag } = Route.useSearch();
+  const router = useRouter();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const shopify = useAppBridge();
   const { agent, identified } = useShopAgent();
+  const [query, setQuery] = React.useState("");
+  const [name, setName] = React.useState("");
+  const [nameError, setNameError] = React.useState<string | null>(null);
   const [banner, setBanner] = React.useState<string | null>(null);
-  /** Which workflow's delete is awaiting its inline confirmation. */
-  const [confirming, setConfirming] = React.useState<Domain.WorkflowId | null>(
-    null,
-  );
-
-  const invalidate = () => router.invalidate({ sync: true });
-
-  const onResult = (result: Domain.WorkflowResult) => {
-    setBanner(workflowResultMessage(result));
-    return invalidate();
-  };
 
   const createMutation = useMutation({
-    mutationFn: ({ name, tags }: CreateWorkflowForm) =>
+    mutationFn: () =>
       agent
         ? withSocketRecovery(agent)(() =>
-            agent.stub.createWorkflow({
-              name,
-              scope: "item",
-              tags: splitTags(tags),
-            }),
+            agent.stub.createWorkflow({ name, scope: "item", tags: [] }),
           ).then(decodeWorkflowResult)
         : Promise.reject(new Error("Still connecting. Try again in a moment.")),
     onSuccess: async (result) => {
-      if (result._tag === "Ok") form.reset();
-      await onResult(result);
+      if (result._tag !== "Ok") {
+        setNameError(workflowResultMessage(result));
+        return;
+      }
+      await shopify.modal.hide(CREATE_MODAL);
+      setName("");
+      await router.invalidate({ sync: true });
+      await navigate({
+        to: "/app/workflows/$workflowId/edit",
+        params: { workflowId: result.workflow.id },
+      });
     },
-    onError: (error) => {
+    onError: (error: Error) => {
       setBanner(error.message);
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (input: typeof Domain.DeleteWorkflowInput.Encoded) =>
-      agent
-        ? withSocketRecovery(agent)(() =>
-            agent.stub.removeWorkflow(input),
-          ).then(decodeDeleteWorkflowResult)
-        : Promise.reject(new Error("Still connecting. Try again in a moment.")),
-    onSuccess: async (result) => {
-      setBanner(deleteWorkflowResultMessage(result));
-      setConfirming(null);
-      await invalidate();
-    },
-    onError: (error) => {
-      setBanner(error.message);
-    },
-  });
-
-  const form = useForm({
-    defaultValues: {
-      name: "",
-      tags: "",
-    } satisfies CreateWorkflowForm,
-    validators: { onSubmit: Schema.toStandardSchemaV1(CreateWorkflowForm) },
-    onSubmit: ({ value }) => {
-      void createMutation.mutateAsync(value);
     },
   });
 
   const workflows = allWorkflows.filter(Domain.isItemWorkflow);
+  const tags = [
+    ...new Set(workflows.flatMap((workflow) => workflow.tags)),
+  ].toSorted();
 
-  const renderRow = (workflow: Domain.ItemWorkflowSummary) => (
-    <s-table-row key={workflow.id} id={workflow.id}>
-      <s-table-cell>
-        <s-link href={`/app/workflows/${workflow.id}`}>{workflow.name}</s-link>
-      </s-table-cell>
-      <s-table-cell>{statusBadges(workflow)}</s-table-cell>
-      <s-table-cell>
-        <s-stack direction="inline" gap="small-300">
-          {workflow.tags.map((tag) => (
-            <s-badge key={tag}>{tag}</s-badge>
-          ))}
-        </s-stack>
-      </s-table-cell>
-      <s-table-cell>{workflow.stepCount}</s-table-cell>
-      <s-table-cell>{formatDateTime(workflow.updatedAt)}</s-table-cell>
-      <s-table-cell>
-        <s-button
-          variant="tertiary"
-          tone="critical"
-          disabled={!identified || deleteMutation.isPending}
-          onClick={() => {
-            setConfirming(workflow.id);
-          }}
-        >
-          Delete
-        </s-button>
-      </s-table-cell>
-    </s-table-row>
+  /** Whatever is not in `next` is cleared, so the URL only ever carries the filters in force. */
+  const setFilters = (next: WorkflowsSearch) => {
+    void navigate({ search: next });
+  };
+
+  const trimmed = query.trim().toLowerCase();
+  const rows = workflows.filter((workflow) => {
+    if (status === "active" && !workflow.active) return false;
+    if (status === "off" && workflow.active) return false;
+    if (tag !== undefined && !workflow.tags.some((one) => one === tag))
+      return false;
+    if (trimmed !== "" && !workflow.name.toLowerCase().includes(trimmed))
+      return false;
+    return true;
+  });
+  const filtered = status !== undefined || tag !== undefined || trimmed !== "";
+
+  const statusButton = (label: string, value?: "active" | "off") => (
+    <s-button
+      variant={status === value ? "primary" : "tertiary"}
+      onClick={() => {
+        setFilters({
+          ...(value === undefined ? {} : { status: value }),
+          ...(tag === undefined ? {} : { tag }),
+        });
+      }}
+    >
+      {label}
+    </s-button>
   );
 
-  /** Confirm inline, under the row. */
-  const confirmRow = (workflow: Domain.WorkflowSummary) => (
-    <s-table-row key={`${workflow.id}-confirm`} id={`${workflow.id}-confirm`}>
-      <s-table-cell>
-        <s-banner tone="critical" heading={`Delete ${workflow.name}?`}>
-          <s-stack gap="small-300">
-            <s-paragraph>{DELETE_WORKFLOW_WARNING}</s-paragraph>
-            <s-stack direction="inline" gap="small-300">
-              <s-button
-                variant="primary"
-                tone="critical"
-                disabled={!identified}
-                {...(deleteMutation.isPending ? { loading: true } : {})}
-                onClick={() => {
-                  deleteMutation.mutate({ workflowId: workflow.id });
-                }}
-              >
-                Delete
-              </s-button>
-              <s-button
-                variant="tertiary"
-                onClick={() => {
-                  setConfirming(null);
-                }}
-              >
-                Cancel
-              </s-button>
-            </s-stack>
-          </s-stack>
-        </s-banner>
-      </s-table-cell>
-      <s-table-cell> </s-table-cell>
-      <s-table-cell> </s-table-cell>
-      <s-table-cell> </s-table-cell>
-      <s-table-cell> </s-table-cell>
-      <s-table-cell> </s-table-cell>
-    </s-table-row>
+  const createButton = (slotted: boolean) => (
+    <s-button
+      {...(slotted ? { slot: "primary-action" as const } : {})}
+      variant="primary"
+      commandFor={CREATE_MODAL}
+      command="--show"
+    >
+      Create workflow
+    </s-button>
   );
 
-  const renderTable = (rows: readonly Domain.ItemWorkflowSummary[]) => (
-    <s-table>
-      <s-table-header-row>
-        <s-table-header listSlot="primary">Name</s-table-header>
-        <s-table-header>Status</s-table-header>
-        <s-table-header>Product tags</s-table-header>
-        <s-table-header>Steps</s-table-header>
-        <s-table-header>Updated</s-table-header>
-        <s-table-header> </s-table-header>
-      </s-table-header-row>
-      <s-table-body>
-        {rows.flatMap((workflow) => [
-          renderRow(workflow),
-          ...(confirming === workflow.id ? [confirmRow(workflow)] : []),
-        ])}
-      </s-table-body>
-    </s-table>
-  );
-
-  const renderWorkflows = () => {
+  const renderRows = () => {
     if (workflows.length === 0)
       return (
-        <s-paragraph color="subdued">
-          No workflows yet. Create one above, then add the same product tag to
-          any product in Shopify and its line items will follow that workflow.
-        </s-paragraph>
+        <s-box padding="base">
+          <s-stack gap="base" alignItems="start">
+            <s-paragraph color="subdued">
+              No workflows yet. A workflow is the ordered list of steps a line
+              item passes through, each owned by a team. Product tags decide
+              which items follow it.
+            </s-paragraph>
+            {createButton(false)}
+          </s-stack>
+        </s-box>
       );
-    return renderTable(workflows);
+    if (rows.length === 0)
+      return (
+        <s-box padding="base">
+          <s-stack gap="base" alignItems="start">
+            <s-paragraph color="subdued">No workflows match.</s-paragraph>
+            <s-button
+              variant="secondary"
+              onClick={() => {
+                setQuery("");
+                setFilters({});
+              }}
+            >
+              Clear filters
+            </s-button>
+          </s-stack>
+        </s-box>
+      );
+    return (
+      <s-table>
+        <s-table-header-row>
+          <s-table-header listSlot="primary">Workflow</s-table-header>
+          <s-table-header>Status</s-table-header>
+          <s-table-header>Product tags</s-table-header>
+          <s-table-header>Steps</s-table-header>
+          <s-table-header>Updated</s-table-header>
+        </s-table-header-row>
+        <s-table-body>
+          {rows.map((workflow) => (
+            <s-table-row key={workflow.id} id={workflow.id}>
+              <s-table-cell>
+                <s-link href={`/app/workflows/${workflow.id}`}>
+                  {workflow.name}
+                </s-link>
+              </s-table-cell>
+              <s-table-cell>{statusBadges(workflow)}</s-table-cell>
+              <s-table-cell>
+                {workflow.tags.length === 0 ? (
+                  <s-text color="subdued">—</s-text>
+                ) : (
+                  <s-stack direction="inline" gap="small-300">
+                    {workflow.tags.map((productTag) => (
+                      <s-badge key={productTag}>{productTag}</s-badge>
+                    ))}
+                  </s-stack>
+                )}
+              </s-table-cell>
+              <s-table-cell>{workflow.stepCount}</s-table-cell>
+              <s-table-cell>{formatDateTime(workflow.updatedAt)}</s-table-cell>
+            </s-table-row>
+          ))}
+        </s-table-body>
+      </s-table>
+    );
   };
 
   return (
     <s-page heading="Workflows" inlineSize="large">
       <SocketBanner />
+      {workflows.length > 0 && createButton(true)}
 
-      <s-section heading="Create workflow" accessibilityLabel="Create workflow">
-        <s-stack gap="base">
-          <s-paragraph color="subdued">
-            A workflow is the ordered list of steps a line item passes through,
-            each owned by a team. Product tags select it: a line item whose
-            product carries any of these tags follows this workflow.
-          </s-paragraph>
-          {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              void form.handleSubmit();
-            }}
-          >
-            <s-stack gap="base">
-              <form.Field name="name">
-                {(field) => (
-                  <s-text-field
-                    label="Name"
-                    name={field.name}
-                    value={field.state.value}
-                    error={fieldError(field.state.meta.errors)}
-                    onInput={(event) => {
-                      field.handleChange(event.currentTarget.value);
+      <s-section padding="none" accessibilityLabel="Workflows">
+        <s-box padding="base" paddingBlockEnd="none">
+          <s-stack gap="small-300">
+            {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
+            <s-paragraph color="subdued">
+              A workflow is the ordered list of steps a line item passes
+              through, each owned by a team. Turn one off to stop new runs while
+              open runs finish.
+            </s-paragraph>
+          </s-stack>
+        </s-box>
+
+        {workflows.length > 0 && (
+          <s-box padding="base">
+            <s-stack gap="small-300">
+              <s-grid
+                gridTemplateColumns="auto 1fr"
+                gap="base"
+                alignItems="center"
+              >
+                <s-stack direction="inline" gap="small-300">
+                  {statusButton("All")}
+                  {statusButton("Active", "active")}
+                  {statusButton("Off", "off")}
+                </s-stack>
+                <s-search-field
+                  label="Search workflows by name"
+                  labelAccessibilityVisibility="exclusive"
+                  placeholder="Search by name"
+                  value={query}
+                  onInput={(event) => {
+                    setQuery(event.currentTarget.value);
+                  }}
+                />
+              </s-grid>
+              {tags.length > 0 && (
+                <s-stack direction="inline" gap="small-300" alignItems="center">
+                  <s-text color="subdued">Product tag</s-text>
+                  <s-button
+                    variant={tag === undefined ? "primary" : "tertiary"}
+                    onClick={() => {
+                      setFilters(status === undefined ? {} : { status });
                     }}
-                    onBlur={field.handleBlur}
-                    required
-                  />
-                )}
-              </form.Field>
-              <form.Field name="tags">
-                {(field) => (
-                  <s-text-field
-                    label="Product tags"
-                    details="Comma-separated. Starts for any item whose product has at least one of these tags. Case doesn't matter."
-                    name={field.name}
-                    value={field.state.value}
-                    onInput={(event) => {
-                      field.handleChange(event.currentTarget.value);
-                    }}
-                    onBlur={field.handleBlur}
-                  />
-                )}
-              </form.Field>
-              <s-stack alignItems="start">
-                <s-button
-                  type="submit"
-                  variant="primary"
-                  disabled={!identified}
-                  {...(createMutation.isPending ? { loading: true } : {})}
-                >
-                  Create workflow
-                </s-button>
-              </s-stack>
+                  >
+                    Any
+                  </s-button>
+                  {tags.map((productTag) => (
+                    <s-button
+                      key={productTag}
+                      variant={tag === productTag ? "primary" : "tertiary"}
+                      onClick={() => {
+                        setFilters({
+                          ...(status === undefined ? {} : { status }),
+                          tag: productTag,
+                        });
+                      }}
+                    >
+                      {productTag}
+                    </s-button>
+                  ))}
+                </s-stack>
+              )}
+              {filtered && (
+                <s-paragraph color="subdued">
+                  {`Showing ${String(rows.length)} of ${String(workflows.length)} workflows.`}
+                </s-paragraph>
+              )}
             </s-stack>
-          </form>
-        </s-stack>
+          </s-box>
+        )}
+
+        {renderRows()}
       </s-section>
 
-      <s-section heading="Workflows" accessibilityLabel="Workflows">
-        <s-stack gap="base">
-          <s-paragraph color="subdued">
-            Turn a workflow off to stop new runs while open runs finish. Delete
-            it and its runs stay on their orders; open ones finish.
-          </s-paragraph>
-          {renderWorkflows()}
-        </s-stack>
-      </s-section>
+      <s-modal id={CREATE_MODAL} heading="Create workflow">
+        <s-text-field
+          label="Name"
+          placeholder="e.g. Engraved ring"
+          details="You'll add the product tags and steps next."
+          value={name}
+          maxLength={64}
+          {...(nameError === null ? {} : { error: nameError })}
+          onInput={(event) => {
+            setName(event.currentTarget.value);
+            setNameError(null);
+          }}
+        />
+        <s-button
+          slot="secondary-actions"
+          commandFor={CREATE_MODAL}
+          command="--hide"
+        >
+          Cancel
+        </s-button>
+        <s-button
+          slot="primary-action"
+          variant="primary"
+          loading={createMutation.isPending}
+          disabled={!identified || name.trim().length === 0}
+          onClick={() => {
+            createMutation.mutate();
+          }}
+        >
+          Create
+        </s-button>
+      </s-modal>
     </s-page>
   );
 }
