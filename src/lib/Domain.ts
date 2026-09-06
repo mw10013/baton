@@ -466,8 +466,8 @@ export type ProductTags = typeof ProductTags.Type;
 /**
  * `item`: runs once per matching line item (chosen by product tag). `order`:
  * runs once per order, after every item run on it is finished — at most one
- * active per shop, never tag-selected, `tags` always empty. Set on create,
- * never changed.
+ * per shop in any state (`Workflow_order_uidx`), never tag-selected, and
+ * {@link OrderWorkflow} carries no `tags`. Set on create, never changed.
  */
 export const WorkflowScope = Schema.Literals(["item", "order"]);
 export type WorkflowScope = typeof WorkflowScope.Type;
@@ -524,16 +524,42 @@ export type WorkflowScope = typeof WorkflowScope.Type;
  * definition, never a half one. Encoded side is the Durable Object row
  * (epoch-ms integers).
  */
-export const Workflow = Schema.Struct({
+const WorkflowFields = {
   id: WorkflowId,
   name: WorkflowName,
-  scope: WorkflowScope,
   active: SqliteBoolean,
-  tags: Schema.fromJsonString(ProductTags),
   createdAt: Schema.Number,
   updatedAt: Schema.Number,
+};
+
+/** An item workflow: chosen by product tag. */
+export const ItemWorkflow = Schema.Struct({
+  ...WorkflowFields,
+  scope: Schema.Literal("item"),
+  tags: Schema.fromJsonString(ProductTags),
 });
+export type ItemWorkflow = typeof ItemWorkflow.Type;
+
+/**
+ * The order workflow: no `tags` field, so nothing can read or render tags for
+ * it. Both variants decode from the same `Workflow` row (the row's `tags`
+ * column is `'[]'` under a SQL check and is dropped here as an excess key),
+ * so the discriminated union is a type-level fact and not a second table.
+ */
+export const OrderWorkflow = Schema.Struct({
+  ...WorkflowFields,
+  scope: Schema.Literal("order"),
+});
+export type OrderWorkflow = typeof OrderWorkflow.Type;
+
+export const Workflow = Schema.Union([ItemWorkflow, OrderWorkflow]);
 export type Workflow = typeof Workflow.Type;
+
+/** Narrows any workflow-shaped value (summary, row) to its item variant, which is the only one with `tags`. */
+export const isItemWorkflow = <W extends { readonly scope: WorkflowScope }>(
+  workflow: W,
+): workflow is Extract<W, { readonly scope: "item" }> =>
+  workflow.scope === "item";
 
 /**
  * The draft side of {@link Workflow}: at most one per workflow (`workflowId`
@@ -589,13 +615,31 @@ export type WorkflowDraftStep = typeof WorkflowDraftStep.Type;
  * derived badge from {@link Workflow}: a step unassigned or on a team with no
  * members, computed against the live roster on every list read.
  */
-export const WorkflowSummary = Schema.Struct({
-  ...Workflow.fields,
+const WorkflowSummaryRowFields = {
   hasDraft: SqliteBoolean,
   stepCount: Schema.Number,
-  needsAttention: Schema.Boolean,
-});
+};
+/** The stored half of {@link WorkflowSummary}: what one list query returns before the roster join. */
+export const WorkflowSummaryRow = Schema.Union([
+  Schema.Struct({ ...ItemWorkflow.fields, ...WorkflowSummaryRowFields }),
+  Schema.Struct({ ...OrderWorkflow.fields, ...WorkflowSummaryRowFields }),
+]);
+export type WorkflowSummaryRow = typeof WorkflowSummaryRow.Type;
+
+export const WorkflowSummary = Schema.Union([
+  Schema.Struct({
+    ...ItemWorkflow.fields,
+    ...WorkflowSummaryRowFields,
+    needsAttention: Schema.Boolean,
+  }),
+  Schema.Struct({
+    ...OrderWorkflow.fields,
+    ...WorkflowSummaryRowFields,
+    needsAttention: Schema.Boolean,
+  }),
+]);
 export type WorkflowSummary = typeof WorkflowSummary.Type;
+export type ItemWorkflowSummary = Extract<WorkflowSummary, { scope: "item" }>;
 
 /** The shape run creation reads: a workflow with its steps. Drafts never appear here. */
 export const WorkflowDetail = Schema.Struct({
@@ -664,12 +708,18 @@ export type WorkflowIdInput = typeof WorkflowIdInput.Type;
 export const DeleteWorkflowInput = WorkflowIdInput;
 export type DeleteWorkflowInput = typeof DeleteWorkflowInput.Type;
 
-/** `scope` omitted means `item`, so every pre-existing caller keeps its shape. */
-export const CreateWorkflowInput = Schema.Struct({
-  name: WorkflowName,
-  scope: Schema.optionalKey(WorkflowScope),
-  tags: ProductTags,
-});
+/** Item: `scope` omitted means `item`, so every pre-existing caller keeps its shape. Order: no `tags` key at all — the type, not a runtime check, is what keeps tags off the order workflow. */
+export const CreateWorkflowInput = Schema.Union([
+  Schema.Struct({
+    name: WorkflowName,
+    scope: Schema.optionalKey(Schema.Literal("item")),
+    tags: ProductTags,
+  }),
+  Schema.Struct({
+    name: WorkflowName,
+    scope: Schema.Literal("order"),
+  }),
+]);
 export type CreateWorkflowInput = typeof CreateWorkflowInput.Type;
 
 /** Name only: a rename is immediate. Tags select line items and go through the draft ({@link UpdateWorkflowTagsInput}). */
@@ -738,9 +788,11 @@ export type UpdateStepInput = typeof UpdateStepInput.Type;
  * step **unassigned** so the needs-attention state is visible after
  * `pnpm seed`. A step with no `stage` gets the previous step's stage + 1
  * (linear); the repository validates the stage invariant before writing. The
- * repository still enforces one active order workflow and no tags on an order
- * workflow, since a fixture that breaks either would leave the app in a state
- * the ordinary write path can never produce.
+ * repository still enforces one order workflow and no tags on an order
+ * workflow (the schema's check and partial unique index would refuse either
+ * anyway, but with a raw constraint error instead of a named one), since a
+ * fixture that breaks either would leave the app in a state the ordinary
+ * write path can never produce.
  *
  * `steps` become the workflow's steps; a fixture with no steps is seeded
  * with an empty draft beside it, the state the ordinary path produces for a
@@ -845,7 +897,6 @@ export const ActivateResult = Schema.Union([
     _tag: Schema.Literal("StepUnassigned"),
     stepNames: Schema.Array(StepName),
   }),
-  Schema.Struct({ _tag: Schema.Literal("OrderWorkflowExists") }),
 ]);
 export type ActivateResult = typeof ActivateResult.Type;
 

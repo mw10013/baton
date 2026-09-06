@@ -199,11 +199,9 @@ export class WorkflowRepository extends Context.Service<
      * sends any, so it is a programming error) and is refused while another
      * one exists.
      */
-    readonly createWorkflow: (input: {
-      readonly name: Domain.WorkflowName;
-      readonly scope?: Domain.WorkflowScope;
-      readonly tags: Domain.ProductTags;
-    }) => Effect.Effect<
+    readonly createWorkflow: (
+      input: Domain.CreateWorkflowInput,
+    ) => Effect.Effect<
       Domain.Workflow,
       | SqlError.SqlError
       | WorkflowRepositoryError
@@ -235,8 +233,9 @@ export class WorkflowRepository extends Context.Service<
     >;
     /**
      * The on/off switch. On requires: at least one step, every step assigned
-     * to a team in `teams`, and (order scope) no other active order workflow.
-     * A team with no members does not refuse. Off touches nothing else: open
+     * to a team in `teams`. There is no order-workflow slot check here: at
+     * most one order workflow exists in any state, so the one being turned on
+     * is the only one. A team with no members does not refuse. Off touches nothing else: open
      * runs are days of physical work and keep going; only new runs stop.
      * Neither direction creates, applies, or discards a draft, or looks at
      * whether one exists.
@@ -252,7 +251,6 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowNotFoundError
       | NoStepsError
       | StepUnassignedError
-      | OrderWorkflowExistsError
     >;
     /**
      * Edit. Returns the existing draft when there is one (the merchant is
@@ -491,37 +489,36 @@ export class WorkflowRepository extends Context.Service<
           sql`select count(*) from WorkflowDraftStep where workflowId = ${workflowId}`,
         );
 
-      /** The order workflow other than `exceptId`, if any; `activeOnly` narrows to the switched-on one. */
-      const otherOrderWorkflowId = (
-        exceptId: string | null,
-        activeOnly: boolean,
-      ) =>
-        sql`
-          select id from Workflow
-          where scope = 'order'
-            and id is not ${exceptId}
-            ${activeOnly ? sql`and active = 1` : sql``}
-          limit 1
+      /**
+       * The existing order workflow, if any. At most one exists in any state:
+       * `Workflow_order_uidx` is the backstop, and this pre-check is what
+       * turns a would-be constraint failure into `OrderWorkflowExistsError`.
+       */
+      const existingOrderWorkflowId = sql`
+          select id from Workflow where scope = 'order' limit 1
         `.pipe(
-          Effect.map((rows) =>
-            Option.fromUndefinedOr(rows[0]?.id).pipe(Option.map(String)),
-          ),
-        );
+        Effect.map((rows) =>
+          Option.fromUndefinedOr(rows[0]?.id).pipe(Option.map(String)),
+        ),
+      );
 
-      const requireOrderWorkflowSlot = (
-        exceptId: string | null,
-        activeOnly: boolean,
-      ) =>
-        otherOrderWorkflowId(exceptId, activeOnly).pipe(
-          Effect.flatMap(
-            Option.match({
-              onNone: () => Effect.void,
-              onSome: (workflowId) =>
-                Effect.fail(new OrderWorkflowExistsError({ workflowId })),
-            }),
-          ),
-        );
+      const requireOrderWorkflowSlot = existingOrderWorkflowId.pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (workflowId) =>
+              Effect.fail(new OrderWorkflowExistsError({ workflowId })),
+          }),
+        ),
+      );
 
+      /**
+       * Only `updateWorkflowTags` needs this: it is the one write that takes
+       * tags for a workflow whose scope the input cannot know. Create's input
+       * type has no `tags` key on the order variant, and Apply copies a draft
+       * this guard already vetted; the SQL check on `Workflow.tags` backstops
+       * both.
+       */
       const requireNoTagsForOrderScope = (
         scope: Domain.WorkflowScope,
         tags: Domain.ProductTags,
@@ -714,13 +711,7 @@ export class WorkflowRepository extends Context.Service<
         listWorkflows: Effect.fn("WorkflowRepository.listWorkflows")(
           function* ({ teams }: { readonly teams: Teams }) {
             const rows = yield* decode(
-              Schema.Array(
-                Schema.Struct({
-                  ...Domain.Workflow.fields,
-                  hasDraft: Domain.WorkflowSummary.fields.hasDraft,
-                  stepCount: Schema.Number,
-                }),
-              ),
+              Schema.Array(Domain.WorkflowSummaryRow),
               "Invalid WorkflowSummary row",
             )(
               yield* sql`
@@ -957,17 +948,13 @@ export class WorkflowRepository extends Context.Service<
          * taken.
          */
         createWorkflow: Effect.fn("WorkflowRepository.createWorkflow")(
-          function* ({
-            name,
-            scope = "item",
-            tags,
-          }: {
-            readonly name: Domain.WorkflowName;
-            readonly scope?: Domain.WorkflowScope;
-            readonly tags: Domain.ProductTags;
-          }) {
-            yield* requireNoTagsForOrderScope(scope, tags);
-            if (scope === "order") yield* requireOrderWorkflowSlot(null, false);
+          function* (input: Domain.CreateWorkflowInput) {
+            const { name } = input;
+            const scope = input.scope ?? "item";
+            const tags = input.scope === "order" ? [] : input.tags;
+            // Before the insert: `insert or ignore` would otherwise report a
+            // second order workflow as a name collision.
+            if (scope === "order") yield* requireOrderWorkflowSlot;
             const open = yield* count(sql`select count(*) from Workflow`);
             if (open >= Domain.WorkflowLimits.maxWorkflows)
               return yield* new WorkflowLimitError({
@@ -1055,15 +1042,13 @@ export class WorkflowRepository extends Context.Service<
             readonly active: boolean;
             readonly teams: Teams;
           }) {
-            const existing = yield* requireWorkflow(workflowId);
+            yield* requireWorkflow(workflowId);
             if (active) {
               yield* requireStartableSteps(
                 workflowId,
                 yield* workflowSteps(workflowId),
                 teams,
               );
-              if (existing.scope === "order")
-                yield* requireOrderWorkflowSlot(workflowId, true);
             }
             const now = yield* Clock.currentTimeMillis;
             const [workflow] = yield* decodeWorkflows(
@@ -1093,7 +1078,7 @@ export class WorkflowRepository extends Context.Service<
               const now = yield* Clock.currentTimeMillis;
               const draft = yield* insertDraft({
                 workflowId,
-                tags: workflow.tags,
+                tags: workflow.scope === "order" ? [] : workflow.tags,
                 now,
               });
               const steps = yield* workflowSteps(workflowId);
@@ -1124,9 +1109,8 @@ export class WorkflowRepository extends Context.Service<
         }) {
           return yield* sql.withTransaction(
             Effect.gen(function* () {
-              const existing = yield* requireWorkflow(workflowId);
+              yield* requireWorkflow(workflowId);
               const draft = yield* requireDraft(workflowId);
-              yield* requireNoTagsForOrderScope(existing.scope, draft.tags);
               const steps = yield* draftSteps(workflowId);
               yield* requireStartableSteps(workflowId, steps, teams);
               const now = yield* Clock.currentTimeMillis;

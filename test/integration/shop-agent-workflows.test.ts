@@ -23,6 +23,14 @@ const layer = Repository.layerNoDeps.pipe(
   ),
 );
 
+/** `tags` lives on the item variant only; `null` means "not an item workflow" or nothing at all. */
+const tagsOf = (
+  workflow: Domain.Workflow | Domain.WorkflowSummary | null | undefined,
+): readonly string[] | null =>
+  workflow !== null && workflow !== undefined && Domain.isItemWorkflow(workflow)
+    ? workflow.tags
+    : null;
+
 const shopOf = Schema.decodeUnknownSync(Domain.Shop);
 const teamName = Schema.decodeUnknownSync(Domain.TeamName);
 
@@ -111,7 +119,7 @@ describe("ShopAgent workflow callables", () => {
     });
     expect(fresh?.draft?.draft.tags).toEqual(["engraving"]);
     expect(fresh?.steps).toEqual([]);
-    expect(fresh?.workflow.tags).toEqual([]);
+    expect(tagsOf(fresh?.workflow)).toEqual([]);
 
     const unknown = await agent.addStep({
       workflowId: created.workflow.id,
@@ -360,9 +368,9 @@ describe("ShopAgent workflow callables", () => {
     strictEqual(tagged._tag, "Ok");
     const applied = await agent.applyDraft({ workflowId });
     if (applied._tag !== "Ok") throw new Error(applied._tag);
-    expect(applied.workflow.tags).toEqual(["b"]);
+    expect(tagsOf(applied.workflow)).toEqual(["b"]);
     const detail = await agent.getWorkflowDetail({ workflowId });
-    expect(detail?.workflow.tags).toEqual(["b"]);
+    expect(tagsOf(detail?.workflow)).toEqual(["b"]);
     expect(detail?.steps.map((s) => [s.name, s.teamName])).toEqual([
       ["S", "T"],
     ]);
@@ -391,12 +399,12 @@ describe("ShopAgent workflow callables", () => {
     const edited = await agent.getWorkflowDetail({ workflowId });
     expect(edited?.draft?.draft.tags).toEqual(["c"]);
     expect(edited?.draft?.steps.map((s) => s.name)).toEqual(["S"]);
-    expect(edited?.workflow.tags).toEqual(["b"]);
+    expect(tagsOf(edited?.workflow)).toEqual(["b"]);
     const discarded = await agent.discardDraft({ workflowId });
     strictEqual(discarded._tag, "Ok");
     const afterDiscard = await agent.getWorkflowDetail({ workflowId });
     expect(afterDiscard?.draft).toBe(null);
-    expect(afterDiscard?.workflow.tags).toEqual(["b"]);
+    expect(tagsOf(afterDiscard?.workflow)).toEqual(["b"]);
 
     // Team deleted under the workflow's step: turn-on names the step.
     await agent.setWorkflowActive({ workflowId, active: false });
@@ -635,12 +643,11 @@ describe("ShopAgent workflow run callables", () => {
     const pack = await agent.createWorkflow({
       name: "Pack",
       scope: "order",
-      tags: [],
     });
     if (pack._tag !== "Ok") throw new Error(pack._tag);
     strictEqual(pack.workflow.scope, "order");
     expect(
-      await agent.createWorkflow({ name: "Pack 2", scope: "order", tags: [] }),
+      await agent.createWorkflow({ name: "Pack 2", scope: "order" }),
     ).toEqual({ _tag: "OrderWorkflowExists" });
     await agent.addStep({
       workflowId: pack.workflow.id,

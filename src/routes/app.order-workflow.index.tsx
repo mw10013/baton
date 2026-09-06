@@ -87,7 +87,6 @@ function RouteComponent() {
             agent.stub.createWorkflow({
               name,
               scope: "order",
-              tags: [],
             }),
           ).then(decodeWorkflowResult)
         : Promise.reject(new Error("Still connecting. Try again in a moment.")),

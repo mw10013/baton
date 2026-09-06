@@ -119,6 +119,7 @@ export const matchesLineItem = (
   order: Domain.ShopOrder,
   lineItem: Domain.OrderLineItem,
 ) =>
+  workflow.scope === "item" &&
   Domain.unitsToMake(lineItem) > 0 &&
   order.processedAt >= workflow.createdAt &&
   lineItem.productTags.some((tag) => {

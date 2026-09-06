@@ -31,6 +31,14 @@ const runInRepository = <A, E>(
       ),
   );
 
+/** `tags` lives on the item variant only; `null` means "not an item workflow" or nothing at all. */
+const tagsOf = (
+  workflow: Domain.Workflow | Domain.WorkflowSummary | null | undefined,
+): readonly string[] | null =>
+  workflow !== null && workflow !== undefined && Domain.isItemWorkflow(workflow)
+    ? workflow.tags
+    : null;
+
 const name = Schema.decodeUnknownSync(Domain.WorkflowName);
 const stepName = Schema.decodeUnknownSync(Domain.StepName);
 const tags = Schema.decodeUnknownSync(Domain.ProductTags);
@@ -141,7 +149,7 @@ describe("WorkflowRepository", () => {
         deepStrictEqual<readonly string[]>(retagged.tags, ["x"]);
         strictEqual(retagged.workflowId, updated.id);
         // Tags reach the workflow only through Apply.
-        deepStrictEqual<readonly string[]>(updated.tags, []);
+        deepStrictEqual(tagsOf(updated), []);
         const taken = yield* repo
           .updateWorkflow({ workflowId: a.id, name: name("b") })
           .pipe(Effect.flip);
@@ -582,14 +590,12 @@ describe("WorkflowRepository", () => {
         const first = yield* repo.createWorkflow({
           name: name("Pack"),
           scope: "order",
-          tags: tags([]),
         });
         strictEqual(first.scope, "order");
         const second = yield* repo
           .createWorkflow({
             name: name("Ship"),
             scope: "order",
-            tags: tags([]),
           })
           .pipe(Effect.flip);
         strictEqual(second._tag, "OrderWorkflowExistsError");
@@ -604,7 +610,6 @@ describe("WorkflowRepository", () => {
         const ship = yield* repo.createWorkflow({
           name: name("Ship"),
           scope: "order",
-          tags: tags([]),
         });
         strictEqual(ship.scope, "order");
         const listed = yield* repo.listWorkflows({ teams: ALL_TEAMS });
@@ -618,27 +623,32 @@ describe("WorkflowRepository", () => {
       }),
     ));
 
-  it("refuses tags on an order workflow on create and update; scope never changes", () =>
+  it("refuses tags on an order workflow on update, and the schema refuses them on any write; scope never changes", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
-        const tagged = yield* repo
-          .createWorkflow({
-            name: name("Pack"),
-            scope: "order",
-            tags: tags(["x"]),
-          })
-          .pipe(Effect.flip);
-        strictEqual(tagged._tag, "WorkflowRepositoryError");
+        const sql = yield* SqlClient.SqlClient;
+        // Create cannot even be asked for tags on order scope (the input type
+        // has no `tags` key); the SQL check is the backstop for a raw write.
+        const raw = yield* sql`
+          insert into Workflow (id, name, scope, active, tags, createdAt, updatedAt)
+          values ('raw', 'Raw', 'order', 0, '["x"]', 0, 0)
+        `.pipe(Effect.flip);
+        strictEqual(raw._tag, "SqlError");
         const pack = yield* repo.createWorkflow({
           name: name("Pack"),
           scope: "order",
-          tags: tags([]),
         });
         const retag = yield* repo
           .updateWorkflowTags({ workflowId: pack.id, tags: tags(["x"]) })
           .pipe(Effect.flip);
         strictEqual(retag._tag, "WorkflowRepositoryError");
+        // The singleton is a partial unique index, not only the pre-check.
+        const rawSecond = yield* sql`
+          insert into Workflow (id, name, scope, active, tags, createdAt, updatedAt)
+          values ('raw2', 'Raw 2', 'order', 0, '[]', 0, 0)
+        `.pipe(Effect.flip);
+        strictEqual(rawSecond._tag, "SqlError");
         const renamed = yield* repo.updateWorkflow({
           workflowId: pack.id,
           name: name("Pack & ship"),
@@ -713,7 +723,7 @@ describe("WorkflowRepository workflow and draft", () => {
           tags: tags(["a"]),
         });
         strictEqual(w.active, false);
-        deepStrictEqual<readonly string[]>(w.tags, []);
+        deepStrictEqual(tagsOf(w), []);
         const fresh = yield* found(w.id);
         deepStrictEqual(fresh.steps, []);
         deepStrictEqual<readonly string[]>(fresh.draft?.draft.tags ?? [], [
@@ -723,7 +733,7 @@ describe("WorkflowRepository workflow and draft", () => {
         deepStrictEqual(yield* repo.listActiveWorkflowDetails(), []);
         const [row] = yield* repo.listWorkflows({ teams: ALL_TEAMS });
         deepStrictEqual(
-          [row?.hasDraft, row?.stepCount, row?.tags],
+          [row?.hasDraft, row?.stepCount, tagsOf(row)],
           [true, 0, []],
         );
         const empty = yield* repo
@@ -766,7 +776,7 @@ describe("WorkflowRepository workflow and draft", () => {
           workflowId: w.id,
           teams: ALL_TEAMS,
         });
-        deepStrictEqual<readonly string[]>(applied.tags, ["a"]);
+        deepStrictEqual(tagsOf(applied), ["a"]);
         strictEqual(applied.active, false);
         const after = yield* found(w.id);
         strictEqual(after.draft, null);
@@ -777,7 +787,7 @@ describe("WorkflowRepository workflow and draft", () => {
         );
         const [row] = yield* repo.listWorkflows({ teams: ALL_TEAMS });
         deepStrictEqual(
-          [row?.hasDraft, row?.stepCount, row?.tags],
+          [row?.hasDraft, row?.stepCount, tagsOf(row)],
           [false, 2, ["a"]],
         );
         // Off: still invisible to run creation until turned on.
@@ -789,7 +799,7 @@ describe("WorkflowRepository workflow and draft", () => {
         });
         const [detail] = yield* repo.listActiveWorkflowDetails();
         deepStrictEqual(stepNames(detail?.steps ?? []), ["Cut", "Finish"]);
-        deepStrictEqual<readonly string[]>(detail?.workflow.tags ?? [], ["a"]);
+        deepStrictEqual(tagsOf(detail?.workflow), ["a"]);
         // No draft: apply and discard refuse, and so does every step write.
         strictEqual(
           (yield* repo
@@ -896,7 +906,7 @@ describe("WorkflowRepository workflow and draft", () => {
           "b",
         ]);
         deepStrictEqual(stepNames(edited.steps), ["Cut", "Finish"]);
-        deepStrictEqual<readonly string[]>(edited.workflow.tags, ["a"]);
+        deepStrictEqual(tagsOf(edited.workflow), ["a"]);
         const [detail] = yield* repo.listActiveWorkflowDetails();
         deepStrictEqual(stepNames(detail?.steps ?? []), ["Cut", "Finish"]);
         const missing = yield* repo
@@ -934,7 +944,7 @@ describe("WorkflowRepository workflow and draft", () => {
           teams: ALL_TEAMS,
         });
         strictEqual(applied.active, true);
-        deepStrictEqual<readonly string[]>(applied.tags, ["b"]);
+        deepStrictEqual(tagsOf(applied), ["b"]);
         const after = yield* found(w.id);
         strictEqual(after.draft, null);
         deepStrictEqual(stepNames(after.steps), ["Cut", "Finish", "Pack"]);
@@ -954,7 +964,7 @@ describe("WorkflowRepository workflow and draft", () => {
         });
         yield* repo.updateWorkflowTags({ workflowId: w.id, tags: tags(["c"]) });
         const discarded = yield* repo.discardDraft({ workflowId: w.id });
-        deepStrictEqual<readonly string[]>(discarded.tags, ["b"]);
+        deepStrictEqual(tagsOf(discarded), ["b"]);
         strictEqual(discarded.active, true);
         const back = yield* found(w.id);
         strictEqual(back.draft, null);
@@ -1090,7 +1100,6 @@ describe("WorkflowRepository workflow and draft", () => {
         const pack = yield* repo.createWorkflow({
           name: name("Pack"),
           scope: "order",
-          tags: tags([]),
         });
         yield* twoSteps(pack.id);
         yield* repo.applyDraft({ workflowId: pack.id, teams: ALL_TEAMS });
@@ -1101,7 +1110,6 @@ describe("WorkflowRepository workflow and draft", () => {
         const ship = yield* repo.createWorkflow({
           name: name("Ship"),
           scope: "order",
-          tags: tags([]),
         });
         yield* twoSteps(ship.id);
         yield* repo.applyDraft({ workflowId: ship.id, teams: ALL_TEAMS });
@@ -1111,7 +1119,6 @@ describe("WorkflowRepository workflow and draft", () => {
             .createWorkflow({
               name: name("Pack"),
               scope: "order",
-              tags: tags([]),
             })
             .pipe(Effect.flip))._tag,
           "OrderWorkflowExistsError",
@@ -1246,7 +1253,7 @@ describe("WorkflowRepository workflow and draft", () => {
             w.hasDraft,
             w.stepCount,
             w.needsAttention,
-            w.tags,
+            tagsOf(w),
           ]),
           [
             ["Empty", false, true, 0, false, ["e"]],

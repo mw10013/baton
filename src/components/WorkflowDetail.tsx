@@ -83,7 +83,6 @@ const activateResultMessage = Match.typeTags<
   NoSteps: () => "This workflow has no steps. Edit to add some, then apply.",
   StepUnassigned: ({ stepNames }) =>
     `These steps are unassigned: ${stepList(stepNames)}. Assign a team.`,
-  OrderWorkflowExists: () => "Another order workflow is on. Turn it off first.",
 });
 
 /** A blank instructions field means "no instructions", which the wire carries as `null`, never `""`. */
@@ -107,8 +106,7 @@ const onEmptyTeam = (steps: readonly Domain.StepWithTeamName[]) =>
 /**
  * Why Turn on would be refused, decided from the workflow's own steps — the
  * same facts the object checks — so the button can be disabled with its
- * reason instead of failing after a round trip. `OrderWorkflowExists` is
- * only known server-side and surfaces as a banner. An empty team is not a
+ * reason instead of failing after a round trip. An empty team is not a
  * blocker: the run starts and waits for a member.
  */
 const turnOnBlockerOf = (

@@ -297,7 +297,6 @@ const seedOrderWorkflow = Effect.gen(function* () {
   const pack = yield* workflows.createWorkflow({
     name: name("Pack"),
     scope: "order",
-    tags: tags([]),
   });
   yield* workflows.addStep({
     workflowId: pack.id,
@@ -2337,7 +2336,6 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         const replacement = yield* workflows.createWorkflow({
           name: name("Pack 2"),
           scope: "order",
-          tags: tags([]),
         });
         yield* workflows.addStep({
           workflowId: replacement.id,

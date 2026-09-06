@@ -154,11 +154,9 @@ function RouteComponent() {
     },
   });
 
-  const workflows = allWorkflows.filter(
-    (workflow) => workflow.scope === "item",
-  );
+  const workflows = allWorkflows.filter(Domain.isItemWorkflow);
 
-  const renderRow = (workflow: Domain.WorkflowSummary) => (
+  const renderRow = (workflow: Domain.ItemWorkflowSummary) => (
     <s-table-row key={workflow.id} id={workflow.id}>
       <s-table-cell>
         <s-link href={`/app/workflows/${workflow.id}`}>{workflow.name}</s-link>
@@ -227,7 +225,7 @@ function RouteComponent() {
     </s-table-row>
   );
 
-  const renderTable = (rows: readonly Domain.WorkflowSummary[]) => (
+  const renderTable = (rows: readonly Domain.ItemWorkflowSummary[]) => (
     <s-table>
       <s-table-header-row>
         <s-table-header listSlot="primary">Name</s-table-header>

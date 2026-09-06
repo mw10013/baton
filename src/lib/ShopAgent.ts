@@ -145,6 +145,18 @@ const callableEffect =
  * because it snapshots its steps and names, not because old definitions are
  * retained. `active` is stored, never derived, and no draft event touches it.
  *
+ * Item and order workflows (`scope`) share these four tables on purpose: they
+ * differ in one column and one cardinality rule, and in nothing about steps,
+ * stages, drafts, team pointers, or the on/off switch. An order workflow has
+ * no product tags — `tags` is `'[]'` under the `check`, and
+ * `Domain.OrderWorkflow` has no `tags` field at all — and there is at most
+ * one per shop in any state, which `Workflow_order_uidx` (a partial unique
+ * index on the constant `scope`) states in the schema. The repository
+ * pre-checks both so the merchant gets a typed error rather than a constraint
+ * failure; the SQL is the backstop for any write path that forgets, including
+ * the seed. Separate `OrderWorkflow*` tables were considered and rejected:
+ * they would duplicate every step/draft query for one missing column.
+ *
  * `WorkflowStep.teamId` is a D1 `Team.id` with no foreign key because none is
  * possible: `Team` lives in D1 and this table in the object's private SQLite,
  * and SQLite foreign keys do not cross databases. Integrity is
@@ -261,12 +273,15 @@ const initializeSchema = Effect.gen(function* () {
       name text not null check (name = trim(name) and length(name) > 0),
       scope text not null default 'item' check (scope in ('item', 'order')),
       active integer not null default 0 check (active in (0, 1)),
-      tags text not null default '[]',
+      tags text not null default '[]'
+        check (scope = 'item' or tags = '[]'),
       createdAt integer not null,
       updatedAt integer not null
     );
     create unique index if not exists Workflow_name_uidx
       on Workflow (name collate nocase);
+    create unique index if not exists Workflow_order_uidx
+      on Workflow (scope) where scope = 'order';
     create table if not exists WorkflowStep (
       id text primary key,
       workflowId text not null references Workflow (id) on delete cascade,
@@ -555,7 +570,6 @@ const activateResult = <R>(
     | WorkflowNotFoundError
     | NoStepsError
     | StepUnassignedError
-    | OrderWorkflowExistsError
     | SqlError.SqlError
     | WorkflowRepositoryError
     | RepositoryError
@@ -582,8 +596,6 @@ const activateResult = <R>(
           _tag: "StepUnassigned",
           stepNames,
         }),
-      OrderWorkflowExistsError: () =>
-        Effect.succeed<Domain.ActivateResult>({ _tag: "OrderWorkflowExists" }),
     }),
   );
 
@@ -1479,12 +1491,10 @@ export class ShopAgent extends Agent {
     return this.runEffect(
       callableEffect("ShopAgent.createWorkflow", Domain.CreateWorkflowInput, {
         onExcessProperty: "error",
-      })(({ name, scope, tags }) =>
+      })((input) =>
         workflowResult(
           WorkflowRepository.pipe(
-            Effect.flatMap((repository) =>
-              repository.createWorkflow({ name, scope, tags }),
-            ),
+            Effect.flatMap((repository) => repository.createWorkflow(input)),
           ),
         ),
       )(input),
