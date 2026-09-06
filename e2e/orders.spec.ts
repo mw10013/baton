@@ -27,8 +27,10 @@ import { clickHoisted, gotoApp, hoistedEnabled } from "./app";
  * Both action buttons sit in the page's `primary-action` slot, which App Bridge
  * hoists out of the iframe into the admin title bar, so they are located on
  * `page`, not `frame`, and driven through the hoisted helpers. The orders index
- * also renders an in-frame copy inside its empty state, which is why a
- * frame-scoped locator passes on a fresh database and fails once orders exist.
+ * renders the slotted button only once orders exist; on a fresh database the
+ * only sync button is the in-frame one inside the empty state. The test
+ * starts from whichever is present, so it passes on both an empty shop (a
+ * wiped local Durable Object) and one that has synced before.
  */
 test("orders screen syncs the window and lists orders", async ({ page }) => {
   test.setTimeout(180_000);
@@ -37,8 +39,17 @@ test("orders screen syncs the window and lists orders", async ({ page }) => {
   await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
 
-  const sync = page.getByRole("button", { name: /^Sync last \d+ days$/u });
-  await expect.poll(() => hoistedEnabled(sync)).toBe(true);
+  const syncName = { name: /^Sync last \d+ days$/u };
+  const hoistedSync = page.getByRole("button", syncName);
+  const emptyStateSync = frame.getByRole("button", syncName);
+  await expect
+    .poll(
+      async () =>
+        (await hoistedEnabled(hoistedSync)) ||
+        (await emptyStateSync.isEnabled().catch(() => false)),
+    )
+    .toBe(true);
+  const sync = (await hoistedSync.count()) > 0 ? hoistedSync : emptyStateSync;
 
   /* The completion signal is a *new* `Last synced` timestamp, not the transient
      "Syncing…" text and not the button re-enabling. A sandbox window syncs in
