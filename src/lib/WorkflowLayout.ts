@@ -11,6 +11,15 @@ import type * as Domain from "@/lib/Domain";
  * Every function returns a new normalized array and mutates nothing. A
  * workflow holds at most `WorkflowLimits.maxSteps` steps, so nothing here
  * needs to be clever about cost.
+ *
+ * Two families of operation, kept deliberately separate. **Ordering**
+ * (`move`) changes where a step sits and always leaves it alone in a stage of
+ * its own; it never changes which other steps share a stage. **Parallelism**
+ * (`join`, `separate`) changes only which stage a step belongs to. A stage is
+ * a run-time fact — every step in it is ready together and the next stage
+ * waits for all of them — so making two steps parallel must be a deliberate,
+ * named action and never a side effect of reordering. Within a stage order
+ * carries no meaning, so nothing here reorders inside one.
  */
 export interface Placed {
   readonly id: string;
@@ -24,9 +33,11 @@ const byStageThenPosition = (a: Placed, b: Placed) =>
 
 /**
  * Sort by `(stage, position)`, renumber positions `1..n`, then renumber stages
- * densely from 1. Sorting by stage first is what makes "a step adopts its
- * neighbour's stage" and "a step leaves its stage" both come out as a
- * contiguous block without further bookkeeping.
+ * densely from 1. Sorting by stage first is what lets the other operations
+ * express themselves as a single stage write — a fractional stage lands the
+ * step between two existing ones — and come out as a contiguous block without
+ * further bookkeeping. Fractional stages are legal inputs here and never
+ * survive.
  */
 export const normalize = (layout: Layout): Layout => {
   const sorted = layout.toSorted(byStageThenPosition);
@@ -74,10 +85,14 @@ export const appendParallel = (
 };
 
 /**
- * Swap positions with the neighbour; the moved step takes the neighbour's
- * stage. Within a stage that only reorders display. Across a boundary the
- * step joins the neighbour's stage, and if its old stage is now empty
- * `normalize` closes the gap. No-op at either edge or for an unknown id.
+ * The step slides past the neighbouring stage boundary into a **new stage of
+ * its own**: before the previous stage when alone and moving up, after the
+ * next stage when alone and moving down, and just outside its own stage when
+ * it has mates (which stay together). Implemented as a fractional stage that
+ * `normalize` resolves; the `position` write only matters for sort order
+ * among steps at the same stage value. No-op at either edge for a solo step
+ * and for an unknown id; a shared step in stage 1 can still move up, into a
+ * new stage 1 ahead of its mates.
  */
 export const move = (
   layout: Layout,
@@ -85,19 +100,43 @@ export const move = (
   direction: Domain.StepDirection,
 ): Layout => {
   const sorted = normalize(layout);
-  const index = sorted.findIndex((p) => p.id === id);
-  if (index === -1) return sorted;
-  const target = index + (direction === "up" ? -1 : 1);
-  const step = sorted[index];
-  const neighbour = sorted[target];
-  if (step === undefined || neighbour === undefined) return sorted;
+  const step = sorted.find((p) => p.id === id);
+  if (step === undefined) return sorted;
+  const shared = sorted.some((p) => p.id !== id && p.stage === step.stage);
+  const last = maxOf(sorted, "stage");
+  if (!shared && (direction === "up" ? step.stage === 1 : step.stage === last))
+    return sorted;
+  // The boundary the step crosses: its own stage's edge when it has mates,
+  // the neighbouring stage's far edge when it is alone.
+  const stage =
+    direction === "up"
+      ? (shared ? step.stage : step.stage - 1) - 0.5
+      : (shared ? step.stage : step.stage + 1) + 0.5;
   return normalize(
-    sorted.map((p) => {
-      if (p.id === step.id)
-        return { ...p, position: neighbour.position, stage: neighbour.stage };
-      if (p.id === neighbour.id) return { ...p, position: step.position };
-      return p;
-    }),
+    sorted.map((p) =>
+      p.id === id
+        ? { ...p, stage, position: direction === "up" ? 0 : sorted.length + 1 }
+        : p,
+    ),
+  );
+};
+
+/**
+ * The step merges into the previous stage, after that stage's last member:
+ * `position` is set past every existing one so `normalize` sorts it last
+ * within the stage. Its former stage-mates, if any, stay behind. No-op in
+ * stage 1 and for an unknown id. Inverse of `separate`.
+ */
+export const join = (layout: Layout, id: string): Layout => {
+  const sorted = normalize(layout);
+  const step = sorted.find((p) => p.id === id);
+  if (step === undefined || step.stage === 1) return sorted;
+  return normalize(
+    sorted.map((p) =>
+      p.id === id
+        ? { ...p, stage: step.stage - 1, position: sorted.length + 1 }
+        : p,
+    ),
   );
 };
 
@@ -105,7 +144,7 @@ export const move = (
  * The step leaves its stage into a new stage of its own immediately after
  * it. Implemented by pushing the step and everything in a later stage up by
  * one stage number; `normalize` then keeps the step's position ordering.
- * No-op when the step is already alone in its stage.
+ * No-op when the step is already alone in its stage. Inverse of `join`.
  */
 export const separate = (layout: Layout, id: string): Layout => {
   const sorted = normalize(layout);

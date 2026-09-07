@@ -2316,6 +2316,37 @@ export class ShopAgent extends Agent {
   }
 
   @callable()
+  joinStep(
+    input: typeof Domain.JoinStepInput.Encoded,
+  ): Promise<Domain.StepResult> {
+    const shop = this.name;
+    return this.runEffect(
+      callableEffect("ShopAgent.joinStep", Domain.JoinStepInput, {
+        onExcessProperty: "error",
+      })(({ stepId }) =>
+        stepResult(
+          Effect.gen(function* () {
+            const repository = yield* WorkflowRepository;
+            const existing = yield* repository.getStep({ stepId });
+            if (Option.isNone(existing)) return { _tag: "NotFound" };
+            yield* repository.joinStep({ stepId });
+            yield* Effect.logInfo(
+              `ShopAgent.joinStep: shop=${shop} workflowId=${existing.value.workflow.id} stage=${String(existing.value.step.stage)}`,
+            ).pipe(
+              Effect.annotateLogs({
+                shop,
+                workflowId: existing.value.workflow.id,
+                stage: existing.value.step.stage,
+              }),
+            );
+            return { _tag: "Ok", step: null };
+          }),
+        ),
+      )(input),
+    );
+  }
+
+  @callable()
   removeStep(
     input: typeof Domain.StepIdInput.Encoded,
   ): Promise<Domain.StepResult> {

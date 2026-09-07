@@ -222,16 +222,20 @@ describe("WorkflowRepository", () => {
         deepStrictEqual(yield* positions(), ["One", "Two", "Three"]);
         yield* repo.moveStep({ stepId: s3.id, direction: "down" });
         deepStrictEqual(yield* positions(), ["One", "Two", "Three"]);
-        // Linear steps are each their own stage, so a move joins the
-        // neighbour's stage and separate restores the boundary.
+        // A move only reorders: the step slides past the neighbouring stage
+        // into one of its own, never joining it. `joinStep` is what merges,
+        // and `separateStep` undoes that.
         yield* repo.moveStep({ stepId: s3.id, direction: "up" });
         deepStrictEqual(yield* positions(), ["One", "Three", "Two"]);
-        deepStrictEqual(yield* stages(), [1, 2, 2]);
-        yield* repo.separateStep({ stepId: s2.id });
+        deepStrictEqual(yield* stages(), [1, 2, 3]);
+        yield* repo.joinStep({ stepId: s3.id });
+        deepStrictEqual(yield* positions(), ["One", "Three", "Two"]);
+        deepStrictEqual(yield* stages(), [1, 1, 2]);
+        yield* repo.separateStep({ stepId: s3.id });
         deepStrictEqual(yield* stages(), [1, 2, 3]);
         yield* repo.moveStep({ stepId: s1.id, direction: "down" });
         deepStrictEqual(yield* positions(), ["Three", "One", "Two"]);
-        deepStrictEqual(yield* stages(), [1, 1, 2]);
+        deepStrictEqual(yield* stages(), [1, 2, 3]);
 
         yield* repo.removeStep({ stepId: s1.id });
         const after = editable(
@@ -255,7 +259,7 @@ describe("WorkflowRepository", () => {
       }),
     ));
 
-  it("stages: move joins, separate splits, remove closes, addParallelStep shares; unknown stage fails", () =>
+  it("stages: join merges, move reorders, separate splits, remove closes, addParallelStep shares; unknown stage fails", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -286,8 +290,17 @@ describe("WorkflowRepository", () => {
         const d = yield* add("d");
         deepStrictEqual(yield* layout(), ["a1", "b1", "c2", "d3"]);
 
+        yield* repo.joinStep({ stepId: c.id });
+        deepStrictEqual(yield* layout(), ["a1", "b1", "c1", "d2"]);
+        // Reordering out of a shared stage leaves the mates together.
         yield* repo.moveStep({ stepId: c.id, direction: "up" });
-        deepStrictEqual(yield* layout(), ["a1", "c1", "b1", "d2"]);
+        deepStrictEqual(yield* layout(), ["c1", "a2", "b2", "d3"]);
+        yield* repo.joinStep({ stepId: c.id });
+        deepStrictEqual(yield* layout(), ["c1", "a2", "b2", "d3"]);
+        yield* repo.moveStep({ stepId: c.id, direction: "down" });
+        deepStrictEqual(yield* layout(), ["a1", "b1", "c2", "d3"]);
+        yield* repo.joinStep({ stepId: c.id });
+        deepStrictEqual(yield* layout(), ["a1", "b1", "c1", "d2"]);
 
         yield* repo.separateStep({ stepId: b.id });
         deepStrictEqual(yield* layout(), ["a1", "c1", "b2", "d3"]);
@@ -1006,7 +1019,7 @@ describe("WorkflowRepository workflow and draft", () => {
         const edited = yield* found(w.id);
         deepStrictEqual(
           edited.draft?.steps.map((s) => `${s.name}${String(s.stage)}`),
-          ["Cut21", "Finish2", "Pack3", "Label3"],
+          ["Finish1", "Cut22", "Pack3", "Label3"],
         );
         deepStrictEqual<readonly string[]>(edited.draft?.draft.tags ?? [], [
           "b",

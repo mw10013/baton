@@ -61,14 +61,16 @@ Every layout change is computed in TypeScript over the workflow's ≤ 20 steps, 
 ```text
 addStep(steps, step)                    new step, position n+1, stage m+1
 addParallelStep(steps, stage, step)     new step placed after the last step of `stage`, same stage; later positions shift by 1
-moveStep(steps, id, up|down)            swap position with the neighbour; the moved step takes the neighbour's stage
+moveStep(steps, id, up|down)            the step slides past the neighbouring stage boundary into a new stage of its own
+joinStep(steps, id)                     the step merges into the previous stage, after that stage's last member;
+                                        no-op in stage 1
 separateStep(steps, id)                 the step leaves its stage into a new stage of its own immediately after it;
                                         no-op if it is already alone in its stage
 removeStep(steps, id)                   delete, then normalize
 normalize(steps)                        sort by (stage, position); renumber positions 1..n; renumber stages dense 1..m
 ```
 
-`moveStep` semantics, spelled out: moving step A "up" swaps positions with the step B directly above it. If B is in a lower stage, A adopts B's stage, so A joins the stage above; A's old stage shrinks by one and, if it becomes empty, `normalize` closes the gap. Moving within a stage just reorders display. There is no way to _create_ a stage boundary with move; that is `separateStep`. Together with `addParallelStep`, these four operations reach every valid layout (proof sketch: any layout can be built stage by stage with `addStep` then `addParallelStep`; any edit is a sequence of separate, move, and remove).
+Ordering and parallelism are separate decisions, and the operations keep them separate: `moveStep` never changes which steps share a stage, `joinStep` / `separateStep` never change order. The JSDoc in `src/lib/WorkflowLayout.ts` is the normative statement of each; the reasoning is superseded by the 2026-09-06 revision recorded there.
 
 ## Schema — `src/lib/ShopAgent.ts` `initializeSchema` (edit in place)
 

@@ -139,6 +139,49 @@ test("workflows create, edit, apply, and discard through the draft", async ({
     page.getByRole("button", { name: "Discard changes" }),
   ).toBeVisible();
 
+  /* Two decisions, three verbs. A second step lands in its own stage;
+     "Run alongside the previous step" is the only thing that makes the two
+     parallel, "Run on its own" splits them back, and moving only reorders —
+     both stages stay solo across the move. */
+  await frame.getByRole("button", { name: "Add a step", exact: true }).click();
+  await nameField.fill("Ice");
+  await frame
+    .getByRole("combobox", { name: "Team", exact: true })
+    .selectOption({ label: TEAM });
+  await frame.getByRole("button", { name: "Add step" }).click();
+  await expect(frame.getByText("Stage 2", { exact: true })).toBeVisible();
+
+  await frame.getByRole("button", { name: "Edit Ice" }).click();
+  await frame
+    .getByRole("button", { name: "Run alongside the previous step" })
+    .click();
+  await expect(
+    frame.getByText("Stage 1 · at the same time", { exact: true }),
+  ).toBeVisible();
+  await expect(frame.getByText("Stage 2", { exact: true })).toHaveCount(0);
+
+  await frame.getByRole("button", { name: "Run on its own" }).click();
+  await expect(frame.getByText("Stage 2", { exact: true })).toBeVisible();
+  await expect(
+    frame.getByText("Stage 1 · at the same time", { exact: true }),
+  ).toHaveCount(0);
+
+  /* Card order in the canvas: the label the card carries, top to bottom. */
+  const stepOrder = () =>
+    frame
+      .locator('s-clickable[accessibilityLabel^="Edit "]')
+      .evaluateAll((cards) =>
+        cards.map((card) => card.getAttribute("accessibilityLabel")),
+      );
+  await frame.getByRole("button", { name: "Move earlier" }).click();
+  await expect.poll(stepOrder).toEqual(["Edit Ice", "Edit Bake and cool"]);
+  await expect(frame.getByText("Stage 1", { exact: true })).toBeVisible();
+  await expect(frame.getByText("Stage 2", { exact: true })).toBeVisible();
+  await frame.getByRole("button", { name: "Move later" }).click();
+  await expect.poll(stepOrder).toEqual(["Edit Bake and cool", "Edit Ice"]);
+  await frame.getByRole("button", { name: "Remove step" }).click();
+  await expect(frame.getByText("Stage 2", { exact: true })).toHaveCount(0);
+
   /* Close keeps the draft, and the two tabs show the two answers. */
   await closeEditor(page);
   await frame.getByRole("button", { name: "Draft", exact: true }).click();

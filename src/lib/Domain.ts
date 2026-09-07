@@ -834,6 +834,11 @@ export type SeedWorkflowsInput = typeof SeedWorkflowsInput.Type;
 export const StepDirection = Schema.Literals(["up", "down"]);
 export type StepDirection = typeof StepDirection.Type;
 
+/**
+ * `moveStep`: the step takes a stage of its own past the neighbouring
+ * boundary (`WorkflowLayout.move`). Reordering never makes a step parallel
+ * with another; that is `joinStep`.
+ */
 export const MoveStepInput = Schema.Struct({
   stepId: BoundedId,
   direction: StepDirection,
@@ -846,6 +851,10 @@ export type StepIdInput = typeof StepIdInput.Type;
 /** `separateStep`: the step leaves its stage into a new stage of its own immediately after it. */
 export const SeparateStepInput = StepIdInput;
 export type SeparateStepInput = typeof SeparateStepInput.Type;
+
+/** `joinStep`: the step merges into the previous stage, after that stage's last member. */
+export const JoinStepInput = StepIdInput;
+export type JoinStepInput = typeof JoinStepInput.Type;
 
 export const TeamIdInput = Schema.Struct({ teamId: BoundedId });
 export type TeamIdInput = typeof TeamIdInput.Type;

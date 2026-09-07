@@ -206,6 +206,13 @@ function RouteComponent() {
     onError,
   });
 
+  const joinStepMutation = useMutation({
+    mutationFn: (input: typeof Domain.JoinStepInput.Encoded) =>
+      call((stub) => stub.joinStep(input)).then(decodeStepResult),
+    onSuccess: onStepResult,
+    onError,
+  });
+
   const removeStepMutation = useMutation({
     mutationFn: (input: typeof Domain.StepIdInput.Encoded) =>
       call((stub) => stub.removeStep(input)).then(decodeStepResult),
@@ -384,30 +391,14 @@ function RouteComponent() {
     updateStepMutation.isPending ||
     moveStepMutation.isPending ||
     separateStepMutation.isPending ||
+    joinStepMutation.isPending ||
     removeStepMutation.isPending ||
     tagsMutation.isPending ||
     applyMutation.isPending ||
     discardMutation.isPending;
   const sharesStage = (step: Domain.StepWithTeamName) =>
     steps.some((other) => other.id !== step.id && other.stage === step.stage);
-  /**
-   * What a move will do, said on the button. `WorkflowLayout.move` swaps
-   * with the neighbour and takes its stage, so past a stage boundary the
-   * click merges the step into that stage rather than reordering it. The
-   * label changes at the boundary so the merchant is never surprised.
-   */
-  const moveLabel = (
-    step: Domain.StepWithTeamName,
-    direction: "up" | "down",
-  ) => {
-    const index = steps.findIndex((candidate) => candidate.id === step.id);
-    const neighbour = steps[direction === "up" ? index - 1 : index + 1];
-    if (neighbour === undefined || neighbour.stage === step.stage)
-      return direction === "up" ? "Move earlier" : "Move later";
-    return direction === "up"
-      ? "Join the previous stage"
-      : "Join the next stage";
-  };
+  const lastStage = steps.reduce((max, step) => Math.max(max, step.stage), 0);
 
   const selectStep = (stepId: string) => {
     const step = steps.find((candidate) => candidate.id === stepId);
@@ -774,10 +765,19 @@ function RouteComponent() {
               Save step
             </s-button>
             <s-divider />
+            {/*
+              Three verbs, two decisions. Move earlier / Move later change
+              order and never concurrency: the moved step always ends alone.
+              Run alongside / Run on its own change concurrency and never
+              order. Enabled state is decided from the step's stage, not its
+              index: a step that shares stage 1 can still move earlier.
+            */}
             <s-stack direction="inline" gap="small-300">
               <s-button
                 variant="tertiary"
-                disabled={busy || steps[0]?.id === selected.id}
+                disabled={
+                  busy || (!sharesStage(selected) && selected.stage === 1)
+                }
                 onClick={() => {
                   moveStepMutation.mutate({
                     stepId: selected.id,
@@ -785,11 +785,14 @@ function RouteComponent() {
                   });
                 }}
               >
-                {moveLabel(selected, "up")}
+                Move earlier
               </s-button>
               <s-button
                 variant="tertiary"
-                disabled={busy || steps.at(-1)?.id === selected.id}
+                disabled={
+                  busy ||
+                  (!sharesStage(selected) && selected.stage === lastStage)
+                }
                 onClick={() => {
                   moveStepMutation.mutate({
                     stepId: selected.id,
@@ -797,10 +800,10 @@ function RouteComponent() {
                   });
                 }}
               >
-                {moveLabel(selected, "down")}
+                Move later
               </s-button>
             </s-stack>
-            {sharesStage(selected) && (
+            {sharesStage(selected) ? (
               <s-stack direction="inline">
                 <s-button
                   variant="tertiary"
@@ -809,9 +812,23 @@ function RouteComponent() {
                     separateStepMutation.mutate({ stepId: selected.id });
                   }}
                 >
-                  Give it a stage of its own
+                  Run on its own
                 </s-button>
               </s-stack>
+            ) : (
+              selected.stage > 1 && (
+                <s-stack direction="inline">
+                  <s-button
+                    variant="tertiary"
+                    disabled={busy}
+                    onClick={() => {
+                      joinStepMutation.mutate({ stepId: selected.id });
+                    }}
+                  >
+                    Run alongside the previous step
+                  </s-button>
+                </s-stack>
+              )
             )}
             <s-stack direction="inline">
               <s-button

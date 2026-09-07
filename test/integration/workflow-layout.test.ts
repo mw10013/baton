@@ -16,6 +16,18 @@ const shape = (l: WorkflowLayout.Layout) =>
 
 const ids = (l: WorkflowLayout.Layout) => l.map((p) => p.id).toSorted();
 
+/** How every step other than `id` is partitioned into stages, in stage order. */
+const others = (l: WorkflowLayout.Layout, id: string) =>
+  WorkflowLayout.stagesOf(l)
+    .map((group) =>
+      group
+        .map((p) => p.id)
+        .filter((other) => other !== id)
+        .toSorted()
+        .join(""),
+    )
+    .filter((group) => group.length > 0);
+
 const check = (before: WorkflowLayout.Layout, after: WorkflowLayout.Layout) => {
   strictEqual(WorkflowLayout.isValid(after), true, shape(after));
   deepStrictEqual(ids(after), ids(before));
@@ -56,23 +68,82 @@ describe("WorkflowLayout", () => {
     );
   });
 
-  it("move within a stage reorders only; across a boundary adopts the neighbour's stage and closes an emptied one", () => {
-    const start = layout("a1 b1 c2 d3");
-    const within = WorkflowLayout.move(start, "b", "up");
-    strictEqual(shape(within), "b1 a1 c2 d3");
-    check(start, within);
+  it("move slides a step past the neighbouring boundary into a stage of its own", () => {
+    const linear = layout("a1 b2 c3");
+    const soloUp = WorkflowLayout.move(linear, "c", "up");
+    strictEqual(shape(soloUp), "a1 c2 b3");
+    check(linear, soloUp);
 
-    const joined = WorkflowLayout.move(start, "c", "up");
-    strictEqual(shape(joined), "a1 c1 b1 d2");
-    check(start, joined);
+    const soloDown = WorkflowLayout.move(linear, "a", "down");
+    strictEqual(shape(soloDown), "b1 a2 c3");
+    check(linear, soloDown);
 
-    const down = WorkflowLayout.move(start, "b", "down");
-    strictEqual(shape(down), "a1 c2 b2 d3");
-    check(start, down);
+    const start = layout("a1 b2 c2 d3");
+    const sharedUp = WorkflowLayout.move(start, "c", "up");
+    strictEqual(shape(sharedUp), "a1 c2 b3 d4");
+    check(start, sharedUp);
 
-    strictEqual(shape(WorkflowLayout.move(start, "a", "up")), shape(start));
-    strictEqual(shape(WorkflowLayout.move(start, "d", "down")), shape(start));
+    const sharedDown = WorkflowLayout.move(start, "b", "down");
+    strictEqual(shape(sharedDown), "a1 c2 b3 d4");
+    check(start, sharedDown);
+
+    // A shared step in stage 1 is not stuck: it moves up into a new stage 1.
+    const first = layout("a1 b1 c2");
+    const aheadOfMates = WorkflowLayout.move(first, "a", "up");
+    strictEqual(shape(aheadOfMates), "a1 b2 c3");
+    check(first, aheadOfMates);
+
+    strictEqual(shape(WorkflowLayout.move(linear, "a", "up")), shape(linear));
+    strictEqual(shape(WorkflowLayout.move(linear, "c", "down")), shape(linear));
     strictEqual(shape(WorkflowLayout.move(start, "zz", "down")), shape(start));
+  });
+
+  it("move never changes which other steps share a stage, and leaves the moved step alone", () => {
+    for (const spec of ["a1 b2 c3", "a1 b1 c2 d3", "a1 b2 c2 d2 e3"]) {
+      const before = layout(spec);
+      for (const p of before)
+        for (const direction of ["up", "down"] as const) {
+          const after = WorkflowLayout.move(before, p.id, direction);
+          const where = `${spec} ${p.id} ${direction}`;
+          check(before, after);
+          if (shape(after) !== shape(before)) {
+            const moved = after.find((q) => q.id === p.id);
+            strictEqual(
+              after.filter((q) => q.stage === moved?.stage).length,
+              1,
+              where,
+            );
+            deepStrictEqual(others(after, p.id), others(before, p.id), where);
+          }
+        }
+    }
+  });
+
+  it("join merges a step into the previous stage, last among its members", () => {
+    const linear = layout("a1 b2 c3");
+    const joined = WorkflowLayout.join(linear, "c");
+    strictEqual(shape(joined), "a1 b2 c2");
+    check(linear, joined);
+
+    const intoShared = WorkflowLayout.join(layout("a1 b2 c2 d3"), "d");
+    strictEqual(shape(intoShared), "a1 b2 c2 d2");
+
+    strictEqual(
+      shape(WorkflowLayout.join(layout("a1 b1 c2"), "c")),
+      "a1 b1 c1",
+    );
+
+    // Mates stay behind.
+    const shared = layout("a1 b2 c2");
+    const left = WorkflowLayout.join(shared, "c");
+    strictEqual(shape(left), "a1 c1 b2");
+    check(shared, left);
+
+    strictEqual(shape(WorkflowLayout.join(linear, "a")), shape(linear));
+    strictEqual(shape(WorkflowLayout.join(linear, "zz")), shape(linear));
+
+    // Round trip: separate undoes join.
+    strictEqual(shape(WorkflowLayout.separate(joined, "c")), shape(linear));
   });
 
   it("separate is a no-op on a solo step and splits a member off into its own following stage", () => {
@@ -81,10 +152,14 @@ describe("WorkflowLayout", () => {
     const split = WorkflowLayout.separate(start, "b");
     strictEqual(shape(split), "a1 c1 b2 d3");
     check(start, split);
-    // Research appendix round trip: a following step moved up rejoins it.
-    const rejoined = WorkflowLayout.move(split, "d", "up");
-    strictEqual(shape(rejoined), "a1 c1 d2 b2");
-    check(start, rejoined);
+    // Reordering never merges: `d` moved up lands in a stage of its own.
+    const moved = WorkflowLayout.move(split, "d", "up");
+    strictEqual(shape(moved), "a1 c1 d2 b3");
+    check(start, moved);
+    // Joining does merge, and separate puts it back.
+    const rejoined = WorkflowLayout.join(split, "d");
+    strictEqual(shape(rejoined), "a1 c1 b2 d2");
+    strictEqual(shape(WorkflowLayout.separate(rejoined, "d")), shape(split));
   });
 
   it("remove closes the gap in both positions and stages", () => {

@@ -404,7 +404,10 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowNotFoundError
       | StepNotFoundError
     >;
-    /** A move past either edge is a no-op, not an error. Across a stage boundary the step joins the neighbour's stage. */
+    /**
+     * The moved step always ends alone in its stage; other steps keep their
+     * stage-mates. A move past either edge is a no-op, not an error.
+     */
     readonly moveStep: (input: {
       readonly stepId: string;
       readonly direction: Domain.StepDirection;
@@ -417,6 +420,20 @@ export class WorkflowRepository extends Context.Service<
     >;
     /** The step leaves its stage into a new one of its own right after it; no-op when already alone. */
     readonly separateStep: (input: {
+      readonly stepId: string;
+    }) => Effect.Effect<
+      void,
+      | SqlError.SqlError
+      | WorkflowRepositoryError
+      | WorkflowNotFoundError
+      | StepNotFoundError
+    >;
+    /**
+     * The step joins the previous stage, last among its members; no-op in
+     * stage 1. Lands on the draft, creating it on first change, like every
+     * step-id write.
+     */
+    readonly joinStep: (input: {
       readonly stepId: string;
     }) => Effect.Effect<
       void,
@@ -1472,6 +1489,16 @@ export class WorkflowRepository extends Context.Service<
         }) {
           yield* relayout(stepId, (layout) =>
             WorkflowLayout.separate(layout, stepId),
+          );
+        }),
+
+        joinStep: Effect.fn("WorkflowRepository.joinStep")(function* ({
+          stepId,
+        }: {
+          readonly stepId: string;
+        }) {
+          yield* relayout(stepId, (layout) =>
+            WorkflowLayout.join(layout, stepId),
           );
         }),
 

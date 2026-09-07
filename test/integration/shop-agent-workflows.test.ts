@@ -327,6 +327,16 @@ describe("ShopAgent workflow callables", () => {
       ["A", 1],
       ["B", 2],
     ]);
+
+    const joinMissing = await agent.joinStep({ stepId: "nope" });
+    strictEqual(joinMissing._tag, "NotFound");
+    const joined = await agent.joinStep({ stepId: parallel.step.id });
+    strictEqual(joined._tag, "Ok");
+    const rejoined = await agent.getWorkflowDetail({ workflowId });
+    expect(rejoined?.draft?.steps.map((s) => [s.name, s.stage])).toEqual([
+      ["A", 1],
+      ["B", 1],
+    ]);
   });
 
   it("createDraft / applyDraft / discardDraft / setWorkflowActive / updateWorkflowTags map failures to results", async () => {
