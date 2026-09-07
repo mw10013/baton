@@ -69,11 +69,19 @@ export interface QueueRow {
 }
 
 export interface ReconcileCounts {
+  /** Item runs created by this pass. */
   readonly created: number;
   readonly cancelled: number;
   readonly flagged: number;
-  /** Order runs started by this pass (0 or 1). */
+  /** Order runs created by this pass (0 or 1). */
   readonly orderRuns: number;
+}
+
+export interface ReconcileAllCounts {
+  /** Open, paid orders the pass visited. */
+  readonly orders: number;
+  /** Item and order runs created, summed. */
+  readonly created: number;
 }
 
 export interface StartContext {
@@ -99,7 +107,7 @@ export const canStart = (
   { workflow, steps }: Domain.WorkflowDetail,
   teams: StartContext["teams"],
 ) =>
-  workflow.active &&
+  Domain.isActive(workflow) &&
   steps.length > 0 &&
   steps.every(
     (step) =>
@@ -107,27 +115,54 @@ export const canStart = (
   );
 
 /**
- * The line-item half: the tag test. `processedAt >= workflow.createdAt` is
- * the age rule: a bulk stream of thirty days of history must not start work
- * on orders placed before the workflow existed, whichever path delivers
- * them. It is the workflow's creation, not the last Apply: a re-apply must
- * not stop starting runs for orders that arrived while the draft was being
- * written.
+ * The line-item half: the tag test and the date rule. An order qualifies
+ * only when it was placed (`processedAt`) on or after the workflow's
+ * `activatedAt`: a bulk stream of thirty days of history, or an edit
+ * webhook on an order shipped a month ago, must not start work on orders
+ * placed before the workflow was turned on, whichever path delivers them.
+ * It is Turn on, not the last Apply: a re-apply must not disown an unpaid
+ * order placed while the workflow was on. An off workflow never reaches
+ * this (`canStart` first), so `activatedAt` null reads as "never".
  */
 export const matchesLineItem = (
-  { workflow }: Domain.WorkflowDetail,
+  detail: Domain.WorkflowDetail,
   order: Domain.ShopOrder,
   lineItem: Domain.OrderLineItem,
+) => placedSince(detail.workflow, order) && matchesTags(detail, lineItem);
+
+/** The date rule alone: placed on or after Turn on. Off never qualifies. */
+export const placedSince = (
+  workflow: Domain.Workflow,
+  order: Pick<Domain.ShopOrder, "processedAt">,
+) => workflow.activatedAt !== null && order.processedAt >= workflow.activatedAt;
+
+/** The tag test alone, with units still to make; what the Turn on dialog's count uses, since it asks "would match if the date allowed". */
+export const matchesTags = (
+  { workflow }: Domain.WorkflowDetail,
+  lineItem: Pick<Domain.OrderLineItem, "productTags" | "unfulfilledQuantity">,
 ) =>
   workflow.type === "item" &&
-  Domain.unitsToMake(lineItem) > 0 &&
-  order.processedAt >= workflow.createdAt &&
+  lineItem.unfulfilledQuantity > 0 &&
   lineItem.productTags.some((tag) => {
     const folded = tag.trim().toLowerCase();
     return workflow.tags.some((candidate) => candidate === folded);
   });
 
 const json = (value: unknown) => JSON.stringify(value);
+
+/** One row per waiting order: the count, and the placed date "Include them" would move `activatedAt` to. */
+const summarise = (
+  rows: readonly { readonly processedAt: number }[],
+): Domain.WaitingOrders => ({
+  count: rows.length,
+  earliestProcessedAt: rows.reduce<number | null>(
+    (earliest, row) =>
+      earliest === null || row.processedAt < earliest
+        ? row.processedAt
+        : earliest,
+    null,
+  ),
+});
 
 const isTerminal = (run: Domain.WorkflowRun) =>
   run.status === "done" || run.status === "cancelled";
@@ -157,27 +192,45 @@ export class WorkflowRunRepository extends Context.Service<
       SqlError.SqlError | WorkflowRunRepositoryError
     >;
     /**
-     * The sweep behind turning the order workflow on or applying it. The
-     * order-run trigger otherwise fires only from an order reconcile or the
-     * last item run's completion or cancellation, so an order whose items
-     * finished while the order workflow was off, or had an unassigned step,
-     * would stay stranded until someone pressed Resync on it. One query
-     * selects the candidates — paid, uncancelled, unfulfilled, a `done` item
-     * run, no open item run, no order run for this workflow, and past the
-     * age rule or opted in by a manual attach — and the trigger re-checks
-     * each inside one transaction. A no-op when there is no startable order
-     * workflow. Returns how many order runs it started.
+     * `reconcileOrder` over every open, paid order, one transaction each:
+     * what runs after a definition changes on an on workflow (Turn on, its
+     * date moved, Apply). Fulfilled orders are excluded on purpose —
+     * reconcile treats fulfilled as terminal and there is nothing left to
+     * make or pack — and unpaid ones because they reconcile when they pay.
+     * Bounded by the merchant's live floor, not the whole stored window.
      */
-    readonly startReadyOrderRuns: (
+    readonly reconcileAll: (
       input: StartContext,
-    ) => Effect.Effect<number, SqlError.SqlError | WorkflowRunRepositoryError>;
+    ) => Effect.Effect<
+      ReconcileAllCounts,
+      SqlError.SqlError | WorkflowRunRepositoryError
+    >;
+    /**
+     * What the Turn on dialog asks: how many stored, open (unfulfilled, not
+     * cancelled) orders would match `workflow` if its date allowed them, paid
+     * or not, and the placed date of the earliest. For an item workflow a
+     * line item counts when its tags match and `(lineItemId, workflowId)`
+     * has no run; for the order workflow an order counts when it has a
+     * non-cancelled item run and no order run. Row cost: the open orders'
+     * line items, once per dialog open.
+     */
+    readonly countWaitingOrders: (input: {
+      readonly workflow: Domain.WorkflowDetail;
+    }) => Effect.Effect<
+      Domain.WaitingOrders,
+      SqlError.SqlError | WorkflowRunRepositoryError
+    >;
     /**
      * Manual attach of an item workflow. `None` when `(lineItemId,
      * workflowId)` already has a run in any status. A new item run flags any
-     * open order run of the order `item_added`.
+     * open order run of the order `item_added`. With `orderWorkflow` (the
+     * startable order workflow, or null), a successful attach also creates
+     * the order run when the order has none: attach is the merchant's
+     * opt-in, so the date rule does not apply to it.
      */
     readonly createRun: (input: {
       readonly workflow: Domain.WorkflowDetail;
+      readonly orderWorkflow: Domain.WorkflowDetail | null;
       readonly teams: StartContext["teams"];
       readonly order: Domain.ShopOrder;
       readonly lineItem: Domain.OrderLineItem;
@@ -201,13 +254,8 @@ export class WorkflowRunRepository extends Context.Service<
       Option.Option<Domain.WorkflowRunDetail>,
       SqlError.SqlError | WorkflowRunRepositoryError
     >;
-    /**
-     * `startContext` lets cancelling the last open item run start the order run;
-     * absent (tests that only exercise steps), the trigger is skipped.
-     */
     readonly cancelRun: (input: {
       readonly runId: string;
-      readonly startContext?: StartContext;
     }) => Effect.Effect<
       void,
       | SqlError.SqlError
@@ -254,15 +302,15 @@ export class WorkflowRunRepository extends Context.Service<
     >;
     /**
      * Also backfills `startedAt` / `startedBy` when Done arrives without a
-     * Start, so every finished step records who. With `startContext`, a completion
-     * that finishes the last item run on an order starts the order run.
+     * Start, so every finished step records who. Finishing the last item run
+     * on an order makes the order run's first stage ready (`readyWhere`);
+     * nothing is created here.
      */
     readonly completeStep: (input: {
       readonly runStepId: string;
       readonly memberId: Domain.MemberId;
       readonly memberEmail: Domain.Email;
       readonly teamIds: readonly string[];
-      readonly startContext?: StartContext;
     }) => Effect.Effect<
       void,
       | SqlError.SqlError
@@ -384,7 +432,7 @@ export class WorkflowRunRepository extends Context.Service<
       );
 
       const orderColumns = sql.literal(
-        `id, legacyId, name, createdAt, processedAt, updatedAt, cancelledAt,
+        `id, legacyId, name, processedAt, updatedAt, cancelledAt,
          closedAt, financialStatus, fulfillmentStatus, fullyPaid, tags, note,
          customAttributes, lineItemsComplete, syncedAt, syncSource`,
       );
@@ -417,14 +465,40 @@ export class WorkflowRunRepository extends Context.Service<
 
       /**
        * A step is ready when it is open and nothing in an earlier stage of
-       * the same run is still open. One definition, interpolated as a literal
+       * the same run is still open. For an order run the item runs are stage
+       * zero: its steps are ready only when no item run on the order is open
+       * and at least one is done, so the order run exists from the moment
+       * the order arrives (the merchant can see packing is coming) but
+       * reaches nobody's queue until the items are made. Evaluated live, so
+       * a line item added by a later edit, or a workflow attached by hand,
+       * simply makes the order run wait longer. Every subquery is `exists`
+       * and stops at its first row; `WorkflowRun_order_items_idx` serves
+       * the two item-run probes. One definition, interpolated as a literal
        * with the outer alias, so the queue and every action agree.
        */
       const readyWhere = (alias: string) =>
         sql.literal(`(
-          ${alias}.completedAt is null and not exists (
+          ${alias}.completedAt is null
+          and not exists (
             select 1 from WorkflowRunStep p
             where p.runId = ${alias}.runId and p.completedAt is null and p.stage < ${alias}.stage
+          )
+          and (
+            exists (select 1 from WorkflowRun r where r.id = ${alias}.runId and r.lineItemId is not null)
+            or (
+              not exists (
+                select 1 from WorkflowRun i
+                join WorkflowRun r on r.orderId = i.orderId
+                where r.id = ${alias}.runId and i.lineItemId is not null
+                  and i.status in ('pending', 'active')
+              )
+              and exists (
+                select 1 from WorkflowRun i
+                join WorkflowRun r on r.orderId = i.orderId
+                where r.id = ${alias}.runId and i.lineItemId is not null
+                  and i.status = 'done'
+              )
+            )
           )
         )`);
 
@@ -708,384 +782,407 @@ export class WorkflowRunRepository extends Context.Service<
       );
 
       /**
-       * The order-run trigger, evaluated inside the caller's transaction at
-       * the end of every action that can finish an order's last open item run.
-       * Never opens a transaction of its own. Returns how many order runs
-       * started (0 or 1).
-       *
-       * Ready = `canStartRuns` (paid, not cancelled), the order workflow able
-       * to start and older than the order (the same age rule as item runs),
-       * at least one item run `done`, no item run open, and no
-       * order run for this workflow in any status — a cancelled order run
-       * keeps its key, so recovery is un-cancel, never a second start. A
-       * stock-only order (no item runs) never triggers.
-       *
-       * The age rule has one exception: an item run with `source = 'manual'`
-       * opts the order in. Manual attach already overrides the age rule for
-       * the item — an admin choosing to work an old order by hand — and the
-       * item's completion would otherwise dead-end there, with the placeholder
-       * promising packing that never comes. Tag-started runs cannot exist on an
-       * order older than their workflow, so this only ever fires on orders a
-       * person deliberately pulled into production.
+       * A pending order run whose item runs all ended cancelled has no
+       * premise left; cancel it silently, as reconcile does any pending run
+       * whose work vanished. Requires at least one item run so a run created
+       * by manual attach on a stock-only order is not cancelled before its
+       * item run exists. An active order run keeps its flags instead.
        */
-      const startOrderRunIfReady = Effect.fn(
-        "WorkflowRunRepository.startOrderRunIfReady",
-      )(function* ({
-        orderId,
-        workflows,
-        teams,
-      }: StartContext & { readonly orderId: string }) {
-        const orderWorkflow = workflows.find(
-          ({ workflow }) => workflow.type === "order",
-        );
-        if (orderWorkflow === undefined) return 0;
-        if (!canStart(orderWorkflow, teams)) return 0;
-        const [order] = yield* decodeOrders(
-          yield* sql`select ${orderColumns} from ShopOrder where id = ${orderId}`,
-        );
-        if (order === undefined || !Domain.canStartRuns(order)) return 0;
-        const [ready] = yield* sql`
-          select
-            exists (
-              select 1 from WorkflowRun
-              where orderId = ${orderId} and lineItemId is not null and status = 'done'
-            ) as anyDone,
-            exists (
-              select 1 from WorkflowRun
-              where orderId = ${orderId} and lineItemId is not null and source = 'manual'
-            ) as optedIn,
-            exists (
-              select 1 from WorkflowRun
-              where orderId = ${orderId} and lineItemId is not null
-                and status in ('pending', 'active')
-            ) as anyOpen,
-            exists (
-              select 1 from WorkflowRun
-              where orderId = ${orderId} and lineItemId is null
-                and workflowId = ${orderWorkflow.workflow.id}
-            ) as started
-        `;
-        if (
-          ready === undefined ||
-          Number(ready.anyDone) === 0 ||
-          Number(ready.anyOpen) !== 0 ||
-          Number(ready.started) !== 0
-        )
-          return 0;
-        if (
-          order.processedAt < orderWorkflow.workflow.createdAt &&
-          Number(ready.optedIn) === 0
-        )
-          return 0;
-        const run = yield* insertRun({
-          workflow: orderWorkflow,
-          teams,
-          order,
-          lineItem: null,
-          source: "tag",
-        });
-        if (Option.isNone(run)) return 0;
-        yield* Effect.logInfo(
-          `WorkflowRunRepository.startOrderRun: orderId=${orderId} workflowId=${orderWorkflow.workflow.id} runId=${run.value.id}`,
-        ).pipe(
-          Effect.annotateLogs({
-            orderId,
-            workflowId: orderWorkflow.workflow.id,
-            runId: run.value.id,
-          }),
-        );
-        return 1;
-      });
-
-      const startReadyOrderRuns = Effect.fn(
-        "WorkflowRunRepository.startReadyOrderRuns",
-      )(function* ({ workflows, teams }: StartContext) {
-        const orderWorkflow = workflows.find(
-          ({ workflow }) => workflow.type === "order",
-        );
-        if (orderWorkflow === undefined || !canStart(orderWorkflow, teams))
-          return 0;
-        const workflowId = orderWorkflow.workflow.id;
-        const createdAt = orderWorkflow.workflow.createdAt;
-        const candidates = yield* sql<{ readonly id: string }>`
-          select o.id from ShopOrder o
-          where o.fullyPaid = 1
-            and o.cancelledAt is null
-            and o.fulfillmentStatus <> 'FULFILLED'
+      const cancelOrphanedOrderRun = (orderId: string, now: number) =>
+        sql`
+          update WorkflowRun
+          set status = 'cancelled', cancelledAt = ${now}, updatedAt = ${now}
+          where orderId = ${orderId} and lineItemId is null and status = 'pending'
             and exists (
-              select 1 from WorkflowRun
-              where orderId = o.id and lineItemId is not null and status = 'done'
+              select 1 from WorkflowRun i
+              where i.orderId = ${orderId} and i.lineItemId is not null
             )
             and not exists (
-              select 1 from WorkflowRun
-              where orderId = o.id and lineItemId is not null
-                and status in ('pending', 'active')
+              select 1 from WorkflowRun i
+              where i.orderId = ${orderId} and i.lineItemId is not null
+                and i.status <> 'cancelled'
             )
-            and not exists (
-              select 1 from WorkflowRun
-              where orderId = o.id and lineItemId is null
-                and workflowId = ${workflowId}
-            )
-            and (
-              o.processedAt >= ${createdAt}
-              or exists (
-                select 1 from WorkflowRun
-                where orderId = o.id and lineItemId is not null and source = 'manual'
-              )
-            )
-        `;
-        if (candidates.length === 0) return 0;
-        const started: readonly number[] = yield* sql.withTransaction(
-          Effect.forEach(
-            candidates.map(({ id }) => id),
-            (orderId) => startOrderRunIfReady({ orderId, workflows, teams }),
-          ),
-        );
-        return started.reduce((sum, count) => sum + count, 0);
-      });
+          returning id
+        `.pipe(Effect.map((rows) => rows.length));
 
-      return WorkflowRunRepository.of({
-        startReadyOrderRuns,
-        /**
-         * Two gates, deliberately split. `Domain.isCancelled` and
-         * `Domain.isFulfilled` are the stop gates and return early;
-         * `Domain.canStartRuns` (paid) gates only run *creation* and the
-         * order-run trigger. Adjusting open runs against their line items and
-         * flagging order runs happen whether or not the order is currently
-         * paid, so an edit that pushes a paid order back to unpaid keeps its
-         * runs, still tracks removals and quantity changes, and simply creates
-         * nothing new until the balance lands — a payment wobble must never
-         * cancel work in progress.
-         */
-        reconcileOrder: Effect.fn("WorkflowRunRepository.reconcileOrder")(
-          function* ({
-            orderId,
-            workflows,
-            teams,
-          }: StartContext & { readonly orderId: string }) {
-            const now = yield* Clock.currentTimeMillis;
-            const [order] = yield* decodeOrders(
-              yield* sql`select ${orderColumns} from ShopOrder where id = ${orderId}`,
-            );
-            if (order === undefined) return NO_COUNTS;
-            const earlyExit = (status: "cancelled" | "fulfilled") =>
-              Effect.logInfo(
-                `WorkflowRunRepository.reconcileOrder: orderId=${orderId} status=${status}`,
-              ).pipe(Effect.annotateLogs({ orderId, status }));
-            if (Domain.isCancelled(order)) {
-              yield* earlyExit("cancelled");
-              return {
-                ...NO_COUNTS,
-                cancelled: yield* cancelPending(orderId, now),
-                flagged: yield* flagActive(
-                  sql`orderId = ${orderId}`,
-                  "order_cancelled",
-                  {},
-                  now,
-                ),
-              };
-            }
-            /**
-             * Nothing left to make or pack. Pending item runs go silently
-             * (no one started them); active item runs and every open order
-             * run are flagged because their premise cannot be restored.
-             * `PARTIALLY_FULFILLED` never lands here: the shipped line's
-             * `unfulfilledQuantity` is 0 and `adjust` handles it per line.
-             */
-            if (Domain.isFulfilled(order)) {
-              yield* earlyExit("fulfilled");
-              const cancelled = yield* cancelPending(orderId, now);
-              const flaggedItems = yield* flagActive(
-                sql`orderId = ${orderId} and lineItemId is not null`,
-                "order_fulfilled",
+      const openOrders = sql`
+        select id from ShopOrder
+        where cancelledAt is null and fulfillmentStatus <> 'FULFILLED' and fullyPaid = 1
+      `;
+
+      /**
+       * Two gates, deliberately split. `Domain.isCancelled` and
+       * `Domain.isFulfilled` are the stop gates and return early;
+       * `Domain.canStartRuns` (paid) gates only run *creation*, item and
+       * order runs alike. Adjusting open runs against their line items and
+       * flagging order runs happen whether or not the order is currently
+       * paid, so an edit that pushes a paid order back to unpaid keeps its
+       * runs, still tracks removals and quantity changes, and simply creates
+       * nothing new until the balance lands — a payment wobble must never
+       * cancel work in progress.
+       *
+       * The order run is created here, with the item runs: when the order
+       * qualifies and has at least one non-cancelled item run (created now
+       * or earlier) and the startable order workflow's date allows the
+       * order, one order run is inserted, `pending`. Its steps wait on
+       * `readyWhere`. `WorkflowRun_order_uidx` refuses a second, and a
+       * cancelled one keeps its key, so recovery is un-cancel.
+       */
+      const reconcileOrder = Effect.fn("WorkflowRunRepository.reconcileOrder")(
+        function* ({
+          orderId,
+          workflows,
+          teams,
+        }: StartContext & { readonly orderId: string }) {
+          const now = yield* Clock.currentTimeMillis;
+          const [order] = yield* decodeOrders(
+            yield* sql`select ${orderColumns} from ShopOrder where id = ${orderId}`,
+          );
+          if (order === undefined) return NO_COUNTS;
+          const earlyExit = (status: "cancelled" | "fulfilled") =>
+            Effect.logInfo(
+              `WorkflowRunRepository.reconcileOrder: orderId=${orderId} status=${status}`,
+            ).pipe(Effect.annotateLogs({ orderId, status }));
+          if (Domain.isCancelled(order)) {
+            yield* earlyExit("cancelled");
+            return {
+              ...NO_COUNTS,
+              cancelled: yield* cancelPending(orderId, now),
+              flagged: yield* flagActive(
+                sql`orderId = ${orderId}`,
+                "order_cancelled",
                 {},
                 now,
-              );
-              const flaggedOrderRuns = yield* flagOpenOrderRuns(
-                orderId,
-                "order_fulfilled",
-                {},
-                now,
-              );
-              return {
-                ...NO_COUNTS,
-                cancelled,
-                flagged: flaggedItems + flaggedOrderRuns,
-              };
-            }
-            const orderCanStart = Domain.canStartRuns(order);
-            const lineItems = yield* decodeLineItems(
-              yield* sql`select * from OrderLineItem where orderId = ${orderId}`,
+              ),
+            };
+          }
+          /**
+           * Nothing left to make or pack. Pending item runs go silently
+           * (no one started them); active item runs and every open order
+           * run are flagged because their premise cannot be restored.
+           * `PARTIALLY_FULFILLED` never lands here: the shipped line's
+           * `unfulfilledQuantity` is 0 and `adjust` handles it per line.
+           */
+          if (Domain.isFulfilled(order)) {
+            yield* earlyExit("fulfilled");
+            const cancelled = yield* cancelPending(orderId, now);
+            const flaggedItems = yield* flagActive(
+              sql`orderId = ${orderId} and lineItemId is not null`,
+              "order_fulfilled",
+              {},
+              now,
             );
-            const runs = yield* decodeRuns(
-              yield* sql`
+            const flaggedOrderRuns = yield* flagOpenOrderRuns(
+              orderId,
+              "order_fulfilled",
+              {},
+              now,
+            );
+            return {
+              ...NO_COUNTS,
+              cancelled,
+              flagged: flaggedItems + flaggedOrderRuns,
+            };
+          }
+          const orderCanStart = Domain.canStartRuns(order);
+          const lineItems = yield* decodeLineItems(
+            yield* sql`select * from OrderLineItem where orderId = ${orderId}`,
+          );
+          // Every non-cancelled run plus every order run: open item runs
+          // are adjusted below, done item runs count as "has an item run"
+          // for order-run creation, and a cancelled or done order run
+          // still holds its key.
+          const runs = yield* decodeRuns(
+            yield* sql`
                 select * from WorkflowRun
-                where orderId = ${orderId} and status in ('pending', 'active')
+                where orderId = ${orderId}
+                  and (status <> 'cancelled' or lineItemId is null)
               `,
-            );
-            const startable = workflows.filter((workflow) =>
-              canStart(workflow, teams),
-            );
-            const inserted = orderCanStart
-              ? yield* Effect.forEach(
-                  lineItems.flatMap((lineItem) =>
-                    startable
-                      .filter(
-                        (workflow) =>
-                          workflow.workflow.type === "item" &&
-                          matchesLineItem(workflow, order, lineItem),
-                      )
-                      .map((workflow) => ({ workflow, lineItem })),
-                  ),
-                  ({ workflow, lineItem }) =>
-                    insertRun({
-                      workflow,
-                      teams,
-                      order,
-                      lineItem,
-                      source: "tag",
-                    }).pipe(
-                      Effect.map(
-                        Option.map((run) => ({ run, item: lineItem.title })),
-                      ),
+          );
+          const startable = workflows.filter((workflow) =>
+            canStart(workflow, teams),
+          );
+          const inserted = orderCanStart
+            ? yield* Effect.forEach(
+                lineItems.flatMap((lineItem) =>
+                  startable
+                    .filter(
+                      (workflow) =>
+                        workflow.workflow.type === "item" &&
+                        matchesLineItem(workflow, order, lineItem),
+                    )
+                    .map((workflow) => ({ workflow, lineItem })),
+                ),
+                ({ workflow, lineItem }) =>
+                  insertRun({
+                    workflow,
+                    teams,
+                    order,
+                    lineItem,
+                    source: "tag",
+                  }).pipe(
+                    Effect.map(
+                      Option.map((run) => ({ run, item: lineItem.title })),
                     ),
-                ).pipe(Effect.map((results) => results.filter(Option.isSome)))
-              : [];
-            const created = inserted.length;
-            const itemRuns = runs.filter((run) => run.lineItemId !== null);
-            const orderRuns = runs.filter((run) => run.lineItemId === null);
-            /**
-             * Tracks `Domain.unitsToMake`, so a refund that zeroes or lowers
-             * `unfulfilledQuantity` reads exactly like a removal or an edit.
-             * `removed` names the item so the order run's flag can carry it.
-             */
-            const adjust = (run: Domain.WorkflowRun) => {
-              const lineItem = lineItems.find(
-                (item) => item.id === run.lineItemId,
-              );
-              if (lineItem === undefined || Domain.unitsToMake(lineItem) === 0)
-                return run.status === "pending"
-                  ? sql`
+                  ),
+              ).pipe(Effect.map((results) => results.filter(Option.isSome)))
+            : [];
+          const created = inserted.length;
+          const orderWorkflow = startable.find(
+            ({ workflow }) => workflow.type === "order",
+          );
+          const hasItemRun =
+            created > 0 ||
+            runs.some(
+              (run) => run.lineItemId !== null && run.status !== "cancelled",
+            );
+          const hasOrderRun = runs.some((run) => run.lineItemId === null);
+          const orderRun =
+            orderWorkflow !== undefined &&
+            orderCanStart &&
+            hasItemRun &&
+            !hasOrderRun &&
+            placedSince(orderWorkflow.workflow, order)
+              ? yield* insertRun({
+                  workflow: orderWorkflow,
+                  teams,
+                  order,
+                  lineItem: null,
+                  source: "tag",
+                })
+              : Option.none();
+          if (Option.isSome(orderRun))
+            yield* Effect.logInfo(
+              `WorkflowRunRepository.reconcileOrder: orderId=${orderId} workflowId=${orderRun.value.workflowId} runId=${orderRun.value.id}: order run created`,
+            ).pipe(
+              Effect.annotateLogs({
+                orderId,
+                workflowId: orderRun.value.workflowId,
+                runId: orderRun.value.id,
+              }),
+            );
+          const itemRuns = runs.filter(
+            (run) => run.lineItemId !== null && !isTerminal(run),
+          );
+          const openOrderRuns = runs.filter(
+            (run) => run.lineItemId === null && !isTerminal(run),
+          );
+          /**
+           * Tracks `Domain.unitsToMake`, so a refund that zeroes or lowers
+           * `unfulfilledQuantity` reads exactly like a removal or an edit.
+           * `removed` names the item so the order run's flag can carry it.
+           */
+          const adjust = (run: Domain.WorkflowRun) => {
+            const lineItem = lineItems.find(
+              (item) => item.id === run.lineItemId,
+            );
+            if (lineItem === undefined || Domain.unitsToMake(lineItem) === 0)
+              return run.status === "pending"
+                ? sql`
                       update WorkflowRun
                       set status = 'cancelled', cancelledAt = ${now}, updatedAt = ${now}
                       where id = ${run.id}
                     `.pipe(
-                      Effect.as({
-                        cancelled: 1,
-                        flagged: 0,
-                        removed: null,
-                      }),
-                    )
-                  : flagActive(
-                      sql`id = ${run.id}`,
-                      "item_removed",
-                      {},
-                      now,
-                    ).pipe(
-                      Effect.map((flagged) => ({
-                        cancelled: 0,
-                        flagged,
-                        removed: flagged > 0 ? run.lineItemTitle : null,
-                      })),
-                    );
-              const units = Domain.unitsToMake(lineItem);
-              if (units === run.quantity)
-                return Effect.succeed({
-                  cancelled: 0,
-                  flagged: 0,
-                  removed: null,
-                });
-              return sql`
+                    Effect.as({
+                      cancelled: 1,
+                      flagged: 0,
+                      removed: null,
+                    }),
+                  )
+                : flagActive(sql`id = ${run.id}`, "item_removed", {}, now).pipe(
+                    Effect.map((flagged) => ({
+                      cancelled: 0,
+                      flagged,
+                      removed: flagged > 0 ? run.lineItemTitle : null,
+                    })),
+                  );
+            const units = Domain.unitsToMake(lineItem);
+            if (units === run.quantity)
+              return Effect.succeed({
+                cancelled: 0,
+                flagged: 0,
+                removed: null,
+              });
+            return sql`
                 update WorkflowRun
                 set quantity = ${units}, updatedAt = ${now}
                 where id = ${run.id}
               `.pipe(
-                Effect.andThen(
-                  run.status === "pending"
-                    ? Effect.succeed(0)
-                    : flagActive(
-                        sql`id = ${run.id}`,
-                        "quantity_changed",
-                        { from: run.quantity ?? 0, to: units },
-                        now,
-                      ),
-                ),
-                Effect.map((flagged) => ({
-                  cancelled: 0,
-                  flagged,
-                  removed: null,
-                })),
-              );
-            };
-            const adjusted = yield* Effect.all(itemRuns.map(adjust));
-            // Order runs already open: a new item, or an item removed in this
-            // pass, breaks "all items made". Removal wins when both happen,
-            // because it is the one the worker cannot see from the items list.
-            const addedItem = inserted[0]?.value.item ?? null;
-            const removedItem =
-              adjusted.find((delta) => delta.removed !== null)?.removed ?? null;
-            const orderRunFlag = (():
-              | readonly [Domain.RunFlag, string]
-              | null => {
-              if (orderRuns.length === 0) return null;
-              if (removedItem !== null) return ["item_removed", removedItem];
-              if (addedItem !== null) return ["item_added", addedItem];
-              return null;
-            })();
-            const orderRunFlags =
-              orderRunFlag === null
-                ? 0
-                : yield* flagOpenOrderRuns(
-                    orderId,
-                    orderRunFlag[0],
-                    { item: orderRunFlag[1] },
-                    now,
-                  );
-            const startedOrderRuns = orderCanStart
-              ? yield* startOrderRunIfReady({
-                  orderId,
-                  workflows,
-                  teams,
-                })
-              : 0;
-            return adjusted.reduce<ReconcileCounts>(
-              (counts, delta) => ({
-                ...counts,
-                cancelled: counts.cancelled + delta.cancelled,
-                flagged: counts.flagged + delta.flagged,
-              }),
-              {
-                created,
+              Effect.andThen(
+                run.status === "pending"
+                  ? Effect.succeed(0)
+                  : flagActive(
+                      sql`id = ${run.id}`,
+                      "quantity_changed",
+                      { from: run.quantity ?? 0, to: units },
+                      now,
+                    ),
+              ),
+              Effect.map((flagged) => ({
                 cancelled: 0,
-                flagged: orderRunFlags,
-                orderRuns: startedOrderRuns,
-              },
+                flagged,
+                removed: null,
+              })),
             );
+          };
+          const adjusted = yield* Effect.all(itemRuns.map(adjust));
+          // Order runs already open: a new item, or an item removed in this
+          // pass, breaks "all items made". Removal wins when both happen,
+          // because it is the one the worker cannot see from the items list.
+          const addedItem = inserted[0]?.value.item ?? null;
+          const removedItem =
+            adjusted.find((delta) => delta.removed !== null)?.removed ?? null;
+          const orderRunFlag = (():
+            | readonly [Domain.RunFlag, string]
+            | null => {
+            if (openOrderRuns.length === 0) return null;
+            if (removedItem !== null) return ["item_removed", removedItem];
+            if (addedItem !== null) return ["item_added", addedItem];
+            return null;
+          })();
+          const orderRunFlags =
+            orderRunFlag === null
+              ? 0
+              : yield* flagOpenOrderRuns(
+                  orderId,
+                  orderRunFlag[0],
+                  { item: orderRunFlag[1] },
+                  now,
+                );
+          const orphaned = yield* cancelOrphanedOrderRun(orderId, now);
+          return adjusted.reduce<ReconcileCounts>(
+            (counts, delta) => ({
+              ...counts,
+              cancelled: counts.cancelled + delta.cancelled,
+              flagged: counts.flagged + delta.flagged,
+            }),
+            {
+              created,
+              cancelled: orphaned,
+              flagged: orderRunFlags,
+              orderRuns: Option.isSome(orderRun) ? 1 : 0,
+            },
+          );
+        },
+      );
+
+      return WorkflowRunRepository.of({
+        reconcileOrder,
+
+        reconcileAll: Effect.fn("WorkflowRunRepository.reconcileAll")(
+          function* (context: StartContext) {
+            const ids = yield* openOrders.pipe(
+              Effect.map((rows) => rows.map((row) => String(row.id))),
+            );
+            const counts = yield* Effect.forEach(
+              ids,
+              (orderId) =>
+                sql.withTransaction(reconcileOrder({ ...context, orderId })),
+              { concurrency: 1 },
+            );
+            return {
+              orders: ids.length,
+              created: counts.reduce(
+                (sum, { created, orderRuns }) => sum + created + orderRuns,
+                0,
+              ),
+            } satisfies ReconcileAllCounts;
           },
         ),
 
-        createRun: Effect.fn("WorkflowRunRepository.createRun")(function* (
-          input: Parameters<typeof insertRun>[0] & {
-            readonly lineItem: Domain.OrderLineItem;
-          },
-        ) {
-          return yield* sql.withTransaction(
-            insertRun(input).pipe(
-              Effect.tap((run) =>
-                Option.isNone(run)
-                  ? Effect.void
-                  : Clock.currentTimeMillis.pipe(
-                      Effect.flatMap((now) =>
-                        flagOpenOrderRuns(
-                          input.order.id,
-                          "item_added",
-                          { item: input.lineItem.title },
-                          now,
-                        ),
-                      ),
-                    ),
-              ),
+        countWaitingOrders: Effect.fn(
+          "WorkflowRunRepository.countWaitingOrders",
+        )(function* ({
+          workflow,
+        }: {
+          readonly workflow: Domain.WorkflowDetail;
+        }) {
+          if (workflow.workflow.type === "order") {
+            const rows = yield* decode(
+              Schema.Array(Schema.Struct({ processedAt: Schema.Number })),
+              "Invalid waiting order row",
+            )(
+              yield* sql`
+                select o.processedAt from ShopOrder o
+                where o.cancelledAt is null and o.fulfillmentStatus <> 'FULFILLED'
+                  and exists (
+                    select 1 from WorkflowRun i
+                    where i.orderId = o.id and i.lineItemId is not null and i.status <> 'cancelled'
+                  )
+                  and not exists (
+                    select 1 from WorkflowRun r
+                    where r.orderId = o.id and r.lineItemId is null
+                  )
+              `,
+            );
+            return summarise(rows);
+          }
+          // The open orders' line items that this workflow has no run for
+          // yet; the tag test runs here because tags are JSON text.
+          const rows = yield* decode(
+            Schema.Array(
+              Schema.Struct({
+                orderId: Schema.String,
+                processedAt: Schema.Number,
+                unfulfilledQuantity: Schema.Number,
+                productTags: Schema.fromJsonString(Schema.Array(Schema.String)),
+              }),
             ),
+            "Invalid waiting line item row",
+          )(
+            yield* sql`
+              select li.orderId, o.processedAt, li.unfulfilledQuantity, li.productTags
+              from OrderLineItem li
+              join ShopOrder o on o.id = li.orderId
+              where o.cancelledAt is null and o.fulfillmentStatus <> 'FULFILLED'
+                and li.unfulfilledQuantity > 0
+                and not exists (
+                  select 1 from WorkflowRun r
+                  where r.lineItemId = li.id and r.workflowId = ${workflow.workflow.id}
+                )
+            `,
+          );
+          const matching = rows.filter((row) => matchesTags(workflow, row));
+          const byOrder = [
+            ...new Map(matching.map((row) => [row.orderId, row])).values(),
+          ];
+          return summarise(byOrder);
+        }),
+
+        /**
+         * The item run first, then the `item_added` flag on any open order
+         * run, then — when the order has no order run yet and the order
+         * workflow can start — the order run itself, so a run created here
+         * is never flagged for the item that caused it.
+         */
+        createRun: Effect.fn("WorkflowRunRepository.createRun")(function* ({
+          orderWorkflow,
+          ...input
+        }: Parameters<typeof insertRun>[0] & {
+          readonly orderWorkflow: Domain.WorkflowDetail | null;
+          readonly lineItem: Domain.OrderLineItem;
+        }) {
+          return yield* sql.withTransaction(
+            Effect.gen(function* () {
+              const run = yield* insertRun(input);
+              if (Option.isNone(run)) return run;
+              const now = yield* Clock.currentTimeMillis;
+              yield* flagOpenOrderRuns(
+                input.order.id,
+                "item_added",
+                { item: input.lineItem.title },
+                now,
+              );
+              if (orderWorkflow !== null)
+                yield* insertRun({
+                  workflow: orderWorkflow,
+                  teams: input.teams,
+                  order: input.order,
+                  lineItem: null,
+                  source: "manual",
+                });
+              return run;
+            }),
           );
         }),
 
@@ -1129,10 +1226,8 @@ export class WorkflowRunRepository extends Context.Service<
 
         cancelRun: Effect.fn("WorkflowRunRepository.cancelRun")(function* ({
           runId,
-          startContext,
         }: {
           readonly runId: string;
-          readonly startContext?: StartContext;
         }) {
           yield* sql.withTransaction(
             Effect.gen(function* () {
@@ -1145,11 +1240,6 @@ export class WorkflowRunRepository extends Context.Service<
                 set status = 'cancelled', cancelledAt = ${now}, updatedAt = ${now}
                 where id = ${runId}
               `;
-              if (startContext !== undefined && !Domain.isOrderRun(run))
-                yield* startOrderRunIfReady({
-                  ...startContext,
-                  orderId: run.orderId,
-                });
             }),
           );
         }),
@@ -1294,13 +1384,11 @@ export class WorkflowRunRepository extends Context.Service<
             memberId,
             memberEmail,
             teamIds,
-            startContext,
           }: {
             readonly runStepId: string;
             readonly memberId: Domain.MemberId;
             readonly memberEmail: Domain.Email;
             readonly teamIds: readonly string[];
-            readonly startContext?: StartContext;
           }) {
             yield* sql.withTransaction(
               Effect.gen(function* () {
@@ -1321,11 +1409,6 @@ export class WorkflowRunRepository extends Context.Service<
                   where id = ${runStepId}
                 `;
                 yield* recomputeStatus(run.id, now);
-                if (startContext !== undefined && !Domain.isOrderRun(run))
-                  yield* startOrderRunIfReady({
-                    ...startContext,
-                    orderId: run.orderId,
-                  });
               }),
             );
           },

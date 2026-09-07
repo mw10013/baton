@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { clickHoisted, gotoApp, hoistedEnabled } from "./app";
+import { seedConfig, seedMembers } from "./seed";
 
 /**
  * The window sync end to end, against the real sandbox: click, and real orders
@@ -90,4 +91,51 @@ test("orders screen syncs the window and lists orders", async ({ page }) => {
   await expect
     .poll(() => hoistedEnabled(resync), { timeout: 30_000 })
     .toBe(true);
+});
+
+/**
+ * The order page names why the order workflow will not start here and links
+ * to its own page: with the singleton off, "Turn it on" lands on
+ * `/app/order-workflow`, the nav entry after Workflows.
+ */
+test("the order page's order-workflow link lands on the order workflow page", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+
+  const MEMBER = "e2e.orders@example.com";
+  const TEAM = "E2E Bench";
+  await seedMembers(
+    seedConfig(),
+    [MEMBER],
+    [{ name: TEAM, members: [MEMBER] }],
+    [
+      {
+        name: "E2E Ring",
+        tags: ["e2e-ring"],
+        steps: [{ name: "Cut", team: TEAM }],
+      },
+    ],
+    [
+      {
+        n: 9201,
+        lineItems: [{ title: "E2E Band", quantity: 1, tags: ["e2e-ring"] }],
+      },
+    ],
+  );
+
+  const frame = await gotoApp(page);
+  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await frame.getByRole("link", { name: "#9201" }).click();
+  await expect(frame.locator('s-page[heading="#9201"]')).toBeVisible();
+  await expect(
+    frame.getByText(
+      "Order workflow is off, so it will not start on this order.",
+      {
+        exact: false,
+      },
+    ),
+  ).toBeVisible();
+  await frame.getByRole("link", { name: "Turn it on" }).click();
+  await expect(frame.locator('s-page[heading="Order workflow"]')).toBeVisible();
 });

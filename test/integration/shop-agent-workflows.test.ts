@@ -462,7 +462,6 @@ const seedOrder = (shop: string, processedAt: number) =>
               id: "gid://shopify/Order/1",
               legacyId: "1",
               name: "#1001",
-              createdAt: processedAt,
               processedAt,
               updatedAt: processedAt,
               cancelledAt: null,
@@ -641,7 +640,7 @@ describe("ShopAgent workflow run callables", () => {
     ).toEqual({ _tag: "NotAllowed" });
   });
 
-  it("completing the last item step starts the order run; the packing team can complete and cancel it", async () => {
+  it("attach creates the order run with the item run; completing the last item step makes it ready; the packing team can complete and cancel it", async () => {
     const shop = "wf-order-run.myshopify.com";
     const engraving = await seedTeam(shop, "Engraving");
     const packing = await seedTeam(shop, "Packing");
@@ -655,15 +654,27 @@ describe("ShopAgent workflow run callables", () => {
       teamId: engraving.id,
     });
     await goLive(agent, item.workflow.id);
-    const pack = await agent.createWorkflow({
-      name: "Pack",
-      type: "order",
+    // The order workflow is the schema's singleton: never created, and
+    // delete, rename, and duplicate answer `Singleton`.
+    const packDetail = await agent.getWorkflowDetail({
+      workflowId: Domain.ORDER_WORKFLOW_ID,
     });
-    if (pack._tag !== "Ok") throw new Error(pack._tag);
-    strictEqual(pack.workflow.type, "order");
+    strictEqual(packDetail?.workflow.type, "order");
+    strictEqual(packDetail?.workflow.name, Domain.ORDER_WORKFLOW_NAME);
+    strictEqual(packDetail?.workflow.activatedAt, null);
     expect(
-      await agent.createWorkflow({ name: "Pack 2", type: "order" }),
-    ).toEqual({ _tag: "OrderWorkflowExists" });
+      await agent.removeWorkflow({ workflowId: Domain.ORDER_WORKFLOW_ID }),
+    ).toEqual({ _tag: "Singleton" });
+    expect(
+      await agent.updateWorkflow({
+        workflowId: Domain.ORDER_WORKFLOW_ID,
+        name: "Packing",
+      }),
+    ).toEqual({ _tag: "Singleton" });
+    expect(
+      await agent.duplicateWorkflow({ workflowId: Domain.ORDER_WORKFLOW_ID }),
+    ).toEqual({ _tag: "Singleton" });
+    const pack = { workflow: { id: Domain.ORDER_WORKFLOW_ID } };
     await agent.addStep({
       workflowId: pack.workflow.id,
       name: "QC",
@@ -680,8 +691,10 @@ describe("ShopAgent workflow run callables", () => {
       legacyId: "1",
       subscriberId: "t",
     });
-    strictEqual(detail?.orderWorkflow?.id, pack.workflow.id);
-    strictEqual(detail?.runs.length, 1);
+    strictEqual(detail?.orderWorkflow.id, pack.workflow.id);
+    // The order run is created with the item run and waits on it.
+    strictEqual(detail?.runs.length, 2);
+    expect(await agent.listQueue({ teamIds: [packing.id] })).toHaveLength(0);
 
     const [engraveItem] = await agent.listQueue({ teamIds: [engraving.id] });
     expect(
@@ -697,7 +710,7 @@ describe("ShopAgent workflow run callables", () => {
     if (packItem === undefined) throw new Error("no order run in the queue");
     strictEqual(detail?.orderWorkflowBlocker, null);
     strictEqual(packItem.run.lineItemId, null);
-    strictEqual(packItem.run.workflowName, "Pack");
+    strictEqual(packItem.run.workflowName, Domain.ORDER_WORKFLOW_NAME);
     expect(packItem.items.map((i) => [i.title, i.runStatus])).toEqual([
       ["Necklace", "done"],
     ]);
@@ -730,7 +743,7 @@ describe("ShopAgent workflow run callables", () => {
     );
   });
 
-  it("turning the order workflow on starts the order run on an order whose items finished while it was off; the order view names the off state", async () => {
+  it("turning the order workflow on creates the order run on an order whose items finished while it was off; the order view names the off state", async () => {
     const shop = "wf-order-sweep.myshopify.com";
     const engraving = await seedTeam(shop, "Engraving");
     const packing = await seedTeam(shop, "Packing");
@@ -744,8 +757,7 @@ describe("ShopAgent workflow run callables", () => {
       teamId: engraving.id,
     });
     await goLive(agent, item.workflow.id);
-    const pack = await agent.createWorkflow({ name: "Pack", type: "order" });
-    if (pack._tag !== "Ok") throw new Error(pack._tag);
+    const pack = { workflow: { id: Domain.ORDER_WORKFLOW_ID } };
     await agent.addStep({
       workflowId: pack.workflow.id,
       name: "Pack",
@@ -763,7 +775,7 @@ describe("ShopAgent workflow run callables", () => {
       legacyId: "1",
       subscriberId: "t",
     });
-    strictEqual(before?.orderWorkflow?.id, pack.workflow.id);
+    strictEqual(before?.orderWorkflow.id, pack.workflow.id);
     strictEqual(before?.orderWorkflowBlocker, "off");
 
     const [engraveItem] = await agent.listQueue({ teamIds: [engraving.id] });
@@ -777,14 +789,17 @@ describe("ShopAgent workflow run callables", () => {
     ).toEqual({ _tag: "Ok" });
     expect(await agent.listQueue({ teamIds: [packing.id] })).toHaveLength(0);
 
+    // Turn on: the order was placed after `activatedAt` (an hour ahead), so
+    // the reconcile-all creates its order run, ready at once.
     const on = await agent.setWorkflowActive({
       workflowId: pack.workflow.id,
       active: true,
     });
     if (on._tag !== "Ok") throw new Error(on._tag);
+    strictEqual(on.started, 1);
     const [packItem] = await agent.listQueue({ teamIds: [packing.id] });
     strictEqual(packItem?.run.lineItemId, null);
-    strictEqual(packItem?.run.workflowName, "Pack");
+    strictEqual(packItem?.run.workflowName, Domain.ORDER_WORKFLOW_NAME);
     const after = await agent.subscribeOrder({
       legacyId: "1",
       subscriberId: "t",

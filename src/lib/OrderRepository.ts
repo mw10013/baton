@@ -224,7 +224,7 @@ export class OrderRepository extends Context.Service<
        * kilobyte per order over the socket for nothing.
        */
       const orderColumns = sql.literal(
-        `id, legacyId, name, createdAt, processedAt, updatedAt, cancelledAt,
+        `id, legacyId, name, processedAt, updatedAt, cancelledAt,
          closedAt, financialStatus, fulfillmentStatus, fullyPaid, tags, note,
          customAttributes, lineItemsComplete, syncedAt, syncSource`,
       );
@@ -332,13 +332,13 @@ export class OrderRepository extends Context.Service<
               Effect.gen(function* () {
                 const written = yield* sql`
                 insert into ShopOrder (
-                  id, legacyId, name, createdAt, processedAt, updatedAt,
+                  id, legacyId, name, processedAt, updatedAt,
                   cancelledAt, closedAt, financialStatus, fulfillmentStatus,
                   fullyPaid, tags, note, customAttributes, lineItemsComplete,
                   raw, syncedAt, syncSource
                 ) values (
                   ${order.id}, ${order.legacyId}, ${order.name},
-                  ${order.createdAt}, ${order.processedAt}, ${order.updatedAt},
+                  ${order.processedAt}, ${order.updatedAt},
                   ${order.cancelledAt}, ${order.closedAt},
                   ${order.financialStatus}, ${order.fulfillmentStatus},
                   ${bit(order.fullyPaid)}, ${json(order.tags)}, ${order.note},
@@ -349,7 +349,6 @@ export class OrderRepository extends Context.Service<
                 on conflict(id) do update set
                   legacyId = excluded.legacyId,
                   name = excluded.name,
-                  createdAt = excluded.createdAt,
                   processedAt = excluded.processedAt,
                   updatedAt = excluded.updatedAt,
                   cancelledAt = excluded.cancelledAt,

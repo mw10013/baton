@@ -49,6 +49,15 @@ const T2 = { id: teamId("t2"), memberCount: 1 };
 const T3 = { id: teamId("t3"), memberCount: 1 };
 const ALL_TEAMS = [T1, T2, T3];
 
+/** The tag of an expected failure. */
+const refused = <A, E extends { readonly _tag: string }>(
+  effect: Effect.Effect<A, E>,
+) =>
+  effect.pipe(
+    Effect.flip,
+    Effect.map((error) => error._tag),
+  );
+
 /** The side the editor shows: the draft, which a fresh workflow always has. */
 const editable = (found: Option.Option<Domain.WorkflowWithDraft>) => {
   const { draft } = Option.getOrThrow(found);
@@ -106,12 +115,16 @@ describe("WorkflowRepository", () => {
           .createWorkflow({ name: name("engraving"), tags: tags([]) })
           .pipe(Effect.flip);
         strictEqual(dupe._tag, "WorkflowNameTakenError");
-        const all = yield* repo.listWorkflows({ teams: ALL_TEAMS });
+        const all = yield* repo.listWorkflows({
+          teams: ALL_TEAMS,
+          type: "item",
+        });
         strictEqual(all.length, 1);
         strictEqual(all[0]?.stepCount, 0);
         yield* repo.deleteWorkflow({ workflowId: created.id });
         strictEqual(
-          (yield* repo.listWorkflows({ teams: ALL_TEAMS })).length,
+          (yield* repo.listWorkflows({ teams: ALL_TEAMS, type: "item" }))
+            .length,
           0,
         );
         const again = yield* repo.createWorkflow({
@@ -167,9 +180,10 @@ describe("WorkflowRepository", () => {
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
+        // The order workflow singleton counts toward the limit.
         yield* Effect.forEach(
           Array.from(
-            { length: Domain.WorkflowLimits.maxWorkflows },
+            { length: Domain.WorkflowLimits.maxWorkflows - 1 },
             (_, i) => i,
           ),
           (i) =>
@@ -183,7 +197,10 @@ describe("WorkflowRepository", () => {
           .createWorkflow({ name: name("Over"), tags: tags([]) })
           .pipe(Effect.flip);
         strictEqual(over._tag, "WorkflowLimitError");
-        const [first] = yield* repo.listWorkflows({ teams: ALL_TEAMS });
+        const [first] = yield* repo.listWorkflows({
+          teams: ALL_TEAMS,
+          type: "item",
+        });
         yield* repo.deleteWorkflow({ workflowId: first?.id ?? "" });
         yield* repo.createWorkflow({ name: name("Over"), tags: tags([]) });
       }),
@@ -436,21 +453,43 @@ describe("WorkflowRepository", () => {
             },
           ],
         });
+        // The order entry rewrites the singleton in place: fixed id and
+        // name, the fixture's steps and switch.
         deepStrictEqual(
           (yield* repo.listActiveWorkflowDetails())
             .map(({ workflow }) => workflow.name)
             .toSorted(),
-          ["Live", "Order"],
+          ["Live", Domain.ORDER_WORKFLOW_NAME],
         );
         const all = yield* repo.listWorkflows({ teams: ALL_TEAMS });
         deepStrictEqual(
-          all.map((w) => [w.name, w.active, w.needsAttention]),
+          all.map((w) => [w.name, Domain.isActive(w), w.needsAttention]),
           [
             ["Live", true, false],
             ["Lost", false, true],
-            ["Order", true, false],
+            [Domain.ORDER_WORKFLOW_NAME, true, false],
           ],
         );
+        strictEqual(
+          (yield* repo.getOrderWorkflow()).workflow.id,
+          Domain.ORDER_WORKFLOW_ID,
+        );
+        deepStrictEqual(
+          (yield* repo.getOrderWorkflow()).steps.map((step) => step.name),
+          ["a"],
+        );
+        // Item-only listing leaves the singleton out.
+        deepStrictEqual(
+          (yield* repo.listWorkflows({ teams: ALL_TEAMS, type: "item" })).map(
+            (w) => w.name,
+          ),
+          ["Live", "Lost"],
+        );
+        // A reseed with no order entry resets it: off, no steps, still there.
+        yield* repo.replaceWorkflows({ workflows: [] });
+        const reset = yield* repo.getOrderWorkflow();
+        strictEqual(reset.workflow.activatedAt, null);
+        deepStrictEqual(reset.steps, []);
         const refused = (workflows: Domain.SeedWorkflowsInput["workflows"]) =>
           repo.replaceWorkflows({ workflows }).pipe(Effect.flip);
         strictEqual(
@@ -475,7 +514,7 @@ describe("WorkflowRepository", () => {
         strictEqual(all.length, 3);
         strictEqual(
           (yield* repo.listWorkflows({ teams: ALL_TEAMS })).length,
-          3,
+          1,
         );
       }),
     ));
@@ -594,42 +633,54 @@ describe("WorkflowRepository", () => {
       }),
     ));
 
-  it("allows one order workflow: second refused, delete frees the slot", () =>
+  it("the order workflow exists from the schema: off, no steps, fixed id and name; delete, rename, and duplicate refuse", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
-        const first = yield* repo.createWorkflow({
-          name: name("Pack"),
-          type: "order",
-        });
-        strictEqual(first.type, "order");
-        const second = yield* repo
-          .createWorkflow({
-            name: name("Ship"),
-            type: "order",
-          })
-          .pipe(Effect.flip);
-        strictEqual(second._tag, "OrderWorkflowExistsError");
-        // Item workflows are unaffected by the slot.
+        const singleton = yield* repo.getOrderWorkflow();
+        strictEqual(singleton.workflow.id, Domain.ORDER_WORKFLOW_ID);
+        strictEqual(singleton.workflow.name, Domain.ORDER_WORKFLOW_NAME);
+        strictEqual(singleton.workflow.type, "order");
+        strictEqual(singleton.workflow.activatedAt, null);
+        deepStrictEqual(singleton.steps, []);
+        // Item workflows are unaffected.
         const item = yield* repo.createWorkflow({
           name: name("Engrave"),
           tags: tags(["x"]),
         });
         strictEqual(item.type, "item");
-
-        yield* repo.deleteWorkflow({ workflowId: first.id });
-        const ship = yield* repo.createWorkflow({
-          name: name("Ship"),
-          type: "order",
-        });
-        strictEqual(ship.type, "order");
         const listed = yield* repo.listWorkflows({ teams: ALL_TEAMS });
         deepStrictEqual(
           listed.map((w) => [w.name, w.type]),
           [
             ["Engrave", "item"],
-            ["Ship", "order"],
+            [Domain.ORDER_WORKFLOW_NAME, "order"],
           ],
+        );
+        strictEqual(
+          yield* refused(
+            repo.deleteWorkflow({ workflowId: Domain.ORDER_WORKFLOW_ID }),
+          ),
+          "SingletonWorkflowError",
+        );
+        strictEqual(
+          yield* refused(
+            repo.updateWorkflow({
+              workflowId: Domain.ORDER_WORKFLOW_ID,
+              name: name("Packing"),
+            }),
+          ),
+          "SingletonWorkflowError",
+        );
+        strictEqual(
+          yield* refused(
+            repo.duplicateWorkflow({ workflowId: Domain.ORDER_WORKFLOW_ID }),
+          ),
+          "SingletonWorkflowError",
+        );
+        strictEqual(
+          (yield* repo.getOrderWorkflow()).workflow.name,
+          "Order workflow",
         );
       }),
     ));
@@ -639,33 +690,27 @@ describe("WorkflowRepository", () => {
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
         const sql = yield* SqlClient.SqlClient;
-        // Create cannot even be asked for tags on the order workflow (the input type
-        // has no `tags` key); the SQL check is the backstop for a raw write.
+        // Create cannot even be asked for an order workflow; the SQL checks
+        // are the backstop for a raw write: no tags on it, no second row of
+        // the type, and no other id or name for it.
         const raw = yield* sql`
-          insert into Workflow (id, name, type, active, tags, createdAt, updatedAt)
-          values ('raw', 'Raw', 'order', 0, '["x"]', 0, 0)
+          update Workflow set tags = '["x"]' where id = ${Domain.ORDER_WORKFLOW_ID}
         `.pipe(Effect.flip);
         strictEqual(raw._tag, "SqlError");
-        const pack = yield* repo.createWorkflow({
-          name: name("Pack"),
-          type: "order",
-        });
+        const pack = (yield* repo.getOrderWorkflow()).workflow;
         const retag = yield* repo
           .updateWorkflowTags({ workflowId: pack.id, tags: tags(["x"]) })
           .pipe(Effect.flip);
         strictEqual(retag._tag, "WorkflowRepositoryError");
-        // The singleton is a partial unique index, not only the pre-check.
         const rawSecond = yield* sql`
-          insert into Workflow (id, name, type, active, tags, createdAt, updatedAt)
-          values ('raw2', 'Raw 2', 'order', 0, '[]', 0, 0)
+          insert into Workflow (id, name, type, activatedAt, tags, createdAt, updatedAt)
+          values ('raw2', 'Raw 2', 'order', null, '[]', 0, 0)
         `.pipe(Effect.flip);
         strictEqual(rawSecond._tag, "SqlError");
-        const renamed = yield* repo.updateWorkflow({
-          workflowId: pack.id,
-          name: name("Pack & ship"),
-        });
-        strictEqual(renamed.type, "order");
-        strictEqual(renamed.name, "Pack & ship");
+        const rawRename = yield* sql`
+          update Workflow set name = 'Packing' where id = ${Domain.ORDER_WORKFLOW_ID}
+        `.pipe(Effect.flip);
+        strictEqual(rawRename._tag, "SqlError");
       }),
     ));
 
@@ -729,7 +774,7 @@ describe("WorkflowRepository duplicate", () => {
 
         const copy = yield* repo.duplicateWorkflow({ workflowId: w.id });
         strictEqual(copy.name, "Engraved ring copy");
-        strictEqual(copy.active, false);
+        strictEqual(Domain.isActive(copy), false);
         deepStrictEqual(tagsOf(copy), []);
         const copied = Option.getOrThrow(
           yield* repo.getWorkflow({ workflowId: copy.id }),
@@ -748,7 +793,7 @@ describe("WorkflowRepository duplicate", () => {
           false,
         );
         // The source is untouched and still on.
-        strictEqual(source.workflow.active, true);
+        strictEqual(Domain.isActive(source.workflow), true);
         deepStrictEqual(tagsOf(source.workflow), ["engraved"]);
         // A second duplicate takes the next free name.
         const second = yield* repo.duplicateWorkflow({ workflowId: w.id });
@@ -812,7 +857,7 @@ describe("WorkflowRepository workflow and draft", () => {
           name: name("A"),
           tags: tags(["a"]),
         });
-        strictEqual(w.active, false);
+        strictEqual(Domain.isActive(w), false);
         deepStrictEqual(tagsOf(w), ["a"]);
         const fresh = yield* found(w.id);
         deepStrictEqual(fresh.steps, []);
@@ -870,7 +915,7 @@ describe("WorkflowRepository workflow and draft", () => {
           teams: ALL_TEAMS,
         });
         deepStrictEqual(tagsOf(applied), ["a"]);
-        strictEqual(applied.active, false);
+        strictEqual(Domain.isActive(applied), false);
         const after = yield* found(w.id);
         strictEqual(after.draft, null);
         deepStrictEqual(stepNames(after.steps), ["Cut", "Finish"]);
@@ -1062,7 +1107,7 @@ describe("WorkflowRepository workflow and draft", () => {
           workflowId: w.id,
           teams: ALL_TEAMS,
         });
-        strictEqual(applied.active, true);
+        strictEqual(Domain.isActive(applied), true);
         deepStrictEqual(tagsOf(applied), ["b"]);
         const after = yield* found(w.id);
         strictEqual(after.draft, null);
@@ -1084,7 +1129,7 @@ describe("WorkflowRepository workflow and draft", () => {
         yield* repo.updateWorkflowTags({ workflowId: w.id, tags: tags(["c"]) });
         const discarded = yield* repo.discardDraft({ workflowId: w.id });
         deepStrictEqual(tagsOf(discarded), ["b"]);
-        strictEqual(discarded.active, true);
+        strictEqual(Domain.isActive(discarded), true);
         const back = yield* found(w.id);
         strictEqual(back.draft, null);
         deepStrictEqual(stepNames(back.steps), ["Cut", "Finish", "Pack"]);
@@ -1139,7 +1184,7 @@ describe("WorkflowRepository workflow and draft", () => {
           teams: ALL_TEAMS,
         });
         yield* check;
-        strictEqual((yield* found(w.id)).workflow.active, true);
+        strictEqual(Domain.isActive((yield* found(w.id)).workflow), true);
       }),
     ));
 
@@ -1175,7 +1220,7 @@ describe("WorkflowRepository workflow and draft", () => {
         if (orphan._tag === "StepUnassignedError")
           deepStrictEqual<readonly string[]>(orphan.stepNames, ["Finish"]);
         const onA = yield* on(a.id, [T1, { ...T2, memberCount: 0 }]);
-        strictEqual(onA.active, true);
+        strictEqual(Domain.isActive(onA), true);
         // A draft on an active workflow changes nothing about the switch.
         yield* repo.createDraft({ workflowId: a.id });
         const off = yield* repo.setWorkflowActive({
@@ -1183,9 +1228,9 @@ describe("WorkflowRepository workflow and draft", () => {
           active: false,
           teams: ALL_TEAMS,
         });
-        strictEqual(off.active, false);
+        strictEqual(Domain.isActive(off), false);
         strictEqual((yield* found(a.id)).draft !== null, true);
-        strictEqual((yield* on(a.id)).active, true);
+        strictEqual(Domain.isActive(yield* on(a.id)), true);
 
         // A team delete nulls the pointer; turn on is refused until assigned.
         const lost = yield* repo.createWorkflow({
@@ -1206,42 +1251,66 @@ describe("WorkflowRepository workflow and draft", () => {
       }),
     ));
 
-  it("one active order workflow at a time: turning the second on is refused until the first is off", () =>
+  it("turn on writes activatedAt (now, or the date given); off clears it; setWorkflowActivatedAt moves it only while on", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
-        const on = (workflowId: string) =>
-          repo.setWorkflowActive({
-            workflowId,
-            active: true,
-            teams: ALL_TEAMS,
-          });
-        const pack = yield* repo.createWorkflow({
-          name: name("Pack"),
-          type: "order",
+        const pack = Domain.ORDER_WORKFLOW_ID;
+        yield* twoSteps(pack);
+        yield* repo.applyDraft({ workflowId: pack, teams: ALL_TEAMS });
+        const before = Date.now();
+        const on = yield* repo.setWorkflowActive({
+          workflowId: pack,
+          active: true,
+          teams: ALL_TEAMS,
         });
-        yield* twoSteps(pack.id);
-        yield* repo.applyDraft({ workflowId: pack.id, teams: ALL_TEAMS });
-        yield* on(pack.id);
-        // The row slot is one per shop; delete frees it, and the next order
-        // workflow can be created and turned on at once.
-        yield* repo.deleteWorkflow({ workflowId: pack.id });
-        const ship = yield* repo.createWorkflow({
-          name: name("Ship"),
-          type: "order",
+        strictEqual(on.activatedAt !== null && on.activatedAt >= before, true);
+        const moved = yield* repo.setWorkflowActivatedAt({
+          workflowId: pack,
+          activatedAt: 1000,
         });
-        yield* twoSteps(ship.id);
-        yield* repo.applyDraft({ workflowId: ship.id, teams: ALL_TEAMS });
-        strictEqual((yield* on(ship.id)).active, true);
+        strictEqual(moved.activatedAt, 1000);
+        strictEqual(
+          (yield* repo.getOrderWorkflow()).workflow.activatedAt,
+          1000,
+        );
+        // Apply never touches it.
+        yield* repo.addStep({
+          workflowId: pack,
+          name: stepName("Ship"),
+          teamId: T3.id,
+        });
+        const applied = yield* repo.applyDraft({
+          workflowId: pack,
+          teams: ALL_TEAMS,
+        });
+        strictEqual(applied.activatedAt, 1000);
+        const off = yield* repo.setWorkflowActive({
+          workflowId: pack,
+          active: false,
+          teams: ALL_TEAMS,
+        });
+        strictEqual(off.activatedAt, null);
         strictEqual(
           (yield* repo
-            .createWorkflow({
-              name: name("Pack"),
-              type: "order",
-            })
+            .setWorkflowActivatedAt({ workflowId: pack, activatedAt: 5 })
             .pipe(Effect.flip))._tag,
-          "OrderWorkflowExistsError",
+          "WorkflowOffError",
         );
+        strictEqual(
+          (yield* repo
+            .setWorkflowActivatedAt({ workflowId: "nope", activatedAt: 5 })
+            .pipe(Effect.flip))._tag,
+          "WorkflowNotFoundError",
+        );
+        // Include them: an earlier date on the way on.
+        const included = yield* repo.setWorkflowActive({
+          workflowId: pack,
+          active: true,
+          activatedAt: 42,
+          teams: ALL_TEAMS,
+        });
+        strictEqual(included.activatedAt, 42);
       }),
     ));
 
@@ -1364,11 +1433,14 @@ describe("WorkflowRepository workflow and draft", () => {
             },
           ],
         });
-        const rows = yield* repo.listWorkflows({ teams: ALL_TEAMS });
+        const rows = yield* repo.listWorkflows({
+          teams: ALL_TEAMS,
+          type: "item",
+        });
         deepStrictEqual<readonly (readonly unknown[])[]>(
           rows.map((w) => [
             w.name,
-            w.active,
+            Domain.isActive(w),
             w.hasDraft,
             w.stepCount,
             w.needsAttention,

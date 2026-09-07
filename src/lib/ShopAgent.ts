@@ -49,13 +49,14 @@ import { ShopifyAdmin } from "@/lib/ShopifyAdmin";
 import {
   type NoDraftError,
   type NoStepsError,
-  type OrderWorkflowExistsError,
+  type SingletonWorkflowError,
   type StageNotFoundError,
   type StepNotFoundError,
   type StepUnassignedError,
   type WorkflowLimitError,
   type WorkflowNameTakenError,
   type WorkflowNotFoundError,
+  type WorkflowOffError,
   WorkflowRepository,
   WorkflowRepositoryError,
 } from "@/lib/WorkflowRepository";
@@ -143,19 +144,27 @@ const callableEffect =
  * ambiguous about its side and `unique (workflowId, position)` holds on each
  * side independently. No history is kept: a run survives every later edit
  * because it snapshots its steps and names, not because old definitions are
- * retained. `active` is stored, never derived, and no draft event touches it.
+ * retained. `activatedAt` is the on/off switch and the coverage date in one
+ * column, stored and never derived: null is off; Turn on sets it to now or to
+ * an earlier date the merchant chose; the merchant can move it on the
+ * workflow page; Turn off clears it; Apply never touches it. One fact instead
+ * of two that must agree, and Apply must not move it because an unpaid order
+ * placed while the workflow was on is still that workflow's business when it
+ * pays. A run starts on an order only when `ShopOrder.processedAt >=
+ * activatedAt`.
  *
  * Item and order workflows (`type`) share these four tables on purpose: they
  * differ in one column and one cardinality rule, and in nothing about steps,
  * stages, drafts, team pointers, or the on/off switch. An order workflow has
  * no product tags — `tags` is `'[]'` under the `check`, and
- * `Domain.OrderWorkflow` has no `tags` field at all — and there is at most
- * one per shop in any state, which `Workflow_order_uidx` (a partial unique
- * index on the constant `type`) states in the schema. The repository
- * pre-checks both so the merchant gets a typed error rather than a constraint
- * failure; the SQL is the backstop for any write path that forgets, including
- * the seed. Separate `OrderWorkflow*` tables were considered and rejected:
- * they would duplicate every step/draft query for one missing column.
+ * `Domain.OrderWorkflow` has no `tags` field at all — and there is exactly
+ * one per shop: the singleton row `id = 'order'`, `name = 'Order workflow'`,
+ * inserted below and never deleted, renamed, or duplicated. The table
+ * `check` forbids any other row of `type = 'order'` and any other name on
+ * this one; `Workflow_order_uidx` (a partial unique index on the constant
+ * `type`) is the second backstop. Separate `OrderWorkflow*` tables were
+ * considered and rejected: they would duplicate every step/draft query for
+ * one missing column.
  *
  * `WorkflowStep.teamId` is a D1 `Team.id` with no foreign key because none is
  * possible: `Team` lives in D1 and this table in the object's private SQLite,
@@ -181,8 +190,10 @@ const callableEffect =
  * `WorkflowRun` / `WorkflowRunStep` are the *instances*: one workflow applied
  * to one line item **or to one order**, with the definition's steps copied
  * in. An order run (`Workflow.type = 'order'`) has `lineItemId` and the
- * three line-item snapshot columns null together (the `check`), and starts
- * once every item run on the order is finished with at least one done. Every
+ * three line-item snapshot columns null together (the `check`), is created
+ * with the item runs, and its steps become ready once every item run on the
+ * order is finished with at least one done (`readyWhere`;
+ * `WorkflowRun_order_items_idx` serves that gate on every queue read). Every
  * display field is a snapshot and there is no foreign key to `ShopOrder`,
  * `OrderLineItem`, or `Workflow` — a run must survive an order delete, a
  * line item dropped by an edit, and a definition edit or rename, because it
@@ -209,12 +220,12 @@ const callableEffect =
  */
 const initializeSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const now = yield* Clock.currentTimeMillis;
   yield* sql`
     create table if not exists ShopOrder (
       id text primary key,
       legacyId text not null,
       name text not null,
-      createdAt integer not null,
       processedAt integer not null,
       updatedAt integer not null,
       cancelledAt integer,
@@ -272,11 +283,12 @@ const initializeSchema = Effect.gen(function* () {
       id text primary key,
       name text not null check (name = trim(name) and length(name) > 0),
       type text not null default 'item' check (type in ('item', 'order')),
-      active integer not null default 0 check (active in (0, 1)),
+      activatedAt integer,
       tags text not null default '[]'
         check (type = 'item' or tags = '[]'),
       createdAt integer not null,
-      updatedAt integer not null
+      updatedAt integer not null,
+      check (type <> 'order' or (id = 'order' and name = 'Order workflow'))
     );
     create unique index if not exists Workflow_name_uidx
       on Workflow (name collate nocase);
@@ -339,6 +351,8 @@ const initializeSchema = Effect.gen(function* () {
       on WorkflowRun (orderId, workflowId) where lineItemId is null;
     create index if not exists WorkflowRun_orderId_idx on WorkflowRun (orderId);
     create index if not exists WorkflowRun_status_idx on WorkflowRun (status);
+    create index if not exists WorkflowRun_order_items_idx
+      on WorkflowRun (orderId, lineItemId, status);
     create table if not exists WorkflowRunStep (
       id text primary key,
       runId text not null references WorkflowRun (id) on delete cascade,
@@ -359,6 +373,15 @@ const initializeSchema = Effect.gen(function* () {
     );
     create index if not exists WorkflowRunStep_teamId_idx
       on WorkflowRunStep (teamId, completedAt);
+  `;
+  // The order workflow singleton, off and empty, the way `SyncState` is
+  // seeded: a fixed row the merchant fills in and switches, never creates or
+  // deletes. Its own statement because the timestamps are bound parameters
+  // and the block above is parameter-free DDL. `insert or ignore` on the
+  // primary key keeps it idempotent.
+  yield* sql`
+    insert or ignore into Workflow (id, name, type, activatedAt, tags, createdAt, updatedAt)
+    values (${Domain.ORDER_WORKFLOW_ID}, ${Domain.ORDER_WORKFLOW_NAME}, 'order', null, '[]', ${now}, ${now})
   `;
 });
 
@@ -460,7 +483,7 @@ const workflowResult = <R>(
     | WorkflowNameTakenError
     | WorkflowNotFoundError
     | WorkflowLimitError
-    | OrderWorkflowExistsError
+    | SingletonWorkflowError
     | SqlError.SqlError
     | WorkflowRepositoryError,
     R
@@ -479,8 +502,8 @@ const workflowResult = <R>(
         Effect.succeed<Domain.WorkflowResult>({ _tag: "NotFound" }),
       WorkflowLimitError: ({ limit }) =>
         Effect.succeed<Domain.WorkflowResult>({ _tag: "Limit", limit }),
-      OrderWorkflowExistsError: () =>
-        Effect.succeed<Domain.WorkflowResult>({ _tag: "OrderWorkflowExists" }),
+      SingletonWorkflowError: () =>
+        Effect.succeed<Domain.WorkflowResult>({ _tag: "Singleton" }),
     }),
   );
 
@@ -566,9 +589,10 @@ const draftResult = <R>(
     }),
   );
 
+/** `Ok` carries how many runs the reconcile-all after Turn on started, for the toast. */
 const activateResult = <R>(
   effect: Effect.Effect<
-    Domain.Workflow,
+    { readonly workflow: Domain.Workflow; readonly started: number },
     | WorkflowNotFoundError
     | NoStepsError
     | StepUnassignedError
@@ -589,7 +613,11 @@ const activateResult = <R>(
   R
 > =>
   effect.pipe(
-    Effect.map((workflow): Domain.ActivateResult => ({ _tag: "Ok", workflow })),
+    Effect.map(({ workflow, started }): Domain.ActivateResult => ({
+      _tag: "Ok",
+      workflow,
+      started,
+    })),
     Effect.catchTags({
       WorkflowNotFoundError: () =>
         Effect.succeed<Domain.ActivateResult>({ _tag: "NotFound" }),
@@ -600,6 +628,41 @@ const activateResult = <R>(
           _tag: "StepUnassigned",
           stepNames,
         }),
+    }),
+  );
+
+const changeActivatedAtResult = <R>(
+  effect: Effect.Effect<
+    { readonly workflow: Domain.Workflow; readonly started: number },
+    | WorkflowNotFoundError
+    | WorkflowOffError
+    | SqlError.SqlError
+    | WorkflowRepositoryError
+    | WorkflowRunRepositoryError
+    | RepositoryError
+    | Schema.SchemaError,
+    R
+  >,
+): Effect.Effect<
+  Domain.ChangeActivatedAtResult,
+  | SqlError.SqlError
+  | WorkflowRepositoryError
+  | WorkflowRunRepositoryError
+  | RepositoryError
+  | Schema.SchemaError,
+  R
+> =>
+  effect.pipe(
+    Effect.map(({ workflow, started }): Domain.ChangeActivatedAtResult => ({
+      _tag: "Ok",
+      workflow,
+      started,
+    })),
+    Effect.catchTags({
+      WorkflowNotFoundError: () =>
+        Effect.succeed<Domain.ChangeActivatedAtResult>({ _tag: "NotFound" }),
+      WorkflowOffError: () =>
+        Effect.succeed<Domain.ChangeActivatedAtResult>({ _tag: "Off" }),
     }),
   );
 
@@ -1415,13 +1478,15 @@ export class ShopAgent extends Agent {
    * loader-versus-socket rule documented there). Only the mutations stay on
    * the socket.
    */
-  listWorkflows(): Promise<readonly Domain.WorkflowSummary[]> {
+  listWorkflows(): Promise<readonly Domain.ItemWorkflowSummary[]> {
     const teams = () => this.teams();
     return this.runEffect(
       Effect.gen(function* () {
-        return yield* (yield* WorkflowRepository).listWorkflows({
+        const rows = yield* (yield* WorkflowRepository).listWorkflows({
           teams: yield* teams(),
+          type: "item",
         });
+        return rows.filter(Domain.isItemWorkflow);
       }).pipe(Effect.withLogSpan("ShopAgent.listWorkflows")),
     );
   }
@@ -1597,8 +1662,12 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Apply changes. Publishes because the next order starts against the new
-   * steps and tags, which the order page's workflow pickers reflect.
+   * Apply changes. On an on workflow, reconciles every stored order once
+   * afterwards: a tag added on Apply can match paid, unfulfilled orders
+   * already in Baton, and they should start now rather than at whatever
+   * moment Shopify next edits them. Publishes because the next order starts
+   * against the new steps and tags, which the order page's workflow pickers
+   * reflect.
    */
   @callable()
   applyDraft(
@@ -1607,8 +1676,8 @@ export class ShopAgent extends Agent {
     const shop = this.name;
     const publish = () => this.publish("all");
     const teams = () => this.teams();
-    const sweep = (workflow: Domain.Workflow) =>
-      this.sweepOrderRuns("applyDraft", workflow);
+    const reconcileAll = (workflow: Domain.Workflow) =>
+      this.reconcileAll("applyDraft", workflow);
     return this.runEffect(
       callableEffect("ShopAgent.applyDraft", Domain.ApplyDraftInput, {
         onExcessProperty: "error",
@@ -1622,7 +1691,7 @@ export class ShopAgent extends Agent {
             yield* Effect.logInfo(
               `ShopAgent.applyDraft: shop=${shop} workflowId=${workflowId}`,
             ).pipe(Effect.annotateLogs({ shop, workflowId }));
-            yield* sweep(workflow);
+            yield* reconcileAll(workflow);
             return workflow;
           }),
         ).pipe(Effect.tap(publish)),
@@ -1654,7 +1723,12 @@ export class ShopAgent extends Agent {
     );
   }
 
-  /** The on/off switch. Publishes for the reason on {@link applyDraft}. */
+  /**
+   * The on/off switch. On writes `activatedAt` (now, or the earlier date the
+   * dialog chose) and then reconciles every stored order once, so anything
+   * that now qualifies starts here rather than at whatever moment Shopify
+   * next edits it. Publishes for the reason on {@link applyDraft}.
+   */
   @callable()
   setWorkflowActive(
     input: typeof Domain.SetWorkflowActiveInput.Encoded,
@@ -1662,27 +1736,66 @@ export class ShopAgent extends Agent {
     const shop = this.name;
     const publish = () => this.publish("all");
     const teams = () => this.teams();
-    const sweep = (workflow: Domain.Workflow) =>
-      this.sweepOrderRuns("setWorkflowActive", workflow);
+    const reconcileAll = (workflow: Domain.Workflow) =>
+      this.reconcileAll("setWorkflowActive", workflow);
     return this.runEffect(
       callableEffect(
         "ShopAgent.setWorkflowActive",
         Domain.SetWorkflowActiveInput,
         { onExcessProperty: "error" },
-      )(({ workflowId, active }) =>
+      )(({ workflowId, active, activatedAt }) =>
         activateResult(
           Effect.gen(function* () {
             const workflow =
               yield* (yield* WorkflowRepository).setWorkflowActive({
                 workflowId,
                 active,
+                ...(activatedAt === undefined ? {} : { activatedAt }),
                 teams: yield* teams(),
               });
             yield* Effect.logInfo(
-              `ShopAgent.setWorkflowActive: shop=${shop} workflowId=${workflowId} active=${String(active)}`,
-            ).pipe(Effect.annotateLogs({ shop, workflowId, active }));
-            yield* sweep(workflow);
-            return workflow;
+              `ShopAgent.setWorkflowActive: shop=${shop} workflowId=${workflowId} active=${String(active)} activatedAt=${String(workflow.activatedAt)}`,
+            ).pipe(
+              Effect.annotateLogs({
+                shop,
+                workflowId,
+                active,
+                activatedAt: workflow.activatedAt,
+              }),
+            );
+            return { workflow, started: yield* reconcileAll(workflow) };
+          }),
+        ).pipe(Effect.tap(publish)),
+      )(input),
+    );
+  }
+
+  /** The workflow page's Change control: moves the coverage date, then reconciles every stored order once. */
+  @callable()
+  setWorkflowActivatedAt(
+    input: typeof Domain.SetWorkflowActivatedAtInput.Encoded,
+  ): Promise<Domain.ChangeActivatedAtResult> {
+    const shop = this.name;
+    const publish = () => this.publish("all");
+    const reconcileAll = (workflow: Domain.Workflow) =>
+      this.reconcileAll("setWorkflowActivatedAt", workflow);
+    return this.runEffect(
+      callableEffect(
+        "ShopAgent.setWorkflowActivatedAt",
+        Domain.SetWorkflowActivatedAtInput,
+        { onExcessProperty: "error" },
+      )(({ workflowId, activatedAt }) =>
+        changeActivatedAtResult(
+          Effect.gen(function* () {
+            const workflow =
+              yield* (yield* WorkflowRepository).setWorkflowActivatedAt({
+                workflowId,
+                activatedAt,
+              });
+            yield* Effect.logInfo(
+              `ShopAgent.setWorkflowActivatedAt: shop=${shop} workflowId=${workflowId} activatedAt=${String(activatedAt)}`,
+            ).pipe(Effect.annotateLogs({ shop, workflowId, activatedAt }));
+            return { workflow, started: yield* reconcileAll(workflow) };
           }),
         ).pipe(Effect.tap(publish)),
       )(input),
@@ -1690,8 +1803,41 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Delete a workflow and its runs stay on their orders (vocabulary on
-   * `Domain.Workflow`). `removeWorkflow`, not `deleteWorkflow`: the Agents
+   * The Turn on dialog's count: read-only, no publish. The workflow is
+   * usually off here, so it is read by id rather than from the active set.
+   * `NotFound` is a count of zero: the dialog has nothing to add.
+   */
+  @callable()
+  countWaitingOrders(
+    input: typeof Domain.CountWaitingOrdersInput.Encoded,
+  ): Promise<Domain.WaitingOrders> {
+    return this.runEffect(
+      callableEffect(
+        "ShopAgent.countWaitingOrders",
+        Domain.CountWaitingOrdersInput,
+        { onExcessProperty: "error" },
+      )(({ workflowId }) =>
+        Effect.gen(function* () {
+          const found = yield* (yield* WorkflowRepository).getWorkflow({
+            workflowId,
+          });
+          if (Option.isNone(found))
+            return { count: 0, earliestProcessedAt: null };
+          return yield* (yield* WorkflowRunRepository).countWaitingOrders({
+            workflow: {
+              workflow: found.value.workflow,
+              steps: found.value.steps,
+            },
+          });
+        }),
+      )(input),
+    );
+  }
+
+  /**
+   * Delete an item workflow and its runs stay on their orders (vocabulary on
+   * `Domain.Workflow`); the order workflow singleton answers `Singleton`.
+   * `removeWorkflow`, not `deleteWorkflow`: the Agents
    * SDK base class already has a `deleteWorkflow(workflowId)` that drops a
    * Cloudflare Workflow instance's tracking row (`onWorkflowComplete` calls
    * it), the same collision `getWorkflowDetail` sidesteps. Publishes because
@@ -1716,9 +1862,14 @@ export class ShopAgent extends Agent {
           yield* publish();
           return { _tag: "Deleted" } satisfies Domain.DeleteWorkflowResult;
         }).pipe(
-          Effect.catchTag("WorkflowNotFoundError", () =>
-            Effect.succeed<Domain.DeleteWorkflowResult>({ _tag: "NotFound" }),
-          ),
+          Effect.catchTags({
+            WorkflowNotFoundError: () =>
+              Effect.succeed<Domain.DeleteWorkflowResult>({ _tag: "NotFound" }),
+            SingletonWorkflowError: () =>
+              Effect.succeed<Domain.DeleteWorkflowResult>({
+                _tag: "Singleton",
+              }),
+          }),
         ),
       )(input),
     );
@@ -1765,27 +1916,38 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * After a definition write that can make the order workflow startable
-   * (turned on, or a draft applied that assigns its last step), start the
-   * order run on every order already waiting for it — otherwise those orders
-   * stay stranded until a webhook or Resync reconciles them. Item workflows
-   * skip it: their runs start per line item on reconcile, and a stale order
-   * run trigger is the only thing this repairs. Not the write's transaction:
-   * the repository owns that one and Durable Object SQLite refuses to nest,
-   * but the Durable Object serialises callables so nothing interleaves.
+   * After a definition write on an on workflow (turned on, its date moved,
+   * or a draft applied), reconcile every stored open order once, so
+   * anything that now qualifies starts at this moment rather than at
+   * whatever moment Shopify next edits it. Reconcile is an idempotent state
+   * check, so running it over every order is safe; orders placed before
+   * `activatedAt` are still excluded by the date rule. A no-op when the
+   * workflow is off. Not the write's transaction: the repository owns that
+   * one and Durable Object SQLite refuses to nest, but the Durable Object
+   * serialises callables so nothing interleaves. Returns how many runs it
+   * created.
    */
-  private sweepOrderRuns(caller: string, workflow: Domain.Workflow) {
+  private reconcileAll(caller: string, workflow: Domain.Workflow) {
     const shop = this.name;
     const startContext = () => this.startContext();
     return Effect.gen(function* () {
-      if (workflow.type !== "order" || !workflow.active) return;
-      const started = yield* (yield* WorkflowRunRepository).startReadyOrderRuns(
-        yield* startContext(),
+      if (!Domain.isActive(workflow)) return 0;
+      const { orders, created } =
+        yield* (yield* WorkflowRunRepository).reconcileAll(
+          yield* startContext(),
+        );
+      yield* Effect.logInfo(
+        `ShopAgent.reconcileAll: shop=${shop} caller=${caller} workflowId=${workflow.id} orders=${String(orders)} created=${String(created)}`,
+      ).pipe(
+        Effect.annotateLogs({
+          shop,
+          caller,
+          workflowId: workflow.id,
+          orders,
+          created,
+        }),
       );
-      if (started > 0)
-        yield* Effect.logInfo(
-          `ShopAgent.${caller}: shop=${shop} workflowId=${workflow.id} orderRuns=${String(started)}: started waiting order runs`,
-        ).pipe(Effect.annotateLogs({ shop, workflowId: workflow.id, started }));
+      return created;
     });
   }
 
@@ -1837,13 +1999,10 @@ export class ShopAgent extends Agent {
       const repository = yield* WorkflowRepository;
       const workflows = yield* repository.listActiveWorkflowDetails();
       const roster = yield* teams();
-      const orderWorkflow = Option.getOrNull(
-        yield* repository.getOrderWorkflow(),
-      );
+      const orderWorkflow = yield* repository.getOrderWorkflow();
       const orderWorkflowBlocker =
         ((): Domain.OrderDetailView["orderWorkflowBlocker"] => {
-          if (orderWorkflow === null) return null;
-          if (!orderWorkflow.workflow.active) return "off";
+          if (!Domain.isActive(orderWorkflow.workflow)) return "off";
           if (orderWorkflow.steps.length === 0) return "no_steps";
           const assigned = orderWorkflow.steps.every(
             (step) =>
@@ -1857,7 +2016,7 @@ export class ShopAgent extends Agent {
         lineItems,
         runs: yield* runs.listRunsForOrder({ orderId: order.id }),
         teams: roster,
-        orderWorkflow: orderWorkflow?.workflow ?? null,
+        orderWorkflow: orderWorkflow.workflow,
         orderWorkflowBlocker,
         itemWorkflows: workflows
           .filter(
@@ -1937,7 +2096,10 @@ export class ShopAgent extends Agent {
    * Manual attach applies only the definition half of the start predicate
    * (`canStart`): an admin choosing a workflow for a line item by hand is
    * exactly the override for a missing tag, a fulfilled line, or an order
-   * older than the workflow. The run key still refuses a duplicate.
+   * placed before the workflow was turned on. The run key still refuses a
+   * duplicate. An attached item opts the order in: the startable order
+   * workflow is handed along so the order run is created with the item run
+   * when the order has none yet.
    */
   @callable()
   attachWorkflow(
@@ -1955,13 +2117,12 @@ export class ShopAgent extends Agent {
           );
           if (Option.isNone(target))
             return { _tag: "LineItemNotFound" } satisfies Domain.AttachResult;
-          const found = yield* (yield* WorkflowRepository).getWorkflow({
-            workflowId,
-          });
+          const workflows = yield* WorkflowRepository;
+          const found = yield* workflows.getWorkflow({ workflowId });
           const roster = yield* teams();
           // Only the workflow's own steps can start a run; a draft is never
-          // attachable. An order workflow starts by rule, never by attaching
-          // it to one line item (deferred; see the `WorkflowType` doc).
+          // attachable. The order workflow is never attached to a line item:
+          // an attached item run brings the order run with it (below).
           const detail: Domain.WorkflowDetail | null = Option.isSome(found)
             ? { workflow: found.value.workflow, steps: found.value.steps }
             : null;
@@ -1973,8 +2134,12 @@ export class ShopAgent extends Agent {
             return {
               _tag: "WorkflowCannotStart",
             } satisfies Domain.AttachResult;
+          const orderWorkflow = yield* workflows.getOrderWorkflow();
           const run = yield* (yield* WorkflowRunRepository).createRun({
             workflow: detail,
+            orderWorkflow: canStart(orderWorkflow, roster)
+              ? orderWorkflow
+              : null,
             teams: roster,
             order: target.value.order,
             lineItem: target.value.lineItem,
@@ -1995,20 +2160,13 @@ export class ShopAgent extends Agent {
   ): Promise<Domain.RunResult> {
     const shop = this.name;
     const publish = () => this.publish("all");
-    const startContext = () => this.startContext();
     return this.runEffect(
       callableEffect("ShopAgent.cancelRun", Domain.RunIdInput, {
         onExcessProperty: "error",
       })(({ runId }) =>
         runResult(
           WorkflowRunRepository.pipe(
-            Effect.flatMap((repository) =>
-              startContext().pipe(
-                Effect.flatMap((startContext) =>
-                  repository.cancelRun({ runId, startContext }),
-                ),
-              ),
-            ),
+            Effect.flatMap((repository) => repository.cancelRun({ runId })),
             Effect.tap(() =>
               Effect.logInfo(
                 `ShopAgent.cancelRun: shop=${shop} runId=${runId}`,
@@ -2171,7 +2329,6 @@ export class ShopAgent extends Agent {
   ): Promise<Domain.RunResult> {
     const shop = this.name;
     const publish = () => this.publish("all");
-    const startContext = () => this.startContext();
     return this.runEffect(
       callableEffect(
         "ShopAgent.completeStep",
@@ -2186,7 +2343,6 @@ export class ShopAgent extends Agent {
               ).pipe(Effect.orDie),
               memberEmail,
               teamIds,
-              startContext: yield* startContext(),
             });
             yield* Effect.logInfo(
               `ShopAgent.completeStep: shop=${shop} step=${runStepId} memberId=${memberId}`,
@@ -2556,16 +2712,15 @@ export class ShopAgent extends Agent {
    * Development seed for orders, same gate and reasoning as `seedWorkflows`.
    * Goes through `upsertOrder` + `reconcileOrder` rather than raw inserts so
    * the fixture exercises run creation, and `done` finishes steps through
-   * `completeStep` with the step's own team so the order-run trigger fires
-   * the way it does on the floor. Only rows under `SEED_ORDER_ID_PREFIX` are
-   * replaced; synced orders are left alone.
+   * `completeStep` with the step's own team so the order run's readiness
+   * gate is exercised the way it is on the floor. Only rows under
+   * `SEED_ORDER_ID_PREFIX` are replaced; synced orders are left alone.
    */
   @callable()
   seedOrders(input: typeof Domain.SeedOrdersInput.Encoded): Promise<void> {
     const environment = this.env.ENVIRONMENT;
     const publish = () => this.publish("all");
     const reconciler = () => this.reconciler("manual");
-    const loadStartContext = () => this.startContext();
     return this.runEffect(
       callableEffect("ShopAgent.seedOrders", Domain.SeedOrdersInput, {
         onExcessProperty: "error",
@@ -2582,7 +2737,6 @@ export class ShopAgent extends Agent {
           const orderRepository = yield* OrderRepository;
           const runs = yield* WorkflowRunRepository;
           const reconcile = yield* reconciler();
-          const startContext = yield* loadStartContext();
           const now = yield* Clock.currentTimeMillis;
           const completeOpenRuns = (orderId: string) =>
             Effect.gen(function* () {
@@ -2599,7 +2753,6 @@ export class ShopAgent extends Agent {
                       memberId,
                       memberEmail,
                       teamIds: step.teamId === null ? [] : [step.teamId],
-                      startContext,
                     }),
                   { discard: true },
                 );
@@ -2616,15 +2769,14 @@ export class ShopAgent extends Agent {
           for (const [index, seed] of orders.entries()) {
             const id = `${Domain.SEED_ORDER_ID_PREFIX}${String(seed.n)}`;
             // At or after `now`, never before: the workflows this fixture
-            // starts were created moments ago and the age rule skips an
-            // order processed before its workflow. Spaced a second apart so
+            // starts were turned on moments ago and the date rule skips an
+            // order placed before its workflow. Spaced a second apart so
             // the index's keyset order matches `orders` order, newest last.
             const processedAt = now + index * 1000;
             const order: Domain.ShopOrder = {
               id,
               legacyId: `seed-${String(seed.n)}`,
               name: `#${String(seed.n)}`,
-              createdAt: processedAt,
               processedAt,
               updatedAt: now,
               cancelledAt: null,
@@ -2664,12 +2816,9 @@ export class ShopAgent extends Agent {
               }),
               afterWrite: reconcile(order),
             });
-            // Item runs first; the last completion starts the order run, which
-            // the second pass then finishes.
-            if (seed.done === true) {
-              yield* completeOpenRuns(id);
-              yield* completeOpenRuns(id);
-            }
+            // Item runs come first in `listRunsForOrder`, so by the time the
+            // order run's steps are reached they are ready.
+            if (seed.done === true) yield* completeOpenRuns(id);
           }
           yield* publish();
         }),

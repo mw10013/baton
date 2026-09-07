@@ -465,23 +465,31 @@ export type ProductTags = typeof ProductTags.Type;
 
 /**
  * `item`: runs once per matching line item (chosen by product tag). `order`:
- * runs once per order — at most one per shop in any state
- * (`Workflow_order_uidx`), never tag-selected, and {@link OrderWorkflow}
- * carries no `tags`. Set on create, never changed.
+ * runs once per order — the shop's one order workflow, the singleton row
+ * {@link ORDER_WORKFLOW_ID} that `initializeSchema` inserts, never
+ * tag-selected, and {@link OrderWorkflow} carries no `tags`. Set on create,
+ * never changed.
  *
- * The order run starts only when all of these hold (the authority is
- * `WorkflowRunRepository.startOrderRunIfReady`): the order workflow is on
- * with every step assigned; the order is paid and not cancelled
- * ({@link canStartRuns}); at least one item run on the order is `done`, so a
- * stock-only order never starts it; no item run is `pending` or `active`;
- * no order run for this workflow exists in any status; and the order was
- * placed after the workflow was created, unless an item run on it was
- * attached by hand. It is evaluated on order reconcile, on the last item
- * run's completion or cancellation, and swept when the order workflow is
- * turned on or applied.
+ * The order run is created together with the item runs, when the order first
+ * reconciles as paid with at least one item run and the order workflow is on
+ * and qualifies by the same date rule, or on manual attach. Its steps become
+ * ready only when every item run on the order is done or cancelled with at
+ * least one done — a read-time readiness rule (`readyWhere` in
+ * `WorkflowRunRepository`), not a write-time trigger, so nothing can be
+ * missed while the switch happened to be off.
  */
 export const WorkflowType = Schema.Literals(["item", "order"]);
 export type WorkflowType = typeof WorkflowType.Type;
+
+/**
+ * The fixed id and name of the shop's one order workflow. Fixed because the
+ * row is inserted by the schema, never by a merchant: links, seeds, and tests
+ * name it directly, `getOrderWorkflow` is a plain lookup, and no uuid can
+ * collide with it. The merchant cannot delete, rename, or duplicate it; "I
+ * don't want it" is Turn off.
+ */
+export const ORDER_WORKFLOW_ID = Schema.decodeSync(WorkflowId)("order");
+export const ORDER_WORKFLOW_NAME = "Order workflow";
 
 /**
  * Vocabulary. A workflow definition has two nouns and the merchant never
@@ -495,36 +503,49 @@ export type WorkflowType = typeof WorkflowType.Type;
  *
  * Verbs: **Edit** creates the draft. **Apply changes** replaces the
  * workflow's tags and steps with the draft's and deletes the draft.
- * **Discard changes** deletes the draft. **Turn on** / **Turn off** flip
- * `active`; the switch and the draft are unrelated.
+ * **Discard changes** deletes the draft. **Turn on** / **Turn off** set and
+ * clear `activatedAt`; the switch and the draft are unrelated.
  *
  * How a workflow is chosen for work, in merchant copy:
  *
  * - a workflow **starts when** an order **contains** a product **tagged with**
  *   one of its tags;
- * - an order workflow **starts for every paid order**;
+ * - the order workflow **starts for every paid order** with an item run;
  * - an order or line item that no workflow's tags **match** shows
  *   **"No workflow"**;
- * - the order page says a workflow **started for** N items.
+ * - the order page says a workflow **started for** N items;
+ * - a workflow **applies to orders placed since** it was turned on; the
+ *   word for an order's date is **placed**, never a field name.
  *
  * In identifiers: `match` is the tag test, `start` / `canStart` is creating
  * a run. Not used, in code or copy: version, live, saved, published,
- * retired, applied (as a state), route, routing, routable.
+ * retired, applied (as a state), route, routing, routable, pause.
  *
- * Merchant copy, the whole model in four sentences: **delete a workflow and
- * its runs stay on their orders**, open ones finish; **turn off** stops new
- * runs and open ones finish; **any open step on a run can be assigned to
- * another team**, a finished step is history; **deleting configuration never
- * deletes work**. Delete removes the definition, its steps, and its draft,
- * nothing else — a run is self-sufficient, so it needs no confirm counts and
- * the dialog says only that it can't be undone. The name and the
- * order-workflow slot are freed at once, so uniqueness is among existing rows
- * only. A rename is immediate and cosmetic because runs snapshot
- * `workflowName`.
+ * Merchant copy, the whole model in five sentences: **delete an item
+ * workflow and its runs stay on their orders**, open ones finish, and the
+ * order workflow is never deleted, only turned off; **turn off** stops new
+ * runs and open ones finish; **a workflow needs at least one step before it
+ * can be applied or turned on**, so zero steps is the state before the first
+ * Apply and only that; **any open step on a run can be assigned to another
+ * team**, a finished step is history; **deleting configuration never deletes
+ * work**. Delete removes the definition, its steps, and its draft, nothing
+ * else — a run is self-sufficient, so it needs no confirm counts and the
+ * dialog says only that it can't be undone. The name is freed at once, so
+ * uniqueness is among existing rows only. A rename is immediate and cosmetic
+ * because runs snapshot `workflowName`.
  *
- * `active` is the explicit on/off switch, stored and never derived. A
- * workflow can start runs when `active and it has steps and every step is
- * assigned to a team that exists`; `active = 1` implies at least one step.
+ * `activatedAt` is the on/off switch and the coverage date in one column,
+ * stored and never derived: null is off; Turn on sets it to now, or to an
+ * earlier date the merchant chose to include waiting orders; the merchant
+ * can move it on the workflow page; Turn off clears it; Apply never touches
+ * it, because an unpaid order placed while the workflow was on is still that
+ * workflow's business when it pays. A workflow starts a run on an order only
+ * if the order was placed (`ShopOrder.processedAt`) on or after
+ * `activatedAt`, on every path — new-order webhook, edit webhook, sync,
+ * resync — so an old order Baton meets late is never touched. A workflow can
+ * start runs when `activatedAt is not null and it has steps and every step
+ * is assigned to a team that exists`; `activatedAt` not null implies at
+ * least one step, every one assigned at the moment of Turn on.
  * A step whose team was deleted is **unassigned** (`teamId` null, or an id
  * no D1 row carries — read as null everywhere). **Needs attention** is the
  * badge for a workflow, run, or team with an unassigned step or a team with
@@ -538,10 +559,14 @@ export type WorkflowType = typeof WorkflowType.Type;
 const WorkflowFields = {
   id: WorkflowId,
   name: WorkflowName,
-  active: SqliteBoolean,
+  activatedAt: Schema.NullOr(Schema.Number),
   createdAt: Schema.Number,
   updatedAt: Schema.Number,
 };
+
+/** On: `activatedAt` is set. The one read of the switch, so no caller compares the column to null on its own. */
+export const isActive = (workflow: { readonly activatedAt: number | null }) =>
+  workflow.activatedAt !== null;
 
 /** An item workflow: chosen by product tag. */
 export const ItemWorkflow = Schema.Struct({
@@ -637,12 +662,16 @@ export const WorkflowSummaryRow = Schema.Union([
 ]);
 export type WorkflowSummaryRow = typeof WorkflowSummaryRow.Type;
 
+/** The item variant on its own: what the workflows page lists. */
+export const ItemWorkflowSummary = Schema.Struct({
+  ...ItemWorkflow.fields,
+  ...WorkflowSummaryRowFields,
+  needsAttention: Schema.Boolean,
+});
+export type ItemWorkflowSummary = typeof ItemWorkflowSummary.Type;
+
 export const WorkflowSummary = Schema.Union([
-  Schema.Struct({
-    ...ItemWorkflow.fields,
-    ...WorkflowSummaryRowFields,
-    needsAttention: Schema.Boolean,
-  }),
+  ItemWorkflowSummary,
   Schema.Struct({
     ...OrderWorkflow.fields,
     ...WorkflowSummaryRowFields,
@@ -650,7 +679,6 @@ export const WorkflowSummary = Schema.Union([
   }),
 ]);
 export type WorkflowSummary = typeof WorkflowSummary.Type;
-export type ItemWorkflowSummary = Extract<WorkflowSummary, { type: "item" }>;
 
 /** The shape run creation reads: a workflow with its steps. Drafts never appear here. */
 export const WorkflowDetail = Schema.Struct({
@@ -719,18 +747,11 @@ export type WorkflowIdInput = typeof WorkflowIdInput.Type;
 export const DeleteWorkflowInput = WorkflowIdInput;
 export type DeleteWorkflowInput = typeof DeleteWorkflowInput.Type;
 
-/** Item: `type` omitted means `item`, so every pre-existing caller keeps its shape. Order: no `tags` key at all — the type, not a runtime check, is what keeps tags off the order workflow. */
-export const CreateWorkflowInput = Schema.Union([
-  Schema.Struct({
-    name: WorkflowName,
-    type: Schema.optionalKey(Schema.Literal("item")),
-    tags: ProductTags,
-  }),
-  Schema.Struct({
-    name: WorkflowName,
-    type: Schema.Literal("order"),
-  }),
-]);
+/** Item workflows only: the order workflow is the schema's singleton ({@link ORDER_WORKFLOW_ID}) and is never created. */
+export const CreateWorkflowInput = Schema.Struct({
+  name: WorkflowName,
+  tags: ProductTags,
+});
 export type CreateWorkflowInput = typeof CreateWorkflowInput.Type;
 
 /** Name only: a rename is immediate. Tags select line items and go through the draft ({@link UpdateWorkflowTagsInput}). */
@@ -760,11 +781,25 @@ export type ApplyDraftInput = typeof ApplyDraftInput.Type;
 export const DiscardDraftInput = WorkflowIdInput;
 export type DiscardDraftInput = typeof DiscardDraftInput.Type;
 
+/**
+ * `activatedAt` is honoured only with `active: true`: the Turn on dialog's
+ * "Include them" sends the earliest waiting order's placed date so those
+ * orders qualify; omitted, Turn on means now. Off always clears the date.
+ */
 export const SetWorkflowActiveInput = Schema.Struct({
   workflowId: BoundedId,
   active: Schema.Boolean,
+  activatedAt: Schema.optionalKey(Schema.Number),
 });
 export type SetWorkflowActiveInput = typeof SetWorkflowActiveInput.Type;
+
+/** The workflow page's Change control: moves the coverage date of an on workflow. */
+export const SetWorkflowActivatedAtInput = Schema.Struct({
+  workflowId: BoundedId,
+  activatedAt: Schema.Number,
+});
+export type SetWorkflowActivatedAtInput =
+  typeof SetWorkflowActivatedAtInput.Type;
 
 export const AddStepInput = Schema.Struct({
   workflowId: BoundedId,
@@ -803,18 +838,20 @@ export type UpdateStepInput = typeof UpdateStepInput.Type;
  * step **unassigned** so the needs-attention state is visible after
  * `pnpm seed`. A step with no `stage` gets the previous step's stage + 1
  * (linear); the repository validates the stage invariant before writing. The
- * repository still enforces one order workflow and no tags on an order
- * workflow (the schema's check and partial unique index would refuse either
+ * repository still enforces at most one `type: "order"` entry and no tags on
+ * it (the schema's check and partial unique index would refuse either
  * anyway, but with a raw constraint error instead of a named one), since a
  * fixture that breaks either would leave the app in a state the ordinary
- * write path can never produce.
+ * write path can never produce. An order entry describes the singleton
+ * ({@link ORDER_WORKFLOW_ID}) rather than creating it: its `name` is ignored.
  *
  * `steps` become the workflow's steps; a fixture with no steps and no
  * `draft` has no draft, the state the ordinary path produces for a fresh
- * workflow. `active` defaults to `true` when the entry has steps and
- * every step is assigned. `draft` seeds a pending draft (its own tags,
- * defaulting to the workflow's, and steps) for fixtures that show the draft
- * UI.
+ * workflow. `active` is the fixture's word for the switch and defaults to
+ * `true` when the entry has steps and every step is assigned; the
+ * repository stores it as `activatedAt = now`, so seeded orders qualify.
+ * `draft` seeds a pending draft (its own tags, defaulting to the workflow's,
+ * and steps) for fixtures that show the draft UI.
  */
 const SeedWorkflowStep = Schema.Struct({
   name: StepName,
@@ -881,7 +918,8 @@ export const WorkflowResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("NameTaken") }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("Limit"), limit: Schema.Number }),
-  Schema.Struct({ _tag: Schema.Literal("OrderWorkflowExists") }),
+  /** Rename or duplicate aimed at the order workflow singleton, which has a fixed name and no copy. */
+  Schema.Struct({ _tag: Schema.Literal("Singleton") }),
 ]);
 export type WorkflowResult = typeof WorkflowResult.Type;
 
@@ -913,8 +951,13 @@ export const DraftResult = Schema.Union([
 ]);
 export type DraftResult = typeof DraftResult.Type;
 
+/** `started` is how many runs the reconcile-all after Turn on created on waiting orders (0 for Turn off), so the toast can say so. */
 export const ActivateResult = Schema.Union([
-  Schema.Struct({ _tag: Schema.Literal("Ok"), workflow: Workflow }),
+  Schema.Struct({
+    _tag: Schema.Literal("Ok"),
+    workflow: Workflow,
+    started: Schema.Number,
+  }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("NoSteps") }),
   Schema.Struct({
@@ -923,6 +966,33 @@ export const ActivateResult = Schema.Union([
   }),
 ]);
 export type ActivateResult = typeof ActivateResult.Type;
+
+/** `Off`: the workflow is not on, so there is no coverage date to move. */
+export const ChangeActivatedAtResult = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal("Ok"),
+    workflow: Workflow,
+    started: Schema.Number,
+  }),
+  Schema.Struct({ _tag: Schema.Literal("NotFound") }),
+  Schema.Struct({ _tag: Schema.Literal("Off") }),
+]);
+export type ChangeActivatedAtResult = typeof ChangeActivatedAtResult.Type;
+
+/**
+ * What the Turn on dialog asks about: orders already stored, unfulfilled and
+ * not cancelled, that would match the workflow if its date allowed them —
+ * paid or not, because an unpaid one qualifies the day it pays.
+ * `earliestProcessedAt` is what "Include them" sends as `activatedAt`.
+ */
+export const WaitingOrders = Schema.Struct({
+  count: Schema.Number,
+  earliestProcessedAt: Schema.NullOr(Schema.Number),
+});
+export type WaitingOrders = typeof WaitingOrders.Type;
+
+export const CountWaitingOrdersInput = WorkflowIdInput;
+export type CountWaitingOrdersInput = typeof CountWaitingOrdersInput.Type;
 
 export const StepResult = Schema.Union([
   Schema.Struct({
@@ -936,10 +1006,11 @@ export const StepResult = Schema.Union([
 ]);
 export type StepResult = typeof StepResult.Type;
 
-/** Delete a workflow and its runs go with it; nothing refuses. */
+/** Delete an item workflow and its runs stay on their orders; only the order workflow singleton refuses. */
 export const DeleteWorkflowResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Deleted") }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
+  Schema.Struct({ _tag: Schema.Literal("Singleton") }),
 ]);
 export type DeleteWorkflowResult = typeof DeleteWorkflowResult.Type;
 
@@ -976,7 +1047,7 @@ export const TeamStepCounts = Schema.Struct({
 });
 export type TeamStepCounts = typeof TeamStepCounts.Type;
 
-/** A step of the workflow or of its draft that points at a team; the team page lists both sides and links each to `/app/workflows/$workflowId`, which serves both kinds. */
+/** A step of the workflow or of its draft that points at a team; the team page lists both sides and links each to its workflow page (`/app/order-workflow` for {@link ORDER_WORKFLOW_ID}). */
 export const OwnedStep = Schema.Struct({
   workflowId: WorkflowId,
   workflowName: WorkflowName,
@@ -1084,7 +1155,13 @@ export const ShopOrder = Schema.Struct({
   id: Schema.String,
   legacyId: Schema.String,
   name: Schema.String,
-  createdAt: Schema.Number,
+  /**
+   * Shopify's `processedAt`: the date shown under the order number in the
+   * admin, the one importers back-date, and the only date Baton compares
+   * (against `Workflow.activatedAt`). Shopify's `createdAt` (the row
+   * timestamp) is deliberately not persisted so nobody has to ask which one
+   * matters.
+   */
   processedAt: Schema.Number,
   updatedAt: Schema.Number,
   cancelledAt: Schema.NullOr(Schema.Number),
@@ -1580,12 +1657,12 @@ export type OrdersIndexLoaderData = OrdersView;
 /** `/app/orders/$orderId` (`app.orders.$orderId`); `null` is not stored. */
 export type OrderLoaderData = OrderDetailView | null;
 
-/** `/app/workflows` (`app.workflows.index`). Both kinds; the page shows the order workflow above the item list. */
+/** `/app/workflows` (`app.workflows.index`). Item workflows only; the order workflow has its own page at `/app/order-workflow`. */
 export interface WorkflowsIndexLoaderData {
-  readonly workflows: readonly WorkflowSummary[];
+  readonly workflows: readonly ItemWorkflowSummary[];
 }
 
-/** `/app/workflows/$workflowId` (`app.workflows.$workflowId`) and its `/edit`; `null` is not found. Both kinds of workflow: the pages branch on `workflow.type` only for the trigger box and the tag editor. */
+/** `/app/workflows/$workflowId` (`app.workflows.$workflowId`) and its `/edit`, and `/app/order-workflow` and its `/edit`; `null` is not found. */
 export type WorkflowLoaderData = WorkflowDetailView | null;
 
 /**
@@ -1941,10 +2018,10 @@ export const OrderDetailView = Schema.Struct({
   runs: Schema.Array(WorkflowRunDetail),
   /**
    * The shop's order workflow in any state, so the page can say what will
-   * start once the items are made — or why nothing will. `null` when the
-   * shop has none.
+   * start once the items are made — or why nothing will. Always present: it
+   * is the schema's singleton ({@link ORDER_WORKFLOW_ID}).
    */
-  orderWorkflow: Schema.NullOr(Workflow),
+  orderWorkflow: Workflow,
   /**
    * Why the order workflow cannot start today, or `null` when it can:
    * `off` (switched off), `no_steps`, or `unassigned` (a step with no team,

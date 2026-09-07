@@ -10,7 +10,6 @@ const order = (
   id: "gid://shopify/Order/1",
   legacyId: "1",
   name: "#1001",
-  createdAt: 0,
   processedAt: 0,
   updatedAt: 0,
   cancelledAt: null,

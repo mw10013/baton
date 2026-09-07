@@ -365,7 +365,6 @@ const storedOrder = (updatedAt: number): Domain.ShopOrder => ({
   id: ORDER_ID,
   legacyId: "1001",
   name: "#1001",
-  createdAt: updatedAt,
   processedAt: updatedAt,
   updatedAt,
   cancelledAt: null,

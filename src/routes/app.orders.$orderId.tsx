@@ -451,22 +451,28 @@ function RouteComponent() {
   });
   const orderRuns = runs.filter(({ run }) => Domain.isOrderRun(run));
   const itemRunCount = runs.length - orderRuns.length;
-  /** Mirrors the trigger's age rule: a manual attach opts an older order in. */
+  /** Mirrors the date rule: placed before Turn on, unless a manual attach opted the order in. */
   const tooOld =
-    orderWorkflow !== null &&
-    order.processedAt < orderWorkflow.createdAt &&
+    orderWorkflow.activatedAt !== null &&
+    order.processedAt < orderWorkflow.activatedAt &&
     !runs.some(({ run }) => !Domain.isOrderRun(run) && run.source === "manual");
   const itemRunsAllCancelled =
     itemRunCount > 0 &&
     runs.every(
       ({ run }) => Domain.isOrderRun(run) || run.status === "cancelled",
     );
+  /** Open item runs: what a pending order run is waiting on (`readyWhere`), counted from the runs in hand. */
+  const openItemRuns = runs.filter(
+    ({ run }) =>
+      !Domain.isOrderRun(run) &&
+      (run.status === "pending" || run.status === "active"),
+  ).length;
   /**
-   * One line per way the order run is not here yet, in the trigger's own
+   * One line per way the order run is not here yet, in the rule's own
    * order: a blocked definition first (the merchant can fix it), then the
    * order-side reasons it will never start, then the plain wait. Each is a
-   * condition of `startOrderRunIfReady` restated for the person looking at
-   * this order, so no order is silently skipped.
+   * condition of order-run creation in `reconcileOrder` restated for the
+   * person looking at this order, so no order is silently skipped.
    */
   const orderWorkflowLine = (workflow: Domain.Workflow) => {
     const name = workflow.name;
@@ -474,7 +480,7 @@ function RouteComponent() {
       return (
         <>
           {`${name} is off, so it will not start on this order. `}
-          <s-link href={`/app/workflows/${workflow.id}`}>Turn it on</s-link>
+          <s-link href="/app/order-workflow">Turn it on</s-link>
           {" to start it here once every item with a workflow is made."}
         </>
       );
@@ -482,14 +488,12 @@ function RouteComponent() {
       return (
         <>
           {`${name} cannot start: it has ${orderWorkflowBlocker === "no_steps" ? "no steps" : "a step with no team"}. `}
-          <s-link href={`/app/workflows/${workflow.id}`}>
-            Fix the workflow
-          </s-link>
+          <s-link href="/app/order-workflow">Fix the workflow</s-link>
           {" to start it here once every item with a workflow is made."}
         </>
       );
     if (tooOld)
-      return `${name} will not start here: this order was placed before that workflow was created. Attaching a workflow to an item by hand opts the order in.`;
+      return `${name} will not start here: this order was placed before ${name} was turned on. Attaching a workflow to an item by hand opts the order in.`;
     if (itemRunCount === 0)
       return `${name} will not start here: no item on this order has a workflow. Attaching a workflow to an item opts the order in.`;
     if (itemRunsAllCancelled)
@@ -596,6 +600,13 @@ function RouteComponent() {
           </s-button>
         )}
       </s-stack>
+      {Domain.isOrderRun(run.run) &&
+        run.run.status === "pending" &&
+        openItemRuns > 0 && (
+          <s-text color="subdued">
+            {`Waiting for ${formatNumber(openItemRuns)} item${openItemRuns === 1 ? "" : "s"}`}
+          </s-text>
+        )}
       {stepTrail(run, teams, assignTeam, {
         expanded: reassigning.has(run.run.id),
         handleToggle: () => {
@@ -791,12 +802,11 @@ function RouteComponent() {
         )}
       </s-section>
 
-      {(orderRuns.length > 0 ||
-        (orderWorkflow !== null && Domain.canStartRuns(order))) && (
+      {(orderRuns.length > 0 || Domain.canStartRuns(order)) && (
         <s-section heading="Order workflow" accessibilityLabel="Order workflow">
           <s-stack gap="base">
             {orderRuns.length > 0 && orderRuns.map(renderRun)}
-            {orderRuns.length === 0 && orderWorkflow !== null && (
+            {orderRuns.length === 0 && (
               <s-paragraph color="subdued">
                 {orderWorkflowLine(orderWorkflow)}
               </s-paragraph>

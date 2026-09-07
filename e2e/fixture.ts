@@ -25,7 +25,8 @@ import type {
  *   `Step Na`, `Step Nb` (N = stage): the queue card shows the step name but
  *   not the stage, so the letter is the only thing telling a worker two cards
  *   are siblings.
- * - Order workflows are `Order Workflow NN`, their own sequence, no tags.
+ * - The order workflow is the shop's singleton, `Order workflow`: the fixture's
+ *   `type: "order"` entry describes its steps and switch, never creates it.
  * - The two derived attention states are seeded so both warnings are visible
  *   after `pnpm seed`: `Team 07 Empty` has nobody on it, and `Workflow 07
  *   Unassigned` has a step with no team (what a team delete leaves behind).
@@ -34,7 +35,7 @@ import type {
  * Invariants the ordinary write path enforces and the seed only checks in
  * part, so the fixture must honour them by construction:
  *
- * - At most one order workflow, and no tags on any order workflow
+ * - At most one `type: "order"` entry, and no tags on it
  *   (`WorkflowRepository.replaceWorkflows` refuses both).
  * - A workflow with an unassigned step cannot be on; the seed defaults it
  *   off.
@@ -174,8 +175,8 @@ export const workflows: readonly SeedWorkflow[] = [
     steps: [],
   },
   {
-    // the active order workflow, with a stage inside an order run
-    name: "Order Workflow 01",
+    // the order workflow singleton, on, with a stage inside an order run
+    name: "Order workflow",
     type: "order",
     tags: [],
     steps: [

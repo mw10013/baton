@@ -1,6 +1,7 @@
 import { Match } from "effect";
 
 import * as Domain from "@/lib/Domain";
+import { formatDateTime } from "@/lib/format";
 
 /** Comma-separated text → tag list; the Durable Object normalises again. */
 export const splitTags = (text: string) =>
@@ -19,9 +20,12 @@ export const workflowResultMessage = Match.typeTags<
   NotFound: () => "That workflow no longer exists.",
   Limit: ({ limit }) =>
     `This shop has reached its limit of ${String(limit)} workflows.`,
-  OrderWorkflowExists: () =>
-    "This shop already has an order workflow. Delete it first to create another.",
+  Singleton: () => SINGLETON_MESSAGE,
 });
+
+/** The order workflow has a fixed name and is never deleted; the UI never offers either, so this only answers a stale client. */
+const SINGLETON_MESSAGE =
+  "The order workflow can't be deleted or renamed. Turn it off instead.";
 
 export const deleteWorkflowResultMessage = Match.typeTags<
   Domain.DeleteWorkflowResult,
@@ -29,6 +33,7 @@ export const deleteWorkflowResultMessage = Match.typeTags<
 >()({
   Deleted: () => null,
   NotFound: () => "That workflow no longer exists.",
+  Singleton: () => SINGLETON_MESSAGE,
 });
 
 /**
@@ -43,12 +48,12 @@ export const DELETE_WORKFLOW_WARNING = "This can't be undone.";
  * Three sentences because the trigger has three parts a merchant cannot
  * infer from "order workflow": the wait for item runs, the exclusion of
  * orders with no item workflow (a stock-only order never starts it), and
- * the age rule with its manual-attach exception. Every surface that
+ * the date rule with its manual-attach exception. Every surface that
  * describes the trigger renders this string unmodified so no page states a
  * different rule from another.
  */
 export const ORDER_WORKFLOW_TRIGGER =
-  "Runs once per paid order, after every item with a workflow is made. An order where no item matches a workflow never starts it. Orders placed before this workflow was created are skipped, unless you attach a workflow to one of their items by hand.";
+  "Runs once per paid order, after every item with a workflow is made. An order where no item matches a workflow never starts it. Orders placed before this workflow was turned on are skipped, unless you attach a workflow to one of their items by hand.";
 
 /**
  * The item-workflow trigger line: what has to be true of an order for this
@@ -63,8 +68,37 @@ export const itemTriggerLine = (tags: readonly string[]) => {
     quoted.length === 1
       ? quoted[0]
       : `${quoted.slice(0, -1).join(", ")} or ${quoted.at(-1) ?? ""}`;
-  return `Starts when an order contains a product tagged ${list ?? ""}.`;
+  return `Starts when an order contains a product tagged ${list ?? ""}. Orders placed before this workflow was turned on are skipped.`;
 };
+
+export const changeActivatedAtResultMessage = Match.typeTags<
+  Domain.ChangeActivatedAtResult,
+  string | null
+>()({
+  Ok: () => null,
+  NotFound: () => "That workflow no longer exists.",
+  Off: () => "This workflow is off, so there is no date to change.",
+});
+
+/** One sentence under the badges of an on workflow: what "on" covers, in the merchant's word for the date. */
+export const appliesSinceLine = (activatedAt: number) =>
+  `Applies to orders placed since ${formatDateTime(activatedAt)}`;
+
+/**
+ * The Turn on dialog's second line, present only when there is something to
+ * decide: earlier open orders that would match. The count, not the date, is
+ * what the merchant decides on.
+ */
+export const waitingOrdersLine = ({ count }: Domain.WaitingOrders) =>
+  count === 0
+    ? null
+    : `${String(count)} earlier ${count === 1 ? "order is" : "orders are"} unfulfilled and would match.`;
+
+/** The toast after Turn on or Change: names the runs the reconcile-all started, when it started any. */
+export const startedToast = (verb: string, started: number) =>
+  started === 0
+    ? `${verb}.`
+    : `${verb}. Started ${String(started)} ${started === 1 ? "run" : "runs"} on waiting orders.`;
 
 const stepList = (steps: readonly Domain.StepWithTeamName[]) =>
   steps.map((step) => step.name).join(", ");

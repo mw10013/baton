@@ -4,13 +4,19 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { useMutation } from "@tanstack/react-query";
 import {
   createFileRoute,
+  redirect,
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
-import { Effect, Match, Schema } from "effect";
+import { Effect, Schema } from "effect";
 
 import { AttentionBanner, StageFlow } from "@/components/WorkflowStages";
+import {
+  activateResultMessage,
+  AppliesSince,
+  WorkflowSwitch,
+} from "@/components/WorkflowSwitch";
 import * as Domain from "@/lib/Domain";
 import { formatDateTime } from "@/lib/format";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
@@ -21,7 +27,6 @@ import {
   DELETE_WORKFLOW_WARNING,
   deleteWorkflowResultMessage,
   itemTriggerLine,
-  ORDER_WORKFLOW_TRIGGER,
   turnOnBlocker,
   workflowResultMessage,
 } from "@/lib/workflowShared";
@@ -40,35 +45,19 @@ const validateSearch = ({
 
 const RENAME_MODAL = "rename-workflow";
 const DELETE_MODAL = "delete-workflow";
-const TURN_ON_MODAL = "turn-on-workflow";
 
 const decodeWorkflowResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.WorkflowResult),
-);
-const decodeActivateResult = Schema.decodeUnknownPromise(
-  Schema.toType(Domain.ActivateResult),
 );
 const decodeDeleteWorkflowResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.DeleteWorkflowResult),
 );
 
-const activateResultMessage = Match.typeTags<
-  Domain.ActivateResult,
-  string | null
->()({
-  Ok: () => null,
-  NotFound: () => "That workflow no longer exists.",
-  NoSteps: () => "This workflow has no steps. Edit to add some, then apply.",
-  StepUnassigned: ({ stepNames }) =>
-    `These steps have no team: ${stepNames.join(", ")}.`,
-});
-
-/** The Turn on dialog's body: the rule that will start runs once the switch is on. */
-const turnOnBody = (workflow: Domain.Workflow) => {
-  if (workflow.type === "order") return ORDER_WORKFLOW_TRIGGER;
+/** The Turn on dialog's first line: the rule that will start runs once the switch is on. */
+const turnOnBody = (workflow: Domain.ItemWorkflow) => {
   if (workflow.tags.length === 0)
     return "This workflow has no product tags, so nothing will match it until you add some.";
-  return `Every order with a line item tagged ${workflow.tags
+  return `Every order placed from now with a line item tagged ${workflow.tags
     .map((tag) => `“${tag}”`)
     .join(" or ")} will start a run of this workflow.`;
 };
@@ -89,7 +78,14 @@ const getLoaderData = createServerFn({ method: "GET" })
 
 export const Route = createFileRoute("/app/workflows/$workflowId")({
   validateSearch,
-  loader: ({ params }) => getLoaderData({ data: params }),
+  loader: ({ params }) => {
+    // The order workflow has its own page; a stale link to it here lands
+    // there rather than on a not-found.
+    if (params.workflowId === Domain.ORDER_WORKFLOW_ID)
+      // eslint-disable-next-line @typescript-eslint/only-throw-error
+      throw redirect({ to: "/app/order-workflow" });
+    return getLoaderData({ data: params });
+  },
   component: RouteComponent,
 });
 
@@ -102,10 +98,8 @@ export const Route = createFileRoute("/app/workflows/$workflowId")({
  * run copies its steps when it starts and is independent from then on, so the
  * workflow has exactly two states worth showing.
  *
- * Both kinds of workflow render here. The order workflow differs in one
- * thing on this page: its trigger is the shop-wide rule, not a product tag,
- * so the dashed trigger box changes heading and text on `workflow.type`.
- * Nothing else about steps, drafts, teams or the switch is different.
+ * Item workflows only; the order workflow's page is `/app/order-workflow`,
+ * a copy of this one without the product-tag trigger, Rename, or Delete.
  */
 function RouteComponent() {
   const { workflowId } = Route.useParams();
@@ -168,26 +162,6 @@ function RouteComponent() {
     onError,
   });
 
-  const activeMutation = useMutation({
-    mutationFn: (active: boolean) =>
-      call((stub) => stub.setWorkflowActive({ workflowId, active })).then(
-        decodeActivateResult,
-      ),
-    onSuccess: async (result) => {
-      setBanner(activateResultMessage(result));
-      if (result._tag === "Ok") {
-        await shopify.modal.hide(TURN_ON_MODAL);
-        shopify.toast.show(
-          result.workflow.active
-            ? "Turned on."
-            : "Turned off. Open runs finish.",
-        );
-      }
-      await invalidate();
-    },
-    onError,
-  });
-
   const deleteMutation = useMutation({
     mutationFn: () =>
       call((stub) => stub.removeWorkflow({ workflowId })).then(
@@ -209,7 +183,7 @@ function RouteComponent() {
     if (loadedName !== undefined) setName(loadedName);
   }, [loadedName]);
 
-  if (detail === null)
+  if (detail === null || !Domain.isItemWorkflow(detail.workflow))
     return (
       <s-page heading="Workflow not found">
         <s-link slot="breadcrumb-actions" href="/app/workflows">
@@ -221,17 +195,13 @@ function RouteComponent() {
       </s-page>
     );
 
-  const { workflow, draft, steps } = detail;
+  const { draft, steps } = detail;
+  const workflow = detail.workflow;
 
   const showingDraft = tab === "draft" && draft !== null;
   const shownSteps = showingDraft ? draft.steps : steps;
-  /** `null` for the order workflow, which `Domain.OrderWorkflow` gives no `tags` key. */
-  const shownTags = (() => {
-    if (workflow.type === "order") return null;
-    return showingDraft ? draft.draft.tags : workflow.tags;
-  })();
+  const shownTags = showingDraft ? draft.draft.tags : workflow.tags;
   const blocker = turnOnBlocker(steps);
-  const switching = activeMutation.isPending;
 
   const tabButton = (label: string, draftTab: boolean) => (
     <s-button
@@ -249,7 +219,7 @@ function RouteComponent() {
       <s-link slot="breadcrumb-actions" href="/app/workflows">
         Workflows
       </s-link>
-      {workflow.active ? (
+      {Domain.isActive(workflow) ? (
         <s-badge slot="accessory" tone="success">
           Active
         </s-badge>
@@ -264,27 +234,13 @@ function RouteComponent() {
       >
         Edit
       </s-button>
-      {workflow.active ? (
-        <s-button
-          slot="secondary-actions"
-          loading={switching}
-          disabled={!identified || switching}
-          onClick={() => {
-            activeMutation.mutate(false);
-          }}
-        >
-          Turn off
-        </s-button>
-      ) : (
-        <s-button
-          slot="secondary-actions"
-          disabled={!identified || switching || blocker !== null}
-          commandFor={TURN_ON_MODAL}
-          command="--show"
-        >
-          Turn on
-        </s-button>
-      )}
+      <WorkflowSwitch
+        workflow={workflow}
+        steps={steps}
+        turnOnBody={turnOnBody(workflow)}
+        onChanged={invalidate}
+        onMessage={setBanner}
+      />
       <s-button slot="secondary-actions" commandFor="workflow-actions">
         More actions
       </s-button>
@@ -292,23 +248,16 @@ function RouteComponent() {
         <s-button icon="edit" commandFor={RENAME_MODAL} command="--show">
           Rename
         </s-button>
-        {/* Item workflows only: an order workflow holds the shop's one order
-            slot itself (`Workflow_order_uidx`), so duplicating it can only
-            ever fail with `OrderWorkflowExists` naming the workflow the
-            merchant is standing on. There is nothing to vary in a copy
-            either — an order workflow has no tags and no selector. */}
-        {Domain.isItemWorkflow(workflow) && (
-          <s-button
-            icon="duplicate"
-            loading={duplicateMutation.isPending}
-            disabled={!identified || duplicateMutation.isPending}
-            onClick={() => {
-              duplicateMutation.mutate();
-            }}
-          >
-            Duplicate
-          </s-button>
-        )}
+        <s-button
+          icon="duplicate"
+          loading={duplicateMutation.isPending}
+          disabled={!identified || duplicateMutation.isPending}
+          onClick={() => {
+            duplicateMutation.mutate();
+          }}
+        >
+          Duplicate
+        </s-button>
         <s-button
           icon="delete"
           tone="critical"
@@ -324,7 +273,7 @@ function RouteComponent() {
       <s-section accessibilityLabel="Workflow">
         <s-stack gap="base">
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
-          {!workflow.active && blocker !== null && (
+          {!Domain.isActive(workflow) && blocker !== null && (
             <s-banner tone="info" heading="Turn on is unavailable">
               {activateResultMessage(blocker)}
             </s-banner>
@@ -341,6 +290,12 @@ function RouteComponent() {
           <s-paragraph color="subdued">
             {`Last updated on ${formatDateTime(workflow.updatedAt)}`}
           </s-paragraph>
+          {workflow.activatedAt !== null && (
+            <AppliesSince
+              activatedAt={workflow.activatedAt}
+              disabled={!identified}
+            />
+          )}
 
           {showingDraft && (
             <s-banner tone="info" heading="Not running yet">
@@ -360,14 +315,8 @@ function RouteComponent() {
                 borderRadius="base"
               >
                 <s-stack gap="small-500">
-                  <s-text type="strong">
-                    {shownTags === null ? "When it runs" : "Product tag"}
-                  </s-text>
-                  <s-text color="subdued">
-                    {shownTags === null
-                      ? ORDER_WORKFLOW_TRIGGER
-                      : itemTriggerLine(shownTags)}
-                  </s-text>
+                  <s-text type="strong">Product tag</s-text>
+                  <s-text color="subdued">{itemTriggerLine(shownTags)}</s-text>
                 </s-stack>
               </s-box>
             }
@@ -412,28 +361,6 @@ function RouteComponent() {
           }}
         >
           Save
-        </s-button>
-      </s-modal>
-
-      <s-modal id={TURN_ON_MODAL} heading={`Turn on ${workflow.name}?`}>
-        <s-paragraph>{turnOnBody(workflow)}</s-paragraph>
-        <s-button
-          slot="secondary-actions"
-          commandFor={TURN_ON_MODAL}
-          command="--hide"
-        >
-          Cancel
-        </s-button>
-        <s-button
-          slot="primary-action"
-          variant="primary"
-          loading={switching}
-          disabled={!identified || switching}
-          onClick={() => {
-            activeMutation.mutate(true);
-          }}
-        >
-          Turn on
         </s-button>
       </s-modal>
 

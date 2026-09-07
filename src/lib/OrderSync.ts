@@ -17,7 +17,6 @@ export const OrderNode = Schema.Struct({
   id: Schema.String,
   legacyResourceId: Schema.String,
   name: Schema.String,
-  createdAt: Domain.EpochMillis,
   processedAt: Domain.EpochMillis,
   updatedAt: Domain.EpochMillis,
   cancelledAt: Schema.NullOr(Domain.EpochMillis),
@@ -78,7 +77,6 @@ export const toShopOrder = ({
   id: node.id,
   legacyId: node.legacyResourceId,
   name: node.name,
-  createdAt: node.createdAt,
   processedAt: node.processedAt,
   updatedAt: node.updatedAt,
   cancelledAt: node.cancelledAt,
@@ -136,7 +134,6 @@ export const orderSyncQuery = `#graphql
       id
       legacyResourceId
       name
-      createdAt
       processedAt
       updatedAt
       cancelledAt

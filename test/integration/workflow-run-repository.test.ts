@@ -72,7 +72,6 @@ const order = (
   id: ORDER_ID,
   legacyId: "1",
   name: "#1001",
-  createdAt: PROCESSED_AT,
   processedAt: PROCESSED_AT,
   updatedAt: PROCESSED_AT,
   cancelledAt: null,
@@ -294,23 +293,22 @@ const seedOrderWorkflow = Effect.gen(function* () {
     name: stepName("Finish"),
     teamId: TEAM_B.id,
   });
-  const pack = yield* workflows.createWorkflow({
-    name: name("Pack"),
-    type: "order",
-  });
+  // The order workflow is the schema's singleton: it is never created, only
+  // given steps and turned on.
+  const pack = Domain.ORDER_WORKFLOW_ID;
   yield* workflows.addStep({
-    workflowId: pack.id,
+    workflowId: pack,
     name: stepName("QC"),
     teamId: TEAM_C.id,
   });
   yield* workflows.addStep({
-    workflowId: pack.id,
+    workflowId: pack,
     name: stepName("Pack"),
     teamId: TEAM_C.id,
   });
   return {
     necklace: yield* goLive(necklace.id),
-    pack: yield* goLive(pack.id),
+    pack: yield* goLive(pack),
   };
 });
 
@@ -330,11 +328,10 @@ const orderRuns = () =>
     Effect.map((runs) => runs.filter(({ run }) => Domain.isOrderRun(run))),
   );
 
-/** Finishes both steps of every item run, passing the start context so the last completion can start the order run. */
+/** Finishes both steps of every open item run; the order run's first stage becomes ready by `readyWhere`, nothing is created. */
 const finishItemRuns = () =>
   Effect.gen(function* () {
     const runs = yield* WorkflowRunRepository;
-    const context = yield* startContext();
     const open = (yield* itemRuns()).filter(
       (detail) =>
         detail.run.status !== "cancelled" && detail.run.status !== "done",
@@ -346,14 +343,25 @@ const finishItemRuns = () =>
           memberId: memberId("member-1"),
           memberEmail: emailOf("member-1@example.com"),
           teamIds: [team.id],
-          startContext: context,
         });
   });
 
 const startContext = () => loadStartContext;
 
+/** The packing team's queue: the order run's ready steps, and nothing while an item run is open. */
+const packQueue = () =>
+  WorkflowRunRepository.pipe(
+    Effect.flatMap((runs) => runs.listQueue({ teamIds: [TEAM_C.id] })),
+  );
+
+/** The singleton with its steps, as the start context sees it when on. */
+const orderWorkflowDetail = () =>
+  WorkflowRepository.pipe(
+    Effect.flatMap((workflows) => workflows.getOrderWorkflow()),
+  );
+
 describe("WorkflowRunRepository order runs", () => {
-  it("starts one pending order run with copied steps once every item run is done; never twice", () =>
+  it("creates one pending order run with copied steps alongside the item runs; its steps are ready once every item run is done; never twice", () =>
     runInRepository(
       Effect.gen(function* () {
         const { pack } = yield* seedOrderWorkflow;
@@ -363,10 +371,8 @@ describe("WorkflowRunRepository order runs", () => {
           created: 2,
           cancelled: 0,
           flagged: 0,
-          orderRuns: 0,
+          orderRuns: 1,
         });
-        strictEqual((yield* orderRuns()).length, 0);
-        yield* finishItemRuns();
         const [orderRun] = yield* orderRuns();
         if (orderRun === undefined) throw new Error("no order run");
         strictEqual(orderRun.run.workflowId, pack.id);
@@ -386,7 +392,29 @@ describe("WorkflowRunRepository order runs", () => {
         const all = yield* runsForOrder();
         strictEqual(all.at(-1)?.run.id, orderRun.run.id);
 
-        // A later reconcile (same order, nothing changed) does not start a second.
+        // Its steps wait on the item runs: not in the packing queue, and
+        // Start is refused as not ready.
+        strictEqual((yield* packQueue()).length, 0);
+        strictEqual(
+          (yield* runs
+            .startStep({
+              runStepId: orderRun.steps[0]?.id ?? "",
+              memberId: memberId("member-1"),
+              memberEmail: emailOf("member-1@example.com"),
+              teamIds: [TEAM_C.id],
+            })
+            .pipe(Effect.flip))._tag,
+          "StepNotReadyError",
+        );
+        yield* finishItemRuns();
+        const [ready] = yield* packQueue();
+        strictEqual(ready?.run.id, orderRun.run.id);
+        deepStrictEqual(
+          ready?.steps.map((s) => s.name),
+          ["QC"],
+        );
+
+        // A later reconcile (same order, nothing changed) does not create a second.
         const again = yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 1 }),
           ORDER_ITEMS,
@@ -394,11 +422,8 @@ describe("WorkflowRunRepository order runs", () => {
         strictEqual(again.orderRuns, 0);
         strictEqual((yield* orderRuns()).length, 1);
 
-        // Cancelling the order run does not re-trigger either; un-cancel is the way back.
-        yield* runs.cancelRun({
-          runId: orderRun.run.id,
-          startContext: yield* startContext(),
-        });
+        // Cancelling the order run does not re-create either; un-cancel is the way back.
+        yield* runs.cancelRun({ runId: orderRun.run.id });
         yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 2 }),
           ORDER_ITEMS,
@@ -408,7 +433,7 @@ describe("WorkflowRunRepository order runs", () => {
       }),
     ));
 
-  it("one done plus one cancelled triggers; all cancelled, untagged-only, and reconcile-only paths do not", () =>
+  it("one done plus one cancelled makes the order run ready; all cancelled cancels a pending order run", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedOrderWorkflow;
@@ -417,123 +442,134 @@ describe("WorkflowRunRepository order runs", () => {
         const [first, second] = yield* itemRuns();
         if (first === undefined || second === undefined)
           throw new Error("expected two item runs");
-        const context = yield* startContext();
-        // Cancel one while the other is still open: nothing yet.
-        yield* runs.cancelRun({ runId: first.run.id, startContext: context });
-        strictEqual((yield* orderRuns()).length, 0);
-        // Finish the other: done + cancelled → trigger.
+        // Cancel one while the other is still open: still waiting.
+        yield* runs.cancelRun({ runId: first.run.id });
+        strictEqual((yield* packQueue()).length, 0);
+        // Finish the other: done + cancelled → ready.
         for (const [index, team] of [TEAM_A, TEAM_B].entries())
           yield* runs.completeStep({
             runStepId: second.steps[index]?.id ?? "",
             memberId: memberId("member-1"),
             memberEmail: emailOf("member-1@example.com"),
             teamIds: [team.id],
-            startContext: context,
           });
-        strictEqual((yield* orderRuns()).length, 1);
+        strictEqual((yield* packQueue()).length, 1);
+        strictEqual((yield* orderRuns())[0]?.run.status, "pending");
       }),
     ));
 
-  it("cancel of the last open item run triggers when another is done; all cancelled never triggers", () =>
+  it("every item run cancelled: the next reconcile cancels the pending order run and never creates a second", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedOrderWorkflow;
         const runs = yield* WorkflowRunRepository;
         yield* upsertAndReconcile(order(), ORDER_ITEMS);
-        const [first, second] = yield* itemRuns();
-        if (first === undefined || second === undefined)
-          throw new Error("expected two item runs");
-        const context = yield* startContext();
-        for (const [index, team] of [TEAM_A, TEAM_B].entries())
-          yield* runs.completeStep({
-            runStepId: first.steps[index]?.id ?? "",
-            memberId: memberId("member-1"),
-            memberEmail: emailOf("member-1@example.com"),
-            teamIds: [team.id],
-            startContext: context,
-          });
-        strictEqual((yield* orderRuns()).length, 0);
-        yield* runs.cancelRun({ runId: second.run.id, startContext: context });
+        for (const detail of yield* itemRuns())
+          yield* runs.cancelRun({ runId: detail.run.id });
+        strictEqual((yield* orderRuns())[0]?.run.status, "pending");
+        const cancelled = yield* upsertAndReconcile(
+          order({ updatedAt: PROCESSED_AT + 1 }),
+          ORDER_ITEMS,
+        );
+        strictEqual(cancelled.cancelled, 1);
+        strictEqual((yield* orderRuns())[0]?.run.status, "cancelled");
+        const again = yield* upsertAndReconcile(
+          order({ updatedAt: PROCESSED_AT + 2 }),
+          ORDER_ITEMS,
+        );
+        strictEqual(again.orderRuns, 0);
+        strictEqual((yield* orderRuns()).length, 1);
+        // Un-cancelling an item run does not revive the order run; its
+        // own un-cancel is the way back, and it is ready once items finish.
+        const [first] = yield* itemRuns();
+        if (first === undefined) throw new Error("no item run");
+        yield* runs.uncancelRun({ runId: first.run.id });
+        yield* upsertAndReconcile(
+          order({ updatedAt: PROCESSED_AT + 3 }),
+          ORDER_ITEMS,
+        );
+        strictEqual((yield* orderRuns())[0]?.run.status, "cancelled");
         strictEqual((yield* orderRuns()).length, 1);
       }),
     ));
 
-  it("never triggers for a stock-only order, an all-cancelled order, or without a start context", () =>
+  it("a stock-only order gets no order run; a manual attach creates one with the item run; the second attach adds nothing", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedOrderWorkflow;
         const runs = yield* WorkflowRunRepository;
-        // Stock-only: no item runs at all.
-        yield* upsertAndReconcile(order(), [lineItem(3, [])]);
+        yield* upsertAndReconcile(order(), [lineItem(3, []), lineItem(4, [])]);
         strictEqual((yield* runsForOrder()).length, 0);
 
-        yield* upsertAndReconcile(
-          order({ updatedAt: PROCESSED_AT + 1 }),
-          ORDER_ITEMS,
-        );
-        const context = yield* startContext();
-        for (const detail of yield* itemRuns())
-          yield* runs.cancelRun({
-            runId: detail.run.id,
-            startContext: context,
-          });
-        strictEqual((yield* orderRuns()).length, 0);
-        // Reconcile after all-cancelled: still nothing (no item run done).
-        yield* upsertAndReconcile(
-          order({ updatedAt: PROCESSED_AT + 2 }),
-          ORDER_ITEMS,
-        );
-        strictEqual((yield* orderRuns()).length, 0);
+        const { workflows } = yield* startContext();
+        const necklace = workflows.find((w) => w.workflow.type === "item");
+        if (necklace === undefined) throw new Error("no item workflow");
+        const pack = yield* orderWorkflowDetail();
+        const attached = yield* runs.createRun({
+          workflow: necklace,
+          orderWorkflow: pack,
+          teams: TEAMS,
+          order: order(),
+          lineItem: lineItem(3, []),
+          source: "manual",
+        });
+        strictEqual(Option.isSome(attached), true);
+        const [orderRun] = yield* orderRuns();
+        strictEqual(orderRun?.run.status, "pending");
+        strictEqual(orderRun?.run.source, "manual");
+        // Created with the item run, so not flagged for it.
+        strictEqual(orderRun?.run.flag, null);
 
-        // Without a start context, completion never evaluates the trigger; the next reconcile does.
-        for (const detail of yield* itemRuns())
-          yield* runs.uncancelRun({ runId: detail.run.id });
-        for (const detail of yield* itemRuns())
-          for (const [index, team] of [TEAM_A, TEAM_B].entries())
-            yield* runs.completeStep({
-              runStepId: detail.steps[index]?.id ?? "",
-              memberId: memberId("member-1"),
-              memberEmail: emailOf("member-1@example.com"),
-              teamIds: [team.id],
-            });
-        strictEqual((yield* orderRuns()).length, 0);
-        const counts = yield* upsertAndReconcile(
-          order({ updatedAt: PROCESSED_AT + 3 }),
-          ORDER_ITEMS,
-        );
-        strictEqual(counts.orderRuns, 1);
+        const again = yield* runs.createRun({
+          workflow: necklace,
+          orderWorkflow: pack,
+          teams: TEAMS,
+          order: order(),
+          lineItem: lineItem(4, []),
+          source: "manual",
+        });
+        strictEqual(Option.isSome(again), true);
         strictEqual((yield* orderRuns()).length, 1);
+        // The second item is a new item on an existing order run.
+        strictEqual((yield* orderRuns())[0]?.run.flag, "item_added");
       }),
     ));
 
-  it("startReadyOrderRuns: the sweep starts every waiting order run once, and nothing else", () =>
+  it("reconcileAll: turning on creates runs on waiting paid, unfulfilled orders; before the date and fulfilled are untouched", () =>
     runInRepository(
       Effect.gen(function* () {
         const { pack } = yield* seedOrderWorkflow;
         const runs = yield* WorkflowRunRepository;
         // Items finish while the order workflow is off: no order run.
-        yield* upsertAndReconcile(order(), ORDER_ITEMS);
         yield* turnOff(pack.id);
+        yield* upsertAndReconcile(order(), ORDER_ITEMS);
         yield* finishItemRuns();
         strictEqual((yield* orderRuns()).length, 0);
-        // Off: the sweep is a no-op.
-        strictEqual(yield* runs.startReadyOrderRuns(yield* startContext()), 0);
-        // On: the sweep starts it exactly once.
+        // Off: reconcile-all creates nothing.
+        const off = yield* runs.reconcileAll(yield* startContext());
+        deepStrictEqual(off, { orders: 1, created: 0 });
+        // On, with the date at now: the order was placed after it (the
+        // fixture is an hour ahead), so reconcile-all creates it once.
         yield* turnOn(pack.id);
-        strictEqual(yield* runs.startReadyOrderRuns(yield* startContext()), 1);
+        const on = yield* runs.reconcileAll(yield* startContext());
+        deepStrictEqual(on, { orders: 1, created: 1 });
         strictEqual((yield* orderRuns()).length, 1);
-        strictEqual(yield* runs.startReadyOrderRuns(yield* startContext()), 0);
-        strictEqual((yield* orderRuns()).length, 1);
+        strictEqual((yield* packQueue()).length, 1);
+        deepStrictEqual(yield* runs.reconcileAll(yield* startContext()), {
+          orders: 1,
+          created: 0,
+        });
       }),
     ));
 
-  it("startReadyOrderRuns: an order shipped or cancelled while waiting is left alone", () =>
+  it("reconcileAll: an order shipped while waiting is left alone, and an order placed before the date is never touched", () =>
     runInRepository(
       Effect.gen(function* () {
         const { pack } = yield* seedOrderWorkflow;
         const runs = yield* WorkflowRunRepository;
-        yield* upsertAndReconcile(order(), ORDER_ITEMS);
+        const workflows = yield* WorkflowRepository;
         yield* turnOff(pack.id);
+        yield* upsertAndReconcile(order(), ORDER_ITEMS);
         yield* finishItemRuns();
         yield* upsertAndReconcile(
           order({
@@ -543,18 +579,45 @@ describe("WorkflowRunRepository order runs", () => {
           ORDER_ITEMS,
         );
         yield* turnOn(pack.id);
-        strictEqual(yield* runs.startReadyOrderRuns(yield* startContext()), 0);
+        deepStrictEqual(yield* runs.reconcileAll(yield* startContext()), {
+          orders: 0,
+          created: 0,
+        });
         strictEqual((yield* orderRuns()).length, 0);
+
+        // Back to unfulfilled, but the date moved past the order: untouched
+        // (the date moves first, so the reconcile the upsert runs sees it).
+        yield* workflows.setWorkflowActivatedAt({
+          workflowId: pack.id,
+          activatedAt: PROCESSED_AT + 1,
+        });
+        yield* upsertAndReconcile(
+          order({ updatedAt: PROCESSED_AT + 2 }),
+          ORDER_ITEMS,
+        );
+        deepStrictEqual(yield* runs.reconcileAll(yield* startContext()), {
+          orders: 1,
+          created: 0,
+        });
+        strictEqual((yield* orderRuns()).length, 0);
+        // Moved back before it: created.
+        yield* workflows.setWorkflowActivatedAt({
+          workflowId: pack.id,
+          activatedAt: PROCESSED_AT - 1,
+        });
+        deepStrictEqual(yield* runs.reconcileAll(yield* startContext()), {
+          orders: 1,
+          created: 1,
+        });
       }),
     ));
 
-  it("does not start when the order workflow is off, cannot start, or newer than the order", () =>
+  it("does not create when the order workflow is off, cannot start, or was turned on after the order", () =>
     runInRepository(
       Effect.gen(function* () {
         const { pack } = yield* seedOrderWorkflow;
-        yield* upsertAndReconcile(order(), ORDER_ITEMS);
         yield* turnOff(pack.id);
-        yield* finishItemRuns();
+        yield* upsertAndReconcile(order(), ORDER_ITEMS);
         strictEqual((yield* orderRuns()).length, 0);
         yield* turnOn(pack.id);
         // Team C gone from the roster: the step is unassigned, cannot start.
@@ -564,7 +627,7 @@ describe("WorkflowRunRepository order runs", () => {
           [TEAM_A, TEAM_B],
         );
         strictEqual((yield* orderRuns()).length, 0);
-        // Startable again: reconcile starts it.
+        // Startable again: reconcile creates it, item runs already done or not.
         const counts = yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 2 }),
           ORDER_ITEMS,
@@ -573,7 +636,7 @@ describe("WorkflowRunRepository order runs", () => {
       }),
     ));
 
-  it("age rule: an order older than the order workflow gets no order run from a tag match, but a manual attach opts it in", () =>
+  it("date rule: an order placed before the order workflow was turned on gets no order run from a tag match, but a manual attach opts it in", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedOrderWorkflow;
@@ -581,14 +644,16 @@ describe("WorkflowRunRepository order runs", () => {
         const sql = yield* SqlClient.SqlClient;
         const old = order({ processedAt: Date.now() - 60 * 60 * 1000 });
         yield* upsertAndReconcile(old, ORDER_ITEMS);
-        // The tag match skips old orders too, so plant a tag-sourced done run to
-        // isolate the order-level age rule from the item-level one.
+        strictEqual((yield* runsForOrder()).length, 0);
+        // The tag match skips old orders too, so plant tag-sourced item runs
+        // to isolate the order-level date rule from the item-level one.
         yield* upsertAndReconcile(
           order({ updatedAt: old.updatedAt + 1 }),
           ORDER_ITEMS,
         );
+        yield* sql`delete from WorkflowRun where lineItemId is null`;
         yield* sql`update ShopOrder set processedAt = ${old.processedAt} where id = ${ORDER_ID}`;
-        yield* finishItemRuns();
+        yield* upsertAndReconcile(old, ORDER_ITEMS);
         strictEqual((yield* orderRuns()).length, 0);
 
         // A manual attach on the same order is the opt-in.
@@ -598,6 +663,7 @@ describe("WorkflowRunRepository order runs", () => {
         const manual = Option.getOrThrow(
           yield* runs.createRun({
             workflow: necklace,
+            orderWorkflow: yield* orderWorkflowDetail(),
             teams: TEAMS,
             order: old,
             lineItem: lineItem(3, []),
@@ -605,9 +671,83 @@ describe("WorkflowRunRepository order runs", () => {
           }),
         );
         strictEqual(manual.source, "manual");
-        yield* finishItemRuns();
         const [orderRun] = yield* orderRuns();
         strictEqual(orderRun?.run.status, "pending");
+        strictEqual(orderRun?.run.source, "manual");
+      }),
+    ));
+
+  it("countWaitingOrders: open orders that would match if the date allowed, paid or not, with the earliest placed date", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { necklace, pack } = yield* seedOrderWorkflow;
+        const runs = yield* WorkflowRunRepository;
+        const workflows = yield* WorkflowRepository;
+        const orders = yield* OrderRepository;
+        const necklaceDetail = yield* savedDetail(necklace.id);
+        const old = Date.now() - 60 * 60 * 1000;
+        const older = old - 1000;
+        // Two old orders (one unpaid), one fulfilled, one stock-only.
+        const seedOrder = (
+          id: string,
+          overrides: Partial<Domain.ShopOrder>,
+          items: readonly Domain.OrderLineItem[],
+        ) =>
+          orders.upsertOrder({
+            order: order({ id, legacyId: id, name: id, ...overrides }),
+            raw: "{}",
+            lineItems: items.map((item) => ({
+              ...item,
+              id: `${id}/${item.id}`,
+              orderId: id,
+            })),
+            afterWrite: Effect.void,
+          });
+        yield* seedOrder("o1", { processedAt: old }, [
+          lineItem(1, ["necklace"]),
+        ]);
+        yield* seedOrder("o2", { processedAt: older, fullyPaid: false }, [
+          lineItem(1, ["necklace"]),
+        ]);
+        yield* seedOrder(
+          "o3",
+          { processedAt: older - 1, fulfillmentStatus: "FULFILLED" },
+          [lineItem(1, ["necklace"])],
+        );
+        yield* seedOrder("o4", { processedAt: older - 2 }, [lineItem(1, [])]);
+        deepStrictEqual(
+          yield* runs.countWaitingOrders({ workflow: necklaceDetail }),
+          { count: 2, earliestProcessedAt: older },
+        );
+        // Nothing has an item run yet, so the order workflow waits on nobody.
+        deepStrictEqual(
+          yield* runs.countWaitingOrders({
+            workflow: yield* orderWorkflowDetail(),
+          }),
+          { count: 0, earliestProcessedAt: null },
+        );
+        // Include them: the date moves to the earliest, reconcile-all creates
+        // item and order runs on the paid one; the unpaid one waits to pay.
+        yield* workflows.setWorkflowActive({
+          workflowId: necklace.id,
+          active: true,
+          activatedAt: older,
+          teams: TEAMS,
+        });
+        yield* turnOff(pack.id);
+        const created = yield* runs.reconcileAll(yield* startContext());
+        deepStrictEqual(created, { orders: 2, created: 1 });
+        deepStrictEqual(
+          yield* runs.countWaitingOrders({ workflow: necklaceDetail }),
+          { count: 1, earliestProcessedAt: older },
+        );
+        // The order workflow is off; o1 has an item run and no order run.
+        deepStrictEqual(
+          yield* runs.countWaitingOrders({
+            workflow: yield* orderWorkflowDetail(),
+          }),
+          { count: 1, earliestProcessedAt: old },
+        );
       }),
     ));
 
@@ -639,6 +779,16 @@ describe("WorkflowRunRepository order runs", () => {
         strictEqual(flagged.run.flag, "item_added");
         deepStrictEqual(flagged.run.flagDetail, { item: "Gift box" });
 
+        // The new item run puts the order run back to waiting: its steps
+        // are not ready, so nobody can act on the flag until it is made.
+        strictEqual((yield* packQueue()).length, 0);
+        strictEqual(
+          (yield* runs
+            .dismissFlag({ runId: orderRun.run.id, teamIds: [TEAM_C.id] })
+            .pipe(Effect.flip))._tag,
+          "RunNotAllowedError",
+        );
+        yield* finishItemRuns();
         yield* runs.dismissFlag({
           runId: orderRun.run.id,
           teamIds: [TEAM_C.id],
@@ -656,6 +806,7 @@ describe("WorkflowRunRepository order runs", () => {
         const attached = Option.getOrThrow(
           yield* runs.createRun({
             workflow: necklace,
+            orderWorkflow: null,
             teams: TEAMS,
             order: order(),
             lineItem: lineItem(3, []),
@@ -669,12 +820,14 @@ describe("WorkflowRunRepository order runs", () => {
         strictEqual(afterAttach.run.flag, "item_added");
         strictEqual(afterAttach.run.flagDetail?.item, "Item 3");
 
-        // Cancel that pending item run (no flag), then un-cancel it (flag again).
+        // Cancel that pending item run (no flag; and with it gone the order
+        // run is ready again, so the flag can be dismissed), then un-cancel
+        // it (flag again).
+        yield* runs.cancelRun({ runId: attached.id });
         yield* runs.dismissFlag({
           runId: orderRun.run.id,
           teamIds: [TEAM_C.id],
         });
-        yield* runs.cancelRun({ runId: attached.id });
         strictEqual(
           Option.getOrThrow(yield* runs.getRun({ runId: orderRun.run.id })).run
             .flag,
@@ -764,6 +917,7 @@ describe("WorkflowRunRepository order runs", () => {
         const late = Option.getOrThrow(
           yield* runs.createRun({
             workflow: necklace,
+            orderWorkflow: null,
             teams: TEAMS,
             order: order(),
             lineItem: lineItem(3, []),
@@ -871,11 +1025,14 @@ describe("WorkflowRunRepository order runs", () => {
         deepStrictEqual(packing.items[0]?.customAttributes, [
           { key: "Engraving", value: "Hello 1" },
         ]);
-        // A late item arriving shows immediately with its own status.
+        // A late item arriving takes the order run out of the queue until
+        // its run is done; then it shows with its own status.
         yield* upsertAndReconcile(order({ updatedAt: PROCESSED_AT + 1 }), [
           ...ORDER_ITEMS,
           lineItem(4, ["necklace"], { title: "Late" }),
         ]);
+        strictEqual((yield* packQueue()).length, 0);
+        yield* finishItemRuns();
         const [again] = yield* runs.listQueue({ teamIds: [TEAM_C.id] });
         deepStrictEqual(
           again?.items.map((item) => [item.title, item.runStatus]),
@@ -883,7 +1040,7 @@ describe("WorkflowRunRepository order runs", () => {
             ["Item 1", "done"],
             ["Item 2", "done"],
             ["Item 3", null],
-            ["Late", "pending"],
+            ["Late", "done"],
           ],
         );
         strictEqual(again?.run.flag, "item_added");
@@ -900,7 +1057,7 @@ describe("WorkflowRunRepository order runs", () => {
           created: 2,
           cancelled: 0,
           flagged: 0,
-          orderRuns: 0,
+          orderRuns: 1,
         });
         const [first, second] = yield* itemRuns();
         if (first === undefined || second === undefined)
@@ -939,7 +1096,9 @@ describe("WorkflowRunRepository order runs", () => {
         const changed = after.find((d) => d.run.id === second.run.id);
         strictEqual(changed?.run.flag, "quantity_changed");
         strictEqual(changed?.run.quantity, 1);
-        strictEqual((yield* orderRuns()).length, 0);
+        // The pending order run is adjusted silently: still there, unflagged.
+        strictEqual((yield* orderRuns()).length, 1);
+        strictEqual((yield* orderRuns())[0]?.run.flag, null);
       }),
     ));
 });
@@ -1047,18 +1206,19 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
       }),
     ));
 
-  it("skips orders processed before the workflow existed; manual attach still works", () =>
+  it("skips orders placed before the workflow was turned on; manual attach still works", () =>
     runInRepository(
       Effect.gen(function* () {
         const { a } = yield* seed;
         const runs = yield* WorkflowRunRepository;
-        const old = order({ processedAt: a.createdAt - 1 });
+        const old = order({ processedAt: (a.activatedAt ?? 0) - 1 });
         const items = [lineItem(1, ["a"])];
         const counts = yield* upsertAndReconcile(old, items);
         strictEqual(counts.created, 0);
         const detail = yield* savedDetail(a.id);
         const attached = yield* runs.createRun({
           workflow: detail,
+          orderWorkflow: null,
           teams: TEAMS,
           order: old,
           lineItem: items[0] ?? lineItem(1, ["a"]),
@@ -1068,6 +1228,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         strictEqual(Option.getOrThrow(attached).source, "manual");
         const duplicate = yield* runs.createRun({
           workflow: detail,
+          orderWorkflow: null,
           teams: TEAMS,
           order: old,
           lineItem: items[0] ?? lineItem(1, ["a"]),
@@ -1475,6 +1636,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           const pendingRun = Option.getOrThrow(
             yield* runs.createRun({
               workflow: necklace,
+              orderWorkflow: null,
               teams: TEAMS,
               order: order(),
               lineItem: lineItem(3, []),
@@ -2197,7 +2359,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           workflowId: a.id,
           teams: TEAMS,
         });
-        strictEqual(applied.active, true);
+        strictEqual(Domain.isActive(applied), true);
         const third = yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 2 }),
           [lineItem(1, ["a"]), lineItem(2, ["a"]), lineItem(3, ["a"])],
@@ -2334,6 +2496,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         yield* goLive(replacement.id);
         const attached = yield* runs.createRun({
           workflow: yield* savedDetail(replacement.id),
+          orderWorkflow: null,
           teams: TEAMS,
           order: order(),
           lineItem: items[0] ?? lineItem(1, ["a"]),
@@ -2352,44 +2515,35 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
       }),
     ));
 
-  it("deleting the active order workflow leaves its open order run and frees the slot for a new one", () =>
+  it("the order workflow cannot be deleted; turning it off leaves its open order run alone", () =>
     runInRepository(
       Effect.gen(function* () {
         const { pack } = yield* seedOrderWorkflow;
         const workflows = yield* WorkflowRepository;
         yield* upsertAndReconcile(order(), ORDER_ITEMS);
-        yield* finishItemRuns();
         const [orderRun] = yield* orderRuns();
         if (orderRun === undefined) throw new Error("no order run");
         strictEqual(orderRun.run.status, "pending");
 
-        yield* workflows.deleteWorkflow({ workflowId: pack.id });
+        strictEqual(
+          (yield* workflows
+            .deleteWorkflow({ workflowId: pack.id })
+            .pipe(Effect.flip))._tag,
+          "SingletonWorkflowError",
+        );
+        yield* turnOff(pack.id);
+        yield* finishItemRuns();
         const [kept] = yield* orderRuns();
         strictEqual(kept?.run.id, orderRun.run.id);
         strictEqual(kept?.run.status, "pending");
         strictEqual(kept?.run.workflowName, pack.name);
-        deepStrictEqual(
-          kept?.steps.map((step) => step.name),
-          ["QC", "Pack"],
-        );
-
-        // The order-workflow slot is free at once, and it is the new workflow
-        // the next order's start context will read.
-        const replacement = yield* workflows.createWorkflow({
-          name: name("Pack 2"),
-          type: "order",
-        });
-        yield* workflows.addStep({
-          workflowId: replacement.id,
-          name: stepName("Ship"),
-          teamId: TEAM_C.id,
-        });
-        yield* goLive(replacement.id);
+        // Off does not stop a run that already exists: its steps are ready.
+        strictEqual((yield* packQueue()).length, 1);
         deepStrictEqual(
           (yield* loadStartContext).workflows
             .filter((detail) => detail.workflow.type === "order")
             .map((detail) => detail.workflow.name),
-          [replacement.name],
+          [],
         );
       }),
     ));

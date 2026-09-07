@@ -4,7 +4,6 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { useMutation } from "@tanstack/react-query";
 import {
   createFileRoute,
-  redirect,
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
@@ -17,24 +16,11 @@ import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
-import {
-  applyBlocker,
-  DELETE_WORKFLOW_WARNING,
-  deleteWorkflowResultMessage,
-  itemTriggerLine,
-  workflowResultMessage,
-} from "@/lib/workflowShared";
+import { applyBlocker, ORDER_WORKFLOW_TRIGGER } from "@/lib/workflowShared";
 
-const WorkflowParams = Schema.Struct({ workflowId: Schema.String });
-
-const RENAME_MODAL = "rename-workflow";
-const DELETE_MODAL = "delete-workflow";
 const DISCARD_MODAL = "discard-draft";
 const APPLY_MODAL = "apply-draft";
 
-const decodeWorkflowResult = Schema.decodeUnknownPromise(
-  Schema.toType(Domain.WorkflowResult),
-);
 const decodeStepResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.StepResult),
 );
@@ -44,10 +30,6 @@ const decodeApplyResult = Schema.decodeUnknownPromise(
 const decodeDiscardResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.DiscardResult),
 );
-const decodeDeleteWorkflowResult = Schema.decodeUnknownPromise(
-  Schema.toType(Domain.DeleteWorkflowResult),
-);
-
 const stepResultMessage = Match.typeTags<Domain.StepResult, string | null>()({
   Ok: () => null,
   NotFound: () => "That step no longer exists. Reload the page.",
@@ -77,33 +59,31 @@ const discardResultMessage = Match.typeTags<
 const instructionsOrNull = (value: string) =>
   value.trim().length === 0 ? null : value;
 
+/** The singleton by its fixed id; no `$workflowId` in the URL, as on its detail page. */
 const getLoaderData = createServerFn({ method: "GET" })
-  .validator(Schema.toStandardSchemaV1(WorkflowParams))
   .middleware([shopifyServerFnMiddleware])
-  .handler(({ data, context: { runEffect, session } }) =>
+  .handler(({ context: { runEffect, session } }) =>
     runEffect(
       ShopAgentClient.pipe(
         Effect.flatMap((client) =>
-          client.getWorkflowDetail(session.shop, data),
+          client.getWorkflowDetail(session.shop, {
+            workflowId: Domain.ORDER_WORKFLOW_ID,
+          }),
         ),
       ),
     ),
   );
 
-export const Route = createFileRoute("/app/workflows/$workflowId_/edit")({
-  loader: ({ params }) => {
-    // The order workflow's editor is its own route; a stale link lands there.
-    if (params.workflowId === Domain.ORDER_WORKFLOW_ID)
-      // eslint-disable-next-line @typescript-eslint/only-throw-error
-      throw redirect({ to: "/app/order-workflow/edit" });
-    return getLoaderData({ data: params });
-  },
+export const Route = createFileRoute("/app/order-workflow/edit")({
+  loader: () => getLoaderData(),
   component: RouteComponent,
 });
 
 /**
- * The item-workflow editor: its own page, so the detail page can stay a
- * read-only answer to "what does this workflow do".
+ * The order workflow's editor: a copy of the item editor without the tag
+ * editor (the trigger is the shop-wide rule and is not editable), Rename,
+ * Delete, or Duplicate (the singleton has none), and so without the More
+ * actions menu. Steps, stages, the draft, Apply and Discard are the same.
  *
  * Opening it writes nothing. The canvas shows the draft when one exists and
  * the workflow itself when one does not — the first change is what creates
@@ -114,7 +94,7 @@ export const Route = createFileRoute("/app/workflows/$workflowId_/edit")({
  * Close leaves the draft alone; only Apply and Discard end it.
  */
 function RouteComponent() {
-  const { workflowId } = Route.useParams();
+  const workflowId = Domain.ORDER_WORKFLOW_ID;
   const detail: Domain.WorkflowLoaderData = Route.useLoaderData();
   const router = useRouter();
   const navigate = useNavigate({ from: Route.fullPath });
@@ -136,9 +116,6 @@ function RouteComponent() {
     readonly teamId: string;
     readonly instructions: string;
   } | null>(null);
-  const [tagInput, setTagInput] = React.useState("");
-  const [name, setName] = React.useState(detail?.workflow.name ?? "");
-  const [nameError, setNameError] = React.useState<string | null>(null);
 
   const invalidate = () => router.invalidate({ sync: true });
 
@@ -230,18 +207,6 @@ function RouteComponent() {
     onError,
   });
 
-  const tagsMutation = useMutation({
-    mutationFn: (tags: readonly string[]) =>
-      call((stub) => stub.updateWorkflowTags({ workflowId, tags })).then(
-        decodeStepResult,
-      ),
-    onSuccess: async (result) => {
-      if (result._tag === "Ok") setTagInput("");
-      await onStepResult(result);
-    },
-    onError,
-  });
-
   const applyMutation = useMutation({
     mutationFn: () =>
       call((stub) => stub.applyDraft({ workflowId })).then(decodeApplyResult),
@@ -250,10 +215,7 @@ function RouteComponent() {
       if (result._tag !== "Ok") return;
       await shopify.modal.hide(APPLY_MODAL);
       shopify.toast.show("Changes applied. This is what runs now.");
-      await navigate({
-        to: "/app/workflows/$workflowId",
-        params: { workflowId },
-      });
+      await navigate({ to: "/app/order-workflow" });
     },
     onError,
   });
@@ -274,63 +236,6 @@ function RouteComponent() {
     },
     onError,
   });
-
-  const renameMutation = useMutation({
-    mutationFn: () =>
-      call((stub) => stub.updateWorkflow({ workflowId, name })).then(
-        decodeWorkflowResult,
-      ),
-    onSuccess: async (result) => {
-      const message = workflowResultMessage(result);
-      if (message !== null) {
-        setNameError(message);
-        return;
-      }
-      await shopify.modal.hide(RENAME_MODAL);
-      await invalidate();
-    },
-    onError,
-  });
-
-  const duplicateMutation = useMutation({
-    mutationFn: () =>
-      call((stub) => stub.duplicateWorkflow({ workflowId })).then(
-        decodeWorkflowResult,
-      ),
-    onSuccess: async (result) => {
-      if (result._tag !== "Ok") {
-        setBanner(workflowResultMessage(result));
-        return;
-      }
-      shopify.toast.show(`Copied to “${result.workflow.name}”.`);
-      await navigate({
-        to: "/app/workflows/$workflowId/edit",
-        params: { workflowId: result.workflow.id },
-      });
-    },
-    onError,
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: () =>
-      call((stub) => stub.removeWorkflow({ workflowId })).then(
-        decodeDeleteWorkflowResult,
-      ),
-    onSuccess: async (result) => {
-      if (result._tag !== "Deleted") {
-        setBanner(deleteWorkflowResultMessage(result));
-        return;
-      }
-      await shopify.modal.hide(DELETE_MODAL);
-      await navigate({ to: "/app/workflows" });
-    },
-    onError,
-  });
-
-  const loadedName = detail?.workflow.name;
-  React.useEffect(() => {
-    if (loadedName !== undefined) setName(loadedName);
-  }, [loadedName]);
 
   /**
    * The step panel's fields are local state copied from the step on select,
@@ -358,24 +263,22 @@ function RouteComponent() {
     });
   }, [loadedStepName, loadedStepTeamId, loadedStepInstructions]);
 
-  if (detail === null || !Domain.isItemWorkflow(detail.workflow))
+  if (detail === null)
     return (
-      <s-page heading="Workflow not found">
-        <s-link slot="breadcrumb-actions" href="/app/workflows">
-          Workflows
+      <s-page heading={Domain.ORDER_WORKFLOW_NAME}>
+        <s-link slot="breadcrumb-actions" href="/app/order-workflow">
+          {Domain.ORDER_WORKFLOW_NAME}
         </s-link>
         <s-paragraph color="subdued">
-          That workflow no longer exists.
+          The order workflow is not available. Reload the page.
         </s-paragraph>
       </s-page>
     );
 
-  const { draft, teams } = detail;
-  const workflow = detail.workflow;
+  const { workflow, draft, teams } = detail;
 
   /** What the editor writes: the draft once one exists, the workflow itself until then. */
   const steps = draft?.steps ?? detail.steps;
-  const tags = draft?.draft.tags ?? workflow.tags;
   const hasDraft = draft !== null;
   const blocker = applyBlocker(steps);
   const selected = steps.find((step) => step.id === selectedStepId) ?? null;
@@ -386,7 +289,6 @@ function RouteComponent() {
     separateStepMutation.isPending ||
     joinStepMutation.isPending ||
     removeStepMutation.isPending ||
-    tagsMutation.isPending ||
     applyMutation.isPending ||
     discardMutation.isPending;
   const sharesStage = (step: Domain.StepWithTeamName) =>
@@ -556,8 +458,8 @@ function RouteComponent() {
   };
 
   return (
-    <s-page heading={workflow.name} inlineSize="base">
-      <s-link slot="breadcrumb-actions" href={`/app/workflows/${workflowId}`}>
+    <s-page heading={Domain.ORDER_WORKFLOW_NAME} inlineSize="base">
+      <s-link slot="breadcrumb-actions" href="/app/order-workflow">
         Close
       </s-link>
       {hasDraft ? (
@@ -593,33 +495,6 @@ function RouteComponent() {
           Discard changes
         </s-button>
       )}
-      <s-button slot="secondary-actions" commandFor="editor-actions">
-        More actions
-      </s-button>
-      <s-menu id="editor-actions" accessibilityLabel="More actions">
-        <s-button icon="edit" commandFor={RENAME_MODAL} command="--show">
-          Rename
-        </s-button>
-        <s-button
-          icon="duplicate"
-          loading={duplicateMutation.isPending}
-          disabled={!identified || duplicateMutation.isPending}
-          onClick={() => {
-            duplicateMutation.mutate();
-          }}
-        >
-          Duplicate
-        </s-button>
-        <s-button
-          icon="delete"
-          tone="critical"
-          commandFor={DELETE_MODAL}
-          command="--show"
-        >
-          Delete
-        </s-button>
-      </s-menu>
-
       <SocketBanner />
 
       <s-section accessibilityLabel="Steps">
@@ -649,50 +524,8 @@ function RouteComponent() {
                 borderRadius="base"
               >
                 <s-stack gap="small-300">
-                  <s-text type="strong">Product tag</s-text>
-                  <s-text color="subdued">{itemTriggerLine(tags)}</s-text>
-                  {tags.length > 0 && (
-                    <s-stack direction="inline" gap="small-300">
-                      {tags.map((tag) => (
-                        <s-chip
-                          key={tag}
-                          removable
-                          accessibilityLabel={`Remove ${tag}`}
-                          onRemove={() => {
-                            tagsMutation.mutate(
-                              tags.filter((other) => other !== tag),
-                            );
-                          }}
-                        >
-                          {tag}
-                        </s-chip>
-                      ))}
-                    </s-stack>
-                  )}
-                  <s-grid
-                    gridTemplateColumns="1fr auto"
-                    gap="small-300"
-                    alignItems="end"
-                  >
-                    <s-text-field
-                      label="Add a product tag"
-                      placeholder="e.g. engraved"
-                      value={tagInput}
-                      disabled={busy}
-                      onInput={(event) => {
-                        setTagInput(event.currentTarget.value);
-                      }}
-                    />
-                    <s-button
-                      loading={tagsMutation.isPending}
-                      disabled={busy || tagInput.trim().length === 0}
-                      onClick={() => {
-                        tagsMutation.mutate([...tags, tagInput]);
-                      }}
-                    >
-                      Add tag
-                    </s-button>
-                  </s-grid>
+                  <s-text type="strong">When it runs</s-text>
+                  <s-text color="subdued">{ORDER_WORKFLOW_TRIGGER}</s-text>
                 </s-stack>
               </s-box>
             }
@@ -886,60 +719,6 @@ function RouteComponent() {
           }}
         >
           Discard
-        </s-button>
-      </s-modal>
-
-      <s-modal id={RENAME_MODAL} heading="Rename workflow">
-        <s-text-field
-          label="Name"
-          value={name}
-          maxLength={64}
-          {...(nameError === null ? {} : { error: nameError })}
-          onInput={(event) => {
-            setName(event.currentTarget.value);
-            setNameError(null);
-          }}
-        />
-        <s-button
-          slot="secondary-actions"
-          commandFor={RENAME_MODAL}
-          command="--hide"
-        >
-          Cancel
-        </s-button>
-        <s-button
-          slot="primary-action"
-          variant="primary"
-          loading={renameMutation.isPending}
-          disabled={!identified || name.trim().length === 0}
-          onClick={() => {
-            renameMutation.mutate();
-          }}
-        >
-          Save
-        </s-button>
-      </s-modal>
-
-      <s-modal id={DELETE_MODAL} heading={`Delete ${workflow.name}?`}>
-        <s-paragraph>{DELETE_WORKFLOW_WARNING}</s-paragraph>
-        <s-button
-          slot="secondary-actions"
-          commandFor={DELETE_MODAL}
-          command="--hide"
-        >
-          Cancel
-        </s-button>
-        <s-button
-          slot="primary-action"
-          variant="primary"
-          tone="critical"
-          loading={deleteMutation.isPending}
-          disabled={!identified || deleteMutation.isPending}
-          onClick={() => {
-            deleteMutation.mutate();
-          }}
-        >
-          Delete
         </s-button>
       </s-modal>
     </s-page>

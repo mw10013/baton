@@ -31,7 +31,6 @@ query BulkOrdersQuery {
         id
         legacyResourceId
         name
-        createdAt
         processedAt
         updatedAt
         cancelledAt

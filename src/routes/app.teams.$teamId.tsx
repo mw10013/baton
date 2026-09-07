@@ -201,7 +201,13 @@ function RouteComponent() {
             >
               <s-table-cell>
                 <s-stack direction="inline" gap="small-300">
-                  <s-link href={`/app/workflows/${owned.workflowId}`}>
+                  <s-link
+                    href={
+                      owned.workflowId === Domain.ORDER_WORKFLOW_ID
+                        ? "/app/order-workflow"
+                        : `/app/workflows/${owned.workflowId}`
+                    }
+                  >
                     {owned.workflowName}
                   </s-link>
                   {owned.side === "draft" && (

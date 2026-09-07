@@ -47,7 +47,6 @@ const anOrder = (
   id: orderId(1),
   legacyId: "1",
   name: "#1001",
-  createdAt: 1000,
   processedAt: 1000,
   updatedAt: 1000,
   cancelledAt: null,

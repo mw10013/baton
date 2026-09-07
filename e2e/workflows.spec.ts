@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test";
 
 import { expect, test } from "@playwright/test";
 
-import { clickHoisted, gotoApp } from "./app";
+import { clickHoisted, gotoApp, hoistedEnabled } from "./app";
 import { seedConfig, seedMembers } from "./seed";
 
 /**
@@ -203,16 +203,13 @@ test("workflows create, edit, apply, and discard through the draft", async ({
   await expect(frame.getByText("Bake", { exact: true })).toBeVisible();
 });
 
-const ORDER_CREATED = "E2E Pack";
-
 /**
- * The order workflow on the same page: created from its own section's empty
- * state (never from the header's Create workflow, which always makes an item
- * workflow), listed as a row above the item list rather than in it, and
- * served by the same detail page and editor as an item workflow — minus the
- * product-tag trigger, since it has none.
+ * The order workflow: the shop's singleton, reached from its own nav entry.
+ * It exists from the start, off and empty, has no Rename or Delete (so no
+ * More actions at all), and follows the same four verbs as an item workflow:
+ * Edit, add steps, Apply, Turn on. Its trigger box is the shop-wide rule.
  */
-test("the order workflow is created from its own section and opens on the shared detail page", async ({
+test("the order workflow opens from the nav, has no rename or delete, and turns on after steps are applied", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -232,59 +229,128 @@ test("the order workflow is created from its own section and opens on the shared
 
   const frame = await gotoApp(page);
   await clickHoisted(
-    page.getByRole("link", { name: "Workflows", exact: true }),
+    page.getByRole("link", { name: "Order workflow", exact: true }),
   );
-  await expect(frame.locator('s-page[heading="Workflows"]')).toBeVisible();
+  await expect(frame.locator('s-page[heading="Order workflow"]')).toBeVisible();
+  /* Scoped to the section: the Turn on dialog carries the same sentence. */
+  await expect(
+    frame
+      .locator("s-section")
+      .getByText("Runs once per paid order", { exact: false }),
+  ).toBeVisible();
+  /* No steps yet: Turn on is offered but disabled, with its reason. */
+  await expect(
+    frame.getByText("This workflow has no steps.", { exact: false }),
+  ).toBeVisible();
+  await expect
+    .poll(() => hoistedEnabled(page.getByRole("button", { name: "Turn on" })))
+    .toBe(false);
+  /* No Rename, Delete, or Duplicate anywhere: the admin's own title bar
+     carries a "More actions" of its own, so the menu items are the proof. */
+  for (const name of ["Rename", "Delete", "Duplicate"])
+    await expect(page.getByRole("button", { name, exact: true })).toHaveCount(
+      0,
+    );
 
-  /* No order workflow yet: the section offers its own create, and nothing
-     else on the page does. */
-  await expect(
-    frame.getByText("No order workflow yet.", { exact: false }),
-  ).toBeVisible();
-  await frame.getByRole("button", { name: "Create order workflow" }).click();
-  await frame
-    .locator('s-modal[heading="Create order workflow"]')
-    .getByRole("textbox", { name: "Name", exact: true })
-    .fill(ORDER_CREATED);
-  await frame
-    .locator('s-modal[heading="Create order workflow"]')
-    .getByRole("button", { name: "Create", exact: true })
-    .click();
-
-  /* Lands in the editor. The trigger box is the shop-wide rule, not a tag
-     field, so there is nothing to add a tag to. */
-  await expect(
-    frame.locator(`s-page[heading="${ORDER_CREATED}"]`),
-  ).toBeVisible();
-  await expect(
-    frame.getByText("Runs once per paid order", { exact: false }),
-  ).toBeVisible();
+  /* The editor: the same steps canvas, no tag field. */
+  await clickHoisted(page.getByRole("button", { name: "Edit", exact: true }));
   await expect(
     frame.getByRole("textbox", { name: "Add a product tag" }),
   ).toHaveCount(0);
+  for (const name of ["Rename", "Delete", "Duplicate"])
+    await expect(page.getByRole("button", { name, exact: true })).toHaveCount(
+      0,
+    );
+  await frame.getByRole("button", { name: "Add the first step" }).click();
+  await frame.getByRole("textbox", { name: "Name", exact: true }).fill("Pack");
+  await frame
+    .getByRole("combobox", { name: "Team", exact: true })
+    .selectOption({ label: TEAM });
+  await frame.getByRole("button", { name: "Add step" }).click();
+  await expect(frame.getByText("Stage 1", { exact: true })).toBeVisible();
+  await clickHoisted(page.getByRole("button", { name: "Apply changes" }));
+  await expect(frame.locator('s-page[heading="Order workflow"]')).toBeVisible();
 
-  /* Back on the list it is one row above the item list, not a table row. */
-  await closeEditor(page);
+  /* Turn on: a fresh shop has no waiting orders, so the dialog is a plain
+     confirm, and the page then says what "on" covers. The hoisted button
+     was disabled a moment ago (no steps), so wait for the enabled copy. */
+  const turnOn = page.getByRole("button", { name: "Turn on" });
+  await expect.poll(() => hoistedEnabled(turnOn)).toBe(true);
+  await clickHoisted(turnOn);
   await expect(
-    frame.locator(`s-page[heading="${ORDER_CREATED}"]`),
+    frame.getByText("Checking earlier orders", { exact: false }),
+  ).toHaveCount(0);
+  await expect(frame.getByText("would match.", { exact: false })).toHaveCount(
+    0,
+  );
+  await frame.getByRole("button", { name: "Turn on", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Turn off" })).toBeVisible();
+  await expect(
+    frame
+      .locator("s-section")
+      .getByText("Applies to orders placed since", { exact: false }),
   ).toBeVisible();
+
+  /* A stale link to the singleton under the item routes lands here. */
+  await expect(
+    frame.getByRole("link", { name: "Workflows", exact: true }),
+  ).toHaveCount(0);
+});
+
+/**
+ * Turn on by count: a workflow turned on after an order was placed does not
+ * start on it — unless the merchant includes the waiting orders from the
+ * Turn on dialog, which moves the coverage date back to the earliest one.
+ */
+test("turning on a workflow offers to include earlier unfulfilled orders, and including them starts their runs", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+
+  await seedMembers(
+    seedConfig(),
+    [MEMBER],
+    [{ name: TEAM, members: [MEMBER] }],
+    [
+      {
+        name: EXISTING,
+        active: false,
+        tags: ["e2e-ring"],
+        steps: [{ name: "Cut", team: TEAM }],
+      },
+    ],
+    [
+      {
+        n: 9101,
+        lineItems: [{ title: "E2E Band", quantity: 1, tags: ["e2e-ring"] }],
+      },
+    ],
+  );
+
+  const frame = await gotoApp(page);
   await clickHoisted(
-    page.getByLabel(/^Breadcrumbs/u).getByRole("button", { name: "Workflows" }),
+    page.getByRole("link", { name: "Workflows", exact: true }),
   );
-  await expect(frame.locator('s-page[heading="Workflows"]')).toBeVisible();
-  const orderSection = frame.locator('s-section[heading="Order workflow"]');
+  await frame.getByRole("link", { name: EXISTING }).click();
+  await expect(frame.locator(`s-page[heading="${EXISTING}"]`)).toBeVisible();
+
+  const turnOn = page.getByRole("button", { name: "Turn on" });
+  await expect.poll(() => hoistedEnabled(turnOn)).toBe(true);
+  await clickHoisted(turnOn);
   await expect(
-    orderSection.getByRole("link", { name: ORDER_CREATED }),
+    frame.getByText("1 earlier order is unfulfilled and would match.", {
+      exact: false,
+    }),
   ).toBeVisible();
-  await expect(orderSection.getByText("One per shop")).toBeVisible();
+  await frame.getByRole("checkbox", { name: "Include them" }).check();
+  await frame.getByRole("button", { name: "Turn on", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Turn off" })).toBeVisible();
+
+  /* The order page shows the run that Include them started. */
+  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await frame.getByRole("link", { name: "#9101" }).click();
+  await expect(frame.locator('s-page[heading="#9101"]')).toBeVisible();
   await expect(
-    frame.getByRole("button", { name: "Create order workflow" }),
-  ).toHaveCount(0);
-  const itemSection = frame.locator(
-    's-section[accessibilityLabel="Item workflows"]',
-  );
-  await expect(itemSection.getByRole("link", { name: EXISTING })).toBeVisible();
-  await expect(
-    itemSection.getByRole("link", { name: ORDER_CREATED }),
-  ).toHaveCount(0);
+    frame.getByText(`${EXISTING} started for 1 item`, { exact: false }),
+  ).toBeVisible();
 });
