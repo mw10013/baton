@@ -599,16 +599,23 @@ function RouteComponent() {
         <s-button icon="edit" commandFor={RENAME_MODAL} command="--show">
           Rename
         </s-button>
-        <s-button
-          icon="duplicate"
-          loading={duplicateMutation.isPending}
-          disabled={!identified || duplicateMutation.isPending}
-          onClick={() => {
-            duplicateMutation.mutate();
-          }}
-        >
-          Duplicate
-        </s-button>
+        {/* Item workflows only: an order workflow holds the shop's one order
+            slot itself (`Workflow_order_uidx`), so duplicating it can only
+            ever fail with `OrderWorkflowExists` naming the workflow the
+            merchant is standing on. There is nothing to vary in a copy
+            either — an order workflow has no tags and no selector. */}
+        {Domain.isItemWorkflow(workflow) && (
+          <s-button
+            icon="duplicate"
+            loading={duplicateMutation.isPending}
+            disabled={!identified || duplicateMutation.isPending}
+            onClick={() => {
+              duplicateMutation.mutate();
+            }}
+          >
+            Duplicate
+          </s-button>
+        )}
         <s-button
           icon="delete"
           tone="critical"
