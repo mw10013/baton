@@ -37,7 +37,7 @@ const DevSeedInput = Schema.Struct({
     Schema.Array(
       Schema.Struct({
         name: Domain.WorkflowName,
-        scope: Schema.optionalKey(Domain.WorkflowScope),
+        type: Schema.optionalKey(Domain.WorkflowType),
         /** Defaults to on when the entry has steps and every step is assigned; see `Domain.SeedWorkflowsInput`. */
         active: Schema.optionalKey(Schema.Boolean),
         tags: Domain.ProductTags,
@@ -168,7 +168,7 @@ export const Route = createFileRoute("/api/dev/seed")({
                 (typeof Domain.SeedWorkflowsInput.Encoded)["workflows"][number]["steps"][number];
               const seedWorkflows: {
                 name: string;
-                scope?: Domain.WorkflowScope;
+                type?: Domain.WorkflowType;
                 active?: boolean;
                 tags: readonly string[];
                 steps: SeedStep[];
@@ -218,9 +218,9 @@ export const Route = createFileRoute("/api/dev/seed")({
                       };
                 seedWorkflows.push({
                   name: workflow.name,
-                  ...(workflow.scope === undefined
+                  ...(workflow.type === undefined
                     ? {}
-                    : { scope: workflow.scope }),
+                    : { type: workflow.type }),
                   ...(workflow.active === undefined
                     ? {}
                     : { active: workflow.active }),

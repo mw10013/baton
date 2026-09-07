@@ -15,15 +15,15 @@ Everything existing is treated as revisable. Where the recommendation lands on t
 
 Recorded after the first read of this document, so a later reader knows which sections are settled and which are still live.
 
-| Question                                                                         | Status                                                                                                                                                                               |
-| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1 — root noun stays `workflow`                                                   | **Settled.**                                                                                                                                                                         |
-| 2 — unqualified `workflow` is the default; `item workflow` only when contrasting | **Settled.** "Product workflow" is off the table entirely; the reasoning is kept below only so the decision does not get relitigated.                                                |
-| 3 — how the two kinds are presented                                              | **Open.** The one-nav-entry proposal needs to be seen before it is judged; an earlier combined page was confusing and was deliberately split. Mockups are in the companion artifact. |
-| 4 — the order workflow keeps the after-items rule                                | **Settled.** The copy fixes it implies are specified in `order-workflow-trigger-truth-research.md`, not here.                                                                        |
-| 5 — replacing `scope`                                                            | **Settled as `type`.** The original recommendation in this document was `runsOn`; it was rejected as obscure and the section below has been rewritten.                               |
-| 6 — Edit / Draft / Apply / Discard / Turn on / Turn off                          | **Settled, unchanged.**                                                                                                                                                              |
-| 7 — one vocabulary across the owner and worker surfaces                          | **Settled in principle**, with one concrete consequence identified below.                                                                                                            |
+| Question                                                                         | Status                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 — root noun stays `workflow`                                                   | **Settled.**                                                                                                                                                                                                                                                                                                                                    |
+| 2 — unqualified `workflow` is the default; `item workflow` only when contrasting | **Settled.** "Product workflow" is off the table entirely; the reasoning is kept below only so the decision does not get relitigated.                                                                                                                                                                                                           |
+| 3 — how the two kinds are presented                                              | **Settled: one nav entry, two stacked sections on `/app/workflows`** (option B in the companion artifact). The order workflow gets its own compact section above the item-workflow list and shares no table, filter or create button with it. Not yet built.                                                                                    |
+| 4 — the order workflow keeps the after-items rule                                | **Settled and shipped** (`7b7ab34`). The copy and behaviour fixes it implied are specified and implemented per `order-workflow-trigger-truth-research.md`.                                                                                                                                                                                      |
+| 5 — replacing `scope`                                                            | **Settled as `type`.** The original recommendation here was `runsOn`; it was rejected as obscure and the section below rewritten. **Not yet done** — `scope` is still the field name as of `7b7ab34`, and its JSDoc has since grown to carry the whole order-run trigger rule, so the rename touches a larger comment block than it would have. |
+| 6 — Edit / Draft / Apply / Discard / Turn on / Turn off                          | **Settled, unchanged.**                                                                                                                                                                                                                                                                                                                         |
+| 7 — one vocabulary across the owner and worker surfaces                          | **Settled in principle**, with one concrete consequence identified below. The queue badge is not yet changed.                                                                                                                                                                                                                                   |
 
 Made-to-order (MTO), used throughout: a shop that makes each item after the order arrives rather than picking it off a shelf. It is the shop Baton is for.
 
@@ -80,7 +80,7 @@ The important half of that recommendation is the second sentence. A qualifier is
 
 ## Question 3 — naming the order kind
 
-> **Status: open.** The naming below is settled — it stays `order workflow`. The presentation recommendation (one nav entry, one index, two sections) is not, and is the subject of the companion mockup artifact. An earlier iteration of Baton combined the two kinds on one page and it was confusing enough to be split back out; that history is evidence and the proposal below has to answer it. See the note appended to this section.
+> **Status: settled.** The noun stays `order workflow`. The presentation is **option B**: one `Workflows` nav entry, one index page, two sections — a compact order-workflow section above the item-workflow list, sharing no table, no filter and no create button with it. An earlier iteration of Baton combined the two kinds on one page and it was confusing enough to be split back out; the note at the end of this section is why B is not a repeat of that.
 
 The thing today: at most one per shop, no tags, one run per order, and it starts only after every item run on that order is done.
 
@@ -113,14 +113,17 @@ The failure mode of a combined page is **heterogeneous rows in one table**. Ther
 
 The proposal is therefore explicitly **not** one list. The item workflows keep the page they have now — same table, same filters, same search, same tag chips, same Create button, untouched. The order workflow appears as a **single card in its own region**, never as a row, with its own name link, its own status badges, its own trigger line and its own create/empty state. The two never share a table, a filter or a button.
 
-Both kinds already share the detail editor (`src/components/WorkflowDetail.tsx`, rendered by both routes), so the drill-down experience the current workflows page is liked for is _already_ what the order workflow gets — the order-workflow **index** is the only page that is a mess, and it is a mess for reasons unrelated to being separate: it carries an always-visible inline create form, a one-row table with a delete column, and two competing explanatory paragraphs (`src/routes/app.order-workflow.index.tsx:219-296`).
+A correction to an earlier draft of this document, which claimed both kinds already share one detail editor. They did; they no longer do. As of `d13f89a` item workflows have a read-only detail page (`/app/workflows/$workflowId`) plus a separate editor route (`/app/workflows/$workflowId/edit`), both built on `src/components/WorkflowStages.tsx`, while the order workflow still renders the older combined `src/components/WorkflowDetail.tsx` — a component nothing else imports any more. So the drill-down the workflows page is liked for is **not** yet what the order workflow gets.
 
-Which means there are two independent decisions here, and they should not be bundled:
+The order-workflow **index** is separately a mess, and for reasons unrelated to being its own page: an always-visible inline create form for a thing that already exists and can only exist once, a five-column table rendering a single row with a delete column, and two explanatory paragraphs in two cards (`src/routes/app.order-workflow.index.tsx:219-296`).
 
-1. **Should the order-workflow index be rebuilt to match the quality of the workflows index?** Yes, uncontroversially, whichever nav shape wins.
-2. **Should it be a page at all, or a region on the Workflows page?** This is the open one, and it is a question about discovery and about teaching the taxonomy, not about quality.
+Which means there are **three** independent pieces of work, and they should not be bundled:
 
-The mockups in the companion artifact show three shapes for decision 2 — an aside card on the Workflows page, a stacked section on the Workflows page, and a rebuilt standalone page under two nav entries — with the same content in each, so the comparison is about placement only.
+1. **The index.** Rebuild it to the quality of the workflows index — uncontroversial whichever nav shape wins.
+2. **Placement.** Its own page, or a region on the Workflows page? This was the open question, and it is about discovery and teaching the taxonomy, not about quality. **Decided: option B**, a stacked section.
+3. **The detail pair.** Bring the order workflow onto the read-only-detail + separate-editor pattern that item workflows already have, and retire `WorkflowDetail.tsx`. Independent of 1 and 2, larger than either, and worth doing regardless.
+
+The mockups in the companion artifact show three shapes for piece 2 — an aside card, a stacked section, and a rebuilt standalone page under two nav entries — with the same content in each, so the comparison was about placement only. Four consequences of B are settled there: the order-workflow section sits **above** the item list and is **one compact row** rather than a card; the list gains the heading **Item workflows**, which is the only place the qualifier appears anywhere in the app; `/app/order-workflow` folds into `/app/workflows` while the detail route keeps working, because the order-page blocker copy shipped in `7b7ab34` links to it from three messages; and **Create workflow** creates an item workflow only, with the order workflow created from its own section's empty state — one button that has to ask "which kind?" is the specific defect that made the old combined page confusing.
 
 ## Question 4 — should the order workflow still wait for the items?
 
@@ -142,6 +145,16 @@ Two consequences a merchant is never told about: an order whose items are all st
 **Recommendation: keep the order workflow as a pass that runs after the items, and do not build a wait gate yet.** The actual defect today is not the timing rule, it is that the timing rule is invisible and mis-stated. That is fixed with a sentence, not with machinery. Revisit the moment a merchant asks for order-level work that must happen _before_ the items are made — that request is the trigger, and it should be recorded as such rather than pre-built.
 
 If it is ever revisited, the merchant-comprehensible form is a step named **"Wait for all items"** — a step, not a new kind of object, so the merchant learns nothing new and can see the wait sitting in the list. That is the cheapest possible expression and the one to reach for.
+
+### Outcome (`7b7ab34`)
+
+The recommendation was taken and implemented, with three corrections from review that are worth carrying back here:
+
+- **The wait is not actually invisible.** The trigger runs inside the same transaction as the last item step's completion, so there is no observable gap between "last item done" and "order run exists"; while items are open, `Domain.productionState` resolves the order to `in_production`, which _is_ the wait's representation. The only genuinely unrepresented states were the dead-ends.
+- **The dead-ends now name themselves.** The order page states the outcome in every case — off, no steps, unassigned step, too old, no item has a workflow, every item run cancelled — instead of hiding the section, and `ORDER_WORKFLOW_TRIGGER` is now one three-sentence string every surface renders unmodified.
+- **A stranded order no longer needs a merchant to guess.** Turning the order workflow on, or applying a draft that makes it startable, now sweeps the orders already waiting for it. The manual "Start order workflow" escape hatch this document floated was rejected: Resync already existed, and a manual start invites routine bypassing of the wait.
+
+The design questions this raised were all settled the conservative way — keep the `anyDone` condition, no order workflow for an all-cancelled order, no `waiting` run status. Details in `order-workflow-trigger-truth-research.md` §5.
 
 ## Question 5 — replacing `scope`
 
@@ -226,9 +239,12 @@ The workflow-name badge on the card (`:440`) is a closer call and should stay: i
 
 ## Loose ends worth fixing regardless of the naming decisions
 
-Found while researching; each is a truth problem rather than a taste problem. They are written up in full, with line references and proposed fixes, in `order-workflow-trigger-truth-research.md` — that document supersedes this list.
+Found while researching; each was a truth problem rather than a taste problem. They are written up in full, with line references and fixes, in `order-workflow-trigger-truth-research.md` — that document supersedes this list. Status as of `7b7ab34`:
 
-- `ORDER_WORKFLOW_TRIGGER` says "Starts for every paid order." on the detail page, and the real rule is considerably narrower. State the real rule.
-- An order with no matching item workflow never gets an order workflow either, and nothing says so anywhere.
-- The order-workflow age rule ("this order was placed before that workflow was created") is explained on the order detail page but not on the workflow's own page.
-- The nav gives a shop-wide singleton the same weight as every item workflow combined.
+| Loose end                                                                                                            | Status                                                                                                                                          |
+| -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ORDER_WORKFLOW_TRIGGER` said "Starts for every paid order." on the detail page while the real rule was far narrower | **Fixed.** One three-sentence constant, rendered unmodified by every surface that describes the trigger.                                        |
+| An order with no matching item workflow never gets an order workflow, and nothing said so                            | **Fixed.** The order page names that outcome instead of hiding the section.                                                                     |
+| The age rule was explained on the order detail page only                                                             | **Fixed.** It is a clause in the shared trigger string, so it appears wherever the trigger does.                                                |
+| Orders stranded when the order workflow was off or had an unassigned step                                            | **Fixed.** `startReadyOrderRuns` sweeps them when the workflow is turned on or applied; the order page names the blocker with a link to fix it. |
+| The nav gives a shop-wide singleton the same weight as every item workflow combined                                  | **Open.** This is Question 3's option B, decided but not built.                                                                                 |

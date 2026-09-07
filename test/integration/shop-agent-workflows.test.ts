@@ -657,12 +657,12 @@ describe("ShopAgent workflow run callables", () => {
     await goLive(agent, item.workflow.id);
     const pack = await agent.createWorkflow({
       name: "Pack",
-      scope: "order",
+      type: "order",
     });
     if (pack._tag !== "Ok") throw new Error(pack._tag);
-    strictEqual(pack.workflow.scope, "order");
+    strictEqual(pack.workflow.type, "order");
     expect(
-      await agent.createWorkflow({ name: "Pack 2", scope: "order" }),
+      await agent.createWorkflow({ name: "Pack 2", type: "order" }),
     ).toEqual({ _tag: "OrderWorkflowExists" });
     await agent.addStep({
       workflowId: pack.workflow.id,
@@ -744,7 +744,7 @@ describe("ShopAgent workflow run callables", () => {
       teamId: engraving.id,
     });
     await goLive(agent, item.workflow.id);
-    const pack = await agent.createWorkflow({ name: "Pack", scope: "order" });
+    const pack = await agent.createWorkflow({ name: "Pack", type: "order" });
     if (pack._tag !== "Ok") throw new Error(pack._tag);
     await agent.addStep({
       workflowId: pack.workflow.id,
@@ -794,7 +794,7 @@ describe("ShopAgent workflow run callables", () => {
 
   /**
    * The member-area server fns cannot be driven end to end here (their route
-   * needs a Shopify session the isolate cannot stub), so the scope check they
+   * needs a Shopify session the isolate cannot stub), so the kind check they
    * delegate to is asserted at the object: a team outside the caller's is
    * `NotAllowed` for every action, and `listQueue` returns the snapshotted
    * `startedByEmail`.

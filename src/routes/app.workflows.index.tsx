@@ -16,9 +16,18 @@ import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
-import { workflowResultMessage } from "@/lib/workflowShared";
+import {
+  ORDER_WORKFLOW_TRIGGER,
+  workflowResultMessage,
+} from "@/lib/workflowShared";
 
 const CREATE_MODAL = "create-workflow";
+/**
+ * Two create paths, never one button that asks which kind. The header button
+ * always makes an item workflow; the order workflow is created only from its
+ * own section's empty state, which exists only while the shop has none.
+ */
+const CREATE_ORDER_MODAL = "create-order-workflow";
 
 /**
  * The status tabs and the tag filter are in the URL, so a filtered list is a
@@ -53,8 +62,7 @@ const decodeWorkflowResult = Schema.decodeUnknownPromise(
  * attention" is derived by the object on every read: an unassigned step or a
  * team with no members.
  *
- * Shared with the order workflow index, which renders the same badges for
- * its single row.
+ * The order-workflow row above the list renders the same badges.
  */
 export const statusBadges = (workflow: Domain.WorkflowSummary) => (
   <s-stack direction="inline" gap="small-300">
@@ -76,8 +84,7 @@ export const statusBadges = (workflow: Domain.WorkflowSummary) => (
  * loader (the loader-versus-socket rule on `ShopAgentClient`): SSR paint, and
  * `router.invalidate()` after each write. Only the writes use the socket.
  *
- * Item scope only: the order workflow lives on `/app/order-workflow` and is
- * filtered out here.
+ * Both kinds come back; the page splits them by `type`.
  */
 const getLoaderData = createServerFn({ method: "GET" })
   .middleware([shopifyServerFnMiddleware])
@@ -99,10 +106,19 @@ export const Route = createFileRoute("/app/workflows/")({
 });
 
 /**
- * The workflows list: what exists, what state each one is in, and one way in
- * to each. Creating asks for a name and nothing else — a workflow's product
- * tags and steps are decisions made in the editor, in front of the trigger
- * card that says what they do — so the page carries no form.
+ * The workflows page: the order workflow as one compact row above, the item
+ * workflows as the filterable list below. The two never share a table, a
+ * filter or a create button — the order workflow has no product tags and at
+ * most one exists, so a shared table would carry a blank column and a filter
+ * that cannot apply to it. Above the list rather than below because a
+ * merchant looking for it has to find it; compact because a shop-wide
+ * singleton must not read as more important than the daily work. Delete
+ * lives on the detail page for both kinds; the index has no destructive
+ * control.
+ *
+ * Creating asks for a name and nothing else — a workflow's product tags and
+ * steps are decisions made in the editor, in front of the trigger card that
+ * says what they do — so the page carries no standing form.
  */
 function RouteComponent() {
   const { workflows: allWorkflows } = Route.useLoaderData();
@@ -114,13 +130,17 @@ function RouteComponent() {
   const [query, setQuery] = React.useState("");
   const [name, setName] = React.useState("");
   const [nameError, setNameError] = React.useState<string | null>(null);
+  const [orderName, setOrderName] = React.useState("");
+  const [orderNameError, setOrderNameError] = React.useState<string | null>(
+    null,
+  );
   const [banner, setBanner] = React.useState<string | null>(null);
 
   const createMutation = useMutation({
     mutationFn: () =>
       agent
         ? withSocketRecovery(agent)(() =>
-            agent.stub.createWorkflow({ name, scope: "item", tags: [] }),
+            agent.stub.createWorkflow({ name, type: "item", tags: [] }),
           ).then(decodeWorkflowResult)
         : Promise.reject(new Error("Still connecting. Try again in a moment.")),
     onSuccess: async (result) => {
@@ -141,7 +161,35 @@ function RouteComponent() {
     },
   });
 
+  const createOrderMutation = useMutation({
+    mutationFn: () =>
+      agent
+        ? withSocketRecovery(agent)(() =>
+            agent.stub.createWorkflow({ name: orderName, type: "order" }),
+          ).then(decodeWorkflowResult)
+        : Promise.reject(new Error("Still connecting. Try again in a moment.")),
+    onSuccess: async (result) => {
+      if (result._tag !== "Ok") {
+        setOrderNameError(workflowResultMessage(result));
+        return;
+      }
+      await shopify.modal.hide(CREATE_ORDER_MODAL);
+      setOrderName("");
+      await router.invalidate({ sync: true });
+      await navigate({
+        to: "/app/workflows/$workflowId/edit",
+        params: { workflowId: result.workflow.id },
+      });
+    },
+    onError: (error: Error) => {
+      setBanner(error.message);
+    },
+  });
+
   const workflows = allWorkflows.filter(Domain.isItemWorkflow);
+  /** The slot is taken by any order workflow, on or off (`Workflow_order_uidx`). */
+  const orderWorkflow =
+    allWorkflows.find((workflow) => workflow.type === "order") ?? null;
   const tags = [
     ...new Set(workflows.flatMap((workflow) => workflow.tags)),
   ].toSorted();
@@ -188,15 +236,54 @@ function RouteComponent() {
     </s-button>
   );
 
+  const renderOrderWorkflow = () => {
+    if (orderWorkflow === null)
+      return (
+        <s-stack gap="base" alignItems="start">
+          <s-paragraph color="subdued">
+            No order workflow yet. Add one for the steps that happen once per
+            order after every item is made — packing, a final check, the
+            invoice.
+          </s-paragraph>
+          <s-button commandFor={CREATE_ORDER_MODAL} command="--show">
+            Create order workflow
+          </s-button>
+        </s-stack>
+      );
+    return (
+      <s-stack gap="small-300">
+        <s-grid gridTemplateColumns="1fr auto" gap="base" alignItems="center">
+          <s-stack direction="inline" gap="base" alignItems="center">
+            <s-link href={`/app/workflows/${orderWorkflow.id}`}>
+              {orderWorkflow.name}
+            </s-link>
+            {statusBadges(orderWorkflow)}
+            <s-text color="subdued">
+              {`${String(orderWorkflow.stepCount)} ${orderWorkflow.stepCount === 1 ? "step" : "steps"}`}
+            </s-text>
+            <s-badge tone="info">One per shop</s-badge>
+          </s-stack>
+          <s-button
+            variant="tertiary"
+            href={`/app/workflows/${orderWorkflow.id}`}
+          >
+            Open
+          </s-button>
+        </s-grid>
+        <s-paragraph color="subdued">{ORDER_WORKFLOW_TRIGGER}</s-paragraph>
+      </s-stack>
+    );
+  };
+
   const renderRows = () => {
     if (workflows.length === 0)
       return (
         <s-box padding="base">
           <s-stack gap="base" alignItems="start">
             <s-paragraph color="subdued">
-              No workflows yet. A workflow is the ordered list of steps a line
-              item passes through, each owned by a team. Product tags decide
-              which items follow it.
+              No item workflows yet. Each one is the ordered list of steps a
+              line item passes through, each owned by a team. Product tags
+              decide which items follow it.
             </s-paragraph>
             {createButton(false)}
           </s-stack>
@@ -206,7 +293,7 @@ function RouteComponent() {
       return (
         <s-box padding="base">
           <s-stack gap="base" alignItems="start">
-            <s-paragraph color="subdued">No workflows match.</s-paragraph>
+            <s-paragraph color="subdued">No item workflows match.</s-paragraph>
             <s-button
               variant="secondary"
               onClick={() => {
@@ -262,14 +349,24 @@ function RouteComponent() {
       <SocketBanner />
       {workflows.length > 0 && createButton(true)}
 
-      <s-section padding="none" accessibilityLabel="Workflows">
+      {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
+
+      <s-section heading="Order workflow" accessibilityLabel="Order workflow">
+        {renderOrderWorkflow()}
+      </s-section>
+
+      {/* No `heading` attribute: the section has `padding="none"` so the
+          table runs edge to edge, which would leave a slotted heading flush
+          against the card's left edge. The heading goes inside the padded
+          intro box instead. */}
+      <s-section padding="none" accessibilityLabel="Item workflows">
         <s-box padding="base" paddingBlockEnd="none">
           <s-stack gap="small-300">
-            {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
+            <s-heading>Item workflows</s-heading>
             <s-paragraph color="subdued">
-              A workflow is the ordered list of steps a line item passes
-              through, each owned by a team. Turn one off to stop new runs while
-              open runs finish.
+              Each one is the ordered list of steps a line item passes through,
+              chosen by product tag. Turn one off to stop new runs while open
+              runs finish.
             </s-paragraph>
           </s-stack>
         </s-box>
@@ -326,7 +423,7 @@ function RouteComponent() {
               )}
               {filtered && (
                 <s-paragraph color="subdued">
-                  {`Showing ${String(rows.length)} of ${String(workflows.length)} workflows.`}
+                  {`Showing ${String(rows.length)} of ${String(workflows.length)} item workflows.`}
                 </s-paragraph>
               )}
             </s-stack>
@@ -363,6 +460,39 @@ function RouteComponent() {
           disabled={!identified || name.trim().length === 0}
           onClick={() => {
             createMutation.mutate();
+          }}
+        >
+          Create
+        </s-button>
+      </s-modal>
+
+      <s-modal id={CREATE_ORDER_MODAL} heading="Create order workflow">
+        <s-text-field
+          label="Name"
+          placeholder="e.g. Pack and ship"
+          details="You'll add the steps next. It has no product tags: it runs once per order."
+          value={orderName}
+          maxLength={64}
+          {...(orderNameError === null ? {} : { error: orderNameError })}
+          onInput={(event) => {
+            setOrderName(event.currentTarget.value);
+            setOrderNameError(null);
+          }}
+        />
+        <s-button
+          slot="secondary-actions"
+          commandFor={CREATE_ORDER_MODAL}
+          command="--hide"
+        >
+          Cancel
+        </s-button>
+        <s-button
+          slot="primary-action"
+          variant="primary"
+          loading={createOrderMutation.isPending}
+          disabled={!identified || orderName.trim().length === 0}
+          onClick={() => {
+            createOrderMutation.mutate();
           }}
         >
           Create

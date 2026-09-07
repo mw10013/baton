@@ -21,6 +21,7 @@ import {
   DELETE_WORKFLOW_WARNING,
   deleteWorkflowResultMessage,
   itemTriggerLine,
+  ORDER_WORKFLOW_TRIGGER,
   turnOnBlocker,
   workflowResultMessage,
 } from "@/lib/workflowShared";
@@ -62,6 +63,16 @@ const activateResultMessage = Match.typeTags<
     `These steps have no team: ${stepNames.join(", ")}.`,
 });
 
+/** The Turn on dialog's body: the rule that will start runs once the switch is on. */
+const turnOnBody = (workflow: Domain.Workflow) => {
+  if (workflow.type === "order") return ORDER_WORKFLOW_TRIGGER;
+  if (workflow.tags.length === 0)
+    return "This workflow has no product tags, so nothing will match it until you add some.";
+  return `Every order with a line item tagged ${workflow.tags
+    .map((tag) => `“${tag}”`)
+    .join(" or ")} will start a run of this workflow.`;
+};
+
 /** Loader read for the same reason as the index's: a definition is configuration one person edits. */
 const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(WorkflowParams))
@@ -91,8 +102,10 @@ export const Route = createFileRoute("/app/workflows/$workflowId")({
  * run copies its steps when it starts and is independent from then on, so the
  * workflow has exactly two states worth showing.
  *
- * Order scope lives under `/app/order-workflow` with its own page; an order
- * workflow opened here renders a pointer rather than the wrong editor.
+ * Both kinds of workflow render here. The order workflow differs in one
+ * thing on this page: its trigger is the shop-wide rule, not a product tag,
+ * so the dashed trigger box changes heading and text on `workflow.type`.
+ * Nothing else about steps, drafts, teams or the switch is different.
  */
 function RouteComponent() {
   const { workflowId } = Route.useParams();
@@ -210,24 +223,13 @@ function RouteComponent() {
 
   const { workflow, draft, steps } = detail;
 
-  if (workflow.scope === "order")
-    return (
-      <s-page heading={workflow.name}>
-        <s-link slot="breadcrumb-actions" href="/app/workflows">
-          Workflows
-        </s-link>
-        <s-paragraph color="subdued">
-          This is an order workflow. It lives under Order workflow now.
-        </s-paragraph>
-        <s-link href={`/app/order-workflow/${workflowId}`}>
-          Open in Order workflow
-        </s-link>
-      </s-page>
-    );
-
   const showingDraft = tab === "draft" && draft !== null;
   const shownSteps = showingDraft ? draft.steps : steps;
-  const shownTags = showingDraft ? draft.draft.tags : workflow.tags;
+  /** `null` for the order workflow, which `Domain.OrderWorkflow` gives no `tags` key. */
+  const shownTags = (() => {
+    if (workflow.type === "order") return null;
+    return showingDraft ? draft.draft.tags : workflow.tags;
+  })();
   const blocker = turnOnBlocker(steps);
   const switching = activeMutation.isPending;
 
@@ -351,8 +353,14 @@ function RouteComponent() {
                 borderRadius="base"
               >
                 <s-stack gap="small-500">
-                  <s-text type="strong">Product tag</s-text>
-                  <s-text color="subdued">{itemTriggerLine(shownTags)}</s-text>
+                  <s-text type="strong">
+                    {shownTags === null ? "When it runs" : "Product tag"}
+                  </s-text>
+                  <s-text color="subdued">
+                    {shownTags === null
+                      ? ORDER_WORKFLOW_TRIGGER
+                      : itemTriggerLine(shownTags)}
+                  </s-text>
                 </s-stack>
               </s-box>
             }
@@ -401,13 +409,7 @@ function RouteComponent() {
       </s-modal>
 
       <s-modal id={TURN_ON_MODAL} heading={`Turn on ${workflow.name}?`}>
-        <s-paragraph>
-          {workflow.tags.length === 0
-            ? "This workflow has no product tags, so nothing will match it until you add some."
-            : `Every order with a line item tagged ${workflow.tags
-                .map((tag) => `“${tag}”`)
-                .join(" or ")} will start a run of this workflow.`}
-        </s-paragraph>
+        <s-paragraph>{turnOnBody(workflow)}</s-paragraph>
         <s-button
           slot="secondary-actions"
           commandFor={TURN_ON_MODAL}

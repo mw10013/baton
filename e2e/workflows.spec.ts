@@ -202,3 +202,89 @@ test("workflows create, edit, apply, and discard through the draft", async ({
   ).toHaveCount(0);
   await expect(frame.getByText("Bake", { exact: true })).toBeVisible();
 });
+
+const ORDER_CREATED = "E2E Pack";
+
+/**
+ * The order workflow on the same page: created from its own section's empty
+ * state (never from the header's Create workflow, which always makes an item
+ * workflow), listed as a row above the item list rather than in it, and
+ * served by the same detail page and editor as an item workflow — minus the
+ * product-tag trigger, since it has none.
+ */
+test("the order workflow is created from its own section and opens on the shared detail page", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+
+  await seedMembers(
+    seedConfig(),
+    [MEMBER],
+    [{ name: TEAM, members: [MEMBER] }],
+    [
+      {
+        name: EXISTING,
+        tags: ["e2e-ring"],
+        steps: [{ name: "Cut", team: TEAM }],
+      },
+    ],
+  );
+
+  const frame = await gotoApp(page);
+  await clickHoisted(
+    page.getByRole("link", { name: "Workflows", exact: true }),
+  );
+  await expect(frame.locator('s-page[heading="Workflows"]')).toBeVisible();
+
+  /* No order workflow yet: the section offers its own create, and nothing
+     else on the page does. */
+  await expect(
+    frame.getByText("No order workflow yet.", { exact: false }),
+  ).toBeVisible();
+  await frame.getByRole("button", { name: "Create order workflow" }).click();
+  await frame
+    .locator('s-modal[heading="Create order workflow"]')
+    .getByRole("textbox", { name: "Name", exact: true })
+    .fill(ORDER_CREATED);
+  await frame
+    .locator('s-modal[heading="Create order workflow"]')
+    .getByRole("button", { name: "Create", exact: true })
+    .click();
+
+  /* Lands in the editor. The trigger box is the shop-wide rule, not a tag
+     field, so there is nothing to add a tag to. */
+  await expect(
+    frame.locator(`s-page[heading="${ORDER_CREATED}"]`),
+  ).toBeVisible();
+  await expect(
+    frame.getByText("Runs once per paid order", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    frame.getByRole("textbox", { name: "Add a product tag" }),
+  ).toHaveCount(0);
+
+  /* Back on the list it is one row above the item list, not a table row. */
+  await closeEditor(page);
+  await expect(
+    frame.locator(`s-page[heading="${ORDER_CREATED}"]`),
+  ).toBeVisible();
+  await clickHoisted(
+    page.getByLabel(/^Breadcrumbs/u).getByRole("button", { name: "Workflows" }),
+  );
+  await expect(frame.locator('s-page[heading="Workflows"]')).toBeVisible();
+  const orderSection = frame.locator('s-section[heading="Order workflow"]');
+  await expect(
+    orderSection.getByRole("link", { name: ORDER_CREATED }),
+  ).toBeVisible();
+  await expect(orderSection.getByText("One per shop")).toBeVisible();
+  await expect(
+    frame.getByRole("button", { name: "Create order workflow" }),
+  ).toHaveCount(0);
+  const itemSection = frame.locator(
+    's-section[accessibilityLabel="Item workflows"]',
+  );
+  await expect(itemSection.getByRole("link", { name: EXISTING })).toBeVisible();
+  await expect(
+    itemSection.getByRole("link", { name: ORDER_CREATED }),
+  ).toHaveCount(0);
+});

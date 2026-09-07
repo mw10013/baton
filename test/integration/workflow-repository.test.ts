@@ -430,7 +430,7 @@ describe("WorkflowRepository", () => {
             },
             {
               name: name("Order"),
-              scope: "order",
+              type: "order",
               tags: tags([]),
               steps: [{ name: stepName("a"), teamId: teamId("t1") }],
             },
@@ -457,7 +457,7 @@ describe("WorkflowRepository", () => {
           (yield* refused([
             {
               name: name("Tagged order"),
-              scope: "order",
+              type: "order",
               tags: tags(["x"]),
               steps: [],
             },
@@ -466,8 +466,8 @@ describe("WorkflowRepository", () => {
         );
         strictEqual(
           (yield* refused([
-            { name: name("O1"), scope: "order", tags: tags([]), steps: [] },
-            { name: name("O2"), scope: "order", tags: tags([]), steps: [] },
+            { name: name("O1"), type: "order", tags: tags([]), steps: [] },
+            { name: name("O2"), type: "order", tags: tags([]), steps: [] },
           ]))._tag,
           "WorkflowRepositoryError",
         );
@@ -600,13 +600,13 @@ describe("WorkflowRepository", () => {
         const repo = yield* WorkflowRepository;
         const first = yield* repo.createWorkflow({
           name: name("Pack"),
-          scope: "order",
+          type: "order",
         });
-        strictEqual(first.scope, "order");
+        strictEqual(first.type, "order");
         const second = yield* repo
           .createWorkflow({
             name: name("Ship"),
-            scope: "order",
+            type: "order",
           })
           .pipe(Effect.flip);
         strictEqual(second._tag, "OrderWorkflowExistsError");
@@ -615,17 +615,17 @@ describe("WorkflowRepository", () => {
           name: name("Engrave"),
           tags: tags(["x"]),
         });
-        strictEqual(item.scope, "item");
+        strictEqual(item.type, "item");
 
         yield* repo.deleteWorkflow({ workflowId: first.id });
         const ship = yield* repo.createWorkflow({
           name: name("Ship"),
-          scope: "order",
+          type: "order",
         });
-        strictEqual(ship.scope, "order");
+        strictEqual(ship.type, "order");
         const listed = yield* repo.listWorkflows({ teams: ALL_TEAMS });
         deepStrictEqual(
-          listed.map((w) => [w.name, w.scope]),
+          listed.map((w) => [w.name, w.type]),
           [
             ["Engrave", "item"],
             ["Ship", "order"],
@@ -634,21 +634,21 @@ describe("WorkflowRepository", () => {
       }),
     ));
 
-  it("refuses tags on an order workflow on update, and the schema refuses them on any write; scope never changes", () =>
+  it("refuses tags on an order workflow on update, and the schema refuses them on any write; type never changes", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
         const sql = yield* SqlClient.SqlClient;
-        // Create cannot even be asked for tags on order scope (the input type
+        // Create cannot even be asked for tags on the order workflow (the input type
         // has no `tags` key); the SQL check is the backstop for a raw write.
         const raw = yield* sql`
-          insert into Workflow (id, name, scope, active, tags, createdAt, updatedAt)
+          insert into Workflow (id, name, type, active, tags, createdAt, updatedAt)
           values ('raw', 'Raw', 'order', 0, '["x"]', 0, 0)
         `.pipe(Effect.flip);
         strictEqual(raw._tag, "SqlError");
         const pack = yield* repo.createWorkflow({
           name: name("Pack"),
-          scope: "order",
+          type: "order",
         });
         const retag = yield* repo
           .updateWorkflowTags({ workflowId: pack.id, tags: tags(["x"]) })
@@ -656,7 +656,7 @@ describe("WorkflowRepository", () => {
         strictEqual(retag._tag, "WorkflowRepositoryError");
         // The singleton is a partial unique index, not only the pre-check.
         const rawSecond = yield* sql`
-          insert into Workflow (id, name, scope, active, tags, createdAt, updatedAt)
+          insert into Workflow (id, name, type, active, tags, createdAt, updatedAt)
           values ('raw2', 'Raw 2', 'order', 0, '[]', 0, 0)
         `.pipe(Effect.flip);
         strictEqual(rawSecond._tag, "SqlError");
@@ -664,7 +664,7 @@ describe("WorkflowRepository", () => {
           workflowId: pack.id,
           name: name("Pack & ship"),
         });
-        strictEqual(renamed.scope, "order");
+        strictEqual(renamed.type, "order");
         strictEqual(renamed.name, "Pack & ship");
       }),
     ));
@@ -1218,7 +1218,7 @@ describe("WorkflowRepository workflow and draft", () => {
           });
         const pack = yield* repo.createWorkflow({
           name: name("Pack"),
-          scope: "order",
+          type: "order",
         });
         yield* twoSteps(pack.id);
         yield* repo.applyDraft({ workflowId: pack.id, teams: ALL_TEAMS });
@@ -1228,7 +1228,7 @@ describe("WorkflowRepository workflow and draft", () => {
         yield* repo.deleteWorkflow({ workflowId: pack.id });
         const ship = yield* repo.createWorkflow({
           name: name("Ship"),
-          scope: "order",
+          type: "order",
         });
         yield* twoSteps(ship.id);
         yield* repo.applyDraft({ workflowId: ship.id, teams: ALL_TEAMS });
@@ -1237,7 +1237,7 @@ describe("WorkflowRepository workflow and draft", () => {
           (yield* repo
             .createWorkflow({
               name: name("Pack"),
-              scope: "order",
+              type: "order",
             })
             .pipe(Effect.flip))._tag,
           "OrderWorkflowExistsError",

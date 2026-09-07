@@ -21,6 +21,7 @@ import {
   DELETE_WORKFLOW_WARNING,
   deleteWorkflowResultMessage,
   itemTriggerLine,
+  ORDER_WORKFLOW_TRIGGER,
   workflowResultMessage,
 } from "@/lib/workflowShared";
 
@@ -365,24 +366,15 @@ function RouteComponent() {
 
   const { workflow, draft, teams } = detail;
 
-  if (workflow.scope === "order")
-    return (
-      <s-page heading={workflow.name}>
-        <s-link slot="breadcrumb-actions" href="/app/workflows">
-          Workflows
-        </s-link>
-        <s-paragraph color="subdued">
-          This is an order workflow. Edit it under Order workflow.
-        </s-paragraph>
-        <s-link href={`/app/order-workflow/${workflowId}`}>
-          Open in Order workflow
-        </s-link>
-      </s-page>
-    );
-
   /** What the editor writes: the draft once one exists, the workflow itself until then. */
   const steps = draft?.steps ?? detail.steps;
-  const tags = draft?.draft.tags ?? workflow.tags;
+  /**
+   * `null` for the order workflow: `Domain.OrderWorkflow` has no `tags` key,
+   * so the tag editor below is a type narrowing, not a runtime check. Its
+   * trigger is the shop-wide rule and is not editable.
+   */
+  const tags =
+    workflow.type === "item" ? (draft?.draft.tags ?? workflow.tags) : null;
   const hasDraft = draft !== null;
   const blocker = applyBlocker(steps);
   const selected = steps.find((step) => step.id === selectedStepId) ?? null;
@@ -656,50 +648,59 @@ function RouteComponent() {
                 borderRadius="base"
               >
                 <s-stack gap="small-300">
-                  <s-text type="strong">Product tag</s-text>
-                  <s-text color="subdued">{itemTriggerLine(tags)}</s-text>
-                  {tags.length > 0 && (
-                    <s-stack direction="inline" gap="small-300">
-                      {tags.map((tag) => (
-                        <s-chip
-                          key={tag}
-                          removable
-                          accessibilityLabel={`Remove ${tag}`}
-                          onRemove={() => {
-                            tagsMutation.mutate(
-                              tags.filter((other) => other !== tag),
-                            );
+                  {tags === null ? (
+                    <>
+                      <s-text type="strong">When it runs</s-text>
+                      <s-text color="subdued">{ORDER_WORKFLOW_TRIGGER}</s-text>
+                    </>
+                  ) : (
+                    <>
+                      <s-text type="strong">Product tag</s-text>
+                      <s-text color="subdued">{itemTriggerLine(tags)}</s-text>
+                      {tags.length > 0 && (
+                        <s-stack direction="inline" gap="small-300">
+                          {tags.map((tag) => (
+                            <s-chip
+                              key={tag}
+                              removable
+                              accessibilityLabel={`Remove ${tag}`}
+                              onRemove={() => {
+                                tagsMutation.mutate(
+                                  tags.filter((other) => other !== tag),
+                                );
+                              }}
+                            >
+                              {tag}
+                            </s-chip>
+                          ))}
+                        </s-stack>
+                      )}
+                      <s-grid
+                        gridTemplateColumns="1fr auto"
+                        gap="small-300"
+                        alignItems="end"
+                      >
+                        <s-text-field
+                          label="Add a product tag"
+                          placeholder="e.g. engraved"
+                          value={tagInput}
+                          disabled={busy}
+                          onInput={(event) => {
+                            setTagInput(event.currentTarget.value);
+                          }}
+                        />
+                        <s-button
+                          loading={tagsMutation.isPending}
+                          disabled={busy || tagInput.trim().length === 0}
+                          onClick={() => {
+                            tagsMutation.mutate([...tags, tagInput]);
                           }}
                         >
-                          {tag}
-                        </s-chip>
-                      ))}
-                    </s-stack>
+                          Add tag
+                        </s-button>
+                      </s-grid>
+                    </>
                   )}
-                  <s-grid
-                    gridTemplateColumns="1fr auto"
-                    gap="small-300"
-                    alignItems="end"
-                  >
-                    <s-text-field
-                      label="Add a product tag"
-                      placeholder="e.g. engraved"
-                      value={tagInput}
-                      disabled={busy}
-                      onInput={(event) => {
-                        setTagInput(event.currentTarget.value);
-                      }}
-                    />
-                    <s-button
-                      loading={tagsMutation.isPending}
-                      disabled={busy || tagInput.trim().length === 0}
-                      onClick={() => {
-                        tagsMutation.mutate([...tags, tagInput]);
-                      }}
-                    >
-                      Add tag
-                    </s-button>
-                  </s-grid>
                 </s-stack>
               </s-box>
             }

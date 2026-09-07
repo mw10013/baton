@@ -298,7 +298,6 @@ function AppRouteContent({ shop }: { readonly shop: string }) {
           </s-link>
           <s-link href="/app/orders">Orders</s-link>
           <s-link href="/app/workflows">Workflows</s-link>
-          <s-link href="/app/order-workflow">Order workflow</s-link>
           <s-link href="/app/teams">Teams</s-link>
           <s-link href="/app/members">Members</s-link>
         </s-app-nav>

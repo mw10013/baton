@@ -145,13 +145,13 @@ const callableEffect =
  * because it snapshots its steps and names, not because old definitions are
  * retained. `active` is stored, never derived, and no draft event touches it.
  *
- * Item and order workflows (`scope`) share these four tables on purpose: they
+ * Item and order workflows (`type`) share these four tables on purpose: they
  * differ in one column and one cardinality rule, and in nothing about steps,
  * stages, drafts, team pointers, or the on/off switch. An order workflow has
  * no product tags — `tags` is `'[]'` under the `check`, and
  * `Domain.OrderWorkflow` has no `tags` field at all — and there is at most
  * one per shop in any state, which `Workflow_order_uidx` (a partial unique
- * index on the constant `scope`) states in the schema. The repository
+ * index on the constant `type`) states in the schema. The repository
  * pre-checks both so the merchant gets a typed error rather than a constraint
  * failure; the SQL is the backstop for any write path that forgets, including
  * the seed. Separate `OrderWorkflow*` tables were considered and rejected:
@@ -180,7 +180,7 @@ const callableEffect =
  *
  * `WorkflowRun` / `WorkflowRunStep` are the *instances*: one workflow applied
  * to one line item **or to one order**, with the definition's steps copied
- * in. An order run (`Workflow.scope = 'order'`) has `lineItemId` and the
+ * in. An order run (`Workflow.type = 'order'`) has `lineItemId` and the
  * three line-item snapshot columns null together (the `check`), and starts
  * once every item run on the order is finished with at least one done. Every
  * display field is a snapshot and there is no foreign key to `ShopOrder`,
@@ -271,17 +271,17 @@ const initializeSchema = Effect.gen(function* () {
     create table if not exists Workflow (
       id text primary key,
       name text not null check (name = trim(name) and length(name) > 0),
-      scope text not null default 'item' check (scope in ('item', 'order')),
+      type text not null default 'item' check (type in ('item', 'order')),
       active integer not null default 0 check (active in (0, 1)),
       tags text not null default '[]'
-        check (scope = 'item' or tags = '[]'),
+        check (type = 'item' or tags = '[]'),
       createdAt integer not null,
       updatedAt integer not null
     );
     create unique index if not exists Workflow_name_uidx
       on Workflow (name collate nocase);
     create unique index if not exists Workflow_order_uidx
-      on Workflow (scope) where scope = 'order';
+      on Workflow (type) where type = 'order';
     create table if not exists WorkflowStep (
       id text primary key,
       workflowId text not null references Workflow (id) on delete cascade,
@@ -1778,7 +1778,7 @@ export class ShopAgent extends Agent {
     const shop = this.name;
     const startContext = () => this.startContext();
     return Effect.gen(function* () {
-      if (workflow.scope !== "order" || !workflow.active) return;
+      if (workflow.type !== "order" || !workflow.active) return;
       const started = yield* (yield* WorkflowRunRepository).startReadyOrderRuns(
         yield* startContext(),
       );
@@ -1862,7 +1862,7 @@ export class ShopAgent extends Agent {
         itemWorkflows: workflows
           .filter(
             ({ workflow, steps }) =>
-              workflow.scope === "item" && steps.length > 0,
+              workflow.type === "item" && steps.length > 0,
           )
           .map(({ workflow }) => workflow),
       } satisfies Domain.OrderDetailView;
@@ -1961,13 +1961,13 @@ export class ShopAgent extends Agent {
           const roster = yield* teams();
           // Only the workflow's own steps can start a run; a draft is never
           // attachable. An order workflow starts by rule, never by attaching
-          // it to one line item (deferred; see the `WorkflowScope` doc).
+          // it to one line item (deferred; see the `WorkflowType` doc).
           const detail: Domain.WorkflowDetail | null = Option.isSome(found)
             ? { workflow: found.value.workflow, steps: found.value.steps }
             : null;
           if (
             detail === null ||
-            detail.workflow.scope !== "item" ||
+            detail.workflow.type !== "item" ||
             !canStart(detail, roster)
           )
             return {

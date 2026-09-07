@@ -296,7 +296,7 @@ const seedOrderWorkflow = Effect.gen(function* () {
   });
   const pack = yield* workflows.createWorkflow({
     name: name("Pack"),
-    scope: "order",
+    type: "order",
   });
   yield* workflows.addStep({
     workflowId: pack.id,
@@ -593,7 +593,7 @@ describe("WorkflowRunRepository order runs", () => {
 
         // A manual attach on the same order is the opt-in.
         const { workflows } = yield* startContext();
-        const necklace = workflows.find((w) => w.workflow.scope === "item");
+        const necklace = workflows.find((w) => w.workflow.type === "item");
         if (necklace === undefined) throw new Error("no item workflow");
         const manual = Option.getOrThrow(
           yield* runs.createRun({
@@ -651,7 +651,7 @@ describe("WorkflowRunRepository order runs", () => {
           teamIds: [TEAM_C.id],
         });
         const { workflows } = yield* startContext();
-        const necklace = workflows.find((w) => w.workflow.scope === "item");
+        const necklace = workflows.find((w) => w.workflow.type === "item");
         if (necklace === undefined) throw new Error("no item workflow");
         const attached = Option.getOrThrow(
           yield* runs.createRun({
@@ -759,7 +759,7 @@ describe("WorkflowRunRepository order runs", () => {
 
         // An *active* item run removed in the same pass does flag the order run.
         const { workflows } = yield* startContext();
-        const necklace = workflows.find((w) => w.workflow.scope === "item");
+        const necklace = workflows.find((w) => w.workflow.type === "item");
         if (necklace === undefined) throw new Error("no item workflow");
         const late = Option.getOrThrow(
           yield* runs.createRun({
@@ -1459,7 +1459,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           yield* seedOrderWorkflow;
           const runs = yield* WorkflowRunRepository;
           const { workflows } = yield* startContext();
-          const necklace = workflows.find((w) => w.workflow.scope === "item");
+          const necklace = workflows.find((w) => w.workflow.type === "item");
           if (necklace === undefined) throw new Error("no item workflow");
           yield* upsertAndReconcile(order(), ORDER_ITEMS);
           yield* finishItemRuns();
@@ -2377,7 +2377,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         // the next order's start context will read.
         const replacement = yield* workflows.createWorkflow({
           name: name("Pack 2"),
-          scope: "order",
+          type: "order",
         });
         yield* workflows.addStep({
           workflowId: replacement.id,
@@ -2387,7 +2387,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         yield* goLive(replacement.id);
         deepStrictEqual(
           (yield* loadStartContext).workflows
-            .filter((detail) => detail.workflow.scope === "order")
+            .filter((detail) => detail.workflow.type === "order")
             .map((detail) => detail.workflow.name),
           [replacement.name],
         );

@@ -119,7 +119,7 @@ export const matchesLineItem = (
   order: Domain.ShopOrder,
   lineItem: Domain.OrderLineItem,
 ) =>
-  workflow.scope === "item" &&
+  workflow.type === "item" &&
   Domain.unitsToMake(lineItem) > 0 &&
   order.processedAt >= workflow.createdAt &&
   lineItem.productTags.some((tag) => {
@@ -736,7 +736,7 @@ export class WorkflowRunRepository extends Context.Service<
         teams,
       }: StartContext & { readonly orderId: string }) {
         const orderWorkflow = workflows.find(
-          ({ workflow }) => workflow.scope === "order",
+          ({ workflow }) => workflow.type === "order",
         );
         if (orderWorkflow === undefined) return 0;
         if (!canStart(orderWorkflow, teams)) return 0;
@@ -801,7 +801,7 @@ export class WorkflowRunRepository extends Context.Service<
         "WorkflowRunRepository.startReadyOrderRuns",
       )(function* ({ workflows, teams }: StartContext) {
         const orderWorkflow = workflows.find(
-          ({ workflow }) => workflow.scope === "order",
+          ({ workflow }) => workflow.type === "order",
         );
         if (orderWorkflow === undefined || !canStart(orderWorkflow, teams))
           return 0;
@@ -932,7 +932,7 @@ export class WorkflowRunRepository extends Context.Service<
                     startable
                       .filter(
                         (workflow) =>
-                          workflow.workflow.scope === "item" &&
+                          workflow.workflow.type === "item" &&
                           matchesLineItem(workflow, order, lineItem),
                       )
                       .map((workflow) => ({ workflow, lineItem })),

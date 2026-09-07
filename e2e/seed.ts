@@ -70,10 +70,10 @@ export interface SeedOrder {
   readonly lineItems: readonly SeedLineItem[];
 }
 
-/** A workflow definition to create, steps inline and in order. `scope: "order"` needs `tags: []`. */
+/** A workflow definition to create, steps inline and in order. `type: "order"` needs `tags: []`. */
 export interface SeedWorkflow {
   readonly name: string;
-  readonly scope?: "item" | "order";
+  readonly type?: "item" | "order";
   /** On/off switch; defaults to on when there are steps and every step is assigned. */
   readonly active?: boolean;
   readonly tags: readonly string[];

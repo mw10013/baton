@@ -452,8 +452,12 @@ function RouteComponent() {
                     alignItems="center"
                   >
                     <s-text>{orderItemLabel(orderItem)}</s-text>
+                    {/* "No steps", not "No workflow": a worker never sees
+                        definitions, so an absence stated in definition terms
+                        is nothing they can act on. What the packer needs is
+                        that nothing was made for this item. */}
                     {orderItem.runStatus === null ? (
-                      <s-badge>No workflow</s-badge>
+                      <s-badge>No steps</s-badge>
                     ) : (
                       <s-badge tone={ITEM_STATUS[orderItem.runStatus].tone}>
                         {ITEM_STATUS[orderItem.runStatus].label}

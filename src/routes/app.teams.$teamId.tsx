@@ -201,13 +201,7 @@ function RouteComponent() {
             >
               <s-table-cell>
                 <s-stack direction="inline" gap="small-300">
-                  <s-link
-                    href={
-                      owned.scope === "order"
-                        ? `/app/order-workflow/${owned.workflowId}`
-                        : `/app/workflows/${owned.workflowId}`
-                    }
-                  >
+                  <s-link href={`/app/workflows/${owned.workflowId}`}>
                     {owned.workflowName}
                   </s-link>
                   {owned.side === "draft" && (

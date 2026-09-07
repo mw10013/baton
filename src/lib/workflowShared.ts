@@ -39,7 +39,7 @@ export const deleteWorkflowResultMessage = Match.typeTags<
 export const DELETE_WORKFLOW_WARNING = "This can't be undone.";
 
 /**
- * The order-scope trigger line, in the merchant copy of `Domain.Workflow`.
+ * The order-workflow trigger line, in the merchant copy of `Domain.Workflow`.
  * Three sentences because the trigger has three parts a merchant cannot
  * infer from "order workflow": the wait for item runs, the exclusion of
  * orders with no item workflow (a stock-only order never starts it), and
@@ -51,7 +51,7 @@ export const ORDER_WORKFLOW_TRIGGER =
   "Runs once per paid order, after every item with a workflow is made. An order where no item matches a workflow never starts it. Orders placed before this workflow was created are skipped, unless you attach a workflow to one of their items by hand.";
 
 /**
- * The item-scope trigger line: what has to be true of an order for this
+ * The item-workflow trigger line: what has to be true of an order for this
  * workflow to start. Product tags are the whole selector, so a workflow
  * without any never starts and says so.
  */

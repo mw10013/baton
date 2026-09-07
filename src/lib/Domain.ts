@@ -480,14 +480,14 @@ export type ProductTags = typeof ProductTags.Type;
  * run's completion or cancellation, and swept when the order workflow is
  * turned on or applied.
  */
-export const WorkflowScope = Schema.Literals(["item", "order"]);
-export type WorkflowScope = typeof WorkflowScope.Type;
+export const WorkflowType = Schema.Literals(["item", "order"]);
+export type WorkflowType = typeof WorkflowType.Type;
 
 /**
  * Vocabulary. A workflow definition has two nouns and the merchant never
  * meets a third:
  *
- * - **Workflow**: name, scope, product tags, steps, Active / Off. This is
+ * - **Workflow**: name, type, product tags, steps, Active / Off. This is
  *   what starts runs. Runs copy it wholesale and never look back at it.
  * - **Draft**: a private copy of the workflow's tags and steps, created by
  *   Edit and living until Apply or Discard. Every edit writes to the draft
@@ -546,7 +546,7 @@ const WorkflowFields = {
 /** An item workflow: chosen by product tag. */
 export const ItemWorkflow = Schema.Struct({
   ...WorkflowFields,
-  scope: Schema.Literal("item"),
+  type: Schema.Literal("item"),
   tags: Schema.fromJsonString(ProductTags),
 });
 export type ItemWorkflow = typeof ItemWorkflow.Type;
@@ -559,7 +559,7 @@ export type ItemWorkflow = typeof ItemWorkflow.Type;
  */
 export const OrderWorkflow = Schema.Struct({
   ...WorkflowFields,
-  scope: Schema.Literal("order"),
+  type: Schema.Literal("order"),
 });
 export type OrderWorkflow = typeof OrderWorkflow.Type;
 
@@ -567,10 +567,10 @@ export const Workflow = Schema.Union([ItemWorkflow, OrderWorkflow]);
 export type Workflow = typeof Workflow.Type;
 
 /** Narrows any workflow-shaped value (summary, row) to its item variant, which is the only one with `tags`. */
-export const isItemWorkflow = <W extends { readonly scope: WorkflowScope }>(
+export const isItemWorkflow = <W extends { readonly type: WorkflowType }>(
   workflow: W,
-): workflow is Extract<W, { readonly scope: "item" }> =>
-  workflow.scope === "item";
+): workflow is Extract<W, { readonly type: "item" }> =>
+  workflow.type === "item";
 
 /**
  * The draft side of {@link Workflow}: at most one per workflow (`workflowId`
@@ -650,7 +650,7 @@ export const WorkflowSummary = Schema.Union([
   }),
 ]);
 export type WorkflowSummary = typeof WorkflowSummary.Type;
-export type ItemWorkflowSummary = Extract<WorkflowSummary, { scope: "item" }>;
+export type ItemWorkflowSummary = Extract<WorkflowSummary, { type: "item" }>;
 
 /** The shape run creation reads: a workflow with its steps. Drafts never appear here. */
 export const WorkflowDetail = Schema.Struct({
@@ -719,16 +719,16 @@ export type WorkflowIdInput = typeof WorkflowIdInput.Type;
 export const DeleteWorkflowInput = WorkflowIdInput;
 export type DeleteWorkflowInput = typeof DeleteWorkflowInput.Type;
 
-/** Item: `scope` omitted means `item`, so every pre-existing caller keeps its shape. Order: no `tags` key at all — the type, not a runtime check, is what keeps tags off the order workflow. */
+/** Item: `type` omitted means `item`, so every pre-existing caller keeps its shape. Order: no `tags` key at all — the type, not a runtime check, is what keeps tags off the order workflow. */
 export const CreateWorkflowInput = Schema.Union([
   Schema.Struct({
     name: WorkflowName,
-    scope: Schema.optionalKey(Schema.Literal("item")),
+    type: Schema.optionalKey(Schema.Literal("item")),
     tags: ProductTags,
   }),
   Schema.Struct({
     name: WorkflowName,
-    scope: Schema.Literal("order"),
+    type: Schema.Literal("order"),
   }),
 ]);
 export type CreateWorkflowInput = typeof CreateWorkflowInput.Type;
@@ -827,7 +827,7 @@ export const SeedWorkflowsInput = Schema.Struct({
   workflows: Schema.Array(
     Schema.Struct({
       name: WorkflowName,
-      scope: Schema.optionalKey(WorkflowScope),
+      type: Schema.optionalKey(WorkflowType),
       active: Schema.optionalKey(Schema.Boolean),
       tags: ProductTags,
       steps: Schema.Array(SeedWorkflowStep),
@@ -976,11 +976,10 @@ export const TeamStepCounts = Schema.Struct({
 });
 export type TeamStepCounts = typeof TeamStepCounts.Type;
 
-/** A step of the workflow or of its draft that points at a team; the team page lists both sides. `scope` selects the detail route the link targets (`/app/workflows` vs `/app/order-workflow`). */
+/** A step of the workflow or of its draft that points at a team; the team page lists both sides and links each to `/app/workflows/$workflowId`, which serves both kinds. */
 export const OwnedStep = Schema.Struct({
   workflowId: WorkflowId,
   workflowName: WorkflowName,
-  scope: WorkflowScope,
   side: Schema.Literals(["workflow", "draft"]),
   stepName: StepName,
 });
@@ -1581,21 +1580,13 @@ export type OrdersIndexLoaderData = OrdersView;
 /** `/app/orders/$orderId` (`app.orders.$orderId`); `null` is not stored. */
 export type OrderLoaderData = OrderDetailView | null;
 
-/** `/app/workflows` (`app.workflows.index`). Item scope only; the order workflow lives on `/app/order-workflow`. */
+/** `/app/workflows` (`app.workflows.index`). Both kinds; the page shows the order workflow above the item list. */
 export interface WorkflowsIndexLoaderData {
   readonly workflows: readonly WorkflowSummary[];
 }
 
-/** `/app/order-workflow` (`app.order-workflow.index`). Same shape as the workflows index; the page filters to order scope. */
-export interface OrderWorkflowIndexLoaderData {
-  readonly workflows: readonly WorkflowSummary[];
-}
-
-/** `/app/workflows/$workflowId` (`app.workflows.$workflowId`); `null` is not found. Item scope only; order scope lives under `/app/order-workflow/$workflowId`. */
+/** `/app/workflows/$workflowId` (`app.workflows.$workflowId`) and its `/edit`; `null` is not found. Both kinds of workflow: the pages branch on `workflow.type` only for the trigger box and the tag editor. */
 export type WorkflowLoaderData = WorkflowDetailView | null;
-
-/** `/app/order-workflow/$workflowId` (`app.order-workflow.$workflowId`); `null` is not found. */
-export type OrderWorkflowLoaderData = WorkflowDetailView | null;
 
 /**
  * `/app/members` (`app.members`). `soleMemberships` are the teams each member
@@ -1797,7 +1788,7 @@ export type RunFlagDetail = typeof RunFlagDetail.Type;
 
 /**
  * One workflow applied to one line item, or — when `lineItemId` is null — to
- * one whole order (an *order run*, see `WorkflowScope`). Every display field
+ * one whole order (an *order run*, see `WorkflowType`). Every display field
  * is a snapshot taken at creation — `workflowName`, `orderName`, the line
  * item's title and personalization — so the queue card reads only this row
  * and the run outlives an order delete, a definition rename, or a line item

@@ -176,7 +176,7 @@ export const workflows: readonly SeedWorkflow[] = [
   {
     // the active order workflow, with a stage inside an order run
     name: "Order Workflow 01",
-    scope: "order",
+    type: "order",
     tags: [],
     steps: [
       step("Step 1", 1, { stage: 1 }),

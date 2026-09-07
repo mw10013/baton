@@ -474,9 +474,7 @@ function RouteComponent() {
       return (
         <>
           {`${name} is off, so it will not start on this order. `}
-          <s-link href={`/app/order-workflow/${workflow.id}`}>
-            Turn it on
-          </s-link>
+          <s-link href={`/app/workflows/${workflow.id}`}>Turn it on</s-link>
           {" to start it here once every item with a workflow is made."}
         </>
       );
@@ -484,7 +482,7 @@ function RouteComponent() {
       return (
         <>
           {`${name} cannot start: it has ${orderWorkflowBlocker === "no_steps" ? "no steps" : "a step with no team"}. `}
-          <s-link href={`/app/order-workflow/${workflow.id}`}>
+          <s-link href={`/app/workflows/${workflow.id}`}>
             Fix the workflow
           </s-link>
           {" to start it here once every item with a workflow is made."}
