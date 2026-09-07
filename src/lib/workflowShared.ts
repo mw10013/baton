@@ -38,8 +38,17 @@ export const deleteWorkflowResultMessage = Match.typeTags<
  */
 export const DELETE_WORKFLOW_WARNING = "This can't be undone.";
 
-/** The order-scope trigger line, in the merchant copy of `Domain.Workflow`; the wait for item runs stays internal. */
-export const ORDER_WORKFLOW_TRIGGER = "Starts for every paid order.";
+/**
+ * The order-scope trigger line, in the merchant copy of `Domain.Workflow`.
+ * Three sentences because the trigger has three parts a merchant cannot
+ * infer from "order workflow": the wait for item runs, the exclusion of
+ * orders with no item workflow (a stock-only order never starts it), and
+ * the age rule with its manual-attach exception. Every surface that
+ * describes the trigger renders this string unmodified so no page states a
+ * different rule from another.
+ */
+export const ORDER_WORKFLOW_TRIGGER =
+  "Runs once per paid order, after every item with a workflow is made. An order where no item matches a workflow never starts it. Orders placed before this workflow was created are skipped, unless you attach a workflow to one of their items by hand.";
 
 /**
  * The item-scope trigger line: what has to be true of an order for this

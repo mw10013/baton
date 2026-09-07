@@ -430,8 +430,15 @@ function RouteComponent() {
       </s-page>
     );
 
-  const { order, lineItems, runs, orderWorkflow, itemWorkflows, teams } =
-    detail;
+  const {
+    order,
+    lineItems,
+    runs,
+    orderWorkflow,
+    orderWorkflowBlocker,
+    itemWorkflows,
+    teams,
+  } = detail;
   /**
    * The same aggregate the index computes in SQL, rebuilt from the run list
    * this page already carries so both pages read one `productionState`.
@@ -449,6 +456,48 @@ function RouteComponent() {
     orderWorkflow !== null &&
     order.processedAt < orderWorkflow.createdAt &&
     !runs.some(({ run }) => !Domain.isOrderRun(run) && run.source === "manual");
+  const itemRunsAllCancelled =
+    itemRunCount > 0 &&
+    runs.every(
+      ({ run }) => Domain.isOrderRun(run) || run.status === "cancelled",
+    );
+  /**
+   * One line per way the order run is not here yet, in the trigger's own
+   * order: a blocked definition first (the merchant can fix it), then the
+   * order-side reasons it will never start, then the plain wait. Each is a
+   * condition of `startOrderRunIfReady` restated for the person looking at
+   * this order, so no order is silently skipped.
+   */
+  const orderWorkflowLine = (workflow: Domain.Workflow) => {
+    const name = workflow.name;
+    if (orderWorkflowBlocker === "off")
+      return (
+        <>
+          {`${name} is off, so it will not start on this order. `}
+          <s-link href={`/app/order-workflow/${workflow.id}`}>
+            Turn it on
+          </s-link>
+          {" to start it here once every item with a workflow is made."}
+        </>
+      );
+    if (orderWorkflowBlocker !== null)
+      return (
+        <>
+          {`${name} cannot start: it has ${orderWorkflowBlocker === "no_steps" ? "no steps" : "a step with no team"}. `}
+          <s-link href={`/app/order-workflow/${workflow.id}`}>
+            Fix the workflow
+          </s-link>
+          {" to start it here once every item with a workflow is made."}
+        </>
+      );
+    if (tooOld)
+      return `${name} will not start here: this order was placed before that workflow was created. Attaching a workflow to an item by hand opts the order in.`;
+    if (itemRunCount === 0)
+      return `${name} will not start here: no item on this order has a workflow. Attaching a workflow to an item opts the order in.`;
+    if (itemRunsAllCancelled)
+      return `${name} will not start here: every item run on this order was cancelled. Un-cancel one and finish it to start it.`;
+    return `${name} starts when every item with a workflow is made.`;
+  };
   const busy =
     attachMutation.isPending ||
     runMutation.isPending ||
@@ -745,16 +794,13 @@ function RouteComponent() {
       </s-section>
 
       {(orderRuns.length > 0 ||
-        (orderWorkflow !== null && itemRunCount > 0)) && (
+        (orderWorkflow !== null && Domain.canStartRuns(order))) && (
         <s-section heading="Order workflow" accessibilityLabel="Order workflow">
           <s-stack gap="base">
-            {orderRuns.length > 0 ? (
-              orderRuns.map(renderRun)
-            ) : (
+            {orderRuns.length > 0 && orderRuns.map(renderRun)}
+            {orderRuns.length === 0 && orderWorkflow !== null && (
               <s-paragraph color="subdued">
-                {tooOld
-                  ? `${orderWorkflow?.name ?? ""} will not start here: this order was placed before that workflow was created. Attaching a workflow to an item by hand opts the order in.`
-                  : `${orderWorkflow?.name ?? ""} starts when all items are made.`}
+                {orderWorkflowLine(orderWorkflow)}
               </s-paragraph>
             )}
           </s-stack>

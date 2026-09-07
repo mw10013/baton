@@ -493,6 +493,7 @@ const applyResult = <R>(
     | StepUnassignedError
     | SqlError.SqlError
     | WorkflowRepositoryError
+    | WorkflowRunRepositoryError
     | RepositoryError
     | Schema.SchemaError,
     R
@@ -501,6 +502,7 @@ const applyResult = <R>(
   Domain.ApplyResult,
   | SqlError.SqlError
   | WorkflowRepositoryError
+  | WorkflowRunRepositoryError
   | RepositoryError
   | Schema.SchemaError,
   R
@@ -572,6 +574,7 @@ const activateResult = <R>(
     | StepUnassignedError
     | SqlError.SqlError
     | WorkflowRepositoryError
+    | WorkflowRunRepositoryError
     | RepositoryError
     | Schema.SchemaError,
     R
@@ -580,6 +583,7 @@ const activateResult = <R>(
   Domain.ActivateResult,
   | SqlError.SqlError
   | WorkflowRepositoryError
+  | WorkflowRunRepositoryError
   | RepositoryError
   | Schema.SchemaError,
   R
@@ -1603,6 +1607,8 @@ export class ShopAgent extends Agent {
     const shop = this.name;
     const publish = () => this.publish("all");
     const teams = () => this.teams();
+    const sweep = (workflow: Domain.Workflow) =>
+      this.sweepOrderRuns("applyDraft", workflow);
     return this.runEffect(
       callableEffect("ShopAgent.applyDraft", Domain.ApplyDraftInput, {
         onExcessProperty: "error",
@@ -1616,6 +1622,7 @@ export class ShopAgent extends Agent {
             yield* Effect.logInfo(
               `ShopAgent.applyDraft: shop=${shop} workflowId=${workflowId}`,
             ).pipe(Effect.annotateLogs({ shop, workflowId }));
+            yield* sweep(workflow);
             return workflow;
           }),
         ).pipe(Effect.tap(publish)),
@@ -1655,6 +1662,8 @@ export class ShopAgent extends Agent {
     const shop = this.name;
     const publish = () => this.publish("all");
     const teams = () => this.teams();
+    const sweep = (workflow: Domain.Workflow) =>
+      this.sweepOrderRuns("setWorkflowActive", workflow);
     return this.runEffect(
       callableEffect(
         "ShopAgent.setWorkflowActive",
@@ -1672,6 +1681,7 @@ export class ShopAgent extends Agent {
             yield* Effect.logInfo(
               `ShopAgent.setWorkflowActive: shop=${shop} workflowId=${workflowId} active=${String(active)}`,
             ).pipe(Effect.annotateLogs({ shop, workflowId, active }));
+            yield* sweep(workflow);
             return workflow;
           }),
         ).pipe(Effect.tap(publish)),
@@ -1754,6 +1764,31 @@ export class ShopAgent extends Agent {
     });
   }
 
+  /**
+   * After a definition write that can make the order workflow startable
+   * (turned on, or a draft applied that assigns its last step), start the
+   * order run on every order already waiting for it — otherwise those orders
+   * stay stranded until a webhook or Resync reconciles them. Item workflows
+   * skip it: their runs start per line item on reconcile, and a stale order
+   * run trigger is the only thing this repairs. Not the write's transaction:
+   * the repository owns that one and Durable Object SQLite refuses to nest,
+   * but the Durable Object serialises callables so nothing interleaves.
+   */
+  private sweepOrderRuns(caller: string, workflow: Domain.Workflow) {
+    const shop = this.name;
+    const startContext = () => this.startContext();
+    return Effect.gen(function* () {
+      if (workflow.scope !== "order" || !workflow.active) return;
+      const started = yield* (yield* WorkflowRunRepository).startReadyOrderRuns(
+        yield* startContext(),
+      );
+      if (started > 0)
+        yield* Effect.logInfo(
+          `ShopAgent.${caller}: shop=${shop} workflowId=${workflow.id} orderRuns=${String(started)}: started waiting order runs`,
+        ).pipe(Effect.annotateLogs({ shop, workflowId: workflow.id, started }));
+    });
+  }
+
   private reconciler(source: Domain.OrderSyncSource) {
     const shop = this.name;
     const startContext = () => this.startContext();
@@ -1799,16 +1834,31 @@ export class ShopAgent extends Agent {
       const detail = yield* orders.getOrderByLegacyId(legacyId);
       if (Option.isNone(detail)) return null;
       const { order, lineItems } = detail.value;
-      const workflows =
-        yield* (yield* WorkflowRepository).listActiveWorkflowDetails();
+      const repository = yield* WorkflowRepository;
+      const workflows = yield* repository.listActiveWorkflowDetails();
+      const roster = yield* teams();
+      const orderWorkflow = Option.getOrNull(
+        yield* repository.getOrderWorkflow(),
+      );
+      const orderWorkflowBlocker =
+        ((): Domain.OrderDetailView["orderWorkflowBlocker"] => {
+          if (orderWorkflow === null) return null;
+          if (!orderWorkflow.workflow.active) return "off";
+          if (orderWorkflow.steps.length === 0) return "no_steps";
+          const assigned = orderWorkflow.steps.every(
+            (step) =>
+              step.teamId !== null &&
+              roster.some((team) => team.id === step.teamId),
+          );
+          return assigned ? null : "unassigned";
+        })();
       return {
         order,
         lineItems,
         runs: yield* runs.listRunsForOrder({ orderId: order.id }),
-        teams: yield* teams(),
-        orderWorkflow:
-          workflows.find(({ workflow }) => workflow.scope === "order")
-            ?.workflow ?? null,
+        teams: roster,
+        orderWorkflow: orderWorkflow?.workflow ?? null,
+        orderWorkflowBlocker,
         itemWorkflows: workflows
           .filter(
             ({ workflow, steps }) =>

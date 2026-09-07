@@ -225,7 +225,7 @@ function RouteComponent() {
       >
         <s-stack gap="base">
           <s-paragraph color="subdued">
-            {`${ORDER_WORKFLOW_TRIGGER} Its steps become ready once every item on the order that has a workflow is done. One order workflow per shop.`}
+            {`${ORDER_WORKFLOW_TRIGGER} One order workflow per shop.`}
           </s-paragraph>
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
           {orderWorkflowExists ? (

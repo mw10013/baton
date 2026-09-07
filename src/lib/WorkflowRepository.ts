@@ -204,6 +204,16 @@ export class WorkflowRepository extends Context.Service<
       SqlError.SqlError | WorkflowRepositoryError
     >;
     /**
+     * The shop's one order workflow with its steps, in any state — on or
+     * off, with or without steps. `listActiveWorkflowDetails` cannot see an
+     * off one, and the order page must say when the order workflow is off
+     * rather than pretend the shop has none. `None` when the shop has none.
+     */
+    readonly getOrderWorkflow: () => Effect.Effect<
+      Option.Option<Domain.WorkflowDetail>,
+      SqlError.SqlError | WorkflowRepositoryError
+    >;
+    /**
      * Development seed only (`ShopAgent.seedWorkflows`): replaces every
      * definition, every draft, and every run with `workflows`, in one
      * transaction. Destructive on purpose — a reseed exists to discard
@@ -955,6 +965,19 @@ export class WorkflowRepository extends Context.Service<
             steps: steps.filter((step) => step.workflowId === workflow.id),
           }));
         }),
+
+        getOrderWorkflow: Effect.fn("WorkflowRepository.getOrderWorkflow")(
+          function* () {
+            const [workflow] = yield* decodeWorkflows(
+              yield* sql`select * from Workflow where scope = 'order'`,
+            );
+            if (workflow === undefined) return Option.none();
+            return Option.some({
+              workflow,
+              steps: yield* workflowSteps(workflow.id),
+            });
+          },
+        ),
 
         /**
          * A fixture's `steps` become the workflow's steps, switched on unless

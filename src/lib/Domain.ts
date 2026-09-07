@@ -465,9 +465,20 @@ export type ProductTags = typeof ProductTags.Type;
 
 /**
  * `item`: runs once per matching line item (chosen by product tag). `order`:
- * runs once per order, after every item run on it is finished — at most one
- * per shop in any state (`Workflow_order_uidx`), never tag-selected, and
- * {@link OrderWorkflow} carries no `tags`. Set on create, never changed.
+ * runs once per order — at most one per shop in any state
+ * (`Workflow_order_uidx`), never tag-selected, and {@link OrderWorkflow}
+ * carries no `tags`. Set on create, never changed.
+ *
+ * The order run starts only when all of these hold (the authority is
+ * `WorkflowRunRepository.startOrderRunIfReady`): the order workflow is on
+ * with every step assigned; the order is paid and not cancelled
+ * ({@link canStartRuns}); at least one item run on the order is `done`, so a
+ * stock-only order never starts it; no item run is `pending` or `active`;
+ * no order run for this workflow exists in any status; and the order was
+ * placed after the workflow was created, unless an item run on it was
+ * attached by hand. It is evaluated on order reconcile, on the last item
+ * run's completion or cancellation, and swept when the order workflow is
+ * turned on or applied.
  */
 export const WorkflowScope = Schema.Literals(["item", "order"]);
 export type WorkflowScope = typeof WorkflowScope.Type;
@@ -1937,8 +1948,22 @@ export const OrderDetailView = Schema.Struct({
   order: ShopOrder,
   lineItems: Schema.Array(OrderLineItem),
   runs: Schema.Array(WorkflowRunDetail),
-  /** The shop's active order workflow, so the page can say what will start once the items are made. */
+  /**
+   * The shop's order workflow in any state, so the page can say what will
+   * start once the items are made — or why nothing will. `null` when the
+   * shop has none.
+   */
   orderWorkflow: Schema.NullOr(Workflow),
+  /**
+   * Why the order workflow cannot start today, or `null` when it can:
+   * `off` (switched off), `no_steps`, or `unassigned` (a step with no team,
+   * or on a team that no longer exists). Mirrors `canStart` in the run
+   * repository, which reads only active workflows and so cannot tell the
+   * page about an off one.
+   */
+  orderWorkflowBlocker: Schema.NullOr(
+    Schema.Literals(["off", "no_steps", "unassigned"]),
+  ),
   /**
    * Active item workflows with at least one step — the manual-attach picker's
    * choices. Carried in the view rather than read by a second socket query so

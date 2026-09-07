@@ -695,6 +695,7 @@ describe("ShopAgent workflow run callables", () => {
 
     const [packItem] = await agent.listQueue({ teamIds: [packing.id] });
     if (packItem === undefined) throw new Error("no order run in the queue");
+    strictEqual(detail?.orderWorkflowBlocker, null);
     strictEqual(packItem.run.lineItemId, null);
     strictEqual(packItem.run.workflowName, "Pack");
     expect(packItem.items.map((i) => [i.title, i.runStatus])).toEqual([
@@ -727,6 +728,68 @@ describe("ShopAgent workflow run callables", () => {
       after.find((d) => d.run.id === packItem.run.id)?.run.status,
       "done",
     );
+  });
+
+  it("turning the order workflow on starts the order run on an order whose items finished while it was off; the order view names the off state", async () => {
+    const shop = "wf-order-sweep.myshopify.com";
+    const engraving = await seedTeam(shop, "Engraving");
+    const packing = await seedTeam(shop, "Packing");
+    await seedOrder(shop, Date.now() + 60 * 60 * 1000);
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const item = await agent.createWorkflow({ name: "Engrave", tags: [] });
+    if (item._tag !== "Ok") throw new Error(item._tag);
+    await agent.addStep({
+      workflowId: item.workflow.id,
+      name: "Engrave",
+      teamId: engraving.id,
+    });
+    await goLive(agent, item.workflow.id);
+    const pack = await agent.createWorkflow({ name: "Pack", scope: "order" });
+    if (pack._tag !== "Ok") throw new Error(pack._tag);
+    await agent.addStep({
+      workflowId: pack.workflow.id,
+      name: "Pack",
+      teamId: packing.id,
+    });
+    const applied = await agent.applyDraft({ workflowId: pack.workflow.id });
+    if (applied._tag !== "Ok") throw new Error(applied._tag);
+
+    const attached = await agent.attachWorkflow({
+      lineItemId: "gid://shopify/LineItem/1",
+      workflowId: item.workflow.id,
+    });
+    if (attached._tag !== "Ok") throw new Error(attached._tag);
+    const before = await agent.subscribeOrder({
+      legacyId: "1",
+      subscriberId: "t",
+    });
+    strictEqual(before?.orderWorkflow?.id, pack.workflow.id);
+    strictEqual(before?.orderWorkflowBlocker, "off");
+
+    const [engraveItem] = await agent.listQueue({ teamIds: [engraving.id] });
+    expect(
+      await agent.completeStep({
+        runStepId: engraveItem?.steps[0]?.id ?? "",
+        memberId: "m1",
+        memberEmail: "m1@example.com",
+        teamIds: [engraving.id],
+      }),
+    ).toEqual({ _tag: "Ok" });
+    expect(await agent.listQueue({ teamIds: [packing.id] })).toHaveLength(0);
+
+    const on = await agent.setWorkflowActive({
+      workflowId: pack.workflow.id,
+      active: true,
+    });
+    if (on._tag !== "Ok") throw new Error(on._tag);
+    const [packItem] = await agent.listQueue({ teamIds: [packing.id] });
+    strictEqual(packItem?.run.lineItemId, null);
+    strictEqual(packItem?.run.workflowName, "Pack");
+    const after = await agent.subscribeOrder({
+      legacyId: "1",
+      subscriberId: "t",
+    });
+    strictEqual(after?.orderWorkflowBlocker, null);
   });
 
   /**

@@ -157,6 +157,21 @@ export class WorkflowRunRepository extends Context.Service<
       SqlError.SqlError | WorkflowRunRepositoryError
     >;
     /**
+     * The sweep behind turning the order workflow on or applying it. The
+     * order-run trigger otherwise fires only from an order reconcile or the
+     * last item run's completion or cancellation, so an order whose items
+     * finished while the order workflow was off, or had an unassigned step,
+     * would stay stranded until someone pressed Resync on it. One query
+     * selects the candidates — paid, uncancelled, unfulfilled, a `done` item
+     * run, no open item run, no order run for this workflow, and past the
+     * age rule or opted in by a manual attach — and the trigger re-checks
+     * each inside one transaction. A no-op when there is no startable order
+     * workflow. Returns how many order runs it started.
+     */
+    readonly startReadyOrderRuns: (
+      input: StartContext,
+    ) => Effect.Effect<number, SqlError.SqlError | WorkflowRunRepositoryError>;
+    /**
      * Manual attach of an item workflow. `None` when `(lineItemId,
      * workflowId)` already has a run in any status. A new item run flags any
      * open order run of the order `item_added`.
@@ -782,7 +797,55 @@ export class WorkflowRunRepository extends Context.Service<
         return 1;
       });
 
+      const startReadyOrderRuns = Effect.fn(
+        "WorkflowRunRepository.startReadyOrderRuns",
+      )(function* ({ workflows, teams }: StartContext) {
+        const orderWorkflow = workflows.find(
+          ({ workflow }) => workflow.scope === "order",
+        );
+        if (orderWorkflow === undefined || !canStart(orderWorkflow, teams))
+          return 0;
+        const workflowId = orderWorkflow.workflow.id;
+        const createdAt = orderWorkflow.workflow.createdAt;
+        const candidates = yield* sql<{ readonly id: string }>`
+          select o.id from ShopOrder o
+          where o.fullyPaid = 1
+            and o.cancelledAt is null
+            and o.fulfillmentStatus <> 'FULFILLED'
+            and exists (
+              select 1 from WorkflowRun
+              where orderId = o.id and lineItemId is not null and status = 'done'
+            )
+            and not exists (
+              select 1 from WorkflowRun
+              where orderId = o.id and lineItemId is not null
+                and status in ('pending', 'active')
+            )
+            and not exists (
+              select 1 from WorkflowRun
+              where orderId = o.id and lineItemId is null
+                and workflowId = ${workflowId}
+            )
+            and (
+              o.processedAt >= ${createdAt}
+              or exists (
+                select 1 from WorkflowRun
+                where orderId = o.id and lineItemId is not null and source = 'manual'
+              )
+            )
+        `;
+        if (candidates.length === 0) return 0;
+        const started: readonly number[] = yield* sql.withTransaction(
+          Effect.forEach(
+            candidates.map(({ id }) => id),
+            (orderId) => startOrderRunIfReady({ orderId, workflows, teams }),
+          ),
+        );
+        return started.reduce((sum, count) => sum + count, 0);
+      });
+
       return WorkflowRunRepository.of({
+        startReadyOrderRuns,
         /**
          * Two gates, deliberately split. `Domain.isCancelled` and
          * `Domain.isFulfilled` are the stop gates and return early;

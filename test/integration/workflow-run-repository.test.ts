@@ -506,6 +506,48 @@ describe("WorkflowRunRepository order runs", () => {
       }),
     ));
 
+  it("startReadyOrderRuns: the sweep starts every waiting order run once, and nothing else", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { pack } = yield* seedOrderWorkflow;
+        const runs = yield* WorkflowRunRepository;
+        // Items finish while the order workflow is off: no order run.
+        yield* upsertAndReconcile(order(), ORDER_ITEMS);
+        yield* turnOff(pack.id);
+        yield* finishItemRuns();
+        strictEqual((yield* orderRuns()).length, 0);
+        // Off: the sweep is a no-op.
+        strictEqual(yield* runs.startReadyOrderRuns(yield* startContext()), 0);
+        // On: the sweep starts it exactly once.
+        yield* turnOn(pack.id);
+        strictEqual(yield* runs.startReadyOrderRuns(yield* startContext()), 1);
+        strictEqual((yield* orderRuns()).length, 1);
+        strictEqual(yield* runs.startReadyOrderRuns(yield* startContext()), 0);
+        strictEqual((yield* orderRuns()).length, 1);
+      }),
+    ));
+
+  it("startReadyOrderRuns: an order shipped or cancelled while waiting is left alone", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { pack } = yield* seedOrderWorkflow;
+        const runs = yield* WorkflowRunRepository;
+        yield* upsertAndReconcile(order(), ORDER_ITEMS);
+        yield* turnOff(pack.id);
+        yield* finishItemRuns();
+        yield* upsertAndReconcile(
+          order({
+            updatedAt: PROCESSED_AT + 1,
+            fulfillmentStatus: "FULFILLED",
+          }),
+          ORDER_ITEMS,
+        );
+        yield* turnOn(pack.id);
+        strictEqual(yield* runs.startReadyOrderRuns(yield* startContext()), 0);
+        strictEqual((yield* orderRuns()).length, 0);
+      }),
+    ));
+
   it("does not start when the order workflow is off, cannot start, or newer than the order", () =>
     runInRepository(
       Effect.gen(function* () {
