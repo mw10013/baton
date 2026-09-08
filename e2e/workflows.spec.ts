@@ -83,11 +83,13 @@ test("workflows create, edit, apply, and discard through the draft", async ({
     }),
   ).toBeVisible();
 
-  /* Tags are a property of the trigger, set where the sentence about them is. */
+  /* Tags are managed from the trigger and saved together to start the draft. */
+  await frame.getByRole("button", { name: "Manage tags" }).click();
   await frame
     .getByRole("textbox", { name: "Add a product tag" })
     .fill("e2e-cake");
-  await frame.getByRole("button", { name: "Add tag" }).click();
+  await frame.getByRole("button", { name: "Add", exact: true }).click();
+  await frame.getByRole("button", { name: "Save to draft" }).click();
   await expect(
     frame.getByText("Starts when an order contains a product tagged", {
       exact: false,
