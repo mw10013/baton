@@ -10,12 +10,15 @@ export function DefaultErrorComponent({ error }: ErrorComponentProps) {
   const inApp = useMatches({
     select: (matches) => matches.some((m) => m.routeId === "/app"),
   });
+  const message =
+    error instanceof Error ? error.message : "Something went wrong";
+  const stack = error instanceof Error ? error.stack : undefined;
 
   return (
     <s-page heading="Something went wrong">
       <s-section>
-        <s-banner heading={error.message} tone="critical">
-          {error.stack && (
+        <s-banner heading={message} tone="critical">
+          {stack && (
             <s-box
               padding="base"
               borderWidth="base"
@@ -23,7 +26,7 @@ export function DefaultErrorComponent({ error }: ErrorComponentProps) {
               background="subdued"
             >
               <pre style={{ margin: 0 }}>
-                <code>{error.stack}</code>
+                <code>{stack}</code>
               </pre>
             </s-box>
           )}
