@@ -11,6 +11,7 @@ import {
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Schema } from "effect";
 
+import * as WorkflowProductTags from "@/components/WorkflowProductTags";
 import { AttentionBanner, StageFlow } from "@/components/WorkflowStages";
 import * as Domain from "@/lib/Domain";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
@@ -136,7 +137,6 @@ function RouteComponent() {
     readonly teamId: string;
     readonly instructions: string;
   } | null>(null);
-  const [tagInput, setTagInput] = React.useState("");
   const [name, setName] = React.useState(detail?.workflow.name ?? "");
   const [nameError, setNameError] = React.useState<string | null>(null);
 
@@ -236,7 +236,6 @@ function RouteComponent() {
         decodeStepResult,
       ),
     onSuccess: async (result) => {
-      if (result._tag === "Ok") setTagInput("");
       await onStepResult(result);
     },
     onError,
@@ -649,50 +648,21 @@ function RouteComponent() {
                 borderRadius="base"
               >
                 <s-stack gap="small-300">
-                  <s-text type="strong">Product tag</s-text>
+                  <s-text type="strong">Product tags</s-text>
                   <s-text color="subdued">{itemTriggerLine(tags)}</s-text>
-                  {tags.length > 0 && (
-                    <s-stack direction="inline" gap="small-300">
-                      {tags.map((tag) => (
-                        <s-chip
-                          key={tag}
-                          removable
-                          accessibilityLabel={`Remove ${tag}`}
-                          onRemove={() => {
-                            tagsMutation.mutate(
-                              tags.filter((other) => other !== tag),
-                            );
-                          }}
-                        >
-                          {tag}
-                        </s-chip>
-                      ))}
-                    </s-stack>
-                  )}
-                  <s-grid
-                    gridTemplateColumns="1fr auto"
-                    gap="small-300"
-                    alignItems="end"
-                  >
-                    <s-text-field
-                      label="Add a product tag"
-                      placeholder="e.g. engraved"
-                      value={tagInput}
-                      disabled={busy}
-                      onInput={(event) => {
-                        setTagInput(event.currentTarget.value);
-                      }}
-                    />
-                    <s-button
-                      loading={tagsMutation.isPending}
-                      disabled={busy || tagInput.trim().length === 0}
-                      onClick={() => {
-                        tagsMutation.mutate([...tags, tagInput]);
-                      }}
-                    >
-                      Add tag
-                    </s-button>
-                  </s-grid>
+                  <WorkflowProductTags.WorkflowProductTags
+                    key={workflowId}
+                    tags={tags}
+                    disabled={!identified || busy}
+                    onSave={async (nextTags) => {
+                      const result = await tagsMutation.mutateAsync(nextTags);
+                      if (result._tag !== "Ok")
+                        throw new Error(
+                          stepResultMessage(result) ??
+                            "Couldn't save product tags.",
+                        );
+                    }}
+                  />
                 </s-stack>
               </s-box>
             }
