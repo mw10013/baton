@@ -1521,26 +1521,20 @@ export const destroyShopAgent = Effect.fn("destroyShopAgent")(function* (
  * there. `getByName(arbitrary)` could instead fabricate a brand-new identity —
  * the very leak this page exists to catch — so it is deliberately not used.
  *
- * `setName(id)` before `destroy()` is mandatory for an `idFromString` stub.
- * agents' `destroy()` calls `_emit("destroy")` AFTER `deleteAll()`, and `_emit`
- * reads `this.name`. PartyServer resolves `name` from `ctx.id.name` (unset for
- * `idFromString`) or the in-memory/`__ps_name`-persisted fallback; orphans that
- * were never initialized via a named (`getByName`) path have no `__ps_name`
- * record, so after `deleteAll()` wipes storage, `get name` throws — the DO is
- * gone but the RPC rejects with the `.name` error instead of "destroyed".
- * `setName(id)` stashes the id in memory up front so `.name` resolves through
- * the whole teardown (it survives `deleteAll()`), so the normal "destroyed"
- * abort is what surfaces. It does not weaken the id-only guarantee: it only
- * labels the already-resolved `idFromString(id)` stub, never calls `getByName`.
- *
- * `setName`'s `@deprecated` tag is scoped — deprecated only for `getByName`
- * callers where it is redundant; it is the supported bootstrap API for
- * `idFromString`/`newUniqueId` DOs (the runtime error names it as the fix), and
- * there is no non-deprecated alternative short of `getByName`.
- *
- * Shares the "destroyed"-abort handling of `destroyShopAgent`: observing the
- * abort is proof `deleteAll()` ran to completion, so we swallow it as success
- * and log status=destroyed; any other failure propagates after status=failed.
+ * A successful destroy rejects, in one of two ways, and both are swallowed as
+ * success. `destroy()` awaits `deleteAll()` and schedules
+ * `ctx.abort("destroyed")` before its closing observability event reads
+ * `this.name`, so whichever error is raised, the storage is already empty and
+ * the isolate already condemned. Which one surfaces depends on whether the
+ * object was resident: a stub made from `idFromString` carries no name
+ * (`ctx.id.name` is undefined for an id-addressed caller even when the id was
+ * minted by `idFromName` —
+ * https://developers.cloudflare.com/durable-objects/api/id/#name), so a cold
+ * object throws "could not determine its Durable Object name" out of that
+ * event, while one still resident from an earlier `getByName` access resolves
+ * its name and surfaces the abort as "destroyed" instead. Neither weakens the
+ * id-only guarantee: nothing here calls `getByName`. Any other rejection —
+ * `deleteAll()` hitting its time limit, say — propagates after status=failed.
  *
  * Idempotent but does not remove the id from the REST inventory. A successful
  * destroy leaves a "tombstone": the id keeps appearing in `list_objects` with
@@ -1551,8 +1545,8 @@ export const destroyShopAgent = Effect.fn("destroyShopAgent")(function* (
  * badge rather than re-clicking. An emptied DO bills no storage and
  * ceases to exist on shutdown, so a tombstone is harmless — ignore it. Note
  * that calling this on a tombstone RE-INSTANTIATES the DO: the constructor
- * reruns `runShopAgentMigrations` (writing storage) before `setName`/`destroy`
- * empty it again, so repeated destroys re-create-then-re-empty and never clear
+ * reruns `runShopAgentMigrations` (writing storage) before `destroy`
+ * empties it again, so repeated destroys re-create-then-re-empty and never clear
  * the row from the list. Removal happens only when Cloudflare GCs the id. The
  * orphan page guards against this footgun by hiding the Destroy button for rows
  * with `hasStoredData === false` (and dropping them from the diff entirely), so
@@ -1563,13 +1557,14 @@ export const destroyShopAgentObjectById = Effect.fn(
 )(function* (id: string) {
   const env = yield* CloudflareEnv;
   const stub = env.SHOP_AGENT.get(env.SHOP_AGENT.idFromString(id));
-  yield* Effect.tryPromise(async () => {
-    await stub.setName(id);
-    await stub.destroy();
-  }).pipe(
+  yield* Effect.tryPromise(() => stub.destroy()).pipe(
     Effect.catchIf(
       (error: Cause.UnknownError) =>
-        error.cause instanceof Error && error.cause.message === "destroyed",
+        error.cause instanceof Error &&
+        (error.cause.message === "destroyed" ||
+          error.cause.message.includes(
+            "could not determine its Durable Object name",
+          )),
       () => Effect.void,
     ),
     Effect.tap(() =>

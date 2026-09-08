@@ -49,7 +49,13 @@ interface Ref {
   readonly name: string;
   /** GitHub repo to download from. */
   readonly repo?: string;
-  /** npm package whose registry tarball is the source, for packages whose repo layout is not worth mapping. */
+  /**
+   * npm package whose registry tarball is the source, for packages whose repo layout is
+   * not worth mapping. No entry uses this today -- `partykit` did until its repo tags
+   * turned out to be mechanical -- but it stays because it is the only way to pin a
+   * package whose manifest carries no repo URL, or whose repo publishes no per-package
+   * tag to resolve `{v}` against.
+   */
   readonly npm?: string;
   /** Tag template for versioned refs; {v} is the resolved version. */
   readonly tag?: string;
@@ -136,11 +142,20 @@ const REFS: readonly Ref[] = [
     version: { from: ".", dep: "agents" },
   },
   {
-    name: "partysocket",
-    // Not a direct dependency: agents pins it exactly, and this ref exists to dig into
-    // the transport agents actually runs on, so the pin is read out of the installed
-    // agents package and an agents bump moves this ref with it.
-    npm: "partysocket",
+    // Named for the repo, not for the pin: this one checkout answers questions about two
+    // of its packages. `packages/partysocket` is the reconnecting WebSocket client under
+    // `useAgent`; `packages/partyserver` is the Durable Object runtime that agents 0.22.0
+    // vendored into `agents/lifecycle`, and reading the pre-vendoring original is how
+    // `this.name` / `__ps_name` / connection questions get settled. Naming the ref after
+    // either package would hide the other. (Unlike tan-start/tan-router, which are two
+    // refs over one repo and so must be named for their packages.)
+    name: "partykit",
+    // partysocket is not a direct dependency: agents pins it exactly, so the pin is read
+    // out of the installed agents package and an agents bump moves this ref with it.
+    // There is no package named `partykit` in the monorepo, so the version this ref
+    // reports is unambiguously partysocket's.
+    repo: "cloudflare/partykit",
+    tag: "partysocket@{v}",
     version: { from: "node_modules/agents", dep: "partysocket" },
   },
   {
