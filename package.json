@@ -59,8 +59,8 @@
     "tail:PRODUCTION": "mkdir -p logs && wrangler tail --env production --format json 2>&1 | tee logs/production.log | jq -r --unbuffered -f scripts/wrangler-tail-compact.jq | tee logs/production-compact.log"
   },
   "dependencies": {
-    "@effect/sql-d1": "4.0.0-rc.108",
-    "@effect/sql-sqlite-do": "4.0.0-rc.108",
+    "@effect/sql-d1": "4.0.0-rc.112",
+    "@effect/sql-sqlite-do": "4.0.0-rc.112",
     "@shopify/app-bridge-react": "4.2.13",
     "@shopify/shopify-api": "14.0.1",
     "@tanstack/react-form": "1.33.3",
@@ -71,7 +71,7 @@
     "@tanstack/router-plugin": "1.168.24",
     "agents": "0.22.0",
     "better-auth": "1.7.2",
-    "effect": "4.0.0-rc.108",
+    "effect": "4.0.0-rc.112",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "vite-tsconfig-paths": "6.1.1"
@@ -80,8 +80,8 @@
     "@babel/plugin-proposal-decorators": "7.29.0",
     "@cloudflare/vite-plugin": "1.54.5",
     "@cloudflare/vitest-pool-workers": "0.22.0",
-    "@effect/platform-node": "4.0.0-rc.108",
-    "@effect/vitest": "4.0.0-rc.108",
+    "@effect/platform-node": "4.0.0-rc.112",
+    "@effect/vitest": "4.0.0-rc.112",
     "@graphql-codegen/cli": "6.3.1",
     "@graphql-codegen/typescript": "5.0.10",
     "@playwright/test": "1.63.0",
