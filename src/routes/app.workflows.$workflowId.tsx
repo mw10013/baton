@@ -178,10 +178,21 @@ function RouteComponent() {
     onError,
   });
 
+  /**
+   * The rename field is a copy, so a name that changes underneath — a rename
+   * from another tab, a reload — would leave the modal offering to save a name
+   * the server no longer has. Re-seed during render rather than from an
+   * effect: React re-runs this component with the new value before committing,
+   * where an effect would paint the stale copy and then cascade a second
+   * render to fix it. The guard is what makes it a re-seed and not a reset —
+   * typing changes `name`, never `loadedName`, so it leaves typing alone.
+   */
   const loadedName = detail?.workflow.name;
-  React.useEffect(() => {
-    if (loadedName !== undefined) setName(loadedName);
-  }, [loadedName]);
+  const [seededName, setSeededName] = React.useState(loadedName);
+  if (loadedName !== undefined && loadedName !== seededName) {
+    setSeededName(loadedName);
+    setName(loadedName);
+  }
 
   if (detail === null || !Domain.isItemWorkflow(detail.workflow))
     return (

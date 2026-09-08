@@ -198,10 +198,22 @@ export function WorkflowSwitch({
     onError,
   });
 
+  /**
+   * The date field is a copy, so a start date changed underneath — another
+   * tab, a reload — would leave the modal offering to save a date the server
+   * no longer has. Re-seed during render rather than from an effect: React
+   * re-runs this component with the new value before committing, where an
+   * effect would paint the stale copy and cascade a second render to fix it.
+   * The guard keeps it a re-seed and not a reset — picking a date changes
+   * `date`, never `activatedAt`.
+   */
   const loadedActivatedAt = workflow.activatedAt;
-  React.useEffect(() => {
-    if (loadedActivatedAt !== null) setDate(toDateInput(loadedActivatedAt));
-  }, [loadedActivatedAt]);
+  const [seededActivatedAt, setSeededActivatedAt] =
+    React.useState(loadedActivatedAt);
+  if (loadedActivatedAt !== null && loadedActivatedAt !== seededActivatedAt) {
+    setSeededActivatedAt(loadedActivatedAt);
+    setDate(toDateInput(loadedActivatedAt));
+  }
 
   const blocker = turnOnBlocker(steps);
   const switching = activeMutation.isPending;

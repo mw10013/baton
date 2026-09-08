@@ -105,6 +105,7 @@
     "new-cap": "off",
     "no-magic-numbers": "off",
     "no-negated-condition": "off",
+    "one-var": "off",
     "max-lines": "off",
     "max-lines-per-function": "off",
     "max-classes-per-file": "off",

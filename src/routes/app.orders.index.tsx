@@ -282,7 +282,6 @@ function RouteComponent() {
   ]);
   const cursor = cursors.at(-1) ?? null;
   const cursorRef = React.useRef(cursor);
-  cursorRef.current = cursor;
   const [syncing, setSyncing] = React.useState(false);
 
   /** A filter change is a new list, so the cursor stack starts over. */
@@ -323,7 +322,15 @@ function RouteComponent() {
     initialData: loaderData,
   });
 
+  /**
+   * The cursor reaches `subscribe` through a ref rather than the query key, so
+   * writing it here is what makes it a real dependency of this effect: publish
+   * the page to move to, then invalidate so the refetch reads it. Ordering
+   * holds because every fetch is downstream of an invalidation, and the ref's
+   * initial value already covers the first render.
+   */
   React.useEffect(() => {
+    cursorRef.current = cursor;
     if (identified) void invalidate();
   }, [identified, invalidate, cursor]);
 

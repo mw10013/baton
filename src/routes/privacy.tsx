@@ -19,7 +19,7 @@ const notCollectedItems = [
   "Buyer storefront browsing behavior.",
 ] as const;
 
-const useItems = [
+const usageItems = [
   "Authenticate merchants and keep the app connected to Shopify.",
   "Send custom Shopify Flow trigger events requested by merchants.",
   "Maintain app security and prevent unauthorized access.",
@@ -78,7 +78,7 @@ function RouteComponent() {
       </PolicySection>
       <PolicySection heading="How We Use Information">
         <s-paragraph>We use collected information to:</s-paragraph>
-        <PolicyList items={useItems} />
+        <PolicyList items={usageItems} />
         <s-paragraph>We do not sell personal information.</s-paragraph>
       </PolicySection>
       <PolicySection heading="Sharing Information">

@@ -61,7 +61,12 @@ export const Route = createFileRoute("/admin/shops")({
           to: "/admin/shops",
           search: { filter: deps.filter },
         });
-      return result;
+      /**
+       * Stamped by the loader, not read during render: `Date.now()` in the
+       * component body makes render impure, and the plan-cache expiry this
+       * feeds should be measured against the snapshot the page is showing.
+       */
+      return { ...result, now: Date.now() };
     },
     staleReloadMode: "blocking",
   },
@@ -71,8 +76,7 @@ export const Route = createFileRoute("/admin/shops")({
 function RouteComponent() {
   const router = useRouter();
   const { filter } = Route.useSearch();
-  const page = Route.useLoaderData();
-  const now = Date.now();
+  const { now, ...page } = Route.useLoaderData();
   return (
     <s-page heading="Shops" inlineSize="large">
       <s-link

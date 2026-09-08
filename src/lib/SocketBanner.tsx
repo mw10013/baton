@@ -31,28 +31,34 @@ const GRACE_MS = 4000;
  */
 export function SocketBanner() {
   const { identified } = useShopAgent();
+  return <ClientOnly>{identified ? null : <DisconnectedBanner />}</ClientOnly>;
+}
+
+/**
+ * Mounted for exactly as long as the socket is down, so the grace period is
+ * the component's own lifetime: a reconnect unmounts it and a later drop
+ * mounts a fresh one that waits out `GRACE_MS` again. Holding the elapsed
+ * flag in `SocketBanner` instead would mean resetting it whenever `identified`
+ * flipped back — state kept alive past the condition it describes, and a
+ * second render to correct it every time the socket recovers.
+ */
+function DisconnectedBanner() {
   const [graceElapsed, setGraceElapsed] = React.useState(false);
 
   React.useEffect(() => {
-    if (identified) setGraceElapsed(false);
-    const timer = identified
-      ? null
-      : setTimeout(() => {
-          setGraceElapsed(true);
-        }, GRACE_MS);
+    const timer = setTimeout(() => {
+      setGraceElapsed(true);
+    }, GRACE_MS);
     return () => {
-      if (timer !== null) clearTimeout(timer);
+      clearTimeout(timer);
     };
-  }, [identified]);
+  }, []);
 
+  if (!graceElapsed) return null;
   return (
-    <ClientOnly>
-      {!identified && graceElapsed && (
-        <s-banner slot="supplemental-start" tone="warning">
-          Not connected to this shop. Live updates are paused and changes on
-          this page are disabled until the connection returns.
-        </s-banner>
-      )}
-    </ClientOnly>
+    <s-banner slot="supplemental-start" tone="warning">
+      Not connected to this shop. Live updates are paused and changes on this
+      page are disabled until the connection returns.
+    </s-banner>
   );
 }

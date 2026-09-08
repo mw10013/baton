@@ -238,12 +238,19 @@ function RouteComponent() {
   });
 
   /**
-   * The step panel's fields are local state copied from the step on select,
-   * so a reload that changes the step underneath — a team deleted in another
-   * tab, an edit from another session — would leave the panel showing values
-   * the server no longer has. Re-copy whenever the loaded step's values
-   * change; the deps are the values, not the object, so a reload that
-   * changes nothing leaves typing alone.
+   * The step panel's fields are local state copied from the step, so a reload
+   * that changes the step underneath — a team deleted in another tab, an edit
+   * from another session — would leave the panel showing values the server no
+   * longer has. Seeding during render rather than from an effect is what lets
+   * this be the panel's only seeding path: selecting a step and a step
+   * changing underneath are the same event here, a new `seeded` identity, so
+   * `selectStep` sets the selection and nothing else. An effect would instead
+   * paint the previous step's values for a frame and cascade a second render,
+   * and would still need the selection handler to seed ahead of it.
+   *
+   * The comparison is over the values, not the step object, so an invalidation
+   * that returns an equal step leaves typing alone; the id is in it so that
+   * moving between two steps that happen to match still re-seeds.
    */
   const loadedSteps = detail?.draft?.steps ?? detail?.steps;
   const loadedStep =
@@ -254,14 +261,33 @@ function RouteComponent() {
       ? ""
       : (loadedStep.teamId ?? "");
   const loadedStepInstructions = loadedStep?.instructions ?? "";
-  React.useEffect(() => {
-    if (loadedStepName === undefined) return;
+  const [seeded, setSeeded] = React.useState<{
+    readonly id: string;
+    readonly name: string;
+    readonly teamId: string;
+    readonly instructions: string;
+  } | null>(null);
+  if (
+    loadedStep !== null &&
+    loadedStepName !== undefined &&
+    (seeded === null ||
+      seeded.id !== loadedStep.id ||
+      seeded.name !== loadedStepName ||
+      seeded.teamId !== loadedStepTeamId ||
+      seeded.instructions !== loadedStepInstructions)
+  ) {
+    setSeeded({
+      id: loadedStep.id,
+      name: loadedStepName,
+      teamId: loadedStepTeamId,
+      instructions: loadedStepInstructions,
+    });
     setEdit({
       name: loadedStepName,
       teamId: loadedStepTeamId,
       instructions: loadedStepInstructions,
     });
-  }, [loadedStepName, loadedStepTeamId, loadedStepInstructions]);
+  }
 
   if (detail === null)
     return (
@@ -295,16 +321,11 @@ function RouteComponent() {
     steps.some((other) => other.id !== step.id && other.stage === step.stage);
   const lastStage = steps.reduce((max, step) => Math.max(max, step.stage), 0);
 
+  /** The panel's fields follow the selection: see the `seeded` block above. */
   const selectStep = (stepId: string) => {
-    const step = steps.find((candidate) => candidate.id === stepId);
-    if (step === undefined) return;
+    if (!steps.some((candidate) => candidate.id === stepId)) return;
     setAdding(null);
     setSelectedStepId(stepId);
-    setEdit({
-      name: step.name,
-      teamId: Domain.isUnassigned(step) ? "" : (step.teamId ?? ""),
-      instructions: step.instructions ?? "",
-    });
   };
 
   const teamSelect = (
