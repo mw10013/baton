@@ -4,12 +4,12 @@ import { ApiType, shopifyApiProject } from "@shopify/api-codegen-preset";
 import { ApiVersion } from "@shopify/shopify-api";
 
 const config: IGraphQLConfig = {
-  schema: `https://shopify.dev/admin-graphql-direct-proxy/${ApiVersion.January26}`,
+  schema: `https://shopify.dev/admin-graphql-direct-proxy/${ApiVersion.July26}`,
   documents: ["./src/**/*.{js,ts,jsx,tsx}"],
   projects: {
     default: shopifyApiProject({
       apiType: ApiType.Admin,
-      apiVersion: ApiVersion.January26,
+      apiVersion: ApiVersion.July26,
       documents: ["./src/**/*.{js,ts,jsx,tsx}"],
       outputDir: "./.codegen",
     }),

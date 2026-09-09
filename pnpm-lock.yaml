@@ -82,8 +82,8 @@ importers:
         specifier: 1.63.0
         version: 1.63.0
       '@shopify/api-codegen-preset':
-        specifier: 2.0.1
-        version: 2.0.1(@types/node@25.0.3)(typescript@6.0.3)
+        specifier: 3.0.0
+        version: 3.0.0(@types/node@25.0.3)(typescript@6.0.3)
       '@shopify/app-bridge-types':
         specifier: 0.7.2
         version: 0.7.2
@@ -2493,9 +2493,9 @@ packages:
   '@shopify/admin-api-client@2.0.0':
     resolution: {integrity: sha512-ivvOKq08S4xdETu3R7ZxIGTX2Q//dKef7jLY7Ne9HSlg+UJzk7PqdY+h61pqQzvZ3AeNN8AJG2eV20ycuJowfg==}
 
-  '@shopify/api-codegen-preset@2.0.1':
-    resolution: {integrity: sha512-sceMo8f10Vok7o409EVrh4XZcUyZJo25vkMmYR4CB8ERRbuXU+C5Icx+szvczqTciZYC2xkdkCczV6KSNUbdNA==}
-    engines: {node: '>=20.0.0'}
+  '@shopify/api-codegen-preset@3.0.0':
+    resolution: {integrity: sha512-NKv+SUggxhHNeYjWFR+LKxb2PVtTaGlm5YJ7/jIGBr8E2v3yuo2TCp9tpcKqbECEhiQVcQzwnyeamW4LhWp92g==}
+    engines: {node: '>=22.0.0'}
 
   '@shopify/app-bridge-react@4.2.13':
     resolution: {integrity: sha512-9ArXhCNRefHZwVwu/DNll1FOQPiKwPhlGs9IwE9FWw39osG+e0SNImczW4B0WF1b92sdRsTgmFkqp3Vvmi3ARg==}
@@ -7160,7 +7160,7 @@ snapshots:
       detect-libc: 2.1.2
       is-glob: 4.0.3
       node-addon-api: 7.1.1
-      picomatch: 4.0.4
+      picomatch: 4.0.7
     optionalDependencies:
       '@parcel/watcher-android-arm64': 2.5.6
       '@parcel/watcher-darwin-arm64': 2.5.6
@@ -7359,7 +7359,7 @@ snapshots:
     dependencies:
       '@shopify/graphql-client': 2.0.0
 
-  '@shopify/api-codegen-preset@2.0.1(@types/node@25.0.3)(typescript@6.0.3)':
+  '@shopify/api-codegen-preset@3.0.0(@types/node@25.0.3)(typescript@6.0.3)':
     dependencies:
       '@graphql-codegen/cli': 6.3.1(@parcel/watcher@2.5.6)(@types/node@25.0.3)(graphql@16.14.2)(typescript@6.0.3)
       '@graphql-codegen/introspection': 5.0.2(graphql@16.14.2)
