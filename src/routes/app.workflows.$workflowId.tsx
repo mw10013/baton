@@ -11,6 +11,7 @@ import {
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
+import { LocalDateTime } from "@/components/LocalDateTime";
 import { AttentionBanner, StageFlow } from "@/components/WorkflowStages";
 import {
   activateResultMessage,
@@ -18,7 +19,6 @@ import {
   WorkflowSwitch,
 } from "@/components/WorkflowSwitch";
 import * as Domain from "@/lib/Domain";
-import { formatDateTime } from "@/lib/format";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
@@ -299,7 +299,7 @@ function RouteComponent() {
           )}
 
           <s-paragraph color="subdued">
-            {`Last updated on ${formatDateTime(workflow.updatedAt)}`}
+            Last updated on <LocalDateTime value={workflow.updatedAt} />
           </s-paragraph>
           {workflow.activatedAt !== null && (
             <AppliesSince

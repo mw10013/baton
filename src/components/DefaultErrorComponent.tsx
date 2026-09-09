@@ -4,21 +4,24 @@ import type { ErrorComponentProps } from "@tanstack/react-router";
 
 import { useMatches, useNavigate, useRouter } from "@tanstack/react-router";
 
+/**
+ * `ErrorComponentProps["error"]` is `unknown` — a boundary catches whatever was
+ * thrown, which need not be an `Error`. Normalizing here keeps the banner
+ * readable for a thrown string or object instead of rendering `undefined`.
+ */
 export function DefaultErrorComponent({ error }: ErrorComponentProps) {
+  const caught = error instanceof Error ? error : new Error(String(error));
   const navigate = useNavigate();
   const router = useRouter();
   const inApp = useMatches({
     select: (matches) => matches.some((m) => m.routeId === "/app"),
   });
-  const message =
-    error instanceof Error ? error.message : "Something went wrong";
-  const stack = error instanceof Error ? error.stack : undefined;
 
   return (
     <s-page heading="Something went wrong">
       <s-section>
-        <s-banner heading={message} tone="critical">
-          {stack && (
+        <s-banner heading={caught.message} tone="critical">
+          {caught.stack && (
             <s-box
               padding="base"
               borderWidth="base"
@@ -26,7 +29,7 @@ export function DefaultErrorComponent({ error }: ErrorComponentProps) {
               background="subdued"
             >
               <pre style={{ margin: 0 }}>
-                <code>{stack}</code>
+                <code>{caught.stack}</code>
               </pre>
             </s-box>
           )}

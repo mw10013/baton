@@ -1,7 +1,6 @@
 import { Match } from "effect";
 
 import * as Domain from "@/lib/Domain";
-import { formatDateTime } from "@/lib/format";
 
 /** Comma-separated text → tag list; the Durable Object normalises again. */
 export const splitTags = (text: string) =>
@@ -79,10 +78,6 @@ export const changeActivatedAtResultMessage = Match.typeTags<
   NotFound: () => "That workflow no longer exists.",
   Off: () => "This workflow is off, so there is no date to change.",
 });
-
-/** One sentence under the badges of an on workflow: what "on" covers, in the merchant's word for the date. */
-export const appliesSinceLine = (activatedAt: number) =>
-  `Applies to orders placed since ${formatDateTime(activatedAt)}`;
 
 /**
  * The Turn on dialog's second line, present only when there is something to

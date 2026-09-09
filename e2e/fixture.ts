@@ -12,6 +12,11 @@ import type {
  * a two-row world. Lives under `e2e/` so nothing in the worker bundle imports
  * test data.
  *
+ * Deliberately NOT adopted by the existing specs: each seeds the exact shape
+ * its assertions compute (a queue with N cards, a team with M members). Pinning
+ * those to this shared fixture would make one edit here silently retune
+ * unrelated assertions. `pnpm seed` and manual exploration are its consumers.
+ *
  * Naming is the point: every row reads back to its entry by eye.
  *
  * - Ordinal `NN` (zero-padded so ten sorts after nine) is the join key across

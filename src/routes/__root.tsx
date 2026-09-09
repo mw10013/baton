@@ -77,8 +77,12 @@ function RouteComponent() {
  *
  * `useHydrated()` is read elsewhere only where this boundary cannot reach:
  * the App-Bridge-hoisted nav and the browser-only token query in
- * `src/routes/app.tsx`, and the SSR-mismatch `ClientOnly` in
- * `src/lib/SocketBanner.tsx`.
+ * `src/routes/app.tsx`, the SSR-mismatch `ClientOnly` in
+ * `src/lib/SocketBanner.tsx`, and `src/components/LocalDateTime.tsx`, which
+ * defers timezone-dependent text because SSR runs in UTC. Polaris `s-page`
+ * slot children and `s-table` hydrate cleanly without wrappers (verified
+ * 2026-09-09 against the CDN `polaris.js`); the mismatch that once looked
+ * like slot hoisting was those timestamps.
  */
 function RootDocument({ children }: { children: React.ReactNode }) {
   const hydrated = useHydrated();

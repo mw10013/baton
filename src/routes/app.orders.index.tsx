@@ -5,8 +5,9 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Schema } from "effect";
 
+import { LocalDateTime } from "@/components/LocalDateTime";
 import * as Domain from "@/lib/Domain";
-import { formatDateTime, formatNumber } from "@/lib/format";
+import { formatNumber } from "@/lib/format";
 import { adminOrderUrl, useResourceLinkTarget } from "@/lib/orderLinks";
 import { ORDER_SYNC_WINDOW_DAYS } from "@/lib/orderSyncConstants";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
@@ -151,9 +152,13 @@ const syncStatusText = (
   if (view === undefined) return "Loading…";
   if (view.syncState.workflowId !== null)
     return "Syncing… this page updates as orders arrive.";
-  return view.syncState.lastFullSyncAt === null
-    ? "Never synced."
-    : `Last synced ${formatDateTime(view.syncState.lastFullSyncAt)}.`;
+  return view.syncState.lastFullSyncAt === null ? (
+    "Never synced."
+  ) : (
+    <>
+      Last synced <LocalDateTime value={view.syncState.lastFullSyncAt} />.
+    </>
+  );
 };
 
 /**
@@ -434,7 +439,7 @@ function RouteComponent() {
                 </s-link>
               </s-table-cell>
               <s-table-cell>
-                {formatDateTime(row.order.processedAt)}
+                <LocalDateTime value={row.order.processedAt} />
               </s-table-cell>
               {/* Blank when Shopify reports no financial status, which it
                   does for $0 and untransacted orders — the admin leaves the

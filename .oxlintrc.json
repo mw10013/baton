@@ -124,6 +124,8 @@
     "unicorn/no-array-callback-reference": "off",
     "unicorn/prefer-global-this": "off",
     "unicorn/text-encoding-identifier-case": "off",
+    // oxfmt 0.67 lowercases hex digits; this rule demands uppercase. oxfmt wins.
+    "unicorn/number-literal-case": "off",
     "unicorn/max-nested-calls": "off",
     "unicorn/throw-new-error": "off",
     "@typescript-eslint/strict-boolean-expressions": "off",

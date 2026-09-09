@@ -6,9 +6,9 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Effect, Match, Schema } from "effect";
 
+import { LocalDateTime } from "@/components/LocalDateTime";
 import * as Domain from "@/lib/Domain";
 import { fieldError, mutationErrorMessage } from "@/lib/form";
-import { formatDateTime } from "@/lib/format";
 import { Repository } from "@/lib/Repository";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
@@ -297,7 +297,7 @@ function RouteComponent() {
                     </s-table-cell>
                     <s-table-cell>{team.memberCount}</s-table-cell>
                     <s-table-cell>
-                      {formatDateTime(team.createdAt)}
+                      <LocalDateTime value={team.createdAt} />
                     </s-table-cell>
                     <s-table-cell>
                       <s-button

@@ -6,8 +6,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Schema } from "effect";
 
+import { LocalDateTime } from "@/components/LocalDateTime";
 import * as Domain from "@/lib/Domain";
-import { formatDateTime, formatNumber } from "@/lib/format";
+import { formatNumber } from "@/lib/format";
 import { adminOrderUrl, useResourceLinkTarget } from "@/lib/orderLinks";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { withSocketRecovery } from "@/lib/ShopAgentContext";
@@ -827,7 +828,7 @@ function RouteComponent() {
           gap="small-200 base"
           alignItems="center"
         >
-          {fact("Placed", formatDateTime(order.processedAt))}
+          {fact("Placed", <LocalDateTime value={order.processedAt} />)}
           {fact(
             "Payment",
             order.financialStatus === null ? null : (
@@ -839,8 +840,18 @@ function RouteComponent() {
             ),
           )}
           {fact("Fulfillment", order.fulfillmentStatus)}
-          {fact("Cancelled", formatDateTime(order.cancelledAt))}
-          {fact("Closed", formatDateTime(order.closedAt))}
+          {fact(
+            "Cancelled",
+            order.cancelledAt === null ? null : (
+              <LocalDateTime value={order.cancelledAt} />
+            ),
+          )}
+          {fact(
+            "Closed",
+            order.closedAt === null ? null : (
+              <LocalDateTime value={order.closedAt} />
+            ),
+          )}
           {fact("Order tags", order.tags.join(", "))}
           {fact(
             "Order attributes",
@@ -850,7 +861,9 @@ function RouteComponent() {
           )}
           {fact(
             "Last synced",
-            `${formatDateTime(order.syncedAt)} (${order.syncSource})`,
+            <>
+              <LocalDateTime value={order.syncedAt} /> ({order.syncSource})
+            </>,
           )}
         </s-grid>
       </s-section>

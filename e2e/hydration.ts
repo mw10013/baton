@@ -15,8 +15,14 @@ import type { FrameLocator, Page } from "@playwright/test";
  *
  * Takes a `Page` for the non-embedded `/login`, `/shop`, and `/admin`
  * surfaces and a `FrameLocator` for the embedded app iframe, so both areas
- * wait on one selector. No timeout override here: callers that need a rescue
- * (the tunnel-served embedded app, see `gotoApp`) wrap this themselves.
+ * wait on one selector. `timeout` exists for callers that must not use the
+ * default, such as `gotoApp`'s short rescue window over the tunnel, so the
+ * selector is never re-inlined at a call site.
  */
-export const awaitHydration = (scope: Page | FrameLocator): Promise<void> =>
-  scope.locator('body[data-hydrated="true"]').waitFor({ state: "attached" });
+export const awaitHydration = (
+  scope: Page | FrameLocator,
+  timeout?: number,
+): Promise<void> =>
+  scope
+    .locator('body[data-hydrated="true"]')
+    .waitFor({ state: "attached", timeout });

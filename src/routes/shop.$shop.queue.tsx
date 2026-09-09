@@ -5,6 +5,7 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Effect, Match, Schema } from "effect";
 
+import { LocalDateTime } from "@/components/LocalDateTime";
 import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
 import {
@@ -243,12 +244,6 @@ const ITEM_STATUS = {
 const personalization = (attributes: readonly Domain.OrderAttribute[]) =>
   attributes.map(({ key, value }) => `${key}: ${value ?? ""}`).join(", ");
 
-const timeOf = (epochMs: number) =>
-  new Date(epochMs).toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-
 function RouteComponent() {
   const { shop, teams, items } = Route.useLoaderData();
   const router = useRouter();
@@ -343,7 +338,9 @@ function RouteComponent() {
           )}
           {started && (
             <s-text color="subdued">
-              {`In progress since ${timeOf(step.startedAt ?? 0)}${step.startedByEmail === null ? "" : ` by ${step.startedByEmail}`}`}
+              In progress since{" "}
+              <LocalDateTime value={step.startedAt ?? 0} format="time" />
+              {step.startedByEmail === null ? "" : ` by ${step.startedByEmail}`}
             </s-text>
           )}
           {!editingNote && step.note !== null && (

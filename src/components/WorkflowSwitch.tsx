@@ -4,11 +4,10 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Match, Schema } from "effect";
 
+import { LocalDateTime } from "@/components/LocalDateTime";
 import * as Domain from "@/lib/Domain";
-import { formatDateTime } from "@/lib/format";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import {
-  appliesSinceLine,
   changeActivatedAtResultMessage,
   startedToast,
   turnOnBlocker,
@@ -89,7 +88,10 @@ export function AppliesSince({
 }) {
   return (
     <s-stack direction="inline" gap="small-300" alignItems="center">
-      <s-text color="subdued">{appliesSinceLine(activatedAt)}</s-text>
+      {/* One sentence under the badges of an on workflow: what "on" covers, in the merchant's word for the date. */}
+      <s-text color="subdued">
+        Applies to orders placed since <LocalDateTime value={activatedAt} />
+      </s-text>
       <s-button
         variant="tertiary"
         disabled={disabled}
@@ -312,7 +314,7 @@ export function WorkflowSwitch({
           />
           {workflow.activatedAt !== null && (
             <s-text color="subdued">
-              {`Currently ${formatDateTime(workflow.activatedAt)}.`}
+              Currently <LocalDateTime value={workflow.activatedAt} />.
             </s-text>
           )}
         </s-stack>

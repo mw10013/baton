@@ -10,8 +10,8 @@ import {
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
+import { LocalDateTime } from "@/components/LocalDateTime";
 import * as Domain from "@/lib/Domain";
-import { formatDateTime } from "@/lib/format";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
@@ -249,7 +249,9 @@ function RouteComponent() {
                 )}
               </s-table-cell>
               <s-table-cell>{workflow.stepCount}</s-table-cell>
-              <s-table-cell>{formatDateTime(workflow.updatedAt)}</s-table-cell>
+              <s-table-cell>
+                <LocalDateTime value={workflow.updatedAt} />
+              </s-table-cell>
             </s-table-row>
           ))}
         </s-table-body>

@@ -69,13 +69,10 @@ export const appFrame = (page: Page): FrameLocator =>
 export async function gotoApp(page: Page): Promise<FrameLocator> {
   await page.goto("", { waitUntil: "commit" });
   const frame = appFrame(page);
-  await frame
-    .locator('body[data-hydrated="true"]')
-    .waitFor({ state: "attached", timeout: 15_000 })
-    .catch(async () => {
-      await page.reload({ waitUntil: "commit" });
-      await awaitHydration(frame);
-    });
+  await awaitHydration(frame, 15_000).catch(async () => {
+    await page.reload({ waitUntil: "commit" });
+    await awaitHydration(frame);
+  });
   return frame;
 }
 

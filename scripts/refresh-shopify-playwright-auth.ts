@@ -168,6 +168,7 @@ const command = Command.make(
     ),
     dryRun: Flag.boolean("dry-run").pipe(
       Flag.withDescription("Count cookies without writing the output file"),
+      Flag.withDefault(false),
     ),
   },
   Effect.fnUntraced(function* ({ output, profile, dryRun }) {

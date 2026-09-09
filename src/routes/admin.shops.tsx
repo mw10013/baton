@@ -1,16 +1,11 @@
-import {
-  ClientOnly,
-  createFileRoute,
-  redirect,
-  useRouter,
-} from "@tanstack/react-router";
+import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
+import { LocalDateTime } from "@/components/LocalDateTime";
 import { PlanCache } from "@/components/PlanCache";
 import { adminServerFnMiddleware } from "@/lib/AdminServerFnMiddleware";
 import * as Domain from "@/lib/Domain";
-import { formatDateTime } from "@/lib/format";
 import { Repository } from "@/lib/Repository";
 
 const LIMIT = 25;
@@ -86,115 +81,117 @@ function RouteComponent() {
         Admin
       </s-link>
       <s-section padding="none" accessibilityLabel="Shops table">
-        <ClientOnly>
-          <s-table
-            paginate={page.hasPreviousPage || page.hasNextPage}
-            hasPreviousPage={page.hasPreviousPage}
-            hasNextPage={page.hasNextPage}
-            onPreviousPage={() => {
+        <s-table
+          paginate={page.hasPreviousPage || page.hasNextPage}
+          hasPreviousPage={page.hasPreviousPage}
+          hasNextPage={page.hasNextPage}
+          onPreviousPage={() => {
+            void router.navigate({
+              to: "/admin/shops",
+              search: {
+                before: page.startCursor ?? undefined,
+                after: undefined,
+                filter,
+              },
+            });
+          }}
+          onNextPage={() => {
+            void router.navigate({
+              to: "/admin/shops",
+              search: {
+                after: page.endCursor ?? undefined,
+                before: undefined,
+                filter,
+              },
+            });
+          }}
+        >
+          <s-search-field
+            slot="filters"
+            label="Search by shop"
+            labelAccessibilityVisibility="exclusive"
+            placeholder="Search by shop"
+            defaultValue={filter ?? ""}
+            onChange={(event) => {
+              const value = event.currentTarget.value.trim();
               void router.navigate({
                 to: "/admin/shops",
                 search: {
-                  before: page.startCursor ?? undefined,
+                  filter: value === "" ? undefined : value,
                   after: undefined,
-                  filter,
-                },
-              });
-            }}
-            onNextPage={() => {
-              void router.navigate({
-                to: "/admin/shops",
-                search: {
-                  after: page.endCursor ?? undefined,
                   before: undefined,
-                  filter,
                 },
               });
             }}
-          >
-            <s-search-field
-              slot="filters"
-              label="Search by shop"
-              labelAccessibilityVisibility="exclusive"
-              placeholder="Search by shop"
-              defaultValue={filter ?? ""}
-              onChange={(event) => {
-                const value = event.currentTarget.value.trim();
-                void router.navigate({
-                  to: "/admin/shops",
-                  search: {
-                    filter: value === "" ? undefined : value,
-                    after: undefined,
-                    before: undefined,
-                  },
-                });
-              }}
-            />
-            <s-table-header-row>
-              <s-table-header listSlot="primary">Shop</s-table-header>
-              <s-table-header>Shop Agent ID</s-table-header>
-              <s-table-header>Shop GID</s-table-header>
-              <s-table-header>Scope</s-table-header>
-              <s-table-header>Access token expires</s-table-header>
-              <s-table-header>Refresh token expires</s-table-header>
-              <s-table-header>Plan</s-table-header>
-              <s-table-header>Plan expires</s-table-header>
-              <s-table-header>Access token</s-table-header>
-              <s-table-header>Refresh token</s-table-header>
-            </s-table-header-row>
-            <s-table-body>
-              {page.shopSessions.map((shopSession) => (
-                <s-table-row key={shopSession.shop} id={shopSession.shop}>
-                  <s-table-cell>
-                    <s-link
-                      onClick={() =>
-                        void router.navigate({
-                          to: "/admin/shop/$shop",
-                          params: { shop: shopSession.shop },
-                        })
-                      }
-                    >
-                      {shopSession.shop}
-                    </s-link>
-                  </s-table-cell>
-                  <s-table-cell>{shopSession.shopAgentId}</s-table-cell>
-                  <s-table-cell>{shopSession.shopGid}</s-table-cell>
-                  <s-table-cell>{shopSession.scope ?? ""}</s-table-cell>
-                  <s-table-cell>
-                    {formatDateTime(shopSession.accessTokenExpiresAt)}
-                  </s-table-cell>
-                  <s-table-cell>
-                    {formatDateTime(shopSession.refreshTokenExpiresAt)}
-                  </s-table-cell>
-                  <s-table-cell>
-                    <PlanCache
-                      plan={Domain.adminShopPlanCache(shopSession, now)}
-                    />
-                  </s-table-cell>
-                  <s-table-cell>
-                    {formatDateTime(shopSession.planHandleExpiresAt)}
-                  </s-table-cell>
-                  <s-table-cell>
-                    <s-badge
-                      tone={shopSession.hasAccessToken ? "success" : "critical"}
-                    >
-                      {shopSession.hasAccessToken ? "Present" : "Missing"}
-                    </s-badge>
-                  </s-table-cell>
-                  <s-table-cell>
-                    <s-badge
-                      tone={
-                        shopSession.hasRefreshToken ? "success" : "critical"
-                      }
-                    >
-                      {shopSession.hasRefreshToken ? "Present" : "Missing"}
-                    </s-badge>
-                  </s-table-cell>
-                </s-table-row>
-              ))}
-            </s-table-body>
-          </s-table>
-        </ClientOnly>
+          />
+          <s-table-header-row>
+            <s-table-header listSlot="primary">Shop</s-table-header>
+            <s-table-header>Shop Agent ID</s-table-header>
+            <s-table-header>Shop GID</s-table-header>
+            <s-table-header>Scope</s-table-header>
+            <s-table-header>Access token expires</s-table-header>
+            <s-table-header>Refresh token expires</s-table-header>
+            <s-table-header>Plan</s-table-header>
+            <s-table-header>Plan expires</s-table-header>
+            <s-table-header>Access token</s-table-header>
+            <s-table-header>Refresh token</s-table-header>
+          </s-table-header-row>
+          <s-table-body>
+            {page.shopSessions.map((shopSession) => (
+              <s-table-row key={shopSession.shop} id={shopSession.shop}>
+                <s-table-cell>
+                  <s-link
+                    onClick={() =>
+                      void router.navigate({
+                        to: "/admin/shop/$shop",
+                        params: { shop: shopSession.shop },
+                      })
+                    }
+                  >
+                    {shopSession.shop}
+                  </s-link>
+                </s-table-cell>
+                <s-table-cell>{shopSession.shopAgentId}</s-table-cell>
+                <s-table-cell>{shopSession.shopGid}</s-table-cell>
+                <s-table-cell>{shopSession.scope ?? ""}</s-table-cell>
+                <s-table-cell>
+                  {shopSession.accessTokenExpiresAt === null ? null : (
+                    <LocalDateTime value={shopSession.accessTokenExpiresAt} />
+                  )}
+                </s-table-cell>
+                <s-table-cell>
+                  {shopSession.refreshTokenExpiresAt === null ? null : (
+                    <LocalDateTime value={shopSession.refreshTokenExpiresAt} />
+                  )}
+                </s-table-cell>
+                <s-table-cell>
+                  <PlanCache
+                    plan={Domain.adminShopPlanCache(shopSession, now)}
+                  />
+                </s-table-cell>
+                <s-table-cell>
+                  {shopSession.planHandleExpiresAt === null ? null : (
+                    <LocalDateTime value={shopSession.planHandleExpiresAt} />
+                  )}
+                </s-table-cell>
+                <s-table-cell>
+                  <s-badge
+                    tone={shopSession.hasAccessToken ? "success" : "critical"}
+                  >
+                    {shopSession.hasAccessToken ? "Present" : "Missing"}
+                  </s-badge>
+                </s-table-cell>
+                <s-table-cell>
+                  <s-badge
+                    tone={shopSession.hasRefreshToken ? "success" : "critical"}
+                  >
+                    {shopSession.hasRefreshToken ? "Present" : "Missing"}
+                  </s-badge>
+                </s-table-cell>
+              </s-table-row>
+            ))}
+          </s-table-body>
+        </s-table>
       </s-section>
       {page.shopSessions.length === 0 && (
         <s-banner tone="info">No sessions.</s-banner>

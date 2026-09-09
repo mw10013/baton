@@ -5,11 +5,12 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Clock, Effect, Match, Option, Schema } from "effect";
 
+import { LocalDateTime } from "@/components/LocalDateTime";
 import { PlanCache } from "@/components/PlanCache";
 import { adminServerFnMiddleware } from "@/lib/AdminServerFnMiddleware";
 import { CloudflareEnv } from "@/lib/CloudflareEnv";
 import * as Domain from "@/lib/Domain";
-import { formatDateTime, formatNumber } from "@/lib/format";
+import { formatNumber } from "@/lib/format";
 import { Repository } from "@/lib/Repository";
 import { SubscriptionPlan } from "@/lib/SubscriptionPlan";
 
@@ -123,7 +124,7 @@ function Field({
   children,
 }: {
   readonly label: string;
-  readonly value?: string | null;
+  readonly value?: ReactNode;
   readonly children?: ReactNode;
 }) {
   return (
@@ -238,7 +239,11 @@ function FoundShop({
             </Field>
             <Field
               label="Fresh until"
-              value={formatDateTime(shopSession.planHandleExpiresAt)}
+              value={
+                shopSession.planHandleExpiresAt === null ? null : (
+                  <LocalDateTime value={shopSession.planHandleExpiresAt} />
+                )
+              }
             />
             <Field
               label="Daily action limit"
@@ -287,11 +292,19 @@ function FoundShop({
           </Field>
           <Field
             label="Access token expires"
-            value={formatDateTime(shopSession.accessTokenExpiresAt)}
+            value={
+              shopSession.accessTokenExpiresAt === null ? null : (
+                <LocalDateTime value={shopSession.accessTokenExpiresAt} />
+              )
+            }
           />
           <Field
             label="Refresh token expires"
-            value={formatDateTime(shopSession.refreshTokenExpiresAt)}
+            value={
+              shopSession.refreshTokenExpiresAt === null ? null : (
+                <LocalDateTime value={shopSession.refreshTokenExpiresAt} />
+              )
+            }
           />
           <Field label="Access token">
             <s-badge tone={shopSession.hasAccessToken ? "success" : "critical"}>
