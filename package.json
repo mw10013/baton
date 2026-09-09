@@ -103,7 +103,7 @@
     "oxlint": "1.82.0",
     "oxlint-tsgolint": "7.0.2001",
     "playwright-core": "1.63.0",
-    "typescript": "6.0.3",
+    "typescript": "7.0.2",
     "vite": "7.3.0",
     "vitest": "4.1.4",
     "vitest-browser-react": "2.2.0",
