@@ -1,0 +1,21 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "lsp": true,
+  "mcp": {
+    // $schema still validates as V1 (no `servers` key) — `mcp.servers` is correct V2 per https://opencode.ai/v2/docs/mcp-servers, ignore squiggles.
+    "servers": {
+      "shopify-dev-mcp": {
+        "type": "local",
+        "command": ["npx", "-y", "@shopify/dev-mcp@latest"]
+      },
+      "cloudflare": {
+        "type": "remote",
+        "url": "https://mcp.cloudflare.com/mcp"
+      },
+      "cloudflare-observability": {
+        "type": "remote",
+        "url": "https://observability.mcp.cloudflare.com/mcp"
+      }
+    }
+  }
+}

@@ -4,5 +4,10 @@
   },
   "claudeMdExcludes": ["**/refs/**"],
   "outputStyle": "Concise",
-  "enabledMcpjsonServers": ["chrome-devtools", "shopify-dev-mcp"]
+  "enabledMcpjsonServers": [
+    "chrome-devtools",
+    "shopify-dev-mcp",
+    "cloudflare-api",
+    "cloudflare-observability"
+  ]
 }
