@@ -1,0 +1,1600 @@
+<title>Baton Teams & Members Rework</title>
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+/>
+<style>
+  :root {
+    --ground: #f1f1f1;
+    --surface: #ffffff;
+    --surface-sub: #f7f7f7;
+    --line: #e3e3e3;
+    --line-strong: #cfcfcf;
+    --ink: #303030;
+    --ink-sub: #616161;
+    --ink-faint: #8a8a8a;
+    --primary: #303030;
+    --primary-ink: #ffffff;
+    --link: #005bd3;
+    --warn-bg: #ffd79d;
+    --warn-ink: #5e4200;
+    --crit-bg: #fed3d1;
+    --crit-ink: #8e1f0b;
+    --crit-btn: #e51c00;
+    --info-bg: #eaf4ff;
+    --info-ink: #00527c;
+    --ok-bg: #cdfee1;
+    --ok-ink: #0c5132;
+    --note: #2d4e3a;
+    --note-bg: #e9f3ec;
+    --dim: rgba(0, 0, 0, 0.45);
+    --radius: 12px;
+    --shadow: 0 1px 0 rgba(0, 0, 0, 0.04), 0 4px 16px rgba(0, 0, 0, 0.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #1a1a1a;
+      --surface: #262626;
+      --surface-sub: #2e2e2e;
+      --line: #3a3a3a;
+      --line-strong: #4a4a4a;
+      --ink: #e8e8e8;
+      --ink-sub: #b0b0b0;
+      --ink-faint: #8a8a8a;
+      --primary: #e8e8e8;
+      --primary-ink: #1a1a1a;
+      --link: #6db3ff;
+      --warn-bg: #4d3a12;
+      --warn-ink: #ffd79d;
+      --crit-bg: #4a1f19;
+      --crit-ink: #ffb4ab;
+      --crit-btn: #ff6b57;
+      --info-bg: #17324a;
+      --info-ink: #a9d3ff;
+      --ok-bg: #14382a;
+      --ok-ink: #9be5be;
+      --note: #bfe0c9;
+      --note-bg: #203127;
+      --dim: rgba(0, 0, 0, 0.6);
+      --shadow: 0 1px 0 rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #1a1a1a;
+    --surface: #262626;
+    --surface-sub: #2e2e2e;
+    --line: #3a3a3a;
+    --line-strong: #4a4a4a;
+    --ink: #e8e8e8;
+    --ink-sub: #b0b0b0;
+    --ink-faint: #8a8a8a;
+    --primary: #e8e8e8;
+    --primary-ink: #1a1a1a;
+    --link: #6db3ff;
+    --warn-bg: #4d3a12;
+    --warn-ink: #ffd79d;
+    --crit-bg: #4a1f19;
+    --crit-ink: #ffb4ab;
+    --crit-btn: #ff6b57;
+    --info-bg: #17324a;
+    --info-ink: #a9d3ff;
+    --ok-bg: #14382a;
+    --ok-ink: #9be5be;
+    --note: #bfe0c9;
+    --note-bg: #203127;
+    --dim: rgba(0, 0, 0, 0.6);
+    --shadow: 0 1px 0 rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.4);
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font:
+      13px/1.5 Inter,
+      -apple-system,
+      "Segoe UI",
+      Helvetica,
+      Arial,
+      sans-serif;
+    padding-inline: 24px;
+    padding-block: 32px 80px;
+  }
+  a {
+    color: var(--link);
+    text-decoration: none;
+  }
+  a:hover,
+  a:focus-visible {
+    text-decoration: underline;
+  }
+  :focus-visible {
+    outline: 2px solid var(--link);
+    outline-offset: 2px;
+  }
+
+  .wrap {
+    max-width: 1040px;
+    margin: 0 auto;
+  }
+  header.lede {
+    max-width: 66ch;
+    margin-bottom: 40px;
+  }
+  header.lede h1 {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin: 0 0 8px;
+    text-wrap: balance;
+  }
+  header.lede p {
+    margin: 0 0 10px;
+    font-size: 14px;
+    color: var(--ink-sub);
+  }
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  nav.toc {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    margin-bottom: 36px;
+    font-size: 13px;
+  }
+  nav.toc a {
+    color: var(--ink-sub);
+  }
+
+  .screen {
+    margin-bottom: 56px;
+  }
+  .screen > h2 {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0 0 4px;
+  }
+  .screen > .why {
+    color: var(--ink-sub);
+    max-width: 70ch;
+    margin: 0 0 14px;
+    font-size: 13.5px;
+  }
+
+  .frame {
+    position: relative;
+    background: var(--ground);
+    border: 1px solid var(--line-strong);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  .chrome {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+  }
+  .chrome .dots {
+    display: flex;
+    gap: 5px;
+  }
+  .chrome .dots i {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--line-strong);
+    display: block;
+  }
+  .chrome .url {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--ink-faint);
+    background: var(--surface-sub);
+    border-radius: 6px;
+    padding: 3px 10px;
+    flex: 1;
+  }
+  .canvas {
+    padding: 20px 24px 28px;
+    min-height: 260px;
+  }
+  .page {
+    max-width: 760px;
+    margin: 0 auto;
+    display: grid;
+    gap: 14px;
+  }
+  .page.wide {
+    max-width: 960px;
+  }
+
+  .pagehead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .pagehead .titles {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .crumb {
+    color: var(--ink-faint);
+    font-size: 12px;
+  }
+  .pagehead h1 {
+    font-size: 20px;
+    font-weight: 700;
+    margin: 0;
+  }
+  .pagehead .actions {
+    display: flex;
+    gap: 8px;
+  }
+  .subline {
+    color: var(--ink-sub);
+    font-size: 13px;
+    margin-top: -6px;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn.primary {
+    background: var(--primary);
+    color: var(--primary-ink);
+    border-color: var(--primary);
+  }
+  .btn.tertiary {
+    border-color: transparent;
+    background: transparent;
+  }
+  .btn.critical {
+    color: var(--crit-btn);
+  }
+  .btn.primary.critical {
+    background: var(--crit-btn);
+    border-color: var(--crit-btn);
+    color: #fff;
+  }
+  .btn.sm {
+    padding: 3px 9px;
+    font-size: 12px;
+  }
+  .btn[disabled] {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .card {
+    background: var(--surface);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+  .card .intro {
+    padding: 14px 16px 0;
+    color: var(--ink-sub);
+  }
+  .card .tools {
+    display: flex;
+    gap: 10px;
+    padding: 12px 16px;
+    align-items: center;
+  }
+  .search {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    padding: 6px 10px;
+    color: var(--ink-faint);
+    background: var(--surface);
+  }
+  .search svg {
+    width: 14px;
+    height: 14px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+  }
+  th {
+    text-align: left;
+    font-weight: 500;
+    color: var(--ink-sub);
+    font-size: 12px;
+    padding: 8px 16px;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    background: var(--surface-sub);
+  }
+  td {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: middle;
+  }
+  tr:last-child td {
+    border-bottom: 0;
+  }
+  td.num,
+  th.num {
+    text-align: right;
+  }
+  td.act {
+    text-align: right;
+    white-space: nowrap;
+  }
+  .tablewrap {
+    overflow-x: auto;
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 500;
+    background: var(--surface-sub);
+    color: var(--ink-sub);
+    border: 1px solid var(--line);
+  }
+  .badge.warn {
+    background: var(--warn-bg);
+    color: var(--warn-ink);
+    border-color: transparent;
+  }
+  .badge.crit {
+    background: var(--crit-bg);
+    color: var(--crit-ink);
+    border-color: transparent;
+  }
+  .badge.ok {
+    background: var(--ok-bg);
+    color: var(--ok-ink);
+    border-color: transparent;
+  }
+  .chips {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .chip {
+    padding: 1px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    background: var(--surface-sub);
+    border: 1px solid var(--line);
+    color: var(--ink);
+  }
+
+  .empty {
+    padding: 28px 16px;
+    display: grid;
+    gap: 12px;
+    justify-items: start;
+    color: var(--ink-sub);
+  }
+
+  .empty.center {
+    padding: 40px 16px;
+    justify-items: center;
+    text-align: center;
+  }
+  .empty h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .empty .line {
+    max-width: 320px;
+  }
+
+  /* Polaris details template: main column plus aside cards. */
+  .cols {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 232px;
+    gap: 14px;
+    align-items: start;
+  }
+  .cols .aside {
+    display: grid;
+    gap: 14px;
+  }
+  .cardhead {
+    padding: 14px 16px 0;
+    font-weight: 600;
+  }
+  .cardbody {
+    padding: 14px 16px;
+    display: grid;
+    gap: 10px;
+  }
+  .framed {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .framed table {
+    margin: 0;
+  }
+  .facts {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 6px 14px;
+  }
+  .facts .k {
+    color: var(--ink-sub);
+  }
+  .stacklinks {
+    display: grid;
+    gap: 6px;
+    justify-items: start;
+  }
+
+  /* modal */
+  .dim {
+    position: absolute;
+    inset: 0;
+    background: var(--dim);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 48px;
+  }
+  .modal {
+    width: min(520px, calc(100% - 32px));
+    background: var(--surface);
+    border-radius: var(--radius);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+  }
+  .modal .mh {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--line);
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .modal .mh .x {
+    color: var(--ink-faint);
+    font-size: 18px;
+    line-height: 1;
+  }
+  .modal .mb {
+    padding: 16px;
+    display: grid;
+    gap: 14px;
+  }
+  .modal .mf {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--line);
+    background: var(--surface-sub);
+  }
+  .field label {
+    display: block;
+    font-weight: 500;
+    margin-bottom: 4px;
+  }
+  .field .input {
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    padding: 7px 10px;
+    background: var(--surface);
+  }
+  .field .input.placeholder {
+    color: var(--ink-faint);
+  }
+  .field .help {
+    color: var(--ink-sub);
+    font-size: 12px;
+    margin-top: 4px;
+  }
+  .checks {
+    display: grid;
+    gap: 8px;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .check i {
+    width: 15px;
+    height: 15px;
+    border: 1.5px solid var(--line-strong);
+    border-radius: 4px;
+    display: inline-block;
+    background: var(--surface);
+    position: relative;
+  }
+  .check i.on {
+    background: var(--primary);
+    border-color: var(--primary);
+  }
+  .check i.on::after {
+    content: "";
+    position: absolute;
+    left: 4px;
+    top: 1px;
+    width: 4px;
+    height: 8px;
+    border: solid var(--primary-ink);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+  .check small {
+    color: var(--ink-faint);
+  }
+  .banner {
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+  }
+  .banner.info {
+    background: var(--info-bg);
+    color: var(--info-ink);
+  }
+  .banner.warn {
+    background: var(--warn-bg);
+    color: var(--warn-ink);
+  }
+  .menu {
+    position: absolute;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    padding: 6px;
+    display: grid;
+    min-width: 160px;
+    z-index: 2;
+  }
+  .menu span {
+    padding: 6px 10px;
+    border-radius: 6px;
+  }
+  .menu span.crit {
+    color: var(--crit-btn);
+  }
+  .menu span:hover {
+    background: var(--surface-sub);
+  }
+
+  /* callouts */
+  .notes {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .note {
+    display: grid;
+    grid-template-columns: 22px 1fr;
+    gap: 10px;
+    align-items: start;
+    color: var(--ink);
+    font-size: 13px;
+    max-width: 76ch;
+  }
+  .note b {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--note-bg);
+    color: var(--note);
+    font-size: 11px;
+    font-weight: 700;
+    display: inline-grid;
+    place-items: center;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  .pin {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--note-bg);
+    color: var(--note);
+    font-size: 11px;
+    font-weight: 700;
+    display: grid;
+    place-items: center;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    border: 1.5px solid var(--note);
+    z-index: 3;
+  }
+  .not-built {
+    border: 1px dashed var(--line-strong);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    max-width: 76ch;
+    color: var(--ink-sub);
+  }
+  .not-built h3 {
+    margin: 0 0 6px;
+    font-size: 14px;
+    color: var(--ink);
+  }
+  .not-built p {
+    margin: 0 0 6px;
+  }
+  .rowhl td {
+    background: color-mix(in srgb, var(--note-bg) 40%, var(--surface));
+  }
+  @media (max-width: 640px) {
+    body {
+      padding-inline: 16px;
+    }
+    .canvas {
+      padding: 14px;
+    }
+    .pagehead h1 {
+      font-size: 17px;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * {
+      transition: none !important;
+    }
+  }
+</style>
+
+<div class="wrap">
+  <header class="lede">
+    <div class="eyebrow">Baton · research mockups · 2026-09-12</div>
+    <h1>Teams &amp; Members, reworked on the Workflows pattern</h1>
+    <p>
+      Five screens. Create goes behind a header button and a dialog, rename and
+      delete move into <em>More actions</em>, the team page lists only its own
+      people, and the step table becomes one line of links. There is no member
+      page and no name field, on purpose. Reasoning is in
+      <code>docs/teams-members-ux-research.md</code>.
+    </p>
+    <p>Seed data shown. Numbered pins map to the notes under each screen.</p>
+  </header>
+
+  <nav class="toc">
+    <a href="#teams">1 · Teams</a>
+    <a href="#create-team">2 · Create team</a>
+    <a href="#team">3 · Team page</a>
+    <a href="#picker">4 · Add members</a>
+    <a href="#members">5 · Members</a>
+    <a href="#add-member">6 · Add member</a>
+    <a href="#no-page">7 · What is not built</a>
+  </nav>
+
+  <!-- 1 TEAMS INDEX -->
+  <section class="screen" id="teams">
+    <h2>1 · Teams index</h2>
+    <p class="why">
+      Same skeleton as Workflows: primary action in the header, one-sentence
+      intro, search once there is something to search, no per-row delete.
+    </p>
+    <div class="frame">
+      <div class="chrome">
+        <span class="dots"><i></i><i></i><i></i></span
+        ><span class="url"
+          >admin.shopify.com/store/baton-dev/apps/baton/app/teams</span
+        >
+      </div>
+      <div class="canvas">
+        <div class="page wide">
+          <div class="pagehead">
+            <div class="titles"><h1>Teams</h1></div>
+            <div class="actions">
+              <span class="btn primary">Create team</span
+              ><span
+                class="pin"
+                style="position: relative; top: -4px; left: -2px"
+                >1</span
+              >
+            </div>
+          </div>
+          <div class="card">
+            <p class="intro">
+              Teams are who can work a step. Assign a team to each step in a
+              workflow.
+            </p>
+            <div class="tools">
+              <div class="search">
+                <svg viewBox="0 0 24 24">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="m20 20-3.5-3.5" /></svg
+                >Search by name
+              </div>
+            </div>
+            <div class="tablewrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Team</th>
+                    <th class="num">Members</th>
+                    <th>Used by</th>
+                    <th>Created</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><a href="#team">Engraving</a></td>
+                    <td class="num">2</td>
+                    <td>
+                      <a href="#">Engraved ring</a>,
+                      <a href="#">Custom pendant</a>
+                    </td>
+                    <td>Sep 2, 2026</td>
+                  </tr>
+                  <tr>
+                    <td><a href="#team">Polishing</a></td>
+                    <td class="num">3</td>
+                    <td><a href="#">Engraved ring</a></td>
+                    <td>Sep 2, 2026</td>
+                  </tr>
+                  <tr>
+                    <td><a href="#team">Casting</a></td>
+                    <td class="num">2</td>
+                    <td>
+                      <a href="#">Custom pendant</a>
+                      <span class="badge">draft</span>
+                    </td>
+                    <td>Sep 2, 2026</td>
+                  </tr>
+                  <tr>
+                    <td><a href="#team">Packing</a></td>
+                    <td class="num">1</td>
+                    <td><a href="#">Order workflow</a></td>
+                    <td>Sep 2, 2026</td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <a href="#team">Quality check</a>
+                      <span class="badge warn">No members</span>
+                      <span
+                        class="pin"
+                        style="position: relative; top: -2px; left: 4px"
+                        >2</span
+                      >
+                    </td>
+                    <td class="num">0</td>
+                    <td><a href="#">Engraved ring</a></td>
+                    <td>Sep 10, 2026</td>
+                  </tr>
+                  <tr>
+                    <td><a href="#team">Stone setting</a></td>
+                    <td class="num">2</td>
+                    <td>
+                      <span style="color: var(--ink-faint)">—</span>
+                      <span
+                        class="pin"
+                        style="position: relative; top: -2px; left: 4px"
+                        >3</span
+                      >
+                    </td>
+                    <td>Sep 11, 2026</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="note">
+        <b>1</b
+        ><span
+          ><strong>Create team</strong> opens the dialog in screen 2. The
+          standing “Create team” card is gone. Delete moves to the team page,
+          exactly where it is for workflows.</span
+        >
+      </div>
+      <div class="note">
+        <b>2</b
+        ><span
+          >The existing <strong>No members</strong> badge stays. It is the one
+          problem a merchant must notice from the list.</span
+        >
+      </div>
+      <div class="note">
+        <b>3</b
+        ><span
+          ><strong>Used by</strong> is new and costs nothing:
+          <code>countStepsByTeam</code> already loads with this page. It answers
+          “can I delete this?” and “where is this team?” without a step
+          list.</span
+        >
+      </div>
+    </div>
+  </section>
+
+  <!-- 2 CREATE TEAM -->
+  <section class="screen" id="create-team">
+    <h2>2 · Create team dialog</h2>
+    <p class="why">
+      One field. On success the app navigates to the new team page, because the
+      next thing is always adding people.
+    </p>
+    <div class="frame">
+      <div class="chrome">
+        <span class="dots"><i></i><i></i><i></i></span
+        ><span class="url">…/app/teams</span>
+      </div>
+      <div class="canvas" style="min-height: 320px">
+        <div class="page wide" style="opacity: 0.5">
+          <div class="pagehead">
+            <div class="titles"><h1>Teams</h1></div>
+            <div class="actions">
+              <span class="btn primary">Create team</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="tools"><div class="search">Search by name</div></div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Team</th>
+                  <th class="num">Members</th>
+                  <th>Used by</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Engraving</td>
+                  <td class="num">2</td>
+                  <td>Engraved ring, Custom pendant</td>
+                </tr>
+                <tr>
+                  <td>Polishing</td>
+                  <td class="num">3</td>
+                  <td>Engraved ring</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="dim">
+          <div class="modal" role="dialog" aria-label="Create team">
+            <div class="mh">
+              <span>Create team</span><span class="x">×</span>
+            </div>
+            <div class="mb">
+              <div class="field">
+                <label for="ct-name">Name</label>
+                <div class="input" id="ct-name">Stone setting</div>
+                <div class="help">You’ll add members next.</div>
+              </div>
+            </div>
+            <div class="mf">
+              <span class="btn">Cancel</span
+              ><span class="btn primary">Create</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="note">
+        <b>·</b
+        ><span
+          >Mirrors the Create workflow dialog: same <code>s-modal</code>,
+          <code>commandFor</code> trigger, Create disabled until the name is
+          non-empty and the socket is identified, “name taken” shows as the
+          field error.</span
+        >
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 TEAM DETAIL -->
+  <section class="screen" id="team">
+    <h2>3 · Team page</h2>
+    <p class="why">
+      The team page is about people. Its own members are a table under a
+      <strong>Members</strong> heading, adding is a header action, and the
+      workflows that use the team are an aside card instead of a step table
+      above the roster. Laid out as Polaris’ details template, like the order
+      and workflow detail pages: main column for the roster, aside for the facts
+      a merchant checks before a rename or delete. The page is
+      <code>inlineSize="base"</code> — <code>s-page</code> renders the aside
+      slot at no other width.
+    </p>
+    <div class="frame">
+      <div class="chrome">
+        <span class="dots"><i></i><i></i><i></i></span
+        ><span class="url">…/app/teams/team_01</span>
+      </div>
+      <div class="canvas">
+        <div class="page">
+          <div class="pagehead">
+            <div class="titles">
+              <span class="crumb">Teams ›</span>
+              <h1>Engraving</h1>
+            </div>
+            <div class="actions">
+              <span class="btn primary">Add members</span
+              ><span class="btn" style="position: relative"
+                >More actions ▾
+                <!-- Left of the button, not under it: the aside cards now sit
+                     directly below the header and a right-aligned popover
+                     would cover the Used by list. -->
+                <span class="menu" style="right: 230px; top: 36px"
+                  ><span>Rename</span><span class="crit">Delete</span></span
+                > </span
+              ><span
+                class="pin"
+                style="position: relative; top: -4px; left: -2px"
+                >1</span
+              >
+            </div>
+          </div>
+          <div class="cols">
+            <div class="card">
+              <div class="cardhead">Members</div>
+              <div class="cardbody">
+                <div class="framed">
+                  <div class="tablewrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Member</th>
+                          <th>On team since</th>
+                          <th class="act">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>admin@shop.com</td>
+                          <td>Sep 2, 2026</td>
+                          <td class="act">
+                            <span class="btn tertiary sm critical">Remove</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td>member-01@shop.com</td>
+                          <td>Sep 2, 2026</td>
+                          <td class="act">
+                            <span class="btn tertiary sm critical">Remove</span>
+                            <span
+                              class="pin"
+                              style="position: relative; top: -2px; left: 4px"
+                              >3</span
+                            >
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="aside">
+              <div class="card" style="position: relative">
+                <div class="cardhead">Used by</div>
+                <div class="cardbody">
+                  <div class="stacklinks">
+                    <a href="#">Custom pendant</a>
+                    <span
+                      ><a href="#">Engraved ring</a>
+                      <span class="badge">draft</span></span
+                    >
+                    <a href="#">Order workflow</a>
+                  </div>
+                </div>
+                <span
+                  class="pin"
+                  style="position: absolute; top: 10px; right: -10px"
+                  >2</span
+                >
+              </div>
+              <div class="card">
+                <div class="cardhead">Details</div>
+                <div class="cardbody">
+                  <div class="facts">
+                    <span class="k">Members</span><span>2</span>
+                    <span class="k">Created</span><span>Sep 2, 2026</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="note">
+        <b>1</b
+        ><span
+          ><strong>Rename</strong> and <strong>Delete</strong> live in
+          <em>More actions</em>, each opening a modal, as on the workflow page.
+          The Name card with its permanent Save button is gone; the name is the
+          heading.</span
+        >
+      </div>
+      <div class="note">
+        <b>2</b
+        ><span
+          >The <strong>Workflow steps</strong> table becomes this card. It grows
+          with workflows, not steps, and each link goes to where steps are
+          actually edited. Draft-only use carries a <em>draft</em> badge. With
+          nothing: “Not used by any workflow yet.” The delete dialog keeps the
+          step counts it has today. It is a titled aside card rather than a
+          sentence under the page heading because <code>s-page</code> lays out
+          sections and nothing else — a bare paragraph handed to it floats on
+          the page background in no container, labelled by nothing.</span
+        >
+      </div>
+      <div class="note">
+        <b>3</b
+        ><span
+          ><strong>Remove</strong> confirms in a small modal: “Remove
+          member-01@shop.com from Engraving? They keep access to the shop and
+          their other teams.” When they are the last member it adds “Engraving
+          will have no members.”</span
+        >
+      </div>
+    </div>
+
+    <p class="why" style="margin-top: 22px">
+      <strong>Empty team.</strong> Polaris’ empty-state composition without the
+      illustration: a heading, one sentence, one action, centered. An empty team
+      is a state to explain, not a footnote.
+    </p>
+    <div class="frame">
+      <div class="chrome">
+        <span class="dots"><i></i><i></i><i></i></span
+        ><span class="url">…/app/teams/team_05</span>
+      </div>
+      <div class="canvas" style="min-height: 200px">
+        <div class="page">
+          <div class="pagehead">
+            <div class="titles">
+              <span class="crumb">Teams ›</span>
+              <h1>Quality check</h1>
+              <span class="badge warn">No members</span>
+            </div>
+            <div class="actions">
+              <span class="btn primary">Add members</span
+              ><span class="btn">More actions ▾</span>
+            </div>
+          </div>
+          <div class="cols">
+            <div class="card">
+              <div class="cardhead">Members</div>
+              <div class="empty center">
+                <h3>No members yet</h3>
+                <span class="line"
+                  >Nobody is on this team, so its steps sit unclaimed until
+                  someone joins.</span
+                ><span class="btn primary">Add members</span>
+              </div>
+            </div>
+            <div class="aside">
+              <div class="card">
+                <div class="cardhead">Used by</div>
+                <div class="cardbody">
+                  <div class="stacklinks"><a href="#">Engraved ring</a></div>
+                </div>
+              </div>
+              <div class="card">
+                <div class="cardhead">Details</div>
+                <div class="cardbody">
+                  <div class="facts">
+                    <span class="k">Members</span><span>0</span>
+                    <span class="k">Created</span><span>Sep 5, 2026</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 PICKER -->
+  <section class="screen" id="picker">
+    <h2>4 · Add members picker</h2>
+    <p class="why">
+      App Bridge’s Picker API: native search, multi-select, only members not
+      already on the team. No custom list UI to maintain, and it scales to a
+      hundred people without pagination code.
+    </p>
+    <div class="frame">
+      <div class="chrome">
+        <span class="dots"><i></i><i></i><i></i></span
+        ><span class="url">…/app/teams/team_01</span>
+      </div>
+      <div class="canvas" style="min-height: 400px">
+        <div class="page" style="opacity: 0.5">
+          <div class="pagehead">
+            <div class="titles">
+              <span class="crumb">Teams ›</span>
+              <h1>Engraving</h1>
+            </div>
+            <div class="actions">
+              <span class="btn primary">Add members</span
+              ><span class="btn">More actions ▾</span>
+            </div>
+          </div>
+          <div class="cols">
+            <div class="card">
+              <div class="cardhead">Members</div>
+              <div class="cardbody">
+                <div class="framed">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Member</th>
+                        <th>On team since</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>admin@shop.com</td>
+                        <td>Sep 2, 2026</td>
+                      </tr>
+                      <tr>
+                        <td>member-01@shop.com</td>
+                        <td>Sep 2, 2026</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            <div class="aside">
+              <div class="card">
+                <div class="cardhead">Used by</div>
+                <div class="cardbody">
+                  <div class="stacklinks">
+                    <span>Custom pendant</span><span>Engraved ring</span
+                    ><span>Order workflow</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dim">
+          <div
+            class="modal"
+            role="dialog"
+            aria-label="Add members to Engraving"
+          >
+            <div class="mh">
+              <span>Add members to Engraving</span><span class="x">×</span>
+            </div>
+            <div class="mb">
+              <div class="search">
+                <svg viewBox="0 0 24 24">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="m20 20-3.5-3.5" /></svg
+                ><span style="color: var(--ink)">mem</span>
+              </div>
+              <div class="checks">
+                <div class="check">
+                  <i class="on"></i>member-02@shop.com <small>Polishing</small>
+                </div>
+                <div class="check">
+                  <i class="on"></i>member-03@shop.com
+                  <small>Polishing, Casting</small>
+                </div>
+                <div class="check">
+                  <i></i>member-04@shop.com <small>Casting</small>
+                </div>
+                <div class="check">
+                  <i></i>member-05@shop.com <small>Packing</small>
+                </div>
+                <div class="check">
+                  <i></i>member-06@shop.com <small>Stone setting</small>
+                </div>
+                <div class="check">
+                  <i></i>member-08@shop.com
+                  <small style="color: var(--warn-ink)">No teams</small>
+                </div>
+              </div>
+              <div style="color: var(--ink-sub)">
+                Someone missing?
+                <a href="#members">Add them on Members</a> first.
+              </div>
+            </div>
+            <div class="mf">
+              <span class="btn">Cancel</span
+              ><span class="btn primary">Add 2 members</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="note">
+        <b>·</b
+        ><span
+          >Rows show the member’s other teams as a hint, so “is this the right
+          Jenny?” is answerable. When every member is already on the team, or
+          the shop has none, the picker is replaced by a small dialog with the
+          link to Members.</span
+        >
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 MEMBERS INDEX -->
+  <section class="screen" id="members">
+    <h2>5 · Members index</h2>
+    <p class="why">
+      Still a single page. The one new column, <strong>Teams</strong>, is the
+      fact a merchant actually looks for, and the row menu covers everything a
+      member page would have done.
+    </p>
+    <div class="frame">
+      <div class="chrome">
+        <span class="dots"><i></i><i></i><i></i></span
+        ><span class="url">…/app/members</span>
+      </div>
+      <div class="canvas">
+        <div class="page wide">
+          <div class="pagehead">
+            <div class="titles"><h1>Members</h1></div>
+            <div class="actions">
+              <span class="btn primary">Add member</span
+              ><span
+                class="pin"
+                style="position: relative; top: -4px; left: -2px"
+                >1</span
+              >
+            </div>
+          </div>
+          <div class="card">
+            <p class="intro">
+              Members sign in with their email on the member area. Put each one
+              on a team, or they have nothing to do.
+            </p>
+            <div class="tools">
+              <div class="search">
+                <svg viewBox="0 0 24 24">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="m20 20-3.5-3.5" /></svg
+                >Search by email
+              </div>
+            </div>
+            <div class="tablewrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Email</th>
+                    <th>Teams</th>
+                    <th>Added</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>admin@shop.com</td>
+                    <td>
+                      <div class="chips">
+                        <span class="chip">Engraving</span
+                        ><span class="chip">Polishing</span
+                        ><span class="chip">Casting</span
+                        ><span class="chip">Packing</span>
+                        <span class="chip" style="color: var(--ink-faint)"
+                          >+2</span
+                        >
+                      </div>
+                    </td>
+                    <td>Sep 2, 2026</td>
+                    <td class="act">
+                      <span class="btn tertiary sm">···</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>member-01@shop.com</td>
+                    <td>
+                      <div class="chips">
+                        <span class="chip">Engraving</span>
+                      </div>
+                      <span
+                        class="pin"
+                        style="position: relative; top: -2px; left: 4px"
+                        >2</span
+                      >
+                    </td>
+                    <td>Sep 2, 2026</td>
+                    <td class="act">
+                      <span class="btn tertiary sm">···</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>member-02@shop.com</td>
+                    <td>
+                      <div class="chips">
+                        <span class="chip">Polishing</span>
+                      </div>
+                    </td>
+                    <td>Sep 2, 2026</td>
+                    <td class="act">
+                      <span class="btn tertiary sm">···</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>member-03@shop.com</td>
+                    <td>
+                      <div class="chips">
+                        <span class="chip">Polishing</span
+                        ><span class="chip">Casting</span>
+                      </div>
+                    </td>
+                    <td>Sep 2, 2026</td>
+                    <td class="act" style="position: relative">
+                      <span class="btn tertiary sm">···</span>
+                      <span class="menu" style="right: 16px; top: 34px"
+                        ><span>Edit teams</span
+                        ><span class="crit">Remove</span></span
+                      ><span
+                        class="pin"
+                        style="position: relative; top: -2px; left: 4px"
+                        >3</span
+                      >
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>member-04@shop.com</td>
+                    <td>
+                      <div class="chips"><span class="chip">Casting</span></div>
+                    </td>
+                    <td>Sep 2, 2026</td>
+                    <td class="act">
+                      <span class="btn tertiary sm">···</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>member-05@shop.com</td>
+                    <td>
+                      <div class="chips"><span class="chip">Packing</span></div>
+                    </td>
+                    <td>Sep 2, 2026</td>
+                    <td class="act">
+                      <span class="btn tertiary sm">···</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>member-06@shop.com</td>
+                    <td>
+                      <div class="chips">
+                        <span class="chip">Stone setting</span>
+                      </div>
+                    </td>
+                    <td>Sep 3, 2026</td>
+                    <td class="act">
+                      <span class="btn tertiary sm">···</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>member-08@shop.com</td>
+                    <td>
+                      <span class="badge warn">No teams</span>
+                      <span
+                        class="pin"
+                        style="position: relative; top: -2px; left: 4px"
+                        >4</span
+                      >
+                    </td>
+                    <td>Sep 11, 2026</td>
+                    <td class="act">
+                      <span class="btn tertiary sm">···</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="note">
+        <b>1</b
+        ><span
+          ><strong>Add member</strong> opens screen 6. The five-line explanatory
+          paragraph shrinks to one sentence that names the trap.</span
+        >
+      </div>
+      <div class="note">
+        <b>2</b
+        ><span
+          ><strong>Teams</strong> is one new shop-scoped read over
+          <code>TeamMember</code>. Chips overflow to “+N” past four.</span
+        >
+      </div>
+      <div class="note">
+        <b>3</b
+        ><span
+          >The row menu holds <strong>Edit teams</strong> (the same checklist
+          modal as Add member, without the email field) and
+          <strong>Remove</strong> (confirm modal with today’s “this will leave X
+          with no members” copy). This is the whole reason a member page is not
+          needed.</span
+        >
+      </div>
+      <div class="note">
+        <b>4</b
+        ><span
+          ><strong>No teams</strong> is the member-side twin of the team’s
+          <strong>No members</strong> badge. Same tone, same meaning: someone
+          who cannot see work.</span
+        >
+      </div>
+    </div>
+  </section>
+
+  <!-- 6 ADD MEMBER -->
+  <section class="screen" id="add-member">
+    <h2>6 · Add member dialog</h2>
+    <p class="why">
+      Email plus an optional team checklist. Offering teams here is what keeps a
+      no-code merchant from creating members who see nothing.
+    </p>
+    <div class="frame">
+      <div class="chrome">
+        <span class="dots"><i></i><i></i><i></i></span
+        ><span class="url">…/app/members</span>
+      </div>
+      <div class="canvas" style="min-height: 440px">
+        <div class="page wide" style="opacity: 0.5">
+          <div class="pagehead">
+            <div class="titles"><h1>Members</h1></div>
+            <div class="actions">
+              <span class="btn primary">Add member</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="tools"><div class="search">Search by email</div></div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Teams</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>admin@shop.com</td>
+                  <td>Engraving, Polishing, Casting, Packing</td>
+                </tr>
+                <tr>
+                  <td>member-01@shop.com</td>
+                  <td>Engraving</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="dim">
+          <div class="modal" role="dialog" aria-label="Add member">
+            <div class="mh">
+              <span>Add member</span><span class="x">×</span>
+            </div>
+            <div class="mb">
+              <div class="field">
+                <label for="am-email">Email</label>
+                <div class="input" id="am-email">jenny@hollowaystudio.co</div>
+                <div class="help">
+                  They’ll sign in with this email on the member area. No Shopify
+                  account needed.
+                </div>
+              </div>
+              <div class="field">
+                <label>Teams</label>
+                <div class="checks">
+                  <div class="check"><i class="on"></i>Engraving</div>
+                  <div class="check"><i></i>Polishing</div>
+                  <div class="check"><i></i>Casting</div>
+                  <div class="check"><i></i>Packing</div>
+                  <div class="check">
+                    <i></i>Quality check <small>No members</small>
+                  </div>
+                  <div class="check"><i></i>Stone setting</div>
+                </div>
+                <div class="help">
+                  Optional. A member with no team has nothing to do yet.
+                </div>
+              </div>
+            </div>
+            <div class="mf">
+              <span class="btn">Cancel</span
+              ><span class="btn primary">Add</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="note">
+        <b>·</b
+        ><span
+          >“Edit teams” from the Members row menu is this same dialog with the
+          email shown read-only in the heading (“Teams for member-03@shop.com”).
+          One component, two entry points. Teams are few, so a checklist beats a
+          picker here; past ~15 teams the checklist gets a search field, not a
+          new page.</span
+        >
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 NOT BUILT -->
+  <section class="screen" id="no-page">
+    <h2>7 · What is deliberately not built</h2>
+    <div class="not-built">
+      <h3>No member detail page</h3>
+      <p>
+        A member is an email, a short list of teams, a date and one destructive
+        action. That is a table row. A page would have a breadcrumb, a heading
+        that is an email, and the same two modals the row menu already opens.
+      </p>
+      <p>
+        What would change this: per-member work history or activity. Not asked
+        for, not in scope.
+      </p>
+    </div>
+    <div class="not-built" style="margin-top: 12px">
+      <h3>No name field on members</h3>
+      <p>
+        Only one line in the whole product shows one person’s identity to
+        another (“In progress since … by jenny@…” on the queue). The merchant
+        typed the email and knows whose it is; the member reads their own. A
+        name would add a migration, a field, a rename modal and a fallback rule
+        at every render site to improve that one line.
+      </p>
+      <p>
+        If it ever comes, it should be self-service in the member area and
+        called <em>Name</em>, not something the merchant maintains.
+      </p>
+    </div>
+    <div class="not-built" style="margin-top: 12px">
+      <h3>No step list on the team page</h3>
+      <p>
+        Replaced by the “Used by” aside card. Steps are edited in the workflow
+        editor; the delete dialog already counts them. A list keyed by step
+        grows without bound and pushes the people, the thing this page is for,
+        below the fold.
+      </p>
+    </div>
+  </section>
+</div>

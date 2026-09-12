@@ -444,46 +444,162 @@ describe("Repository SQL (D1 ShopSession)", () => {
       ),
     );
 
-    it.effect("listSoleMemberships names the teams a member is alone on", () =>
-      run(
-        Effect.gen(function* () {
-          const repo = yield* Repository;
-          const shop = shopOf("m.myshopify.com");
-          yield* seed(repo, [shop]);
-          const alone = emailOf("alone@example.com");
-          const other = emailOf("other@example.com");
-          yield* repo.addMember({ shop, email: alone });
-          yield* repo.addMember({ shop, email: other });
-          const members = yield* repo.listMembers(shop);
-          const idOf = (email: string) =>
-            members.find((m) => m.email === email)?.id ??
-            Schema.decodeUnknownSync(Domain.MemberId)("nope");
-          const solo = yield* repo.createTeam({
-            shop,
-            name: Schema.decodeUnknownSync(Domain.TeamName)("Solo"),
-          });
-          const shared = yield* repo.createTeam({
-            shop,
-            name: Schema.decodeUnknownSync(Domain.TeamName)("Shared"),
-          });
-          for (const [teamId, email] of [
-            [solo.id, alone],
-            [shared.id, alone],
-            [shared.id, other],
-          ] as const)
-            yield* repo.setTeamMember({
+    it.effect(
+      "listMemberTeams lists every edge with the team's count, ordered by team name",
+      () =>
+        run(
+          Effect.gen(function* () {
+            const repo = yield* Repository;
+            const shop = shopOf("m.myshopify.com");
+            yield* seed(repo, [shop]);
+            const alone = emailOf("alone@example.com");
+            const other = emailOf("other@example.com");
+            yield* repo.addMember({ shop, email: alone });
+            yield* repo.addMember({ shop, email: other });
+            const members = yield* repo.listMembers(shop);
+            const idOf = (email: string) =>
+              members.find((m) => m.email === email)?.id ??
+              Schema.decodeUnknownSync(Domain.MemberId)("nope");
+            const solo = yield* repo.createTeam({
               shop,
-              teamId,
-              memberId: idOf(email),
-              inTeam: true,
+              name: Schema.decodeUnknownSync(Domain.TeamName)("Solo"),
             });
-          const sole = yield* repo.listSoleMemberships(shop);
-          strictEqual(
-            sole.map((row) => `${row.memberId}:${row.teamName}`).join(","),
-            `${idOf(alone)}:Solo`,
-          );
-        }),
-      ),
+            const shared = yield* repo.createTeam({
+              shop,
+              name: Schema.decodeUnknownSync(Domain.TeamName)("a shared"),
+            });
+            for (const [teamId, email] of [
+              [solo.id, alone],
+              [shared.id, alone],
+              [shared.id, other],
+            ] as const)
+              yield* repo.setTeamMember({
+                shop,
+                teamId,
+                memberId: idOf(email),
+                inTeam: true,
+              });
+            const rows = yield* repo.listMemberTeams(shop);
+            strictEqual(
+              rows
+                .map(
+                  (row) =>
+                    `${row.memberId === idOf(alone) ? "alone" : "other"}:${row.teamName}:${String(row.teamMemberCount)}`,
+                )
+                .join(","),
+              "alone:a shared:2,other:a shared:2,alone:Solo:1",
+            );
+            /* A sole membership is `teamMemberCount === 1`, which is what
+               the members page's remove dialog warns about. */
+            strictEqual(
+              rows
+                .filter((row) => row.teamMemberCount === 1)
+                .map((row) => row.teamName)
+                .join(","),
+              "Solo",
+            );
+            strictEqual(
+              (yield* repo.listMemberTeams(shopOf("o.myshopify.com"))).length,
+              0,
+            );
+          }),
+        ),
+    );
+
+    it.effect(
+      "setMemberTeams replaces the whole set, drops cross-shop ids, and empties on []",
+      () =>
+        run(
+          Effect.gen(function* () {
+            const repo = yield* Repository;
+            const shop = shopOf("m.myshopify.com");
+            const other = shopOf("o.myshopify.com");
+            yield* seed(repo, [shop, other]);
+            const email = emailOf("worker@example.com");
+            yield* repo.addMember({ shop, email });
+            const [member] = yield* repo.listMembers(shop);
+            const teamNameOf = Schema.decodeUnknownSync(Domain.TeamName);
+            const a = yield* repo.createTeam({ shop, name: teamNameOf("A") });
+            const b = yield* repo.createTeam({ shop, name: teamNameOf("B") });
+            const foreign = yield* repo.createTeam({
+              shop: other,
+              name: teamNameOf("F"),
+            });
+            const names = () =>
+              Effect.map(repo.listMemberTeams(shop), (rows) =>
+                rows.map((row) => row.teamName).join(","),
+              );
+            yield* repo.setMemberTeams({
+              shop,
+              memberId: member.id,
+              teamIds: [a.id, b.id, foreign.id],
+            });
+            strictEqual(yield* names(), "A,B");
+            strictEqual(
+              (yield* repo.listTeams({ shop: other }))[0].memberCount,
+              0,
+            );
+            yield* repo.setMemberTeams({
+              shop,
+              memberId: member.id,
+              teamIds: [b.id],
+            });
+            strictEqual(yield* names(), "B");
+            yield* repo.setMemberTeams({
+              shop,
+              memberId: member.id,
+              teamIds: [],
+            });
+            strictEqual(yield* names(), "");
+            /* A member id from another shop matches no row: nothing is
+               deleted or inserted for this shop. */
+            yield* repo.setMemberTeams({
+              shop: other,
+              memberId: member.id,
+              teamIds: [foreign.id],
+            });
+            strictEqual((yield* repo.listMemberTeams(other)).length, 0);
+          }),
+        ),
+    );
+
+    it.effect(
+      "setMemberTeams is one atomic batch: a failing statement rolls the delete back",
+      () =>
+        run(
+          Effect.gen(function* () {
+            const repo = yield* Repository;
+            const shop = shopOf("m.myshopify.com");
+            yield* seed(repo, [shop]);
+            const email = emailOf("worker@example.com");
+            yield* repo.addMember({ shop, email });
+            const [member] = yield* repo.listMembers(shop);
+            const a = yield* repo.createTeam({
+              shop,
+              name: Schema.decodeUnknownSync(Domain.TeamName)("A"),
+            });
+            yield* repo.setMemberTeams({
+              shop,
+              memberId: member.id,
+              teamIds: [a.id],
+            });
+            /* The same shape `setMemberTeams` sends, with a deliberately
+               broken second statement, on the raw binding the driver's
+               `batch` wraps: D1 documents batches as one implicit
+               transaction, so the delete must not survive on its own. */
+            yield* Effect.tryPromise(() =>
+              env.D1.batch([
+                env.D1.prepare(
+                  "delete from TeamMember where memberId = ?",
+                ).bind(member.id),
+                env.D1.prepare("insert into NoSuchTable (x) values (?)").bind(
+                  1,
+                ),
+              ]),
+            ).pipe(Effect.flip);
+            strictEqual((yield* repo.listMemberTeams(shop)).length, 1);
+          }),
+        ),
     );
 
     it.effect("listMemberShops spans shops for one email", () =>
@@ -666,6 +782,54 @@ describe("Repository SQL (D1 ShopSession)", () => {
       ),
     );
 
+    it.effect(
+      "addTeamMembers adds many, ignores present and cross-shop members, refuses a missing team",
+      () =>
+        run(
+          Effect.gen(function* () {
+            const repo = yield* Repository;
+            const shop = shopOf("t.myshopify.com");
+            const other = shopOf("o.myshopify.com");
+            yield* seed(repo, [shop, other]);
+            const team = yield* seedTeam(shop, "Cut");
+            for (const email of ["a@example.com", "b@example.com"])
+              yield* repo.addMember({ shop, email: emailOf(email) });
+            yield* repo.addMember({
+              shop: other,
+              email: emailOf("f@example.com"),
+            });
+            const [a, b] = yield* repo.listMembers(shop);
+            const [foreign] = yield* repo.listMembers(other);
+            yield* repo.setTeamMember({
+              shop,
+              teamId: team.id,
+              memberId: a.id,
+              inTeam: true,
+            });
+            yield* repo.addTeamMembers({
+              shop,
+              teamId: team.id,
+              memberIds: [a.id, b.id, foreign.id],
+            });
+            strictEqual((yield* repo.listTeams({ shop }))[0].memberCount, 2);
+            yield* repo.addTeamMembers({
+              shop,
+              teamId: team.id,
+              memberIds: [],
+            });
+            assertTrue(
+              (yield* Effect.flip(
+                repo.addTeamMembers({
+                  shop: other,
+                  teamId: team.id,
+                  memberIds: [foreign.id],
+                }),
+              )) instanceof TeamNotFoundError,
+            );
+          }),
+        ),
+    );
+
     it.effect("findTeamDetail flags every shop member, in or out", () =>
       run(
         Effect.gen(function* () {
@@ -701,6 +865,13 @@ describe("Repository SQL (D1 ShopSession)", () => {
               .toSorted()
               .join(","),
             "in@example.com:in,out@example.com:out",
+          );
+          strictEqual(
+            detail.members
+              .map((m) => (m.inTeamSince === null ? "null" : "set"))
+              .toSorted()
+              .join(","),
+            "null,set",
           );
           assertTrue(
             Option.isNone(

@@ -2850,6 +2850,16 @@ export class ShopAgent extends Agent {
     );
   }
 
+  /** Plain RPC for the same reason as {@link listStepsOwnedBy}: the teams index's "Used by" column, read by its loader. */
+  listOwnedSteps(): Promise<readonly Domain.OwnedStepByTeam[]> {
+    return this.runEffect(
+      WorkflowRepository.pipe(
+        Effect.flatMap((repository) => repository.listOwnedSteps()),
+        Effect.withLogSpan("ShopAgent.listOwnedSteps"),
+      ),
+    );
+  }
+
   /** Plain RPC for the same reason as {@link listStepsOwnedBy}: the delete dialogs' counts, read by the team pages' loaders. */
   countStepsByTeam(): Promise<readonly Domain.TeamStepCounts[]> {
     return this.runEffect(

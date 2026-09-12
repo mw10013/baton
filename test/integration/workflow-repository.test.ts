@@ -630,6 +630,19 @@ describe("WorkflowRepository", () => {
             ["B", "B1", "workflow"],
           ],
         );
+        deepStrictEqual(
+          (yield* repo.listOwnedSteps()).map((o) => [
+            o.teamId,
+            o.workflowName,
+            o.stepName,
+            o.side,
+          ]),
+          [
+            ["t1", "A", "A1", "draft"],
+            ["t2", "A", "A2", "draft"],
+            ["t1", "B", "B1", "workflow"],
+          ],
+        );
       }),
     ));
 

@@ -509,6 +509,11 @@ export class WorkflowRepository extends Context.Service<
       readonly Domain.OwnedStep[],
       SqlError.SqlError | WorkflowRepositoryError
     >;
+    /** {@link listStepsOwnedBy} for every team at once; the teams index's "Used by" column. */
+    readonly listOwnedSteps: () => Effect.Effect<
+      readonly Domain.OwnedStepByTeam[],
+      SqlError.SqlError | WorkflowRepositoryError
+    >;
     /**
      * The object-side half of a team delete: every workflow step, draft step,
      * and *open* run step that points at `teamId` becomes unassigned, in one
@@ -1677,6 +1682,31 @@ export class WorkflowRepository extends Context.Service<
                   from WorkflowDraftStep s
                   join Workflow w on w.id = s.workflowId
                   where s.teamId = ${teamId}
+                )
+                order by workflowName collate nocase, sideOrder, position
+              `,
+            );
+          },
+        ),
+
+        listOwnedSteps: Effect.fn("WorkflowRepository.listOwnedSteps")(
+          function* () {
+            return yield* decode(
+              Schema.Array(Domain.OwnedStepByTeam),
+              "Invalid OwnedStepByTeam row",
+            )(
+              yield* sql`
+                select teamId, workflowId, workflowName, side, stepName from (
+                  select s.teamId, w.id as workflowId, w.name as workflowName,
+                    'workflow' as side, 0 as sideOrder, s.name as stepName, s.position
+                  from WorkflowStep s
+                  join Workflow w on w.id = s.workflowId
+                  where s.teamId is not null
+                  union all
+                  select s.teamId, w.id, w.name, 'draft', 1, s.name, s.position
+                  from WorkflowDraftStep s
+                  join Workflow w on w.id = s.workflowId
+                  where s.teamId is not null
                 )
                 order by workflowName collate nocase, sideOrder, position
               `,

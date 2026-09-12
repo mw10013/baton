@@ -338,7 +338,12 @@ export type TeamRoster = typeof TeamRoster.Type;
 export const TeamDetail = Schema.Struct({
   team: Team,
   members: Schema.Array(
-    Schema.Struct({ ...Member.fields, inTeam: SqliteBoolean }),
+    Schema.Struct({
+      ...Member.fields,
+      inTeam: SqliteBoolean,
+      /** The `TeamMember.createdAt` of the edge; `null` when `inTeam` is false. */
+      inTeamSince: Schema.NullOr(Schema.String),
+    }),
   ),
 });
 export type TeamDetail = typeof TeamDetail.Type;
@@ -356,6 +361,21 @@ export const MemberAccess = Schema.Struct({
   teams: Schema.Array(Schema.Struct({ id: TeamId, name: TeamName })),
 });
 export type MemberAccess = typeof MemberAccess.Type;
+
+/**
+ * One row per `(member, team)` edge in a shop, with the team's total member
+ * count riding along: the members page paints its Teams column from it, the
+ * edit-teams modal seeds its checklist from it, and a sole membership — the
+ * team a delete would empty — is simply `teamMemberCount === 1`, so no second
+ * read over the same join exists to drift from this one.
+ */
+export const MemberTeam = Schema.Struct({
+  memberId: MemberId,
+  teamId: TeamId,
+  teamName: TeamName,
+  teamMemberCount: Schema.Number,
+});
+export type MemberTeam = typeof MemberTeam.Type;
 
 export const WorkflowId = Schema.NonEmptyString.pipe(
   Schema.brand("WorkflowId"),
@@ -1069,6 +1089,13 @@ export const OwnedStep = Schema.Struct({
 });
 export type OwnedStep = typeof OwnedStep.Type;
 
+/** {@link OwnedStep} for every team at once, keyed by team: the teams index's "Used by" column in one object read. */
+export const OwnedStepByTeam = Schema.Struct({
+  teamId: TeamId,
+  ...OwnedStep.fields,
+});
+export type OwnedStepByTeam = typeof OwnedStepByTeam.Type;
+
 /** Assign a team to any open run step: the remedy that makes team delete safe, and the merchant's way to move work between teams. */
 export const AssignRunStepTeamInput = Schema.Struct({
   runStepId: BoundedId,
@@ -1679,35 +1706,35 @@ export interface WorkflowsIndexLoaderData {
 export type WorkflowLoaderData = WorkflowDetailView | null;
 
 /**
- * `/app/members` (`app.members`). `soleMemberships` are the teams each member
- * is the only person on, so the delete dialog can warn "This will leave
- * <team> with no members" — only when true.
+ * `/app/members` (`app.members`). `teams` feeds the team checklist in the add
+ * and edit-teams modals; `memberTeams` paints the Teams column and carries the
+ * sole-membership warning (`teamMemberCount === 1`) for the remove dialog.
  */
 export interface MembersLoaderData {
   readonly members: readonly Member[];
-  readonly soleMemberships: readonly {
-    readonly memberId: MemberId;
-    readonly teamName: TeamName;
-  }[];
+  readonly teams: readonly TeamRoster[];
+  readonly memberTeams: readonly MemberTeam[];
 }
 
 /**
- * `/app/teams` (`app.teams.index`). `stepCounts` is Durable Object data
+ * `/app/teams` (`app.teams.index`). `ownedSteps` is Durable Object data
  * joined into a D1 page by the loader (the loader-versus-socket rule on
- * `ShopAgentClient`), feeding the delete dialog's counts.
+ * `ShopAgentClient`), grouped per team into the "Used by" column.
  */
 export interface TeamsIndexLoaderData {
   readonly teams: readonly TeamSummary[];
-  readonly stepCounts: readonly TeamStepCounts[];
+  readonly ownedSteps: readonly OwnedStepByTeam[];
 }
 
 /**
  * `/app/teams/$teamId` (`app.teams.$teamId`; a param tail contributes its
  * noun, `Team`). `ownedSteps` and `stepCounts` are Durable Object data joined
  * into a D1 page by the loader — see the loader-versus-socket rule on
- * `ShopAgentClient`.
+ * `ShopAgentClient`. `memberTeams` is the "Other teams" hint the add-members
+ * picker shows per candidate.
  */
 export interface TeamLoaderData extends TeamDetail {
+  readonly memberTeams: readonly MemberTeam[];
   readonly ownedSteps: readonly OwnedStep[];
   readonly stepCounts: TeamDeleteCounts;
 }

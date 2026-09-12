@@ -157,16 +157,19 @@ export class Repository extends Context.Service<
     readonly deleteMember: (
       member: Pick<Domain.Member, "shop" | "email">,
     ) => Effect.Effect<void, SqlError.SqlError | MemberNotFoundError>;
-    /**
-     * `(memberId, teamName)` for every team that has exactly one member, so
-     * the members page can warn which teams a delete would empty.
-     */
-    readonly listSoleMemberships: (
+    /** Every `(member, team)` edge in the shop with the team's member count; see `Domain.MemberTeam`. */
+    readonly listMemberTeams: (
       shop: Domain.Shop,
     ) => Effect.Effect<
-      Domain.MembersLoaderData["soleMemberships"],
+      readonly Domain.MemberTeam[],
       SqlError.SqlError | RepositoryError
     >;
+    /** Replace a member's whole team set at once; the add-member and edit-teams dialogs. */
+    readonly setMemberTeams: (params: {
+      readonly shop: Domain.Shop;
+      readonly memberId: Domain.MemberId;
+      readonly teamIds: readonly Domain.TeamId[];
+    }) => Effect.Effect<void, SqlError.SqlError>;
     readonly findMember: (
       member: Pick<Domain.Member, "shop" | "email">,
     ) => Effect.Effect<
@@ -224,6 +227,12 @@ export class Repository extends Context.Service<
       void,
       SqlError.SqlError | RepositoryError | TeamNotFoundError
     >;
+    /** The add-members picker's write: several members onto one team at once. */
+    readonly addTeamMembers: (params: {
+      readonly shop: Domain.Shop;
+      readonly teamId: Domain.TeamId;
+      readonly memberIds: readonly Domain.MemberId[];
+    }) => Effect.Effect<void, SqlError.SqlError | TeamNotFoundError>;
     readonly findMemberAccess: (
       member: Pick<Domain.Member, "shop" | "email">,
     ) => Effect.Effect<
@@ -509,25 +518,67 @@ export class Repository extends Context.Service<
           });
       });
 
-      const listSoleMemberships = Effect.fn("Repository.listSoleMemberships")(
+      /**
+       * Reads through `D1Primary` for the same reason {@link listMembers}
+       * does: the members page re-lists right after a primary write. The
+       * count is a correlated subquery so it is the team's total, not the
+       * count of rows this join happens to return.
+       */
+      const listMemberTeams = Effect.fn("Repository.listMemberTeams")(
         function* (shop: Domain.Shop) {
           const rows = yield* sqlPrimary`
-            select tm.memberId, t.name as teamName
+            select tm.memberId, tm.teamId, t.name as teamName,
+              (select count(*) from TeamMember x where x.teamId = tm.teamId) as teamMemberCount
             from TeamMember tm
             join Team t on t.id = tm.teamId
             where t.shop = ${shop}
-              and (select count(*) from TeamMember x where x.teamId = tm.teamId) = 1
             order by t.name collate nocase
           `;
           return yield* decodeRepository(
-            Schema.Array(
-              Schema.Struct({
-                memberId: Domain.MemberId,
-                teamName: Domain.TeamName,
-              }),
-            ),
-            "Invalid sole membership rows",
+            Schema.Array(Domain.MemberTeam),
+            "Invalid MemberTeam rows",
           )(rows);
+        },
+      );
+
+      /**
+       * One D1 batch, not a `withTransaction`: D1 has no interactive
+       * transactions (the driver rejects `withTransaction` outright), but
+       * `db.batch()` runs its statements in order inside one implicit
+       * transaction and rolls all of them back if any fails — so the delete
+       * and the inserts land together or not at all, and a member is never
+       * observed with no teams between the two. A batch cannot nest inside a
+       * `SqlClient` transaction; this repo's transactions are all on the
+       * Durable Object's SQLite, never on D1. Tagged-template statements are
+       * lazy, so the array is built without `yield*` and handed over whole.
+       *
+       * Both statements scope through `Member.shop`/`Team.shop`, so a forged
+       * cross-shop id matches no row and is silently dropped — the same
+       * posture as {@link setTeamMember}.
+       */
+      const setMemberTeams = Effect.fn("Repository.setMemberTeams")(
+        function* (params: {
+          readonly shop: Domain.Shop;
+          readonly memberId: Domain.MemberId;
+          readonly teamIds: readonly Domain.TeamId[];
+        }) {
+          const createdAt = new Date(
+            yield* Clock.currentTimeMillis,
+          ).toISOString();
+          yield* sqlPrimary.batch([
+            sqlPrimary`
+              delete from TeamMember where memberId in (
+                select m.id from Member m where m.id = ${params.memberId} and m.shop = ${params.shop})
+            `,
+            ...params.teamIds.map(
+              (teamId) => sqlPrimary`
+                insert or ignore into TeamMember (teamId, memberId, createdAt)
+                select t.id, m.id, ${createdAt}
+                from Team t join Member m on m.shop = t.shop
+                where t.id = ${teamId} and m.id = ${params.memberId} and t.shop = ${params.shop}
+              `,
+            ),
+          ]);
         },
       );
 
@@ -679,7 +730,7 @@ export class Repository extends Context.Service<
           yield* sqlPrimary`select * from Team where id = ${team.id} and shop = ${team.shop}`;
         if (teamRows[0] === undefined) return Option.none();
         const memberRows = yield* sqlPrimary`
-          select m.*, (tm.teamId is not null) as inTeam
+          select m.*, (tm.teamId is not null) as inTeam, tm.createdAt as inTeamSince
           from Member m
           left join TeamMember tm on tm.memberId = m.id and tm.teamId = ${team.id}
           where m.shop = ${team.shop}
@@ -745,6 +796,44 @@ export class Repository extends Context.Service<
       );
 
       /**
+       * The batch form of {@link setTeamMember} with `inTeam: true`, one D1
+       * batch for the same atomicity reasons as {@link setMemberTeams}. The
+       * team is checked up front (as {@link renameTeam} disambiguates) because
+       * `insert or ignore` cannot tell a missing team from an already-present
+       * edge; a member id from another shop matches no source row and is
+       * dropped by the join.
+       */
+      const addTeamMembers = Effect.fn("Repository.addTeamMembers")(
+        function* (params: {
+          readonly shop: Domain.Shop;
+          readonly teamId: Domain.TeamId;
+          readonly memberIds: readonly Domain.MemberId[];
+        }) {
+          const team =
+            yield* sqlPrimary`select 1 as present from Team where id = ${params.teamId} and shop = ${params.shop}`;
+          if (team[0] === undefined)
+            yield* new TeamNotFoundError({
+              shop: params.shop,
+              teamId: params.teamId,
+            });
+          if (params.memberIds.length === 0) return;
+          const createdAt = new Date(
+            yield* Clock.currentTimeMillis,
+          ).toISOString();
+          yield* sqlPrimary.batch(
+            params.memberIds.map(
+              (memberId) => sqlPrimary`
+                insert or ignore into TeamMember (teamId, memberId, createdAt)
+                select t.id, m.id, ${createdAt}
+                from Team t join Member m on m.shop = t.shop
+                where t.id = ${params.teamId} and m.id = ${memberId} and t.shop = ${params.shop}
+              `,
+            ),
+          );
+        },
+      );
+
+      /**
        * The member-area guard's single query: membership and the teams it
        * carries in one round trip, through the per-request replica session for
        * the same staleness tolerance as {@link findMember}. The left joins are
@@ -800,7 +889,8 @@ export class Repository extends Context.Service<
         listMembers,
         addMember,
         deleteMember,
-        listSoleMemberships,
+        listMemberTeams,
+        setMemberTeams,
         findMember,
         listMemberShops,
         listTeams,
@@ -809,6 +899,7 @@ export class Repository extends Context.Service<
         deleteTeam,
         findTeamDetail,
         setTeamMember,
+        addTeamMembers,
         findMemberAccess,
       });
     }),

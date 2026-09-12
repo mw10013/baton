@@ -91,6 +91,9 @@ export class ShopAgentClient extends Context.Service<
     readonly countStepsByTeam: (
       shop: string,
     ) => Effect.Effect<readonly Domain.TeamStepCounts[], ShopAgentClientError>;
+    readonly listOwnedSteps: (
+      shop: string,
+    ) => Effect.Effect<readonly Domain.OwnedStepByTeam[], ShopAgentClientError>;
     readonly listOrders: (
       shop: string,
       input: Domain.ListOrdersInput,
@@ -189,6 +192,9 @@ export class ShopAgentClient extends Context.Service<
       const queueItems = Schema.toType(Schema.Array(Domain.QueueItem));
       const ownedSteps = Schema.toType(Schema.Array(Domain.OwnedStep));
       const teamStepCounts = Schema.toType(Schema.Array(Domain.TeamStepCounts));
+      const ownedStepsByTeam = Schema.toType(
+        Schema.Array(Domain.OwnedStepByTeam),
+      );
       const ordersView = Schema.toType(Domain.OrdersView);
       const orderDetail = Schema.toType(Schema.NullOr(Domain.OrderDetailView));
       const workflows = Schema.toType(Schema.Array(Domain.ItemWorkflowSummary));
@@ -217,6 +223,12 @@ export class ShopAgentClient extends Context.Service<
           (shop: string) =>
             call("countStepsByTeam", teamStepCounts, shop, (stub) =>
               stub.countStepsByTeam(),
+            ),
+        ),
+        listOwnedSteps: Effect.fn("ShopAgentClient.listOwnedSteps")(
+          (shop: string) =>
+            call("listOwnedSteps", ownedStepsByTeam, shop, (stub) =>
+              stub.listOwnedSteps(),
             ),
         ),
         listOrders: Effect.fn("ShopAgentClient.listOrders")(

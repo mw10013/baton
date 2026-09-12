@@ -1,10 +1,10 @@
-import { expect, test } from "@playwright/test";
+import { expect, type FrameLocator, test } from "@playwright/test";
 
 import { clickHoisted, gotoApp } from "./app";
 import { seedConfig, seedMembers } from "./seed";
 
 /**
- * The embedded half of teams: creating, renaming, staffing, and deleting on
+ * The embedded half of teams: creating, staffing, renaming, and deleting on
  * `/app/teams`. What a member then sees of their teams is
  * `member-area.member.spec.ts`, which runs outside the admin entirely.
  *
@@ -19,15 +19,30 @@ import { seedConfig, seedMembers } from "./seed";
  * default before the page ever renders.
  */
 
+/**
+ * A More actions menu item. The title-bar button is hoisted into the admin
+ * chrome, and neither a synthetic click nor a forced pointer click on it opens
+ * a menu Playwright can see in either document (probed 2026-09-12), so the
+ * item is driven at its source: the in-frame `s-button` inside the `s-menu`
+ * still exists, hidden, and a native click on it fires its `commandFor`
+ * exactly as the host's menu would. The modal it opens is what gets asserted.
+ */
+const clickMenuItem = (frame: FrameLocator, name: string) =>
+  frame
+    .locator("s-menu#team-actions s-button", { hasText: name })
+    .evaluate((el) => {
+      (el as HTMLElement).click();
+    });
+
 const MEMBER_EMAIL = "e2e.member@example.com";
-const EMPTY_STATE = "No teams yet. Create one above.";
+const EMPTY_STATE = "No teams yet.";
 const TEAM = "E2E Cut";
 const RENAMED = "E2E Cutting";
 
 test("teams screen creates, staffs, renames, and deletes a team", async ({
   page,
 }) => {
-  test.setTimeout(90_000);
+  test.setTimeout(120_000);
 
   await seedMembers(seedConfig(), [MEMBER_EMAIL]);
 
@@ -36,41 +51,79 @@ test("teams screen creates, staffs, renames, and deletes a team", async ({
   await expect(frame.locator('s-page[heading="Teams"]')).toBeVisible();
   await expect(frame.getByText(EMPTY_STATE)).toBeVisible();
 
-  /* Padded on purpose: `Domain.TeamName` trims at decode, so the row that comes
-     back is the proof that normalization is structural rather than something
-     the create form does on its own. */
-  await frame.getByLabel("Name").fill(`  ${TEAM}  `);
+  /* Padded on purpose: `Domain.TeamName` trims at decode, so the heading that
+     comes back is the proof that normalization is structural rather than
+     something the create dialog does on its own. Creating lands on the new
+     team's page, since the next thing is always adding people. */
   await frame.getByRole("button", { name: "Create team" }).click();
-  await expect(frame.getByRole("link", { name: TEAM })).toBeVisible();
+  await frame
+    .getByRole("textbox", { name: "Name", exact: true })
+    .fill(`  ${TEAM}  `);
+  await frame.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(frame.locator(`s-page[heading="${TEAM}"]`)).toBeVisible();
+  await expect(frame.getByText("Not used by any workflow yet.")).toBeVisible();
+  await expect(frame.getByText("Nobody is on this team")).toBeVisible();
 
   /* Case-insensitive uniqueness is a unique index, not a pre-check, so the
-     duplicate has to come back as the merchant-facing banner rather than as a
-     raw constraint error. */
-  await frame.getByLabel("Name").fill(TEAM.toLowerCase());
-  await frame.getByRole("button", { name: "Create team" }).click();
+     duplicate has to come back as the field error in the dialog rather than
+     as a raw constraint error. */
+  await clickHoisted(page.getByRole("link", { name: "Teams", exact: true }));
+  await expect(frame.getByRole("link", { name: TEAM })).toBeVisible();
+  /* With teams present the Create button is the title-bar primary action,
+     hoisted into the admin chrome by App Bridge (see `clickHoisted`); the
+     modal itself stays in the frame. */
+  await clickHoisted(page.getByRole("button", { name: "Create team" }));
+  await frame
+    .getByRole("textbox", { name: "Name", exact: true })
+    .fill(TEAM.toLowerCase());
+  await frame.getByRole("button", { name: "Create", exact: true }).click();
   await expect(
     frame.getByText("A team with that name already exists."),
   ).toBeVisible();
+  await frame.getByRole("button", { name: "Cancel" }).click();
 
+  /* Search filters client-side; a miss shows the clear-filters state. Typed
+     key by key: Polaris forwards native `input` events into its `onInput`,
+     and `fill` can land as one value swap the element does not report. */
+  await frame
+    .getByRole("searchbox", { name: "Search teams by name" })
+    .pressSequentially("zzz");
+  await expect(frame.getByText("No teams match.")).toBeVisible();
+  await frame.getByRole("button", { name: "Clear filters" }).click();
   await frame.getByRole("link", { name: TEAM }).click();
   await expect(frame.locator(`s-page[heading="${TEAM}"]`)).toBeVisible();
 
-  await frame.getByLabel(MEMBER_EMAIL).check();
-  await frame.getByLabel("Name").fill(RENAMED);
+  /* Add members opens the App Bridge picker, which the admin host renders in
+     the top-level document, not in the app iframe. The empty-team box carries
+     its own in-frame Add members button (the title-bar one is hoisted); the
+     picker is located by its heading on `page`, and its rows by text. */
+  await frame.getByRole("button", { name: "Add members" }).click();
+  const picker = page.getByRole("dialog").filter({
+    hasText: `Add members to ${TEAM}`,
+  });
+  await expect(picker).toBeVisible();
+  await picker.getByText(MEMBER_EMAIL).click();
+  await picker.getByRole("button", { name: /^(?:Add|Select|Done)$/u }).click();
+  await expect(frame.getByText(MEMBER_EMAIL, { exact: true })).toBeVisible();
+
+  /* Rename lives behind More actions and the name is the page heading. */
+  await clickMenuItem(frame, "Rename");
+  await frame.getByRole("textbox", { name: "Name", exact: true }).fill(RENAMED);
   await frame.getByRole("button", { name: "Save" }).click();
   await expect(frame.locator(`s-page[heading="${RENAMED}"]`)).toBeVisible();
-  await expect(frame.getByLabel(MEMBER_EMAIL)).toBeChecked();
 
-  await clickHoisted(page.getByRole("link", { name: "Teams", exact: true }));
-  await expect(frame.getByRole("link", { name: RENAMED })).toBeVisible();
-
-  /* A fresh team has nobody on it until staffed; this one was staffed above,
-     so the badge must be absent, and the delete dialog names no steps. */
-  await expect(frame.getByText("No members", { exact: true })).toHaveCount(0);
-  await frame.getByRole("button", { name: "Delete", exact: true }).click();
+  /* Remove confirms in a modal; the last member gets the empty-team sentence. */
+  await frame.getByRole("button", { name: "Remove", exact: true }).click();
   await expect(
-    frame.locator(`s-banner[heading="Delete ${RENAMED}?"]`),
+    frame.getByText(`${RENAMED} will have no members.`),
   ).toBeVisible();
+  await frame
+    .getByRole("button", { name: "Remove", exact: true })
+    .last()
+    .click();
+  await expect(frame.getByText("Nobody is on this team")).toBeVisible();
+
+  await clickMenuItem(frame, "Delete");
   await expect(
     frame.getByText("No workflow steps are assigned to it."),
   ).toBeVisible();
@@ -78,5 +131,6 @@ test("teams screen creates, staffs, renames, and deletes a team", async ({
     .getByRole("button", { name: "Delete", exact: true })
     .last()
     .click();
+  await expect(frame.locator('s-page[heading="Teams"]')).toBeVisible();
   await expect(frame.getByText(EMPTY_STATE)).toBeVisible();
 });

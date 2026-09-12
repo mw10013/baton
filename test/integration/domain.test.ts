@@ -3,6 +3,7 @@ import { Schema } from "effect";
 import { describe, it } from "vitest";
 
 import * as Domain from "@/lib/Domain";
+import { groupUsedBy } from "@/lib/usedBy";
 
 const order = (
   overrides: Partial<Domain.ShopOrder> = {},
@@ -121,5 +122,39 @@ describe("Domain.runCounts", () => {
     strictEqual(counts.open, 2);
     strictEqual(counts.done, 1);
     strictEqual(counts.flagged, 1);
+  });
+});
+
+const ownedStep = (
+  workflowId: string,
+  workflowName: string,
+  side: "workflow" | "draft",
+  stepName: string,
+): Domain.OwnedStep => ({
+  workflowId: Schema.decodeUnknownSync(Domain.WorkflowId)(workflowId),
+  workflowName: Schema.decodeUnknownSync(Domain.WorkflowName)(workflowName),
+  side,
+  stepName: Schema.decodeUnknownSync(Domain.StepName)(stepName),
+});
+
+describe("groupUsedBy", () => {
+  it("groups steps by workflow, sorted by name, draft-only when no live step", () => {
+    const grouped = groupUsedBy([
+      ownedStep("w2", "pendant", "draft", "Cast"),
+      ownedStep("w1", "Ring", "workflow", "Engrave"),
+      ownedStep("w1", "Ring", "draft", "Engrave"),
+      ownedStep("w2", "pendant", "draft", "Polish"),
+      ownedStep(Domain.ORDER_WORKFLOW_ID, "Order workflow", "workflow", "Pack"),
+    ]);
+    strictEqual(
+      grouped
+        .map(
+          (w) =>
+            `${w.workflowName}:${w.draftOnly ? "draft" : "live"}:${w.href}`,
+        )
+        .join("|"),
+      "Order workflow:live:/app/order-workflow|pendant:draft:/app/workflows/w2|Ring:live:/app/workflows/w1",
+    );
+    strictEqual(groupUsedBy([]).length, 0);
   });
 });
