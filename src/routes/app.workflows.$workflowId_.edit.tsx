@@ -11,8 +11,8 @@ import {
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Schema } from "effect";
 
-import * as WorkflowProductTags from "@/components/WorkflowProductTags";
 import { AttentionBanner, StageFlow } from "@/components/WorkflowStages";
+import * as WorkflowTag from "@/components/WorkflowTag";
 import * as Domain from "@/lib/Domain";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
@@ -91,7 +91,19 @@ const getLoaderData = createServerFn({ method: "GET" })
     ),
   );
 
+/**
+ * `tag=edit` opens the tag dialog on arrival — the detail page's Edit tag
+ * button lands here, so the one edit surface is one click away without the
+ * detail page growing a second one. Hand-written so an unknown value reads
+ * as absent instead of failing the route.
+ */
+const validateSearch = ({
+  tag,
+}: Record<string, unknown>): { readonly tag?: "edit" } =>
+  tag === "edit" ? { tag } : {};
+
 export const Route = createFileRoute("/app/workflows/$workflowId_/edit")({
+  validateSearch,
   loader: ({ params }) => {
     // The order workflow's editor is its own route; a stale link lands there.
     if (params.workflowId === Domain.ORDER_WORKFLOW_ID)
@@ -116,6 +128,7 @@ export const Route = createFileRoute("/app/workflows/$workflowId_/edit")({
  */
 function RouteComponent() {
   const { workflowId } = Route.useParams();
+  const { tag: tagSearch } = Route.useSearch();
   const detail: Domain.WorkflowLoaderData = Route.useLoaderData();
   const router = useRouter();
   const navigate = useNavigate({ from: Route.fullPath });
@@ -680,18 +693,23 @@ function RouteComponent() {
                 borderRadius="base"
               >
                 <s-stack gap="small-300">
-                  <s-text type="strong">Product tags</s-text>
+                  <s-text type="strong">Tag</s-text>
                   <s-text color="subdued">{itemTriggerLine(tags)}</s-text>
-                  <WorkflowProductTags.WorkflowProductTags
+                  <WorkflowTag.WorkflowTag
                     key={workflowId}
                     tags={tags}
                     disabled={!identified || busy}
+                    defaultOpen={tagSearch === "edit"}
+                    onClose={() => {
+                      // Drop the deep link so a refresh does not reopen the dialog.
+                      if (tagSearch === "edit")
+                        void navigate({ search: {}, replace: true });
+                    }}
                     onSave={async (nextTags) => {
                       const result = await tagsMutation.mutateAsync(nextTags);
                       if (result._tag !== "Ok")
                         throw new Error(
-                          stepResultMessage(result) ??
-                            "Couldn't save product tags.",
+                          stepResultMessage(result) ?? "Couldn't save the tag.",
                         );
                     }}
                   />

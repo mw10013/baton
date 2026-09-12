@@ -49,7 +49,7 @@ const runInRepository = <A, E>(
 
 const name = Schema.decodeUnknownSync(Domain.WorkflowName);
 const stepName = Schema.decodeUnknownSync(Domain.StepName);
-const tags = Schema.decodeUnknownSync(Domain.ProductTags);
+const tags = Schema.decodeUnknownSync(Domain.WorkflowTags);
 const teamId = Schema.decodeUnknownSync(Domain.TeamId);
 const teamName = Schema.decodeUnknownSync(Domain.TeamName);
 const memberId = Schema.decodeUnknownSync(Domain.MemberId);

@@ -421,6 +421,13 @@ export const StepNote = trimmedText("StepNote", 1000);
 export type StepNote = typeof StepNote.Type;
 
 /**
+ * The workflow's tag: its own name in a form a product can carry. Baton
+ * authors it (the create dialog prefills it from the workflow name) and the
+ * merchant applies it to products in Shopify; a line item whose product
+ * carries it follows the workflow. It is not a *product* tag — that is
+ * `OrderLineItem.productTags`, the product's own merchandising facets, which
+ * this is matched against.
+ *
  * Trimmed *and* lowercased, unlike the names: a tag exists only to be matched
  * against `OrderLineItem.productTags`, merchants type `Engraving` and
  * `engraving` interchangeably, and Shopify's own admin search is
@@ -428,10 +435,10 @@ export type StepNote = typeof StepNote.Type;
  * plain set intersection over lowercased line-item tags. 255 is Shopify's tag
  * length limit.
  */
-export const ProductTag = Schema.String.pipe(
+export const WorkflowTag = Schema.String.pipe(
   Schema.decodeTo(
     Schema.NonEmptyString.check(Schema.isMaxLength(255)).pipe(
-      Schema.brand("ProductTag"),
+      Schema.brand("WorkflowTag"),
     ),
     {
       decode: SchemaGetter.transform((s) => s.trim().toLowerCase()),
@@ -439,16 +446,16 @@ export const ProductTag = Schema.String.pipe(
     },
   ),
 );
-export type ProductTag = typeof ProductTag.Type;
+export type WorkflowTag = typeof WorkflowTag.Type;
 
 /**
  * Dedupes *after* folding, so `["Engraving", "engraving"]` is one tag, and
  * drops blanks so a trailing comma in the tags field is not an error. The
  * ceiling is checked on what survives.
  */
-export const ProductTags = Schema.Array(Schema.String).pipe(
+export const WorkflowTags = Schema.Array(Schema.String).pipe(
   Schema.decodeTo(
-    Schema.Array(ProductTag).check(
+    Schema.Array(WorkflowTag).check(
       Schema.isMaxLength(WorkflowLimits.maxTags, {
         message: `At most ${String(WorkflowLimits.maxTags)} tags`,
       }),
@@ -461,10 +468,10 @@ export const ProductTags = Schema.Array(Schema.String).pipe(
     },
   ),
 );
-export type ProductTags = typeof ProductTags.Type;
+export type WorkflowTags = typeof WorkflowTags.Type;
 
 /**
- * `item`: runs once per matching line item (chosen by product tag). `order`:
+ * `item`: runs once per matching line item (chosen by the workflow's tag). `order`:
  * runs once per order — the shop's one order workflow, the singleton row
  * {@link ORDER_WORKFLOW_ID} that `initializeSchema` inserts, never
  * tag-selected, and {@link OrderWorkflow} carries no `tags`. Set on create,
@@ -495,8 +502,8 @@ export const ORDER_WORKFLOW_NAME = "Order workflow";
  * Vocabulary. A workflow definition has two nouns and the merchant never
  * meets a third:
  *
- * - **Workflow**: name, type, product tags, steps, Active / Off. This is
- *   what starts runs. Runs copy it wholesale and never look back at it.
+ * - **Workflow**: name, type, tag, steps, Active / Off. This is what
+ *   starts runs. Runs copy it wholesale and never look back at it.
  * - **Draft**: a private copy of the workflow's tags and steps, created by
  *   Edit and living until Apply or Discard. Every edit writes to the draft
  *   immediately; there is no unsaved state anywhere.
@@ -506,7 +513,12 @@ export const ORDER_WORKFLOW_NAME = "Order workflow";
  * **Discard changes** deletes the draft. **Turn on** / **Turn off** set and
  * clear `activatedAt`; the switch and the draft are unrelated.
  *
- * How a workflow is chosen for work, in merchant copy:
+ * How a workflow is chosen for work, in merchant copy. The workflow **has a
+ * tag** (one in practice; `tags` allows more as an escape hatch for renames
+ * and merges); the product **carries product tags**; a **match** is one of
+ * the product's tags equalling the workflow's tag. The workflow's field is
+ * never called a "product tag": that name points the arrow the wrong way,
+ * since Baton mints the string and the merchant carries it out to Shopify.
  *
  * - a workflow **starts when** an order **contains** a product **tagged with**
  *   one of its tags;
@@ -519,7 +531,8 @@ export const ORDER_WORKFLOW_NAME = "Order workflow";
  *
  * In identifiers: `match` is the tag test, `start` / `canStart` is creating
  * a run. Not used, in code or copy: version, live, saved, published,
- * retired, applied (as a state), route, routing, routable, pause.
+ * retired, applied (as a state), route, routing, routable, pause, and
+ * "product tag" for the workflow's own field.
  *
  * Merchant copy, the whole model in five sentences: **delete an item
  * workflow and its runs stay on their orders**, open ones finish, and the
@@ -568,11 +581,11 @@ const WorkflowFields = {
 export const isActive = (workflow: { readonly activatedAt: number | null }) =>
   workflow.activatedAt !== null;
 
-/** An item workflow: chosen by product tag. */
+/** An item workflow: chosen by its tag. */
 export const ItemWorkflow = Schema.Struct({
   ...WorkflowFields,
   type: Schema.Literal("item"),
-  tags: Schema.fromJsonString(ProductTags),
+  tags: Schema.fromJsonString(WorkflowTags),
 });
 export type ItemWorkflow = typeof ItemWorkflow.Type;
 
@@ -604,7 +617,7 @@ export const isItemWorkflow = <W extends { readonly type: WorkflowType }>(
  */
 export const WorkflowDraft = Schema.Struct({
   workflowId: WorkflowId,
-  tags: Schema.fromJsonString(ProductTags),
+  tags: Schema.fromJsonString(WorkflowTags),
   createdAt: Schema.Number,
   updatedAt: Schema.Number,
 });
@@ -750,7 +763,7 @@ export type DeleteWorkflowInput = typeof DeleteWorkflowInput.Type;
 /** Item workflows only: the order workflow is the schema's singleton ({@link ORDER_WORKFLOW_ID}) and is never created. */
 export const CreateWorkflowInput = Schema.Struct({
   name: WorkflowName,
-  tags: ProductTags,
+  tags: WorkflowTags,
 });
 export type CreateWorkflowInput = typeof CreateWorkflowInput.Type;
 
@@ -764,7 +777,7 @@ export type UpdateWorkflowInput = typeof UpdateWorkflowInput.Type;
 /** Lands on the draft, never on the workflow; the draft is created if this is the first change. */
 export const UpdateWorkflowTagsInput = Schema.Struct({
   workflowId: BoundedId,
-  tags: ProductTags,
+  tags: WorkflowTags,
 });
 export type UpdateWorkflowTagsInput = typeof UpdateWorkflowTagsInput.Type;
 
@@ -866,11 +879,11 @@ export const SeedWorkflowsInput = Schema.Struct({
       name: WorkflowName,
       type: Schema.optionalKey(WorkflowType),
       active: Schema.optionalKey(Schema.Boolean),
-      tags: ProductTags,
+      tags: WorkflowTags,
       steps: Schema.Array(SeedWorkflowStep),
       draft: Schema.optionalKey(
         Schema.Struct({
-          tags: Schema.optionalKey(ProductTags),
+          tags: Schema.optionalKey(WorkflowTags),
           steps: Schema.Array(SeedWorkflowStep),
         }),
       ),

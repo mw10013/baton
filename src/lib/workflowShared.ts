@@ -56,12 +56,14 @@ export const ORDER_WORKFLOW_TRIGGER =
 
 /**
  * The item-workflow trigger line: what has to be true of an order for this
- * workflow to start. Product tags are the whole selector, so a workflow
- * without any never starts and says so.
+ * workflow to start. The workflow's tag is the whole selector, so a workflow
+ * without one never starts and says so. The match sentence speaks from the
+ * order's side ("a product tagged"), which is where "product tag" is the
+ * right phrase.
  */
 export const itemTriggerLine = (tags: readonly string[]) => {
   if (tags.length === 0)
-    return "No product tags yet, so this never starts. Add one to say which items follow it.";
+    return "No tag yet, so nothing reaches this workflow. Add one, then put it on your products in Shopify.";
   const quoted = tags.map((tag) => `“${tag}”`);
   const list =
     quoted.length === 1

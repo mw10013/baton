@@ -56,7 +56,7 @@ const decodeDeleteWorkflowResult = Schema.decodeUnknownPromise(
 /** The Turn on dialog's first line: the rule that will start runs once the switch is on. */
 const turnOnBody = (workflow: Domain.ItemWorkflow) => {
   if (workflow.tags.length === 0)
-    return "This workflow has no product tags, so nothing will match it until you add some.";
+    return "This workflow has no tag, so nothing can reach it. Add one, then put it on your products.";
   return `Every order placed from now with a line item tagged ${workflow.tags
     .map((tag) => `“${tag}”`)
     .join(" or ")} will start a run of this workflow.`;
@@ -237,6 +237,9 @@ function RouteComponent() {
       ) : (
         <s-badge slot="accessory">Off</s-badge>
       )}
+      {workflow.tags.length > 0 && (
+        <s-badge slot="accessory">{workflow.tags.join(", ")}</s-badge>
+      )}
       <s-button
         slot="primary-action"
         variant="primary"
@@ -325,9 +328,24 @@ function RouteComponent() {
                 border="base subdued dashed"
                 borderRadius="base"
               >
-                <s-stack gap="small-500">
-                  <s-text type="strong">Product tag</s-text>
+                <s-stack gap="small-300">
+                  <s-text type="strong">Tag</s-text>
+                  {shownTags.length > 0 && (
+                    <s-stack direction="inline" gap="small-300">
+                      {shownTags.map((tag) => (
+                        <s-chip key={tag}>{tag}</s-chip>
+                      ))}
+                    </s-stack>
+                  )}
                   <s-text color="subdued">{itemTriggerLine(shownTags)}</s-text>
+                  {/* Editing happens in one place, the editor; navigating there creates no draft, only saving does. */}
+                  <s-box>
+                    <s-button
+                      href={`/app/workflows/${workflowId}/edit?tag=edit`}
+                    >
+                      Edit tag
+                    </s-button>
+                  </s-box>
                 </s-stack>
               </s-box>
             }

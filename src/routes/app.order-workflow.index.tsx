@@ -53,8 +53,8 @@ export const Route = createFileRoute("/app/order-workflow/")({
  * The order workflow's page: a copy of the item detail page with what does
  * not apply removed. No breadcrumb (it is a top-level nav entry), no More
  * actions (nothing is left in it: the singleton is never renamed, deleted,
- * or duplicated), and the trigger box is the shop-wide rule rather than a
- * product tag. Steps, drafts, teams, the switch, and the "applies since"
+ * or duplicated), and the trigger box is the shop-wide rule rather than the
+ * workflow's tag. Steps, drafts, teams, the switch, and the "applies since"
  * line are the same as an item workflow's. Copied rather than shared as one
  * component because the two pages are about different things and the
  * branches would outweigh the duplication.

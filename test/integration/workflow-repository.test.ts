@@ -41,7 +41,7 @@ const tagsOf = (
 
 const name = Schema.decodeUnknownSync(Domain.WorkflowName);
 const stepName = Schema.decodeUnknownSync(Domain.StepName);
-const tags = Schema.decodeUnknownSync(Domain.ProductTags);
+const tags = Schema.decodeUnknownSync(Domain.WorkflowTags);
 const teamId = Schema.decodeUnknownSync(Domain.TeamId);
 
 const T1 = { id: teamId("t1"), memberCount: 1 };
@@ -66,20 +66,20 @@ const editable = (found: Option.Option<Domain.WorkflowWithDraft>) => {
 };
 
 describe("Domain workflow schemas", () => {
-  it("ProductTags trims, lowercases, dedupes, and drops blanks", () => {
+  it("WorkflowTags trims, lowercases, dedupes, and drops blanks", () => {
     deepStrictEqual<readonly string[]>(
       tags([" Engraving", "engraving", "", "Wood "]),
       ["engraving", "wood"],
     );
   });
 
-  it("ProductTags rejects more than the tag limit", () => {
+  it("WorkflowTags rejects more than the tag limit", () => {
     const over = Array.from(
       { length: Domain.WorkflowLimits.maxTags + 1 },
       (_, i) => String(i),
     );
     strictEqual(
-      Option.isNone(Schema.decodeUnknownOption(Domain.ProductTags)(over)),
+      Option.isNone(Schema.decodeUnknownOption(Domain.WorkflowTags)(over)),
       true,
     );
   });

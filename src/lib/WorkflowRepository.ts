@@ -302,7 +302,7 @@ export class WorkflowRepository extends Context.Service<
     /** Writes `tags` on the draft, creating it if this is the first change. Non-empty tags on an order workflow are refused. */
     readonly updateWorkflowTags: (input: {
       readonly workflowId: string;
-      readonly tags: Domain.ProductTags;
+      readonly tags: Domain.WorkflowTags;
     }) => Effect.Effect<
       Domain.WorkflowDraft,
       SqlError.SqlError | WorkflowRepositoryError | WorkflowNotFoundError
@@ -642,7 +642,7 @@ export class WorkflowRepository extends Context.Service<
        */
       const requireNoTagsForOrderWorkflow = (
         type: Domain.WorkflowType,
-        tags: Domain.ProductTags,
+        tags: Domain.WorkflowTags,
       ) =>
         type === "order" && tags.length > 0
           ? Effect.fail(
@@ -659,7 +659,7 @@ export class WorkflowRepository extends Context.Service<
         now,
       }: {
         readonly workflowId: string;
-        readonly tags: Domain.ProductTags;
+        readonly tags: Domain.WorkflowTags;
         readonly now: number;
       }) =>
         Effect.gen(function* () {
@@ -1295,7 +1295,7 @@ export class WorkflowRepository extends Context.Service<
             tags,
           }: {
             readonly workflowId: string;
-            readonly tags: Domain.ProductTags;
+            readonly tags: Domain.WorkflowTags;
           }) {
             return yield* sql.withTransaction(
               Effect.gen(function* () {

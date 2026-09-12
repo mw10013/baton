@@ -40,12 +40,12 @@ const DevSeedInput = Schema.Struct({
         type: Schema.optionalKey(Domain.WorkflowType),
         /** Defaults to on when the entry has steps and every step is assigned; see `Domain.SeedWorkflowsInput`. */
         active: Schema.optionalKey(Schema.Boolean),
-        tags: Domain.ProductTags,
+        tags: Domain.WorkflowTags,
         steps: Schema.Array(SeedStepByTeamName),
         /** A pending draft beside the workflow's `steps`; `tags` default to the workflow's. */
         draft: Schema.optionalKey(
           Schema.Struct({
-            tags: Schema.optionalKey(Domain.ProductTags),
+            tags: Schema.optionalKey(Domain.WorkflowTags),
             steps: Schema.Array(SeedStepByTeamName),
           }),
         ),

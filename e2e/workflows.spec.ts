@@ -71,30 +71,30 @@ test("workflows create, edit, apply, and discard through the draft", async ({
   await expect(frame.locator('s-page[heading="Workflows"]')).toBeVisible();
   await expect(frame.getByRole("link", { name: EXISTING })).toBeVisible();
 
-  /* Create asks for a name and nothing else, then hands over to the editor. */
+  /* Create asks for a name and a tag. The tag mirrors the name, folded,
+     until the merchant edits it; after that the name can keep changing. */
   await clickHoisted(page.getByRole("button", { name: "Create workflow" }));
   const nameField = frame.getByRole("textbox", { name: "Name", exact: true });
+  const tagField = frame.getByRole("textbox", { name: "Tag", exact: true });
+  await nameField.fill("Cake");
+  await expect(tagField).toHaveValue("cake");
+  await tagField.fill("e2e-cake");
   await nameField.fill(CREATED);
+  await expect(tagField).toHaveValue("e2e-cake");
   await frame.getByRole("button", { name: "Create", exact: true }).click();
   await expect(frame.locator(`s-page[heading="${CREATED}"]`)).toBeVisible();
-  await expect(
-    frame.getByText("No product tags yet, so this never starts.", {
-      exact: false,
-    }),
-  ).toBeVisible();
-
-  /* Tags are managed from the trigger and saved together to start the draft. */
-  await frame.getByRole("button", { name: "Manage tags" }).click();
-  await frame
-    .getByRole("textbox", { name: "Add a product tag" })
-    .fill("e2e-cake");
-  await frame.getByRole("button", { name: "Add", exact: true }).click();
-  await frame.getByRole("button", { name: "Save to draft" }).click();
   await expect(
     frame.getByText("Starts when an order contains a product tagged", {
       exact: false,
     }),
   ).toBeVisible();
+
+  /* The tag is edited from the trigger; Cancel leaves the workflow alone. */
+  await frame.getByRole("button", { name: "Edit tag" }).click();
+  await expect(
+    frame.getByRole("textbox", { name: "Tag", exact: true }),
+  ).toHaveValue("e2e-cake");
+  await frame.getByRole("button", { name: "Cancel", exact: true }).click();
 
   await frame.getByRole("button", { name: "Add the first step" }).click();
   await nameField.fill("Bake");
@@ -254,11 +254,9 @@ test("the order workflow opens from the nav, has no rename or delete, and turns 
       0,
     );
 
-  /* The editor: the same steps canvas, no tag field. */
+  /* The editor: the same steps canvas, no tag. */
   await clickHoisted(page.getByRole("button", { name: "Edit", exact: true }));
-  await expect(
-    frame.getByRole("textbox", { name: "Add a product tag" }),
-  ).toHaveCount(0);
+  await expect(frame.getByRole("button", { name: "Edit tag" })).toHaveCount(0);
   for (const name of ["Rename", "Delete", "Duplicate"])
     await expect(page.getByRole("button", { name, exact: true })).toHaveCount(
       0,
