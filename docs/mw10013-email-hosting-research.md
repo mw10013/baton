@@ -13,6 +13,8 @@ Domain and DNS provider: Cloudflare
 
 Sign in to Infomaniak with `mw10013@gmail.com`. That is the account login, not a hosted inbox. Keep it as the login and recovery address so an email or DNS problem at `mw10013.com` cannot lock you out of Infomaniak.
 
+This work moves human mail for the apex `mw10013.com` domain to Infomaniak. MX records apply to the whole domain, so both `michael@mw10013.com` and its `support@mw10013.com` alias will use Infomaniak. It does not change Baton's transactional email from the `mail.mw10013.com` subdomain.
+
 ## Current checkpoint
 
 Completed in Infomaniak:
@@ -36,13 +38,21 @@ Current delivery remains unchanged:
 
 No DNS changes are in progress, so it is safe to stop at this checkpoint.
 
-In the next session, open **Cloudflare -> mw10013.com -> DNS -> Records** and add these non-disruptive records one at a time:
+In the next session, first open Infomaniak's **Connect domain** or **Global Security** screen and keep it open beside **Cloudflare -> mw10013.com -> DNS -> Records**. Add these non-disruptive records one at a time:
 
 1. Add a CNAME named `autoconfig` pointing to `infomaniak.com`, with proxy status **DNS only** and TTL **Auto**.
 2. Add a CNAME named `autodiscover` pointing to `infomaniak.com`, with proxy status **DNS only** and TTL **Auto**.
-3. Add the Infomaniak DKIM TXT record using the exact host and value from the Infomaniak **Connect domain** screen. Copy both fields with Infomaniak's copy buttons because the displayed values are truncated.
+3. Add the Infomaniak DKIM TXT record using the exact host and value from Infomaniak. Copy both fields with Infomaniak's copy buttons because the displayed values may be truncated.
 
-Each of those records can be added separately, with a pause between them. They do not change inbound mail delivery.
+Each record can be added separately, with a pause between them. They do not change inbound mail delivery. The two CNAMEs help mail clients discover Infomaniak's settings; DKIM authenticates outbound Infomaniak mail.
+
+After publishing DKIM:
+
+1. Wait until a public DNS lookup returns the complete DKIM value.
+2. Confirm Infomaniak recognizes DKIM as valid.
+3. Send test messages from both the `michael@` and `support@` identities to validate them before changing inbound delivery.
+
+SPF can still fail on those test messages because the apex SPF record still authorizes Cloudflare, not Infomaniak. DKIM should pass. Do not enforce apex DMARC until after the cutover.
 
 Do **not** add the Infomaniak MX record, change the apex SPF record, disable Cloudflare Email Routing, or alter the existing Cloudflare `support@` routing rule during those three steps. MX and SPF will be handled later as a separate controlled cutover.
 
@@ -107,7 +117,7 @@ Before the cutover:
 2. Screenshot the Cloudflare Email Routing rules.
 3. Record the Gmail **Settings -> Accounts and Import -> Send mail as** entry for `support@mw10013.com`.
 4. In Infomaniak **Mail Service -> Global Security**, copy the exact MX, SPF, and DKIM values shown for `mw10013.com`.
-5. If Cloudflare permits it, reduce the apex MX TTL before the cutover.
+5. Confirm the apex MX TTL is still 300 seconds. It was already 300 seconds on September 12, 2026, so no reduction was needed.
 
 Current public apex records are:
 
@@ -130,16 +140,16 @@ Use the values displayed in the Infomaniak account if they differ. DKIM is accou
 
 Perform these steps together during a quiet period:
 
-1. Disable Cloudflare Email Routing for `mw10013.com`.
-2. Remove any remaining Cloudflare Email Routing MX records at the apex.
-3. Add the exact Infomaniak MX record at the apex.
-4. Replace the old apex SPF TXT value with Infomaniak's exact SPF value.
-5. Add the account-specific Infomaniak DKIM record.
+1. Confirm the Infomaniak mailbox, alias, sending identities, and published DKIM are ready.
+2. In **Cloudflare -> Email Routing -> Settings**, unlock the Email Routing DNS records. If Cloudflare presents a **Start disabling** flow, choose **Unlock records and continue**, not **Delete and Disable**. Unlocking preserves the existing routing configuration for easier rollback.
+3. Add the exact Infomaniak MX record at the apex. The currently documented value is `mta-gw.infomaniak.ch` at priority `5`, but use the value in Infomaniak Manager if it differs.
+4. Remove the three Cloudflare Email Routing MX records from the apex. A brief overlap is acceptable because Infomaniak's priority `5` is preferred over the current Cloudflare priorities `18`, `89`, and `99`; remove the Cloudflare records promptly rather than leaving a mixed configuration.
+5. Delete the Cloudflare-managed apex SPF record, then create a new apex TXT record with Infomaniak's exact SPF value. Do not edit the Cloudflare-managed record in place because disabling Email Routing later could remove that same managed record.
 6. Ensure mail-related Cloudflare records are DNS-only wherever proxy status is offered.
-7. Confirm there is exactly one SPF record at `mw10013.com`.
+7. Confirm there is exactly one SPF record at `mw10013.com` and exactly the intended Infomaniak MX record.
 8. Recheck that no record under `mail.mw10013.com` or `cf-bounce.mail.mw10013.com` changed.
 
-Do not keep Cloudflare and Infomaniak MX records active together. That can split delivery unpredictably.
+Do not disable Cloudflare Email Routing until the tests below pass. Changing the apex MX records stops new mail from selecting Cloudflare while retaining its routing configuration for rollback. After a successful monitoring period, disable Email Routing; Cloudflare will remove any routing-related DNS records it still manages at the apex.
 
 ## 6. Test immediately
 
@@ -155,6 +165,8 @@ Use Gmail and one non-Google account to test:
 8. Send a Baton login email and confirm `noreply@mail.mw10013.com` still delivers normally.
 
 DNS caches can continue using the previous MX records temporarily. Monitor both the new Infomaniak inbox and Gmail during the transition.
+
+After all tests pass and mail has remained stable through at least the 300-second old MX TTL, disable Cloudflare Email Routing. Review the records Cloudflare proposes to remove before confirming and verify again that none belong to `mail.mw10013.com` or `cf-bounce.mail.mw10013.com`.
 
 ## 7. Add DMARC
 
@@ -186,11 +198,12 @@ Only after all tests pass:
 
 If Infomaniak cannot receive mail:
 
-1. Re-enable Cloudflare Email Routing.
-2. Restore the recorded Cloudflare apex MX records.
-3. Restore the previous apex SPF value.
+1. If Cloudflare Email Routing has not yet been disabled, restore the recorded Cloudflare apex MX records and previous apex SPF value. Its existing `support@` routing rule should resume forwarding to Gmail after DNS propagation.
+2. If Email Routing has already been disabled, enable it again, confirm or recreate the `support@` routing rule, and restore the recorded Cloudflare apex MX and SPF records.
+3. Remove the Infomaniak apex MX record so only the Cloudflare MX set remains.
 4. Continue forwarding `support@` to Gmail while correcting the Infomaniak configuration.
-5. Do not alter Baton's subdomain records during rollback.
+5. Monitor both Gmail and Infomaniak until the 300-second MX TTL and any external caches have passed.
+6. Do not alter Baton's subdomain records during rollback.
 
 ## Mail retention
 
