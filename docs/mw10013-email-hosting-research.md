@@ -1,6 +1,6 @@
 # Set up Infomaniak email for `mw10013.com`
 
-Updated: **September 11, 2026**.
+Updated: **September 12, 2026**.
 
 ## Target
 
@@ -13,7 +13,38 @@ Domain and DNS provider: Cloudflare
 
 Sign in to Infomaniak with `mw10013@gmail.com`. That is the account login, not a hosted inbox. Keep it as the login and recovery address so an email or DNS problem at `mw10013.com` cannot lock you out of Infomaniak.
 
-The custom mailbox has not been created yet: no `@mw10013.com` address currently appears in Infomaniak Mail.
+## Current checkpoint
+
+Completed in Infomaniak:
+
+- Added `mw10013.com` to kSuite as an **external** domain. The domain was not transferred.
+- Created the Mail Service and primary mailbox `michael@mw10013.com`.
+- Assigned the existing Michael Wu Infomaniak user to the mailbox.
+- Created the active alias `support@mw10013.com`, which delivers into the `michael@` inbox.
+- Created the `Support` sending identity with display name `Michael Wu` and both sender and reply address set to `support@mw10013.com`.
+
+Current delivery remains unchanged:
+
+- Cloudflare is still the registrar, authoritative DNS provider, and nameserver provider.
+- Cloudflare Email Routing remains enabled.
+- Cloudflare still forwards `support@mw10013.com` to `mw10013@gmail.com`.
+- No Infomaniak DNS records have been added to Cloudflare yet.
+- Infomaniak therefore still reports the external domain as disconnected.
+- A Cloudflare DNS export was downloaded on September 12, 2026, before making any DNS changes.
+
+### Resume here
+
+No DNS changes are in progress, so it is safe to stop at this checkpoint.
+
+In the next session, open **Cloudflare -> mw10013.com -> DNS -> Records** and add these non-disruptive records one at a time:
+
+1. Add a CNAME named `autoconfig` pointing to `infomaniak.com`, with proxy status **DNS only** and TTL **Auto**.
+2. Add a CNAME named `autodiscover` pointing to `infomaniak.com`, with proxy status **DNS only** and TTL **Auto**.
+3. Add the Infomaniak DKIM TXT record using the exact host and value from the Infomaniak **Connect domain** screen. Copy both fields with Infomaniak's copy buttons because the displayed values are truncated.
+
+Each of those records can be added separately, with a pause between them. They do not change inbound mail delivery.
+
+Do **not** add the Infomaniak MX record, change the apex SPF record, disable Cloudflare Email Routing, or alter the existing Cloudflare `support@` routing rule during those three steps. MX and SPF will be handled later as a separate controlled cutover.
 
 Do not change the domain's nameservers. Cloudflare remains authoritative for DNS.
 
@@ -62,7 +93,7 @@ If Infomaniak will not create the pending Mail Service without immediate DNS cha
 7. Add `support@mw10013.com` as its one included alias.
 8. In Mail, open **Settings -> Signatures** and create or edit a signature.
 9. Expand **Advanced Settings** and select `support@mw10013.com` as the sender address.
-10. Confirm both `michael@` and `support@` are available when composing mail.
+10. Create a `Support` signature identity so selecting that signature sends as `support@mw10013.com`; sending without it uses the primary address.
 
 Mail sent to `support@` will arrive in the `michael@` inbox. The alias has no separate inbox or password.
 
