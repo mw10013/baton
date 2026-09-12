@@ -240,8 +240,9 @@ already knows from Flow. Sequence:
 ## Spike outcome (2026-09-12)
 
 Built and verified live in `sandbox-shop-01`. Screenshots in
-`docs/workflow-editor-chrome/`. The item editor now opens in an `s-app-window`;
-the order-workflow editor is untouched.
+`docs/workflow-editor-chrome/`. Both editors now open in an `s-app-window`; the
+order-workflow editor followed the same day once the item editor had been seen
+(`11-order-workflow-after-apply.png`), sharing the hook with its own editor path.
 
 What was seen:
 
@@ -277,6 +278,6 @@ on every `hide`, hides on `applied`, and hides then calls `onDeleted` on `delete
 The list page opens the window straight after Create and navigates to the new
 workflow's page when it closes, which is Flow's behaviour.
 
-Left for later: the order-workflow editor, and cleaning up the sandbox test data
-(the Engraved workflow now has a "Polish" step and its tag reads "engraving"; a
-"Window spike" workflow exists).
+Left for later: cleaning up the sandbox test data (the Engraved workflow now has a
+"Polish" step and its tag reads "engraving"; a "Window spike" workflow exists; the
+order workflow has a "Pack" step).

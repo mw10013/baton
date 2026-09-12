@@ -34,8 +34,8 @@ export const postEditorWindowMessage = (message: EditorWindowMessage): void => {
   channel.close();
 };
 
-const editorSrc = (workflowId: string, search = ""): string =>
-  `/app/workflows/${workflowId}/edit?chrome=window${search}`;
+const itemEditorPath = (workflowId: string): string =>
+  `/app/workflows/${workflowId}/edit`;
 
 /**
  * Owns one `s-app-window` for the workflow editor on the calling page:
@@ -55,11 +55,14 @@ const editorSrc = (workflowId: string, search = ""): string =>
  */
 export const useWorkflowEditorWindow = ({
   workflowId,
+  editorPath = itemEditorPath,
   onHide,
   onDeleted,
 }: {
   /** The workflow the standing `src` points at; the list page has none until create. */
   readonly workflowId?: string;
+  /** Route of the editor for a workflow id; the order workflow has its own. */
+  readonly editorPath?: (workflowId: string) => string;
   readonly onHide: () => void;
   readonly onDeleted: (workflowId: string) => void;
 }): {
@@ -71,6 +74,8 @@ export const useWorkflowEditorWindow = ({
   readonly open: (workflowId: string, search?: string) => void;
 } => {
   const ref = React.useRef<SAppWindowElement | null>(null);
+  const editorSrc = (id: string, search = "") =>
+    `${editorPath(id)}?chrome=window${search}`;
   /**
    * The standing `src` must be a real app URL with a query string even when
    * there is no workflow yet: with `about:blank` App Bridge rewrote a later

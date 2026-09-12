@@ -20,6 +20,7 @@ import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
+import { useWorkflowEditorWindow } from "@/lib/workflowEditorWindow";
 import { ORDER_WORKFLOW_TRIGGER, turnOnBlocker } from "@/lib/workflowShared";
 
 /** `tab=draft` is the Draft tab; anything else is the live workflow, as on the item page. */
@@ -68,6 +69,14 @@ function RouteComponent() {
   const [banner, setBanner] = React.useState<string | null>(null);
 
   const invalidate = () => router.invalidate({ sync: true });
+  /** The editor opens in an `s-app-window` over this page, Flow's chrome; see `workflowEditorWindow.ts`. */
+  const editor = useWorkflowEditorWindow({
+    workflowId: Domain.ORDER_WORKFLOW_ID,
+    editorPath: () => "/app/order-workflow/edit",
+    onHide: () => void invalidate(),
+    // The singleton cannot be deleted; a refetch is the safe no-op.
+    onDeleted: () => void invalidate(),
+  });
 
   if (detail === null)
     return (
@@ -108,10 +117,12 @@ function RouteComponent() {
         slot="primary-action"
         variant="primary"
         icon="edit"
-        href="/app/order-workflow/edit"
+        commandFor={editor.windowProps.id}
+        command="--show"
       >
         Edit
       </s-button>
+      <s-app-window {...editor.windowProps} />
       <WorkflowSwitch
         workflow={workflow}
         steps={steps}

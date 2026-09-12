@@ -12,10 +12,12 @@ import { Effect, Match, Schema } from "effect";
 
 import { AttentionBanner, StageFlow } from "@/components/WorkflowStages";
 import * as Domain from "@/lib/Domain";
+import { hideModal } from "@/lib/polarisModal";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
+import { postEditorWindowMessage } from "@/lib/workflowEditorWindow";
 import { applyBlocker, ORDER_WORKFLOW_TRIGGER } from "@/lib/workflowShared";
 
 const DISCARD_MODAL = "discard-draft";
@@ -74,7 +76,14 @@ const getLoaderData = createServerFn({ method: "GET" })
     ),
   );
 
+/** `chrome=window` marks the route as opened inside an `s-app-window`; see `workflowEditorWindow.ts`. */
+const validateSearch = ({
+  chrome,
+}: Record<string, unknown>): { readonly chrome?: "window" } =>
+  chrome === "window" ? { chrome } : {};
+
 export const Route = createFileRoute("/app/order-workflow/edit")({
+  validateSearch,
   loader: () => getLoaderData(),
   component: RouteComponent,
 });
@@ -83,7 +92,11 @@ export const Route = createFileRoute("/app/order-workflow/edit")({
  * The order workflow's editor: a copy of the item editor without the tag
  * editor (the trigger is the shop-wide rule and is not editable), Rename,
  * Delete, or Duplicate (the singleton has none), and so without the More
- * actions menu. Steps, stages, the draft, Apply and Discard are the same.
+ * actions menu. Steps, stages, the draft, Apply and Discard are the same,
+ * and so is window mode: opened in an `s-app-window` it drops the breadcrumb,
+ * reports Apply over `postEditorWindowMessage` instead of navigating, and
+ * hides modals with `hideModal` because `shopify.modal.hide` cannot see this
+ * document's modals from inside a window.
  *
  * Opening it writes nothing. The canvas shows the draft when one exists and
  * the workflow itself when one does not — the first change is what creates
@@ -98,6 +111,7 @@ function RouteComponent() {
   const detail: Domain.WorkflowLoaderData = Route.useLoaderData();
   const router = useRouter();
   const navigate = useNavigate({ from: Route.fullPath });
+  const inWindow = Route.useSearch().chrome === "window";
   const shopify = useAppBridge();
   const { agent, identified } = useShopAgent();
   const [banner, setBanner] = React.useState<string | null>(null);
@@ -213,8 +227,12 @@ function RouteComponent() {
     onSuccess: async (result) => {
       setBanner(applyResultMessage(result));
       if (result._tag !== "Ok") return;
-      await shopify.modal.hide(APPLY_MODAL);
+      hideModal(APPLY_MODAL);
       shopify.toast.show("Changes applied. This is what runs now.");
+      if (inWindow) {
+        postEditorWindowMessage({ type: "applied", workflowId });
+        return;
+      }
       await navigate({ to: "/app/order-workflow" });
     },
     onError,
@@ -228,7 +246,7 @@ function RouteComponent() {
     onSuccess: async (result) => {
       setBanner(discardResultMessage(result));
       if (result._tag !== "Ok") return;
-      await shopify.modal.hide(DISCARD_MODAL);
+      hideModal(DISCARD_MODAL);
       shopify.toast.show("Draft discarded.");
       setSelectedStepId(null);
       setAdding(null);
@@ -292,9 +310,11 @@ function RouteComponent() {
   if (detail === null)
     return (
       <s-page heading={Domain.ORDER_WORKFLOW_NAME}>
-        <s-link slot="breadcrumb-actions" href="/app/order-workflow">
-          {Domain.ORDER_WORKFLOW_NAME}
-        </s-link>
+        {!inWindow && (
+          <s-link slot="breadcrumb-actions" href="/app/order-workflow">
+            {Domain.ORDER_WORKFLOW_NAME}
+          </s-link>
+        )}
         <s-paragraph color="subdued">
           The order workflow is not available. Reload the page.
         </s-paragraph>
@@ -480,9 +500,12 @@ function RouteComponent() {
 
   return (
     <s-page heading={Domain.ORDER_WORKFLOW_NAME} inlineSize="base">
-      <s-link slot="breadcrumb-actions" href="/app/order-workflow">
-        Close
-      </s-link>
+      {/* In a window the admin's own X is the exit; a breadcrumb would be a second one. */}
+      {!inWindow && (
+        <s-link slot="breadcrumb-actions" href="/app/order-workflow">
+          Close
+        </s-link>
+      )}
       {hasDraft ? (
         <s-badge slot="accessory" tone="info">
           Draft
