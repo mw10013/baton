@@ -1730,8 +1730,8 @@ export interface TeamsIndexLoaderData {
  * `/app/teams/$teamId` (`app.teams.$teamId`; a param tail contributes its
  * noun, `Team`). `ownedSteps` and `stepCounts` are Durable Object data joined
  * into a D1 page by the loader — see the loader-versus-socket rule on
- * `ShopAgentClient`. `memberTeams` is the "Other teams" hint the add-members
- * picker shows per candidate.
+ * `ShopAgentClient`. `memberTeams` is the hint the Add members
+ * dialog shows beside each candidate: where they already work.
  */
 export interface TeamLoaderData extends TeamDetail {
   readonly memberTeams: readonly MemberTeam[];

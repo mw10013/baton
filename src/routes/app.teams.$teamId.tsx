@@ -31,7 +31,13 @@ import {
 const RENAME_MODAL = "rename-team";
 const DELETE_MODAL = "delete-team";
 const REMOVE_MODAL = "remove-team-member";
-const NO_CANDIDATES_MODAL = "no-team-candidates";
+const ADD_MODAL = "add-team-members";
+
+/**
+ * Below this many candidates the Add members dialog leaves its search field
+ * out: a search box over three rows is chrome the merchant has to read past.
+ */
+const SEARCH_FROM = 6;
 
 const TeamIdInput = Schema.Struct({ teamId: Schema.String });
 
@@ -193,6 +199,8 @@ function RouteComponent() {
   const [nameError, setNameError] = React.useState<string | null>(null);
   /** Which member the Remove dialog is about; one modal serves every row. */
   const [removing, setRemoving] = React.useState<Domain.MemberId | null>(null);
+  const [addQuery, setAddQuery] = React.useState("");
+  const [selected, setSelected] = React.useState<readonly string[]>([]);
 
   const current = members.filter((member) => member.inTeam);
   const candidates = members.filter((member) => !member.inTeam);
@@ -224,7 +232,11 @@ function RouteComponent() {
   const addMutation = useMutation({
     mutationFn: (memberIds: readonly string[]) =>
       addTeamMembers({ data: { teamId: team.id, memberIds: [...memberIds] } }),
-    onSuccess: () => router.invalidate({ sync: true }),
+    onSuccess: async () => {
+      await shopify.modal.hide(ADD_MODAL);
+      setSelected([]);
+      await router.invalidate({ sync: true });
+    },
   });
 
   /**
@@ -286,45 +298,32 @@ function RouteComponent() {
       .filter((row) => row.memberId === memberId)
       .map((row) => row.teamName);
 
+  const addTrimmed = addQuery.trim().toLowerCase();
+  const matches =
+    addTrimmed === ""
+      ? candidates
+      : candidates.filter((member) =>
+          member.email.toLowerCase().includes(addTrimmed),
+        );
+
   /**
-   * App Bridge's Picker API: the platform's own "choose from my app's data"
-   * dialog, with native search and multi-select, rendered by the admin host
-   * outside this iframe. It lists only members not yet on the team; the
-   * empty cases (no members in the shop, or everyone already here) open a
-   * small modal that points at the Members page instead, since the picker
-   * cannot add a brand-new email.
+   * `s-choice-list` reports only the choices it has rendered, so a member ticked
+   * before the search narrowed the list would be dropped by the next change
+   * event. The rendered ids are replaced wholesale and the rest of the selection
+   * is kept, which is what lets a merchant search, tick, search again, and add
+   * both.
    */
-  const pickMembers = async () => {
-    if (candidates.length === 0) {
-      await shopify.modal.show(NO_CANDIDATES_MODAL);
-      return;
-    }
-    const picker = await shopify.picker({
-      heading: `Add members to ${team.name}`,
-      multiple: true,
-      headers: [{ content: "Member" }, { content: "Other teams" }],
-      items: candidates.map((member) => {
-        const names = otherTeams(member.id);
-        return {
-          id: member.id,
-          heading: member.email,
-          data: [names.length === 0 ? "No teams" : names.join(", ")],
-        };
-      }),
-    });
-    const selected = await picker.selected;
-    if (selected !== undefined && selected.length > 0)
-      addMutation.mutate(selected);
+  const changeSelected = (values: readonly string[]) => {
+    const rendered = new Set<string>(matches.map((member) => member.id));
+    setSelected([...selected.filter((id) => !rendered.has(id)), ...values]);
   };
 
   const addButton = (slotted: boolean) => (
     <s-button
       {...(slotted ? { slot: "primary-action" as const } : {})}
       variant="primary"
-      loading={addMutation.isPending}
-      onClick={() => {
-        void pickMembers();
-      }}
+      commandFor={ADD_MODAL}
+      command="--show"
     >
       Add members
     </s-button>
@@ -560,22 +559,96 @@ function RouteComponent() {
         </s-button>
       </s-modal>
 
-      <s-modal id={NO_CANDIDATES_MODAL} heading="Add members">
-        <s-paragraph>
-          {members.length === 0
-            ? "This shop has no members yet."
-            : "Everyone is already on this team."}
-        </s-paragraph>
+      {/* Our own dialog rather than App Bridge's Picker API. The picker is
+          rendered by the admin host outside this iframe and takes no layout
+          input beyond its columns, so a short list came out as a full-bleed
+          table with a header row and a scrollbar for one row. A modal keeps
+          the inset, drops the search field when there is nothing to search,
+          shows where each candidate already works, and folds in the two
+          nobody-to-add cases the picker had to hand to a second dialog. It
+          also matches the Members page, which edits the same membership from
+          the other side with a checklist in a modal. */}
+      <s-modal
+        id={ADD_MODAL}
+        heading={`Add members to ${team.name}`}
+        onShow={() => {
+          setAddQuery("");
+          setSelected([]);
+        }}
+      >
+        {candidates.length === 0 ? (
+          <s-paragraph>
+            {members.length === 0
+              ? "This shop has no members yet. Add them once, then put them on teams."
+              : "Everyone is already on this team."}
+          </s-paragraph>
+        ) : (
+          <s-stack gap="base">
+            {candidates.length >= SEARCH_FROM && (
+              <s-search-field
+                label="Search members by email"
+                labelAccessibilityVisibility="exclusive"
+                placeholder="Search by email"
+                value={addQuery}
+                onInput={(event) => {
+                  setAddQuery(event.currentTarget.value);
+                }}
+              />
+            )}
+            {matches.length === 0 ? (
+              <s-paragraph color="subdued">No members match.</s-paragraph>
+            ) : (
+              <s-choice-list
+                label="Members"
+                labelAccessibilityVisibility="exclusive"
+                name="memberIds"
+                multiple
+                values={[...selected]}
+                onChange={(event) => {
+                  changeSelected([...event.currentTarget.values]);
+                }}
+              >
+                {matches.map((member) => {
+                  const names = otherTeams(member.id);
+                  return (
+                    <s-choice key={member.id} value={member.id}>
+                      {member.email}
+                      {names.length > 0 && (
+                        <s-text slot="details">
+                          {`Already on ${names.join(", ")}`}
+                        </s-text>
+                      )}
+                    </s-choice>
+                  );
+                })}
+              </s-choice-list>
+            )}
+          </s-stack>
+        )}
         <s-button
           slot="secondary-actions"
-          commandFor={NO_CANDIDATES_MODAL}
+          commandFor={ADD_MODAL}
           command="--hide"
         >
           Cancel
         </s-button>
-        <s-button slot="primary-action" variant="primary" href="/app/members">
-          Go to Members
-        </s-button>
+        {candidates.length === 0 ? (
+          <s-button slot="primary-action" variant="primary" href="/app/members">
+            Go to Members
+          </s-button>
+        ) : (
+          <s-button
+            slot="primary-action"
+            variant="primary"
+            loading={addMutation.isPending}
+            disabled={selected.length === 0}
+            onClick={() => {
+              addMutation.mutate(selected);
+            }}
+          >
+            {selected.length === 0 ? "Add" : `Add ${String(selected.length)}`}
+          </s-button>
+        )}
       </s-modal>
     </s-page>
   );

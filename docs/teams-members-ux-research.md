@@ -9,7 +9,9 @@ implementation plan is at the end of this doc.
 Revised 2026-09-12 from the build: the team page's layout was reworked after seeing it
 on screen, and this doc and the mockups now describe what shipped rather than the first
 cut. [The team page layout](#the-team-page-layout) has the diagnosis and the three
-Polaris constraints that decided it.
+Polaris constraints that decided it, and
+[The Add members dialog](#the-add-members-dialog) records why the App Bridge picker was
+built, seen, and replaced with an `s-modal`.
 
 ## Conclusion
 
@@ -23,7 +25,7 @@ Polaris constraints that decided it.
    and today only one line in the whole product shows one person's identity to another
    person. Revisit when there is a "completed by" report or activity view.
 4. **Add members to teams from both sides, with one component.** The team page gets an
-   **Add members** picker; the Members page gets a **Teams** column and an **Edit teams**
+   **Add members** dialog; the Members page gets a **Teams** column and an **Edit teams**
    row action that reuses the same checklist as the **Add member** modal. The new-member
    modal offers teams up front, because "a member with no team sees nothing to do" is the
    trap a no-code merchant walks into today.
@@ -171,8 +173,8 @@ pendant** and the **Order workflow**.") and rejected on sight — see
 
 Replace the whole-roster checkbox list with a table of **current members only** (Email,
 Added, Remove). Adding goes through an **Add members** primary action that opens a
-picker listing members **not yet on the team**, with search and multi-select. Two ways
-to build the picker:
+dialog listing members **not yet on the team**, with search and multi-select. Two ways
+to build it:
 
 - **App Bridge Picker API** (`shopify.picker({ heading, items, multiple: true })`,
   `refs/shopify-docs/.../picker-api.md`): native search, native multi-select, returns
@@ -180,14 +182,47 @@ to build the picker:
 - **`s-modal` with `s-search-field` and checkboxes**: fully in our hands, can carry a
   "Not here? Add a member" link to the Members page.
 
-**Recommendation:** the Picker API. It is the platform's own answer to "choose from
-my app's data" and it matches what the merchant sees elsewhere in Admin. Put the "Add a
-member first" link in the picker's empty case (every member is already on the team, or
-the shop has no members) by falling back to a small `s-modal` for that case only.
+**Recommendation, revised 2026-09-12 after building both: the `s-modal`.** The Picker
+API shipped first, on the reasoning that the platform's own dialog is what the merchant
+sees elsewhere in Admin. On screen it was the worst surface on the page — see
+[The Add members dialog](#the-add-members-dialog).
 
 Remove is a row action with a confirm modal (copy: "Remove jenny@shop.com from
 Engraving? They keep access to the shop and their other teams."). If they are the last
 member, the modal says the team will have no members.
+
+### The Add members dialog
+
+Revised 2026-09-12 after building it. `shopify.picker` renders in the admin host
+document, outside this iframe, and takes no input beyond `heading`, `headers`, `items`
+and `multiple` — no padding, size, or density. A team with one candidate came out as a
+full-bleed two-column table: a header row labelling two columns, one row running edge to
+edge under it, and a scroll area sized for a long list leaving a scrollbar beside the
+single row. None of that is reachable from the API.
+
+Trimming what we feed it (no `headers`, other teams as `badges`) removes the header row
+and the second column, but the full-bleed rows, the fixed height and the scrollbar are
+the host's and stay. So the dialog is ours:
+
+- `s-modal` with the team in its heading, opened by `commandFor` like every other modal
+  on the page, `onShow` clearing the query and the selection.
+- An `s-choice-list multiple` of candidates; each candidate's other teams ride along as
+  `<s-text slot="details">Already on …</s-text>`, the second line Polaris' choice
+  composition provides, rather than a column.
+- The search field appears only from six candidates up. A search box over three rows is
+  chrome to read past, which is half of what made the picker look wrong at one row.
+- The two nobody-to-add cases (no members in the shop, everyone already here) are a
+  sentence in the same modal with **Go to Members** as its primary action, so the
+  separate fallback modal the picker needed is gone.
+- **Add** carries the count (`Add 2`) and is disabled until something is ticked.
+
+One non-obvious bit: `s-choice-list` reports only the choices it currently renders, so a
+member ticked before the search narrowed the list would be dropped by the next change
+event. The handler replaces the rendered ids and keeps the rest of the selection, which
+is what lets a merchant search, tick, search again, and add both.
+
+This also makes the two directions one pattern: the Members page edits the same
+membership with a checklist in a modal, and now so does the team page.
 
 ### Rename and delete
 
@@ -288,7 +323,7 @@ by existing queries.
 
 | Thing            | Seed | Realistic top (from Route to Ship's ladder) | Design holds?                           |
 | ---------------- | ---- | ------------------------------------------- | --------------------------------------- |
-| Members per shop | 8    | 30 to 100                                   | Table with search; picker with search   |
+| Members per shop | 8    | 30 to 100                                   | Table with search; dialog with search   |
 | Teams per shop   | 7    | 15 to 30                                    | Table with search; checklist in a modal |
 | Members per team | 2    | 30                                          | Table, no pagination needed             |
 | Steps per team   | 1    | tens                                        | Not listed; workflow links only         |
@@ -367,8 +402,8 @@ stops owning delete copy it no longer uses: `NAME_TAKEN`, `TEAM_GONE`,
 `app.teams.$teamId.tsx`. Pure move, no behaviour change. Typecheck must pass before 0b.
 
 **0b. Repository: `listMemberTeams`.** One shop-scoped read backing the Members page's
-Teams column, the Edit-teams modal's initial values, the team picker's "other teams"
-hint, and the derived sole-membership warning.
+Teams column, the Edit-teams modal's initial values, the Add members dialog's "other
+teams" hint, and the derived sole-membership warning.
 
 ```ts
 // Domain.ts, next to MemberAccess
@@ -459,7 +494,7 @@ that is awkward, skip it and say so in the test file; Cloudflare's documented be
 is the guarantee).
 
 **0d. Repository: `addTeamMembers`.** Batch form of `setTeamMember(inTeam: true)` for
-the picker; same insert-select per id in one `sqlPrimary.batch` (see 0c), fails
+the Add members dialog; same insert-select per id in one `sqlPrimary.batch` (see 0c), fails
 `TeamNotFoundError` when the team row is absent for the shop (check with one
 `select 1 from Team where id = ? and shop = ?` first, as `renameTeam` does at
 `:629-661`). Vitest: adds two, ignores one already present, cross-shop member ignored,
@@ -488,14 +523,14 @@ export interface TeamsIndexLoaderData {
   readonly ownedSteps: readonly OwnedStepByTeam[];
 }
 export interface TeamLoaderData extends TeamDetail {
-  readonly memberTeams: readonly MemberTeam[]; // picker hint column
+  readonly memberTeams: readonly MemberTeam[]; // Add members dialog hint
   readonly ownedSteps: readonly OwnedStep[];
   readonly stepCounts: TeamDeleteCounts;
 }
 ```
 
 `TeamDetail.members` keeps the whole roster with `inTeam`; the page splits it into the
-table (`inTeam`) and the picker candidates (`!inTeam`) client-side. Both lists are small.
+table (`inTeam`) and the dialog's candidates (`!inTeam`) client-side. Both lists are small.
 
 **0g. `src/lib/usedBy.ts`** (new, pure). `groupUsedBy(steps: readonly OwnedStep[])`
 returns `readonly { workflowId, workflowName, draftOnly: boolean, href }[]`, ordered by
@@ -559,7 +594,7 @@ Header:
 
 - Breadcrumb `Teams`, heading `team.name`, `No members` accessory badge when
   `inTeam` count is 0.
-- `primary-action` button **Add members** (see picker below).
+- `primary-action` button **Add members** (see the dialog below).
 - `secondary-actions` button "More actions" with `commandFor="team-actions"` and an
   `s-menu id="team-actions"` containing **Rename** (`commandFor={RENAME_MODAL}`) and
   **Delete** (`tone="critical"`, `commandFor={DELETE_MODAL}`), mirroring
@@ -595,35 +630,27 @@ Remove flow: clicking Remove sets `removing: MemberId | null`; one
 last member, "{team} will have no members." Confirm calls the existing `setTeamMemberFn`
 with `inTeam: false`, hides the modal, invalidates.
 
-Add members picker:
+Add members dialog (`ADD_MODAL`), revised 2026-09-12 — see
+[The Add members dialog](#the-add-members-dialog) for why this is not the Picker API:
 
 ```ts
 const candidates = members.filter((m) => !m.inTeam);
-const otherTeams = (id: Domain.MemberId) =>
-  memberTeams.filter((row) => row.memberId === id).map((row) => row.teamName);
-const pick = async () => {
-  const picker = await shopify.picker({
-    heading: `Add members to ${team.name}`,
-    multiple: true,
-    headers: [{ content: "Member" }, { content: "Other teams" }],
-    items: candidates.map((m) => ({
-      id: m.id,
-      heading: m.email,
-      data: [otherTeams(m.id).join(", ") || "No teams"],
-    })),
-  });
-  const selected = await picker.selected;
-  if (selected !== undefined && selected.length > 0)
-    addMembersMutation.mutate(selected);
+const matches =
+  query === "" ? candidates : candidates.filter((m) => m.email.includes(query));
+/** The list reports only what it renders, so keep the selections it cannot see. */
+const changeSelected = (values: readonly string[]) => {
+  const rendered = new Set<string>(matches.map((m) => m.id));
+  setSelected([...selected.filter((id) => !rendered.has(id)), ...values]);
 };
 ```
 
-`shopify.picker` is typed on the same global as `shopify.modal`
-(`@shopify/app-bridge-types` 0.7.2, already in `tsconfig.json` types). When
-`candidates.length === 0`, do not open the picker; open a small `s-modal
-id={NO_CANDIDATES_MODAL}` instead: "Everyone is already on this team." or "This shop has
-no members yet.", with an `s-link href="/app/members"` "Go to Members". The primary
-button's `onClick` branches on `candidates.length`.
+An `s-modal` holding an `s-search-field` (only from six candidates up) and an
+`s-choice-list multiple`, one `s-choice` per candidate with their other teams as
+`<s-text slot="details">Already on …</s-text>`. Cancel plus an **Add** primary action
+carrying the count, disabled until something is ticked. When `candidates.length === 0`
+the body is one sentence ("This shop has no members yet. Add them once, then put them on
+teams." or "Everyone is already on this team.") and the primary action is an
+`s-link`-style button to `/app/members`.
 
 `addTeamMembersFn`: POST, validator `Schema.Struct({ teamId: Schema.String, memberIds:
 Schema.Array(Schema.String) })`, decodes ids, calls `repository.addTeamMembers`,
@@ -642,10 +669,10 @@ Remove: the Name section and its form, the Workflow steps section and
 `renderOwnedSteps`, the checkbox list, `confirming`.
 
 E2E: extend the rewritten `e2e/teams.spec.ts`: from the created team, Add members
-opens the App Bridge picker. It renders in the **Admin host page**, not inside the
-`appFrame(page)` iframe (`e2e/app.ts:17-18`); locate it on the top-level `page` by its
-heading text. No existing spec drives a picker, so record the selector that worked in a
-comment in the spec. Select the seeded member, expect a row; Remove opens the modal with
+opens an in-frame `s-modal#add-team-members`. Scope to that element, tick the candidate
+by `getByRole("checkbox", { name: email })` (its text matches both the `s-choice` and
+its inner `<label>`, so a text locator is a strict-mode violation), and click the
+counted `Add 1`. Expect a row; Remove opens the modal with
 the last-member sentence, confirm, expect the empty-team box; Rename via More actions;
 Delete via More actions with the "No workflow steps are assigned to it." sentence,
 expect `/app/teams` with the empty state. Seed with `seedMembers(config, [MEMBER_EMAIL])`
@@ -732,8 +759,8 @@ shows "This will leave Engraving with no members.", confirm, expect empty state.
    through `setMemberTeams`.
 3. Manual, embedded, with `pnpm seed`: Teams shows "Used by" names; Team 07 Empty shows
    the centered empty state beside its **Used by** and **Details** aside cards, and its
-   picker lists all eight members; adding two from the
-   picker paints two rows without reload; Members shows chips and one "No teams" badge
+   Add members dialog lists all eight members with their
+   other teams; adding two paints two rows without reload; Members shows chips and one "No teams" badge
    for member-08; Edit teams on member-08 puts them on Team 01 and the Teams page count
    for Team 01 goes to 3.
 4. `pnpm fmt` run last; keep every touched file.

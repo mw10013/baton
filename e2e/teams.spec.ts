@@ -93,18 +93,19 @@ test("teams screen creates, staffs, renames, and deletes a team", async ({
   await frame.getByRole("link", { name: TEAM }).click();
   await expect(frame.locator(`s-page[heading="${TEAM}"]`)).toBeVisible();
 
-  /* Add members opens the App Bridge picker, which the admin host renders in
-     the top-level document, not in the app iframe. The empty-team box carries
-     its own in-frame Add members button (the title-bar one is hoisted); the
-     picker is located by its heading on `page`, and its rows by text. */
+  /* Add members is our own `s-modal`, in the frame: App Bridge's picker is
+     rendered by the admin host and gives no control over its layout. The
+     empty-team box carries its own Add members button (the title-bar one is
+     hoisted). Below six candidates the dialog has no search field, so the one
+     seeded member is a bare choice; the Add button counts the selection. */
   await frame.getByRole("button", { name: "Add members" }).click();
-  const picker = page.getByRole("dialog").filter({
-    hasText: `Add members to ${TEAM}`,
-  });
-  await expect(picker).toBeVisible();
-  await picker.getByText(MEMBER_EMAIL).click();
-  await picker.getByRole("button", { name: /^(?:Add|Select|Done)$/u }).click();
-  await expect(frame.getByText(MEMBER_EMAIL, { exact: true })).toBeVisible();
+  const addDialog = frame.locator("s-modal#add-team-members");
+  await expect(addDialog.getByText(`Add members to ${TEAM}`)).toBeVisible();
+  await addDialog.getByRole("checkbox", { name: MEMBER_EMAIL }).check();
+  await frame.getByRole("button", { name: /^Add \d+$/u }).click();
+  await expect(
+    frame.locator("s-table-cell").getByText(MEMBER_EMAIL, { exact: true }),
+  ).toBeVisible();
 
   /* Rename lives behind More actions and the name is the page heading. */
   await clickMenuItem(frame, "Rename");

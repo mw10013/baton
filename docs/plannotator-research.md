@@ -4,7 +4,7 @@ Research into the tool remembered as "Planetator": what it is, how it integrates
 Claude Code and OpenCode, whether it belongs in user or project configuration, and a
 recommended manual-first workflow for iterating on Markdown documents and reviewing code.
 
-**Status: researched 2026-09-12.** The project is
+**Status: researched and installed 2026-09-12.** The project is
 [backnotprop/plannotator](https://github.com/backnotprop/plannotator), spelled
 **Plannotator**. At research time it has 8,636 GitHub stars, 646 forks, dual MIT / Apache
 2.0 licensing, and an active latest release, `v0.27.14` (published 2026-09-11). It was
@@ -25,8 +25,8 @@ created in December 2025, so it is popular and actively developed but still youn
    OpenCode V2 loads the globally installed skills and exposes them as slash entries.
 5. Keep every skill explicitly user-invoked. Nothing should open until a
    `/plannotator-*` skill is deliberately run.
-6. Pin the Plannotator release and the `skills` CLI version in the installation commands,
-   disable the `skills` CLI's telemetry, and upgrade each layer deliberately.
+6. Always install the latest binary and latest skill contents. Neither auto-updates; rerun
+   both installation commands together whenever updating.
 
 "Global" here does **not** mean an npm global install and does not mean committing config
 to every product. It means a user-level binary plus user-level skills managed by a general
@@ -109,10 +109,10 @@ workflows and is unnecessary here. Omitting it means Plannotator adds no Claude 
 
 ### OpenCode V2
 
-Vercel's CLI targets OpenCode explicitly and installs links under
-`~/.config/opencode/skills` to the same canonical generic skills. OpenCode V2 documents that
-global directory and makes skills slash-visible by default, so the three skill IDs provide
-the desired entry points:
+Vercel's CLI installs the canonical generic skills under `~/.agents/skills`, which OpenCode
+V2 documents as a global compatibility source. It links Claude Code to those same copies.
+OpenCode makes skills slash-visible by default, so the three skill IDs provide the desired
+entry points:
 
 ```text
 /plannotator-annotate <file|folder|url>
@@ -139,41 +139,31 @@ release.
 
 Current local state on 2026-09-12:
 
-| Component     | Detected version / state                            |
-| ------------- | --------------------------------------------------- |
-| macOS         | 14.7.1, Apple silicon (`arm64`)                     |
-| Claude Code   | `2.1.269`; no Plannotator skills or plugin          |
-| OpenCode V2   | `v0.0.0-next-17403`; no Plannotator commands/plugin |
-| OpenCode V1   | `1.18.25` (not the target for this setup)           |
-| Bun           | `1.3.1`                                             |
-| Plannotator   | not installed                                       |
-| global config | `~/.config/opencode/opencode.jsonc` already exists  |
-| Baton config  | `.opencode/opencode.jsonc` has MCP settings only    |
+| Component     | Detected version / state                              |
+| ------------- | ----------------------------------------------------- |
+| macOS         | 14.7.1, Apple silicon (`arm64`)                       |
+| Claude Code   | `2.1.269`; three skills installed, no plugin          |
+| OpenCode V2   | `v0.0.0-next-17403`; three skills, no commands/plugin |
+| OpenCode V1   | `1.18.25` (not the target for this setup)             |
+| Bun           | `1.3.1`                                               |
+| Plannotator   | `0.27.14`; minimal binary-only install                |
+| global config | `~/.config/opencode/opencode.jsonc` already exists    |
+| Baton config  | `.opencode/opencode.jsonc` has MCP settings only      |
 
 ### 4.1 Install only the user-level CLI
 
-Do not execute an unseen remote script directly. Download the release installer, inspect it,
-then run a pinned, verified, targeted installation:
+Install the latest release in binary-only mode:
 
 ```bash
-curl -fsSLo /tmp/plannotator-install.sh https://plannotator.ai/install.sh
-less /tmp/plannotator-install.sh
-bash /tmp/plannotator-install.sh \
-  --version v0.27.14 \
-  --verify-attestation \
-  --minimal
+curl -fsSL https://plannotator.ai/install.sh | bash -s -- --minimal
 ```
 
 Why this form:
 
 - The executable goes to `~/.local/bin/plannotator`, which is already the intended user-level
   location.
-- Every install verifies the release SHA-256. `--verify-attestation` additionally asks `gh`
-  to verify signed SLSA provenance against the repository's release workflow. This machine
-  already has `gh`.
-- Pinning avoids an install changing between machines or between retries. The latest verified
-  release at research time is `v0.27.14`; choose a newer installer release deliberately when
-  upgrading.
+- The installer resolves the latest GitHub release each time and verifies the downloaded
+  binary against its published SHA-256 checksum.
 - `--minimal` is the key boundary. It installs only `~/.local/bin/plannotator`; it installs no
   skills, hooks, slash-command files, plugins, `sem` sidecar, CallDiff runtime, integrated
   agent terminal, or per-agent configuration.
@@ -194,16 +184,14 @@ is printed to stdout because no agent session owns it. Plain `annotate` has no a
 
 ### 4.2 Install three skills with Vercel's CLI
 
-The npm package is `skills`, currently `1.5.26`, from
-[vercel-labs/skills](https://github.com/vercel-labs/skills) (MIT). The following source and
-discovery command was validated on 2026-09-12: it resolves the Plannotator `v0.27.14` tag and
-finds all four skills under `apps/skills/core`.
+The npm package is `skills` from [vercel-labs/skills](https://github.com/vercel-labs/skills)
+(MIT). The following source and discovery path was validated on 2026-09-12 and finds all four
+core skills under `apps/skills/core`.
 
 Install only the three requested action skills globally for both hosts:
 
 ```bash
-DO_NOT_TRACK=1 npx --yes skills@1.5.26 add \
-  'https://github.com/backnotprop/plannotator/tree/v0.27.14/apps/skills/core' \
+DO_NOT_TRACK=1 npx skills add backnotprop/plannotator/apps/skills/core \
   --global \
   --agent claude-code \
   --agent opencode \
@@ -218,27 +206,6 @@ symlink installation is intentional: `skills` keeps one canonical copy and links
 agent-specific global skill directory to it. Do not pass `--copy` unless a host has a concrete
 symlink problem.
 
-#### What the pins mean
-
-There are two independent pins in the command:
-
-- `tree/v0.27.14` selects the **Plannotator skill contents**. Keep this aligned with the
-  installed `plannotator 0.27.14` binary so skill instructions do not rely on newer CLI flags
-  or output contracts.
-- `skills@1.5.26` selects the **Vercel installer code** that runs through `npx`. This pin is
-  about reproducible installation behavior, not Plannotator compatibility.
-
-Pinning does not block updates or require uninstalling. It means updates happen when the
-version in the command is changed. For example, after choosing `v0.28.0`, rerun the minimal
-binary installer with `--version v0.28.0`, then rerun `skills add` with
-`tree/v0.28.0`. Vercel's CLI replaces/updates the managed links.
-
-For a personal machine, pinning `skills@1.5.26` is optional. Omitting the version and running
-`npx --yes skills add ...` is shorter, but it executes whatever Vercel publishes as latest at
-that moment. **Recommendation:** retain both pins while these tools are young. The maintenance
-cost is changing two version strings during an intentional update; the benefit is a
-repeatable, debuggable setup.
-
 The omitted fourth skill, `plannotator`, is a broad CLI reference covering plan review,
 archives, Guided Reviews, sharing, and less-common flags. The three focused skills are
 self-contained for document, last-message, and code review. Add the reference later only if
@@ -246,7 +213,7 @@ those other CLI surfaces become useful.
 
 #### Other available Plannotator skills
 
-Plannotator `v0.27.14` contains these additional skills:
+Plannotator currently contains these additional skills:
 
 | Skill                          | Set   | Purpose                                                                      | Recommendation here |
 | ------------------------------ | ----- | ---------------------------------------------------------------------------- | ------------------- |
@@ -276,14 +243,14 @@ Tradeoffs of this split installation:
   through Vercel gives Claude the generic portable variant instead. It still works, but the
   model performs the shell call using normal Claude permissions rather than the optimized
   Claude-only launcher.
-- **Separate updates:** upgrading the binary does not upgrade the skills, and `skills update`
-  does not upgrade the binary. Keep their Plannotator release tags aligned manually.
+- **Separate updates:** upgrading the binary does not upgrade the skills. Rerun both latest
+  installation commands together.
 - **No optional sidecars:** `--minimal` omits `sem`, CallDiff, and the integrated agent
   terminal. Basic document and code review still work; optional semantic/call-flow review
   enhancements are absent.
 - **Slightly outside the documented happy path:** Plannotator officially directs core-skill
-  users to its full installer. If a future core skill layout changes, the pinned direct path
-  can fail clearly and the installation command will need updating.
+  users to its full installer. If a future core skill layout changes, the direct path can fail
+  clearly and the installation command will need updating.
 
 **Recommendation:** use this split installation. Its limitations are acceptable for explicit
 document, last-message, and basic code review, and it matches the existing preference to
@@ -302,7 +269,7 @@ Restart Claude Code and OpenCode, then type `/plannotator`. Both should show:
 Use Vercel's inventory command to confirm the global target links:
 
 ```bash
-DO_NOT_TRACK=1 npx --yes skills@1.5.26 list \
+DO_NOT_TRACK=1 npx skills list \
   --global \
   --agent claude-code \
   --agent opencode
@@ -436,8 +403,7 @@ plannotator archive
   is portable Markdown skills in OpenCode's documented global skill directory. That sharply
   reduces compatibility risk during the OpenCode V2 cutover.
 - Vercel's `skills` CLI clones the public Plannotator repository and normally reports
-  anonymous install telemetry. `DO_NOT_TRACK=1` disables that telemetry. Pinning
-  `skills@1.5.26` also avoids silently executing a different npm CLI on a later reinstall.
+  anonymous install telemetry. `DO_NOT_TRACK=1` disables that telemetry.
 - Manual foreground skill runs hold the agent turn open while the browser review is active.
   Close or submit abandoned reviews rather than leaving sessions blocked.
 
@@ -462,23 +428,31 @@ Jina URL fetching explicit opt-ins while learning the tool.
 
 ## 7. Updates, rollback, and removal
 
-The binary and skills now have intentionally separate lifecycle managers:
+Neither the binary nor the skills auto-update. Always update both together by rerunning the
+same two latest-version commands:
 
-1. Update the binary by reading the
-   [Plannotator release notes](https://github.com/backnotprop/plannotator/releases), then
-   rerunning the minimal installer with a new `--version vX.Y.Z --verify-attestation`.
-2. Update the skills by rerunning the `skills add` command with the same new Plannotator tag.
-   Keep the skill source tag aligned with the binary because skill instructions can describe
-   version-specific CLI flags.
-3. Upgrade the pinned `skills@1.5.26` CLI separately after reviewing its releases. The CLI
-   version manages installation behavior; it is not the Plannotator skill version.
+```bash
+curl -fsSL https://plannotator.ai/install.sh | bash -s -- --minimal
 
-There is no Claude or OpenCode plugin to update separately.
+DO_NOT_TRACK=1 npx skills add backnotprop/plannotator/apps/skills/core \
+  --global \
+  --agent claude-code \
+  --agent opencode \
+  --skill plannotator-annotate \
+  --skill plannotator-last \
+  --skill plannotator-review \
+  --yes
+```
+
+The first command resolves and installs Plannotator's latest GitHub release. The second uses
+the current Vercel Skills CLI and the latest default branch of the Plannotator repository,
+then refreshes the three selected global skills. There is no Claude or OpenCode plugin to
+update separately.
 
 When OpenCode V2 becomes the normal `opencode` command, verify that `/plannotator-*` still
 appears and completes one smoke review. The files live in OpenCode's documented
-`~/.config/opencode/skills` location and use no plugin API, so the executable rename itself
-should require no Plannotator change.
+`~/.agents/skills` compatibility location and use no plugin API, so the executable rename
+itself should require no Plannotator change.
 
 To remove everything, preview first:
 
@@ -490,7 +464,7 @@ plannotator uninstall
 Because the skills were installed independently, remove them with their manager:
 
 ```bash
-DO_NOT_TRACK=1 npx --yes skills@1.5.26 remove \
+DO_NOT_TRACK=1 npx skills remove \
   --global \
   --agent claude-code \
   --agent opencode \
