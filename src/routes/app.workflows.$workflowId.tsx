@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import "@/lib/shopifyAppBridgeElements";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { useMutation } from "@tanstack/react-query";
 import {
@@ -23,6 +24,7 @@ import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
+import { useWorkflowEditorWindow } from "@/lib/workflowEditorWindow";
 import {
   DELETE_WORKFLOW_WARNING,
   deleteWorkflowResultMessage,
@@ -114,6 +116,13 @@ function RouteComponent() {
   const [nameError, setNameError] = React.useState<string | null>(null);
 
   const invalidate = () => router.invalidate({ sync: true });
+
+  /** The editor opens in an `s-app-window` over this page, Flow's chrome; see `workflowEditorWindow.ts`. */
+  const editor = useWorkflowEditorWindow({
+    workflowId,
+    onHide: () => void invalidate(),
+    onDeleted: () => void navigate({ to: "/app/workflows" }),
+  });
 
   const call = <A,>(
     op: (stub: NonNullable<typeof agent>["stub"]) => Promise<A>,
@@ -244,10 +253,12 @@ function RouteComponent() {
         slot="primary-action"
         variant="primary"
         icon="edit"
-        href={`/app/workflows/${workflowId}/edit`}
+        commandFor={editor.windowProps.id}
+        command="--show"
       >
         Edit
       </s-button>
+      <s-app-window {...editor.windowProps} />
       <WorkflowSwitch
         workflow={workflow}
         steps={steps}
@@ -341,7 +352,9 @@ function RouteComponent() {
                   {/* Editing happens in one place, the editor; navigating there creates no draft, only saving does. */}
                   <s-box>
                     <s-button
-                      href={`/app/workflows/${workflowId}/edit?tag=edit`}
+                      onClick={() => {
+                        editor.open(workflowId, "&tag=edit");
+                      }}
                     >
                       Edit tag
                     </s-button>

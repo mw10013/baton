@@ -16,6 +16,10 @@ declare module "react" {
   namespace JSX {
     interface IntrinsicElements {
       "s-app-nav": globalThis.JSX.IntrinsicElements["s-app-nav"];
+      // `ref` is added so a page can call `show()`/`hide()` and listen for `hide`; Shopify's entry carries attributes only.
+      "s-app-window": globalThis.JSX.IntrinsicElements["s-app-window"] & {
+        ref?: Ref<SAppWindowElement>;
+      };
       "ui-save-bar": globalThis.JSX.IntrinsicElements["ui-save-bar"];
     }
   }

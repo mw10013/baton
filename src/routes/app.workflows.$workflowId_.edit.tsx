@@ -14,10 +14,12 @@ import { Effect, Match, Schema } from "effect";
 import { AttentionBanner, StageFlow } from "@/components/WorkflowStages";
 import * as WorkflowTag from "@/components/WorkflowTag";
 import * as Domain from "@/lib/Domain";
+import { hideModal } from "@/lib/polarisModal";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
+import { postEditorWindowMessage } from "@/lib/workflowEditorWindow";
 import {
   applyBlocker,
   DELETE_WORKFLOW_WARNING,
@@ -99,8 +101,14 @@ const getLoaderData = createServerFn({ method: "GET" })
  */
 const validateSearch = ({
   tag,
-}: Record<string, unknown>): { readonly tag?: "edit" } =>
-  tag === "edit" ? { tag } : {};
+  chrome,
+}: Record<string, unknown>): {
+  readonly tag?: "edit";
+  readonly chrome?: "window";
+} => ({
+  ...(tag === "edit" ? { tag } : {}),
+  ...(chrome === "window" ? { chrome } : {}),
+});
 
 export const Route = createFileRoute("/app/workflows/$workflowId_/edit")({
   validateSearch,
@@ -115,8 +123,16 @@ export const Route = createFileRoute("/app/workflows/$workflowId_/edit")({
 });
 
 /**
- * The item-workflow editor: its own page, so the detail page can stay a
- * read-only answer to "what does this workflow do".
+ * The item-workflow editor: its own route, so the detail page can stay a
+ * read-only answer to "what does this workflow do". The detail and list
+ * pages open it inside an App Bridge `s-app-window` (Flow's full-screen
+ * chrome, `chrome=window` in the search) and the admin hoists the `s-page`
+ * heading, accessory badge and action slots into its own bar with an X.
+ * In that mode the breadcrumb is not rendered, Apply and Delete report
+ * back over `postEditorWindowMessage` instead of navigating (the window
+ * cannot navigate its opener, and a `navigate` here would only move the
+ * iframe), and modals must be hidden with `hideModal`, never
+ * `shopify.modal.hide`, which cannot see this document's modals.
  *
  * Opening it writes nothing. The canvas shows the draft when one exists and
  * the workflow itself when one does not — the first change is what creates
@@ -128,7 +144,14 @@ export const Route = createFileRoute("/app/workflows/$workflowId_/edit")({
  */
 function RouteComponent() {
   const { workflowId } = Route.useParams();
-  const { tag: tagSearch } = Route.useSearch();
+  const { tag: tagSearch, chrome } = Route.useSearch();
+  /**
+   * True when the admin opened this route inside an `s-app-window`; see
+   * `workflowEditorWindow.ts`. The flag is a word, not `1`, because the
+   * router's search parser JSON-decodes values and would hand back a number.
+   */
+  const inWindow = chrome === "window";
+  const keepSearch = inWindow ? { chrome: "window" as const } : {};
   const detail: Domain.WorkflowLoaderData = Route.useLoaderData();
   const router = useRouter();
   const navigate = useNavigate({ from: Route.fullPath });
@@ -260,8 +283,12 @@ function RouteComponent() {
     onSuccess: async (result) => {
       setBanner(applyResultMessage(result));
       if (result._tag !== "Ok") return;
-      await shopify.modal.hide(APPLY_MODAL);
+      hideModal(APPLY_MODAL);
       shopify.toast.show("Changes applied. This is what runs now.");
+      if (inWindow) {
+        postEditorWindowMessage({ type: "applied", workflowId });
+        return;
+      }
       await navigate({
         to: "/app/workflows/$workflowId",
         params: { workflowId },
@@ -278,7 +305,7 @@ function RouteComponent() {
     onSuccess: async (result) => {
       setBanner(discardResultMessage(result));
       if (result._tag !== "Ok") return;
-      await shopify.modal.hide(DISCARD_MODAL);
+      hideModal(DISCARD_MODAL);
       shopify.toast.show("Draft discarded.");
       setSelectedStepId(null);
       setAdding(null);
@@ -298,7 +325,7 @@ function RouteComponent() {
         setNameError(message);
         return;
       }
-      await shopify.modal.hide(RENAME_MODAL);
+      hideModal(RENAME_MODAL);
       await invalidate();
     },
     onError,
@@ -318,6 +345,7 @@ function RouteComponent() {
       await navigate({
         to: "/app/workflows/$workflowId/edit",
         params: { workflowId: result.workflow.id },
+        search: keepSearch,
       });
     },
     onError,
@@ -333,7 +361,11 @@ function RouteComponent() {
         setBanner(deleteWorkflowResultMessage(result));
         return;
       }
-      await shopify.modal.hide(DELETE_MODAL);
+      hideModal(DELETE_MODAL);
+      if (inWindow) {
+        postEditorWindowMessage({ type: "deleted", workflowId });
+        return;
+      }
       await navigate({ to: "/app/workflows" });
     },
     onError,
@@ -601,9 +633,12 @@ function RouteComponent() {
 
   return (
     <s-page heading={workflow.name} inlineSize="base">
-      <s-link slot="breadcrumb-actions" href={`/app/workflows/${workflowId}`}>
-        Close
-      </s-link>
+      {/* In a window the admin's own X is the exit; a breadcrumb would be a second one. */}
+      {!inWindow && (
+        <s-link slot="breadcrumb-actions" href={`/app/workflows/${workflowId}`}>
+          Close
+        </s-link>
+      )}
       {hasDraft ? (
         <s-badge slot="accessory" tone="info">
           Draft
@@ -703,7 +738,7 @@ function RouteComponent() {
                     onClose={() => {
                       // Drop the deep link so a refresh does not reopen the dialog.
                       if (tagSearch === "edit")
-                        void navigate({ search: {}, replace: true });
+                        void navigate({ search: keepSearch, replace: true });
                     }}
                     onSave={async (nextTags) => {
                       const result = await tagsMutation.mutateAsync(nextTags);

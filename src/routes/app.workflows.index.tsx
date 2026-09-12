@@ -16,6 +16,7 @@ import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
+import { useWorkflowEditorWindow } from "@/lib/workflowEditorWindow";
 import { workflowResultMessage } from "@/lib/workflowShared";
 
 const CREATE_MODAL = "create-workflow";
@@ -118,6 +119,26 @@ function RouteComponent() {
   const [nameError, setNameError] = React.useState<string | null>(null);
   const [banner, setBanner] = React.useState<string | null>(null);
 
+  /**
+   * Create opens the editor straight away, as Flow's Create workflow does,
+   * and closing it lands on the new workflow's page rather than back here.
+   * See `workflowEditorWindow.ts`.
+   */
+  const [created, setCreated] = React.useState<string | null>(null);
+  const editor = useWorkflowEditorWindow({
+    onHide: () => {
+      if (created === null) return;
+      void navigate({
+        to: "/app/workflows/$workflowId",
+        params: { workflowId: created },
+      });
+    },
+    onDeleted: () => {
+      setCreated(null);
+      void router.invalidate({ sync: true });
+    },
+  });
+
   const createMutation = useMutation({
     mutationFn: () =>
       agent
@@ -136,10 +157,8 @@ function RouteComponent() {
       await shopify.modal.hide(CREATE_MODAL);
       resetCreateForm();
       await router.invalidate({ sync: true });
-      await navigate({
-        to: "/app/workflows/$workflowId/edit",
-        params: { workflowId: result.workflow.id },
-      });
+      setCreated(result.workflow.id);
+      editor.open(result.workflow.id);
     },
     onError: (error: Error) => {
       setBanner(error.message);
@@ -279,6 +298,7 @@ function RouteComponent() {
 
   return (
     <s-page heading="Workflows" inlineSize="large">
+      <s-app-window {...editor.windowProps} />
       <SocketBanner />
       {workflows.length > 0 && createButton(true)}
 

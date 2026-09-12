@@ -106,3 +106,19 @@ export const setModalDirty = (modalId: string, dirty: boolean): void => {
   if (dirty) modal.dirty = true;
   else if ("dirty" in modal) delete modal.dirty;
 };
+
+/**
+ * Hides an `s-modal` through the element rather than `shopify.modal.hide`.
+ *
+ * App Bridge's `shopify.modal.hide(id)` resolves the id in the host's modal
+ * registry. Inside an `s-app-window` that registry does not see the window
+ * document's modals, so the call rejects with "Modal with ID … not found"
+ * even while the dialog is open (observed live 2026-09-12). The element's own
+ * `hideOverlay` closes the dialog in every context and still runs the `dirty`
+ * check documented on `setModalDirty`.
+ */
+export const hideModal = (modalId: string): void => {
+  document
+    .querySelector<HTMLElement & { hideOverlay?: () => void }>(`#${modalId}`)
+    ?.hideOverlay?.();
+};
