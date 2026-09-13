@@ -1,6 +1,6 @@
 # Set up Infomaniak email for `mw10013.com`
 
-Updated: **September 12, 2026**.
+Updated: **September 13, 2026**.
 
 ## Target
 
@@ -17,46 +17,35 @@ This work moves human mail for the apex `mw10013.com` domain to Infomaniak. MX r
 
 ## Current checkpoint
 
-Completed in Infomaniak:
+The controlled cutover was completed on September 13, 2026, followed by Gmail and DNS cleanup plus apex DMARC monitoring:
 
-- Added `mw10013.com` to kSuite as an **external** domain. The domain was not transferred.
-- Created the Mail Service and primary mailbox `michael@mw10013.com`.
-- Assigned the existing Michael Wu Infomaniak user to the mailbox.
-- Created the active alias `support@mw10013.com`, which delivers into the `michael@` inbox.
-- Created the `Support` sending identity with display name `Michael Wu` and both sender and reply address set to `support@mw10013.com`.
+- Cloudflare remains the registrar, authoritative DNS provider, and nameserver provider.
+- Human mail at the apex uses the Infomaniak MX record `mta-gw.infomaniak.ch` at priority `5`.
+- The apex has exactly one SPF record: `v=spf1 include:spf.infomaniak.ch -all`.
+- Infomaniak reports all five DNS diagnostics as valid, including MX, SPF, DKIM, `autoconfig`, and `autodiscover`.
+- Cloudflare Email Routing was disabled after the old 300-second MX TTL elapsed and delivery tests passed.
+- Cloudflare's disable flow preserved the third-party Infomaniak records as stated in its confirmation dialog.
+- Baton's records under `mail.mw10013.com` and `cf-bounce.mail.mw10013.com` remain unchanged.
 
-Current delivery remains unchanged:
+Delivery verification:
 
-- Cloudflare is still the registrar, authoritative DNS provider, and nameserver provider.
-- Cloudflare Email Routing remains enabled.
-- Cloudflare still forwards `support@mw10013.com` to `mw10013@gmail.com`.
-- No Infomaniak DNS records have been added to Cloudflare yet.
-- Infomaniak therefore still reports the external domain as disconnected.
-- A Cloudflare DNS export was downloaded on September 12, 2026, before making any DNS changes.
+- Fresh messages from both `michael@mw10013.com` and `support@mw10013.com` reached Gmail immediately.
+- Gmail's original-message diagnostics reported SPF and DKIM passing for both identities.
+- Replies from Gmail to both `michael@mw10013.com` and `support@mw10013.com` arrived in the Infomaniak `michael@` inbox. This confirms the `support@` alias receives correctly.
+- Gmail reported DMARC failing because `_dmarc.mw10013.com` is still absent. This did not block delivery; add the monitoring policy in section 7 as a separate follow-up.
 
-### Resume here
+Post-cutover Gmail inbox copies are not Cloudflare routing:
 
-No DNS changes are in progress, so it is safe to stop at this checkpoint.
+- Cloudflare Email Routing shows no onboarded domain and prompts to onboard; public MX/SPF on both `1.1.1.1` and `8.8.8.8` remain Infomaniak-only.
+- Gmail has no forwarding address and no Mail Fetcher account configured.
+- A Gmail-to-`support@` test arrived in Infomaniak, while the matching Gmail inbox copy has no `Received` headers, Gmail message ID, and `Delivered after 0 seconds`. That is Gmail self-delivery to its own `Send mail as` alias, not an external forward.
+- Gmail still has the obsolete `Support mw10013 <support@mw10013.com>` **Send mail as** entry and the `to:(support@mw10013.com)` filter that stars, marks important, and applies the `mw10013/support` label. Together they keep a labeled copy of every Gmail-sent `support@` test in the Gmail inbox alongside the real delivery in Infomaniak.
+- Remove those two Gmail leftovers per section 8. Until then, treat Gmail inbox copies of Gmail-sent `support@` messages as expected local duplicates.
+- Gmail cleanup completed: the obsolete `Support mw10013 <support@mw10013.com>` **Send mail as** entry is deleted, leaving only the default `mw10013@gmail.com`; the `to:(support@mw10013.com)` filter is deleted. The `mw10013/support` label itself remains for old messages but no longer applies to new mail.
+- Cloudflare cleanup completed: Email Routing remains disabled with no onboarded domain, and the leftover `cf2024-1._domainkey.mw10013.com` TXT was deleted. Authoritative NS returns empty for it. Baton records under `mail.mw10013.com` and `cf-bounce.mail.mw10013.com` were not touched.
+- Apex DMARC monitoring added on September 13, 2026: TXT at `_dmarc.mw10013.com` with `v=DMARC1; p=none; rua=mailto:support@mw10013.com`, verified on both authoritative NS and public `1.1.1.1`/`8.8.8.8`. `p=none` changes no delivery; it only requests aggregate reports. Do not jump to `quarantine`/`reject` without the review periods in section 7.
 
-In the next session, first open Infomaniak's **Connect domain** or **Global Security** screen and keep it open beside **Cloudflare -> mw10013.com -> DNS -> Records**. Add these non-disruptive records one at a time:
-
-1. Add a CNAME named `autoconfig` pointing to `infomaniak.com`, with proxy status **DNS only** and TTL **Auto**.
-2. Add a CNAME named `autodiscover` pointing to `infomaniak.com`, with proxy status **DNS only** and TTL **Auto**.
-3. Add the Infomaniak DKIM TXT record using the exact host and value from Infomaniak. Copy both fields with Infomaniak's copy buttons because the displayed values may be truncated.
-
-Each record can be added separately, with a pause between them. They do not change inbound mail delivery. The two CNAMEs help mail clients discover Infomaniak's settings; DKIM authenticates outbound Infomaniak mail.
-
-After publishing DKIM:
-
-1. Wait until a public DNS lookup returns the complete DKIM value.
-2. Confirm Infomaniak recognizes DKIM as valid.
-3. Send test messages from both the `michael@` and `support@` identities to validate them before changing inbound delivery.
-
-SPF can still fail on those test messages because the apex SPF record still authorizes Cloudflare, not Infomaniak. DKIM should pass. Do not enforce apex DMARC until after the cutover.
-
-Do **not** add the Infomaniak MX record, change the apex SPF record, disable Cloudflare Email Routing, or alter the existing Cloudflare `support@` routing rule during those three steps. MX and SPF will be handled later as a separate controlled cutover.
-
-Do not change the domain's nameservers. Cloudflare remains authoritative for DNS.
+No migration action is currently in progress. Do not change the domain's nameservers; Cloudflare remains authoritative for DNS.
 
 ## Protected Baton records
 
@@ -116,10 +105,10 @@ Before the cutover:
 1. Export or screenshot the Cloudflare DNS records.
 2. Screenshot the Cloudflare Email Routing rules.
 3. Record the Gmail **Settings -> Accounts and Import -> Send mail as** entry for `support@mw10013.com`.
-4. In Infomaniak **Mail Service -> Global Security**, copy the exact MX, SPF, and DKIM values shown for `mw10013.com`.
+4. In Infomaniak **Mail Service -> Domains management -> DNS test**, use **Correct error** beside each record to copy the exact MX and DKIM values shown for `mw10013.com`. The SPF row shows the currently detected value; use Infomaniak's documented SPF value during cutover.
 5. Confirm the apex MX TTL is still 300 seconds. It was already 300 seconds on September 12, 2026, so no reduction was needed.
 
-Current public apex records are:
+The public apex records before cutover were:
 
 ```text
 MX:  Cloudflare Email Routing
@@ -127,7 +116,7 @@ SPF: v=spf1 include:_spf.mx.cloudflare.net ~all
 DMARC: absent
 ```
 
-Infomaniak currently documents these generic values:
+The live public apex records after cutover are:
 
 ```text
 MX priority 5: mta-gw.infomaniak.ch
@@ -161,7 +150,7 @@ Use Gmail and one non-Google account to test:
 4. Reply from `michael@` and verify the visible sender.
 5. Reply from `support@` and verify the visible sender is `support@mw10013.com`.
 6. Inspect received-message headers and confirm SPF and DKIM pass.
-7. Open Infomaniak **Global Security** and confirm MX, SPF, and DKIM are healthy.
+7. Open Infomaniak **Mail Service -> Domains management -> DNS test** and confirm MX, SPF, and DKIM are healthy.
 8. Send a Baton login email and confirm `noreply@mail.mw10013.com` still delivers normally.
 
 DNS caches can continue using the previous MX records temporarily. Monitor both the new Infomaniak inbox and Gmail during the transition.
@@ -170,6 +159,8 @@ After all tests pass and mail has remained stable through at least the 300-secon
 
 ## 7. Add DMARC
 
+Apex DMARC monitoring is live as of September 13, 2026 with `p=none`. Later enforcement to `quarantine` then `reject` is still required after report review; do not treat DMARC as finished.
+
 After Infomaniak SPF and DKIM consistently pass:
 
 1. Add one TXT record at `_dmarc.mw10013.com` with a monitoring policy:
@@ -177,6 +168,8 @@ After Infomaniak SPF and DKIM consistently pass:
    ```text
    v=DMARC1; p=none; rua=mailto:support@mw10013.com
    ```
+
+   Completed September 13, 2026 and verified publicly. Reports go to `support@mw10013.com`, which delivers to the Infomaniak `michael@` inbox.
 
 2. Review the reports and confirm Infomaniak is the only legitimate service sending as `@mw10013.com`.
 3. Change the policy to `p=quarantine`.
@@ -189,10 +182,11 @@ DMARC reports are machine-generated XML attachments. A dedicated reporting servi
 
 Only after all tests pass:
 
-1. Remove the obsolete `support@` **Send mail as** entry from personal Gmail.
-2. Remove stale Cloudflare Email Routing rules if disabling the service left any behind.
-3. Keep `mw10013@gmail.com` as the Infomaniak login and recovery address.
-4. Save a final export or screenshot of the working DNS records.
+1. Remove the obsolete `support@` **Send mail as** entry from personal Gmail. While it remains, Gmail treats `support@mw10013.com` as one of its own addresses: a Gmail-sent test to `support@` gets an internal inbox copy with no `Received` headers in addition to the real external delivery to Infomaniak. Completed: only the default `mw10013@gmail.com` sender remains.
+2. Update or remove the Gmail `to:(support@mw10013.com)` filter that stars, marks important, and applies the `mw10013/support` label. While it remains, it labels those Gmail-sent duplicate copies and makes them look like forwarded mail. Prefer deleting it once Infomaniak is the mailbox of record; if retained temporarily, add `Skip Inbox` understanding that it only affects incoming mail handling. Completed: filter deleted; label retained only for old messages.
+3. Remove stale Cloudflare Email Routing records if disabling the service left any behind. Completed: `cf2024-1._domainkey.mw10013.com` deleted after verifying Email Routing shows no onboarded domain.
+4. Keep `mw10013@gmail.com` as the Infomaniak login and recovery address.
+5. Save a final export or screenshot of the working DNS records.
 
 ## Rollback
 
