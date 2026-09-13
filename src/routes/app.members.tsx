@@ -268,12 +268,19 @@ function RouteComponent() {
     if (members.length === 0)
       return (
         <s-box padding="base">
-          <s-stack gap="base" alignItems="start">
-            <s-paragraph color="subdued">
-              No members yet. Add an email to grant access.
-            </s-paragraph>
-            {addButton(false)}
-          </s-stack>
+          <s-grid gap="base" justifyItems="center" paddingBlock="large-400">
+            <s-grid justifyItems="center" maxInlineSize="450px" gap="base">
+              <s-stack alignItems="center" gap="small-300">
+                <s-heading>No members yet</s-heading>
+                <s-paragraph color="subdued">
+                  Add an email to grant access. Members sign in with it on the
+                  member area; put each one on a team, or they have nothing to
+                  do.
+                </s-paragraph>
+              </s-stack>
+              {addButton(false)}
+            </s-grid>
+          </s-grid>
         </s-box>
       );
     if (rows.length === 0)
@@ -346,19 +353,30 @@ function RouteComponent() {
   return (
     <s-page heading="Members" inlineSize="large">
       <SocketBanner />
-      {members.length > 0 && addButton(true)}
+      {/* Unconditional, empty list included: the resource-index template keeps
+          the title-bar primary action and lets the empty state carry a second
+          copy, so "add is top right" holds on the visit where it matters most.
+          App Bridge hoists this one out of the iframe, so the in-card twin is
+          not a duplicate in the frame's DOM — frame- and page-scoped e2e
+          locators stay disjoint.
+          https://shopify.dev/docs/api/app-home/latest/patterns/templates/resource-index */}
+      {addButton(true)}
 
       {mutationError && <s-banner tone="critical">{mutationError}</s-banner>}
 
       {/* `padding="none"` so the table runs edge to edge; the description
           goes inside a padded intro box instead of a slotted heading. */}
       <s-section padding="none" accessibilityLabel="Members">
-        <s-box padding="base" paddingBlockEnd="none">
-          <s-paragraph color="subdued">
-            Members sign in with their email on the member area. Put each one on
-            a team, or they have nothing to do.
-          </s-paragraph>
-        </s-box>
+        {/* Only with rows: on empty the centred empty state carries this same
+            sentence, so showing both said it twice. */}
+        {members.length > 0 && (
+          <s-box padding="base" paddingBlockEnd="none">
+            <s-paragraph color="subdued">
+              Members sign in with their email on the member area. Put each one
+              on a team, or they have nothing to do.
+            </s-paragraph>
+          </s-box>
+        )}
 
         {members.length > 0 && (
           <s-box padding="base">

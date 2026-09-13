@@ -228,14 +228,19 @@ function RouteComponent() {
     if (workflows.length === 0)
       return (
         <s-box padding="base">
-          <s-stack gap="base" alignItems="start">
-            <s-paragraph color="subdued">
-              No item workflows yet. Each one is the ordered list of steps a
-              line item passes through, each owned by a team. Each workflow has
-              a tag; products carrying it follow that workflow.
-            </s-paragraph>
-            {createButton(false)}
-          </s-stack>
+          <s-grid gap="base" justifyItems="center" paddingBlock="large-400">
+            <s-grid justifyItems="center" maxInlineSize="450px" gap="base">
+              <s-stack alignItems="center" gap="small-300">
+                <s-heading>No item workflows yet</s-heading>
+                <s-paragraph color="subdued">
+                  Each one is the ordered list of steps a line item passes
+                  through, each owned by a team. Each workflow has a tag;
+                  products carrying it follow that workflow.
+                </s-paragraph>
+              </s-stack>
+              {createButton(false)}
+            </s-grid>
+          </s-grid>
         </s-box>
       );
     if (rows.length === 0)
@@ -300,20 +305,32 @@ function RouteComponent() {
     <s-page heading="Workflows" inlineSize="large">
       <s-app-window {...editor.windowProps} />
       <SocketBanner />
-      {workflows.length > 0 && createButton(true)}
+      {/* Unconditional, empty list included: the resource-index template keeps
+          the title-bar primary action and lets the empty state carry a second
+          copy, so "create is top right" holds on the visit where it matters
+          most. App Bridge hoists this one out of the iframe, so the in-card
+          twin is not a duplicate in the frame's DOM — frame- and page-scoped
+          e2e locators stay disjoint.
+          https://shopify.dev/docs/api/app-home/latest/patterns/templates/resource-index */}
+      {createButton(true)}
 
       {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
 
       {/* `padding="none"` so the table runs edge to edge; the description
           goes inside a padded intro box instead of a slotted heading. */}
       <s-section padding="none" accessibilityLabel="Item workflows">
-        <s-box padding="base" paddingBlockEnd="none">
-          <s-paragraph color="subdued">
-            Each one is the ordered list of steps a line item passes through,
-            chosen by its tag. Turn one off to stop new runs while open runs
-            finish.
-          </s-paragraph>
-        </s-box>
+        {/* Only with rows: on empty the centred empty state already explains
+            what a workflow is, and two subdued paragraphs saying nearly the
+            same thing is what this card used to look like. */}
+        {workflows.length > 0 && (
+          <s-box padding="base" paddingBlockEnd="none">
+            <s-paragraph color="subdued">
+              Each one is the ordered list of steps a line item passes through,
+              chosen by its tag. Turn one off to stop new runs while open runs
+              finish.
+            </s-paragraph>
+          </s-box>
+        )}
 
         {workflows.length > 0 && (
           <s-box padding="base">

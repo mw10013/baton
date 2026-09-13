@@ -84,6 +84,11 @@ export async function gotoApp(page: Page): Promise<FrameLocator> {
  * out with "element is not enabled" — even though a human can click it. Assert
  * visibility (also the hydration gate: `s-app-nav` only renders post-hydration),
  * then fire a native DOM click.
+ *
+ * Pass a PAGE-scoped locator: the hoist moves the control out of the iframe, so
+ * `frame.getByRole(...)` cannot see it. That split is also why the index pages
+ * can show a title-bar create button and an identically named one in the empty
+ * state without tripping strict mode — each locator sees exactly one of them.
  */
 export async function clickHoisted(locator: Locator): Promise<void> {
   await expect(locator).toBeVisible();

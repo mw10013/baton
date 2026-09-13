@@ -22,7 +22,7 @@ The code is the same in all three routes:
 ```tsx
 {
   workflows.length > 0 && createButton(true);
-} // src/routes/app.workflows.index.tsx:283
+} // src/routes/app.workflows.index.tsx:303
 {
   teams.length > 0 && createButton(true);
 } // src/routes/app.teams.index.tsx:217
@@ -33,6 +33,10 @@ The code is the same in all three routes:
 
 where `createButton(slotted)` renders the same `s-button` with `slot="primary-action"`
 when `slotted` is true and unslotted (inside the card) when false.
+
+The intro `s-box` above the search is _not_ guarded on any of the three pages, which
+is why the empty card says the same thing twice: the intro paragraph and the
+empty-state paragraph both explain what the resource is.
 
 ## Where it came from
 
@@ -138,40 +142,63 @@ For a follow-up agent. Read this whole doc first. Each step ends with `pnpm type
 `pnpm lint`, the named e2e spec green, and `pnpm fmt` run repo-wide with every touched
 file kept. Do not commit.
 
+Two hazards that apply to all three pages:
+
+- **Do not copy Shopify's `slot="primary-action"` onto the in-card button.** In the
+  composition that slot belongs to the enclosing `s-button-group`, not the page. On a
+  direct `s-page` descendant App Bridge hoists it into the title bar, which would give
+  two title-bar buttons and no button in the card. Keep `createButton(false)`
+  unslotted, exactly as it is today.
+- **Playwright frame vs page scoping is what keeps the specs unambiguous.** App Bridge
+  lifts the slotted button out of the iframe into the admin document, so a
+  `frame.getByRole("button", { name: "Create team" })` sees only the in-card one and a
+  `page.getByRole(...)` (via `clickHoisted`) sees only the hoisted one. Two visible
+  buttons with the same name therefore do not trip strict mode — but this is an
+  observation about App Bridge's DOM, not a guarantee, so watch for a strict-mode
+  failure when the specs run.
+
 ### 1. Workflows index (`src/routes/app.workflows.index.tsx`)
 
-- Change `{workflows.length > 0 && createButton(true)}` to `{createButton(true)}`.
+- Change `{workflows.length > 0 && createButton(true)}` to `{createButton(true)}`
+  (line 303).
 - In `renderRows`, the `workflows.length === 0` branch becomes the empty-state
-  composition: `s-grid`/`s-stack` centred, an `s-heading` "No item workflows yet",
-  one `s-paragraph` (keep the existing sentence: "Each one is the ordered list of
-  steps a line item passes through, each owned by a team. Each workflow has a tag;
-  products carrying it follow that workflow."), then `createButton(false)`.
-- The intro `s-box` above the search (the "Each one is the ordered list…" sentence)
-  renders only when `workflows.length > 0`, so it is not repeated on empty.
-- `e2e/workflows.spec.ts`: it seeds an existing workflow first, so it already clicks
-  the hoisted button; no change expected. Run it to confirm.
+  composition: centred `s-grid`/`s-stack`, an `s-heading` "No item workflows yet",
+  one `s-paragraph` carrying the rest of the existing sentence ("Each one is the
+  ordered list of steps a line item passes through, each owned by a team. Each
+  workflow has a tag; products carrying it follow that workflow."), then
+  `createButton(false)`.
+- Guard the intro `s-box` above the search with `workflows.length > 0`. Its sentence
+  is a different one ("…chosen by its tag. Turn one off to stop new runs while open
+  runs finish.") from the empty-state sentence, so nothing is lost either way.
+- `e2e/workflows.spec.ts`: it seeds an existing workflow (`EXISTING`) before the
+  first create, so it already clicks the hoisted button; no change expected. Run it
+  to confirm.
 
 ### 2. Teams index (`src/routes/app.teams.index.tsx`)
 
-- Same guard removal at the `{teams.length > 0 && createButton(true)}` line.
-- Empty state: heading "No teams yet", paragraph "A team is who can work a step.
-  Assign one to each step in a workflow.", then `createButton(false)`. Intro box
-  only when `teams.length > 0`.
-- `e2e/teams.spec.ts`: the first create currently clicks the in-frame button
-  (`frame.getByRole("button", { name: "Create team" })`). With the title-bar button
-  hoisted on empty too, that in-frame locator still resolves to the in-card one, so it
-  keeps working; but the `EMPTY_STATE` constant is `"No teams yet."` and should become
-  the new heading text. Run it.
+- Same guard removal at the `{teams.length > 0 && createButton(true)}` line (217).
+- Empty state: heading "No teams yet", paragraph carrying the rest of the existing
+  sentence ("A team is who can work a step; assign one to each step in a workflow."),
+  then `createButton(false)`. Guard the intro box with `teams.length > 0` — its copy
+  is "Teams are who can work a step. Assign a team to each step in a workflow.",
+  which is the same thing said twice on empty.
+- `e2e/teams.spec.ts`: the first create clicks the in-frame button
+  (`frame.getByRole("button", { name: "Create team" })`, line 58) and keeps working
+  per the scoping note above. The `EMPTY_STATE` constant is `"No teams yet."` and
+  must lose its full stop to match the heading. Run it.
 
 ### 3. Members index (`src/routes/app.members.tsx`)
 
-- Same guard removal at the `{members.length > 0 && addButton(true)}` line.
+- Same guard removal at the `{members.length > 0 && addButton(true)}` line (349).
 - Empty state: heading "No members yet", paragraph "Add an email to grant access.
-  Members sign in with it on the member area and see the work of their teams.", then
-  `addButton(false)`. Intro box only when `members.length > 0`.
-- `e2e/members.spec.ts`: `EMPTY_STATE` is the full current sentence; update it to the
-  new heading. The first add clicks the in-frame button, which still resolves to the
-  in-card one. Run it.
+  Members sign in with it on the member area; put each one on a team, or they have
+  nothing to do." — the second sentence is lifted from the intro box, which is
+  guarded away on empty. Then `addButton(false)`.
+- `e2e/members.spec.ts`: `EMPTY_STATE` is the full current sentence
+  (`"No members yet. Add an email to grant access."`); `getByText` does not match
+  across elements, so once the copy splits into a heading and a paragraph it must
+  become just `"No members yet"`. The first add clicks the in-frame button
+  (line 44). Run it.
 
 ### 4. Verify
 
@@ -189,6 +216,28 @@ file kept. Do not commit.
 | ------ | ---------------------------------------------------------------------------------------------------- |
 | Routes | `src/routes/app.workflows.index.tsx`, `src/routes/app.teams.index.tsx`, `src/routes/app.members.tsx` |
 | Tests  | `e2e/workflows.spec.ts`, `e2e/teams.spec.ts`, `e2e/members.spec.ts`                                  |
+
+## Outcome (2026-09-12)
+
+Option A is implemented on all three pages. What the verification actually showed, on
+an empty shop (`.wrangler` cleared, `pnpm d1:reset`, no seed):
+
+- Each page renders the title-bar primary action top right _and_ a centred empty state
+  with an `s-heading`, one `s-paragraph`, and the same button. The intro paragraph is
+  gone on empty, so the card no longer says the same thing twice.
+- The App Bridge hoist puts the title-bar button in the admin document as a **sibling
+  of the app iframe**, confirmed in the accessibility tree. That is what keeps
+  Playwright's frame-scoped and page-scoped locators disjoint, and
+  `e2e/teams.spec.ts` + `e2e/members.spec.ts` pass unchanged apart from their
+  `EMPTY_STATE` constants — no strict-mode ambiguity from the two same-named buttons.
+- `pnpm typecheck`, `pnpm lint`, `pnpm test` (241 tests) all green; `pnpm fmt` run
+  repo-wide.
+
+Unrelated pre-existing failure, present on `d6167a5` with these changes stashed:
+`e2e/workflows.spec.ts` tests 1 and 3 fail with `strict mode violation:
+locator('iframe[src*="embedded=1"]') resolved to 2 elements`. The `s-app-window`
+editor adds a second embedded iframe, which `appFrame` in `e2e/app.ts` does not
+disambiguate. Not caused by this work; needs its own fix.
 
 ## Decisions already made (do not reopen)
 

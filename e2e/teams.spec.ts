@@ -35,7 +35,7 @@ const clickMenuItem = (frame: FrameLocator, name: string) =>
     });
 
 const MEMBER_EMAIL = "e2e.member@example.com";
-const EMPTY_STATE = "No teams yet.";
+const EMPTY_STATE = "No teams yet";
 const TEAM = "E2E Cut";
 const RENAMED = "E2E Cutting";
 

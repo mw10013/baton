@@ -136,13 +136,18 @@ function RouteComponent() {
     if (teams.length === 0)
       return (
         <s-box padding="base">
-          <s-stack gap="base" alignItems="start">
-            <s-paragraph color="subdued">
-              No teams yet. A team is who can work a step; assign one to each
-              step in a workflow.
-            </s-paragraph>
-            {createButton(false)}
-          </s-stack>
+          <s-grid gap="base" justifyItems="center" paddingBlock="large-400">
+            <s-grid justifyItems="center" maxInlineSize="450px" gap="base">
+              <s-stack alignItems="center" gap="small-300">
+                <s-heading>No teams yet</s-heading>
+                <s-paragraph color="subdued">
+                  A team is who can work a step; assign one to each step in a
+                  workflow.
+                </s-paragraph>
+              </s-stack>
+              {createButton(false)}
+            </s-grid>
+          </s-grid>
         </s-box>
       );
     if (rows.length === 0)
@@ -214,19 +219,30 @@ function RouteComponent() {
   return (
     <s-page heading="Teams" inlineSize="large">
       <SocketBanner />
-      {teams.length > 0 && createButton(true)}
+      {/* Unconditional, empty list included: the resource-index template keeps
+          the title-bar primary action and lets the empty state carry a second
+          copy, so "create is top right" holds on the visit where it matters
+          most. App Bridge hoists this one out of the iframe, so the in-card
+          twin is not a duplicate in the frame's DOM — frame- and page-scoped
+          e2e locators stay disjoint.
+          https://shopify.dev/docs/api/app-home/latest/patterns/templates/resource-index */}
+      {createButton(true)}
 
       {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
 
       {/* `padding="none"` so the table runs edge to edge; the description
           goes inside a padded intro box instead of a slotted heading. */}
       <s-section padding="none" accessibilityLabel="Teams">
-        <s-box padding="base" paddingBlockEnd="none">
-          <s-paragraph color="subdued">
-            Teams are who can work a step. Assign a team to each step in a
-            workflow.
-          </s-paragraph>
-        </s-box>
+        {/* Only with rows: on empty the centred empty state already says what
+            a team is, and this paragraph said it a second time. */}
+        {teams.length > 0 && (
+          <s-box padding="base" paddingBlockEnd="none">
+            <s-paragraph color="subdued">
+              Teams are who can work a step. Assign a team to each step in a
+              workflow.
+            </s-paragraph>
+          </s-box>
+        )}
 
         {teams.length > 0 && (
           <s-box padding="base">

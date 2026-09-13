@@ -15,7 +15,7 @@ import { seedConfig, seedMembers } from "./seed";
 
 const MEMBER_EMAIL = "e2e.member@example.com";
 const TEAM = "Engraving";
-const EMPTY_STATE = "No members yet. Add an email to grant access.";
+const EMPTY_STATE = "No members yet";
 
 test("members screen adds, staffs, normalizes, and removes a member", async ({
   page,
