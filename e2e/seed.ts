@@ -60,12 +60,20 @@ export interface SeedLineItem {
   }[];
 }
 
-/** An order to seed; `n` becomes `#n`. `done` completes every run it routes to. */
+/**
+ * An order to seed; `n` becomes `#n`. `done` completes every run it routes
+ * to. `advance` completes that many rounds of ready steps instead (item runs
+ * first; the order run only once every item is made), `started` then Starts
+ * whatever is ready, and `blocked` flags every open run with that reason.
+ */
 export interface SeedOrder {
   readonly n: number;
   readonly fulfillmentStatus?: string;
   readonly unpaid?: boolean;
   readonly done?: boolean;
+  readonly advance?: number;
+  readonly started?: boolean;
+  readonly blocked?: string;
   readonly note?: string;
   readonly lineItems: readonly SeedLineItem[];
 }

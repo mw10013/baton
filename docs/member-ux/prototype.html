@@ -1,0 +1,1505 @@
+<title>Baton Member Area</title>
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap"
+/>
+<style>
+  :root {
+    --ground: #f1f1f1;
+    --surface: #ffffff;
+    --surface-sub: #f7f7f7;
+    --line: #e3e3e3;
+    --line-strong: #c9c9c9;
+    --ink: #303030;
+    --ink-sub: #616161;
+    --ink-faint: #8a8a8a;
+    --primary: #303030;
+    --primary-ink: #ffffff;
+    --link: #005bd3;
+    --warn-bg: #ffd79d;
+    --warn-ink: #5e4200;
+    --warn-soft: #fff5e6;
+    --crit-bg: #fed3d1;
+    --crit-ink: #8e1f0b;
+    --crit-btn: #e51c00;
+    --info-bg: #e0f0ff;
+    --info-ink: #00527c;
+    --ok-bg: #cdfee1;
+    --ok-ink: #0c5132;
+    --chip-on: #303030;
+    --chip-on-ink: #ffffff;
+    --dim: rgba(0, 0, 0, 0.45);
+    --radius: 12px;
+    --radius-sm: 8px;
+    --shadow: 0 1px 0 rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.08);
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: Inter, -apple-system, "Segoe UI", Roboto, system-ui, sans-serif;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #1a1a1a;
+      --surface: #262626;
+      --surface-sub: #2f2f2f;
+      --line: #3a3a3a;
+      --line-strong: #4d4d4d;
+      --ink: #e3e3e3;
+      --ink-sub: #b5b5b5;
+      --ink-faint: #8a8a8a;
+      --primary: #e3e3e3;
+      --primary-ink: #1a1a1a;
+      --link: #6fb4ff;
+      --warn-bg: #5e4200;
+      --warn-ink: #ffd79d;
+      --warn-soft: #3a2c10;
+      --crit-bg: #6b1a0f;
+      --crit-ink: #fed3d1;
+      --crit-btn: #ff5c47;
+      --info-bg: #10344d;
+      --info-ink: #b6ddff;
+      --ok-bg: #0c5132;
+      --ok-ink: #cdfee1;
+      --chip-on: #e3e3e3;
+      --chip-on-ink: #1a1a1a;
+      --dim: rgba(0, 0, 0, 0.6);
+      --shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.4);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #1a1a1a;
+    --surface: #262626;
+    --surface-sub: #2f2f2f;
+    --line: #3a3a3a;
+    --line-strong: #4d4d4d;
+    --ink: #e3e3e3;
+    --ink-sub: #b5b5b5;
+    --ink-faint: #8a8a8a;
+    --primary: #e3e3e3;
+    --primary-ink: #1a1a1a;
+    --link: #6fb4ff;
+    --warn-bg: #5e4200;
+    --warn-ink: #ffd79d;
+    --warn-soft: #3a2c10;
+    --crit-bg: #6b1a0f;
+    --crit-ink: #fed3d1;
+    --crit-btn: #ff5c47;
+    --info-bg: #10344d;
+    --info-ink: #b6ddff;
+    --ok-bg: #0c5132;
+    --ok-ink: #cdfee1;
+    --chip-on: #e3e3e3;
+    --chip-on-ink: #1a1a1a;
+    --dim: rgba(0, 0, 0, 0.6);
+    --shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.4);
+    color-scheme: dark;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.45;
+    padding-inline: 16px;
+    padding-block: 20px 48px;
+  }
+  h1,
+  h2,
+  h3,
+  p {
+    margin: 0;
+  }
+  a {
+    color: var(--link);
+  }
+  button {
+    font: inherit;
+  }
+
+  /* ---- studio chrome around the phone ---- */
+  .studio {
+    max-width: 1080px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 430px;
+    gap: 32px;
+    align-items: start;
+  }
+  @media (max-width: 860px) {
+    .studio {
+      grid-template-columns: 1fr;
+    }
+  }
+  .brief h1 {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+  .brief p {
+    color: var(--ink-sub);
+    max-width: 60ch;
+  }
+  .brief .lede {
+    margin-top: 6px;
+  }
+  .personas {
+    margin-top: 22px;
+    display: grid;
+    gap: 6px;
+  }
+  .personas .label {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 600;
+  }
+  .persona {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 12px;
+    align-items: center;
+    width: 100%;
+    text-align: left;
+    padding: 9px 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .persona[aria-pressed="true"] {
+    border-color: var(--ink);
+    box-shadow: inset 0 0 0 1px var(--ink);
+  }
+  .persona .email {
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+  .persona .who {
+    color: var(--ink-sub);
+    font-size: 12.5px;
+  }
+  .persona:focus-visible,
+  .btn:focus-visible,
+  .chip:focus-visible,
+  .card-title a:focus-visible {
+    outline: 2px solid var(--link);
+    outline-offset: 2px;
+  }
+  .notes {
+    margin-top: 26px;
+    display: grid;
+    gap: 10px;
+  }
+  .notes h2 {
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .notes ol {
+    margin: 0;
+    padding-left: 18px;
+    color: var(--ink-sub);
+    display: grid;
+    gap: 6px;
+  }
+  .notes li::marker {
+    color: var(--ink-faint);
+  }
+
+  .phone {
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: 28px;
+    padding: 14px 10px;
+    box-shadow: var(--shadow);
+    position: sticky;
+    top: 16px;
+  }
+  .screen {
+    background: var(--ground);
+    border-radius: 18px;
+    min-height: 720px;
+    max-height: 82vh;
+    overflow-y: auto;
+    padding: 16px 12px 24px;
+  }
+
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 2px 4px 12px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 12px;
+  }
+  .bar svg {
+    width: 22px;
+    height: 22px;
+    flex: none;
+  }
+  .bar .shop {
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .bar .btn {
+    margin-left: auto;
+  }
+  .tier-head button {
+    margin-left: auto;
+  }
+  .done-entry {
+    display: grid;
+    gap: 4px;
+    padding: 8px 4px;
+    border-top: 1px solid var(--line);
+    font-size: 13px;
+  }
+  .done-entry:first-of-type {
+    border-top: 0;
+  }
+  .done-entry .l1 {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+  .done-entry .l1 a {
+    font-family: var(--mono);
+    color: var(--ink);
+    text-decoration: none;
+  }
+  .done-entry .l1 strong {
+    font-weight: 600;
+  }
+  .done-list {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 4px 10px;
+    box-shadow: var(--shadow);
+  }
+
+  /* ---- Polaris-ish primitives ---- */
+  .page-head {
+    display: grid;
+    gap: 2px;
+    padding: 4px 4px 14px;
+  }
+  .page-head .row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .page-head h1 {
+    font-size: 18px;
+    font-weight: 650;
+  }
+  .page-head .sub {
+    color: var(--ink-sub);
+    font-size: 12.5px;
+    font-family: var(--mono);
+  }
+  .back {
+    font-size: 13px;
+    padding: 0 4px 10px;
+  }
+  .btn {
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
+    color: var(--ink);
+    border-radius: var(--radius-sm);
+    padding: 7px 12px;
+    font-size: 13px;
+    font-weight: 550;
+    cursor: pointer;
+    line-height: 1.2;
+  }
+  .btn.primary {
+    background: var(--primary);
+    color: var(--primary-ink);
+    border-color: var(--primary);
+  }
+  .btn.tertiary {
+    border-color: transparent;
+    background: transparent;
+    color: var(--ink-sub);
+    padding-inline: 6px;
+  }
+  .btn.critical {
+    background: var(--crit-btn);
+    border-color: var(--crit-btn);
+    color: #fff;
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .badge {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.3;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--surface-sub);
+    border: 1px solid var(--line);
+    color: var(--ink-sub);
+    white-space: nowrap;
+  }
+  .badge.info {
+    background: var(--info-bg);
+    color: var(--info-ink);
+    border-color: transparent;
+  }
+  .badge.ok {
+    background: var(--ok-bg);
+    color: var(--ok-ink);
+    border-color: transparent;
+  }
+  .badge.warn {
+    background: var(--warn-bg);
+    color: var(--warn-ink);
+    border-color: transparent;
+  }
+  .badge.crit {
+    background: var(--crit-bg);
+    color: var(--crit-ink);
+    border-color: transparent;
+  }
+  .banner {
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    display: grid;
+    gap: 2px;
+    font-size: 13px;
+  }
+  .banner.warn {
+    background: var(--warn-soft);
+    color: var(--warn-ink);
+  }
+  .banner.crit {
+    background: var(--crit-bg);
+    color: var(--crit-ink);
+  }
+  .banner strong {
+    font-weight: 600;
+  }
+  .chips {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 0 4px 14px;
+  }
+  .chip {
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
+    color: var(--ink);
+    border-radius: 999px;
+    padding: 4px 11px;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .chip[aria-pressed="true"] {
+    background: var(--chip-on);
+    color: var(--chip-on-ink);
+    border-color: var(--chip-on);
+  }
+  .chip .n {
+    opacity: 0.7;
+    margin-left: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .tier {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+  .tier-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 0 4px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-sub);
+  }
+  .tier-head .n {
+    color: var(--ink-faint);
+    font-weight: 500;
+    letter-spacing: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 12px 14px 14px;
+    display: grid;
+    gap: 10px;
+    box-shadow: var(--shadow);
+  }
+  .card.attention {
+    border-color: var(--warn-bg);
+  }
+  .card-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .card-title a {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 15px;
+    text-decoration: none;
+    color: var(--ink);
+  }
+  .card-title a:hover {
+    text-decoration: underline;
+  }
+  .card-title .age {
+    margin-left: auto;
+    color: var(--ink-faint);
+    font-size: 12px;
+  }
+  .item {
+    display: grid;
+    gap: 3px;
+  }
+  .item .title {
+    font-weight: 500;
+  }
+  .item .qty {
+    color: var(--ink-sub);
+    font-variant-numeric: tabular-nums;
+  }
+  dl.person {
+    margin: 0;
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    column-gap: 10px;
+    row-gap: 2px;
+    font-size: 13.5px;
+  }
+  dl.person dt {
+    color: var(--ink-sub);
+  }
+  dl.person dd {
+    margin: 0;
+    font-weight: 600;
+  }
+  .order-note {
+    font-size: 13px;
+    color: var(--ink-sub);
+    border-left: 2px solid var(--line-strong);
+    padding-left: 8px;
+  }
+  .step {
+    background: var(--surface-sub);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    display: grid;
+    gap: 6px;
+  }
+  .step .name {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+  .step .name strong {
+    font-weight: 600;
+  }
+  .step .name .k {
+    color: var(--ink-faint);
+    font-size: 12.5px;
+  }
+  .step .with,
+  .step .since,
+  .step .instr,
+  .muted {
+    color: var(--ink-sub);
+    font-size: 13px;
+  }
+  .step .instr {
+    color: var(--ink);
+  }
+  .actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 2px;
+  }
+  .items-list {
+    display: grid;
+    gap: 8px;
+  }
+  .items-list .li {
+    display: grid;
+    gap: 2px;
+  }
+  .items-list .li .row {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: center;
+  }
+  .empty {
+    color: var(--ink-sub);
+    padding: 24px 8px;
+    text-align: center;
+  }
+
+  /* work page */
+  .section {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 12px 14px 14px;
+    display: grid;
+    gap: 10px;
+    margin-bottom: 12px;
+    box-shadow: var(--shadow);
+  }
+  .section h2 {
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .hist {
+    display: grid;
+    gap: 0;
+  }
+  .hist .s {
+    display: grid;
+    grid-template-columns: 18px 1fr;
+    gap: 10px;
+    padding: 8px 0;
+    border-top: 1px solid var(--line);
+  }
+  .hist .s:first-child {
+    border-top: 0;
+  }
+  .hist .dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid var(--line-strong);
+    margin-top: 4px;
+    background: var(--surface);
+  }
+  .hist .dot.done {
+    background: var(--ink);
+    border-color: var(--ink);
+  }
+  .hist .dot.active {
+    border-color: var(--ok-ink);
+    background: var(--ok-bg);
+  }
+  .hist .dot.ready {
+    border-color: var(--ink);
+  }
+  .hist .body {
+    display: grid;
+    gap: 3px;
+  }
+  .hist .body .l1 {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+  .hist .body .l1 strong {
+    font-weight: 600;
+  }
+  .hist .body .team {
+    color: var(--ink-faint);
+    font-size: 12.5px;
+  }
+  .field {
+    display: grid;
+    gap: 4px;
+  }
+  .field label {
+    font-size: 13px;
+    color: var(--ink-sub);
+  }
+  .field input,
+  .field textarea {
+    font: inherit;
+    padding: 7px 10px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--ink);
+    width: 100%;
+  }
+  .toast {
+    position: sticky;
+    bottom: 8px;
+    margin: 12px auto 0;
+    width: max-content;
+    max-width: 100%;
+    background: var(--ink);
+    color: var(--surface);
+    padding: 8px 14px;
+    border-radius: 999px;
+    font-size: 13px;
+    box-shadow: var(--shadow);
+  }
+  .toast[hidden] {
+    display: none;
+  }
+
+  /* sign-in */
+  .signin {
+    display: grid;
+    gap: 12px;
+    padding-top: 40px;
+  }
+  .signin .section {
+    margin: 0;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .card,
+    .section {
+      transition: opacity 120ms ease;
+    }
+  }
+</style>
+
+<div class="studio">
+  <div class="brief">
+    <h1>The member area, as proposed</h1>
+    <p class="lede">
+      Three screens on a phone: sign in, the queue, and one work page per run.
+      Pick a person from the seed to see their day. Start and Done change the
+      state on this page only; the card moves tier, and the work page shows the
+      history.
+    </p>
+
+    <div class="personas" id="personas">
+      <span class="label">Sign in as</span>
+    </div>
+
+    <div class="notes">
+      <h2>What to look at</h2>
+      <ol>
+        <li>
+          <strong>m2 (Engraving)</strong> has four cards across three workflows
+          and a blocked ring at the top. That is the busiest bench in the seed.
+        </li>
+        <li>
+          <strong>m7</strong> is on two teams: the chip row filters one list
+          instead of repeating sections.
+        </li>
+        <li>
+          <strong>p1 (Quality check)</strong> holds an order card: every item on
+          #1004 with its state and its personalization, because that is what an
+          inspection checks.
+        </li>
+        <li>
+          <strong>lead</strong> sees every queue. Sorting by tier is what keeps
+          that readable.
+        </li>
+        <li>
+          Tap an order number to open the work page: full step history, the
+          other items on the order, notes, and Block.
+        </li>
+        <li>
+          <strong>Done today</strong> at the bottom of the queue is where a
+          mistake is fixed: Undo on a step nobody downstream has started, "ask
+          them" when they have. Try it as m3: undo "Cut leather" on #1003, then
+          look at #1002, where Engraving has already started.
+        </li>
+        <li><strong>m8</strong> is on no team and sees the empty state.</li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="phone">
+    <div class="screen" id="screen"></div>
+  </div>
+</div>
+
+<script>
+  /* ---------- seed (mirrors e2e/fixture.ts after `pnpm seed`) ---------- */
+  const TEAMS = {
+    WOOD: "Woodshop",
+    ENG: "Engraving",
+    LEA: "Leather",
+    JEW: "Jewelry",
+    TEX: "Textiles",
+    FIN: "Finishing",
+    QC: "Quality check",
+    PACK: "Packing",
+    SHIP: "Shipping",
+  };
+  const ALL_TEAMS = Object.values(TEAMS);
+  const PERSONAS = [
+    { email: "lead@m.com", teams: ALL_TEAMS, who: "on every team" },
+    { email: "m2@m.com", teams: [TEAMS.ENG], who: "Engraving" },
+    { email: "m3@m.com", teams: [TEAMS.LEA], who: "Leather" },
+    {
+      email: "m7@m.com",
+      teams: [TEAMS.ENG, TEAMS.FIN],
+      who: "Engraving · Finishing",
+    },
+    { email: "p1@m.com", teams: [TEAMS.QC], who: "Quality check" },
+    {
+      email: "p4@m.com",
+      teams: [TEAMS.PACK, TEAMS.SHIP],
+      who: "Packing · Shipping",
+    },
+    { email: "m8@m.com", teams: [], who: "not on a team yet" },
+  ];
+  const LEAD = "lead@m.com";
+  const NOW = Date.now();
+  const hoursAgo = (h) => NOW - h * 3600e3;
+  const step = (name, team, stage, instructions) => ({
+    name,
+    team,
+    stage,
+    instructions: instructions ?? null,
+    startedAt: null,
+    startedBy: null,
+    completedAt: null,
+    completedBy: null,
+    note: null,
+  });
+  const done = (s, h, by = LEAD) => ({
+    ...s,
+    startedAt: hoursAgo(h + 0.5),
+    startedBy: by,
+    completedAt: hoursAgo(h),
+    completedBy: by,
+  });
+  const started = (s, h, by = LEAD) => ({
+    ...s,
+    startedAt: hoursAgo(h),
+    startedBy: by,
+  });
+
+  const boardSteps = () => [
+    step(
+      "Cut and sand",
+      TEAMS.WOOD,
+      1,
+      "Cut to the size on the order. Sand to 220 grit; check for tear-out on the end grain.",
+    ),
+    step(
+      "Engrave",
+      TEAMS.ENG,
+      2,
+      "Engraving text is in the personalization. Confirm spelling against the order before running the laser.",
+    ),
+    step("Oil and finish", TEAMS.FIN, 3),
+  ];
+  const journalSteps = () => [
+    step("Cut leather", TEAMS.LEA, 1),
+    step(
+      "Stamp monogram",
+      TEAMS.ENG,
+      2,
+      "Initials in the personalization; centre on the cover.",
+    ),
+    step("Stitch spine", TEAMS.LEA, 2),
+    step("Condition and inspect", TEAMS.LEA, 3),
+  ];
+  const ringSteps = () => [
+    step(
+      "Cast",
+      TEAMS.JEW,
+      1,
+      "Ring size and metal are in the personalization.",
+    ),
+    step(
+      "Engrave crest",
+      TEAMS.ENG,
+      2,
+      "Crest file is named after the order number.",
+    ),
+    step("Polish", TEAMS.JEW, 3, "High polish unless the order says brushed."),
+  ];
+  const blanketSteps = () => [
+    step(
+      "Embroider",
+      TEAMS.TEX,
+      1,
+      "Name and thread colour are in the personalization.",
+    ),
+    step("Steam and fold", TEAMS.FIN, 2),
+  ];
+  const orderSteps = () => [
+    step(
+      "Inspect",
+      TEAMS.QC,
+      1,
+      "Every item against the order. Personalization spelled right, no finish defects.",
+    ),
+    step("Pack", TEAMS.PACK, 2),
+    step("Print label", TEAMS.SHIP, 2),
+    step("Hand to carrier", TEAMS.SHIP, 3),
+  ];
+
+  const ORDERS = {
+    1001: { placed: hoursAgo(3), note: null, items: ["board-1001"] },
+    1002: {
+      placed: hoursAgo(26),
+      note: null,
+      items: ["ring-1002", "journal-1002"],
+    },
+    1003: {
+      placed: hoursAgo(30),
+      note: null,
+      items: ["journal-1003", "mug-1003"],
+    },
+    1004: {
+      placed: hoursAgo(50),
+      note: "Gift — please leave the price off the slip.",
+      items: ["blanket-1004a", "blanket-1004b"],
+    },
+    1005: { placed: hoursAgo(75), note: null, items: ["board-1005"] },
+    1007: {
+      placed: hoursAgo(20),
+      note: "Customer cancelled one board after ordering.",
+      items: ["board-1007"],
+    },
+    1008: { placed: hoursAgo(48), note: null, items: ["ring-1008"] },
+  };
+  const ITEMS = {
+    "board-1001": {
+      title: "Engraved cutting board",
+      qty: 1,
+      p: { Engraving: "The Millers · est. 2019" },
+    },
+    "ring-1002": {
+      title: "Signet ring",
+      qty: 1,
+      p: { Size: "9", Metal: "Sterling silver" },
+    },
+    "journal-1002": {
+      title: "Leather journal",
+      qty: 1,
+      p: { Initials: "J.R.M." },
+    },
+    "journal-1003": {
+      title: "Leather journal",
+      qty: 2,
+      p: { Initials: "A.K." },
+    },
+    "mug-1003": { title: "Ceramic mug", qty: 1, p: {} },
+    "blanket-1004a": {
+      title: "Embroidered blanket",
+      qty: 1,
+      p: { Name: "Theodore", Thread: "Navy" },
+    },
+    "blanket-1004b": {
+      title: "Embroidered blanket",
+      qty: 1,
+      p: { Name: "Eloise", Thread: "Rose" },
+    },
+    "board-1005": {
+      title: "Engraved cutting board",
+      qty: 1,
+      p: { Engraving: "Nonna's Kitchen" },
+    },
+    "board-1007": {
+      title: "Engraved cutting board",
+      qty: 1,
+      made: "×1 to make (1 of 2 refunded)",
+      p: { Engraving: "Home Sweet Home" },
+    },
+    "ring-1008": {
+      title: "Signet ring",
+      qty: 1,
+      p: { Size: "10", Metal: "Gold" },
+    },
+  };
+
+  let RUNS = [
+    {
+      id: "r1",
+      order: 1001,
+      wf: "Engraved cutting board",
+      item: "board-1001",
+      steps: boardSteps(),
+      flag: null,
+    },
+    {
+      id: "r2",
+      order: 1002,
+      wf: "Signet ring",
+      item: "ring-1002",
+      steps: (() => {
+        const s = ringSteps();
+        return [done(s[0], 20), started(s[1], 1), s[2]];
+      })(),
+      flag: null,
+    },
+    {
+      id: "r3",
+      order: 1002,
+      wf: "Leather journal",
+      item: "journal-1002",
+      steps: (() => {
+        const s = journalSteps();
+        return [
+          done(s[0], 21),
+          started(s[1], 1.2),
+          started(s[2], 0.7, "m3@m.com"),
+          s[3],
+        ];
+      })(),
+      flag: null,
+    },
+    {
+      id: "r4",
+      order: 1003,
+      wf: "Leather journal",
+      item: "journal-1003",
+      steps: (() => {
+        const s = journalSteps();
+        return [done(s[0], 18, "m3@m.com"), s[1], s[2], s[3]];
+      })(),
+      flag: null,
+    },
+    {
+      id: "r5",
+      order: 1004,
+      wf: "Embroidered blanket",
+      item: "blanket-1004a",
+      steps: (() => {
+        const s = blanketSteps();
+        return [done(s[0], 40, "m5@m.com"), done(s[1], 30, "m6@m.com")];
+      })(),
+      flag: null,
+    },
+    {
+      id: "r6",
+      order: 1004,
+      wf: "Embroidered blanket",
+      item: "blanket-1004b",
+      steps: (() => {
+        const s = blanketSteps();
+        return [done(s[0], 39, "m5@m.com"), done(s[1], 29, "m6@m.com")];
+      })(),
+      flag: null,
+    },
+    {
+      id: "o1004",
+      order: 1004,
+      wf: "Order workflow",
+      item: null,
+      steps: orderSteps(),
+      flag: null,
+    },
+    {
+      id: "r7",
+      order: 1005,
+      wf: "Engraved cutting board",
+      item: "board-1005",
+      steps: (() => {
+        const s = boardSteps();
+        return [
+          done(s[0], 70, "m1@m.com"),
+          done(s[1], 60, "m2@m.com"),
+          done(s[2], 48, "m6@m.com"),
+        ];
+      })(),
+      flag: null,
+    },
+    {
+      id: "o1005",
+      order: 1005,
+      wf: "Order workflow",
+      item: null,
+      steps: (() => {
+        const s = orderSteps();
+        return [done(s[0], 5, "p1@m.com"), s[1], s[2], s[3]];
+      })(),
+      flag: null,
+    },
+    {
+      id: "r8",
+      order: 1007,
+      wf: "Engraved cutting board",
+      item: "board-1007",
+      steps: boardSteps(),
+      flag: null,
+    },
+    {
+      id: "r9",
+      order: 1008,
+      wf: "Signet ring",
+      item: "ring-1008",
+      steps: (() => {
+        const s = ringSteps();
+        return [done(s[0], 44, "m4@m.com"), s[1], s[2]];
+      })(),
+      flag: {
+        kind: "blocked",
+        reason: "Crest file missing from the order — asked the customer.",
+        by: "m2@m.com",
+        at: hoursAgo(2),
+      },
+    },
+  ];
+
+  /* ---------- derived ---------- */
+  const isOpen = (s) => s.completedAt === null;
+  const runOpen = (r) => r.steps.some(isOpen);
+  const runStatus = (r) =>
+    !runOpen(r)
+      ? "done"
+      : r.steps.some((s) => s.startedAt !== null)
+        ? "active"
+        : "pending";
+  const orderRunReady = (r) => {
+    const items = RUNS.filter((x) => x.order === r.order && x.item !== null);
+    return items.length > 0 && items.every((x) => !runOpen(x));
+  };
+  const readySteps = (r) =>
+    !runOpen(r) || (r.item === null && !orderRunReady(r))
+      ? []
+      : r.steps.filter(
+          (s) =>
+            isOpen(s) && !r.steps.some((e) => isOpen(e) && e.stage < s.stage),
+        );
+  const stageCount = (r) => Math.max(...r.steps.map((s) => s.stage));
+  const itemRunStatus = (itemId) => {
+    const r = RUNS.find((x) => x.item === itemId);
+    return r ? runStatus(r) : null;
+  };
+  const rel = (t) => {
+    const h = Math.round((NOW - t) / 3600e3);
+    if (h < 1) return "just now";
+    if (h < 24) return `${h}h ago`;
+    const d = Math.round(h / 24);
+    return `${d}d ago`;
+  };
+  const clock = (t) =>
+    new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const esc = (s) =>
+    String(s).replace(
+      /[&<>"]/g,
+      (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c],
+    );
+
+  /* ---------- state ---------- */
+  const state = {
+    persona: PERSONAS[1],
+    view: "queue",
+    runId: null,
+    chip: "All",
+    toast: null,
+  };
+
+  const myTeams = () => state.persona.teams;
+  const queue = () =>
+    RUNS.map((r) => ({
+      run: r,
+      steps: readySteps(r).filter((s) => myTeams().includes(s.team)),
+    }))
+      .filter((q) => q.steps.length > 0)
+      .filter(
+        (q) =>
+          state.chip === "All" || q.steps.some((s) => s.team === state.chip),
+      );
+  const tierOf = ({ run, steps }) => {
+    if (run.flag) return 0;
+    if (steps.some((s) => s.startedBy === state.persona.email)) return 1;
+    if (steps.some((s) => s.startedAt !== null)) return 2;
+    return 3;
+  };
+  const TIERS = ["Needs attention", "Mine", "In progress", "Up next"];
+
+  /* ---------- render ---------- */
+  const MARK = `<svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#1a1a1a"/><rect x="8" y="14" width="16" height="4" rx="2" fill="#fff" transform="rotate(-35 16 16)"/></svg>`;
+  const bar = () =>
+    `<div class="bar">${MARK}<span class="shop">Sandbox Shop 01</span><button class="btn tertiary" data-act="signout">Sign out</button></div>`;
+  /** The first downstream step that has moved, or null: the undo rule. */
+  const undoBlockedBy = (run, s) => {
+    const later = run.steps.find(
+      (x) => x.stage > s.stage && x.startedAt !== null,
+    );
+    if (later) return later;
+    if (run.item !== null) {
+      const o = RUNS.find((x) => x.order === run.order && x.item === null);
+      const st = o && o.steps.find((x) => x.startedAt !== null);
+      if (st) return st;
+    }
+    return null;
+  };
+  const doneToday = () =>
+    RUNS.flatMap((run) =>
+      run.steps
+        .filter(
+          (s) =>
+            s.completedAt !== null &&
+            myTeams().includes(s.team) &&
+            NOW - s.completedAt < 24 * 3600e3,
+        )
+        .map((s) => ({ run, s })),
+    ).sort((a, b) => b.s.completedAt - a.s.completedAt);
+  let doneOpen = false;
+  const doneTier = () => {
+    const entries = doneToday();
+    if (entries.length === 0) return "";
+    return `<section class="tier"><div class="tier-head">Done today<span class="n">${entries.length}</span><button class="btn tertiary" data-act="toggle-done">${doneOpen ? "Hide" : "Show"}</button></div>${
+      doneOpen
+        ? `<div class="done-list">${entries
+            .map(({ run, s }) => {
+              const blocked = undoBlockedBy(run, s);
+              const it = run.item ? ITEMS[run.item].title : "Order";
+              return `<div class="done-entry"><div class="l1"><a href="#" data-open="${run.id}">#${run.order}</a><strong>${esc(s.name)}</strong><span class="muted">${esc(it)}</span></div>
+                <div class="muted">by ${esc(s.completedBy)} · ${rel(s.completedAt)}${s.note ? ` · Note: ${esc(s.note)}` : ""}</div>
+                <div class="actions">${
+                  blocked
+                    ? `<span class="muted">${esc(blocked.team)} started ${esc(blocked.name)} · ask them</span>`
+                    : `<button class="btn" data-act="undo" data-run="${run.id}" data-step="${esc(s.name)}">Undo</button>`
+                }<button class="btn tertiary" data-act="note-done" data-run="${run.id}" data-step="${esc(s.name)}">${s.note ? "Edit note" : "Note"}</button></div></div>`;
+            })
+            .join("")}</div>`
+        : ""
+    }</section>`;
+  };
+  const badgeFor = (q, tier) =>
+    tier === 0
+      ? `<span class="badge crit">Blocked</span>`
+      : tier === 1
+        ? `<span class="badge ok">Mine</span>`
+        : tier === 2
+          ? `<span class="badge info">In progress</span>`
+          : "";
+  const personDl = (p) =>
+    Object.keys(p).length === 0
+      ? ""
+      : `<dl class="person">${Object.entries(p)
+          .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`)
+          .join("")}</dl>`;
+  const itemBlock = (itemId) => {
+    const it = ITEMS[itemId];
+    return `<div class="item"><div><span class="title">${esc(it.title)}</span> <span class="qty">${
+      it.made ? esc(it.made) : `×${it.qty}`
+    }</span></div>${personDl(it.p)}</div>`;
+  };
+  const orderItemsBlock = (order) =>
+    `<div class="items-list">${ORDERS[order].items
+      .map((id) => {
+        const it = ITEMS[id];
+        const st = itemRunStatus(id);
+        const badge =
+          st === null
+            ? `<span class="badge">No steps</span>`
+            : st === "done"
+              ? `<span class="badge">Made</span>`
+              : st === "active"
+                ? `<span class="badge ok">In progress</span>`
+                : `<span class="badge info">Not started</span>`;
+        return `<div class="li"><div class="row"><span><span class="title">${esc(it.title)}</span> <span class="qty">×${it.qty}</span></span>${badge}</div>${personDl(it.p)}</div>`;
+      })
+      .join("")}</div>`;
+  const stepBox = (run, s, compact) => {
+    const sibs = run.steps.filter(
+      (x) => x.stage === s.stage && x !== s && isOpen(x),
+    );
+    const mine = s.startedBy === state.persona.email;
+    return `<div class="step">
+      <div class="name"><strong>${esc(s.name)}</strong><span class="k">step ${s.stage} of ${stageCount(run)}</span></div>
+      ${sibs.length ? `<div class="with">together with ${sibs.map((x) => `${esc(x.name)} (${esc(x.team)})`).join(", ")}</div>` : ""}
+      ${s.instructions ? `<div class="instr">${esc(s.instructions)}</div>` : ""}
+      ${s.startedAt ? `<div class="since">In progress since ${clock(s.startedAt)}${mine ? "" : ` by ${esc(s.startedBy)}`}</div>` : ""}
+      ${s.note && !compact ? `<div class="muted">Note: ${esc(s.note)}</div>` : ""}
+      <div class="actions">
+        ${s.startedAt ? "" : `<button class="btn" data-act="start" data-run="${run.id}" data-step="${esc(s.name)}">Start</button>`}
+        <button class="btn primary" data-act="done" data-run="${run.id}" data-step="${esc(s.name)}">Done</button>
+      </div>
+    </div>`;
+  };
+  const flagBanner = (run) =>
+    run.flag
+      ? `<div class="banner warn"><strong>Needs attention</strong><span>Blocked: ${esc(run.flag.reason)} <span class="muted">· ${esc(run.flag.by)}, ${rel(run.flag.at)}</span></span></div>`
+      : "";
+
+  const card = (q, tier) => {
+    const { run, steps } = q;
+    const o = ORDERS[run.order];
+    return `<article class="card ${run.flag ? "attention" : ""}">
+      <div class="card-title">
+        <a href="#" data-open="${run.id}">#${run.order}</a>
+        <span class="badge">${esc(run.wf)}</span>
+        ${badgeFor(q, tier)}
+        <span class="age">ordered ${rel(o.placed)}</span>
+      </div>
+      ${run.item ? itemBlock(run.item) : orderItemsBlock(run.order)}
+      ${o.note ? `<div class="order-note">${esc(o.note)}</div>` : ""}
+      ${flagBanner(run)}
+      ${steps.map((s) => stepBox(run, s, true)).join("")}
+    </article>`;
+  };
+
+  const renderQueue = () => {
+    const p = state.persona;
+    const head = `${bar()}<div class="page-head">
+      <div class="row"><h1>Your work</h1></div>
+      <div class="sub">${esc(p.email)}</div>
+    </div>`;
+    if (p.teams.length === 0)
+      return `${head}<p class="empty">You're not on a team yet. Ask the shop owner to add you to a team to see work.</p>`;
+    const all = RUNS.map((r) => ({
+      run: r,
+      steps: readySteps(r).filter((s) => myTeams().includes(s.team)),
+    })).filter((q) => q.steps.length > 0);
+    const chips =
+      p.teams.length > 1
+        ? `<div class="chips">${["All", ...p.teams]
+            .map((t) => {
+              const n =
+                t === "All"
+                  ? all.length
+                  : all.filter((q) => q.steps.some((s) => s.team === t)).length;
+              return `<button class="chip" aria-pressed="${state.chip === t}" data-chip="${esc(t)}">${esc(t)}<span class="n">${n}</span></button>`;
+            })
+            .join("")}</div>`
+        : "";
+    const items = queue();
+    if (items.length === 0)
+      return `${head}${chips}<p class="empty">Nothing to do right now.</p>`;
+    const byTier = TIERS.map((label, i) => ({
+      label,
+      items: items
+        .filter((q) => tierOf(q) === i)
+        .sort(
+          (a, b) => ORDERS[a.run.order].placed - ORDERS[b.run.order].placed,
+        ),
+    })).filter((t) => t.items.length > 0);
+    return `${head}${chips}${byTier
+      .map(
+        (t, i) =>
+          `<section class="tier"><div class="tier-head">${esc(t.label)}<span class="n">${t.items.length}</span></div>${t.items
+            .map((q) => card(q, TIERS.indexOf(t.label)))
+            .join("")}</section>`,
+      )
+      .join("")}${doneTier()}`;
+  };
+
+  const renderWork = () => {
+    const run = RUNS.find((r) => r.id === state.runId);
+    const o = ORDERS[run.order];
+    const ready = readySteps(run);
+    const stateOf = (s) => {
+      if (!isOpen(s))
+        return {
+          cls: "done",
+          text: `Done by ${esc(s.completedBy)} · ${rel(s.completedAt)}`,
+        };
+      if (s.startedAt)
+        return {
+          cls: "active",
+          text: `In progress since ${clock(s.startedAt)} by ${esc(s.startedBy)}`,
+        };
+      if (ready.includes(s))
+        return {
+          cls: "ready",
+          text:
+            run.item === null && !orderRunReady(run)
+              ? "Waiting for items"
+              : "Ready",
+        };
+      if (run.item === null && !orderRunReady(run))
+        return { cls: "", text: "Waiting for every item to be made" };
+      return { cls: "", text: `Waiting on step ${s.stage - 1}` };
+    };
+    const others = run.item ? o.items.filter((id) => id !== run.item) : [];
+    return `${bar()}<a class="back" href="#" data-back>‹ Your work</a>
+      <div class="page-head"><div class="row"><h1 style="font-family:var(--mono);font-weight:500">#${run.order}</h1><span class="badge">${esc(run.wf)}</span></div><div class="sub" style="font-family:var(--sans)">ordered ${rel(o.placed)}</div></div>
+      ${flagBanner(run)}
+      <section class="section"><h2>${run.item ? "This item" : "Items on this order"}</h2>${run.item ? itemBlock(run.item) : orderItemsBlock(run.order)}</section>
+      <section class="section"><h2>Steps</h2><div class="hist">${run.steps
+        .map((s) => {
+          const st = stateOf(s);
+          const mine = myTeams().includes(s.team) && ready.includes(s);
+          const undoable = myTeams().includes(s.team) && !isOpen(s);
+          const blocked = undoable ? undoBlockedBy(run, s) : null;
+          return `<div class="s"><div class="dot ${st.cls}"></div><div class="body">
+            <div class="l1"><strong>${esc(s.name)}</strong><span class="team">${esc(s.team)} · stage ${s.stage}</span></div>
+            <div class="muted">${st.text}</div>
+            ${s.instructions ? `<div class="muted" style="color:var(--ink)">${esc(s.instructions)}</div>` : ""}
+            ${s.note ? `<div class="muted">Note: ${esc(s.note)}</div>` : ""}
+            ${
+              mine
+                ? `<div class="actions">${s.startedAt ? "" : `<button class="btn" data-act="start" data-run="${run.id}" data-step="${esc(s.name)}">Start</button>`}<button class="btn primary" data-act="done" data-run="${run.id}" data-step="${esc(s.name)}">Done</button><button class="btn tertiary" data-act="note" data-run="${run.id}" data-step="${esc(s.name)}">${s.note ? "Edit note" : "Note"}</button></div>`
+                : undoable
+                  ? `<div class="actions">${
+                      blocked
+                        ? `<span class="muted">${esc(blocked.team)} started ${esc(blocked.name)} · ask them</span>`
+                        : `<button class="btn" data-act="undo" data-run="${run.id}" data-step="${esc(s.name)}">Undo</button>`
+                    }<button class="btn tertiary" data-act="note-done" data-run="${run.id}" data-step="${esc(s.name)}">${s.note ? "Edit note" : "Note"}</button></div>`
+                  : ""
+            }
+          </div></div>`;
+        })
+        .join("")}</div></section>
+      ${others.length ? `<section class="section"><h2>Also on this order</h2>${orderItemsBlock(run.order)}</section>` : ""}
+      ${o.note ? `<section class="section"><h2>Order note</h2><div class="order-note">${esc(o.note)}</div></section>` : ""}
+      ${
+        runOpen(run)
+          ? `<section class="section"><h2>${run.flag ? "Blocked" : "Block this work"}</h2>${
+              run.flag
+                ? `<p class="muted">Dismiss once the reason is resolved; the card goes back to its place in the queue.</p><div class="actions"><button class="btn" data-act="dismiss" data-run="${run.id}">Dismiss</button></div>`
+                : `<div class="field"><label for="reason-${run.id}">Reason (optional)</label><input id="reason-${run.id}" placeholder="What is stopping this?" /></div><div class="actions"><button class="btn critical" data-act="block" data-run="${run.id}">Mark blocked</button></div>`
+            }</section>`
+          : ""
+      }`;
+  };
+
+  const renderSignin = () => `<div class="signin">
+      <div class="page-head"><h1>Log in</h1></div>
+      <section class="section"><h2>Sign in</h2>
+        <p class="muted">Demo mode: no emails are sent — the magic link appears here after you submit.</p>
+        <div class="field"><label for="email">Email</label><input id="email" value="${esc(state.persona.email)}" /></div>
+        <div class="actions"><button class="btn primary" data-act="magic">Send magic link</button></div>
+      </section>
+      <p class="muted" style="padding:0 6px">After the link: a one-shop member lands on the queue. Only a member of two shops sees a shop picker.</p>
+    </div>`;
+
+  const screen = document.getElementById("screen");
+  const render = () => {
+    screen.innerHTML =
+      state.view === "signin"
+        ? renderSignin()
+        : state.view === "work"
+          ? renderWork()
+          : renderQueue();
+    if (state.toast) {
+      const t = document.createElement("div");
+      t.className = "toast";
+      t.textContent = state.toast;
+      screen.appendChild(t);
+      state.toast = null;
+      setTimeout(() => t.remove(), 2200);
+    }
+    document.querySelectorAll(".persona").forEach((b) => {
+      b.setAttribute(
+        "aria-pressed",
+        String(b.dataset.email === state.persona.email),
+      );
+    });
+  };
+
+  /* ---------- actions ---------- */
+  const findStep = (runId, name) => {
+    const run = RUNS.find((r) => r.id === runId);
+    return { run, s: run.steps.find((x) => x.name === name && isOpen(x)) };
+  };
+  screen.addEventListener("click", (e) => {
+    const t = e.target.closest(
+      "[data-act],[data-open],[data-back],[data-chip]",
+    );
+    if (!t) return;
+    e.preventDefault();
+    if (t.dataset.open) {
+      state.view = "work";
+      state.runId = t.dataset.open;
+      screen.scrollTop = 0;
+    } else if (t.hasAttribute("data-back")) {
+      state.view = "queue";
+    } else if (t.dataset.chip) {
+      state.chip = t.dataset.chip;
+    } else {
+      const { act, run: runId, step: name } = t.dataset;
+      const me = state.persona.email;
+      if (act === "start") {
+        const { s } = findStep(runId, name);
+        s.startedAt = NOW;
+        s.startedBy = me;
+        state.toast = `Started ${name}`;
+      } else if (act === "done") {
+        const { run, s } = findStep(runId, name);
+        s.startedAt ??= NOW;
+        s.startedBy ??= me;
+        s.completedAt = NOW;
+        s.completedBy = me;
+        state.toast = runOpen(run)
+          ? `${name} done · next: ${
+              readySteps(run)
+                .map((x) => x.team)
+                .join(", ") || "waiting"
+            }`
+          : `#${run.order} finished`;
+        if (
+          state.view === "work" &&
+          !readySteps(run).some((x) => myTeams().includes(x.team))
+        )
+          state.view = "queue";
+      } else if (act === "toggle-done") {
+        doneOpen = !doneOpen;
+      } else if (act === "undo") {
+        const run = RUNS.find((r) => r.id === runId);
+        const s = run.steps.find((x) => x.name === name && !isOpen(x));
+        if (undoBlockedBy(run, s)) {
+          state.toast = "Someone downstream has started; ask them";
+        } else {
+          s.completedAt = null;
+          s.completedBy = null;
+          state.toast = `${name} is back in progress`;
+        }
+      } else if (act === "note-done") {
+        const run = RUNS.find((r) => r.id === runId);
+        const s = run.steps.find((x) => x.name === name && !isOpen(x));
+        const v = prompt("Note about this item", s.note ?? "");
+        if (v !== null) s.note = v.trim() || null;
+      } else if (act === "note") {
+        const { s } = findStep(runId, name);
+        const v = prompt("Note about this item", s.note ?? "");
+        if (v !== null) s.note = v.trim() || null;
+      } else if (act === "block") {
+        const run = RUNS.find((r) => r.id === runId);
+        const input = document.getElementById(`reason-${runId}`);
+        run.flag = {
+          kind: "blocked",
+          reason: input.value.trim() || "No reason given",
+          by: me,
+          at: NOW,
+        };
+        state.toast = "Marked blocked";
+      } else if (act === "dismiss") {
+        RUNS.find((r) => r.id === runId).flag = null;
+        state.toast = "Flag dismissed";
+      } else if (act === "signout") {
+        state.view = "signin";
+      } else if (act === "magic") {
+        state.view = "queue";
+      }
+    }
+    render();
+  });
+
+  const personas = document.getElementById("personas");
+  PERSONAS.forEach((p) => {
+    const b = document.createElement("button");
+    b.className = "persona";
+    b.dataset.email = p.email;
+    b.innerHTML = `<span class="email">${esc(p.email)}</span><span class="who">${esc(p.who)}</span>`;
+    b.addEventListener("click", () => {
+      state.persona = p;
+      state.view = "queue";
+      state.chip = "All";
+      render();
+    });
+    personas.appendChild(b);
+  });
+  render();
+</script>

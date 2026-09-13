@@ -17,25 +17,37 @@ import type {
  * those to this shared fixture would make one edit here silently retune
  * unrelated assertions. `pnpm seed` and manual exploration are its consumers.
  *
- * Naming is the point: every row reads back to its entry by eye.
+ * The shop is a fictional made-to-order gift maker — engraved boards, leather
+ * journals, signet rings, embroidered blankets — so every screen reads the way
+ * a merchant's would: a worker at Engraving sees "Engrave · Signet ring ·
+ * #1002", not "Step 2a · Workflow 03". Realism is what makes UX judgments
+ * about the member area honest; the abstract names it replaced only proved
+ * the plumbing.
  *
- * - Ordinal `NN` (zero-padded so ten sorts after nine) is the join key across
- *   kinds: `member-NN@shop.com` is the member of `Team NN`, which owns the
- *   first step of `Workflow NN`, which is selected by product tag
- *   `workflow-NN`.
- * - `admin@shop.com` is on every active team: one login that sees every queue.
- *   It is fixture data, not `ADMIN_EMAILS` — that env var grants the
- *   better-auth admin role and is deliberately not coupled to a reseed.
- * - Linear steps are `Step N` (N = position). Steps that share a stage are
- *   `Step Na`, `Step Nb` (N = stage): the queue card shows the step name but
- *   not the stage, so the letter is the only thing telling a worker two cards
- *   are siblings.
- * - The order workflow is the shop's singleton, `Order workflow`: the fixture's
- *   `type: "order"` entry describes its steps and switch, never creates it.
- * - The two derived attention states are seeded so both warnings are visible
- *   after `pnpm seed`: `Team 07 Empty` has nobody on it, and `Workflow 07
- *   Unassigned` has a step with no team (what a team delete leaves behind).
- *   Their name suffixes are what make those readings unambiguous.
+ * Logins, by role, so one browser profile per persona covers the product:
+ *
+ * - `lead@m.com` is on every team: one login that sees every queue, maker
+ *   and packer alike. It is fixture data, not `ADMIN_EMAILS` — that env var
+ *   grants the better-auth admin role and is deliberately not coupled to a
+ *   reseed.
+ * - `m1@m.com` … `m6@m.com` are makers, one per item-workflow team in the
+ *   order the teams are listed. `m7@m.com` is on two maker teams, the one
+ *   login whose queue is grouped by team. `m8@m.com` is on no team ("no
+ *   teams" on the members page and "not on a team yet" after sign-in).
+ * - `p1@m.com` … `p3@m.com` are the packing side, one per team that owns an
+ *   order-workflow step; `p4@m.com` is on two of them. Keeping them a
+ *   separate series means "sign in as a packer" needs no lookup.
+ *
+ * Every maker team owns steps in at least two workflows so no queue is
+ * single-workflow, and every hand-off crosses a team boundary. Tags are the
+ * workflow names in tag form, which is what the create dialog prefills.
+ *
+ * The derived attention states are all seeded so every warning is visible
+ * after one `pnpm seed`, and each carries its reading in its name so the row
+ * cannot be mistaken for a mistake: `Retired team (empty)` has nobody on it,
+ * `Pet tag (unassigned step)` has a step with no team (what a team delete
+ * leaves behind) and one on the empty team, `Wholesale sample (no steps)`
+ * has none, and `Photo frame` is seeded off.
  *
  * Invariants the ordinary write path enforces and the seed only checks in
  * part, so the fixture must honour them by construction:
@@ -45,196 +57,313 @@ import type {
  * - A workflow with an unassigned step cannot be on; the seed defaults it
  *   off.
  *
- * Definitions only. Runs come from synced orders whose line items carry a
- * matching tag, so a populated queue also needs the sandbox products tagged
- * `workflow-01` … `workflow-06` by hand in the admin.
+ * Orders are written straight into the shop's object, bypassing Shopify, so
+ * every lifecycle state a queue or order page can show exists without tagging
+ * sandbox products. A populated queue from *real* orders additionally needs
+ * the sandbox products tagged with the item-workflow tags by hand.
  */
 
-const ordinal = (i: number) => String(i).padStart(2, "0");
-const member = (i: number) => `member-${ordinal(i)}@shop.com`;
-const team = (i: number) => `Team ${ordinal(i)}`;
+export const LEAD = "lead@m.com";
+const maker = (i: number) => `m${String(i)}@m.com`;
+const packer = (i: number) => `p${String(i)}@m.com`;
 
-export const ADMIN = "admin@shop.com";
-export const TEAM_07_EMPTY = `${team(7)} Empty`;
-
-/** Members of `Team 01` … `Team 06`; each is the sole ordinary member of theirs. */
-const ACTIVE_ORDINALS = [1, 2, 3, 4, 5, 6] as const;
+// Maker teams, in `m1` … `m6` order.
+const WOODSHOP = "Woodshop";
+const ENGRAVING = "Engraving";
+const LEATHER = "Leather";
+const JEWELRY = "Jewelry";
+const TEXTILES = "Textiles";
+const FINISHING = "Finishing";
+// Packing side, in `p1` … `p3` order.
+const QC = "Quality check";
+const PACKING = "Packing";
+const SHIPPING = "Shipping";
+export const RETIRED_TEAM_EMPTY = "Retired team (empty)";
 
 export const members: readonly SeedMember[] = [
-  ADMIN,
-  ...ACTIVE_ORDINALS.map(member),
-  member(8), // never added to a team → "no teams"
+  LEAD,
+  ...[1, 2, 3, 4, 5, 6, 7, 8].map(maker),
+  ...[1, 2, 3, 4].map(packer),
 ];
 
 export const teams: readonly SeedTeam[] = [
-  ...ACTIVE_ORDINALS.map((i) => ({
-    name: team(i),
-    members: [ADMIN, member(i)],
-  })),
-  {
-    // nobody on it: "No members" on the team page and on the steps it owns
-    name: TEAM_07_EMPTY,
-    members: [],
-  },
+  { name: WOODSHOP, members: [LEAD, maker(1)] },
+  { name: ENGRAVING, members: [LEAD, maker(2), maker(7)] },
+  { name: LEATHER, members: [LEAD, maker(3)] },
+  { name: JEWELRY, members: [LEAD, maker(4)] },
+  { name: TEXTILES, members: [LEAD, maker(5)] },
+  { name: FINISHING, members: [LEAD, maker(6), maker(7)] },
+  { name: QC, members: [LEAD, packer(1)] },
+  { name: PACKING, members: [LEAD, packer(2), packer(4)] },
+  { name: SHIPPING, members: [LEAD, packer(3), packer(4)] },
+  // nobody on it: "No members" on the team page and on the steps it owns
+  { name: RETIRED_TEAM_EMPTY, members: [] },
 ];
-
-/** Step owner by ordinal; 7 is the empty team, whose name carries the suffix; 0 is unassigned. */
-const owner = (i: number) => {
-  if (i === 0) return null;
-  if (i === 7) return TEAM_07_EMPTY;
-  return team(i);
-};
 
 const step = (
   name: string,
-  teamOrdinal: number,
+  team: string | null,
   extra: Partial<Pick<SeedWorkflowStep, "stage" | "instructions">> = {},
-): SeedWorkflowStep => ({ name, team: owner(teamOrdinal), ...extra });
+): SeedWorkflowStep => ({ name, team, ...extra });
 
-const instructions = (name: string) => `Instructions for ${name}`;
+// Product tags the item workflows match on; `orders` below carry the same.
+const TAG = {
+  board: "engraved-cutting-board",
+  journal: "leather-journal",
+  ring: "signet-ring",
+  blanket: "embroidered-blanket",
+  frame: "photo-frame",
+  petTag: "pet-tag",
+  sample: "wholesale-sample",
+} as const;
 
 /**
- * Every active team owns steps in at least two workflows so no queue is
- * single-workflow, and every hand-off crosses a team boundary. Each workflow
- * is a distinct shape so the editor, queue, and order page each have one row
- * per case to look at.
+ * Each workflow is a distinct shape so the editor, queue, and order page each
+ * have one row per case to look at: linear, a parallel stage in the middle
+ * with the first team returning, a parallel first stage, instructions with a
+ * pending draft, and the off / unassigned / no-steps rows.
  */
 export const workflows: readonly SeedWorkflow[] = [
   {
-    // minimal linear
-    name: "Workflow 01",
-    tags: ["workflow-01"],
-    steps: [step("Step 1", 1), step("Step 2", 2)],
-  },
-  {
-    // three-step linear
-    name: "Workflow 02",
-    tags: ["workflow-02"],
-    steps: [step("Step 1", 2), step("Step 2", 3), step("Step 3", 4)],
-  },
-  {
-    // one parallel stage in the middle; the first team returns at the end
-    name: "Workflow 03",
-    tags: ["workflow-03"],
+    // three-step linear, the bread-and-butter product
+    name: "Engraved cutting board",
+    tags: [TAG.board],
     steps: [
-      step("Step 1", 3, { stage: 1 }),
-      step("Step 2a", 4, { stage: 2 }),
-      step("Step 2b", 5, { stage: 2 }),
-      step("Step 3", 3, { stage: 3 }),
+      step("Cut and sand", WOODSHOP, {
+        instructions:
+          "Cut to the size on the order. Sand to 220 grit; check for tear-out on the end grain.",
+      }),
+      step("Engrave", ENGRAVING, {
+        instructions:
+          "Engraving text is in the personalization. Confirm spelling against the order before running the laser.",
+      }),
+      step("Oil and finish", FINISHING),
     ],
   },
   {
-    // parallel first stage, three wide
-    name: "Workflow 04",
-    tags: ["workflow-04"],
+    // parallel middle stage; Leather starts and returns at the end
+    name: "Leather journal",
+    tags: [TAG.journal],
     steps: [
-      step("Step 1a", 4, { stage: 1 }),
-      step("Step 1b", 5, { stage: 1 }),
-      step("Step 1c", 6, { stage: 1 }),
-      step("Step 2", 1, { stage: 2 }),
+      step("Cut leather", LEATHER, { stage: 1 }),
+      step("Stamp monogram", ENGRAVING, {
+        stage: 2,
+        instructions: "Initials in the personalization; centre on the cover.",
+      }),
+      step("Stitch spine", LEATHER, { stage: 2 }),
+      step("Condition and inspect", LEATHER, { stage: 3 }),
     ],
   },
   {
-    // instructions on every step; a pending draft adds a third step so the
-    // list shows "Draft pending" and the detail page shows both sides
-    name: "Workflow 05",
-    tags: ["workflow-05"],
+    // linear; instructions on every step; Jewelry starts and returns
+    name: "Signet ring",
+    tags: [TAG.ring],
     steps: [
-      step("Step 1", 5, { instructions: instructions("Step 1") }),
-      step("Step 2", 6, { instructions: instructions("Step 2") }),
+      step("Cast", JEWELRY, {
+        instructions: "Ring size and metal are in the personalization.",
+      }),
+      step("Engrave crest", ENGRAVING, {
+        instructions: "Crest file is named after the order number.",
+      }),
+      step("Polish", JEWELRY, {
+        instructions: "High polish unless the order says brushed.",
+      }),
+    ],
+  },
+  {
+    // two-step; a pending draft adds a third step so the list shows "Draft
+    // pending" and the detail page shows both sides
+    name: "Embroidered blanket",
+    tags: [TAG.blanket],
+    steps: [
+      step("Embroider", TEXTILES, {
+        instructions: "Name and thread colour are in the personalization.",
+      }),
+      step("Steam and fold", FINISHING),
     ],
     draft: {
       steps: [
-        step("Step 1", 5, { instructions: instructions("Step 1") }),
-        step("Step 2", 6, { instructions: instructions("Step 2") }),
-        step("Step 3", 1),
+        step("Embroider", TEXTILES, {
+          instructions: "Name and thread colour are in the personalization.",
+        }),
+        step("Attach care label", TEXTILES),
+        step("Steam and fold", FINISHING),
       ],
     },
   },
   {
-    // two parallel stages, mixed instructions; seeded off so the list has an
-    // "Off" row and it starts nothing until it is turned on
-    name: "Workflow 06",
+    // parallel first stage, three wide; seeded off so the list has an "Off"
+    // row and it starts nothing until it is turned on
+    name: "Photo frame",
     active: false,
-    tags: ["workflow-06"],
+    tags: [TAG.frame],
     steps: [
-      step("Step 1", 6, { stage: 1 }),
-      step("Step 2a", 1, { stage: 2, instructions: instructions("Step 2a") }),
-      step("Step 2b", 2, { stage: 2 }),
-      step("Step 3a", 3, { stage: 3 }),
-      step("Step 3b", 4, { stage: 3 }),
+      step("Cut frame", WOODSHOP, { stage: 1 }),
+      step("Engrave caption", ENGRAVING, { stage: 1 }),
+      step("Cut glass", FINISHING, { stage: 1 }),
+      step("Assemble", WOODSHOP, { stage: 2 }),
     ],
   },
   {
     // one unassigned step (what a team delete leaves) and one on the empty
     // team: "Needs attention" in the list, both banners on the detail page,
     // Turn on refused until the step is assigned
-    name: "Workflow 07 Unassigned",
-    tags: ["workflow-07"],
-    steps: [step("Step 1", 0), step("Step 2", 7)],
+    name: "Pet tag (unassigned step)",
+    tags: [TAG.petTag],
+    steps: [step("Stamp", null), step("Attach ring", RETIRED_TEAM_EMPTY)],
   },
   {
     // zero steps: "No steps"
-    name: "Workflow 08",
-    tags: ["workflow-08"],
+    name: "Wholesale sample (no steps)",
+    tags: [TAG.sample],
     steps: [],
   },
   {
-    // the order workflow singleton, on, with a stage inside an order run
+    // the order workflow singleton, on: an inspection, then packing and the
+    // label in parallel, then the hand-off
     name: "Order workflow",
     type: "order",
     tags: [],
     steps: [
-      step("Step 1", 1, { stage: 1 }),
-      step("Step 2a", 2, { stage: 2 }),
-      step("Step 2b", 3, { stage: 2 }),
+      step("Inspect", QC, {
+        stage: 1,
+        instructions:
+          "Every item against the order. Personalization spelled right, no finish defects.",
+      }),
+      step("Pack", PACKING, { stage: 2 }),
+      step("Print label", SHIPPING, { stage: 2 }),
+      step("Hand to carrier", SHIPPING, { stage: 3 }),
     ],
   },
 ];
 
+const item = (
+  title: string,
+  tag: string | null,
+  quantity: number,
+  personalization: Record<string, string> = {},
+  extra: Partial<
+    Pick<SeedOrder["lineItems"][number], "unfulfilledQuantity">
+  > = {},
+): SeedOrder["lineItems"][number] => ({
+  title,
+  quantity,
+  tags: tag === null ? [] : [tag],
+  customAttributes: Object.entries(personalization).map(([key, value]) => ({
+    key,
+    value,
+  })),
+  ...extra,
+});
+
 /**
- * Orders written straight into the shop's object, bypassing Shopify, so the
- * lifecycle states show without tagging sandbox products. `#9001` has one of
- * two units refunded (`unfulfilledQuantity` below `currentQuantity`), so its
- * run and the order page read "×1 to make". `#9002` is fully made and still
- * unfulfilled, so the Ready-to-ship filter has a row. `#9003` is in
- * production with nothing special. `#9004` is unpaid, so nothing routes and
- * the Not-paid filter has a row.
+ * One order per state a worker or the orders index can meet, oldest first
+ * (the seed spaces them a second apart). Read down the list as a day on the
+ * floor: new work, work under way, work waiting on packing, and the two
+ * rows that need a person's attention.
  */
 export const orders: readonly SeedOrder[] = [
   {
-    n: 9001,
-    note: "One unit refunded after ordering",
+    // fresh: nothing started; Woodshop's queue has its first card
+    n: 1001,
     lineItems: [
-      {
-        title: "Product 01",
-        quantity: 2,
-        currentQuantity: 2,
-        unfulfilledQuantity: 1,
-        tags: ["workflow-01"],
-        customAttributes: [{ key: "Engraving", value: "Seed 9001" }],
-      },
+      item("Engraved cutting board", TAG.board, 1, {
+        Engraving: "The Millers · est. 2019",
+      }),
     ],
   },
   {
-    n: 9002,
+    // two items, each one step in, and both next steps in progress at
+    // Engraving: "In progress since … by lead@m.com" on two cards
+    n: 1002,
+    advance: 1,
+    started: true,
+    lineItems: [
+      item("Signet ring", TAG.ring, 1, { Size: "9", Metal: "Sterling silver" }),
+      item("Leather journal", TAG.journal, 1, { Initials: "J.R.M." }),
+    ],
+  },
+  {
+    // parallel stage ready: Engraving and Leather each hold a card for the
+    // same journal and see each other as "together with"
+    n: 1003,
+    advance: 1,
+    lineItems: [
+      item("Leather journal", TAG.journal, 2, { Initials: "A.K." }),
+      item("Ceramic mug", null, 1),
+    ],
+  },
+  {
+    // every item made: the order run is ready, so Quality check has a card
+    // listing both items as Done
+    n: 1004,
+    advance: 2,
+    note: "Gift — please leave the price off the slip.",
+    lineItems: [
+      item("Embroidered blanket", TAG.blanket, 1, {
+        Name: "Theodore",
+        Thread: "Navy",
+      }),
+      item("Embroidered blanket", TAG.blanket, 1, {
+        Name: "Eloise",
+        Thread: "Rose",
+      }),
+    ],
+  },
+  {
+    // inspected (three rounds make the board, a fourth passes Inspect):
+    // Pack and Print label ready together, Packing and Shipping each see
+    // the other
+    n: 1005,
+    advance: 4,
+    lineItems: [
+      item("Engraved cutting board", TAG.board, 1, {
+        Engraving: "Nonna's Kitchen",
+      }),
+    ],
+  },
+  {
+    // fully made, packed, and still unfulfilled in Shopify: the Ready-to-ship
+    // filter has a row
+    n: 1006,
     done: true,
+    lineItems: [item("Signet ring", TAG.ring, 1, { Size: "7", Metal: "Gold" })],
+  },
+  {
+    // one of two units refunded after ordering (`unfulfilledQuantity` below
+    // `quantity`), so the run and the order page read "×1 to make"
+    n: 1007,
+    note: "Customer cancelled one board after ordering.",
     lineItems: [
-      { title: "Product 01", quantity: 1, tags: ["workflow-01"] },
-      { title: "Product 02", quantity: 1, tags: ["workflow-02"] },
+      item(
+        "Engraved cutting board",
+        TAG.board,
+        2,
+        { Engraving: "Home Sweet Home" },
+        { unfulfilledQuantity: 1 },
+      ),
     ],
   },
   {
-    n: 9003,
+    // blocked by a worker with a reason: the "Needs attention" banner and
+    // Dismiss on the card
+    n: 1008,
+    advance: 1,
+    blocked: "Crest file missing from the order — asked the customer.",
     lineItems: [
-      { title: "Product 03", quantity: 3, tags: ["workflow-03"] },
-      { title: "Untagged", quantity: 1, tags: [] },
+      item("Signet ring", TAG.ring, 1, { Size: "10", Metal: "Gold" }),
     ],
   },
   {
-    n: 9004,
+    // unpaid: nothing routes and the Not-paid filter has a row
+    n: 1009,
     unpaid: true,
-    lineItems: [{ title: "Product 01", quantity: 1, tags: ["workflow-01"] }],
+    lineItems: [item("Leather journal", TAG.journal, 1, { Initials: "S.P." })],
+  },
+  {
+    // no workflow matches: "No workflow" on the orders index
+    n: 1010,
+    lineItems: [item("Gift card", null, 1)],
   },
 ];
 

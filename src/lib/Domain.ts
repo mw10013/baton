@@ -1308,6 +1308,18 @@ export const SeedOrdersInput = Schema.Struct({
       /** `PENDING`, `fullyPaid: false`: no runs are created, and the row reads as unpaid rather than "No workflow". */
       unpaid: Schema.optionalKey(Schema.Boolean),
       done: Schema.optionalKey(Schema.Boolean),
+      /**
+       * Rounds of progress before the order is left alone: each round
+       * completes every *ready* step of every open run on the order (item
+       * runs first, so a later round reaches the order run once the items
+       * are made). `advance: 1` on a three-step item is "step 1 done, step 2
+       * up next". `done` is the limit of this; the two are not combined.
+       */
+      advance: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
+      /** After `advance`, Start every ready step so the queue shows "In progress since … by <seed member>". */
+      started: Schema.optionalKey(Schema.Boolean),
+      /** After `advance`, flag every open run `blocked` with this reason, the state a worker's Block leaves. */
+      blocked: Schema.optionalKey(StepNote),
       note: Schema.optionalKey(Schema.String),
       lineItems: Schema.Array(
         Schema.Struct({

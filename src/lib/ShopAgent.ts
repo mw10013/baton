@@ -844,6 +844,39 @@ const OrdersStreamInput = Schema.Struct({ url: Schema.String });
 /** See `publish`. */
 type PublishScope = "all" | readonly string[];
 
+const isOpen = (run: Domain.WorkflowRun) =>
+  run.status === "pending" || run.status === "active";
+
+/**
+ * Readiness decided on a snapshot taken before any step of the
+ * round is completed: completing stage 1 makes stage 2 ready at
+ * once, and finishing the last item makes the order run ready, so
+ * asking `completeStep` as the loop goes would run the whole order
+ * to done in one round. Same rule as the repository's ready query:
+ * open, nothing open in an earlier stage of the run, and for an
+ * order run no open item run and at least one done.
+ */
+const seedReadySteps = (
+  details: readonly Domain.WorkflowRunDetail[],
+): Domain.WorkflowRunStep[] => {
+  const itemRuns = details.filter(({ run }) => !Domain.isOrderRun(run));
+  const orderRunReady =
+    !itemRuns.some(({ run }) => isOpen(run)) &&
+    itemRuns.some(({ run }) => run.status === "done");
+  return details.flatMap(({ run, steps }) => {
+    if (!isOpen(run)) return [];
+    if (Domain.isOrderRun(run) && !orderRunReady) return [];
+    return steps.filter(
+      (step) =>
+        step.completedAt === null &&
+        !steps.some(
+          (earlier) =>
+            earlier.completedAt === null && earlier.stage < step.stage,
+        ),
+    );
+  });
+};
+
 export class ShopAgent extends Agent {
   declare private readonly runEffect: ReturnType<typeof makeRunEffect>;
 
@@ -2713,8 +2746,11 @@ export class ShopAgent extends Agent {
    * Goes through `upsertOrder` + `reconcileOrder` rather than raw inserts so
    * the fixture exercises run creation, and `done` finishes steps through
    * `completeStep` with the step's own team so the order run's readiness
-   * gate is exercised the way it is on the floor. Only rows under
-   * `SEED_ORDER_ID_PREFIX` are replaced; synced orders are left alone.
+   * gate is exercised the way it is on the floor. `advance`, `started`, and
+   * `blocked` go through the same actions for the same reason: a seeded
+   * "step 2 of 3, in progress, blocked" card is indistinguishable from one a
+   * worker produced. Only rows under `SEED_ORDER_ID_PREFIX` are replaced;
+   * synced orders are left alone.
    */
   @callable()
   seedOrders(input: typeof Domain.SeedOrdersInput.Encoded): Promise<void> {
@@ -2738,28 +2774,79 @@ export class ShopAgent extends Agent {
           const runs = yield* WorkflowRunRepository;
           const reconcile = yield* reconciler();
           const now = yield* Clock.currentTimeMillis;
+          const listOpenRuns = (orderId: string) =>
+            runs
+              .listRunsForOrder({ orderId })
+              .pipe(
+                Effect.map((details) =>
+                  details.filter(
+                    ({ run }) =>
+                      run.status === "pending" || run.status === "active",
+                  ),
+                ),
+              );
+          const actor = (step: Domain.WorkflowRunStep) => ({
+            runStepId: step.id,
+            memberId,
+            memberEmail,
+            teamIds: step.teamId === null ? [] : [step.teamId],
+          });
           const completeOpenRuns = (orderId: string) =>
             Effect.gen(function* () {
-              const open = (yield* runs.listRunsForOrder({ orderId })).filter(
-                ({ run }) =>
-                  run.status === "pending" || run.status === "active",
-              );
-              for (const { run, steps } of open) {
+              for (const { run, steps } of yield* listOpenRuns(orderId)) {
                 yield* Effect.forEach(
                   steps,
-                  (step) =>
-                    runs.completeStep({
-                      runStepId: step.id,
-                      memberId,
-                      memberEmail,
-                      teamIds: step.teamId === null ? [] : [step.teamId],
-                    }),
+                  (step) => runs.completeStep(actor(step)),
                   { discard: true },
                 );
                 yield* Effect.logInfo(
                   `ShopAgent.seedOrders: orderId=${orderId} runId=${run.id}: completed`,
                 ).pipe(Effect.annotateLogs({ orderId, runId: run.id }));
               }
+            });
+          /** One round: every step ready at the start of the round gets completed; what that makes ready waits for the next. */
+          const advanceRound = (orderId: string) =>
+            runs
+              .listRunsForOrder({ orderId })
+              .pipe(
+                Effect.flatMap((details) =>
+                  Effect.forEach(
+                    seedReadySteps(details),
+                    (step) => runs.completeStep(actor(step)),
+                    { discard: true },
+                  ),
+                ),
+              );
+          const startReadySteps = (orderId: string) =>
+            Effect.gen(function* () {
+              for (const { steps } of yield* listOpenRuns(orderId))
+                yield* Effect.forEach(
+                  steps.filter((step) => step.completedAt === null),
+                  (step) =>
+                    runs
+                      .startStep(actor(step))
+                      .pipe(
+                        Effect.catchTag("StepNotReadyError", () => Effect.void),
+                      ),
+                  { discard: true },
+                );
+            });
+          const blockOpenRuns = (orderId: string, reason: Domain.StepNote) =>
+            Effect.gen(function* () {
+              for (const { run, steps } of yield* listOpenRuns(orderId))
+                yield* runs
+                  .blockRun({
+                    runId: run.id,
+                    memberId,
+                    memberEmail,
+                    teamIds: steps.flatMap((step) =>
+                      step.teamId === null ? [] : [step.teamId],
+                    ),
+                    reason,
+                  })
+                  .pipe(
+                    Effect.catchTag("RunNotAllowedError", () => Effect.void),
+                  );
             });
           const seeded = yield* sql`
             select id from ShopOrder where id like ${`${Domain.SEED_ORDER_ID_PREFIX}%`}
@@ -2819,6 +2906,11 @@ export class ShopAgent extends Agent {
             // Item runs come first in `listRunsForOrder`, so by the time the
             // order run's steps are reached they are ready.
             if (seed.done === true) yield* completeOpenRuns(id);
+            for (let round = 0; round < (seed.advance ?? 0); round += 1)
+              yield* advanceRound(id);
+            if (seed.started === true) yield* startReadySteps(id);
+            if (seed.blocked !== undefined)
+              yield* blockOpenRuns(id, seed.blocked);
           }
           yield* publish();
         }),
