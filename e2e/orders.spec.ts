@@ -28,10 +28,11 @@ import { seedConfig, seedMembers } from "./seed";
  * Both action buttons sit in the page's `primary-action` slot, which App Bridge
  * hoists out of the iframe into the admin title bar, so they are located on
  * `page`, not `frame`, and driven through the hoisted helpers. The orders index
- * renders the slotted button only once orders exist; on a fresh database the
- * only sync button is the in-frame one inside the empty state. The test
- * starts from whichever is present, so it passes on both an empty shop (a
- * wiped local Durable Object) and one that has synced before.
+ * always slots the sync button, and on a shop with nothing stored the empty
+ * state carries a second copy inside the frame; the hoisted one is out of the
+ * iframe, so the two locators stay disjoint. The test starts from whichever is
+ * enabled first, so it passes on both an empty shop (a wiped local Durable
+ * Object) and one that has synced before.
  */
 test("orders screen syncs the window and lists orders", async ({ page }) => {
   test.setTimeout(180_000);

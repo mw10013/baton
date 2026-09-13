@@ -44,41 +44,24 @@ const OrdersSearch = Schema.Struct({
 });
 
 /**
- * The stage strip, in lifecycle order. `cancelled` is deliberately absent: it
+ * The stage filters, in lifecycle order. `cancelled` is deliberately absent: it
  * is rare, shows as a badge, and is not a stage an order moves through.
  * Only the open stages carry a count (see `Domain.OpenStageCounts`).
+ *
+ * No per-stage hint here: `stageText` already says what the selected stage
+ * means at sentence length, and carrying both put a four-word gloss on every
+ * button directly above the sentence that repeated it.
  */
 const STAGES: readonly {
   readonly state: Domain.ProductionState | null;
   readonly label: string;
-  readonly hint: string;
   readonly count: keyof Domain.OpenStageCounts | null;
 }[] = [
-  { state: null, label: "All orders", hint: "everything stored", count: null },
-  {
-    state: "no_workflow",
-    label: "No workflow",
-    hint: "paid, nothing matched",
-    count: "no_workflow",
-  },
-  {
-    state: "in_production",
-    label: "In production",
-    hint: "at least one run open",
-    count: "in_production",
-  },
-  {
-    state: "ready_to_ship",
-    label: "Ready to ship",
-    hint: "made, waiting on fulfilment",
-    count: "ready_to_ship",
-  },
-  {
-    state: "shipped",
-    label: "Shipped",
-    hint: "fulfilled in Shopify",
-    count: null,
-  },
+  { state: null, label: "All orders", count: null },
+  { state: "no_workflow", label: "No workflow", count: "no_workflow" },
+  { state: "in_production", label: "In production", count: "in_production" },
+  { state: "ready_to_ship", label: "Ready to ship", count: "ready_to_ship" },
+  { state: "shipped", label: "Shipped", count: null },
 ];
 
 /**
@@ -358,12 +341,23 @@ function RouteComponent() {
 
   const syncInFlight = view !== undefined && view.syncState.workflowId !== null;
   const orders = view?.page.orders ?? [];
+  const filtered = state !== null || paid !== null || attention;
+  /**
+   * Nothing stored and nothing filtered: the shop has never had orders here,
+   * so the card is the empty state alone. Declared beside `orders` rather than
+   * next to its first use because the section body, the filter row and
+   * `renderOrders` all branch on it.
+   */
+  const neverStored = orders.length === 0 && !filtered;
 
   /**
    * Rendered twice: once into the page's `primary-action` slot, and once
    * inside the empty state where it is the only thing to do. The slot has to
    * sit on the button itself — `s-page` hoists the slotted element into the
-   * admin's title bar, and a wrapper element in the slot is dropped.
+   * admin's title bar, and a wrapper element in the slot is dropped. Because
+   * App Bridge hoists the slotted copy out of the iframe, the in-card twin is
+   * not a duplicate in the frame's DOM, so frame- and page-scoped e2e locators
+   * stay disjoint.
    */
   const syncButton = (slotted: boolean) => (
     <s-button
@@ -377,6 +371,42 @@ function RouteComponent() {
     </s-button>
   );
 
+  /**
+   * The never-stored state: the card is this block alone, with the stage strip
+   * and the payment filters gone — filtering nothing by payment status is
+   * noise, and the strip of zeroes is what used to squeeze this copy into the
+   * bottom corner of the card. Same centred shape as the other index pages'
+   * empty states.
+   *
+   * A shop that has synced and still has nothing gets different copy: "pull
+   * the window" is the wrong instruction once the pull has happened and come
+   * back empty.
+   */
+  const emptyState = () => {
+    const synced = view !== undefined && view.syncState.lastFullSyncAt !== null;
+    return (
+      <s-box padding="base">
+        <s-grid gap="base" justifyItems="center" paddingBlock="large-400">
+          <s-grid justifyItems="center" maxInlineSize="450px" gap="base">
+            <s-stack alignItems="center" gap="small-300">
+              <s-heading>
+                {synced
+                  ? `No orders in the last ${String(ORDER_SYNC_WINDOW_DAYS)} days`
+                  : "No orders yet"}
+              </s-heading>
+              <s-paragraph color="subdued">
+                {synced
+                  ? "The last sync found nothing to store. Order webhooks add new orders as they come in, or sync again to re-pull the window."
+                  : `Pull the last ${String(ORDER_SYNC_WINDOW_DAYS)} days from Shopify in one bulk operation; after that, order webhooks keep them current.`}
+              </s-paragraph>
+            </s-stack>
+            {syncButton(false)}
+          </s-grid>
+        </s-grid>
+      </s-box>
+    );
+  };
+
   const renderOrders = () => {
     /**
      * A failed read renders as a failure. Without this the page shows
@@ -386,23 +416,21 @@ function RouteComponent() {
      */
     if (ordersQuery.isError)
       return (
-        <s-banner tone="critical">
-          {ordersQuery.error instanceof Error
-            ? ordersQuery.error.message
-            : "Could not load orders."}
-        </s-banner>
+        <s-box padding="base">
+          <s-banner tone="critical">
+            {ordersQuery.error instanceof Error
+              ? ordersQuery.error.message
+              : "Could not load orders."}
+          </s-banner>
+        </s-box>
       );
-    if (orders.length === 0 && (state !== null || paid !== null))
-      return <s-paragraph color="subdued">{emptyText(state)}</s-paragraph>;
-    if (orders.length === 0)
+    if (orders.length === 0 && filtered)
       return (
-        <s-stack gap="base">
-          <s-paragraph color="subdued">
-            {`No orders stored yet. Pull the last ${String(ORDER_SYNC_WINDOW_DAYS)} days from Shopify in one bulk operation; after that, order webhooks keep them current.`}
-          </s-paragraph>
-          <s-stack alignItems="start">{syncButton(false)}</s-stack>
-        </s-stack>
+        <s-box padding="base">
+          <s-paragraph color="subdued">{emptyText(state)}</s-paragraph>
+        </s-box>
       );
+    if (orders.length === 0) return emptyState();
     return (
       <s-table
         paginate
@@ -483,63 +511,70 @@ function RouteComponent() {
   };
 
   /**
-   * The stage strip: the filter *is* the lifecycle, one tile per stage in the
-   * order an order moves through them, so it doubles as a status summary.
-   * `s-clickable` rather than `s-button` because a tile carries three lines
-   * (count, label, hint) and a selected background; the pressed state is on
-   * the element for assistive tech. The count is blank, not zero, for stages
-   * that are not counted (see `STAGES`).
+   * The stage filter: one toggle per stage, in the order an order moves through
+   * them, so the row doubles as a reading of where work sits.
+   *
+   * `s-press-button` rather than the `s-clickable` tiles this used to be. The
+   * pressed, hover and focus states come from Polaris instead of being
+   * approximated with a background colour on a div — the tiles looked like
+   * plain text until one was selected — and it is the same control shape as the
+   * payment and "Needs attention" filters beside it, so the card carries one
+   * filter idiom rather than two stacked either side of a divider.
+   *
+   * The count rides in the label where there is one. An uncounted stage (see
+   * `STAGES`) is just its name: a blank where a number belongs reads as a
+   * number that failed to load.
    */
-  const stageTile = ({
+  const stageButton = ({
     state: value,
     label,
-    hint,
     count,
   }: (typeof STAGES)[number]) => {
-    const selected = state === value;
     const n = count === null ? null : view?.page.openCounts[count];
     return (
-      <s-clickable
+      <s-press-button
         key={value ?? "all"}
-        padding="base"
-        background={selected ? "subdued" : "transparent"}
-        borderRadius="base"
-        accessibilityLabel={`${label}${n === undefined || n === null ? "" : `, ${formatNumber(n)}`}`}
-        aria-pressed={selected}
+        pressed={state === value}
         onClick={() => {
           setFilters({ state: value, paid, attention });
         }}
       >
-        <s-stack gap="small-500">
-          <s-heading>
-            {n === undefined || n === null ? "\u00A0" : formatNumber(n)}
-          </s-heading>
-          <s-text type={selected ? "strong" : "generic"}>{label}</s-text>
-          <s-text color="subdued">{hint}</s-text>
-        </s-stack>
-      </s-clickable>
+        {n === undefined || n === null
+          ? label
+          : `${label} · ${formatNumber(n)}`}
+      </s-press-button>
     );
   };
 
+  /**
+   * Same control as `stageButton`, for the same reason: the selected payment
+   * filter used to be a `disabled` primary button, which reads to a screen
+   * reader as "dimmed" — unavailable — when what it is is the one that is on.
+   * `pressed` says that, and re-pressing it is a no-op rather than a dead
+   * control.
+   */
   const paidButton = (label: string, value: boolean | null) => (
-    <s-button
-      variant={paid === value ? "primary" : "secondary"}
-      disabled={paid === value}
+    <s-press-button
+      pressed={paid === value}
       onClick={() => {
         setFilters({ state, paid: value, attention });
       }}
     >
       {label}
-    </s-button>
+    </s-press-button>
   );
 
-  const filtered = state !== null || paid !== null || attention;
   const attentionCount = view?.page.openCounts.attention ?? 0;
 
   return (
     <s-page heading="Orders" inlineSize="large">
       <SocketBanner />
-      {(orders.length > 0 || filtered) && syncButton(true)}
+      {/* Unconditional, empty list included: the resource-index template keeps
+          the title-bar primary action and lets the empty state carry a second
+          copy, so "sync is top right" holds on the visit where it matters most
+          — a shop that has never synced has nothing else to do here.
+          https://shopify.dev/docs/api/app-home/latest/patterns/templates/resource-index */}
+      {syncButton(true)}
 
       <s-section padding="none" accessibilityLabel="Orders">
         <s-box padding="base" paddingBlockEnd="none">
@@ -553,56 +588,74 @@ function RouteComponent() {
             </s-paragraph>
           </s-stack>
         </s-box>
-        <s-box padding="small">
-          <s-grid
-            gridTemplateColumns="repeat(auto-fit, minmax(9rem, 1fr))"
-            gap="small-300"
-          >
-            {STAGES.map(stageTile)}
-          </s-grid>
-        </s-box>
-        <s-divider />
-        <s-box padding="base">
-          <s-stack gap="small-300">
-            <s-stack direction="inline" gap="base" alignItems="center">
-              <s-text color="subdued">Payment</s-text>
-              <s-stack direction="inline" gap="small-300">
-                {paidButton("All", null)}
-                {paidButton("Paid", true)}
-                {paidButton("Not paid", false)}
-              </s-stack>
-              {/* Cross-cutting like payment, not a stage: the count is the
-                  open orders with an unassigned or unstaffed step, and the
-                  order page's "Assign team" picker is the remedy. */}
-              {(attention || attentionCount > 0) && (
-                <s-button
-                  variant={attention ? "primary" : "secondary"}
-                  tone="critical"
-                  onClick={() => {
-                    setFilters({ state, paid, attention: !attention });
-                  }}
-                >
-                  {`Needs attention · ${formatNumber(attentionCount)}`}
-                </s-button>
-              )}
-              {filtered && (
-                <s-button
-                  variant="tertiary"
-                  onClick={() => {
-                    setFilters({ state: null, paid: null, attention: false });
-                  }}
-                >
-                  Clear filters
-                </s-button>
+        {/* One filter bar, gated on there being something to filter: see
+            `neverStored`. The two rows share a grid so "Stage" and "Payment"
+            line up in a label column and their controls start at the same
+            inline offset. */}
+        {!neverStored && (
+          <s-box padding="base">
+            <s-stack gap="small-300">
+              <s-grid
+                gridTemplateColumns="auto 1fr"
+                gap="base"
+                alignItems="center"
+              >
+                <s-text color="subdued">Stage</s-text>
+                <s-stack direction="inline" gap="small-300">
+                  {STAGES.map(stageButton)}
+                </s-stack>
+                <s-text color="subdued">Payment</s-text>
+                <s-stack direction="inline" gap="small-300">
+                  {paidButton("All", null)}
+                  {paidButton("Paid", true)}
+                  {paidButton("Not paid", false)}
+                  {/* Cross-cutting like payment, not a stage: the count is the
+                      open orders with an unassigned or unstaffed step, and the
+                      order page's "Assign team" picker is the remedy.
+
+                      The one filter that stays an `s-button`: it is an alert,
+                      not a neutral facet, and `s-press-button` only takes
+                      `tone="neutral"`, so a press-button would cost the red
+                      that is the whole point of the control. */}
+                  {(attention || attentionCount > 0) && (
+                    <s-button
+                      variant={attention ? "primary" : "secondary"}
+                      tone="critical"
+                      onClick={() => {
+                        setFilters({ state, paid, attention: !attention });
+                      }}
+                    >
+                      {`Needs attention · ${formatNumber(attentionCount)}`}
+                    </s-button>
+                  )}
+                  {filtered && (
+                    <s-button
+                      variant="tertiary"
+                      onClick={() => {
+                        setFilters({
+                          state: null,
+                          paid: null,
+                          attention: false,
+                        });
+                      }}
+                    >
+                      Clear filters
+                    </s-button>
+                  )}
+                </s-stack>
+              </s-grid>
+              {/* Only alongside rows. With none, `emptyText` says the same
+                  thing in the body ("0 orders with work in progress." over
+                  "Nothing is in production."), and printing both reads as a
+                  stutter. */}
+              {orders.length > 0 && stageText(view, state) !== null && (
+                <s-paragraph color="subdued">
+                  {stageText(view, state)}
+                </s-paragraph>
               )}
             </s-stack>
-            {stageText(view, state) !== null && (
-              <s-paragraph color="subdued">
-                {stageText(view, state)}
-              </s-paragraph>
-            )}
-          </s-stack>
-        </s-box>
+          </s-box>
+        )}
         {renderOrders()}
       </s-section>
     </s-page>
