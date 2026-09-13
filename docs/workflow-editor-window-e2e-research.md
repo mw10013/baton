@@ -63,15 +63,15 @@ action failed somewhere unrelated.
 
 Measured 2026-09-12, tag modal open in the editor window:
 
-| Check | Result |
-| --- | --- |
-| Cancel's rect in the editor frame | `x 756.9, y 419.5` |
-| The editor iframe's box in the admin | `x 8, y 113` |
-| Playwright's page-coordinate box for Cancel | `x 764.9, y 532.5` — translation exact |
-| `document.elementFromPoint` **in the frame** | `s-button` — nothing occluding |
+| Check                                         | Result                                                |
+| --------------------------------------------- | ----------------------------------------------------- |
+| Cancel's rect in the editor frame             | `x 756.9, y 419.5`                                    |
+| The editor iframe's box in the admin          | `x 8, y 113`                                          |
+| Playwright's page-coordinate box for Cancel   | `x 764.9, y 532.5` — translation exact                |
+| `document.elementFromPoint` **in the frame**  | `s-button` — nothing occluding                        |
 | `document.elementsFromPoint` **in the admin** | `table._ExtensionsTable_…`, `div._ContentContainer_…` |
-| A listener on the button after `.click()` | never fired |
-| `el.click()` (synthetic) | fired, modal closed |
+| A listener on the button after `.click()`     | never fired                                           |
+| `el.click()` (synthetic)                      | fired, modal closed                                   |
 
 So the click was dispatched at the right page coordinates and landed on the Dev
 Console's extensions table, which sits above the app window in the admin
@@ -95,68 +95,73 @@ The editor's Close is now the X in `div._AppWindowModalHeaderActions_…`, insid
 bare `getByRole("button", { name: "Close" })` also catches the admin's portal
 close and the Dev Console's.
 
+## 4. `clickHoisted` fired at a disabled button
+
+The last failure was **not** the product bug the first draft of this doc
+predicted. Probed live 2026-09-12, editor open on a workflow with a draft:
+
+| Reading                                                     | Result                                                                                        |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| The hoisted `Discard changes` proxy, as HTML                | a Polaris `<button>` with `aria-disabled="true"`, `Polaris-Button--disabled`, `tabindex="-1"` |
+| `#discard-draft` dialog after `clickHoisted`                | still closed                                                                                  |
+| `showOverlay()` on that element                             | opens it                                                                                      |
+| `Apply changes` (same `commandFor` + `--show`, workflow on) | **modal opened**                                                                              |
+
+Apply is the control: an identical `commandFor="apply-draft" command="--show"`
+on a hoisted title-bar button opened a modal living in the window's document.
+So App Bridge relays `--show` across the `s-app-window` boundary just fine, and
+no `showModal` mirroring `hideModal` is needed. (`hideModal` is still needed —
+`shopify.modal.hide` resolves ids in the host registry, which is a different
+mechanism. The two directions are not symmetric.)
+
+What was actually wrong: `Discard changes` is `disabled={!identified || busy}`,
+and `identified` comes from the `ShopAgent` socket handshake. `clickHoisted`
+asserted only visibility and then fired a native `el.click()` — a silent no-op
+on a disabled button. The window paints fast enough that the spec's click landed
+inside that gap; the old in-iframe navigation was slow enough that it did not.
+Same silent-no-op failure shape as the Dev Console occlusion above, for an
+unrelated reason.
+
+Phases of a fresh editor-window open, from the click on Edit (measured
+2026-09-12, local dev, first open then reopen):
+
+| Phase                                     | First  | Reopen  |
+| ----------------------------------------- | ------ | ------- |
+| Editor document requested                 | 317ms  | 270ms   |
+| SSR heading painted                       | 1069ms | 965ms   |
+| Hydrated, `Discard changes` proxy visible | 1933ms | ~1600ms |
+| `ShopAgent` socket open                   | 2071ms | 1603ms  |
+| Identified, proxy enabled                 | 2328ms | 1880ms  |
+
+So the socket is only ~390ms of it and the merchant-visible dead-control window
+is that same ~390ms — the rest is the window loading and hydrating a whole
+document, and ~860ms of that hydration is Vite's unbundled dev module graph,
+which production does not pay. Reopening pays the load again: the window resets
+`src` on hide, so nothing is kept warm.
+
+Fixed in `clickHoisted` by polling `hoistedEnabled` before the click, which is
+the actionability guarantee an ordinary Playwright `.click()` gives and the
+`aria-disabled` ancestor takes away. That made the `expect.poll(() =>
+hoistedEnabled(...)).toBe(true)` preambles in the spec redundant; the
+`.toBe(false)` assertions stayed, because those assert product behaviour.
+
 ## Where it stands
 
-Uncommitted, in the working tree:
+| File                    | Change                                                                                                                                                                                                                              |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `e2e/app.ts`            | `appFrame` excludes `chrome=window`; new `editorFrame`; `closeDevConsole` called from `gotoApp`; `clickHoisted` waits for `hoistedEnabled`. All carry the reasoning above as JSDoc.                                                 |
+| `e2e/workflows.spec.ts` | Editor interactions scoped to `editor`; `stepName` for the editor's step forms; `closeEditor` targets the app-window X; Apply-on-an-active-workflow now covered inside the window (it was the one `commandFor` path no test drove). |
 
-| File | Change |
-| --- | --- |
-| `e2e/app.ts` | `appFrame` excludes `chrome=window`; new `editorFrame`; `closeDevConsole` called from `gotoApp`. All three carry the reasoning above as JSDoc. |
-| `e2e/workflows.spec.ts` | Editor interactions re-scoped to `editor`; `stepName` for the editor's step forms (the create dialog's Name field is a different element); `closeEditor` targets the app-window X; the file's header JSDoc explains the two frames. |
-
-Last healthy run: **3 of 4 passed**. `pnpm typecheck`, `pnpm lint` and
-`pnpm fmt` are clean.
-
-## What is left
-
-One failure, in `workflows create, edit, apply, and discard through the draft`:
-
-```
-locator.click: Test timeout
-  waiting for locator('iframe[src*="chrome=window"]').contentFrame()
-    .getByRole('button', { name: 'Discard', exact: true })
-```
-
-The step before it clicks the hoisted `Discard changes`, which is
-`slot="secondary-actions"` with `commandFor={DISCARD_MODAL} command="--show"`
-(`app.workflows.$workflowId_.edit.tsx:669`). App Bridge hoists that button out of
-the editor's document into the admin's window header, so the `--show` command has
-to be relayed back across the boundary to a modal that lives in the window's
-document.
-
-**The hypothesis to test first: that relay does not work, and this is a product
-bug, not a test bug.** It is the same registry problem already documented for the
-other direction in `src/lib/polarisModal.ts` — `shopify.modal.hide` cannot see an
-`s-app-window` document's modals, which is why `hideModal` exists and calls
-`hideOverlay` on the element. If `--show` fails the same way, a merchant clicking
-**Discard changes** in the editor window gets nothing, and the fix is a `showModal`
-mirroring `hideModal` (plus an `onClick` on that button instead of `commandFor`),
-not a change to the spec.
-
-How to tell them apart, with the editor open on a workflow that has a draft:
-
-1. Click the hoisted `Discard changes`.
-2. Read `s-modal#discard-draft`'s shadow `dialog` in the editor frame — is
-   `open` set?
-3. Call `showOverlay()` on that element directly. If step 2 says closed and step
-   3 opens it, the relay is the bug.
-
-A probe spec that does exactly this was written and deleted; rewriting it is ten
-minutes. Drive it the way the probes in this doc were driven: a throwaway
-`e2e/zz-probe.spec.ts`, `console.log` the readings, delete it afterwards.
-
-Apply changes is worth checking at the same time: it takes the `commandFor`
-branch only when the workflow is **on** (`hasDraft && isActive`), and no test
-currently exercises that path inside the window. If `--show` is broken, Apply on
-an active workflow is broken too, and that is the more damaging of the two.
+Full suite: **14 passed**, `e2e/workflows.spec.ts` 4 passed in 42s.
+`pnpm typecheck`, `pnpm lint`, `pnpm fmt` clean.
 
 ## Environment notes
 
 - Two runs burned 10 and 15 minutes on a dev server that had stopped hydrating:
   `body[data-hydrated="true"]` never appears, every locator eats its full
   timeout, and one run died with `Protocol error … session closed`. A healthy
-  full run of this spec is ~3.4 minutes. **Restart `pnpm app:dev` before
-  concluding anything from a slow run.**
+  run of this spec is ~42s (the whole suite ~1.6 min). **Restart `pnpm app:dev`
+  before concluding anything from a slow run.**
 - These specs seed through `/api/dev/seed`, so the shop is left with `E2E *`
   fixtures. `pnpm d1:reset` (plus clearing `.wrangler`) is how to get an empty
   shop back.

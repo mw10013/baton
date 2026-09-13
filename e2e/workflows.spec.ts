@@ -18,8 +18,10 @@ import { seedConfig, seedMembers } from "./seed";
  *
  * Title-bar controls (Create, Edit, Apply, Turn on, Close, More actions) are
  * hoisted out of the iframe by App Bridge, so they are driven with
- * `clickHoisted` and are all buttons there — the editor's Close is an `s-link`
- * in the page's `breadcrumb-actions` slot and still arrives as a button.
+ * `clickHoisted` and are all buttons there. `clickHoisted` waits for the
+ * hoisted proxy to be enabled, which matters here more than anywhere: the
+ * editor's Apply and Discard are disabled until the `ShopAgent` socket
+ * identifies, a second or two after the window paints.
  *
  * Two frames, and which one a control is in is not a detail: the list and
  * detail pages are `frame` (`appFrame`), while the editor runs in its own
@@ -221,11 +223,28 @@ test("workflows create, edit, apply, and discard through the draft", async ({
   await expect(
     page.getByRole("button", { name: "Discard changes" }),
   ).toHaveCount(0);
-  await closeEditor(page);
+  await expect(
+    editor.getByText("Nothing is saved yet.", { exact: false }),
+  ).toBeVisible();
+  await expect(editor.getByText("Bake", { exact: true })).toBeVisible();
+
+  /* Apply on a workflow that is ON asks first, and that confirm is the one
+     place a hoisted title-bar button has to open a modal back inside the
+     window's own document. Applying from in there closes the window and the
+     detail page comes back on the new live steps. */
+  await editor.getByRole("button", { name: "Edit Bake" }).click();
+  await stepName.fill("Bake and rest");
+  await editor.getByRole("button", { name: "Save step" }).click();
+  await clickHoisted(page.getByRole("button", { name: "Apply changes" }));
+  await expect(
+    editor.getByText("Orders that come in after you apply", { exact: false }),
+  ).toBeVisible();
+  await editor.getByRole("button", { name: "Apply", exact: true }).click();
+  await expect(frame.locator(`s-page[heading="${CREATED}"]`)).toBeVisible();
   await expect(
     frame.getByRole("button", { name: "Draft", exact: true }),
   ).toHaveCount(0);
-  await expect(frame.getByText("Bake", { exact: true })).toBeVisible();
+  await expect(frame.getByText("Bake and rest", { exact: true })).toBeVisible();
 });
 
 /**
@@ -296,11 +315,9 @@ test("the order workflow opens from the nav, has no rename or delete, and turns 
   await expect(frame.locator('s-page[heading="Order workflow"]')).toBeVisible();
 
   /* Turn on: a fresh shop has no waiting orders, so the dialog is a plain
-     confirm, and the page then says what "on" covers. The hoisted button
-     was disabled a moment ago (no steps), so wait for the enabled copy. */
-  const turnOn = page.getByRole("button", { name: "Turn on" });
-  await expect.poll(() => hoistedEnabled(turnOn)).toBe(true);
-  await clickHoisted(turnOn);
+     confirm, and the page then says what "on" covers. It was disabled a
+     moment ago for want of steps; `clickHoisted` waits that out. */
+  await clickHoisted(page.getByRole("button", { name: "Turn on" }));
   await expect(
     frame.getByText("Checking earlier orders", { exact: false }),
   ).toHaveCount(0);
@@ -358,9 +375,7 @@ test("turning on a workflow offers to include earlier unfulfilled orders, and in
   await frame.getByRole("link", { name: EXISTING }).click();
   await expect(frame.locator(`s-page[heading="${EXISTING}"]`)).toBeVisible();
 
-  const turnOn = page.getByRole("button", { name: "Turn on" });
-  await expect.poll(() => hoistedEnabled(turnOn)).toBe(true);
-  await clickHoisted(turnOn);
+  await clickHoisted(page.getByRole("button", { name: "Turn on" }));
   await expect(
     frame.getByText("1 earlier order is unfulfilled and would match.", {
       exact: false,

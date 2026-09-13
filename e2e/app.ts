@@ -139,6 +139,24 @@ const closeDevConsole = async (page: Page): Promise<void> => {
 };
 
 /**
+ * Whether a hoisted control is enabled. `toBeEnabled()` cannot answer this
+ * for the same reason `clickHoisted` exists: the `aria-disabled` ancestor
+ * App Bridge places the control under makes Playwright report every
+ * descendant as disabled. Reads the element's own `disabled` state instead,
+ * which is what the app's `disabled` prop drives — App Bridge mirrors it onto
+ * the proxy as a real `disabled` attribute plus its own `aria-disabled`, so
+ * both are checked. Resolves `false` while the element is absent so it
+ * composes with `expect.poll`.
+ */
+export const hoistedEnabled = async (locator: Locator): Promise<boolean> =>
+  (await locator.count()) > 0 &&
+  locator.evaluate(
+    (el) =>
+      !(el as HTMLButtonElement).disabled &&
+      el.getAttribute("aria-disabled") !== "true",
+  );
+
+/**
  * Click an App-Bridge-hoisted control (e.g. an `s-app-nav` link). App Bridge
  * lifts these OUT of the iframe into admin chrome, under an ancestor with
  * `aria-disabled="true"` that never clears. Playwright treats every descendant of
@@ -151,26 +169,25 @@ const closeDevConsole = async (page: Page): Promise<void> => {
  * `frame.getByRole(...)` cannot see it. That split is also why the index pages
  * can show a title-bar create button and an identically named one in the empty
  * state without tripping strict mode — each locator sees exactly one of them.
+ *
+ * Visibility is NOT enough to click on: `hoistedEnabled` is polled first
+ * because the proxy renders as soon as the page hydrates, while the app's own
+ * `disabled` prop is still true. Several of these controls are disabled until
+ * the `ShopAgent` socket identifies (`useShopAgent`), which takes the token
+ * mint plus a connect and handshake after hydration. Measured 2026-09-12 on a
+ * fresh open of the editor's `s-app-window`: hydrated at 1933ms from the Edit
+ * click, Discard changes proxy visible at 1940ms, socket open at 2071ms,
+ * identified and the proxy enabled at 2328ms — a ~390ms window where the
+ * control is on screen and dead. A native `el.click()` on a disabled button is
+ * a silent no-op, so without this the click reports success, nothing happens,
+ * and the failure surfaces later at whatever the click was supposed to open.
+ * This is the actionability guarantee an ordinary Playwright `.click()` gives
+ * and the `aria-disabled` ancestor takes away.
  */
 export async function clickHoisted(locator: Locator): Promise<void> {
   await expect(locator).toBeVisible();
+  await expect.poll(() => hoistedEnabled(locator)).toBe(true);
   await locator.evaluate((el) => {
     (el as HTMLElement).click();
   });
 }
-
-/**
- * Whether a hoisted control is enabled. `toBeEnabled()` cannot answer this
- * for the same reason `clickHoisted` exists: the `aria-disabled` ancestor
- * App Bridge places the control under makes Playwright report every
- * descendant as disabled. Reads the element's own `disabled` state instead,
- * which is what the app's `disabled` prop drives. Resolves `false` while the
- * element is absent so it composes with `expect.poll`.
- */
-export const hoistedEnabled = async (locator: Locator): Promise<boolean> =>
-  (await locator.count()) > 0 &&
-  locator.evaluate(
-    (el) =>
-      !(el as HTMLButtonElement).disabled &&
-      el.getAttribute("aria-disabled") !== "true",
-  );
