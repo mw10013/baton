@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test";
 
 import { expect, test } from "@playwright/test";
 
-import { clickHoisted, gotoApp, hoistedEnabled } from "./app";
+import { clickHoisted, editorFrame, gotoApp, hoistedEnabled } from "./app";
 import { seedConfig, seedMembers } from "./seed";
 
 /**
@@ -19,8 +19,15 @@ import { seedConfig, seedMembers } from "./seed";
  * Title-bar controls (Create, Edit, Apply, Turn on, Close, More actions) are
  * hoisted out of the iframe by App Bridge, so they are driven with
  * `clickHoisted` and are all buttons there — the editor's Close is an `s-link`
- * in the page's `breadcrumb-actions` slot and still arrives as a button. The
- * modals they open render back inside the frame, as does everything else.
+ * in the page's `breadcrumb-actions` slot and still arrives as a button.
+ *
+ * Two frames, and which one a control is in is not a detail: the list and
+ * detail pages are `frame` (`appFrame`), while the editor runs in its own
+ * `s-app-window` iframe, `editor` (`editorFrame`), that the admin mounts
+ * beside the app's rather than inside it. Create opens the editor straight
+ * away, so everything between Create and Apply — the trigger card, Edit tag,
+ * the step forms, the canvas — is `editor`, and the detail page only comes
+ * back once the window hides. Modals render in whichever frame opened them.
  *
  * Budget: this spec makes far more round trips than `teams.spec.ts` and each
  * one re-runs the Shopify auth middleware, so it pins its own timeout for the
@@ -34,13 +41,21 @@ const EXISTING = "E2E Ring";
 const CREATED = "E2E Cake";
 
 /**
- * The editor's Close. Scoped to the breadcrumb region because the admin also
- * carries a portal close button and the dev console's, and all three answer to
- * the name "Close".
+ * The editor's Close: the X in the header the admin draws around an
+ * `s-app-window`. The editor's own breadcrumb Close is gone — in window mode
+ * the route renders no breadcrumb at all, and the admin owns the chrome
+ * instead (`app.workflows.$workflowId_.edit.tsx`).
+ *
+ * Scoped to the window's dialog rather than taken by name alone because the
+ * admin's portals and the CLI's dev console answer to "Close" too. The class
+ * is a hashed CSS module of the admin's, hence the substring; `Dialog` and not
+ * `Header`, which matches three nested elements and would trip strict mode.
  */
 const closeEditor = (page: Page) =>
   clickHoisted(
-    page.getByLabel(/^Breadcrumbs/u).getByRole("button", { name: "Close" }),
+    page
+      .locator('[class*="AppWindowModalDialog"]')
+      .getByRole("button", { name: "Close" }),
   );
 
 test("workflows create, edit, apply, and discard through the draft", async ({
@@ -65,6 +80,7 @@ test("workflows create, edit, apply, and discard through the draft", async ({
   );
 
   const frame = await gotoApp(page);
+  const editor = editorFrame(page);
   await clickHoisted(
     page.getByRole("link", { name: "Workflows", exact: true }),
   );
@@ -76,33 +92,39 @@ test("workflows create, edit, apply, and discard through the draft", async ({
   await clickHoisted(page.getByRole("button", { name: "Create workflow" }));
   const nameField = frame.getByRole("textbox", { name: "Name", exact: true });
   const tagField = frame.getByRole("textbox", { name: "Tag", exact: true });
+  /* The step forms live in the editor window, so their Name field is a
+     different element from the create dialog's. */
+  const stepName = editor.getByRole("textbox", { name: "Name", exact: true });
   await nameField.fill("Cake");
   await expect(tagField).toHaveValue("cake");
   await tagField.fill("e2e-cake");
   await nameField.fill(CREATED);
   await expect(tagField).toHaveValue("e2e-cake");
   await frame.getByRole("button", { name: "Create", exact: true }).click();
-  await expect(frame.locator(`s-page[heading="${CREATED}"]`)).toBeVisible();
+
+  /* Create lands in the editor, as Flow's does, so the new workflow's first
+     screen is the canvas rather than its detail page. */
+  await expect(editor.locator(`s-page[heading="${CREATED}"]`)).toBeVisible();
   await expect(
-    frame.getByText("Starts when an order contains a product tagged", {
+    editor.getByText("Starts when an order contains a product tagged", {
       exact: false,
     }),
   ).toBeVisible();
 
   /* The tag is edited from the trigger; Cancel leaves the workflow alone. */
-  await frame.getByRole("button", { name: "Edit tag" }).click();
+  await editor.getByRole("button", { name: "Edit tag" }).click();
   await expect(
-    frame.getByRole("textbox", { name: "Tag", exact: true }),
+    editor.getByRole("textbox", { name: "Tag", exact: true }),
   ).toHaveValue("e2e-cake");
-  await frame.getByRole("button", { name: "Cancel", exact: true }).click();
+  await editor.getByRole("button", { name: "Cancel", exact: true }).click();
 
-  await frame.getByRole("button", { name: "Add the first step" }).click();
-  await nameField.fill("Bake");
-  await frame
+  await editor.getByRole("button", { name: "Add the first step" }).click();
+  await stepName.fill("Bake");
+  await editor
     .getByRole("combobox", { name: "Team", exact: true })
     .selectOption({ label: TEAM });
-  await frame.getByRole("button", { name: "Add step" }).click();
-  await expect(frame.getByText("Stage 1", { exact: true })).toBeVisible();
+  await editor.getByRole("button", { name: "Add step" }).click();
+  await expect(editor.getByText("Stage 1", { exact: true })).toBeVisible();
 
   /* Off, so Apply needs no confirmation. */
   await clickHoisted(page.getByRole("button", { name: "Apply changes" }));
@@ -123,7 +145,7 @@ test("workflows create, edit, apply, and discard through the draft", async ({
   /* Opening the editor is not an edit: no draft, so nothing to discard. */
   await clickHoisted(page.getByRole("button", { name: "Edit", exact: true }));
   await expect(
-    frame.getByText("Nothing is saved yet.", { exact: false }),
+    editor.getByText("Nothing is saved yet.", { exact: false }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Discard changes" }),
@@ -131,11 +153,11 @@ test("workflows create, edit, apply, and discard through the draft", async ({
 
   /* The first saved change starts the draft — on a step that exists only on
      the workflow so far, which is the id-preserving copy under test. */
-  await frame.getByRole("button", { name: "Edit Bake" }).click();
-  await nameField.fill("Bake and cool");
-  await frame.getByRole("button", { name: "Save step" }).click();
+  await editor.getByRole("button", { name: "Edit Bake" }).click();
+  await stepName.fill("Bake and cool");
+  await editor.getByRole("button", { name: "Save step" }).click();
   await expect(
-    frame.getByText("Nothing is saved yet.", { exact: false }),
+    editor.getByText("Nothing is saved yet.", { exact: false }),
   ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Discard changes" }),
@@ -145,44 +167,44 @@ test("workflows create, edit, apply, and discard through the draft", async ({
      "Run alongside the previous step" is the only thing that makes the two
      parallel, "Run on its own" splits them back, and moving only reorders —
      both stages stay solo across the move. */
-  await frame.getByRole("button", { name: "Add a step", exact: true }).click();
-  await nameField.fill("Ice");
-  await frame
+  await editor.getByRole("button", { name: "Add a step", exact: true }).click();
+  await stepName.fill("Ice");
+  await editor
     .getByRole("combobox", { name: "Team", exact: true })
     .selectOption({ label: TEAM });
-  await frame.getByRole("button", { name: "Add step" }).click();
-  await expect(frame.getByText("Stage 2", { exact: true })).toBeVisible();
+  await editor.getByRole("button", { name: "Add step" }).click();
+  await expect(editor.getByText("Stage 2", { exact: true })).toBeVisible();
 
-  await frame.getByRole("button", { name: "Edit Ice" }).click();
-  await frame
+  await editor.getByRole("button", { name: "Edit Ice" }).click();
+  await editor
     .getByRole("button", { name: "Run alongside the previous step" })
     .click();
   await expect(
-    frame.getByText("Stage 1 · at the same time", { exact: true }),
+    editor.getByText("Stage 1 · at the same time", { exact: true }),
   ).toBeVisible();
-  await expect(frame.getByText("Stage 2", { exact: true })).toHaveCount(0);
+  await expect(editor.getByText("Stage 2", { exact: true })).toHaveCount(0);
 
-  await frame.getByRole("button", { name: "Run on its own" }).click();
-  await expect(frame.getByText("Stage 2", { exact: true })).toBeVisible();
+  await editor.getByRole("button", { name: "Run on its own" }).click();
+  await expect(editor.getByText("Stage 2", { exact: true })).toBeVisible();
   await expect(
-    frame.getByText("Stage 1 · at the same time", { exact: true }),
+    editor.getByText("Stage 1 · at the same time", { exact: true }),
   ).toHaveCount(0);
 
   /* Card order in the canvas: the label the card carries, top to bottom. */
   const stepOrder = () =>
-    frame
+    editor
       .locator('s-clickable[accessibilityLabel^="Edit "]')
       .evaluateAll((cards) =>
         cards.map((card) => card.getAttribute("accessibilityLabel")),
       );
-  await frame.getByRole("button", { name: "Move earlier" }).click();
+  await editor.getByRole("button", { name: "Move earlier" }).click();
   await expect.poll(stepOrder).toEqual(["Edit Ice", "Edit Bake and cool"]);
-  await expect(frame.getByText("Stage 1", { exact: true })).toBeVisible();
-  await expect(frame.getByText("Stage 2", { exact: true })).toBeVisible();
-  await frame.getByRole("button", { name: "Move later" }).click();
+  await expect(editor.getByText("Stage 1", { exact: true })).toBeVisible();
+  await expect(editor.getByText("Stage 2", { exact: true })).toBeVisible();
+  await editor.getByRole("button", { name: "Move later" }).click();
   await expect.poll(stepOrder).toEqual(["Edit Bake and cool", "Edit Ice"]);
-  await frame.getByRole("button", { name: "Remove step" }).click();
-  await expect(frame.getByText("Stage 2", { exact: true })).toHaveCount(0);
+  await editor.getByRole("button", { name: "Remove step" }).click();
+  await expect(editor.getByText("Stage 2", { exact: true })).toHaveCount(0);
 
   /* Close keeps the draft, and the two tabs show the two answers. */
   await closeEditor(page);
@@ -191,10 +213,11 @@ test("workflows create, edit, apply, and discard through the draft", async ({
   await frame.getByRole("button", { name: "Live workflow" }).click();
   await expect(frame.getByText("Bake", { exact: true })).toBeVisible();
 
-  /* Discard leaves the workflow exactly as it was, and the tab goes with it. */
+  /* Discard leaves the workflow exactly as it was, and the tab goes with it.
+     Its confirm dialog belongs to the editor's document, not the app's. */
   await clickHoisted(page.getByRole("button", { name: "Edit", exact: true }));
   await clickHoisted(page.getByRole("button", { name: "Discard changes" }));
-  await frame.getByRole("button", { name: "Discard", exact: true }).click();
+  await editor.getByRole("button", { name: "Discard", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Discard changes" }),
   ).toHaveCount(0);
@@ -230,6 +253,7 @@ test("the order workflow opens from the nav, has no rename or delete, and turns 
   );
 
   const frame = await gotoApp(page);
+  const editor = editorFrame(page);
   await clickHoisted(
     page.getByRole("link", { name: "Order workflow", exact: true }),
   );
@@ -254,20 +278,20 @@ test("the order workflow opens from the nav, has no rename or delete, and turns 
       0,
     );
 
-  /* The editor: the same steps canvas, no tag. */
+  /* The editor: the same steps canvas, no tag, in its own window. */
   await clickHoisted(page.getByRole("button", { name: "Edit", exact: true }));
-  await expect(frame.getByRole("button", { name: "Edit tag" })).toHaveCount(0);
+  await expect(editor.getByRole("button", { name: "Edit tag" })).toHaveCount(0);
   for (const name of ["Rename", "Delete", "Duplicate"])
     await expect(page.getByRole("button", { name, exact: true })).toHaveCount(
       0,
     );
-  await frame.getByRole("button", { name: "Add the first step" }).click();
-  await frame.getByRole("textbox", { name: "Name", exact: true }).fill("Pack");
-  await frame
+  await editor.getByRole("button", { name: "Add the first step" }).click();
+  await editor.getByRole("textbox", { name: "Name", exact: true }).fill("Pack");
+  await editor
     .getByRole("combobox", { name: "Team", exact: true })
     .selectOption({ label: TEAM });
-  await frame.getByRole("button", { name: "Add step" }).click();
-  await expect(frame.getByText("Stage 1", { exact: true })).toBeVisible();
+  await editor.getByRole("button", { name: "Add step" }).click();
+  await expect(editor.getByText("Stage 1", { exact: true })).toBeVisible();
   await clickHoisted(page.getByRole("button", { name: "Apply changes" }));
   await expect(frame.locator('s-page[heading="Order workflow"]')).toBeVisible();
 

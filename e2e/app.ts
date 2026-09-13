@@ -13,9 +13,29 @@ import { awaitHydration } from "./hydration";
  * the iframe during navigation/mutations, so a captured `page.frames()` /
  * `contentFrame()` handle detaches and throws `frame was detached`; a
  * `frameLocator` never does.
+ *
+ * `embedded=1` alone is no longer unique: an open `s-app-window` is a second
+ * embedded iframe carrying it too, and every locator built on this one then
+ * fails with `strict mode violation: ... resolved to 2 elements`. Excluding
+ * `chrome=window` keeps this the app's own frame; see `editorFrame`.
  */
 export const appFrame = (page: Page): FrameLocator =>
-  page.frameLocator('iframe[src*="embedded=1"]');
+  page.frameLocator('iframe[src*="embedded=1"]:not([src*="chrome=window"])');
+
+/**
+ * The workflow editor's iframe. The editor opens in an App Bridge
+ * `s-app-window`: a full-screen iframe the admin mounts as a SIBLING of the
+ * app's own, not a child of it, so nothing in the editor is reachable through
+ * `appFrame`. It is identified by the `chrome=window` search flag the opener
+ * puts on `src` (`src/lib/workflowEditorWindow.ts`) rather than by the admin's
+ * generated iframe `name` or hashed class, neither of which is ours to rely on.
+ *
+ * Its title-bar controls (Apply changes, Discard changes, Close) hoist into
+ * admin chrome like any page's, so those still go through `clickHoisted` — but
+ * the modals they open render in THIS frame, not the app's.
+ */
+export const editorFrame = (page: Page): FrameLocator =>
+  page.frameLocator('iframe[src*="chrome=window"]');
 
 /**
  * Land on the authed home and return once it is safe to interact INSIDE the
@@ -73,8 +93,50 @@ export async function gotoApp(page: Page): Promise<FrameLocator> {
     await page.reload({ waitUntil: "commit" });
     await awaitHydration(frame);
   });
+  await closeDevConsole(page);
   return frame;
 }
+
+/**
+ * Collapses the Shopify CLI's Dev Console panel if it is expanded.
+ *
+ * The panel is an admin-document overlay covering the lower half of the
+ * viewport, and it outranks the app's iframe in the top document's hit test.
+ * A click Playwright considers actionable — visible, stable, on top *inside
+ * the frame* — then lands on the console's extensions table instead, silently:
+ * the action reports success and the app never sees the event (measured
+ * 2026-09-12: a Cancel at page (796, 546) hit `table._ExtensionsTable_`).
+ * Playwright's occlusion check cannot see this, because it runs in the frame
+ * and the occluder is in the parent document.
+ *
+ * Whether it is expanded comes from the admin session the storage state was
+ * exported from, so it varies between machines and runs — which is exactly why
+ * it is closed here rather than left to whoever opened it last. Collapsed it
+ * is a pill in the corner; nothing this suite drives sits under it.
+ *
+ * Expansion is read from the panel's own geometry, not from the toggle: the
+ * button keeps the accessible name "Close Dev Console" in both states, so
+ * clicking it unconditionally would expand a collapsed console every other
+ * run. The class prefix is the CLI's own markup (a hashed CSS module), hence
+ * the substring match and the no-op when nothing matches — a console that
+ * renamed or vanished must not fail a suite that does not depend on it.
+ */
+const closeDevConsole = async (page: Page): Promise<void> => {
+  const panel = page.locator('[class*="ExtensionsTable"]').first();
+  if ((await panel.count()) === 0) return;
+  /** Expanded means the panel's own rows are on screen, not just its pill. */
+  const expanded = () =>
+    panel.evaluate(
+      (el) => el.getBoundingClientRect().bottom < globalThis.innerHeight,
+    );
+  if (!(await expanded())) return;
+  await page
+    .getByRole("button", { name: "Close Dev Console" })
+    .evaluate((el) => {
+      (el as HTMLElement).click();
+    });
+  await expect.poll(expanded).toBe(false);
+};
 
 /**
  * Click an App-Bridge-hoisted control (e.g. an `s-app-nav` link). App Bridge
