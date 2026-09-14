@@ -118,17 +118,31 @@ const renameTeamFn = createServerFn({ method: "POST" })
     ),
   );
 
+/**
+ * A roster edit changes what the member may act on, and a member who is signed
+ * in is holding a socket whose `teamIds` were resolved when it connected
+ * (`Domain.ConnectionState`). So every one of these writes ends by revoking
+ * the affected members' connections: they reconnect through the Worker's gate
+ * and come back with the roster this edit just wrote. Unbatched, one RPC per
+ * edit — these are merchant actions on one team at a time, so the cost is a
+ * round trip nobody is waiting on.
+ */
 const setTeamMemberFn = createServerFn({ method: "POST" })
   .validator(Schema.toStandardSchemaV1(TeamMemberInput))
   .middleware([shopifyServerFnMiddleware])
   .handler(({ data, context: { runEffect, session } }) =>
     runEffect(
       Effect.gen(function* () {
+        const shop = yield* sessionShop(session.shop);
+        const memberId = yield* decodeMemberId(data.memberId);
         yield* (yield* Repository).setTeamMember({
-          shop: yield* sessionShop(session.shop),
+          shop,
           teamId: yield* decodeTeamId(data.teamId),
-          memberId: yield* decodeMemberId(data.memberId),
+          memberId,
           inTeam: data.inTeam,
+        });
+        yield* (yield* ShopAgentClient).revokeMemberConnections(shop, {
+          memberIds: [memberId],
         });
       }).pipe(Effect.catchTag("TeamNotFoundError", failWith(TEAM_GONE))),
     ),
@@ -140,10 +154,15 @@ const addTeamMembersFn = createServerFn({ method: "POST" })
   .handler(({ data, context: { runEffect, session } }) =>
     runEffect(
       Effect.gen(function* () {
+        const shop = yield* sessionShop(session.shop);
+        const memberIds = yield* decodeMemberIds(data.memberIds);
         yield* (yield* Repository).addTeamMembers({
-          shop: yield* sessionShop(session.shop),
+          shop,
           teamId: yield* decodeTeamId(data.teamId),
-          memberIds: yield* decodeMemberIds(data.memberIds),
+          memberIds,
+        });
+        yield* (yield* ShopAgentClient).revokeMemberConnections(shop, {
+          memberIds,
         });
       }).pipe(Effect.catchTag("TeamNotFoundError", failWith(TEAM_GONE))),
     ),

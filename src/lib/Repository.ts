@@ -153,10 +153,19 @@ export class Repository extends Context.Service<
     readonly addMember: (
       member: Pick<Domain.Member, "shop" | "email">,
     ) => Effect.Effect<void, SqlError.SqlError>;
-    /** The merchant-facing delete: the row goes, `TeamMember` cascades, `ShopSession` is untouched. */
+    /**
+     * The merchant-facing delete: the row goes, `TeamMember` cascades,
+     * `ShopSession` is untouched. Returns the deleted member's id, which the
+     * caller hands to `ShopAgent.revokeMemberConnections` so an open socket
+     * carrying the old membership is closed rather than left working until it
+     * next reconnects.
+     */
     readonly deleteMember: (
       member: Pick<Domain.Member, "shop" | "email">,
-    ) => Effect.Effect<void, SqlError.SqlError | MemberNotFoundError>;
+    ) => Effect.Effect<
+      Domain.MemberId,
+      SqlError.SqlError | RepositoryError | MemberNotFoundError
+    >;
     /** Every `(member, team)` edge in the shop with the team's member count; see `Domain.MemberTeam`. */
     readonly listMemberTeams: (
       shop: Domain.Shop,
@@ -207,11 +216,15 @@ export class Repository extends Context.Service<
      * The D1 half of a team delete: the row goes and `TeamMember` cascades.
      * Only `ShopAgent.deleteTeam` calls this, because the object's SQLite
      * pointers must be nulled right after and the two cannot share a
-     * transaction.
+     * transaction. Returns the members who were on the team, whose open member
+     * sockets the object then closes so they reconnect without it.
      */
     readonly deleteTeam: (
       team: Pick<Domain.Team, "shop" | "id">,
-    ) => Effect.Effect<void, SqlError.SqlError | TeamNotFoundError>;
+    ) => Effect.Effect<
+      readonly Domain.MemberId[],
+      SqlError.SqlError | RepositoryError | TeamNotFoundError
+    >;
     readonly findTeamDetail: (
       team: Pick<Domain.Team, "shop" | "id">,
     ) => Effect.Effect<
@@ -511,11 +524,16 @@ export class Repository extends Context.Service<
           where shop = ${member.shop} and email = ${member.email}
           returning id
         `;
-        if (rows[0] === undefined)
-          yield* new MemberNotFoundError({
+        const row = rows[0];
+        if (row === undefined)
+          return yield* new MemberNotFoundError({
             shop: member.shop,
             email: member.email,
           });
+        return yield* decodeRepository(
+          Domain.MemberId,
+          "Invalid Member id",
+        )(row.id);
       });
 
       /**
@@ -531,8 +549,9 @@ export class Repository extends Context.Service<
               (select count(*) from TeamMember x where x.teamId = tm.teamId) as teamMemberCount
             from TeamMember tm
             join Team t on t.id = tm.teamId
+            join Member m on m.id = tm.memberId
             where t.shop = ${shop}
-            order by t.name collate nocase
+            order by t.name collate nocase, m.email collate nocase
           `;
           return yield* decodeRepository(
             Schema.Array(Domain.MemberTeam),
@@ -703,9 +722,18 @@ export class Repository extends Context.Service<
           : new TeamNotFoundError({ shop: team.shop, teamId: team.id });
       });
 
+      /**
+       * The roster is read *before* the delete because `TeamMember` cascades
+       * with the row: after the delete there is nothing left to say whose open
+       * sockets were scoped to this team, and those connections carry the
+       * team in a connect-time snapshot that the delete has just invalidated.
+       */
       const deleteTeam = Effect.fn("Repository.deleteTeam")(function* (
         team: Pick<Domain.Team, "shop" | "id">,
       ) {
+        const memberRows = yield* sqlPrimary`
+          select memberId from TeamMember where teamId = ${team.id}
+        `;
         const rows = yield* sqlPrimary`
           delete from Team
           where id = ${team.id} and shop = ${team.shop}
@@ -716,6 +744,10 @@ export class Repository extends Context.Service<
             shop: team.shop,
             teamId: team.id,
           });
+        return yield* decodeRepository(
+          Schema.Array(Domain.MemberId),
+          "Invalid TeamMember rows",
+        )(memberRows.map((row) => row.memberId));
       });
 
       /**

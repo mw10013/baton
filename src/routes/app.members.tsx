@@ -12,6 +12,7 @@ import { MemberTeamsFields } from "@/components/MemberTeamsFields";
 import * as Domain from "@/lib/Domain";
 import { fieldError, mutationErrorMessage } from "@/lib/form";
 import { Repository, RepositoryError } from "@/lib/Repository";
+import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
 import { failWith, sessionShop } from "@/lib/teams";
@@ -102,16 +103,27 @@ const addMemberFn = createServerFn({ method: "POST" })
     ),
   );
 
+/**
+ * Replacing a member's team set changes what their open socket may act on, so
+ * it revokes their connections for the same reason the team page's roster
+ * edits do: identity on a connection is a connect-time snapshot, and a
+ * reconnect is what re-reads it.
+ */
 const setMemberTeamsFn = createServerFn({ method: "POST" })
   .validator(Schema.toStandardSchemaV1(MemberTeamsInput))
   .middleware([shopifyServerFnMiddleware])
   .handler(({ data, context: { runEffect, session } }) =>
     runEffect(
       Effect.gen(function* () {
+        const shop = yield* sessionShop(session.shop);
+        const memberId = yield* decodeMemberId(data.memberId);
         yield* (yield* Repository).setMemberTeams({
-          shop: yield* sessionShop(session.shop),
-          memberId: yield* decodeMemberId(data.memberId),
+          shop,
+          memberId,
           teamIds: yield* decodeTeamIds(data.teamIds),
+        });
+        yield* (yield* ShopAgentClient).revokeMemberConnections(shop, {
+          memberIds: [memberId],
         });
       }),
     ),
@@ -119,8 +131,12 @@ const setMemberTeamsFn = createServerFn({ method: "POST" })
 
 /**
  * Delete a member and they leave their teams (vocabulary on `Domain.Member`).
- * A plain server fn: a member owns nothing in the Durable Object, since run
- * steps snapshot the actor's email, so there is no second store to clean.
+ * There is no second store to clean — a member owns nothing in the Durable
+ * Object, since run steps snapshot the actor's email — but there may be a live
+ * socket carrying the membership this delete just removed, so the object is
+ * told to close it. Without that, a member deleted mid-shift keeps working
+ * until their connection next drops; the page guards catch them on the next
+ * navigation either way, but the socket is the faster path.
  */
 const deleteMemberFn = createServerFn({ method: "POST" })
   .validator(Schema.toStandardSchemaV1(MemberEmailInput))
@@ -129,9 +145,13 @@ const deleteMemberFn = createServerFn({ method: "POST" })
     runEffect(
       Effect.gen(function* () {
         const repository = yield* Repository;
-        yield* repository.deleteMember({
-          shop: yield* sessionShop(session.shop),
+        const shop = yield* sessionShop(session.shop);
+        const memberId = yield* repository.deleteMember({
+          shop,
           email: yield* decodeEmail(data.email),
+        });
+        yield* (yield* ShopAgentClient).revokeMemberConnections(shop, {
+          memberIds: [memberId],
         });
       }).pipe(Effect.catchTag("MemberNotFoundError", failWith(MEMBER_GONE))),
     ),

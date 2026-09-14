@@ -8,6 +8,7 @@ import {
   Context,
   ManagedRuntime,
   Match,
+  Option,
   Schema,
 } from "effect";
 import * as Exit from "effect/Exit";
@@ -26,6 +27,7 @@ import {
   makeLoggerLayer,
   tryPromisePassthrough,
 } from "@/lib/LayerEx";
+import { requireMember } from "@/lib/MemberAccess";
 import { Repository } from "@/lib/Repository";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { ResponseError, Shopify } from "@/lib/Shopify";
@@ -66,7 +68,7 @@ const makeAppLayer = (
   );
   const subscriptionPlanLayer = Layer.provideMerge(
     SubscriptionPlan.layerNoDeps,
-    Layer.merge(repositoryLayer, shopifyPartnerLayer),
+    Layer.mergeAll(repositoryLayer, shopifyPartnerLayer, shopAgentClientLayer),
   );
   const kvLayer = Layer.provideMerge(KV.layerNoDeps, envLayer);
   const emailLayer = Layer.provideMerge(Email.layerNoDeps, envLayer);
@@ -283,7 +285,135 @@ declare module "@tanstack/react-start" {
 }
 
 /**
+ * Headers the WebSocket handshake itself needs, and the only ones
+ * {@link rebuildRequest} carries forward.
+ *
+ * `x-partykit-namespace` rides along because `routePartykitRequest` sets it
+ * *before* calling this gate and the request the gate returns is the one
+ * forwarded to the Durable Object
+ * (`refs/partykit/packages/partyserver/src/index.ts`).
+ */
+const FORWARDED_HANDSHAKE_HEADERS = [
+  "upgrade",
+  "connection",
+  "sec-websocket-key",
+  "sec-websocket-version",
+  "sec-websocket-protocol",
+  "sec-websocket-extensions",
+  "x-partykit-namespace",
+] as const;
+
+/**
+ * The request the gate forwards to `ShopAgent`, carrying the identity it just
+ * resolved as `x-baton-*` headers (`Domain.ConnectionState`).
+ *
+ * Built from an empty `Headers` rather than a copy of the inbound ones, and
+ * that is the whole point: a browser cannot set headers on a WebSocket
+ * upgrade, but a non-browser client can, so copying them forward would let a
+ * caller present `x-baton-role: merchant` alongside a member cookie and pick
+ * their own role. Rebuilding means the object can only ever see what this
+ * function wrote. The cookie and `Authorization` are dropped for the same
+ * reason in reverse: the object has no business holding credentials it cannot
+ * verify.
+ *
+ * `new Request(url, …)` rather than `new Request(request, …)` so the headers
+ * stay mutable — partyserver sets `x-partykit-props` on the returned request
+ * after this hook runs, and an immutable header list would throw there.
+ */
+const rebuildRequest = (
+  request: Request,
+  batonHeaders: Readonly<Record<string, string>>,
+) => {
+  const headers = new Headers();
+  for (const name of FORWARDED_HANDSHAKE_HEADERS) {
+    const value = request.headers.get(name);
+    if (value !== null) headers.set(name, value);
+  }
+  for (const [name, value] of Object.entries(batonHeaders))
+    headers.set(name, value);
+  return new Request(request.url, { method: request.method, headers });
+};
+
+/**
+ * The member half of the gate: no session token means the caller is a
+ * `/shop/*` tab, whose only credential is the better-auth cookie the browser
+ * sends automatically on a same-origin upgrade.
+ *
+ * The status codes mirror the member area's HTTP guards exactly, because the
+ * socket must not become a side channel that answers a question a page load
+ * refuses to: no session → `401` (the page redirects to `/login`); an operator
+ * → `403` (the page bounces to `/admin`; the operator role is cross-tenant and
+ * by invariant never a member, so it gets no connection role at all); not a
+ * member of this shop → `404`, the same "no such shop" the page returns, so a
+ * stranger cannot distinguish a shop they lack access to from one that does
+ * not exist; a member of a shop whose subscription lapsed → `402`, the same
+ * answer the merchant gate gives.
+ *
+ * A failure that is not an authorization answer — D1 unreachable — is `503`
+ * rather than `404`: the browser retries a socket, and reporting "not yours"
+ * for an outage would evict a legitimate member's tab.
+ */
+const authorizeShopAgentMember = Effect.fn("authorizeShopAgentMember")(
+  function* (request: Request, urlShop: string | null) {
+    const auth = yield* Auth;
+    const sessionContext = yield* auth.getSession(request.headers);
+    if (Option.isNone(sessionContext))
+      return new Response("Unauthorized", { status: 401 });
+    if (sessionContext.value.user.role === "admin")
+      return new Response("Forbidden", { status: 403 });
+    if (!urlShop) return new Response("Not Found", { status: 404 });
+    const email = sessionContext.value.user.email;
+    return yield* requireMember({ shop: urlShop, email }).pipe(
+      Effect.map((access) =>
+        rebuildRequest(request, {
+          [Domain.CONNECTION_ROLE_HEADER]: "member",
+          [Domain.CONNECTION_MEMBER_ID_HEADER]: access.memberId,
+          [Domain.CONNECTION_MEMBER_EMAIL_HEADER]: email,
+          [Domain.CONNECTION_TEAM_IDS_HEADER]: access.teams
+            .map((team) => team.id)
+            .join(","),
+        }),
+      ),
+      // A malformed shop segment is "no such shop", not a fault.
+      Effect.catchTag("SchemaError", () =>
+        Effect.succeed(new Response("Not Found", { status: 404 })),
+      ),
+      Effect.catchCause((cause) => {
+        const squashed = Cause.squash(cause);
+        if (isNotFound(squashed))
+          return Effect.succeed(new Response("Not Found", { status: 404 }));
+        // `requireMember` answers a lapsed subscription with a redirect to
+        // the member lapsed page; on a socket that is the merchant gate's 402.
+        if (isRedirect(squashed))
+          return Effect.succeed(
+            new Response("Payment Required", { status: 402 }),
+          );
+        return Effect.logError(
+          `authorizeShopAgentMember: shop=${urlShop}: membership lookup failed`,
+        ).pipe(
+          Effect.annotateLogs({
+            shop: urlShop,
+            cause: causeToErrorMessage(cause),
+          }),
+          Effect.as(new Response("Service Unavailable", { status: 503 })),
+        );
+      }),
+    );
+  },
+);
+
+/**
  * Pre-upgrade/pre-request authorization gate for `/agents/shop-agent/{shop}`.
+ *
+ * Two populations reach the same object over the same URL and the gate is the
+ * only place that can tell them apart, because it is the only place that sees
+ * a credential: a **merchant** presents a Shopify session token, a **member**
+ * presents a better-auth cookie. The presence of a token selects the branch —
+ * a member has no way to mint one (only App Bridge inside the Shopify admin
+ * can) — and the cookie branch is {@link authorizeShopAgentMember}. Whichever
+ * branch succeeds returns a {@link rebuildRequest}, so the object learns who
+ * is on the connection from headers only this gate can have written; see
+ * `Domain.ConnectionState` for what it does with them.
  *
  * Browser `WebSocket` upgrades cannot carry custom headers, so the client
  * passes the Shopify session token via the URL query (`?token=…`); HTTP
@@ -315,18 +445,18 @@ declare module "@tanstack/react-start" {
 const authorizeShopAgentRequest = Effect.fn("authorizeShopAgentRequest")(
   function* (request: Request) {
     const url = new URL(request.url);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const urlShop = segments[2] ?? null;
     const token =
       url.searchParams.get("token") ??
       request.headers.get("authorization")?.replace("Bearer ", "");
-    if (!token) return new Response("Unauthorized", { status: 401 });
+    if (!token) return yield* authorizeShopAgentMember(request, urlShop);
 
     const shopify = yield* Shopify;
     const subscriptionPlan = yield* SubscriptionPlan;
     return yield* shopify.decodeSessionToken(token).pipe(
       Effect.flatMap((decoded) => {
         const tokenShop = new URL(decoded.dest).hostname;
-        const segments = url.pathname.split("/").filter(Boolean);
-        const urlShop = segments[2] ?? null;
         return !urlShop || urlShop !== tokenShop
           ? Effect.succeed(new Response("Forbidden", { status: 403 }))
           : Schema.decodeUnknownEffect(Domain.Shop)(tokenShop).pipe(
@@ -334,7 +464,10 @@ const authorizeShopAgentRequest = Effect.fn("authorizeShopAgentRequest")(
               Effect.map((status) =>
                 Match.value(status).pipe(
                   Match.tagsExhaustive({
-                    Subscribed: () => request,
+                    Subscribed: () =>
+                      rebuildRequest(request, {
+                        [Domain.CONNECTION_ROLE_HEADER]: "merchant",
+                      }),
                     Unsubscribed: () =>
                       new Response("Payment Required", { status: 402 }),
                   }),

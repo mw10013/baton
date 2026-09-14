@@ -1128,18 +1128,6 @@ export const ShopSessionRedactedPage = Schema.Struct({
 export type ShopSessionRedactedPage = typeof ShopSessionRedactedPage.Type;
 
 /**
- * What the Durable Object reads back from the Shopify Admin API using the
- * shop's offline session. Exists to prove that path end to end — D1 session
- * lookup, token refresh if due, Admin GraphQL, schema decode — from inside the
- * object rather than from a Worker request.
- */
-export const ShopInfo = Schema.Struct({
-  name: Schema.String,
-  myshopifyDomain: Schema.String,
-});
-export type ShopInfo = typeof ShopInfo.Type;
-
-/**
  * Which ingestion path last wrote a `ShopOrder` row. Diagnostic, not control
  * flow: every path runs the same `updatedAt`-guarded upsert, so the value
  * only answers "how did this row get here" when a sync looks wrong.
@@ -1751,11 +1739,19 @@ export interface TeamLoaderData extends TeamDetail {
   readonly stepCounts: TeamDeleteCounts;
 }
 
-/** `/shop/$shop` (`shop.$shop.index`). */
+/**
+ * `/shop/$shop` (`shop.$shop.index`).
+ *
+ * `shop` is the `myshopify.com` domain, which is what a member is shown. The
+ * Admin API's display name (`shop { name }`) is not stored anywhere in Baton,
+ * and fetching it was the only reason this page ever called Shopify — a call
+ * that spent the shop's API budget to render a heading. The domain is already
+ * in `MemberAccess`, is what the URL and every membership row key on, and is
+ * unique by Shopify's own guarantee.
+ */
 export interface ShopIndexLoaderData {
   readonly shop: Shop;
   readonly teams: MemberAccess["teams"];
-  readonly shopInfo: ShopInfo;
 }
 
 /** `/shop/$shop/queue` (`shop.$shop.queue`). */
@@ -1810,10 +1806,109 @@ export type Subscription = typeof Subscription.Type;
 
 export const SubscriptionState = Schema.NullOr(Subscription);
 
+/**
+ * Who is on a `ShopAgent` WebSocket connection. Two populations reach the
+ * object over the same socket and must not reach the same methods:
+ * **merchants** (Shopify staff inside the embedded admin, proved by an App
+ * Bridge session token) and **members** (a Baton login with no Shopify
+ * account, proved by a better-auth cookie). Only the Worker can tell them
+ * apart — the object never sees a cookie or a token — so the Worker's connect
+ * gate resolves identity once and forwards it as `x-baton-*` headers on the
+ * rewritten upgrade request; `ShopAgent.onConnect` decodes those headers into
+ * this value and stores it with the connection.
+ *
+ * Read from the connection, never from a message: a callable's arguments are
+ * browser-supplied, and `memberId` / `teamIds` are exactly the privileged
+ * inputs a member must not be able to name for themselves. Every `@callable()`
+ * checks the role here first (see `callableEffect` on `ShopAgent`).
+ *
+ * Identity is a connect-time snapshot, persisted with the hibernatable socket
+ * (`serializeAttachment`), so it survives the object hibernating but does not
+ * follow later team edits. Those edits close the affected member connections
+ * (`ShopAgent.revokeMemberConnections`) and the reconnect re-runs the gate;
+ * Cloudflare's ~300s idle close is the backstop, as it already is for the
+ * merchant subscription check.
+ *
+ * {@link Subscription} moves inside this value rather than being the whole
+ * connection state: a subscribe must not be able to erase the identity that
+ * authorizes it, so the subscribe sites write `{ ...state, subscription }`.
+ */
+export const ConnectionRole = Schema.Literals(["merchant", "member"]);
+export type ConnectionRole = typeof ConnectionRole.Type;
+
+export const MerchantConnectionState = Schema.Struct({
+  role: Schema.Literal("merchant"),
+  subscription: Schema.NullOr(Subscription),
+});
+export type MerchantConnectionState = typeof MerchantConnectionState.Type;
+
+export const MemberConnectionState = Schema.Struct({
+  role: Schema.Literal("member"),
+  memberId: MemberId,
+  memberEmail: Email,
+  teamIds: Schema.Array(TeamId),
+  subscription: Schema.NullOr(Subscription),
+});
+export type MemberConnectionState = typeof MemberConnectionState.Type;
+
+export const ConnectionState = Schema.Union([
+  MerchantConnectionState,
+  MemberConnectionState,
+]);
+export type ConnectionState = typeof ConnectionState.Type;
+
+/**
+ * The headers the Worker's connect gate writes onto the request it forwards to
+ * the object, and the only channel by which identity crosses that boundary.
+ * Named here so the gate and `ShopAgent.onConnect` cannot drift apart.
+ *
+ * `teamIds` is comma-separated because a header is a string and a team id is a
+ * ULID-shaped token with no commas in it.
+ */
+export const CONNECTION_ROLE_HEADER = "x-baton-role";
+export const CONNECTION_MEMBER_ID_HEADER = "x-baton-member-id";
+export const CONNECTION_MEMBER_EMAIL_HEADER = "x-baton-member-email";
+export const CONNECTION_TEAM_IDS_HEADER = "x-baton-team-ids";
+
+/**
+ * Close codes the object sends on a connection it will not serve. Both are in
+ * the 4000-4999 application range, so the browser sees them verbatim.
+ *
+ * `4403` is a gate failure: the forwarded request carried no decodable
+ * identity, which can only mean the Worker forwarded something malformed (a
+ * browser cannot set these headers on an upgrade). `4401` is revocation: what
+ * the gate answered at connect no longer holds — the member's teams or
+ * membership changed, or the shop's subscription lapsed — so the snapshot on
+ * the connection is stale and the client must reconnect through the gate,
+ * which now gives the current answer (a new identity, `404`, or `402`).
+ */
+export const CONNECTION_CLOSE_FORBIDDEN = 4403;
+export const CONNECTION_CLOSE_REVOKED = 4401;
+
+/**
+ * The member ids whose open sockets a membership change has invalidated. Plain
+ * RPC input — the Worker sends it after its own D1 write, and no browser can
+ * reach it.
+ */
+export const RevokeMemberConnectionsInput = Schema.Struct({
+  memberIds: Schema.Array(BoundedId),
+});
+export type RevokeMemberConnectionsInput =
+  typeof RevokeMemberConnectionsInput.Type;
+
 export const SubscriberIdInput = Schema.Struct({
   subscriberId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
 });
 export type SubscriberIdInput = typeof SubscriberIdInput.Type;
+
+/**
+ * The socket half of the member queue's read: the same rows `listQueue`
+ * returns, plus a subscription registered on the connection in the same round
+ * trip. `teamIds` is absent on purpose — the queue is scoped by the teams on
+ * the connection, which the member cannot name for themselves.
+ */
+export const SubscribeQueueInput = SubscriberIdInput;
+export type SubscribeQueueInput = typeof SubscribeQueueInput.Type;
 
 /**
  * The one server push: "your loader data is stale, refetch". Deliberately not
@@ -2096,29 +2191,36 @@ export const OrderDetailView = Schema.Struct({
 export type OrderDetailView = typeof OrderDetailView.Type;
 
 /**
- * Member-area inputs. `teamIds`, `memberId`, and `memberEmail` are resolved
- * by `requireMember` and the session in the server fn, never taken from the
- * browser; the Durable Object trusts them because its only caller for these
- * methods is the Worker. The email is what the run step snapshots as the
- * actor.
+ * The member queue's loader read. Still Worker-resolved: `teamIds` comes from
+ * `requireMember`, and the queue's first paint is SSR, where there is no socket
+ * to carry an identity — so this one stays plain RPC through `ShopAgentClient`
+ * while the mutations below moved onto the socket.
  */
 export const ListQueueInput = Schema.Struct({
   teamIds: Schema.Array(BoundedId),
 });
 export type ListQueueInput = typeof ListQueueInput.Type;
 
+/**
+ * Member-area mutation inputs: **what the browser sends, and nothing more.**
+ * Each is the id of the thing that was clicked plus, where there is one, the
+ * text that was typed.
+ *
+ * `memberId`, `memberEmail`, and `teamIds` are deliberately absent. They are
+ * what decides whether the write is allowed and who history records, so they
+ * come off the connection the Worker's gate authorized
+ * ({@link ConnectionState}), never off the wire — a member who could name their
+ * own `teamIds` could act on any team's work, and one who could name their own
+ * `memberEmail` could sign someone else's name to it. The object pairs the two
+ * halves into the `*Command` shapes below before touching the repository.
+ */
 export const CompleteStepInput = Schema.Struct({
   runStepId: BoundedId,
-  memberId: BoundedId,
-  memberEmail: Email,
-  teamIds: Schema.Array(BoundedId),
 });
 export type CompleteStepInput = typeof CompleteStepInput.Type;
 
 export const DismissFlagInput = Schema.Struct({
   runId: BoundedId,
-  memberId: BoundedId,
-  teamIds: Schema.Array(BoundedId),
 });
 export type DismissFlagInput = typeof DismissFlagInput.Type;
 
@@ -2128,8 +2230,6 @@ export type StartStepInput = typeof StartStepInput.Type;
 /** `note: null` clears. */
 export const SetStepNoteInput = Schema.Struct({
   runStepId: BoundedId,
-  memberId: BoundedId,
-  teamIds: Schema.Array(BoundedId),
   note: Schema.NullOr(StepNote),
 });
 export type SetStepNoteInput = typeof SetStepNoteInput.Type;
@@ -2137,12 +2237,49 @@ export type SetStepNoteInput = typeof SetStepNoteInput.Type;
 /** `reason: null` blocks without a reason. */
 export const BlockRunInput = Schema.Struct({
   runId: BoundedId,
-  memberId: BoundedId,
-  memberEmail: Email,
-  teamIds: Schema.Array(BoundedId),
   reason: Schema.NullOr(StepNote),
 });
 export type BlockRunInput = typeof BlockRunInput.Type;
+
+/**
+ * The whole write, as the run repository takes it: the wire input above joined
+ * to the acting member's identity from the connection. Types rather than
+ * schemas because nothing decodes them — they are assembled inside the object
+ * from two values that were each already validated, and naming them is what
+ * keeps "which fields are the browser's" answerable at a glance.
+ *
+ * The email rides along on the two commands that record an actor
+ * (`startStep` / `completeStep` snapshot `startedByEmail` /
+ * `completedByEmail`, `blockRun` the flag's `byEmail`) and is absent from the
+ * two that do not.
+ */
+export interface StartStepCommand {
+  readonly runStepId: string;
+  readonly memberId: MemberId;
+  readonly memberEmail: Email;
+  readonly teamIds: readonly string[];
+}
+export type CompleteStepCommand = StartStepCommand;
+
+export interface SetStepNoteCommand {
+  readonly runStepId: string;
+  readonly memberId: MemberId;
+  readonly teamIds: readonly string[];
+  readonly note: StepNote | null;
+}
+
+export interface BlockRunCommand {
+  readonly runId: string;
+  readonly memberId: MemberId;
+  readonly memberEmail: Email;
+  readonly teamIds: readonly string[];
+  readonly reason: StepNote | null;
+}
+
+export interface DismissFlagCommand {
+  readonly runId: string;
+  readonly teamIds: readonly string[];
+}
 
 /** `WorkflowCannotStart` = off, zero steps, or an unassigned step (see {@link Workflow}). */
 export const AttachResult = Schema.Union([

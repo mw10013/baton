@@ -1,115 +1,27 @@
 import { describe, it } from "@effect/vitest";
 import { assertFalse, assertTrue, strictEqual } from "@effect/vitest/utils";
-import { exports as workerExports } from "cloudflare:workers";
-import { env } from "cloudflare:workers";
-import { Effect, Layer, Schema } from "effect";
+import { Effect } from "effect";
 import { afterEach } from "vitest";
 
-import { Auth, magicLinkKvKey } from "@/lib/Auth";
-import { D1Primary } from "@/lib/D1Primary";
-import { D1Session } from "@/lib/D1Session";
-import * as Domain from "@/lib/Domain";
-import { Email } from "@/lib/Email";
-import { KV } from "@/lib/KV";
-import { makeEnvLayer } from "@/lib/LayerEx";
 import { Repository } from "@/lib/Repository";
 
-const envLayer = makeEnvLayer(env);
-const repositoryLayer = Layer.provideMerge(
-  Repository.layerNoDeps,
-  Layer.mergeAll(
-    D1Session.layer(env.D1),
-    Layer.provide(D1Primary.layerNoDeps, envLayer),
-    envLayer,
-  ),
-);
-const kvLayer = Layer.provideMerge(KV.layerNoDeps, envLayer);
-const layer = Layer.mergeAll(
-  Layer.provideMerge(
-    Auth.layerNoDeps,
-    Layer.mergeAll(
-      kvLayer,
-      repositoryLayer,
-      Layer.provide(Email.layerNoDeps, envLayer),
-      envLayer,
-    ),
-  ),
-  kvLayer,
-  repositoryLayer,
-);
+import {
+  emailOf,
+  fetchWorker,
+  resetMemberTables,
+  run,
+  seedShop,
+  shopOf,
+  signInThroughWorker,
+} from "./member-fixtures";
 
-const run = <A, E>(effect: Effect.Effect<A, E, Auth | KV | Repository>) =>
-  effect.pipe(Effect.provide(layer));
-
-const shopOf = Schema.decodeUnknownSync(Domain.Shop);
-const emailOf = Schema.decodeUnknownSync(Domain.Email);
 const SHOP = shopOf("member-area.myshopify.com");
 const OTHER_SHOP = shopOf("other-shop.myshopify.com");
 const MEMBER = emailOf("member@example.com");
 const ADMIN = emailOf("admin@example.com");
 
-const fetchWorker = (url: string, init?: RequestInit) =>
-  Effect.promise(() =>
-    workerExports.default.fetch(
-      new Request(url, { redirect: "manual", ...init }),
-    ),
-  );
-
-const seedShop = (shop: Domain.Shop) =>
-  Effect.gen(function* () {
-    const repository = yield* Repository;
-    yield* repository.upsertShopSession({
-      shop,
-      shopGid: Schema.decodeUnknownSync(Domain.ShopGid)("gid://shopify/Shop/1"),
-      shopAgentId: Schema.decodeUnknownSync(Domain.ShopAgentId)(
-        `agent-${shop}`,
-      ),
-      scope: "read_products",
-      accessTokenExpiresAt: null,
-      accessToken: null,
-      refreshToken: null,
-      refreshTokenExpiresAt: null,
-    });
-  });
-
-/**
- * The full magic-link hop the way a browser performs it: the link is minted
- * through the `Auth` service (demo mode caches it in KV, exactly as `/login`
- * reads it back), then followed through `workerExports.default.fetch` so the
- * `/api/auth/$` catch-all, its allowlist middleware, and better-auth's verify
- * handler are all on the path — not just the service. Returns the `cookie`
- * header a browser would carry from there on.
- */
-const signInThroughWorker = (email: Domain.Email) =>
-  Effect.gen(function* () {
-    const auth = yield* Auth;
-    const kv = yield* KV;
-    yield* auth.signInMagicLink({
-      headers: new Headers(),
-      email,
-      callbackURL: "/login-callback",
-    });
-    const url = yield* kv.get(magicLinkKvKey(email));
-    if (url === null) return yield* Effect.die("magic link not cached in KV");
-    const response = yield* fetchWorker(url);
-    strictEqual(response.status, 302);
-    assertFalse((response.headers.get("location") ?? "").includes("error="));
-    return response.headers
-      .getSetCookie()
-      .map((entry) => entry.split(";")[0])
-      .join("; ");
-  });
-
 afterEach(async () => {
-  await env.D1.batch([
-    env.D1.prepare("delete from Session"),
-    env.D1.prepare("delete from User"),
-    env.D1.prepare("delete from Verification"),
-    env.D1.prepare("delete from TeamMember"),
-    env.D1.prepare("delete from Team"),
-    env.D1.prepare("delete from Member"),
-    env.D1.prepare("delete from ShopSession"),
-  ]);
+  await resetMemberTables();
 });
 
 describe("api.auth allowlist", () => {
@@ -196,14 +108,11 @@ describe("member area", () => {
   );
 
   /**
-   * Revocation is asserted as a status *change*, not as `200 -> 404`: the
-   * member's own shop page renders `getShopInfo`, whose Durable Object runs in
-   * its own isolate where the in-process Shopify fetch stub cannot reach, so a
-   * seeded shop with no real offline token can only reach `500`. What matters
-   * — and what only the pre/post pair can show — is that `500` proves the
-   * `requireMember` gate was passed before the shop lookup failed, so the
-   * later `404` is the gate closing rather than the page having been
-   * unreachable all along.
+   * `200 -> 404 -> 200`, with the `404` being the gate and nothing else. The
+   * shop page reads only D1 now — it stopped calling the Shopify Admin API
+   * when the member area settled on showing the `myshopify.com` domain rather
+   * than the display name — so a healthy render is an ordinary `200` and the
+   * middle state is unambiguous.
    */
   it.effect("closes the shop page the moment membership is deleted", () =>
     run(
@@ -213,10 +122,9 @@ describe("member area", () => {
         yield* repository.addMember({ shop: SHOP, email: MEMBER });
         const cookie = yield* signInThroughWorker(MEMBER);
         const shopUrl = `http://localhost/shop/${SHOP}`;
-        strictEqual(
-          (yield* fetchWorker(shopUrl, { headers: { cookie } })).status,
-          500,
-        );
+        const page = yield* fetchWorker(shopUrl, { headers: { cookie } });
+        strictEqual(page.status, 200);
+        assertTrue((yield* Effect.promise(() => page.text())).includes(SHOP));
         yield* repository.deleteMember({ shop: SHOP, email: MEMBER });
         strictEqual(
           (yield* fetchWorker(shopUrl, { headers: { cookie } })).status,
@@ -233,7 +141,7 @@ describe("member area", () => {
         yield* repository.addMember({ shop: SHOP, email: MEMBER });
         strictEqual(
           (yield* fetchWorker(shopUrl, { headers: { cookie } })).status,
-          500,
+          200,
         );
       }),
     ),
@@ -244,12 +152,11 @@ describe("member queue", () => {
   /**
    * `/shop/$shop/queue` is a sibling of the shop index under the `/shop/$shop`
    * layout, which owns no loader of its own — each child's server fn calls
-   * `requireMember` itself. So unlike the shop index (whose `getShopInfo`
-   * call can only reach `500` here for the reason documented on the
-   * revocation test above), the queue read hits only the Durable Object and
-   * renders `200`. The `404` on another shop proves the queue route is behind
-   * the same gate. Step-level queue behavior is covered against the Durable
-   * Object in `shop-agent-workflows.test.ts`.
+   * `requireMember` itself. The queue read hits only the Durable Object and
+   * renders `200`; the `404` on another shop proves the route is behind the
+   * same gate. The page's own actions are socket callables and are covered
+   * against the object in `member-queue-socket.test.ts` and
+   * `shop-agent-workflows.test.ts`.
    */
   it.effect("is gated by membership like the shop page", () =>
     run(
@@ -268,6 +175,53 @@ describe("member queue", () => {
         strictEqual(
           (yield* fetchWorker(`http://localhost/shop/${OTHER_SHOP}/queue`, {
             headers: { cookie },
+          })).status,
+          404,
+        );
+      }),
+    ),
+  );
+
+  /**
+   * A member of a shop whose subscription lapsed is sent to the lapsed page,
+   * and only a member: the stranger still gets `404`, because `requireMember`
+   * checks membership before the plan so a lapse is never disclosed to someone
+   * who does not belong to the shop. The lapsed page itself renders without
+   * a loader, so it must not redirect back.
+   */
+  it.effect("redirects a member of a lapsed shop to the lapsed page", () =>
+    run(
+      Effect.gen(function* () {
+        const repository = yield* Repository;
+        yield* seedShop(SHOP);
+        yield* repository.updateShopSessionPlan({
+          shop: SHOP,
+          planHandle: null,
+          planHandleExpiresAt: Date.now() + 60 * 60 * 1000,
+        });
+        yield* repository.addMember({ shop: SHOP, email: MEMBER });
+        // A magic link is only minted for someone who is a member somewhere.
+        yield* seedShop(OTHER_SHOP);
+        const STRANGER = emailOf("stranger@example.com");
+        yield* repository.addMember({ shop: OTHER_SHOP, email: STRANGER });
+        const cookie = yield* signInThroughWorker(MEMBER);
+        const stranger = yield* signInThroughWorker(STRANGER);
+        for (const path of [`/shop/${SHOP}`, `/shop/${SHOP}/queue`]) {
+          const response = yield* fetchWorker(`http://localhost${path}`, {
+            headers: { cookie },
+          });
+          strictEqual(response.status, 307);
+          strictEqual(response.headers.get("location"), `/shop/${SHOP}/lapsed`);
+        }
+        strictEqual(
+          (yield* fetchWorker(`http://localhost/shop/${SHOP}/lapsed`, {
+            headers: { cookie },
+          })).status,
+          200,
+        );
+        strictEqual(
+          (yield* fetchWorker(`http://localhost/shop/${SHOP}/queue`, {
+            headers: { cookie: stranger },
           })).status,
           404,
         );

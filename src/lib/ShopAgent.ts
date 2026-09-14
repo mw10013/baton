@@ -1,7 +1,13 @@
 import type * as ShopifyApi from "@shopify/shopify-api";
 
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-do";
-import { Agent, callable, getCurrentAgent, type Connection } from "agents";
+import {
+  Agent,
+  callable,
+  getCurrentAgent,
+  type Connection,
+  type ConnectionContext,
+} from "agents";
 import {
   Cause,
   Clock,
@@ -80,15 +86,152 @@ class ShopAgentNotifyError extends Schema.TaggedError<ShopAgentNotifyError>()(
 ) {}
 
 /**
- * Scaffolding shared by every decoding ShopAgent RPC method: decode the wire
- * input against `schema`, hand the decoded value to the business `handler`,
- * and wrap both under `Effect.withLogSpan(name)`.
+ * The identity the Worker's connect gate resolved, as it survives on the
+ * connection. See `Domain.ConnectionState` for why it lives there and not in
+ * a message.
+ *
+ * Decoded strict: the only writer is this module, so an excess property means
+ * the shape drifted and the connection should be treated as unidentified
+ * rather than half-understood.
+ */
+const decodeConnectionState = Schema.decodeUnknownOption(
+  Domain.ConnectionState,
+  { onExcessProperty: "error" },
+);
+
+const connectionState = (
+  connection: Connection,
+): Option.Option<Domain.ConnectionState> =>
+  decodeConnectionState(connection.state);
+
+/**
+ * The `x-baton-*` headers on the forwarded upgrade request, shaped for
+ * `Domain.ConnectionState` but not yet validated — a missing or unknown role
+ * yields a value the schema rejects, which is what closes the connection.
+ *
+ * Browsers cannot set headers on a WebSocket upgrade, so these can only have
+ * come from the Worker gate; a non-browser client that sets them itself is
+ * still stripped, because the gate rebuilds the request from scratch rather
+ * than copying the inbound headers.
+ */
+const connectionStateFromHeaders = (headers: Headers): unknown => {
+  const role = headers.get(Domain.CONNECTION_ROLE_HEADER);
+  return role === "member"
+    ? {
+        role,
+        memberId: headers.get(Domain.CONNECTION_MEMBER_ID_HEADER),
+        memberEmail: headers.get(Domain.CONNECTION_MEMBER_EMAIL_HEADER),
+        teamIds: (headers.get(Domain.CONNECTION_TEAM_IDS_HEADER) ?? "")
+          .split(",")
+          .filter((teamId) => teamId.length > 0),
+        subscription: null,
+      }
+    : { role, subscription: null };
+};
+
+/** The tag every member connection carries, so a membership change can find and close it. */
+const memberConnectionTag = (memberId: string) => `member:${memberId}`;
+
+/**
+ * Writes a subscription without disturbing the identity beside it — the reason
+ * `Domain.ConnectionState` nests `subscription` rather than being it. An
+ * unidentified connection is left alone: it is already being closed.
+ */
+const setSubscription = (
+  connection: Connection,
+  subscription: Domain.Subscription | null,
+) => {
+  Option.match(connectionState(connection), {
+    onNone: () => null,
+    onSome: (state) => connection.setState({ ...state, subscription }),
+  });
+};
+
+/**
+ * Refused because of *who* is calling, not what they sent. A typed failure
+ * rather than a defect so the shape is visible in method signatures; it
+ * reaches the browser as an ordinary RPC rejection at the `runEffect` seam,
+ * which is all a client can act on anyway.
+ */
+class ShopAgentForbiddenError extends Schema.TaggedError<ShopAgentForbiddenError>()(
+  "ShopAgentForbiddenError",
+  { message: Schema.String },
+) {}
+
+/**
+ * Who a method admits. Every `callableEffect` names one, so the check cannot
+ * be forgotten when a method is added — that, and not the check itself, is
+ * what keeps this safe over time.
+ *
+ * - `"merchant"` — a merchant connection, or a trusted caller with no
+ *   connection at all (see below).
+ * - `"member"` — a member connection only; it is also the source of the
+ *   `memberId` / `teamIds` the method writes with, so there is nowhere else
+ *   the identity could come from.
+ * - `"any"` — any identified connection. Exactly one method wants this:
+ *   `unsubscribe`, the other half of the subscribe cycle both populations run.
+ * - `"rpc"` — not reachable from a socket at all. These methods are not
+ *   `@callable()`, so the SDK already refuses to dispatch them over a
+ *   connection; naming the role states the intent and catches a stray
+ *   decorator.
+ *
+ * **Why a connectionless caller passes.** The absence of a connection means
+ * the call arrived over Durable Object RPC, which only a Worker binding can
+ * make — a browser has no path to it. Those callers (webhook handlers, the
+ * orders-sync workflow, `/api/dev/seed`, every `ShopAgentClient` loader read)
+ * are the Worker itself, already past its own authentication, and refusing
+ * them here would only mean re-proving a fact the platform guarantees. The
+ * check that matters is the other one: a socket whose role is wrong never
+ * reaches the method body. `"member"` is the exception because it needs an
+ * identity, not just trust.
+ */
+type CallerRole = "merchant" | "member" | "any" | "rpc";
+
+const forbidden = (detail: string) =>
+  Effect.fail(
+    new ShopAgentForbiddenError({ message: `ShopAgent: forbidden: ${detail}` }),
+  );
+
+/**
+ * The role check itself, run **before** the input is decoded so that a caller
+ * who may not be here cannot learn anything from the shape of a schema error.
+ *
+ * Reads `getCurrentAgent().connection`, which the agents SDK establishes
+ * around RPC dispatch (`runInInvocation`) and which is `undefined` for a plain
+ * Durable Object RPC call. Returns the connection's state so a caller that
+ * needs the identity does not decode it twice.
+ */
+const connectionRoleGuard = (
+  role: CallerRole,
+): Effect.Effect<
+  Option.Option<Domain.ConnectionState>,
+  ShopAgentForbiddenError
+> =>
+  Effect.suspend(() => {
+    const { connection } = getCurrentAgent<ShopAgent>();
+    if (!connection)
+      return role === "member"
+        ? forbidden("a member method needs a member connection")
+        : Effect.succeed(Option.none());
+    const state = connectionState(connection);
+    if (Option.isNone(state)) return forbidden("unidentified connection");
+    if (role === "rpc") return forbidden("not reachable over a socket");
+    if (role !== "any" && state.value.role !== role)
+      return forbidden(`role=${state.value.role} cannot call a ${role} method`);
+    return Effect.succeed(state);
+  });
+
+/**
+ * Scaffolding shared by every decoding ShopAgent RPC method: check the
+ * caller's {@link CallerRole}, decode the wire input against `schema`, hand
+ * the decoded value to the business `handler`, and wrap all three under
+ * `Effect.withLogSpan(name)`.
  *
  * Data-last and curried:
- * `callableEffect(name, schema, options?)(handler)(input)` — a method body is
+ * `callableEffect(name, schema, options)(handler)(input)` — a method body is
  * just `this.runEffect(callableEffect(...)(businessHandler)(input))`.
  *
- * `options` passes through to `Schema.decodeUnknownEffect`, which accepts
+ * `options.parse` passes through to `Schema.decodeUnknownEffect`, which accepts
  * `ParseOptions` at decoder creation. Browser-reachable input decodes strict
  * (`{ onExcessProperty: "error" }`); trusted server-to-server input can decode
  * lax.
@@ -100,14 +243,56 @@ const callableEffect =
   <A>(
     name: string,
     schema: Schema.ConstraintDecoder<A>,
-    options?: SchemaAST.ParseOptions,
+    options: {
+      readonly role: CallerRole;
+      readonly parse?: SchemaAST.ParseOptions;
+    },
   ) =>
   <B, E, R>(handler: (input: A) => Effect.Effect<B, E, R>) =>
   (input: unknown) =>
-    Schema.decodeUnknownEffect(
-      schema,
-      options,
-    )(input).pipe(Effect.flatMap(handler), Effect.withLogSpan(name));
+    connectionRoleGuard(options.role).pipe(
+      Effect.flatMap(() =>
+        Schema.decodeUnknownEffect(schema, options.parse)(input),
+      ),
+      Effect.flatMap(handler),
+      Effect.withLogSpan(name),
+    );
+
+/**
+ * {@link callableEffect} for the member mutations, which need the identity the
+ * guard just proved rather than only its verdict: the handler receives the
+ * connection's `memberId`, `memberEmail`, and `teamIds` alongside the decoded
+ * wire input. Those three are exactly what a member must not be able to name
+ * for themselves, which is why they arrive as a second argument from the
+ * connection and never as fields on the input.
+ */
+const memberCallableEffect =
+  <A>(
+    name: string,
+    schema: Schema.ConstraintDecoder<A>,
+    parse?: SchemaAST.ParseOptions,
+  ) =>
+  <B, E, R>(
+    handler: (
+      input: A,
+      member: Domain.MemberConnectionState,
+    ) => Effect.Effect<B, E, R>,
+  ) =>
+  (input: unknown) =>
+    connectionRoleGuard("member").pipe(
+      Effect.flatMap((state) =>
+        Option.isSome(state) && state.value.role === "member"
+          ? Effect.succeed(state.value)
+          : forbidden("member identity missing from the connection"),
+      ),
+      Effect.flatMap((member) =>
+        Schema.decodeUnknownEffect(
+          schema,
+          parse,
+        )(input).pipe(Effect.flatMap((decoded) => handler(decoded, member))),
+      ),
+      Effect.withLogSpan(name),
+    );
 
 /**
  * The Durable Object's private SQLite schema, versioned through
@@ -458,16 +643,6 @@ const shopifyAdminLayer = (session: ShopifyApi.Session) =>
     ShopifyAdmin.layerNoDeps,
     Layer.succeed(CurrentShopifySession, session),
   );
-
-const shopInfoQuery = `#graphql
-  query ShopInfo {
-    shop {
-      name
-      myshopifyDomain
-    }
-  }`;
-
-const ShopInfoResponse = Schema.Struct({ shop: Domain.ShopInfo });
 
 /**
  * Maps the repository's expected failures onto the tagged result union the
@@ -844,6 +1019,13 @@ const OrdersStreamInput = Schema.Struct({ url: Schema.String });
 /** See `publish`. */
 type PublishScope = "all" | readonly string[];
 
+/**
+ * The team half of a publish's scope, for member connections only — see
+ * `publish`. `"all"` is "every team", the honest answer whenever the writer
+ * cannot name the teams a change touched.
+ */
+type PublishTeams = "all" | readonly string[];
+
 const isOpen = (run: Domain.WorkflowRun) =>
   run.status === "pending" || run.status === "active";
 
@@ -894,12 +1076,89 @@ export class ShopAgent extends Agent {
     );
   }
 
-  private subscription(connection: Connection): Domain.Subscription | null {
-    return Option.getOrNull(
-      Schema.decodeUnknownOption(Domain.SubscriptionState)(connection.state, {
-        onExcessProperty: "error",
-      }),
+  /**
+   * Copies the identity the Worker's connect gate resolved off the forwarded
+   * request and onto the connection, where every callable reads it from
+   * (`Domain.ConnectionState`).
+   *
+   * A decode failure closes the connection with
+   * `Domain.CONNECTION_CLOSE_FORBIDDEN` instead of accepting an unidentified
+   * socket: browsers cannot set these headers, so the only way to get here
+   * with malformed ones is a gate that forwarded something wrong, and an
+   * unidentified connection would otherwise sit open failing every callable's
+   * role check one confusing error at a time.
+   *
+   * The subscription starts `null`: a fresh connection is subscribed to
+   * nothing, which is already what the reconnect path in `useSubscribedQuery`
+   * assumes.
+   */
+  override onConnect(connection: Connection, ctx: ConnectionContext) {
+    const shop = this.name;
+    return this.runEffect(
+      Schema.decodeUnknownEffect(Domain.ConnectionState)(
+        connectionStateFromHeaders(ctx.request.headers),
+      ).pipe(
+        Effect.flatMap((state) =>
+          Effect.sync(() => {
+            connection.setState(state);
+          }),
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logWarning(
+            `ShopAgent.onConnect: shop=${shop} connectionId=${connection.id}: no decodable identity, closing`,
+          ).pipe(
+            Effect.annotateLogs({
+              shop,
+              connectionId: connection.id,
+              cause: causeToErrorMessage(cause),
+            }),
+            Effect.flatMap(() =>
+              Effect.sync(() => {
+                connection.close(
+                  Domain.CONNECTION_CLOSE_FORBIDDEN,
+                  "unidentified connection",
+                );
+              }),
+            ),
+          ),
+        ),
+        Effect.withLogSpan("ShopAgent.onConnect"),
+      ),
     );
+  }
+
+  /**
+   * Tags are persisted with the hibernatable socket and are what
+   * `getConnections(tag)` filters on, so they carry only what a *fan-out* has
+   * to select by: the role, and for a member the id a membership change has
+   * to revoke (`revokeMemberConnections`). Everything else stays in
+   * `connection.state`.
+   *
+   * Runs before `onConnect`, against the same forwarded request, so it reads
+   * the headers rather than the state. An undecodable request tags nothing —
+   * `onConnect` closes that connection a moment later.
+   */
+  override getConnectionTags(
+    _connection: Connection,
+    ctx: ConnectionContext,
+  ): string[] {
+    return Option.match(
+      decodeConnectionState(connectionStateFromHeaders(ctx.request.headers)),
+      {
+        onNone: () => [],
+        onSome: (state) =>
+          state.role === "member"
+            ? ["member", memberConnectionTag(state.memberId)]
+            : ["merchant"],
+      },
+    );
+  }
+
+  private subscription(connection: Connection): Domain.Subscription | null {
+    return Option.match(connectionState(connection), {
+      onNone: () => null,
+      onSome: (state) => state.subscription,
+    });
   }
 
   private connections() {
@@ -910,16 +1169,24 @@ export class ShopAgent extends Agent {
     });
   }
 
-  private publishTo(connection: Connection, touched: PublishScope) {
+  private publishTo(
+    connection: Connection,
+    touched: PublishScope,
+    teams: PublishTeams,
+  ) {
     return Effect.try({
       try: () => {
-        const state = this.subscription(connection);
-        if (
-          state &&
-          (touched === "all" ||
-            state.orderId === null ||
-            touched.includes(state.orderId))
-        )
+        const state = Option.getOrNull(connectionState(connection));
+        const subscription = state?.subscription;
+        if (!state || !subscription) return;
+        const inScope =
+          state.role === "member"
+            ? teams === "all" ||
+              state.teamIds.some((teamId) => teams.includes(teamId))
+            : touched === "all" ||
+              subscription.orderId === null ||
+              touched.includes(subscription.orderId);
+        if (inScope)
           connection.send(
             JSON.stringify({
               type: "invalidated",
@@ -933,6 +1200,113 @@ export class ShopAgent extends Agent {
         log: "Debug",
         message: `ShopAgent.publishTo: shop=${this.name}`,
       }),
+    );
+  }
+
+  /**
+   * Closes every open connection belonging to these members with
+   * `Domain.CONNECTION_CLOSE_REVOKED`, so each reconnects through the Worker's
+   * gate and comes back with whatever membership now holds.
+   *
+   * Identity on a connection is a connect-time snapshot
+   * (`Domain.ConnectionState`), which is what makes this necessary: a member
+   * removed from a team keeps a socket whose `teamIds` still name it until
+   * something closes it. Closing is the cheapest correct answer — the gate is
+   * the one authority on membership, and a reconnect simply asks it again.
+   * Cloudflare's ~300s idle close is the backstop if this ever fails.
+   *
+   * Best-effort by design: a close that throws is logged and skipped rather
+   * than failing the merchant's edit, which has already been written to D1 and
+   * is not undone by a stale socket surviving a few minutes.
+   */
+  private closeMemberConnections(memberIds: readonly string[]) {
+    const shop = this.name;
+    return Effect.forEach(
+      memberIds,
+      (memberId) =>
+        Effect.try({
+          try: () => {
+            for (const connection of this.getConnections(
+              memberConnectionTag(memberId),
+            ))
+              connection.close(
+                Domain.CONNECTION_CLOSE_REVOKED,
+                "membership changed",
+              );
+          },
+          catch: (cause) =>
+            new ShopAgentNotifyError({
+              message: "revoke close failed",
+              cause,
+            }),
+        }).pipe(
+          Effect.ignore({
+            log: "Debug",
+            message: `ShopAgent.revokeMemberConnections: shop=${shop} memberId=${memberId}`,
+          }),
+        ),
+      { discard: true },
+    );
+  }
+
+  /**
+   * Plain RPC, not `@callable()`: the caller is the Worker, right after the D1
+   * write that changed a membership (`app.teams.$teamId`, `app.members`). A
+   * browser has no business revoking anyone.
+   */
+  revokeMemberConnections(
+    input: typeof Domain.RevokeMemberConnectionsInput.Encoded,
+  ): Promise<void> {
+    const close = (memberIds: readonly string[]) =>
+      this.closeMemberConnections(memberIds);
+    return this.runEffect(
+      callableEffect(
+        "ShopAgent.revokeMemberConnections",
+        Domain.RevokeMemberConnectionsInput,
+        { role: "rpc" },
+      )(({ memberIds }) => close(memberIds))(input),
+    );
+  }
+
+  /**
+   * Closes every connection on this object — merchant and member alike — with
+   * `Domain.CONNECTION_CLOSE_REVOKED`. Plain RPC, not `@callable()`: the
+   * caller is `SubscriptionPlan`, at the moment a revalidation learns the
+   * shop's subscription lapsed.
+   *
+   * The keepalive means a healthy socket never reconnects on its own, so the
+   * connect-time plan check would otherwise hold for as long as the tab
+   * lives. Closing is what makes the gate's `402` reach an open tab: each
+   * reconnect asks the gate again, and the gate now refuses. Best-effort like
+   * {@link closeMemberConnections}: a failed close is logged, never surfaced
+   * to the revalidation that triggered it.
+   */
+  revokeAllConnections(): Promise<void> {
+    const shop = this.name;
+    const connections = () => this.getConnections();
+    return this.runEffect(
+      Effect.gen(function* () {
+        yield* connectionRoleGuard("rpc");
+        yield* Effect.try({
+          try: () => {
+            for (const connection of connections())
+              connection.close(
+                Domain.CONNECTION_CLOSE_REVOKED,
+                "subscription lapsed",
+              );
+          },
+          catch: (cause) =>
+            new ShopAgentNotifyError({
+              message: "revoke close failed",
+              cause,
+            }),
+        }).pipe(
+          Effect.ignore({
+            log: "Debug",
+            message: `ShopAgent.revokeAllConnections: shop=${shop}`,
+          }),
+        );
+      }).pipe(Effect.withLogSpan("ShopAgent.revokeAllConnections")),
     );
   }
 
@@ -952,13 +1326,23 @@ export class ShopAgent extends Agent {
    * publish, with one exception: Apply and the on/off switch change what
    * starts runs, which the order page's `orderWorkflow` / `itemWorkflows`
    * show, so those two publish `"all"`.
+   *
+   * `teams` is the same idea for the other population. A member's subscription
+   * is their queue, which is scoped by team rather than by order, so an order
+   * GID says nothing about whether their view changed. The five member
+   * mutations name the teams their write could have affected — every team
+   * owning a step on any run of that order, because readiness crosses runs
+   * (`WorkflowRunRepository.listOrderTeamIds`) — and everything else publishes
+   * `"all"`, which reaches every member. Over-broad costs a refetch;
+   * under-broad costs a queue that silently stops updating, so `"all"` is the
+   * right default for a writer that cannot name them.
    */
-  private publish(touched: PublishScope) {
+  private publish(touched: PublishScope, teams: PublishTeams = "all") {
     return this.connections().pipe(
       Effect.flatMap((connections) =>
         Effect.forEach(
           connections,
-          (connection) => this.publishTo(connection, touched),
+          (connection) => this.publishTo(connection, touched, teams),
           { discard: true },
         ),
       ),
@@ -973,7 +1357,8 @@ export class ShopAgent extends Agent {
   unsubscribe(input: Domain.SubscriberIdInput): Promise<void> {
     return this.runEffect(
       callableEffect("ShopAgent.unsubscribe", Domain.SubscriberIdInput, {
-        onExcessProperty: "error",
+        role: "any",
+        parse: { onExcessProperty: "error" },
       })(({ subscriberId }) =>
         Effect.sync(() => {
           const { connection } = getCurrentAgent<ShopAgent>();
@@ -981,34 +1366,9 @@ export class ShopAgent extends Agent {
             connection &&
             this.subscription(connection)?.subscriberId === subscriberId
           )
-            connection.setState(null);
+            setSubscription(connection, null);
         }),
       )(input),
-    );
-  }
-
-  /**
-   * Reads the shop back out of the Shopify Admin API from inside the object,
-   * using the offline session `ensureShopSession` resolves (and refreshes) from D1.
-   *
-   * Not `@callable()`: it spends a Shopify API call, so it stays on the
-   * `ShopAgentClient` path where the Worker has already authenticated the
-   * request.
-   */
-  getShopInfo(): Promise<Domain.ShopInfo> {
-    const name = this.name;
-    return this.runEffect(
-      Effect.gen(function* () {
-        const shop = yield* Schema.decodeUnknownEffect(Domain.Shop)(name);
-        const session = yield* (yield* Shopify).ensureShopSession(shop);
-        const { shop: info } = yield* ShopifyAdmin.pipe(
-          Effect.flatMap((admin) =>
-            admin.graphqlDecode(ShopInfoResponse, shopInfoQuery),
-          ),
-          Effect.provide(shopifyAdminLayer(session)),
-        );
-        return info;
-      }).pipe(Effect.withLogSpan("ShopAgent.getShopInfo")),
     );
   }
 
@@ -1111,6 +1471,9 @@ export class ShopAgent extends Agent {
     const publish = () => this.publish("all");
     return this.runEffect(
       Effect.gen(function* () {
+        // The one `@callable()` that takes no input, so it has no
+        // `callableEffect` to carry the role check; the check is the same.
+        yield* connectionRoleGuard("merchant");
         const repository = yield* OrderRepository;
         const now = yield* Clock.currentTimeMillis;
         const current = yield* repository.getSyncState();
@@ -1208,10 +1571,9 @@ export class ShopAgent extends Agent {
     const publish = () => this.publish("all");
     const reconciler = () => this.reconciler("bulk");
     return this.runEffect(
-      callableEffect(
-        "ShopAgent.onOrdersStream",
-        OrdersStreamInput,
-      )(({ url }) =>
+      callableEffect("ShopAgent.onOrdersStream", OrdersStreamInput, {
+        role: "rpc",
+      })(({ url }) =>
         Effect.gen(function* () {
           const counts = yield* runShopAgentOrdersStream({
             url,
@@ -1253,10 +1615,9 @@ export class ShopAgent extends Agent {
     const shop = this.name;
     const publish = () => this.publish("all");
     return this.runEffect(
-      callableEffect(
-        "ShopAgent.onOrdersSyncError",
-        OrdersSyncErrorInput,
-      )(({ startedAt, message }) =>
+      callableEffect("ShopAgent.onOrdersSyncError", OrdersSyncErrorInput, {
+        role: "rpc",
+      })(({ startedAt, message }) =>
         Effect.gen(function* () {
           yield* Effect.logError(
             `ShopAgent.onOrdersSyncError: shop=${shop}: ${message}`,
@@ -1287,10 +1648,9 @@ export class ShopAgent extends Agent {
     const deleteWorkflow = () => this.deleteWorkflow(workflowId);
     const publish = () => this.publish("all");
     await this.runEffect(
-      callableEffect(
-        "ShopAgent.onWorkflowComplete",
-        Domain.OrdersSyncResult,
-      )(({ startedAt }) =>
+      callableEffect("ShopAgent.onWorkflowComplete", Domain.OrdersSyncResult, {
+        role: "rpc",
+      })(({ startedAt }) =>
         Effect.gen(function* () {
           const state = yield* (yield* OrderRepository).completeSync({
             startedAt,
@@ -1351,48 +1711,46 @@ export class ShopAgent extends Agent {
     const fetchAndUpsert = (orderId: string) =>
       this.fetchAndUpsertOrder(orderId, "webhook");
     return this.runEffect(
-      callableEffect(
-        "ShopAgent.syncOrder",
-        OrderWebhookInput,
-      )(({ orderId, topic, webhookId, triggeredAt, updatedAt }) =>
-        Effect.gen(function* () {
-          const repository = yield* OrderRepository;
-          const isNew = yield* repository.recordWebhookDelivery({
-            webhookId,
-            topic,
-            orderId,
-            triggeredAt,
-            receivedAt: yield* Clock.currentTimeMillis,
-          });
-          if (!isNew) {
-            yield* Effect.logInfo(
-              `ShopAgent.syncOrder: shop=${shop} topic=${topic} status=duplicate`,
-            ).pipe(
-              Effect.annotateLogs({
-                shop,
-                topic,
-                webhookId,
-                status: "duplicate",
-              }),
-            );
-            return;
-          }
-          const stored = yield* repository.getOrderUpdatedAt(orderId);
-          if (
-            updatedAt !== null &&
-            Option.isSome(stored) &&
-            updatedAt <= stored.value
-          ) {
-            yield* Effect.logInfo(
-              `ShopAgent.syncOrder: shop=${shop} topic=${topic} status=stale`,
-            ).pipe(
-              Effect.annotateLogs({ shop, topic, orderId, status: "stale" }),
-            );
-            return;
-          }
-          yield* fetchAndUpsert(orderId);
-          yield* publish([orderId]);
-        }),
+      callableEffect("ShopAgent.syncOrder", OrderWebhookInput, { role: "rpc" })(
+        ({ orderId, topic, webhookId, triggeredAt, updatedAt }) =>
+          Effect.gen(function* () {
+            const repository = yield* OrderRepository;
+            const isNew = yield* repository.recordWebhookDelivery({
+              webhookId,
+              topic,
+              orderId,
+              triggeredAt,
+              receivedAt: yield* Clock.currentTimeMillis,
+            });
+            if (!isNew) {
+              yield* Effect.logInfo(
+                `ShopAgent.syncOrder: shop=${shop} topic=${topic} status=duplicate`,
+              ).pipe(
+                Effect.annotateLogs({
+                  shop,
+                  topic,
+                  webhookId,
+                  status: "duplicate",
+                }),
+              );
+              return;
+            }
+            const stored = yield* repository.getOrderUpdatedAt(orderId);
+            if (
+              updatedAt !== null &&
+              Option.isSome(stored) &&
+              updatedAt <= stored.value
+            ) {
+              yield* Effect.logInfo(
+                `ShopAgent.syncOrder: shop=${shop} topic=${topic} status=stale`,
+              ).pipe(
+                Effect.annotateLogs({ shop, topic, orderId, status: "stale" }),
+              );
+              return;
+            }
+            yield* fetchAndUpsert(orderId);
+            yield* publish([orderId]);
+          }),
       )(input),
     );
   }
@@ -1411,7 +1769,8 @@ export class ShopAgent extends Agent {
       this.fetchAndUpsertOrder(orderId, "manual");
     return this.runEffect(
       callableEffect("ShopAgent.resyncOrder", Domain.ResyncOrderInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })(({ orderId }) =>
         Effect.gen(function* () {
           yield* fetchAndUpsert(orderId);
@@ -1426,10 +1785,9 @@ export class ShopAgent extends Agent {
     const shop = this.name;
     const publish = (touched: PublishScope) => this.publish(touched);
     return this.runEffect(
-      callableEffect(
-        "ShopAgent.deleteOrder",
-        Domain.ResyncOrderInput,
-      )(({ orderId }) =>
+      callableEffect("ShopAgent.deleteOrder", Domain.ResyncOrderInput, {
+        role: "rpc",
+      })(({ orderId }) =>
         Effect.gen(function* () {
           yield* (yield* WorkflowRunRepository).markOrderDeleted({ orderId });
           yield* (yield* OrderRepository).deleteOrder(orderId);
@@ -1473,10 +1831,9 @@ export class ShopAgent extends Agent {
    */
   listOrders(input: Domain.ListOrdersInput): Promise<Domain.OrdersView> {
     return this.runEffect(
-      callableEffect(
-        "ShopAgent.listOrders",
-        Domain.ListOrdersInput,
-      )((input) => this.readOrders(input))(input),
+      callableEffect("ShopAgent.listOrders", Domain.ListOrdersInput, {
+        role: "rpc",
+      })((input) => this.readOrders(input))(input),
     );
   }
 
@@ -1494,11 +1851,13 @@ export class ShopAgent extends Agent {
       this.readOrders(input);
     return this.runEffect(
       callableEffect("ShopAgent.subscribeOrders", Domain.SubscribeOrdersInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })(({ subscriberId, ...input }) =>
         Effect.gen(function* () {
           const { connection } = getCurrentAgent<ShopAgent>();
-          if (connection) connection.setState({ subscriberId, orderId: null });
+          if (connection)
+            setSubscription(connection, { subscriberId, orderId: null });
           return yield* readOrders(input);
         }),
       )(input),
@@ -1546,7 +1905,8 @@ export class ShopAgent extends Agent {
     const teams = () => this.teams();
     return this.runEffect(
       callableEffect("ShopAgent.getWorkflowDetail", Domain.WorkflowIdInput, {
-        onExcessProperty: "error",
+        role: "rpc",
+        parse: { onExcessProperty: "error" },
       })(({ workflowId }) =>
         Effect.gen(function* () {
           const repository = yield* WorkflowRepository;
@@ -1589,7 +1949,8 @@ export class ShopAgent extends Agent {
   ): Promise<Domain.WorkflowResult> {
     return this.runEffect(
       callableEffect("ShopAgent.createWorkflow", Domain.CreateWorkflowInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })((input) =>
         workflowResult(
           WorkflowRepository.pipe(
@@ -1610,7 +1971,7 @@ export class ShopAgent extends Agent {
       callableEffect(
         "ShopAgent.duplicateWorkflow",
         Domain.DuplicateWorkflowInput,
-        { onExcessProperty: "error" },
+        { role: "merchant", parse: { onExcessProperty: "error" } },
       )(({ workflowId }) =>
         workflowResult(
           Effect.gen(function* () {
@@ -1633,7 +1994,8 @@ export class ShopAgent extends Agent {
   ): Promise<Domain.WorkflowResult> {
     return this.runEffect(
       callableEffect("ShopAgent.updateWorkflow", Domain.UpdateWorkflowInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })(({ workflowId, name }) =>
         workflowResult(
           WorkflowRepository.pipe(
@@ -1655,7 +2017,7 @@ export class ShopAgent extends Agent {
       callableEffect(
         "ShopAgent.updateWorkflowTags",
         Domain.UpdateWorkflowTagsInput,
-        { onExcessProperty: "error" },
+        { role: "merchant", parse: { onExcessProperty: "error" } },
       )(({ workflowId, tags }) =>
         stepResult(
           Effect.gen(function* () {
@@ -1678,7 +2040,8 @@ export class ShopAgent extends Agent {
     const shop = this.name;
     return this.runEffect(
       callableEffect("ShopAgent.createDraft", Domain.CreateDraftInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })(({ workflowId }) =>
         draftResult(
           Effect.gen(function* () {
@@ -1713,7 +2076,8 @@ export class ShopAgent extends Agent {
       this.reconcileAll("applyDraft", workflow);
     return this.runEffect(
       callableEffect("ShopAgent.applyDraft", Domain.ApplyDraftInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })(({ workflowId }) =>
         applyResult(
           Effect.gen(function* () {
@@ -1739,7 +2103,8 @@ export class ShopAgent extends Agent {
     const shop = this.name;
     return this.runEffect(
       callableEffect("ShopAgent.discardDraft", Domain.DiscardDraftInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })(({ workflowId }) =>
         discardResult(
           Effect.gen(function* () {
@@ -1775,7 +2140,7 @@ export class ShopAgent extends Agent {
       callableEffect(
         "ShopAgent.setWorkflowActive",
         Domain.SetWorkflowActiveInput,
-        { onExcessProperty: "error" },
+        { role: "merchant", parse: { onExcessProperty: "error" } },
       )(({ workflowId, active, activatedAt }) =>
         activateResult(
           Effect.gen(function* () {
@@ -1816,7 +2181,7 @@ export class ShopAgent extends Agent {
       callableEffect(
         "ShopAgent.setWorkflowActivatedAt",
         Domain.SetWorkflowActivatedAtInput,
-        { onExcessProperty: "error" },
+        { role: "merchant", parse: { onExcessProperty: "error" } },
       )(({ workflowId, activatedAt }) =>
         changeActivatedAtResult(
           Effect.gen(function* () {
@@ -1848,7 +2213,7 @@ export class ShopAgent extends Agent {
       callableEffect(
         "ShopAgent.countWaitingOrders",
         Domain.CountWaitingOrdersInput,
-        { onExcessProperty: "error" },
+        { role: "merchant", parse: { onExcessProperty: "error" } },
       )(({ workflowId }) =>
         Effect.gen(function* () {
           const found = yield* (yield* WorkflowRepository).getWorkflow({
@@ -1885,7 +2250,8 @@ export class ShopAgent extends Agent {
     const publish = () => this.publish("all");
     return this.runEffect(
       callableEffect("ShopAgent.removeWorkflow", Domain.DeleteWorkflowInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })(({ workflowId }) =>
         Effect.gen(function* () {
           yield* (yield* WorkflowRepository).deleteWorkflow({ workflowId });
@@ -2069,10 +2435,9 @@ export class ShopAgent extends Agent {
     input: Domain.GetOrderDetailInput,
   ): Promise<Domain.OrderDetailView | null> {
     return this.runEffect(
-      callableEffect(
-        "ShopAgent.getOrderDetail",
-        Domain.GetOrderDetailInput,
-      )((input) => this.readOrderDetail(input))(input),
+      callableEffect("ShopAgent.getOrderDetail", Domain.GetOrderDetailInput, {
+        role: "rpc",
+      })((input) => this.readOrderDetail(input))(input),
     );
   }
 
@@ -2084,7 +2449,8 @@ export class ShopAgent extends Agent {
       this.readOrderDetail(input);
     return this.runEffect(
       callableEffect("ShopAgent.subscribeOrder", Domain.SubscribeOrderInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })(({ subscriberId, ...input }) =>
         Effect.gen(function* () {
           const view = yield* readOrderDetail(input);
@@ -2096,7 +2462,7 @@ export class ShopAgent extends Agent {
            */
           const { connection } = getCurrentAgent<ShopAgent>();
           if (connection)
-            connection.setState({
+            setSubscription(connection, {
               subscriberId,
               orderId: view?.order.id ?? null,
             });
@@ -2114,7 +2480,7 @@ export class ShopAgent extends Agent {
       callableEffect(
         "ShopAgent.listRunsForOrder",
         Domain.ListRunsForOrderInput,
-        { onExcessProperty: "error" },
+        { role: "merchant", parse: { onExcessProperty: "error" } },
       )(({ orderId }) =>
         WorkflowRunRepository.pipe(
           Effect.flatMap((repository) =>
@@ -2142,7 +2508,8 @@ export class ShopAgent extends Agent {
     const teams = () => this.teams();
     return this.runEffect(
       callableEffect("ShopAgent.attachWorkflow", Domain.AttachWorkflowInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })(({ lineItemId, workflowId }) =>
         Effect.gen(function* () {
           const target = yield* (yield* OrderRepository).getLineItem(
@@ -2195,7 +2562,8 @@ export class ShopAgent extends Agent {
     const publish = () => this.publish("all");
     return this.runEffect(
       callableEffect("ShopAgent.cancelRun", Domain.RunIdInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })(({ runId }) =>
         runResult(
           WorkflowRunRepository.pipe(
@@ -2218,7 +2586,8 @@ export class ShopAgent extends Agent {
     const publish = () => this.publish("all");
     return this.runEffect(
       callableEffect("ShopAgent.uncancelRun", Domain.RunIdInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })(({ runId }) =>
         runResult(
           WorkflowRunRepository.pipe(
@@ -2230,178 +2599,236 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Member-area methods. Plain RPC, not `@callable()`: the member area has no
-   * socket, and `teamIds` / `memberId` are privileged inputs the Worker
-   * resolves from the session in `requireMember` — exactly what the
-   * `ShopAgentClient` path exists to carry. Decoded lax: the caller is the
+   * Member-area methods. Two idioms, split by whether the call has a socket:
+   *
+   * `listQueue` stays plain RPC, not `@callable()`. It is the queue page's
+   * loader read and paints during SSR, where there is no connection to carry
+   * an identity, so `teamIds` arrives from `requireMember` through
+   * `ShopAgentClient` exactly as before. Decoded lax: the caller is the
    * Worker, not a browser.
+   *
+   * The five mutations below are `@callable()` on the member socket. Their
+   * privileged inputs — `memberId`, `memberEmail`, `teamIds` — come from
+   * `Domain.ConnectionState` on the connection the Worker's gate authorized,
+   * never from the message, so the browser sends only what it clicked. That is
+   * the same guarantee the server-function path gave (the Worker resolved
+   * them), reached a different way: `memberCallableEffect` proves the role and
+   * hands the identity to the handler, and the wire input is decoded strict.
    */
+  /**
+   * A publish scoped to the teams a member's write could have changed the
+   * queue of — see `publish`. The read is one indexed query against the
+   * object's own SQLite, and it runs after the write so a step that just
+   * became ready for another team is included.
+   */
+  private publishToTeams(
+    target: { readonly runStepId: string } | { readonly runId: string },
+  ) {
+    return WorkflowRunRepository.pipe(
+      Effect.flatMap((repository) => repository.listOrderTeamIds(target)),
+      Effect.flatMap((teams) => this.publish("all", teams)),
+      Effect.ignore({
+        log: "Debug",
+        message: `ShopAgent.publishToTeams: shop=${this.name}`,
+      }),
+    );
+  }
+
   /** No D1 read: `startedByEmail` is a snapshot on the row, so the queue reads the same after the member is deleted. */
+  private readQueue(teamIds: readonly string[]) {
+    return Effect.gen(function* () {
+      const rows = yield* (yield* WorkflowRunRepository).listQueue({ teamIds });
+      return rows.flatMap((row): Domain.QueueItem[] => {
+        const [first, ...rest] = row.steps;
+        return first === undefined
+          ? []
+          : [
+              {
+                run: row.run,
+                steps: [first, ...rest],
+                stageCount: row.stageCount,
+                note: row.note,
+                items: row.items,
+              },
+            ];
+      });
+    });
+  }
+
   listQueue(
     input: typeof Domain.ListQueueInput.Encoded,
   ): Promise<readonly Domain.QueueItem[]> {
+    const readQueue = (teamIds: readonly string[]) => this.readQueue(teamIds);
     return this.runEffect(
-      callableEffect(
-        "ShopAgent.listQueue",
-        Domain.ListQueueInput,
-      )(({ teamIds }) =>
+      callableEffect("ShopAgent.listQueue", Domain.ListQueueInput, {
+        role: "rpc",
+      })(({ teamIds }) => readQueue(teamIds))(input),
+    );
+  }
+
+  /**
+   * The socket twin of {@link listQueue}: the same read, plus the calling
+   * connection's subscription, in one round trip so a write landing between
+   * two separate calls cannot be missed. The subscribe pattern end to end is
+   * on `Domain.Subscription`.
+   *
+   * `teamIds` comes from the connection, not the message, so a member's queue
+   * is scoped by the membership the Worker's gate resolved — the same value
+   * the loader's `requireMember` produced, arriving by the other route.
+   *
+   * `orderId: null`: a member's subscription is team-scoped, not order-scoped,
+   * and `publish` reads the role to decide which of the two scopes applies.
+   */
+  @callable()
+  subscribeQueue(
+    input: typeof Domain.SubscribeQueueInput.Encoded,
+  ): Promise<readonly Domain.QueueItem[]> {
+    const readQueue = (teamIds: readonly string[]) => this.readQueue(teamIds);
+    return this.runEffect(
+      memberCallableEffect(
+        "ShopAgent.subscribeQueue",
+        Domain.SubscribeQueueInput,
+        { onExcessProperty: "error" },
+      )(({ subscriberId }, { teamIds }) =>
         Effect.gen(function* () {
-          const rows = yield* (yield* WorkflowRunRepository).listQueue({
-            teamIds,
-          });
-          return rows.flatMap((row): Domain.QueueItem[] => {
-            const [first, ...rest] = row.steps;
-            return first === undefined
-              ? []
-              : [
-                  {
-                    run: row.run,
-                    steps: [first, ...rest],
-                    stageCount: row.stageCount,
-                    note: row.note,
-                    items: row.items,
-                  },
-                ];
-          });
+          const { connection } = getCurrentAgent<ShopAgent>();
+          if (connection)
+            setSubscription(connection, { subscriberId, orderId: null });
+          return yield* readQueue(teamIds);
         }),
       )(input),
     );
   }
 
+  @callable()
   startStep(
     input: typeof Domain.StartStepInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
-    const publish = () => this.publish("all");
+    const publish = (runStepId: string) => this.publishToTeams({ runStepId });
     return this.runEffect(
-      callableEffect(
-        "ShopAgent.startStep",
-        Domain.StartStepInput,
-      )(({ runStepId, memberId, memberEmail, teamIds }) =>
+      memberCallableEffect("ShopAgent.startStep", Domain.StartStepInput, {
+        onExcessProperty: "error",
+      })(({ runStepId }, { memberId, memberEmail, teamIds }) =>
         runResult(
           Effect.gen(function* () {
             yield* (yield* WorkflowRunRepository).startStep({
               runStepId,
-              memberId: yield* Schema.decodeUnknownEffect(Domain.MemberId)(
-                memberId,
-              ).pipe(Effect.orDie),
+              memberId,
               memberEmail,
               teamIds,
-            });
+            } satisfies Domain.StartStepCommand);
             yield* Effect.logInfo(
               `ShopAgent.startStep: shop=${shop} step=${runStepId} memberId=${memberId}`,
             ).pipe(Effect.annotateLogs({ shop, step: runStepId, memberId }));
           }),
-        ).pipe(Effect.tap(publish)),
+        ).pipe(Effect.tap(() => publish(runStepId))),
       )(input),
     );
   }
 
   /** The note itself never reaches the log line: worker text is unbounded and not ours to index. */
+  @callable()
   setStepNote(
     input: typeof Domain.SetStepNoteInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
-    const publish = () => this.publish("all");
+    const publish = (runStepId: string) => this.publishToTeams({ runStepId });
     return this.runEffect(
-      callableEffect(
-        "ShopAgent.setStepNote",
-        Domain.SetStepNoteInput,
-      )(({ runStepId, memberId, teamIds, note }) =>
+      memberCallableEffect("ShopAgent.setStepNote", Domain.SetStepNoteInput, {
+        onExcessProperty: "error",
+      })(({ runStepId, note }, { memberId, teamIds }) =>
         runResult(
           Effect.gen(function* () {
             yield* (yield* WorkflowRunRepository).setStepNote({
               runStepId,
-              memberId: yield* Schema.decodeUnknownEffect(Domain.MemberId)(
-                memberId,
-              ).pipe(Effect.orDie),
+              memberId,
               teamIds,
               note,
-            });
+            } satisfies Domain.SetStepNoteCommand);
             yield* Effect.logInfo(
               `ShopAgent.setStepNote: shop=${shop} step=${runStepId} memberId=${memberId}`,
             ).pipe(Effect.annotateLogs({ shop, step: runStepId, memberId }));
           }),
-        ).pipe(Effect.tap(publish)),
+        ).pipe(Effect.tap(() => publish(runStepId))),
       )(input),
     );
   }
 
+  @callable()
   blockRun(
     input: typeof Domain.BlockRunInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
-    const publish = () => this.publish("all");
+    const publish = (runId: string) => this.publishToTeams({ runId });
     return this.runEffect(
-      callableEffect(
-        "ShopAgent.blockRun",
-        Domain.BlockRunInput,
-      )(({ runId, memberId, memberEmail, teamIds, reason }) =>
+      memberCallableEffect("ShopAgent.blockRun", Domain.BlockRunInput, {
+        onExcessProperty: "error",
+      })(({ runId, reason }, { memberId, memberEmail, teamIds }) =>
         runResult(
           Effect.gen(function* () {
             yield* (yield* WorkflowRunRepository).blockRun({
               runId,
-              memberId: yield* Schema.decodeUnknownEffect(Domain.MemberId)(
-                memberId,
-              ).pipe(Effect.orDie),
+              memberId,
               memberEmail,
               teamIds,
               reason,
-            });
+            } satisfies Domain.BlockRunCommand);
             yield* Effect.logInfo(
               `ShopAgent.blockRun: shop=${shop} runId=${runId} memberId=${memberId}`,
             ).pipe(Effect.annotateLogs({ shop, runId, memberId }));
           }),
-        ).pipe(Effect.tap(publish)),
+        ).pipe(Effect.tap(() => publish(runId))),
       )(input),
     );
   }
 
+  @callable()
   completeStep(
     input: typeof Domain.CompleteStepInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
-    const publish = () => this.publish("all");
+    const publish = (runStepId: string) => this.publishToTeams({ runStepId });
     return this.runEffect(
-      callableEffect(
-        "ShopAgent.completeStep",
-        Domain.CompleteStepInput,
-      )(({ runStepId, memberId, memberEmail, teamIds }) =>
+      memberCallableEffect("ShopAgent.completeStep", Domain.CompleteStepInput, {
+        onExcessProperty: "error",
+      })(({ runStepId }, { memberId, memberEmail, teamIds }) =>
         runResult(
           Effect.gen(function* () {
             yield* (yield* WorkflowRunRepository).completeStep({
               runStepId,
-              memberId: yield* Schema.decodeUnknownEffect(Domain.MemberId)(
-                memberId,
-              ).pipe(Effect.orDie),
+              memberId,
               memberEmail,
               teamIds,
-            });
+            } satisfies Domain.CompleteStepCommand);
             yield* Effect.logInfo(
               `ShopAgent.completeStep: shop=${shop} step=${runStepId} memberId=${memberId}`,
             ).pipe(Effect.annotateLogs({ shop, step: runStepId, memberId }));
           }),
-        ).pipe(Effect.tap(publish)),
+        ).pipe(Effect.tap(() => publish(runStepId))),
       )(input),
     );
   }
 
+  @callable()
   dismissFlag(
     input: typeof Domain.DismissFlagInput.Encoded,
   ): Promise<Domain.RunResult> {
-    const publish = () => this.publish("all");
+    const publish = (runId: string) => this.publishToTeams({ runId });
     return this.runEffect(
-      callableEffect(
-        "ShopAgent.dismissFlag",
-        Domain.DismissFlagInput,
-      )(({ runId, teamIds }) =>
+      memberCallableEffect("ShopAgent.dismissFlag", Domain.DismissFlagInput, {
+        onExcessProperty: "error",
+      })(({ runId }, { teamIds }) =>
         runResult(
           WorkflowRunRepository.pipe(
             Effect.flatMap((repository) =>
-              repository.dismissFlag({ runId, teamIds }),
+              repository.dismissFlag({
+                runId,
+                teamIds,
+              } satisfies Domain.DismissFlagCommand),
             ),
           ),
-        ).pipe(Effect.tap(publish)),
+        ).pipe(Effect.tap(() => publish(runId))),
       )(input),
     );
   }
@@ -2427,7 +2854,8 @@ export class ShopAgent extends Agent {
     const teamExists = (teamId: string) => this.teamExists(teamId);
     return this.runEffect(
       callableEffect("ShopAgent.addStep", Domain.AddStepInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })(({ workflowId, name, teamId, instructions }) =>
         stepResult(
           Effect.gen(function* () {
@@ -2455,7 +2883,8 @@ export class ShopAgent extends Agent {
     const teamExists = (teamId: string) => this.teamExists(teamId);
     return this.runEffect(
       callableEffect("ShopAgent.addParallelStep", Domain.AddParallelStepInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })(({ workflowId, stage, name, teamId, instructions }) =>
         stepResult(
           Effect.gen(function* () {
@@ -2485,7 +2914,8 @@ export class ShopAgent extends Agent {
     const teamExists = (teamId: string) => this.teamExists(teamId);
     return this.runEffect(
       callableEffect("ShopAgent.updateStep", Domain.UpdateStepInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })(({ stepId, name, teamId, instructions }) =>
         stepResult(
           Effect.gen(function* () {
@@ -2511,7 +2941,8 @@ export class ShopAgent extends Agent {
   ): Promise<Domain.StepResult> {
     return this.runEffect(
       callableEffect("ShopAgent.moveStep", Domain.MoveStepInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })(({ stepId, direction }) =>
         stepResult(
           Effect.gen(function* () {
@@ -2530,7 +2961,8 @@ export class ShopAgent extends Agent {
     const shop = this.name;
     return this.runEffect(
       callableEffect("ShopAgent.separateStep", Domain.SeparateStepInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })(({ stepId }) =>
         stepResult(
           Effect.gen(function* () {
@@ -2561,7 +2993,8 @@ export class ShopAgent extends Agent {
     const shop = this.name;
     return this.runEffect(
       callableEffect("ShopAgent.joinStep", Domain.JoinStepInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })(({ stepId }) =>
         stepResult(
           Effect.gen(function* () {
@@ -2591,7 +3024,8 @@ export class ShopAgent extends Agent {
   ): Promise<Domain.StepResult> {
     return this.runEffect(
       callableEffect("ShopAgent.removeStep", Domain.StepIdInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })(({ stepId }) =>
         stepResult(
           Effect.gen(function* () {
@@ -2625,9 +3059,12 @@ export class ShopAgent extends Agent {
   ): Promise<Domain.DeleteTeamResult> {
     const name = this.name;
     const publish = () => this.publish("all");
+    const closeMemberConnections = (memberIds: readonly string[]) =>
+      this.closeMemberConnections(memberIds);
     return this.runEffect(
       callableEffect("ShopAgent.deleteTeam", Domain.DeleteTeamInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })(({ teamId }) =>
         Effect.gen(function* () {
           const shop = yield* Schema.decodeUnknownEffect(Domain.Shop)(name);
@@ -2635,17 +3072,31 @@ export class ShopAgent extends Agent {
           const deleted = yield* (yield* Repository)
             .deleteTeam({ shop, id })
             .pipe(
-              Effect.as<Domain.DeleteTeamResult>({ _tag: "Deleted" }),
+              Effect.map((memberIds) => ({
+                result: { _tag: "Deleted" } satisfies Domain.DeleteTeamResult,
+                memberIds: memberIds as readonly string[],
+              })),
               Effect.catchTag("TeamNotFoundError", () =>
-                Effect.succeed<Domain.DeleteTeamResult>({ _tag: "NotFound" }),
+                Effect.succeed({
+                  result: {
+                    _tag: "NotFound",
+                  } satisfies Domain.DeleteTeamResult,
+                  memberIds: [] as readonly string[],
+                }),
               ),
             );
           yield* (yield* WorkflowRepository).unassignTeam({ teamId });
+          // The team was on every one of these members' connections; the
+          // Worker cannot do this itself because `Repository.deleteTeam` runs
+          // here, and only here is the roster still readable.
+          yield* closeMemberConnections(deleted.memberIds);
           yield* Effect.logInfo(
-            `ShopAgent.deleteTeam: shop=${shop} teamId=${teamId} status=${deleted._tag}`,
-          ).pipe(Effect.annotateLogs({ shop, teamId, status: deleted._tag }));
+            `ShopAgent.deleteTeam: shop=${shop} teamId=${teamId} status=${deleted.result._tag}`,
+          ).pipe(
+            Effect.annotateLogs({ shop, teamId, status: deleted.result._tag }),
+          );
           yield* publish();
-          return deleted;
+          return deleted.result;
         }),
       )(input),
     );
@@ -2670,7 +3121,7 @@ export class ShopAgent extends Agent {
       callableEffect(
         "ShopAgent.assignRunStepTeam",
         Domain.AssignRunStepTeamInput,
-        { onExcessProperty: "error" },
+        { role: "merchant", parse: { onExcessProperty: "error" } },
       )(({ runStepId, teamId }) =>
         Effect.gen(function* () {
           const team = yield* teamExists(teamId);
@@ -2725,7 +3176,8 @@ export class ShopAgent extends Agent {
     const environment = this.env.ENVIRONMENT;
     return this.runEffect(
       callableEffect("ShopAgent.seedWorkflows", Domain.SeedWorkflowsInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })((seed) =>
         environment === "local"
           ? WorkflowRepository.pipe(
@@ -2759,7 +3211,8 @@ export class ShopAgent extends Agent {
     const reconciler = () => this.reconciler("manual");
     return this.runEffect(
       callableEffect("ShopAgent.seedOrders", Domain.SeedOrdersInput, {
-        onExcessProperty: "error",
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
       })(({ memberId, memberEmail, orders }) =>
         Effect.gen(function* () {
           if (environment !== "local")
@@ -2929,10 +3382,9 @@ export class ShopAgent extends Agent {
     input: typeof Domain.TeamIdInput.Encoded,
   ): Promise<readonly Domain.OwnedStep[]> {
     return this.runEffect(
-      callableEffect(
-        "ShopAgent.listStepsOwnedBy",
-        Domain.TeamIdInput,
-      )(({ teamId }) =>
+      callableEffect("ShopAgent.listStepsOwnedBy", Domain.TeamIdInput, {
+        role: "rpc",
+      })(({ teamId }) =>
         WorkflowRepository.pipe(
           Effect.flatMap((repository) =>
             repository.listStepsOwnedBy({ teamId }),

@@ -1,12 +1,10 @@
-import { type AnyRouter, notFound, redirect } from "@tanstack/react-router";
+import { type AnyRouter, redirect } from "@tanstack/react-router";
 import { createMiddleware } from "@tanstack/react-start";
-import { Effect, Option, Schema } from "effect";
+import { Effect, Option } from "effect";
 
 import { Auth } from "@/lib/Auth";
 import { CurrentRequest } from "@/lib/CurrentRequest";
-import * as Domain from "@/lib/Domain";
 import { tryPromisePassthrough } from "@/lib/LayerEx";
-import { Repository } from "@/lib/Repository";
 
 /**
  * Server-function auth middleware for the member area (`/shop/*`): validates
@@ -19,8 +17,9 @@ import { Repository } from "@/lib/Repository";
  * the default `RegisteredRouter` generic this guard's type would depend on
  * `/admin`'s guard and vice versa (each redirects into the other's route),
  * and TS fails the cycle with TS7022. Per-shop
- * authorization is separate ({@link requireMember}) because the shop lives in
- * the URL, which a function middleware cannot see — handlers receive it as
+ * authorization is separate (`requireMember` in `@/lib/MemberAccess`) because
+ * the shop lives in the URL, which a function middleware cannot see —
+ * handlers receive it as
  * validated input and assert membership themselves.
  */
 export const memberServerFnMiddleware = createMiddleware({
@@ -41,30 +40,3 @@ export const memberServerFnMiddleware = createMiddleware({
     }),
   ),
 );
-
-/**
- * Asserts the session user's membership in the URL shop and returns that
- * membership's {@link Domain.MemberAccess} — the branded shop, the `memberId`,
- * and the active teams the member belongs to. `notFound` rather than a redirect
- * on a miss: a non-member must not be able to distinguish "shop exists, you
- * lack access" from "no such shop". Membership's FK to `ShopSession` makes a
- * hit proof of install too, so downstream Durable Object access cannot revive a
- * torn-down shop.
- *
- * Teams come back from the same query rather than a second call because they
- * are what scopes work: every member-area handler needs them, and an empty list
- * is the ordinary "not on a team yet" state, never a failed guard.
- */
-export const requireMember = (input: {
-  readonly shop: string;
-  readonly email: Domain.Email;
-}) =>
-  Effect.gen(function* () {
-    const shop = yield* Schema.decodeUnknownEffect(Domain.Shop)(input.shop);
-    const access = yield* (yield* Repository).findMemberAccess({
-      shop,
-      email: input.email,
-    });
-    if (Option.isNone(access)) return yield* Effect.fail(notFound());
-    return access.value;
-  });

@@ -9,6 +9,7 @@ import { D1Session } from "@/lib/D1Session";
 import * as Domain from "@/lib/Domain";
 import { makeEnvLayer } from "@/lib/LayerEx";
 import { Repository } from "@/lib/Repository";
+import { ShopAgentClient, ShopAgentClientError } from "@/lib/ShopAgentClient";
 import { ShopifyPartner, ShopifyPartnerError } from "@/lib/ShopifyPartner";
 import {
   SubscriptionPlan,
@@ -59,9 +60,19 @@ const seedShopSession = (planHandle: string | null, expiresAt: number | null) =>
     });
   });
 
+/**
+ * The revoke-on-lapse hook is observed through a recording stub rather than a
+ * socket: what this file owns is *when* `SubscriptionPlan` decides to revoke,
+ * and `shop-agent-connections.test.ts` owns what `revokeAllConnections` does
+ * to a live connection.
+ */
 const run = <A, E>(
   activeSubscription: ShopifyPartner["Service"]["activeSubscription"],
   effect: Effect.Effect<A, E, Repository | SubscriptionPlan>,
+  options: {
+    readonly revoked?: Ref.Ref<readonly string[]>;
+    readonly revokeFails?: boolean;
+  } = {},
 ) =>
   effect.pipe(
     Effect.provide(SubscriptionPlan.layerNoDeps),
@@ -72,6 +83,31 @@ const run = <A, E>(
         ShopifyPartner.of({
           activeSubscription,
           planSelectionUrl: () => "https://example.com/plans",
+        }),
+      ),
+      Layer.succeed(
+        ShopAgentClient,
+        new Proxy({} as ShopAgentClient["Service"], {
+          get: (_target, name) => {
+            if (name !== "revokeAllConnections")
+              return () =>
+                Effect.die(`ShopAgentClient.${String(name)} not stubbed`);
+            if (options.revokeFails)
+              return () =>
+                Effect.fail(
+                  new ShopAgentClientError({
+                    message: "object unreachable",
+                    retryable: false,
+                    overloaded: false,
+                    cause: new Error("unreachable"),
+                  }),
+                );
+            const { revoked } = options;
+            return (revokedShop: string) =>
+              revoked === undefined
+                ? Effect.void
+                : Ref.update(revoked, (shops) => [...shops, revokedShop]);
+          },
         }),
       ),
     ]),
@@ -224,6 +260,79 @@ describe("SubscriptionPlan", () => {
         }),
       );
       assert.strictEqual(yield* Ref.get(calls), 1);
+    }),
+  );
+
+  it.effect("revokes the shop's connections when a cached plan lapses", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1000);
+      const revoked = yield* Ref.make<readonly string[]>([]);
+      yield* run(
+        () => Effect.succeed(Option.none<Domain.ActiveSubscription>()),
+        Effect.gen(function* () {
+          const plan = yield* SubscriptionPlan;
+          yield* seedShopSession("baton-pro", 500);
+          assert.deepStrictEqual(yield* plan.resolve(shop), {
+            _tag: "Unsubscribed",
+          });
+        }),
+        { revoked },
+      );
+      assert.deepStrictEqual(yield* Ref.get(revoked), [shop]);
+    }),
+  );
+
+  it.effect("does not revoke when the shop was already unsubscribed", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1000);
+      const revoked = yield* Ref.make<readonly string[]>([]);
+      yield* run(
+        () => Effect.succeed(Option.none<Domain.ActiveSubscription>()),
+        Effect.gen(function* () {
+          const plan = yield* SubscriptionPlan;
+          // Expired verified absence: revalidates, lands on null again.
+          yield* seedShopSession(null, 500);
+          yield* plan.resolve(shop);
+          // Never cached: nothing to flip from.
+          yield* seedShopSession(null, null);
+          yield* plan.resolve(shop);
+        }),
+        { revoked },
+      );
+      assert.deepStrictEqual(yield* Ref.get(revoked), []);
+    }),
+  );
+
+  it.effect("does not revoke when the plan is still active", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1000);
+      const revoked = yield* Ref.make<readonly string[]>([]);
+      yield* run(
+        activeProAtFutureBoundary,
+        Effect.gen(function* () {
+          yield* seedShopSession("baton-pro", 500);
+          yield* (yield* SubscriptionPlan).resolve(shop);
+        }),
+        { revoked },
+      );
+      assert.deepStrictEqual(yield* Ref.get(revoked), []);
+    }),
+  );
+
+  it.effect("still answers Unsubscribed when the revoke fails", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1000);
+      yield* run(
+        () => Effect.succeed(Option.none<Domain.ActiveSubscription>()),
+        Effect.gen(function* () {
+          yield* seedShopSession("baton-pro", 500);
+          assert.deepStrictEqual(
+            yield* (yield* SubscriptionPlan).resolve(shop),
+            { _tag: "Unsubscribed" },
+          );
+        }),
+        { revokeFails: true },
+      );
     }),
   );
 

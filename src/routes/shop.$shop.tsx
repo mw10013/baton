@@ -1,4 +1,14 @@
-import { createFileRoute, Outlet } from "@tanstack/react-router";
+import * as React from "react";
+
+import {
+  createFileRoute,
+  Outlet,
+  useHydrated,
+  useRouter,
+} from "@tanstack/react-router";
+
+import * as Domain from "@/lib/Domain";
+import { ShopAgentSocketProvider } from "@/lib/ShopAgentSocketHost";
 
 /**
  * Layout for one shop's member area. It owns the `$shop` URL segment and
@@ -8,5 +18,55 @@ import { createFileRoute, Outlet } from "@tanstack/react-router";
  * so a layout guard would only duplicate the authoritative check.
  */
 export const Route = createFileRoute("/shop/$shop")({
-  component: Outlet,
+  component: RouteComponent,
 });
+
+/**
+ * Opens the member's single `ShopAgent` socket for this shop and shares it
+ * with every child, the same way `/app` does for merchants
+ * (`src/lib/ShopAgentSocketHost.tsx`). One socket per shop tab: the queue's
+ * actions and its live updates both ride it, and no child opens a second.
+ *
+ * No `query`: a member has no App Bridge and cannot mint an ID token. Their
+ * credential is the better-auth cookie, which the browser attaches to a
+ * same-origin upgrade on its own, and which the Worker's connect gate reads to
+ * resolve the membership it forwards to the object.
+ *
+ * `enabled: hydrated` for the same reason as `/app`: `useAgent` evaluates its
+ * connection during render, including SSR, where there is no WebSocket to
+ * open. The page still server-renders — the loader, not the socket, is what
+ * paints it.
+ *
+ * `Domain.CONNECTION_CLOSE_REVOKED` is the object saying this member's teams
+ * or membership changed while they were connected. The socket comes back —
+ * `ShopAgentSocketHost` re-arms it on that code, because `agents` treats a
+ * 4000-range close as terminal and will not reconnect on its own — which
+ * re-runs the gate and returns with the new membership; what this handler adds
+ * is invalidating the router, because the page's loader data was resolved from
+ * the *old* membership and nothing else would refetch it. The loader is also
+ * where a revoked member finds out they are gone: `requireMember` answers
+ * `notFound` and the route renders its not-found state, so the socket's
+ * reconnect never has to be interpreted as an authorization answer.
+ */
+function RouteComponent() {
+  const { shop } = Route.useParams();
+  const hydrated = useHydrated();
+  const router = useRouter();
+  const onSocketClose = React.useCallback(
+    (event: CloseEvent) => {
+      if (event.code === Domain.CONNECTION_CLOSE_REVOKED)
+        void router.invalidate();
+    },
+    [router],
+  );
+  return (
+    <ShopAgentSocketProvider
+      shop={shop}
+      query={undefined}
+      enabled={hydrated}
+      onSocketClose={onSocketClose}
+    >
+      <Outlet />
+    </ShopAgentSocketProvider>
+  );
+}

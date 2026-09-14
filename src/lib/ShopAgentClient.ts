@@ -73,13 +73,18 @@ export class ShopAgentClientError extends Schema.TaggedError<ShopAgentClientErro
  *
  * The `@callable()` set on `ShopAgent` is exactly what the browser may reach
  * over the socket; a read that only loaders need is plain RPC and lives here.
+ *
+ * The member queue is the rule's clearest case, and the reason the five member
+ * mutations are *not* here: `listQueue` is the SSR paint and stays on this
+ * path, while Start, Done, Note, Block, and Dismiss became `@callable()` once
+ * `/shop/*` got a socket. Their privileged inputs did not become less
+ * privileged — they moved from a Worker-resolved argument to
+ * `Domain.ConnectionState` on the connection, which the same `requireMember`
+ * check populates at connect.
  */
 export class ShopAgentClient extends Context.Service<
   ShopAgentClient,
   {
-    readonly getShopInfo: (
-      shop: string,
-    ) => Effect.Effect<Domain.ShopInfo, ShopAgentClientError>;
     readonly listQueue: (
       shop: string,
       input: Domain.ListQueueInput,
@@ -113,31 +118,25 @@ export class ShopAgentClient extends Context.Service<
       shop: string,
       input: Domain.WorkflowIdInput,
     ) => Effect.Effect<Domain.WorkflowDetailView | null, ShopAgentClientError>;
-    readonly startStep: (
-      shop: string,
-      input: Domain.StartStepInput,
-    ) => Effect.Effect<Domain.RunResult, ShopAgentClientError>;
-    readonly completeStep: (
-      shop: string,
-      input: Domain.CompleteStepInput,
-    ) => Effect.Effect<Domain.RunResult, ShopAgentClientError>;
     /**
-     * `Encoded`, not `Type`: the note is free text the object trims and
-     * bounds on decode, so the server fn hands the wire string across and
-     * lets the one decoder on the object side be the one that brands it.
+     * Not a read: the one write on this path. Every merchant edit that changes
+     * who a member is or which teams they work on ends with this call, because
+     * a member's open socket carries a connect-time copy of that answer
+     * (`Domain.ConnectionState`) and nothing else would correct it before the
+     * next reconnect.
      */
-    readonly setStepNote: (
+    readonly revokeMemberConnections: (
       shop: string,
-      input: typeof Domain.SetStepNoteInput.Encoded,
-    ) => Effect.Effect<Domain.RunResult, ShopAgentClientError>;
-    readonly blockRun: (
+      input: Domain.RevokeMemberConnectionsInput,
+    ) => Effect.Effect<void, ShopAgentClientError>;
+    /**
+     * The subscription counterpart: `SubscriptionPlan` calls this when a
+     * revalidation flips a shop to `Unsubscribed`, so every open socket —
+     * merchant and member — reconnects through the gate and is refused.
+     */
+    readonly revokeAllConnections: (
       shop: string,
-      input: typeof Domain.BlockRunInput.Encoded,
-    ) => Effect.Effect<Domain.RunResult, ShopAgentClientError>;
-    readonly dismissFlag: (
-      shop: string,
-      input: Domain.DismissFlagInput,
-    ) => Effect.Effect<Domain.RunResult, ShopAgentClientError>;
+    ) => Effect.Effect<void, ShopAgentClientError>;
   }
 >()("ShopAgentClient") {
   static readonly layerNoDeps = Layer.effect(
@@ -186,8 +185,7 @@ export class ShopAgentClient extends Context.Service<
       /**
        * `Schema.toType`: the object already decoded these rows, so the wire
        * value is the decoded shape (`customAttributes` an array, not JSON
-       * text) and must be validated on that side. `ShopInfo` has no transforms
-       * and needs no such care.
+       * text) and must be validated on that side.
        */
       const queueItems = Schema.toType(Schema.Array(Domain.QueueItem));
       const ownedSteps = Schema.toType(Schema.Array(Domain.OwnedStep));
@@ -202,11 +200,6 @@ export class ShopAgentClient extends Context.Service<
         Schema.NullOr(Domain.WorkflowDetailView),
       );
       return ShopAgentClient.of({
-        getShopInfo: Effect.fn("ShopAgentClient.getShopInfo")((shop: string) =>
-          call("getShopInfo", Domain.ShopInfo, shop, (stub) =>
-            stub.getShopInfo(),
-          ),
-        ),
         listQueue: Effect.fn("ShopAgentClient.listQueue")(
           (shop: string, input: Domain.ListQueueInput) =>
             call("listQueue", queueItems, shop, (stub) =>
@@ -255,34 +248,17 @@ export class ShopAgentClient extends Context.Service<
               stub.getWorkflowDetail(input),
             ),
         ),
-        startStep: Effect.fn("ShopAgentClient.startStep")(
-          (shop: string, input: Domain.StartStepInput) =>
-            call("startStep", Domain.RunResult, shop, (stub) =>
-              stub.startStep(input),
-            ),
+        revokeMemberConnections: Effect.fn(
+          "ShopAgentClient.revokeMemberConnections",
+        )((shop: string, input: Domain.RevokeMemberConnectionsInput) =>
+          call("revokeMemberConnections", Schema.Void, shop, (stub) =>
+            stub.revokeMemberConnections(input),
+          ),
         ),
-        completeStep: Effect.fn("ShopAgentClient.completeStep")(
-          (shop: string, input: Domain.CompleteStepInput) =>
-            call("completeStep", Domain.RunResult, shop, (stub) =>
-              stub.completeStep(input),
-            ),
-        ),
-        setStepNote: Effect.fn("ShopAgentClient.setStepNote")(
-          (shop: string, input: typeof Domain.SetStepNoteInput.Encoded) =>
-            call("setStepNote", Domain.RunResult, shop, (stub) =>
-              stub.setStepNote(input),
-            ),
-        ),
-        blockRun: Effect.fn("ShopAgentClient.blockRun")(
-          (shop: string, input: typeof Domain.BlockRunInput.Encoded) =>
-            call("blockRun", Domain.RunResult, shop, (stub) =>
-              stub.blockRun(input),
-            ),
-        ),
-        dismissFlag: Effect.fn("ShopAgentClient.dismissFlag")(
-          (shop: string, input: Domain.DismissFlagInput) =>
-            call("dismissFlag", Domain.RunResult, shop, (stub) =>
-              stub.dismissFlag(input),
+        revokeAllConnections: Effect.fn("ShopAgentClient.revokeAllConnections")(
+          (shop: string) =>
+            call("revokeAllConnections", Schema.Void, shop, (stub) =>
+              stub.revokeAllConnections(),
             ),
         ),
       });

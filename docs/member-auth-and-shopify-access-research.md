@@ -407,6 +407,73 @@ hydrated` as in `/app`.
   (decision 1). `ShopAgent.getShopInfo` and `ShopAgentClient.getShopInfo` then have
   no callers on the member side and can go.
 
+## Status (2026-09-14): implemented
+
+Steps 1 through 7 are in the tree, uncommitted at the time of writing. Where the
+code departs from the plan above, the code is right and this section is the
+record:
+
+- **`callableEffect` takes a four-value role**: `merchant`, `member`, `any`
+  (`unsubscribe`, which both populations need), `rpc` (plain-RPC methods, refused
+  on any socket). A connectionless caller passes the `merchant` and `any` guards:
+  only a Worker binding can make one, and `api.dev.seed` plus the whole DO test
+  suite depend on it. `member` still requires a connection, since it needs the
+  identity. Member methods use a sibling `memberCallableEffect` that hands the
+  connection identity to the handler.
+- **Member push is order-scoped, not run-scoped** (`listOrderTeamIds`):
+  completing the last item step makes the order run ready for a different team,
+  which a run-scoped push would leave stale.
+- **4401 on the client is `router.invalidate()`, not a navigate**: a browser
+  cannot read a refused upgrade's status, so the loader is where a revoked
+  member learns they are gone (`requireMember` → `notFound`).
+- **Revocation also covers `setMemberTeamsFn`** on `/app/members`, which the
+  Step 5 list omitted.
+- **The socket host lift (Step 6) happened inside Step 4**, since the queue
+  page's callables need a provider above them.
+
+### Subscription check on the member side
+
+The plan never said where a lapsed plan stops a member, and the first cut did
+not check it anywhere. It now lives in `requireMember` (`src/lib/MemberAccess.ts`),
+after membership: every member surface (loaders, server functions, the socket
+gate) runs through that one function. Membership first, plan second, so a
+stranger still gets `404` and never learns a shop lapsed. A member of a lapsed
+shop is redirected to `/shop/$shop/lapsed`, a static page outside the
+`/shop/$shop` layout (the `$shop_` file segment) so it never opens the socket;
+the socket gate turns the same answer into `402`, matching the merchant gate.
+With `BILLING_ENABLED=false` in production this arm only runs in tests, which is
+the point: turning billing on must not open the member area to lapsed shops.
+
+### Revocation on lapse, and the two lags
+
+The research above said Cloudflare's ~300 s idle close was the backstop that
+re-runs the gate. That was wrong: the socket host sends a keepalive every 240 s
+(`SOCKET_KEEPALIVE_MS`, `src/lib/ShopAgentContext.tsx`) precisely so the edge
+never closes an idle socket, and a kept-alive socket holds its connect-time auth
+for as long as the tab lives. Members inherit that host, so the same is true of
+them. Two lags therefore stack on a lapse:
+
+1. **The cache.** `SubscriptionPlan` learns of a lapse only when the cached
+   entry expires (`PLAN_HANDLE_MAX_AGE_MS`, 24 h, plus boundary skew) or the
+   billing redirect calls `refresh`. There is no webhook to shorten this:
+   Shopify App Pricing "doesn't use webhooks to notify your app of subscription
+   changes" and stopped sending `APP_SUBSCRIPTIONS_UPDATE` on 2026-04-28
+   (`refs/shopify-docs/docs/apps/launch/billing/managed-pricing.md`, "Webhook-based
+   subscription notifications"). The Partner API and the redirect parameters are
+   the only signals. The 24 h max age is a deliberate trade-off, argued in the
+   JSDoc on the constant.
+2. **Open sockets.** Once Baton knows, nothing would close a kept-alive socket.
+   `SubscriptionPlan.revalidate` now calls `ShopAgent.revokeAllConnections` when
+   a revalidation flips a shop from a cached handle to none, closing every
+   merchant and member socket with `4401`; each reconnect hits the gate and is
+   refused, and both layouts invalidate the router on `4401` so the loaders
+   redirect (member: the lapsed page; merchant: plan selection). Best-effort:
+   a failed revoke is logged and the plan answer stands.
+
+Membership edits are unrelated to either lag: `revokeMemberConnections` runs
+right after the D1 write, so a removed member's socket closes within the same
+request.
+
 ## Decisions (2026-09-14)
 
 1. **The member area shows the domain, not the display name.** `ShopSession.shop`,

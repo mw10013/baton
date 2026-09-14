@@ -1,56 +1,35 @@
 import * as React from "react";
 
 import { useMutation } from "@tanstack/react-query";
-import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { createServerFn, useServerFn } from "@tanstack/react-start";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
 import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
-import {
-  memberServerFnMiddleware,
-  requireMember,
-} from "@/lib/MemberServerFnMiddleware";
+import { requireMember } from "@/lib/MemberAccess";
+import { memberServerFnMiddleware } from "@/lib/MemberServerFnMiddleware";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
+import { withSocketRecovery } from "@/lib/ShopAgentContext";
+import { SocketBanner } from "@/lib/SocketBanner";
+import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
 
 const ShopParamInput = Schema.Struct({ shop: Schema.String });
-
-const BoundedId = Schema.NonEmptyString.check(Schema.isMaxLength(128));
-
-const StepFormInput = Schema.Struct({
-  shop: Schema.String,
-  runStepId: BoundedId,
-});
-
-const NoteFormInput = Schema.Struct({
-  shop: Schema.String,
-  runStepId: BoundedId,
-  note: Schema.String.check(Schema.isMaxLength(1000)),
-});
-
-const RunFormInput = Schema.Struct({
-  shop: Schema.String,
-  runId: BoundedId,
-});
-
-const BlockFormInput = Schema.Struct({
-  shop: Schema.String,
-  runId: BoundedId,
-  reason: Schema.String.check(Schema.isMaxLength(1000)),
-});
 
 /** A blank text field on the wire is "cleared", which the object stores as `null`. */
 const textOrNull = (value: string) =>
   value.trim().length === 0 ? null : value;
 
 /**
- * `teamIds`, `memberId`, and `memberEmail` never come from the browser:
- * `requireMember` and the session resolve them from the URL shop and the
- * cookie, and the Durable Object trusts them because the Worker is its only
- * caller for these methods. The browser sends only the shop and the id of
- * what it clicked; scope is enforced on the object against the resolved
- * teams, and the email is what the run step snapshots as the actor.
+ * The queue's first paint. SSR, so it cannot be a socket call: `requireMember`
+ * resolves the shop and the member's teams from the cookie, and `listQueue`
+ * reads the object through `ShopAgentClient`.
+ *
+ * The five actions below go the other way — over the member socket, where the
+ * same `requireMember` result is already on the connection. Either way
+ * `teamIds`, `memberId`, and `memberEmail` are resolved server-side and never
+ * sent by the browser; the browser sends only the id of what was clicked.
  */
 const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(ShopParamInput))
@@ -66,106 +45,6 @@ const getLoaderData = createServerFn({ method: "GET" })
           teamIds: teams.map((team) => team.id),
         });
         return { shop, teams, items } satisfies Domain.QueueLoaderData;
-      }),
-    ),
-  );
-
-const startStepFn = createServerFn({ method: "POST" })
-  .validator(Schema.toStandardSchemaV1(StepFormInput))
-  .middleware([memberServerFnMiddleware])
-  .handler(({ data, context: { runEffect, user } }) =>
-    runEffect(
-      Effect.gen(function* () {
-        const { shop, memberId, teams } = yield* requireMember({
-          shop: data.shop,
-          email: user.email,
-        });
-        return yield* (yield* ShopAgentClient).startStep(shop, {
-          runStepId: data.runStepId,
-          memberId,
-          memberEmail: user.email,
-          teamIds: teams.map((team) => team.id),
-        });
-      }),
-    ),
-  );
-
-const completeStepFn = createServerFn({ method: "POST" })
-  .validator(Schema.toStandardSchemaV1(StepFormInput))
-  .middleware([memberServerFnMiddleware])
-  .handler(({ data, context: { runEffect, user } }) =>
-    runEffect(
-      Effect.gen(function* () {
-        const { shop, memberId, teams } = yield* requireMember({
-          shop: data.shop,
-          email: user.email,
-        });
-        return yield* (yield* ShopAgentClient).completeStep(shop, {
-          runStepId: data.runStepId,
-          memberId,
-          memberEmail: user.email,
-          teamIds: teams.map((team) => team.id),
-        });
-      }),
-    ),
-  );
-
-const setStepNoteFn = createServerFn({ method: "POST" })
-  .validator(Schema.toStandardSchemaV1(NoteFormInput))
-  .middleware([memberServerFnMiddleware])
-  .handler(({ data, context: { runEffect, user } }) =>
-    runEffect(
-      Effect.gen(function* () {
-        const { shop, memberId, teams } = yield* requireMember({
-          shop: data.shop,
-          email: user.email,
-        });
-        return yield* (yield* ShopAgentClient).setStepNote(shop, {
-          runStepId: data.runStepId,
-          memberId,
-          teamIds: teams.map((team) => team.id),
-          note: textOrNull(data.note),
-        });
-      }),
-    ),
-  );
-
-const blockRunFn = createServerFn({ method: "POST" })
-  .validator(Schema.toStandardSchemaV1(BlockFormInput))
-  .middleware([memberServerFnMiddleware])
-  .handler(({ data, context: { runEffect, user } }) =>
-    runEffect(
-      Effect.gen(function* () {
-        const { shop, memberId, teams } = yield* requireMember({
-          shop: data.shop,
-          email: user.email,
-        });
-        return yield* (yield* ShopAgentClient).blockRun(shop, {
-          runId: data.runId,
-          memberId,
-          memberEmail: user.email,
-          teamIds: teams.map((team) => team.id),
-          reason: textOrNull(data.reason),
-        });
-      }),
-    ),
-  );
-
-const dismissFlagFn = createServerFn({ method: "POST" })
-  .validator(Schema.toStandardSchemaV1(RunFormInput))
-  .middleware([memberServerFnMiddleware])
-  .handler(({ data, context: { runEffect, user } }) =>
-    runEffect(
-      Effect.gen(function* () {
-        const { shop, memberId, teams } = yield* requireMember({
-          shop: data.shop,
-          email: user.email,
-        });
-        return yield* (yield* ShopAgentClient).dismissFlag(shop, {
-          runId: data.runId,
-          memberId,
-          teamIds: teams.map((team) => team.id),
-        });
       }),
     ),
   );
@@ -244,14 +123,47 @@ const ITEM_STATUS = {
 const personalization = (attributes: readonly Domain.OrderAttribute[]) =>
   attributes.map(({ key, value }) => `${key}: ${value ?? ""}`).join(", ");
 
+/**
+ * Every action is a `@callable()` on the member socket, reached through
+ * `withSocketRecovery` so a zombie connection is healed rather than waited out
+ * (`ShopAgentContext.tsx` describes both recovery layers). `identified` gates
+ * them: the socket is the only path these mutations have, so a click before
+ * the handshake has nothing to send on and says so rather than failing
+ * opaquely.
+ *
+ * The inputs carry no identity. `memberId`, `memberEmail`, and `teamIds` live
+ * on the connection the Worker's gate authorized, so the browser sends only
+ * the id of the step or run it clicked and the text that was typed — see
+ * `Domain.ConnectionState`.
+ */
+const CONNECTING = "Still connecting. Try again in a moment.";
+
 function RouteComponent() {
-  const { shop, teams, items } = Route.useLoaderData();
-  const router = useRouter();
-  const startStep = useServerFn(startStepFn);
-  const completeStep = useServerFn(completeStepFn);
-  const setStepNote = useServerFn(setStepNoteFn);
-  const blockRun = useServerFn(blockRunFn);
-  const dismissFlag = useServerFn(dismissFlagFn);
+  const { shop, teams, items: initialItems } = Route.useLoaderData();
+  /**
+   * The subscribe pattern (`Domain.Subscription`): the loader's rows paint
+   * first, then `subscribeQueue` re-reads them over the socket and registers
+   * this connection for pushes, so work another member finishes lands here
+   * without a reload. The subscription's scope is the teams on the connection,
+   * so nothing about it is named by the browser.
+   */
+  const {
+    data: items,
+    invalidate,
+    agent,
+    identified,
+  } = useSubscribedQuery({
+    queryKey: ["shop-queue", shop],
+    subscribe: (stub, subscriberId) => stub.subscribeQueue({ subscriberId }),
+    initialData: initialItems,
+  });
+  const call = React.useCallback(
+    <A,>(run: (stub: NonNullable<typeof agent>["stub"]) => Promise<A>) =>
+      agent && identified
+        ? withSocketRecovery(agent)(() => run(agent.stub))
+        : Promise.reject(new Error(CONNECTING)),
+    [agent, identified],
+  );
   /** Which step's note editor is open and its draft; one at a time. */
   const [noteDraft, setNoteDraft] = React.useState<{
     runStepId: string;
@@ -263,34 +175,41 @@ function RouteComponent() {
     reason: string;
   } | null>(null);
 
-  const onSuccess = () => router.invalidate();
+  /**
+   * The write's own publish would refetch this eventually, but the throttle in
+   * `useSubscribedQuery` means "eventually" is up to two seconds — too long
+   * for the person who just pressed the button. Invalidating here paints their
+   * own action immediately; the push still covers everyone else.
+   */
+  const onSuccess = () => invalidate();
   const startMutation = useMutation({
-    mutationFn: (runStepId: string) => startStep({ data: { shop, runStepId } }),
+    mutationFn: (runStepId: string) =>
+      call((stub) => stub.startStep({ runStepId })),
     onSuccess,
   });
   const completeMutation = useMutation({
     mutationFn: (runStepId: string) =>
-      completeStep({ data: { shop, runStepId } }),
+      call((stub) => stub.completeStep({ runStepId })),
     onSuccess,
   });
   const noteMutation = useMutation({
-    mutationFn: (input: { runStepId: string; note: string }) =>
-      setStepNote({ data: { shop, ...input } }),
+    mutationFn: ({ runStepId, note }: { runStepId: string; note: string }) =>
+      call((stub) => stub.setStepNote({ runStepId, note: textOrNull(note) })),
     onSuccess: async (result) => {
       if (result._tag === "Ok") setNoteDraft(null);
       await onSuccess();
     },
   });
   const blockMutation = useMutation({
-    mutationFn: (input: { runId: string; reason: string }) =>
-      blockRun({ data: { shop, ...input } }),
+    mutationFn: ({ runId, reason }: { runId: string; reason: string }) =>
+      call((stub) => stub.blockRun({ runId, reason: textOrNull(reason) })),
     onSuccess: async (result) => {
       if (result._tag === "Ok") setBlockDraft(null);
       await onSuccess();
     },
   });
   const dismissMutation = useMutation({
-    mutationFn: (runId: string) => dismissFlag({ data: { shop, runId } }),
+    mutationFn: (runId: string) => call((stub) => stub.dismissFlag({ runId })),
     onSuccess,
   });
 
@@ -301,7 +220,14 @@ function RouteComponent() {
     blockMutation,
     dismissMutation,
   ];
-  const pending = mutations.some((mutation) => mutation.isPending);
+  /**
+   * Disabled while a write is in flight, and while the socket is not
+   * identified: these actions have no other transport, so offering them before
+   * the handshake would only queue a click that cannot be sent. `SocketBanner`
+   * explains the second case after its own grace period.
+   */
+  const pending =
+    mutations.some((mutation) => mutation.isPending) || !identified;
   const banner =
     mutations.find((mutation) => mutation.error)?.error?.message ??
     mutations
@@ -570,6 +496,7 @@ function RouteComponent() {
 
   return (
     <s-page heading="Your work" inlineSize="small">
+      <SocketBanner />
       <s-section accessibilityLabel="Your work">
         <s-stack gap="base">
           <Link to="/shop/$shop" params={{ shop }}>

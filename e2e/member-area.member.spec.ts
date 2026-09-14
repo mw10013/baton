@@ -1,6 +1,6 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
-import { followMagicLink, gotoMember } from "./member";
+import { followMagicLink, gotoMember, requestMagicLink } from "./member";
 import { seedConfig, seedMembers } from "./seed";
 
 /**
@@ -23,12 +23,6 @@ const STRANGER_EMAIL = "e2e.stranger@example.com";
 const TEAM = "E2E Cut";
 const OTHER_TEAM = "E2E Pack";
 const TEAMLESS_STATE = "You’re not on a team yet.";
-
-const requestMagicLink = async (page: Page, email: string): Promise<void> => {
-  await gotoMember(page, "/login");
-  await page.getByLabel("Email").fill(email);
-  await page.getByRole("button", { name: "Send magic link" }).click();
-};
 
 test("an anonymous visitor is bounced from the member area to /login", async ({
   page,
@@ -73,8 +67,9 @@ test("a seeded member signs in by magic link, opens their shop, and signs out", 
 
   await page.getByRole("link", { name: config.shop }).click();
   await expect(page).toHaveURL(new RegExp(`/shop/${config.shop}$`, "u"));
+  await expect(page.locator(`s-page[heading="${config.shop}"]`)).toBeVisible();
   await expect(
-    page.getByText(`You have member access to this shop (${config.shop}).`),
+    page.getByText("You have member access to this shop."),
   ).toBeVisible();
   /* Seeded with no team: membership is login, teams are work, so a member with
      neither is a normal state that has to render as an empty state rather than

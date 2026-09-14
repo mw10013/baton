@@ -4,14 +4,17 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
-import {
-  memberServerFnMiddleware,
-  requireMember,
-} from "@/lib/MemberServerFnMiddleware";
-import { ShopAgentClient } from "@/lib/ShopAgentClient";
+import { requireMember } from "@/lib/MemberAccess";
+import { memberServerFnMiddleware } from "@/lib/MemberServerFnMiddleware";
 
 const ShopParamInput = Schema.Struct({ shop: Schema.String });
 
+/**
+ * One D1 read and nothing else. This page used to call the Shopify Admin API
+ * through the Durable Object for the shop's display name; it no longer does —
+ * a member is shown the `myshopify.com` domain, which `requireMember` already
+ * returns. See `Domain.ShopIndexLoaderData`.
+ */
 const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(ShopParamInput))
   .middleware([memberServerFnMiddleware])
@@ -22,12 +25,7 @@ const getLoaderData = createServerFn({ method: "GET" })
           shop: data.shop,
           email: user.email,
         });
-        const shopAgentClient = yield* ShopAgentClient;
-        return {
-          shop,
-          teams,
-          shopInfo: yield* shopAgentClient.getShopInfo(shop),
-        } satisfies Domain.ShopIndexLoaderData;
+        return { shop, teams } satisfies Domain.ShopIndexLoaderData;
       }),
     ),
   );
@@ -38,14 +36,13 @@ export const Route = createFileRoute("/shop/$shop/")({
 });
 
 function RouteComponent() {
-  const { shop, teams, shopInfo } = Route.useLoaderData();
+  const { shop, teams } = Route.useLoaderData();
   return (
-    <s-page heading={shopInfo.name} inlineSize="small">
+    <s-page heading={shop} inlineSize="small">
       <s-section heading="Shop" accessibilityLabel="Shop info">
         <s-stack gap="base">
-          <s-paragraph>{shopInfo.myshopifyDomain}</s-paragraph>
           <s-paragraph color="subdued">
-            You have member access to this shop ({shop}).
+            You have member access to this shop.
           </s-paragraph>
           <Link to="/shop">Back to your shops</Link>
         </s-stack>

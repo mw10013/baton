@@ -109,6 +109,16 @@ export interface SeedWorkflow {
  *
  * The seed writes over the app's own HTTP origin, not the admin tunnel, so it
  * works identically from the embedded and member projects.
+ *
+ * It also closes every member socket the previous fixture left open, because
+ * the `Member` rows those connections were authorized against are gone — so a
+ * page under test reacts to the new fixture instead of acting on the old one.
+ *
+ * `keepIdentities` keeps the better-auth session of each listed email alive
+ * across the re-seed. A member spec that re-seeds per test needs it: every
+ * sign-in spends one of the 5 magic-link sends `LOGIN_LIMITER` allows per 60
+ * seconds for the whole run, so such a spec signs in once and re-seeds with
+ * this on. Leave it off wherever a test wants a first-time user.
  */
 export const seedMembers = async (
   config: SeedConfig,
@@ -116,6 +126,7 @@ export const seedMembers = async (
   teams: readonly SeedTeam[] = [],
   workflows: readonly SeedWorkflow[] = [],
   orders: readonly SeedOrder[] = [],
+  options: { readonly keepIdentities?: boolean } = {},
 ): Promise<void> => {
   const response = await fetch(`${config.appUrl}/api/dev/seed`, {
     method: "POST",
@@ -126,6 +137,9 @@ export const seedMembers = async (
       teams,
       workflows,
       orders,
+      ...(options.keepIdentities === undefined
+        ? {}
+        : { keepIdentities: options.keepIdentities }),
     }),
   });
   if (!response.ok)

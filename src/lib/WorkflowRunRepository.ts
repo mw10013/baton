@@ -349,6 +349,24 @@ export class WorkflowRunRepository extends Context.Service<
       | RunNotAllowedError
       | RunTerminalError
     >;
+    /**
+     * Every team that owns a step on any run of the order a given run (or run
+     * step) belongs to.
+     *
+     * The scope is the *order*, not the run, because readiness crosses runs:
+     * finishing the last item run makes the order run's first stage ready, and
+     * that stage belongs to a different team than the one that just acted. A
+     * per-run answer would leave the packing team's queue stale until they
+     * reloaded. `null` team ids are excluded — an unassigned step is in
+     * nobody's queue.
+     *
+     * Used only to scope a `ShopAgent.publish` fan-out, so an over-broad
+     * answer costs a redundant refetch and an under-broad one costs a stale
+     * queue; the order boundary is the smallest scope where neither happens.
+     */
+    readonly listOrderTeamIds: (
+      input: { readonly runStepId: string } | { readonly runId: string },
+    ) => Effect.Effect<readonly string[], SqlError.SqlError>;
     /** Allowed when any ready step of the run belongs to one of `teamIds`. */
     readonly dismissFlag: (input: {
       readonly runId: string;
@@ -1466,6 +1484,30 @@ export class WorkflowRunRepository extends Context.Service<
             }),
           );
         }),
+
+        listOrderTeamIds: Effect.fn("WorkflowRunRepository.listOrderTeamIds")(
+          function* (
+            input: { readonly runStepId: string } | { readonly runId: string },
+          ) {
+            const order =
+              "runStepId" in input
+                ? sql`
+                    select r0.orderId from WorkflowRun r0
+                    join WorkflowRunStep s0 on s0.runId = r0.id
+                    where s0.id = ${input.runStepId}
+                  `
+                : sql`select r0.orderId from WorkflowRun r0 where r0.id = ${input.runId}`;
+            const rows = yield* sql`
+              select distinct rs.teamId as teamId
+              from WorkflowRunStep rs
+              join WorkflowRun r on r.id = rs.runId
+              where rs.teamId is not null and r.orderId in (${order})
+            `;
+            return rows.flatMap((row) =>
+              typeof row.teamId === "string" ? [row.teamId] : [],
+            );
+          },
+        ),
 
         dismissFlag: Effect.fn("WorkflowRunRepository.dismissFlag")(function* ({
           runId,

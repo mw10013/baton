@@ -14,11 +14,13 @@ import { useShopAgent } from "@/lib/ShopAgentContext";
 const GRACE_MS = 4000;
 
 /**
- * The one place the `/app` socket's health is surfaced to merchants.
+ * The one place a page's `ShopAgent` socket health is surfaced — to merchants
+ * on `/app` and to members on `/shop/$shop`, whose queue actions have no
+ * transport but this socket.
  *
  * Renders nothing while the socket is healthy, because connected is the
- * expected state and a permanent green badge trains merchants to ignore the
- * one moment it matters. When the socket stays down past `GRACE_MS` the page's
+ * expected state and a permanent green badge trains people to ignore the one
+ * moment it matters. When the socket stays down past `GRACE_MS` the page's
  * writes are disabled and pushes have stopped, so the banner says what that
  * costs rather than just naming the state.
  *

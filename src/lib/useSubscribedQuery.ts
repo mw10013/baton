@@ -39,9 +39,9 @@ const connecting = () =>
  *
  * - **The read subscribes.** `subscribe` is a `subscribe<Feature>` RPC that
  *   reads and registers a `Domain.Subscription` on this connection in one
- *   round trip, keyed by a per-mount `subscriberId` (the `/app` socket
- *   outlives the route, so a stale `unsubscribe` from a replaced mount must
- *   not clear the newer mount's subscription). `staleTime: Infinity` makes
+ *   round trip, keyed by a per-mount `subscriberId` (the subtree's one
+ *   socket outlives the route, so a stale `unsubscribe` from a replaced mount
+ *   must not clear the newer mount's subscription). `staleTime: Infinity` makes
  *   the invalidations below the only refetch triggers; `gcTime` matches
  *   Router's 30-minute route cache so a retained loader match never outlives
  *   its Query data.

@@ -7,7 +7,8 @@ import * as React from "react";
 export type ShopAgentSocket = ReturnType<typeof useAgent<ShopAgent, unknown>>;
 
 /**
- * Shared `/app` WebSocket context value.
+ * Shared per-shop WebSocket context value — one socket per tab, mounted by
+ * `/app` for merchants and by `/shop/$shop` for members.
  *
  * `identified` is intentionally split out as a primitive instead of being read
  * off `agent.identified` at the consumer.
@@ -23,7 +24,8 @@ export type ShopAgentSocket = ReturnType<typeof useAgent<ShopAgent, unknown>>;
  * that calls `useAgent` re-renders on the identity flip.
  *
  * Carrying `identified` as a primitive lets the provider memoize the value on
- * the flipping field (see `app.tsx`), so consumers re-render when it changes.
+ * the flipping field (see `ShopAgentSocketHost.tsx`), so consumers re-render
+ * when it changes.
  * `agent` is still exposed for non-reactive uses (`agent.stub.*`, event
  * listeners). Any other mutated field a consumer needs to react to (e.g.
  * `agent.state`, `agent.connectionError`) must be lifted here the same way.
@@ -134,7 +136,8 @@ export const SOCKET_WATCHDOG_MS = 30_000;
  * through sleep, so wake-after-sleep is detected exactly; the OPEN gate makes
  * overlapping callers no-ops once a reconnect is in flight. Callers: the
  * watchdog interval + visibility listener in `ShopAgentSocketHost`
- * (`src/routes/app.tsx`) and the pre-flight in `withSocketRecovery`.
+ * (`src/lib/ShopAgentSocketHost.tsx`) and the pre-flight in
+ * `withSocketRecovery`.
  */
 export const reconnectIfSocketStale = (agent: ShopAgentSocket) => {
   if (

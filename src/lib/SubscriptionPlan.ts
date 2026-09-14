@@ -12,6 +12,7 @@ import {
 
 import * as Domain from "@/lib/Domain";
 import { Repository } from "@/lib/Repository";
+import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import {
   planSelectionExitIframeHref,
   ShopifyPartner,
@@ -180,12 +181,13 @@ export class SubscriptionPlan extends Context.Service<
   static readonly layerNoDeps: Layer.Layer<
     SubscriptionPlan,
     Config.ConfigError,
-    Repository | ShopifyPartner
+    Repository | ShopifyPartner | ShopAgentClient
   > = Layer.effect(
     SubscriptionPlan,
     Effect.gen(function* () {
       const repository = yield* Repository;
       const shopifyPartner = yield* ShopifyPartner;
+      const shopAgentClient = yield* ShopAgentClient;
       const billingEnabled = yield* Config.boolean("BILLING_ENABLED").pipe(
         Config.withDefault(false),
       );
@@ -238,6 +240,22 @@ export class SubscriptionPlan extends Context.Service<
         yield* Effect.logDebug(
           `SubscriptionPlan.revalidate: shop=${shopSession.shop} handle=${handle ?? "none"}`,
         ).pipe(Effect.annotateLogs({ shop: shopSession.shop, handle }));
+        // Revoke on flip. Every socket gate checks the plan at connect only,
+        // and the keepalive keeps a socket open indefinitely, so a lapse that
+        // the cache has just learned about would otherwise never reach an
+        // open tab. Closing the shop's connections makes each reconnect ask
+        // the gate again, which now answers `402`. Only on the transition
+        // (a handle was cached and there is none now): a shop already known
+        // to be unsubscribed has no connections the gate let through, and a
+        // never-cached row has nothing to compare. Failure is logged, not
+        // raised — the plan answer is correct regardless.
+        if (handle === null && shopSession.planHandle !== null)
+          yield* shopAgentClient.revokeAllConnections(shopSession.shop).pipe(
+            Effect.ignore({
+              log: "Warn",
+              message: `SubscriptionPlan.revalidate: shop=${shopSession.shop}: revoke on lapse failed`,
+            }),
+          );
         return Option.match(active, {
           onNone: () => Unsubscribed,
           onSome: ({ handle }) => subscribed(handle),

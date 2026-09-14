@@ -57,14 +57,31 @@ const DevSeedInput = Schema.Struct({
    * first listed member, so every finished step names a real member.
    */
   orders: Schema.optionalKey(Domain.SeedOrdersInput.fields.orders),
+  /**
+   * Keep the better-auth identity (`User`, and the `Session` rows that cascade
+   * from it) of every listed email instead of deleting it, so a browser that
+   * is already signed in stays signed in across the re-seed. Off by default:
+   * a run normally wants a first-time user.
+   *
+   * Exists for Playwright's member project, where a sign-in costs one of the
+   * 5 magic-link sends `LOGIN_LIMITER` allows per 60 seconds across the whole
+   * run (`wrangler.jsonc`). A spec that re-seeds between tests — which is how
+   * every member spec gets a pristine fixture — cannot afford a fresh sign-in
+   * each time, so it signs in once and re-seeds with this on. Membership,
+   * teams, workflows and orders are still replaced wholesale; only the
+   * identity survives.
+   */
+  keepIdentities: Schema.optionalKey(Schema.Boolean),
 });
 
 /**
  * Development fixture endpoint, driven by `pnpm seed` and by Playwright
  * (`e2e/seed.ts`). Replaces a shop's membership with exactly `members`, its
  * teams with exactly `teams`, its workflow definitions with exactly
- * `workflows`, and drops the better-auth identity of every listed email, so
- * each run signs in as a first-time user. Enabled only for
+ * `workflows`, and (unless `keepIdentities` is set) drops the better-auth
+ * identity of every listed email, so each run signs in as a first-time user.
+ * It ends by closing the sockets of the members it replaced, the way the
+ * roster screens do. Enabled only for
  * `ENVIRONMENT === "local"`; deployed environments receive 404. Local state is
  * disposable, so the endpoint intentionally has no caller authorization.
  *
@@ -112,10 +129,16 @@ export const Route = createFileRoute("/api/dev/seed")({
               return new Response("Not Found", { status: 404 });
             const request = yield* CurrentRequest;
             return yield* Effect.gen(function* () {
-              const { shop, members, teams, workflows, orders } =
-                yield* Schema.decodeUnknownEffect(DevSeedInput)(
-                  yield* Effect.tryPromise(() => request.json()),
-                );
+              const {
+                shop,
+                members,
+                teams,
+                workflows,
+                orders,
+                keepIdentities,
+              } = yield* Schema.decodeUnknownEffect(DevSeedInput)(
+                yield* Effect.tryPromise(() => request.json()),
+              );
               const sql = yield* D1Primary;
               const repository = yield* Repository;
               // Checked rather than left to the FK: `Member.shop` and
@@ -129,11 +152,17 @@ export const Route = createFileRoute("/api/dev/seed")({
                   `no ShopSession for ${shop}: install the app on that shop first (run pnpm app:dev and open the app in the store)`,
                   { status: 409 },
                 );
+              // Read before the delete: these are the ids any live member
+              // socket is tagged with, and the only ones worth revoking below.
+              const priorMemberIds = (yield* repository.listMembers(shop)).map(
+                (member) => member.id,
+              );
               yield* sql`delete from Team where shop = ${shop}`;
               yield* sql`delete from Member where shop = ${shop}`;
               yield* sql`delete from Verification`;
               for (const email of members) {
-                yield* sql`delete from User where email = ${email}`;
+                if (keepIdentities !== true)
+                  yield* sql`delete from User where email = ${email}`;
                 yield* repository.addMember({ shop, email });
               }
               const memberIds = new Map(
@@ -252,6 +281,21 @@ export const Route = createFileRoute("/api/dev/seed")({
                     memberId: seedMemberId,
                     memberEmail: seedMemberEmail,
                     orders: orders ?? [],
+                  }),
+                );
+              // Last, once every write has landed, and with the PRE-seed ids:
+              // a seed rewrites `Member` wholesale, so a member holding an
+              // open socket is carrying a `memberId` and `teamIds` that no
+              // longer exist. This is the same close the roster screens issue
+              // after their own D1 writes (`app.members`,
+              // `app.teams.$teamId`) — the socket reconnects through the
+              // Worker's gate and comes back with the membership this seed
+              // just wrote, and `/shop/$shop` invalidates its router on the
+              // close so the page's loader data follows.
+              if (priorMemberIds.length > 0)
+                yield* Effect.tryPromise(() =>
+                  env.SHOP_AGENT.getByName(shop).revokeMemberConnections({
+                    memberIds: priorMemberIds,
                   }),
                 );
               return Response.json({

@@ -40,6 +40,7 @@ import { Route as AppWorkflowsIndexRouteImport } from './routes/app.workflows.in
 import { Route as AppWorkflowsWorkflowIdRouteImport } from './routes/app.workflows.$workflowId'
 import { Route as ShopShopIndexRouteImport } from './routes/shop.$shop.index'
 import { Route as ShopShopQueueRouteImport } from './routes/shop.$shop.queue'
+import { Route as ShopShopLapsedRouteImport } from './routes/shop.$shop_.lapsed'
 import { Route as WebhooksAppScopes_updateRouteImport } from './routes/webhooks.app.scopes_update'
 import { Route as WebhooksAppUninstalledRouteImport } from './routes/webhooks.app.uninstalled'
 import { Route as AppWorkflowsWorkflowIdEditRouteImport } from './routes/app.workflows.$workflowId_.edit'
@@ -200,6 +201,11 @@ const ShopShopQueueRoute = ShopShopQueueRouteImport.update({
   path: '/queue',
   getParentRoute: () => ShopShopRoute,
 } as any)
+const ShopShopLapsedRoute = ShopShopLapsedRouteImport.update({
+  id: '/$shop_/lapsed',
+  path: '/$shop/lapsed',
+  getParentRoute: () => ShopRoute,
+} as any)
 const WebhooksAppScopes_updateRoute =
   WebhooksAppScopes_updateRouteImport.update({
     id: '/webhooks/app/scopes_update',
@@ -245,6 +251,7 @@ export interface FileRoutesByFullPath {
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
   '/shop/$shop/queue': typeof ShopShopQueueRoute
+  '/shop/$shop/lapsed': typeof ShopShopLapsedRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
   '/app/order-workflow/': typeof AppOrderWorkflowIndexRoute
@@ -277,6 +284,7 @@ export interface FileRoutesByTo {
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
   '/shop/$shop/queue': typeof ShopShopQueueRoute
+  '/shop/$shop/lapsed': typeof ShopShopLapsedRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
   '/app/order-workflow': typeof AppOrderWorkflowIndexRoute
@@ -314,6 +322,7 @@ export interface FileRoutesById {
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
   '/shop/$shop/queue': typeof ShopShopQueueRoute
+  '/shop/$shop_/lapsed': typeof ShopShopLapsedRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
   '/app/order-workflow/': typeof AppOrderWorkflowIndexRoute
@@ -352,6 +361,7 @@ export interface FileRouteTypes {
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
     | '/shop/$shop/queue'
+    | '/shop/$shop/lapsed'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
     | '/app/order-workflow/'
@@ -384,6 +394,7 @@ export interface FileRouteTypes {
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
     | '/shop/$shop/queue'
+    | '/shop/$shop/lapsed'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
     | '/app/order-workflow'
@@ -420,6 +431,7 @@ export interface FileRouteTypes {
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
     | '/shop/$shop/queue'
+    | '/shop/$shop_/lapsed'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
     | '/app/order-workflow/'
@@ -666,6 +678,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShopShopQueueRouteImport
       parentRoute: typeof ShopShopRoute
     }
+    '/shop/$shop_/lapsed': {
+      id: '/shop/$shop_/lapsed'
+      path: '/$shop/lapsed'
+      fullPath: '/shop/$shop/lapsed'
+      preLoaderRoute: typeof ShopShopLapsedRouteImport
+      parentRoute: typeof ShopRoute
+    }
     '/webhooks/app/scopes_update': {
       id: '/webhooks/app/scopes_update'
       path: '/webhooks/app/scopes_update'
@@ -755,11 +774,13 @@ const ShopShopRouteWithChildren = ShopShopRoute._addFileChildren(
 interface ShopRouteChildren {
   ShopShopRoute: typeof ShopShopRouteWithChildren
   ShopIndexRoute: typeof ShopIndexRoute
+  ShopShopLapsedRoute: typeof ShopShopLapsedRoute
 }
 
 const ShopRouteChildren: ShopRouteChildren = {
   ShopShopRoute: ShopShopRouteWithChildren,
   ShopIndexRoute: ShopIndexRoute,
+  ShopShopLapsedRoute: ShopShopLapsedRoute,
 }
 
 const ShopRouteWithChildren = ShopRoute._addFileChildren(ShopRouteChildren)
