@@ -274,13 +274,13 @@ const seedStates = Effect.gen(function* () {
     for (const [index, status] of statuses.entries())
       yield* sql`
         insert into WorkflowRun (
-          id, workflowId, workflowName, orderId, orderName, lineItemId,
-          lineItemTitle, variantTitle, sku, quantity, customAttributes,
+          id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
+          lineItemId, lineItemTitle, variantTitle, sku, quantity, customAttributes,
           source, status, flag, flagAt, flagDetail, createdAt, updatedAt,
           cancelledAt
         ) values (
           ${`run-${String(n)}-${String(index)}`}, 'wf', 'Workflow',
-          ${orderId(n)}, ${`#10${String(n).padStart(2, "0")}`},
+          ${orderId(n)}, ${`#10${String(n).padStart(2, "0")}`}, 0,
           ${`${lineItemId(n)}-${String(index)}`}, 'Item', null, null, 1,
           '[]', 'tag', ${status}, null, null, null, 0, 0, null
         )

@@ -1740,25 +1740,28 @@ export interface TeamLoaderData extends TeamDetail {
 }
 
 /**
- * `/shop/$shop` (`shop.$shop.index`).
- *
- * `shop` is the `myshopify.com` domain, which is what a member is shown. The
- * Admin API's display name (`shop { name }`) is not stored anywhere in Baton,
- * and fetching it was the only reason this page ever called Shopify — a call
- * that spent the shop's API budget to render a heading. The domain is already
- * in `MemberAccess`, is what the URL and every membership row key on, and is
- * unique by Shopify's own guarantee.
+ * `/shop/$shop` (`shop.$shop.index`): the queue, which is the member area's
+ * landing page. `memberId` / `memberEmail` let the page compute its "Mine"
+ * tier (`queueTiers.ts`) from rows it already holds; both come out of the
+ * same `requireMember` that resolved `teams`. `shop` is the `myshopify.com`
+ * domain — the Admin API's display name is not stored anywhere in Baton, and
+ * the domain is what the URL and every membership row key on.
  */
-export interface ShopIndexLoaderData {
-  readonly shop: Shop;
-  readonly teams: MemberAccess["teams"];
-}
-
-/** `/shop/$shop/queue` (`shop.$shop.queue`). */
 export interface QueueLoaderData {
   readonly shop: Shop;
+  readonly memberId: MemberId;
+  readonly memberEmail: Email;
   readonly teams: MemberAccess["teams"];
-  readonly items: readonly QueueItem[];
+  readonly view: QueueView;
+}
+
+/** `/shop/$shop/work/$runId` (`shop.$shop.work.$runId`). `view` is null when the run is not the member's to see. */
+export interface RunLoaderData {
+  readonly shop: Shop;
+  readonly memberId: MemberId;
+  readonly memberEmail: Email;
+  readonly teams: MemberAccess["teams"];
+  readonly view: RunView | null;
 }
 
 /**
@@ -2031,6 +2034,12 @@ export const WorkflowRun = Schema.Struct({
   workflowName: WorkflowName,
   orderId: Schema.String,
   orderName: Schema.String,
+  /**
+   * `ShopOrder.processedAt` snapshotted at creation, like `orderName`: the
+   * queue sorts every tier oldest-order-first and must not join `ShopOrder`
+   * (which an order delete removes) to do it.
+   */
+  orderProcessedAt: Schema.Number,
   lineItemId: Schema.NullOr(Schema.String),
   lineItemTitle: Schema.NullOr(Schema.String),
   variantTitle: Schema.NullOr(Schema.String),
@@ -2146,6 +2155,83 @@ export const QueueItem = Schema.Struct({
 });
 export type QueueItem = typeof QueueItem.Type;
 
+/**
+ * What stands between a finished step and Undo: the first later step someone
+ * has already started (or finished) — in a later stage of the same run, or,
+ * for an item run, in the order run that its completion made ready. Once
+ * downstream has moved the fix is a conversation, so the page names who to
+ * ask rather than offering a button that would pull work out from under them.
+ */
+export const UndoBlocker = Schema.Struct({
+  stepName: StepName,
+  teamName: TeamName,
+});
+export type UndoBlocker = typeof UndoBlocker.Type;
+
+/**
+ * One entry of the queue's "Done today" tier: a step one of the member's
+ * teams completed inside the window, with its run for the card line and the
+ * undo verdict precomputed by the object, which is the only side that can see
+ * the downstream steps.
+ */
+export const DoneItem = Schema.Struct({
+  run: WorkflowRun,
+  step: WorkflowRunStep,
+  undoBlockedBy: Schema.NullOr(UndoBlocker),
+});
+export type DoneItem = typeof DoneItem.Type;
+
+/**
+ * The member queue in one read: the ready work (`items`) and what the team
+ * finished recently (`done`). One value rather than two reads so the socket's
+ * `subscribeQueue` and the loader's `listQueue` paint the same page from the
+ * same snapshot, and a teammate's Undo moves a card between the two halves
+ * under one push.
+ */
+export const QueueView = Schema.Struct({
+  items: Schema.Array(QueueItem),
+  done: Schema.Array(DoneItem),
+});
+export type QueueView = typeof QueueView.Type;
+
+/**
+ * How far back "Done today" reaches. A day, not a shift: a mistake is
+ * noticed when the next card looks wrong, which can be after lunch or the
+ * next morning, and a longer window would make the tier a history view the
+ * merchant's order page already is.
+ */
+export const DONE_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** Cap on the tier so a busy shop's queue read stays one screen of rows. */
+export const DONE_LIMIT = 100;
+
+/**
+ * A run step on the work page, decorated with what the page needs to offer
+ * the right button: `ready` is the queue's readiness rule evaluated for this
+ * step, and `undoBlockedBy` is the undo verdict for a finished one. Both are
+ * facts about *other* rows (earlier stages, the order's item runs, later
+ * stages), which is why the object computes them rather than the page.
+ */
+export const RunStepView = Schema.Struct({
+  ...WorkflowRunStep.fields,
+  ready: Schema.Boolean,
+  undoBlockedBy: Schema.NullOr(UndoBlocker),
+});
+export type RunStepView = typeof RunStepView.Type;
+
+/**
+ * Everything `/shop/$shop/work/$runId` renders. `items` is the order's live
+ * line items (the same read the queue's order-run card uses), so a maker sees
+ * what else ships with the piece; the page drops the run's own line for an
+ * item run. `note` is the order's live note.
+ */
+export const RunView = Schema.Struct({
+  run: WorkflowRun,
+  steps: Schema.Array(RunStepView),
+  note: Schema.NullOr(Schema.String),
+  items: Schema.Array(QueueOrderItem),
+});
+export type RunView = typeof RunView.Type;
+
 export const ListRunsForOrderInput = Schema.Struct({ orderId: BoundedId });
 export type ListRunsForOrderInput = typeof ListRunsForOrderInput.Type;
 
@@ -2202,6 +2288,24 @@ export const ListQueueInput = Schema.Struct({
 export type ListQueueInput = typeof ListQueueInput.Type;
 
 /**
+ * The work page's loader read, Worker-resolved for the same reason as
+ * {@link ListQueueInput}. The guard is "any step of the run on one of my
+ * teams", not "a ready step": a member may open work they have finished.
+ */
+export const GetRunForMemberInput = Schema.Struct({
+  runId: BoundedId,
+  teamIds: Schema.Array(BoundedId),
+});
+export type GetRunForMemberInput = typeof GetRunForMemberInput.Type;
+
+/** The socket twin of {@link GetRunForMemberInput}; `teamIds` comes off the connection. */
+export const SubscribeRunInput = Schema.Struct({
+  ...SubscriberIdInput.fields,
+  runId: BoundedId,
+});
+export type SubscribeRunInput = typeof SubscribeRunInput.Type;
+
+/**
  * Member-area mutation inputs: **what the browser sends, and nothing more.**
  * Each is the id of the thing that was clicked plus, where there is one, the
  * text that was typed.
@@ -2226,6 +2330,10 @@ export type DismissFlagInput = typeof DismissFlagInput.Type;
 
 export const StartStepInput = CompleteStepInput;
 export type StartStepInput = typeof StartStepInput.Type;
+
+/** Undo: re-opens a finished step. Same shape; the rule is on `WorkflowRunRepository.uncompleteStep`. */
+export const UncompleteStepInput = CompleteStepInput;
+export type UncompleteStepInput = typeof UncompleteStepInput.Type;
 
 /** `note: null` clears. */
 export const SetStepNoteInput = Schema.Struct({
@@ -2281,6 +2389,12 @@ export interface DismissFlagCommand {
   readonly teamIds: readonly string[];
 }
 
+/** No email: undo records nobody — the step keeps its original starter and simply reads as in progress again. */
+export interface UncompleteStepCommand {
+  readonly runStepId: string;
+  readonly teamIds: readonly string[];
+}
+
 /** `WorkflowCannotStart` = off, zero steps, or an unassigned step (see {@link Workflow}). */
 export const AttachResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok"), run: WorkflowRun }),
@@ -2292,9 +2406,10 @@ export type AttachResult = typeof AttachResult.Type;
 
 /**
  * `NotAllowed` = the step's team is not among the caller's; `NotReady` = a
- * step in an earlier stage is still open (or this one is already done);
- * `Terminal` = the run is `done` or `cancelled` (or, for un-cancel, is not
- * cancelled).
+ * step in an earlier stage is still open (or this one is already done; for
+ * undo, not yet done); `Terminal` = the run is `done` or `cancelled` (or,
+ * for un-cancel, is not cancelled); `UndoBlocked` = someone downstream has
+ * started, and names them ({@link UndoBlocker}).
  */
 export const RunResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok") }),
@@ -2302,5 +2417,6 @@ export const RunResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("NotAllowed") }),
   Schema.Struct({ _tag: Schema.Literal("NotReady") }),
   Schema.Struct({ _tag: Schema.Literal("Terminal") }),
+  Schema.Struct({ _tag: Schema.Literal("UndoBlocked"), ...UndoBlocker.fields }),
 ]);
 export type RunResult = typeof RunResult.Type;

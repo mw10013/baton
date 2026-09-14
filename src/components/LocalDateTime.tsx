@@ -1,6 +1,6 @@
 import { useHydrated } from "@tanstack/react-router";
 
-import { formatDateTime, formatTime } from "@/lib/format";
+import { formatDateTime, formatRelative, formatTime } from "@/lib/format";
 
 /**
  * A timestamp in the viewer's timezone that is safe to server-render.
@@ -30,10 +30,12 @@ export function LocalDateTime({
   format = "dateTime",
 }: {
   readonly value: string | number;
-  /** `time` is the queue's "In progress since 3:12 PM" form. */
-  readonly format?: "dateTime" | "time";
+  /** `time` is the queue's "In progress since 3:12 PM" form; `relative` its "ordered 3d ago". */
+  readonly format?: "dateTime" | "time" | "relative";
 }) {
   const hydrated = useHydrated();
   if (!hydrated) return null;
-  return format === "time" ? formatTime(value) : formatDateTime(value);
+  if (format === "time") return formatTime(value);
+  if (format === "relative") return formatRelative(value);
+  return formatDateTime(value);
 }

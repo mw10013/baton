@@ -73,6 +73,7 @@ import {
   type RunNotFoundError,
   type RunTerminalError,
   type StepNotReadyError,
+  type StepUndoBlockedError,
   WorkflowRunRepository,
   type WorkflowRunRepositoryError,
 } from "@/lib/WorkflowRunRepository";
@@ -513,6 +514,7 @@ const initializeSchema = Effect.gen(function* () {
       workflowName text not null,
       orderId text not null,
       orderName text not null,
+      orderProcessedAt integer not null,
       lineItemId text,
       lineItemTitle text,
       variantTitle text,
@@ -888,6 +890,7 @@ const runResult = <R>(
     | RunTerminalError
     | RunNotAllowedError
     | StepNotReadyError
+    | StepUndoBlockedError
     | SqlError.SqlError
     | WorkflowRunRepositoryError
     | WorkflowRepositoryError
@@ -915,6 +918,12 @@ const runResult = <R>(
         Effect.succeed<Domain.RunResult>({ _tag: "NotAllowed" }),
       StepNotReadyError: () =>
         Effect.succeed<Domain.RunResult>({ _tag: "NotReady" }),
+      StepUndoBlockedError: ({ stepName, teamName }) =>
+        Effect.succeed<Domain.RunResult>({
+          _tag: "UndoBlocked",
+          stepName,
+          teamName,
+        }),
     }),
   );
 
@@ -2634,11 +2643,22 @@ export class ShopAgent extends Agent {
     );
   }
 
-  /** No D1 read: `startedByEmail` is a snapshot on the row, so the queue reads the same after the member is deleted. */
+  /**
+   * No D1 read: `startedByEmail` is a snapshot on the row, so the queue reads
+   * the same after the member is deleted. Both halves of `Domain.QueueView`
+   * come from one call so the loader and the socket paint one snapshot.
+   */
   private readQueue(teamIds: readonly string[]) {
     return Effect.gen(function* () {
-      const rows = yield* (yield* WorkflowRunRepository).listQueue({ teamIds });
-      return rows.flatMap((row): Domain.QueueItem[] => {
+      const repository = yield* WorkflowRunRepository;
+      const rows = yield* repository.listQueue({ teamIds });
+      const now = yield* Clock.currentTimeMillis;
+      const done = yield* repository.listDone({
+        teamIds,
+        since: now - Domain.DONE_WINDOW_MS,
+        limit: Domain.DONE_LIMIT,
+      });
+      const items = rows.flatMap((row): Domain.QueueItem[] => {
         const [first, ...rest] = row.steps;
         return first === undefined
           ? []
@@ -2652,12 +2672,13 @@ export class ShopAgent extends Agent {
               },
             ];
       });
+      return { items, done } satisfies Domain.QueueView;
     });
   }
 
   listQueue(
     input: typeof Domain.ListQueueInput.Encoded,
-  ): Promise<readonly Domain.QueueItem[]> {
+  ): Promise<Domain.QueueView> {
     const readQueue = (teamIds: readonly string[]) => this.readQueue(teamIds);
     return this.runEffect(
       callableEffect("ShopAgent.listQueue", Domain.ListQueueInput, {
@@ -2682,7 +2703,7 @@ export class ShopAgent extends Agent {
   @callable()
   subscribeQueue(
     input: typeof Domain.SubscribeQueueInput.Encoded,
-  ): Promise<readonly Domain.QueueItem[]> {
+  ): Promise<Domain.QueueView> {
     const readQueue = (teamIds: readonly string[]) => this.readQueue(teamIds);
     return this.runEffect(
       memberCallableEffect(
@@ -2806,6 +2827,87 @@ export class ShopAgent extends Agent {
             ).pipe(Effect.annotateLogs({ shop, step: runStepId, memberId }));
           }),
         ).pipe(Effect.tap(() => publish(runStepId))),
+      )(input),
+    );
+  }
+
+  /**
+   * Undo. Publishes to the order's teams like the others: re-opening an item
+   * step un-readies the order run, so the packing team's card must go too.
+   */
+  @callable()
+  uncompleteStep(
+    input: typeof Domain.UncompleteStepInput.Encoded,
+  ): Promise<Domain.RunResult> {
+    const shop = this.name;
+    const publish = (runStepId: string) => this.publishToTeams({ runStepId });
+    return this.runEffect(
+      memberCallableEffect(
+        "ShopAgent.uncompleteStep",
+        Domain.UncompleteStepInput,
+        { onExcessProperty: "error" },
+      )(({ runStepId }, { memberId, teamIds }) =>
+        runResult(
+          Effect.gen(function* () {
+            yield* (yield* WorkflowRunRepository).uncompleteStep({
+              runStepId,
+              teamIds,
+            } satisfies Domain.UncompleteStepCommand);
+            yield* Effect.logInfo(
+              `ShopAgent.uncompleteStep: shop=${shop} step=${runStepId} memberId=${memberId}`,
+            ).pipe(Effect.annotateLogs({ shop, step: runStepId, memberId }));
+          }),
+        ).pipe(Effect.tap(() => publish(runStepId))),
+      )(input),
+    );
+  }
+
+  private readRunView(input: {
+    readonly runId: string;
+    readonly teamIds: readonly string[];
+  }) {
+    return WorkflowRunRepository.pipe(
+      Effect.flatMap((repository) => repository.getRunView(input)),
+      Effect.map(Option.getOrNull),
+    );
+  }
+
+  /** The work page's loader read; plain RPC for the same reason as {@link listQueue}. */
+  getRunForMember(
+    input: typeof Domain.GetRunForMemberInput.Encoded,
+  ): Promise<Domain.RunView | null> {
+    const readRunView = (input: Domain.GetRunForMemberInput) =>
+      this.readRunView(input);
+    return this.runEffect(
+      callableEffect("ShopAgent.getRunForMember", Domain.GetRunForMemberInput, {
+        role: "rpc",
+      })((input) => readRunView(input))(input),
+    );
+  }
+
+  /**
+   * The socket twin of {@link getRunForMember}, as `subscribeQueue` is of
+   * `listQueue`. The subscription is the same team-scoped one the queue
+   * registers (`orderId: null`): a member's pushes are decided by team, so
+   * any write touching one of their teams' orders refetches this run too.
+   * Over-broad by an order or two; the read is one run.
+   */
+  @callable()
+  subscribeRun(
+    input: typeof Domain.SubscribeRunInput.Encoded,
+  ): Promise<Domain.RunView | null> {
+    const readRunView = (input: Domain.GetRunForMemberInput) =>
+      this.readRunView(input);
+    return this.runEffect(
+      memberCallableEffect("ShopAgent.subscribeRun", Domain.SubscribeRunInput, {
+        onExcessProperty: "error",
+      })(({ subscriberId, runId }, { teamIds }) =>
+        Effect.gen(function* () {
+          const { connection } = getCurrentAgent<ShopAgent>();
+          if (connection)
+            setSubscription(connection, { subscriberId, orderId: null });
+          return yield* readRunView({ runId, teamIds });
+        }),
       )(input),
     );
   }

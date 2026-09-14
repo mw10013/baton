@@ -43,7 +43,10 @@ const BOX_TAG = "e2e-queue-box";
 const RING_ORDER = "#9401";
 /** Routed to `PACK_TEAM`, so only the mate sees it. */
 const BOX_ORDER = "#9402";
-const CUT_STEP = "Step 1 of 1 · Cut";
+/** Routed Cut → Polish across the two teams; seeded only where a test needs downstream work. */
+const BAND_ORDER = "#9403";
+const BAND_TAG = "e2e-queue-band";
+const CUT_STEP = "Cut · step 1 of 1";
 const STARTED = "In progress since";
 const EMPTY = "Nothing to do right now.";
 
@@ -59,6 +62,8 @@ const seedQueue = (
   options: {
     readonly cutMembers: readonly string[];
     readonly keepIdentities: boolean;
+    /** Adds the two-stage band order, for the tests about downstream work. */
+    readonly withBand?: boolean;
   },
 ) =>
   seedMembers(
@@ -79,6 +84,18 @@ const seedQueue = (
         tags: [BOX_TAG],
         steps: [{ name: "Pack", team: PACK_TEAM }],
       },
+      ...(options.withBand === true
+        ? [
+            {
+              name: "E2E Queue Band",
+              tags: [BAND_TAG],
+              steps: [
+                { name: "Cut", team: CUT_TEAM },
+                { name: "Polish", team: PACK_TEAM },
+              ],
+            },
+          ]
+        : []),
     ],
     [
       {
@@ -89,6 +106,14 @@ const seedQueue = (
         n: 9402,
         lineItems: [{ title: "E2E Gift Box", quantity: 1, tags: [BOX_TAG] }],
       },
+      ...(options.withBand === true
+        ? [
+            {
+              n: 9403,
+              lineItems: [{ title: "E2E Cuff", quantity: 1, tags: [BAND_TAG] }],
+            },
+          ]
+        : []),
     ],
     { keepIdentities: options.keepIdentities },
   );
@@ -145,10 +170,17 @@ const openQueue = async (
   const context = await memberContext(browser, config, storageState);
   contexts.push(context);
   const page = await context.newPage();
-  await gotoMember(page, `/shop/${config.shop}/queue`);
+  await gotoMember(page, `/shop/${config.shop}`);
   await expect(page.locator('s-page[heading="Your work"]')).toBeVisible();
   return page;
 };
+
+/** The queue card for one order: the `s-box` whose heading link is the order name. */
+const card = (page: Page, orderName: string) =>
+  page
+    .locator("s-box")
+    .filter({ has: page.getByRole("link", { name: orderName, exact: true }) })
+    .first();
 
 test.describe.configure({ mode: "serial" });
 
@@ -171,7 +203,8 @@ test.beforeAll(async ({ browser }) => {
     });
     const page = await context.newPage();
     await signIn(page, email);
-    await expect(page).toHaveURL(/\/shop$/u);
+    // A one-shop member lands on the queue itself, not the picker.
+    await expect(page.locator('s-page[heading="Your work"]')).toBeVisible();
     const state = await context.storageState();
     await context.close();
     return state;
@@ -268,9 +301,9 @@ test("a completed step lands on another member's queue without a reload", async 
  * the test would pass for the wrong reason — hence `awaitEnabled` first, which
  * is exactly the identified gate.
  *
- * The member keeps their shop membership here, so the answer is an empty queue
- * rather than the not-found state; `member-area.member.spec.ts` owns the
- * removed-from-the-shop case.
+ * The member keeps their shop membership here, so the answer is the queue's
+ * "not on a team yet" state rather than not-found; `member-area.member.spec.ts`
+ * owns the removed-from-the-shop case.
  */
 test("removing a member from a team empties their open queue", async ({
   browser,
@@ -285,6 +318,130 @@ test("removing a member from a team empties their open queue", async ({
   await seedQueue(config, { cutMembers: [MATE], keepIdentities: true });
 
   await expect(page.getByText(RING_ORDER, { exact: true })).toBeHidden();
-  await expect(page.getByText(EMPTY)).toBeVisible();
+  await expect(page.getByText("You’re not on a team yet.")).toBeVisible();
   await expectSameDocument(page);
+});
+
+/**
+ * The tiers, driven by the two real actors rather than the seed: untouched
+ * work is "Up next"; the maker's own Start moves the card under "Mine" on
+ * their page and under "In progress" — naming them — on the mate's, which
+ * arrives by push. The counts in the headings are the shape of the day.
+ */
+test("a started card moves to Mine for the starter and In progress for a teammate", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedQueue(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
+  const mate = await openQueue(browser, config, mateState);
+  await expect(mate.getByText("Up next · 2")).toBeVisible();
+  await awaitEnabled(mate.getByRole("button", { name: "Start" }).first());
+
+  const maker = await openQueue(browser, config, makerState);
+  await expect(maker.getByText("Up next · 1")).toBeVisible();
+  await clickWhenEnabled(maker.getByRole("button", { name: "Start" }));
+  await expect(maker.getByText("Mine · 1")).toBeVisible();
+  await expect(maker.getByText("Up next")).toBeHidden();
+  await expect(card(maker, RING_ORDER).getByText("Mine")).toBeVisible();
+
+  await expect(mate.getByText("In progress · 1")).toBeVisible();
+  await expect(mate.getByText("Up next · 1")).toBeVisible();
+  await expect(mate.getByText(`by ${MAKER}`)).toBeVisible();
+});
+
+/**
+ * Done today and Undo. The finished step leaves the queue and appears under
+ * the collapsed tier; Undo puts it back, and because Undo keeps the original
+ * starter the card returns under "Mine", not "Up next".
+ */
+test("undo puts a finished step back in progress", async ({ browser }) => {
+  const config = seedConfig();
+  await seedQueue(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
+  const page = await openQueue(browser, config, makerState);
+  await expect(page.getByText("Done today")).toBeHidden();
+
+  await clickWhenEnabled(page.getByRole("button", { name: "Start" }));
+  await clickWhenEnabled(page.getByRole("button", { name: "Done" }));
+  await expect(page.getByText(EMPTY)).toBeVisible();
+  await expect(page.getByText("Done today · 1")).toBeVisible();
+  await page.getByRole("button", { name: "Show" }).click();
+  await expect(page.getByText(`by ${MAKER} at`)).toBeVisible();
+
+  await clickWhenEnabled(page.getByRole("button", { name: "Undo" }));
+  await expect(page.getByText("Mine · 1")).toBeVisible();
+  await expect(page.getByText(STARTED)).toBeVisible();
+  await expect(page.getByText("Done today")).toBeHidden();
+});
+
+/**
+ * Once downstream has started the fix is a conversation: the mate (on the
+ * Polish team) starts the next stage, and the maker's Done today entry loses
+ * its Undo button for the "ask them" line naming that team and step.
+ */
+test("undo is refused once downstream started", async ({ browser }) => {
+  const config = seedConfig();
+  await seedQueue(config, {
+    cutMembers: [MAKER],
+    keepIdentities: true,
+    withBand: true,
+  });
+  const maker = await openQueue(browser, config, makerState);
+  await clickWhenEnabled(
+    card(maker, BAND_ORDER).getByRole("button", { name: "Done" }),
+  );
+  await expect(maker.getByText("Done today · 1")).toBeVisible();
+  await maker.getByRole("button", { name: "Show" }).click();
+  await expect(maker.getByRole("button", { name: "Undo" })).toBeVisible();
+
+  const mate = await openQueue(browser, config, mateState);
+  await clickWhenEnabled(
+    card(mate, BAND_ORDER).getByRole("button", { name: "Start" }),
+  );
+
+  await expect(
+    maker.getByText(`${PACK_TEAM} started Polish · ask them`),
+  ).toBeVisible();
+  await expect(maker.getByRole("button", { name: "Undo" })).toBeHidden();
+});
+
+/**
+ * The work page: opened from the card's order number, it lists every step
+ * with its state, takes a note and a block, finishes the step, and reads the
+ * actor back. Block comes before Done because blocking needs a ready step on
+ * the member's team, and Cut is the maker's only one.
+ */
+test("the work page shows the step history and takes a note, a block, and Done", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedQueue(config, {
+    cutMembers: [MAKER],
+    keepIdentities: true,
+    withBand: true,
+  });
+  const page = await openQueue(browser, config, makerState);
+  await page.getByRole("link", { name: BAND_ORDER, exact: true }).click();
+  await expect(page.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
+  await expect(page.getByText("E2E Cuff ×1")).toBeVisible();
+  await expect(page.getByText("Waiting on step 1")).toBeVisible();
+
+  await clickWhenEnabled(page.getByRole("button", { name: "Note" }));
+  await page.getByLabel("Note").fill("Left edge is rough");
+  await clickWhenEnabled(page.getByRole("button", { name: "Save note" }));
+  await expect(page.getByText("Note: Left edge is rough")).toBeVisible();
+
+  await page.getByLabel("Reason").fill("Waiting on stones");
+  await clickWhenEnabled(page.getByRole("button", { name: "Mark blocked" }));
+  await expect(page.getByText("Blocked: Waiting on stones")).toBeVisible();
+  await expect(page.locator('s-section[heading="Blocked"]')).toBeVisible();
+
+  await clickWhenEnabled(page.getByRole("button", { name: "Done" }));
+  await expect(page.getByText(`Done by ${MAKER}`)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
+
+  await page.getByRole("link", { name: "‹ Your work" }).click();
+  await expect(page.locator('s-page[heading="Your work"]')).toBeVisible();
+  /* Cut is done and Polish is the packer's, so the run is no card of the
+     maker's any more; what remains of it on this page is the Done entry. */
+  await expect(page.getByText("Done today · 1")).toBeVisible();
 });

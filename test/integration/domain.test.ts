@@ -3,6 +3,7 @@ import { Schema } from "effect";
 import { describe, it } from "vitest";
 
 import * as Domain from "@/lib/Domain";
+import { tierQueue } from "@/lib/queueTiers";
 import { groupUsedBy } from "@/lib/usedBy";
 
 const order = (
@@ -95,6 +96,7 @@ const run = (
   workflowName: Schema.decodeUnknownSync(Domain.WorkflowName)("W"),
   orderId: "o",
   orderName: "#1",
+  orderProcessedAt: 0,
   lineItemId: null,
   lineItemTitle: null,
   variantTitle: null,
@@ -156,5 +158,70 @@ describe("groupUsedBy", () => {
       "Order workflow:live:/app/order-workflow|pendant:draft:/app/workflows/w2|Ring:live:/app/workflows/w1",
     );
     strictEqual(groupUsedBy([]).length, 0);
+  });
+});
+
+const queueItem = (
+  id: string,
+  orderProcessedAt: number,
+  overrides: {
+    readonly flag?: Domain.RunFlag;
+    readonly startedBy?: string;
+  } = {},
+): Domain.QueueItem => ({
+  run: {
+    ...run("active", overrides.flag ?? null),
+    id: Schema.decodeUnknownSync(Domain.WorkflowRunId)(id),
+    orderName: `#${id}`,
+    orderProcessedAt,
+  },
+  steps: [
+    {
+      id: Schema.decodeUnknownSync(Domain.WorkflowRunStepId)(`${id}-s`),
+      runId: Schema.decodeUnknownSync(Domain.WorkflowRunId)(id),
+      position: 1,
+      stage: 1,
+      name: Schema.decodeUnknownSync(Domain.StepName)("Cut"),
+      teamId: Schema.decodeUnknownSync(Domain.TeamId)("t"),
+      teamName: Schema.decodeUnknownSync(Domain.TeamName)("T"),
+      instructions: null,
+      startedAt: overrides.startedBy === undefined ? null : 1,
+      startedBy:
+        overrides.startedBy === undefined
+          ? null
+          : Schema.decodeUnknownSync(Domain.MemberId)(overrides.startedBy),
+      startedByEmail: null,
+      completedAt: null,
+      completedBy: null,
+      completedByEmail: null,
+      note: null,
+      siblings: [],
+    },
+  ],
+  stageCount: 1,
+  note: null,
+  items: [],
+});
+
+const runIds = (items: readonly Domain.QueueItem[]) =>
+  items.map((item) => item.run.id).join(",");
+
+describe("tierQueue", () => {
+  it("flag first, then mine, then a teammate's, then untouched; oldest order first within a tier", () => {
+    const me = Schema.decodeUnknownSync(Domain.MemberId)("me");
+    const tiers = tierQueue(
+      [
+        queueItem("late-next", 30),
+        queueItem("mine", 20, { startedBy: "me" }),
+        queueItem("early-next", 10),
+        queueItem("theirs", 5, { startedBy: "them" }),
+        queueItem("flagged-mine", 40, { flag: "blocked", startedBy: "me" }),
+      ],
+      me,
+    );
+    strictEqual(runIds(tiers.attention), "flagged-mine");
+    strictEqual(runIds(tiers.mine), "mine");
+    strictEqual(runIds(tiers.inProgress), "theirs");
+    strictEqual(runIds(tiers.upNext), "early-next,late-next");
   });
 });

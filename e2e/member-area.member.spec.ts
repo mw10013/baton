@@ -21,6 +21,7 @@ import { seedConfig, seedMembers } from "./seed";
 const MEMBER_EMAIL = "e2e.member@example.com";
 const STRANGER_EMAIL = "e2e.stranger@example.com";
 const TEAM = "E2E Cut";
+const SECOND_TEAM = "E2E Finish";
 const OTHER_TEAM = "E2E Pack";
 const TEAMLESS_STATE = "You’re not on a team yet.";
 
@@ -50,7 +51,14 @@ test("a non-member gets the same confirmation and no link", async ({
   ).toBeHidden();
 });
 
-test("a seeded member signs in by magic link, opens their shop, and signs out", async ({
+/**
+ * A member of exactly one shop never sees the picker: the magic link lands
+ * them on that shop's queue, with the top bar naming the shop and carrying
+ * Sign out. The picker at `/shop` still exists for a member of several shops
+ * and is reachable by URL, which is how the test also proves it lists the
+ * shop.
+ */
+test("a seeded member signs in by magic link, lands on their queue, and signs out", async ({
   page,
 }) => {
   const config = seedConfig();
@@ -59,25 +67,22 @@ test("a seeded member signs in by magic link, opens their shop, and signs out", 
   await requestMagicLink(page, MEMBER_EMAIL);
   await followMagicLink(page);
 
-  await expect(page).toHaveURL(/\/shop$/u);
-  await expect(page.locator('s-page[heading="Your shops"]')).toBeVisible();
-  await expect(
-    page.locator(`s-section[heading="${MEMBER_EMAIL}"]`),
-  ).toBeVisible();
-
-  await page.getByRole("link", { name: config.shop }).click();
   await expect(page).toHaveURL(new RegExp(`/shop/${config.shop}$`, "u"));
-  await expect(page.locator(`s-page[heading="${config.shop}"]`)).toBeVisible();
-  await expect(
-    page.getByText("You have member access to this shop."),
-  ).toBeVisible();
+  await expect(page.locator('s-page[heading="Your work"]')).toBeVisible();
+  await expect(page.getByText(config.shop, { exact: true })).toBeVisible();
+  await expect(page.getByText(MEMBER_EMAIL, { exact: true })).toBeVisible();
   /* Seeded with no team: membership is login, teams are work, so a member with
      neither is a normal state that has to render as an empty state rather than
      as an error or a blank section. */
   await expect(page.getByText(TEAMLESS_STATE)).toBeVisible();
 
-  await page.getByRole("link", { name: "Back to your shops" }).click();
-  await expect(page).toHaveURL(/\/shop$/u);
+  await gotoMember(page, "/shop");
+  await expect(page.locator('s-page[heading="Your shops"]')).toBeVisible();
+  await expect(
+    page.locator(`s-section[heading="${MEMBER_EMAIL}"]`),
+  ).toBeVisible();
+  await page.getByRole("link", { name: config.shop }).click();
+  await expect(page.locator('s-page[heading="Your work"]')).toBeVisible();
 
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/localhost:\d+\/$/u);
@@ -100,11 +105,13 @@ test("removing a member closes the shop page on their live session", async ({
 
   await requestMagicLink(page, MEMBER_EMAIL);
   await followMagicLink(page);
-  await expect(page.getByRole("link", { name: config.shop })).toBeVisible();
+  await expect(page.locator('s-page[heading="Your work"]')).toBeVisible();
 
   await seedMembers(config, []);
   await gotoMember(page, `/shop/${config.shop}`);
-  await expect(page.getByText("Not Found")).toBeVisible();
+  await expect(
+    page.getByText("You no longer have access to this shop."),
+  ).toBeVisible();
   await gotoMember(page, "/shop");
   await expect(page.getByRole("link", { name: config.shop })).toBeHidden();
 });
@@ -112,8 +119,10 @@ test("removing a member closes the shop page on their live session", async ({
 /**
  * Teams are resolved by the same `requireMember` query that proves membership,
  * so a member sees the teams they are on and nothing else — a team that exists
- * in the same shop, staffed by someone else, must not appear. Seeded rather
- * than created through the admin because the two surfaces are separate
+ * in the same shop, staffed by someone else, must not appear. The queue shows
+ * team chips only for a member on more than one team, so the member here is
+ * on two of three: their two chips render, the stranger's does not. Seeded
+ * rather than created through the admin because the two surfaces are separate
  * Playwright projects; `teams.spec.ts` owns the admin half.
  */
 test("a member sees the teams they are on, and only those", async ({
@@ -125,15 +134,19 @@ test("a member sees the teams they are on, and only those", async ({
     [MEMBER_EMAIL, STRANGER_EMAIL],
     [
       { name: TEAM, members: [MEMBER_EMAIL] },
+      { name: SECOND_TEAM, members: [MEMBER_EMAIL] },
       { name: OTHER_TEAM, members: [STRANGER_EMAIL] },
     ],
   );
 
   await requestMagicLink(page, MEMBER_EMAIL);
   await followMagicLink(page);
-  await page.getByRole("link", { name: config.shop }).click();
+  await expect(page.locator('s-page[heading="Your work"]')).toBeVisible();
 
-  await expect(page.getByText(TEAM, { exact: true })).toBeVisible();
-  await expect(page.getByText(OTHER_TEAM, { exact: true })).toBeHidden();
+  await expect(page.getByRole("button", { name: `${TEAM} · 0` })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: `${SECOND_TEAM} · 0` }),
+  ).toBeVisible();
+  await expect(page.getByText(OTHER_TEAM)).toBeHidden();
   await expect(page.getByText(TEAMLESS_STATE)).toBeHidden();
 });

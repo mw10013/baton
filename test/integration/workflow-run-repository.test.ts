@@ -2168,6 +2168,254 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
       }),
     ));
 
+  it("uncompleteStep re-opens a step, keeps its starter, un-readies the next stage, and is refused once downstream started", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seedStaged;
+        const runs = yield* WorkflowRunRepository;
+        const detail = yield* stagedRun();
+        const artwork = detail.steps[0]?.id ?? "";
+        const materials = detail.steps[1]?.id ?? "";
+        const produce = detail.steps[2]?.id ?? "";
+
+        // Not yet done: nothing to undo.
+        strictEqual(
+          (yield* runs
+            .uncompleteStep({ runStepId: artwork, teamIds: [TEAM_A.id] })
+            .pipe(Effect.flip))._tag,
+          "StepNotReadyError",
+        );
+        yield* complete(detail, 1, [TEAM_A.id]);
+        yield* complete(detail, 2, [TEAM_B.id]);
+        // Stage 2 is ready now; Team C's queue has Produce.
+        strictEqual(
+          (yield* runs.listQueue({ teamIds: [TEAM_C.id] })).length,
+          1,
+        );
+        // Wrong team.
+        strictEqual(
+          (yield* runs
+            .uncompleteStep({ runStepId: artwork, teamIds: [TEAM_B.id] })
+            .pipe(Effect.flip))._tag,
+          "RunNotAllowedError",
+        );
+        // Anyone on the step's team may undo, not only who pressed Done.
+        yield* runs.uncompleteStep({
+          runStepId: artwork,
+          teamIds: [TEAM_A.id],
+        });
+        const undone = Option.getOrThrow(
+          yield* runs.getRun({ runId: detail.run.id }),
+        );
+        strictEqual(undone.steps[0]?.completedAt, null);
+        strictEqual(undone.steps[0]?.completedBy, null);
+        strictEqual(undone.steps[0]?.startedBy, "member-1");
+        strictEqual(undone.run.status, "active");
+        // Produce left Team C's queue: stage 1 is open again.
+        strictEqual(
+          (yield* runs.listQueue({ teamIds: [TEAM_C.id] })).length,
+          0,
+        );
+        strictEqual(
+          (yield* runs.listQueue({ teamIds: [TEAM_A.id] }))[0]?.steps[0]?.id,
+          artwork,
+        );
+
+        // Once downstream has started, undo is refused and names them.
+        yield* complete(detail, 1, [TEAM_A.id]);
+        yield* runs.startStep({
+          runStepId: produce,
+          memberId: memberId("m3"),
+          memberEmail: emailOf("m3@example.com"),
+          teamIds: [TEAM_C.id],
+        });
+        const blocked = yield* runs
+          .uncompleteStep({ runStepId: materials, teamIds: [TEAM_B.id] })
+          .pipe(Effect.flip);
+        strictEqual(blocked._tag, "StepUndoBlockedError");
+        if (blocked._tag === "StepUndoBlockedError") {
+          strictEqual(blocked.stepName, "Produce");
+          strictEqual(blocked.teamName, "Team C");
+        }
+
+        // Undoing the last step turns a done run back to active.
+        yield* complete(detail, 3, [TEAM_C.id]);
+        yield* complete(detail, 4, [TEAM_A.id]);
+        strictEqual(
+          Option.getOrThrow(yield* runs.getRun({ runId: detail.run.id })).run
+            .status,
+          "done",
+        );
+        yield* runs.uncompleteStep({
+          runStepId: detail.steps[3]?.id ?? "",
+          teamIds: [TEAM_A.id],
+        });
+        strictEqual(
+          Option.getOrThrow(yield* runs.getRun({ runId: detail.run.id })).run
+            .status,
+          "active",
+        );
+
+        // A cancelled run is terminal for undo too.
+        yield* runs.cancelRun({ runId: detail.run.id });
+        strictEqual(
+          (yield* runs
+            .uncompleteStep({ runStepId: produce, teamIds: [TEAM_C.id] })
+            .pipe(Effect.flip))._tag,
+          "RunTerminalError",
+        );
+      }),
+    ));
+
+  it("listDone lists the team's recent completions newest first with the undo verdict; getRunView decorates every step", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seedStaged;
+        const runs = yield* WorkflowRunRepository;
+        const detail = yield* stagedRun();
+        const since = Date.now() - 1000;
+        strictEqual(
+          (yield* runs.listDone({ teamIds: [TEAM_A.id], since, limit: 10 }))
+            .length,
+          0,
+        );
+        yield* complete(detail, 1, [TEAM_A.id]);
+        yield* complete(detail, 2, [TEAM_B.id]);
+        const teamA = yield* runs.listDone({
+          teamIds: [TEAM_A.id],
+          since,
+          limit: 10,
+        });
+        strictEqual(teamA.length, 1);
+        strictEqual(teamA[0]?.step.name, "Artwork");
+        strictEqual(teamA[0]?.run.id, detail.run.id);
+        strictEqual(teamA[0]?.undoBlockedBy, null);
+        // Outside the window: nothing.
+        strictEqual(
+          (yield* runs.listDone({
+            teamIds: [TEAM_A.id, TEAM_B.id],
+            since: Date.now() + 60_000,
+            limit: 10,
+          })).length,
+          0,
+        );
+        yield* runs.startStep({
+          runStepId: detail.steps[2]?.id ?? "",
+          memberId: memberId("m3"),
+          memberEmail: emailOf("m3@example.com"),
+          teamIds: [TEAM_C.id],
+        });
+        const both = yield* runs.listDone({
+          teamIds: [TEAM_A.id, TEAM_B.id],
+          since,
+          limit: 10,
+        });
+        deepStrictEqual(
+          both.map((entry) => [entry.step.name, entry.undoBlockedBy?.stepName]),
+          [
+            [stepName("Materials"), stepName("Produce")],
+            [stepName("Artwork"), stepName("Produce")],
+          ],
+        );
+
+        const view = Option.getOrThrow(
+          yield* runs.getRunView({
+            runId: detail.run.id,
+            teamIds: [TEAM_A.id],
+          }),
+        );
+        deepStrictEqual(
+          view.steps.map((step) => [
+            step.name,
+            step.ready,
+            step.undoBlockedBy?.teamName ?? null,
+          ]),
+          [
+            ["Artwork", false, "Team C"],
+            ["Materials", false, "Team C"],
+            ["Produce", true, null],
+            ["Inspect", false, null],
+          ],
+        );
+        strictEqual(view.items.length, 1);
+        // No step on the caller's teams, or no such run: the same None.
+        strictEqual(
+          Option.isNone(
+            yield* runs.getRunView({
+              runId: detail.run.id,
+              teamIds: ["nobody"],
+            }),
+          ),
+          true,
+        );
+        strictEqual(
+          Option.isNone(
+            yield* runs.getRunView({ runId: "missing", teamIds: [TEAM_A.id] }),
+          ),
+          true,
+        );
+        // The run carries the order's placed time.
+        strictEqual(view.run.orderProcessedAt, PROCESSED_AT);
+      }),
+    ));
+
+  it("undo of an item step is refused once the order run has started, and un-readies the order run otherwise", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seedOrderWorkflow;
+        const runs = yield* WorkflowRunRepository;
+        yield* upsertAndReconcile(order(), ORDER_ITEMS);
+        yield* finishItemRuns();
+        const [ready] = yield* packQueue();
+        if (ready === undefined) throw new Error("order run not ready");
+        const [first] = yield* itemRuns();
+        if (first === undefined) throw new Error("no item run");
+        const finish = first.steps[1]?.id ?? "";
+
+        // Nothing downstream started: allowed, and the packer's card goes.
+        yield* runs.uncompleteStep({ runStepId: finish, teamIds: [TEAM_B.id] });
+        strictEqual((yield* packQueue()).length, 0);
+        strictEqual(
+          (yield* runs
+            .uncompleteStep({ runStepId: finish, teamIds: [TEAM_B.id] })
+            .pipe(Effect.flip))._tag,
+          "StepNotReadyError",
+        );
+        yield* runs.completeStep({
+          runStepId: finish,
+          memberId: memberId("member-1"),
+          memberEmail: emailOf("member-1@example.com"),
+          teamIds: [TEAM_B.id],
+        });
+        strictEqual((yield* packQueue()).length, 1);
+
+        // The packer starts QC: every item step is now locked.
+        yield* runs.startStep({
+          runStepId: ready.steps[0]?.id ?? "",
+          memberId: memberId("packer"),
+          memberEmail: emailOf("packer@example.com"),
+          teamIds: [TEAM_C.id],
+        });
+        const blocked = yield* runs
+          .uncompleteStep({ runStepId: finish, teamIds: [TEAM_B.id] })
+          .pipe(Effect.flip);
+        strictEqual(blocked._tag, "StepUndoBlockedError");
+        if (blocked._tag === "StepUndoBlockedError") {
+          strictEqual(blocked.stepName, "QC");
+          strictEqual(blocked.teamName, "Team C");
+        }
+        const done = yield* runs.listDone({
+          teamIds: [TEAM_B.id],
+          since: Date.now() - 60_000,
+          limit: 10,
+        });
+        strictEqual(
+          done.every((entry) => entry.undoBlockedBy?.stepName === "QC"),
+          true,
+        );
+      }),
+    ));
+
   it("setStepNote writes, overwrites, clears; allowed on a done step; refused on a cancelled run", () =>
     runInRepository(
       Effect.gen(function* () {

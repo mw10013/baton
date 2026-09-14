@@ -150,11 +150,11 @@ describe("member area", () => {
 
 describe("member queue", () => {
   /**
-   * `/shop/$shop/queue` is a sibling of the shop index under the `/shop/$shop`
+   * The queue is `/shop/$shop` itself, the index under the `/shop/$shop`
    * layout, which owns no loader of its own — each child's server fn calls
    * `requireMember` itself. The queue read hits only the Durable Object and
    * renders `200`; the `404` on another shop proves the route is behind the
-   * same gate. The page's own actions are socket callables and are covered
+   * same gate. The work page is a sibling and is gated the same way. The page's own actions are socket callables and are covered
    * against the object in `member-queue-socket.test.ts` and
    * `shop-agent-workflows.test.ts`.
    */
@@ -167,13 +167,25 @@ describe("member queue", () => {
         yield* repository.addMember({ shop: SHOP, email: MEMBER });
         const cookie = yield* signInThroughWorker(MEMBER);
         strictEqual(
-          (yield* fetchWorker(`http://localhost/shop/${SHOP}/queue`, {
+          (yield* fetchWorker(`http://localhost/shop/${SHOP}`, {
             headers: { cookie },
           })).status,
           200,
         );
         strictEqual(
-          (yield* fetchWorker(`http://localhost/shop/${OTHER_SHOP}/queue`, {
+          (yield* fetchWorker(`http://localhost/shop/${SHOP}/work/none`, {
+            headers: { cookie },
+          })).status,
+          200,
+        );
+        strictEqual(
+          (yield* fetchWorker(`http://localhost/shop/${OTHER_SHOP}`, {
+            headers: { cookie },
+          })).status,
+          404,
+        );
+        strictEqual(
+          (yield* fetchWorker(`http://localhost/shop/${OTHER_SHOP}/work/none`, {
             headers: { cookie },
           })).status,
           404,
@@ -206,7 +218,7 @@ describe("member queue", () => {
         yield* repository.addMember({ shop: OTHER_SHOP, email: STRANGER });
         const cookie = yield* signInThroughWorker(MEMBER);
         const stranger = yield* signInThroughWorker(STRANGER);
-        for (const path of [`/shop/${SHOP}`, `/shop/${SHOP}/queue`]) {
+        for (const path of [`/shop/${SHOP}`, `/shop/${SHOP}/work/none`]) {
           const response = yield* fetchWorker(`http://localhost${path}`, {
             headers: { cookie },
           });
@@ -220,7 +232,7 @@ describe("member queue", () => {
           200,
         );
         strictEqual(
-          (yield* fetchWorker(`http://localhost/shop/${SHOP}/queue`, {
+          (yield* fetchWorker(`http://localhost/shop/${SHOP}`, {
             headers: { cookie: stranger },
           })).status,
           404,
@@ -281,20 +293,35 @@ describe("admin console", () => {
 });
 
 describe("login-callback", () => {
-  it.effect("sends a freshly signed-in browser on to /shop", () =>
-    run(
-      Effect.gen(function* () {
-        const repository = yield* Repository;
-        yield* seedShop(SHOP);
-        yield* repository.addMember({ shop: SHOP, email: MEMBER });
-        const cookie = yield* signInThroughWorker(MEMBER);
-        const response = yield* fetchWorker("http://localhost/login-callback", {
-          headers: { cookie },
-        });
-        strictEqual(response.status, 307);
-        strictEqual(response.headers.get("location"), "/shop");
-      }),
-    ),
+  /**
+   * One membership lands on that shop's queue; two land on the picker. The
+   * picker is a page with one link when there is one shop, and a bench wants
+   * the work, not a menu.
+   */
+  it.effect(
+    "sends a one-shop member to their queue and a two-shop member to /shop",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const repository = yield* Repository;
+          yield* seedShop(SHOP);
+          yield* repository.addMember({ shop: SHOP, email: MEMBER });
+          const cookie = yield* signInThroughWorker(MEMBER);
+          const one = yield* fetchWorker("http://localhost/login-callback", {
+            headers: { cookie },
+          });
+          strictEqual(one.status, 307);
+          strictEqual(one.headers.get("location"), `/shop/${SHOP}`);
+
+          yield* seedShop(OTHER_SHOP);
+          yield* repository.addMember({ shop: OTHER_SHOP, email: MEMBER });
+          const two = yield* fetchWorker("http://localhost/login-callback", {
+            headers: { cookie },
+          });
+          strictEqual(two.status, 307);
+          strictEqual(two.headers.get("location"), "/shop");
+        }),
+      ),
   );
 
   it.effect("sends a freshly signed-in admin on to /admin", () =>

@@ -1,6 +1,5 @@
 # Member area: UI and UX for people who do the work
 
-Status 2026-09-12: **parked**. The prerequisite is the member-side trust boundary
 (how a signed-in member reaches the shop's Durable Object and, through it, the Admin
 API, over server functions and over a socket), which is researched separately in
 `docs/member-auth-and-shopify-access-research.md`. Pick this doc and the plan back up

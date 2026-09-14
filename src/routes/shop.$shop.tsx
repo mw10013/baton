@@ -2,6 +2,7 @@ import * as React from "react";
 
 import {
   createFileRoute,
+  Link,
   Outlet,
   useHydrated,
   useRouter,
@@ -19,7 +20,30 @@ import { ShopAgentSocketProvider } from "@/lib/ShopAgentSocketHost";
  */
 export const Route = createFileRoute("/shop/$shop")({
   component: RouteComponent,
+  notFoundComponent: NotFoundComponent,
 });
+
+/**
+ * What a child loader's `notFound` renders: `requireMember` answers it for a
+ * shop the member is not (or no longer) part of. Said in the member's terms —
+ * they were removed, or the link is wrong — with the way back to the shops
+ * they still have. No shop name: the guard does not disclose whether the
+ * shop exists.
+ */
+function NotFoundComponent() {
+  return (
+    <s-page heading="No access" inlineSize="small">
+      <s-section accessibilityLabel="No access">
+        <s-stack gap="base">
+          <s-paragraph color="subdued">
+            You no longer have access to this shop.
+          </s-paragraph>
+          <Link to="/shop">Your shops</Link>
+        </s-stack>
+      </s-section>
+    </s-page>
+  );
+}
 
 /**
  * Opens the member's single `ShopAgent` socket for this shop and shares it

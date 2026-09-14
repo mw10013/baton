@@ -105,6 +105,15 @@ afterEach(async () => {
  * Every shop name is unique per test: a Durable Object keeps its SQLite across
  * tests in the same worker, so sharing a shop would leak workflows between cases.
  */
+/** The ready half of the queue view; the Done tier is covered by the repository tests. */
+const queueItems = async (
+  agent: Awaited<ReturnType<typeof getAgentByName<Cloudflare.Env, ShopAgent>>>,
+  teamIds: readonly string[],
+) => {
+  const view = await agent.listQueue({ teamIds });
+  return view.items;
+};
+
 describe("ShopAgent workflow callables", () => {
   it("addStep refuses an unknown team, accepts an existing one", async () => {
     const shop = "wf-team-check.myshopify.com";
@@ -627,14 +636,14 @@ describe("ShopAgent workflow run callables", () => {
       _tag: "NotAllowed",
     });
     stranger.close();
-    expect(await agent.listQueue({ teamIds: [team.id] })).toHaveLength(1);
+    expect(await queueItems(agent, [team.id])).toHaveLength(1);
     const engraver = await openMemberSocket(shop, {
       memberId: "m1",
       memberEmail: "m1@example.com",
       teamIds: [team.id],
     });
     expect(await engraver.completeStep({ runStepId })).toEqual({ _tag: "Ok" });
-    expect(await agent.listQueue({ teamIds: [team.id] })).toHaveLength(0);
+    expect(await queueItems(agent, [team.id])).toHaveLength(0);
     expect(await agent.cancelRun({ runId })).toEqual({ _tag: "Terminal" });
     expect(await engraver.dismissFlag({ runId })).toEqual({
       _tag: "NotAllowed",
@@ -696,9 +705,9 @@ describe("ShopAgent workflow run callables", () => {
     strictEqual(detail?.orderWorkflow.id, pack.workflow.id);
     // The order run is created with the item run and waits on it.
     strictEqual(detail?.runs.length, 2);
-    expect(await agent.listQueue({ teamIds: [packing.id] })).toHaveLength(0);
+    expect(await queueItems(agent, [packing.id])).toHaveLength(0);
 
-    const [engraveItem] = await agent.listQueue({ teamIds: [engraving.id] });
+    const [engraveItem] = await queueItems(agent, [engraving.id]);
     const engraver = await openMemberSocket(shop, {
       memberId: "m1",
       memberEmail: "m1@example.com",
@@ -711,7 +720,7 @@ describe("ShopAgent workflow run callables", () => {
     ).toEqual({ _tag: "Ok" });
     engraver.close();
 
-    const [packItem] = await agent.listQueue({ teamIds: [packing.id] });
+    const [packItem] = await queueItems(agent, [packing.id]);
     if (packItem === undefined) throw new Error("no order run in the queue");
     strictEqual(detail?.orderWorkflowBlocker, null);
     strictEqual(packItem.run.lineItemId, null);
@@ -739,7 +748,7 @@ describe("ShopAgent workflow run callables", () => {
       await packer.completeStep({ runStepId: packItem.steps[0]?.id ?? "" }),
     ).toEqual({ _tag: "Ok" });
     packer.close();
-    expect(await agent.listQueue({ teamIds: [packing.id] })).toHaveLength(0);
+    expect(await queueItems(agent, [packing.id])).toHaveLength(0);
     const after = await agent.listRunsForOrder({
       orderId: "gid://shopify/Order/1",
     });
@@ -784,7 +793,7 @@ describe("ShopAgent workflow run callables", () => {
     strictEqual(before?.orderWorkflow.id, pack.workflow.id);
     strictEqual(before?.orderWorkflowBlocker, "off");
 
-    const [engraveItem] = await agent.listQueue({ teamIds: [engraving.id] });
+    const [engraveItem] = await queueItems(agent, [engraving.id]);
     const engraver = await openMemberSocket(shop, {
       memberId: "m1",
       memberEmail: "m1@example.com",
@@ -796,7 +805,7 @@ describe("ShopAgent workflow run callables", () => {
       }),
     ).toEqual({ _tag: "Ok" });
     engraver.close();
-    expect(await agent.listQueue({ teamIds: [packing.id] })).toHaveLength(0);
+    expect(await queueItems(agent, [packing.id])).toHaveLength(0);
 
     // Turn on: the order was placed after `activatedAt` (an hour ahead), so
     // the reconcile-all creates its order run, ready at once.
@@ -806,7 +815,7 @@ describe("ShopAgent workflow run callables", () => {
     });
     if (on._tag !== "Ok") throw new Error(on._tag);
     strictEqual(on.started, 1);
-    const [packItem] = await agent.listQueue({ teamIds: [packing.id] });
+    const [packItem] = await queueItems(agent, [packing.id]);
     strictEqual(packItem?.run.lineItemId, null);
     strictEqual(packItem?.run.workflowName, Domain.ORDER_WORKFLOW_NAME);
     const after = await agent.subscribeOrder({
@@ -879,7 +888,7 @@ describe("ShopAgent workflow run callables", () => {
       teamIds: [team.id],
     });
     expect(await engraver.startStep({ runStepId })).toEqual({ _tag: "Ok" });
-    const [item] = await agent.listQueue({ teamIds: [team.id] });
+    const [item] = await queueItems(agent, [team.id]);
     strictEqual(item?.run.status, "active");
     strictEqual(item?.steps[0]?.startedByEmail, "w@example.com");
     strictEqual(item?.stageCount, 1);
@@ -893,7 +902,7 @@ describe("ShopAgent workflow run callables", () => {
         });
       }).pipe(Effect.provide(layer)),
     );
-    const [deletedItem] = await agent.listQueue({ teamIds: [team.id] });
+    const [deletedItem] = await queueItems(agent, [team.id]);
     strictEqual(deletedItem?.steps[0]?.startedByEmail, "w@example.com");
     expect(
       await engraver.setStepNote({
@@ -905,7 +914,7 @@ describe("ShopAgent workflow run callables", () => {
       await engraver.blockRun({ runId, reason: "waiting on stock" }),
     ).toEqual({ _tag: "Ok" });
     engraver.close();
-    const [blocked] = await agent.listQueue({ teamIds: [team.id] });
+    const [blocked] = await queueItems(agent, [team.id]);
     strictEqual(blocked?.run.flag, "blocked");
     strictEqual(blocked?.run.flagDetail?.reason, "waiting on stock");
     strictEqual(blocked?.run.flagDetail?.by, memberId);
@@ -937,7 +946,7 @@ describe("ShopAgent workflow run callables", () => {
     const runStepId = detail?.steps[0]?.id ?? "";
 
     await agent.deleteTeam({ teamId: a.id });
-    expect(await agent.listQueue({ teamIds: [a.id] })).toEqual([]);
+    expect(await queueItems(agent, [a.id])).toEqual([]);
     const view = await agent.getOrderDetail({ legacyId: "1" });
     expect(view?.runs[0]?.steps[0]?.teamId).toBe(null);
     expect(view?.teams).toEqual([]);
@@ -949,7 +958,7 @@ describe("ShopAgent workflow run callables", () => {
     expect(await agent.assignRunStepTeam({ runStepId, teamId: b.id })).toEqual({
       _tag: "Assigned",
     });
-    const [item] = await agent.listQueue({ teamIds: [b.id] });
+    const [item] = await queueItems(agent, [b.id]);
     strictEqual(item?.steps[0]?.id, runStepId);
     strictEqual(item?.steps[0]?.teamName, "B");
     const after = await agent.getOrderDetail({ legacyId: "1" });
@@ -969,8 +978,8 @@ describe("ShopAgent workflow run callables", () => {
     expect(await agent.assignRunStepTeam({ runStepId, teamId: c.id })).toEqual({
       _tag: "Assigned",
     });
-    expect(await agent.listQueue({ teamIds: [b.id] })).toEqual([]);
-    const [moved] = await agent.listQueue({ teamIds: [c.id] });
+    expect(await queueItems(agent, [b.id])).toEqual([]);
+    const [moved] = await queueItems(agent, [c.id]);
     strictEqual(moved?.steps[0]?.id, runStepId);
     strictEqual(moved?.steps[0]?.teamName, "C");
     strictEqual(moved?.steps[0]?.startedByEmail, "m1@example.com");

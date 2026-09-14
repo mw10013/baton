@@ -1,11 +1,10 @@
 import { useMutation } from "@tanstack/react-query";
-import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Effect } from "effect";
 
-import { Auth } from "@/lib/Auth";
-import { CurrentRequest } from "@/lib/CurrentRequest";
 import { memberServerFnMiddleware } from "@/lib/MemberServerFnMiddleware";
+import { signOutFn } from "@/lib/memberSignOut";
 import { Repository } from "@/lib/Repository";
 
 const getMyShops = createServerFn({ method: "GET" })
@@ -18,19 +17,6 @@ const getMyShops = createServerFn({ method: "GET" })
           email: user.email,
           shops: yield* repository.listMemberShops(user.email),
         };
-      }),
-    ),
-  );
-
-const signOutFn = createServerFn({ method: "POST" })
-  .middleware([memberServerFnMiddleware])
-  .handler(({ context: { runEffect } }) =>
-    runEffect(
-      Effect.gen(function* () {
-        const auth = yield* Auth;
-        const request = yield* CurrentRequest;
-        yield* auth.signOut(request.headers);
-        return yield* Effect.fail(redirect({ to: "/" }));
       }),
     ),
   );

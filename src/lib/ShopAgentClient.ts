@@ -88,7 +88,12 @@ export class ShopAgentClient extends Context.Service<
     readonly listQueue: (
       shop: string,
       input: Domain.ListQueueInput,
-    ) => Effect.Effect<readonly Domain.QueueItem[], ShopAgentClientError>;
+    ) => Effect.Effect<Domain.QueueView, ShopAgentClientError>;
+    /** The work page's loader read; `null` is "not yours or not there", one answer on purpose. */
+    readonly getRunForMember: (
+      shop: string,
+      input: Domain.GetRunForMemberInput,
+    ) => Effect.Effect<Domain.RunView | null, ShopAgentClientError>;
     readonly listStepsOwnedBy: (
       shop: string,
       input: Domain.TeamIdInput,
@@ -187,7 +192,8 @@ export class ShopAgentClient extends Context.Service<
        * value is the decoded shape (`customAttributes` an array, not JSON
        * text) and must be validated on that side.
        */
-      const queueItems = Schema.toType(Schema.Array(Domain.QueueItem));
+      const queueView = Schema.toType(Domain.QueueView);
+      const runView = Schema.toType(Schema.NullOr(Domain.RunView));
       const ownedSteps = Schema.toType(Schema.Array(Domain.OwnedStep));
       const teamStepCounts = Schema.toType(Schema.Array(Domain.TeamStepCounts));
       const ownedStepsByTeam = Schema.toType(
@@ -202,8 +208,12 @@ export class ShopAgentClient extends Context.Service<
       return ShopAgentClient.of({
         listQueue: Effect.fn("ShopAgentClient.listQueue")(
           (shop: string, input: Domain.ListQueueInput) =>
-            call("listQueue", queueItems, shop, (stub) =>
-              stub.listQueue(input),
+            call("listQueue", queueView, shop, (stub) => stub.listQueue(input)),
+        ),
+        getRunForMember: Effect.fn("ShopAgentClient.getRunForMember")(
+          (shop: string, input: Domain.GetRunForMemberInput) =>
+            call("getRunForMember", runView, shop, (stub) =>
+              stub.getRunForMember(input),
             ),
         ),
         listStepsOwnedBy: Effect.fn("ShopAgentClient.listStepsOwnedBy")(

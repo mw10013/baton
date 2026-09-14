@@ -63,6 +63,9 @@ const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
   NotAllowed: () => "Not allowed.",
   NotReady: () => "A step in an earlier stage is still open.",
   Terminal: () => "That workflow run is already finished.",
+  // Undo is a member action; the merchant page never sends it.
+  UndoBlocked: ({ teamName, stepName }) =>
+    `${teamName} already started ${stepName}.`,
 });
 
 const RUN_STATUS_TONE = {

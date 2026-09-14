@@ -33,6 +33,8 @@ const CALLABLE_ROLES = {
   setStepNote: "member",
   blockRun: "member",
   dismissFlag: "member",
+  uncompleteStep: "member",
+  subscribeRun: "member",
   syncOrders: "merchant",
   resyncOrder: "merchant",
   subscribeOrders: "merchant",

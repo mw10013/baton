@@ -173,7 +173,9 @@ const seedShopWithWork = async (shopName: string) => {
 };
 
 const subscribe = (socket: AgentSocket, subscriberId: string) =>
-  socket.call<readonly Domain.QueueItem[]>("subscribeQueue", { subscriberId });
+  socket
+    .call<Domain.QueueView>("subscribeQueue", { subscriberId })
+    .then((view) => view.items);
 
 afterEach(async () => {
   await resetMemberTables();

@@ -4,11 +4,15 @@ import { Effect, Option } from "effect";
 
 import { Auth } from "@/lib/Auth";
 import { CurrentRequest } from "@/lib/CurrentRequest";
+import { Repository } from "@/lib/Repository";
 
 /**
  * Invisible on success: the verify endpoint has already set the session
  * cookie, so this resolves straight to a redirect — `/admin` for the operator
- * role, otherwise `/shop` (the shop list, uniform for 0/1/many memberships).
+ * role, otherwise the member's work. A member of exactly one shop lands on
+ * that shop's queue: the picker would be a page with one link on it, and a
+ * bench wants the work, not a menu. Zero or several memberships land on
+ * `/shop`, the picker (which is also where a member with no shops reads why).
  * Admin and member surfaces are disjoint: an admin never lands on `/shop`
  * (impersonation is the sanctioned door). The only rendered state is failure — no
  * session, or better-auth redirected here with `?error=INVALID_TOKEN` after an
@@ -23,10 +27,15 @@ const resolveLoginCallback = createServerFn({ method: "GET" }).handler(
         const sessionContext = yield* auth.getSession(request.headers);
         if (Option.isNone(sessionContext))
           return { error: "Magic link sign-in could not be completed." };
+        const { user } = sessionContext.value;
+        if (user.role === "admin")
+          return yield* Effect.fail(redirect({ to: "/admin" }));
+        const shops = yield* (yield* Repository).listMemberShops(user.email);
+        const [only] = shops;
         return yield* Effect.fail(
-          redirect({
-            to: sessionContext.value.user.role === "admin" ? "/admin" : "/shop",
-          }),
+          only !== undefined && shops.length === 1
+            ? redirect({ to: "/shop/$shop", params: { shop: only } })
+            : redirect({ to: "/shop" }),
         );
       }),
     ),

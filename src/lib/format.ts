@@ -34,3 +34,22 @@ export const formatTime = (value: string | number) =>
 
 export const formatNumber = (value: number) =>
   value.toLocaleString("en-US", { maximumFractionDigits: 0 });
+
+/**
+ * Coarse age for the queue card's "ordered 3d ago": minutes under an hour,
+ * hours under a day, then days. Coarse on purpose — a bench wants "is this
+ * from today or last week", not a timestamp, which the work page has. Same
+ * SSR caveat as `formatDateTime`: `Date.now()` differs between the server
+ * render and hydration, so render through `LocalDateTime`.
+ */
+export const formatRelative = (value: string | number, now = Date.now()) => {
+  const minutes = Math.max(
+    0,
+    Math.round((now - new Date(value).getTime()) / 60_000),
+  );
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${String(minutes)}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${String(hours)}h ago`;
+  return `${String(Math.round(hours / 24))}d ago`;
+};

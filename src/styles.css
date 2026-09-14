@@ -129,3 +129,18 @@ details[open] > .live-value-summary .live-value-preview {
     overflow: visible;
   }
 }
+
+/* The member area's top bar (`MemberBar.tsx`): the one strip above `s-page`. */
+.member-bar {
+  padding: 0.5rem 1rem;
+  border-block-end: 1px solid var(--s-color-border, #e3e3e3);
+  background: var(--s-color-bg-surface, #fff);
+}
+
+/* The member work page prints as a job ticket: chrome and every button go. */
+@media print {
+  .print-hide,
+  s-button {
+    display: none !important;
+  }
+}

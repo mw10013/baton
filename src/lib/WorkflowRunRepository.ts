@@ -34,10 +34,24 @@ export class RunNotAllowedError extends Schema.TaggedError<RunNotAllowedError>()
   { runId: Schema.String, teamId: Schema.String },
 ) {}
 
-/** A step in an earlier stage is still open, or this step is already completed. */
+/** A step in an earlier stage is still open, or this step is already completed — or, for undo, not yet completed. */
 export class StepNotReadyError extends Schema.TaggedError<StepNotReadyError>()(
   "StepNotReadyError",
   { runStepId: Schema.String },
+) {}
+
+/**
+ * `uncompleteStep` refused because someone downstream has already started:
+ * a later stage of the run, or the order run an item run's completion made
+ * ready. Names the step and team so the page can say who to ask.
+ */
+export class StepUndoBlockedError extends Schema.TaggedError<StepUndoBlockedError>()(
+  "StepUndoBlockedError",
+  {
+    runStepId: Schema.String,
+    stepName: Domain.StepName,
+    teamName: Domain.TeamName,
+  },
 ) {}
 
 /**
@@ -167,6 +181,37 @@ const summarise = (
 const isTerminal = (run: Domain.WorkflowRun) =>
   run.status === "done" || run.status === "cancelled";
 
+/**
+ * The undo rule, on rows already in hand: the first step in a later stage of
+ * the same run that anyone has started, else — for an item run — the first
+ * started step of the order's open or finished order run. A `startedAt`
+ * test covers finished steps too, because Done backfills `startedAt`. Order
+ * runs whose item runs are all done are the only ones that can have started,
+ * so a null answer for an item run also means the packer has not begun.
+ * Pure and exported so the work page's per-step verdict, the Done tier, and
+ * the write itself cannot disagree.
+ */
+const firstStarted = (steps: readonly Domain.WorkflowRunStep[]) =>
+  steps
+    .filter((other) => other.startedAt !== null)
+    .toSorted((a, b) => a.stage - b.stage || a.position - b.position)[0];
+
+export const undoBlockedBy = (
+  step: Domain.WorkflowRunStep,
+  runSteps: readonly Domain.WorkflowRunStep[],
+  orderRunSteps: readonly Domain.WorkflowRunStep[],
+): Domain.UndoBlocker | null => {
+  const blocker =
+    firstStarted(
+      runSteps.filter(
+        (other) => other.runId === step.runId && other.stage > step.stage,
+      ),
+    ) ?? firstStarted(orderRunSteps);
+  return blocker === undefined
+    ? null
+    : { stepName: blocker.name, teamName: blocker.teamName };
+};
+
 const NO_COUNTS: ReconcileCounts = {
   created: 0,
   cancelled: 0,
@@ -278,6 +323,56 @@ export class WorkflowRunRepository extends Context.Service<
       readonly teamIds: readonly string[];
     }) => Effect.Effect<
       readonly QueueRow[],
+      SqlError.SqlError | WorkflowRunRepositoryError
+    >;
+    /**
+     * Steps owned by `teamIds` completed at or after `since`, newest first,
+     * each with its run and the undo verdict ({@link undoBlockedBy}). The
+     * team's, not the caller's: a colleague notices a mistake as readily as
+     * its author. Cancelled runs are excluded — nothing there is undoable.
+     */
+    readonly listDone: (input: {
+      readonly teamIds: readonly string[];
+      readonly since: number;
+      readonly limit: number;
+    }) => Effect.Effect<
+      readonly Domain.DoneItem[],
+      SqlError.SqlError | WorkflowRunRepositoryError
+    >;
+    /**
+     * Undo: clears `completedAt` / `completedBy` / `completedByEmail` and
+     * recomputes the run's status; `startedAt` / `startedBy` stay, so the
+     * step returns to "in progress" under its original starter. Allowed
+     * for the step's team while nothing downstream has started
+     * (`StepUndoBlockedError` otherwise, naming the blocker). A `done` run
+     * is *not* terminal here — undoing its last step is the point — only a
+     * cancelled one is. The readiness query does the rest: an order run
+     * that was ready stops being ready when an item step re-opens.
+     */
+    readonly uncompleteStep: (input: {
+      readonly runStepId: string;
+      readonly teamIds: readonly string[];
+    }) => Effect.Effect<
+      void,
+      | SqlError.SqlError
+      | WorkflowRunRepositoryError
+      | RunNotFoundError
+      | RunNotAllowedError
+      | RunTerminalError
+      | StepNotReadyError
+      | StepUndoBlockedError
+    >;
+    /**
+     * The work page's read: the run with every step decorated by readiness
+     * and the undo verdict, the order's live note and line items. `None`
+     * when the run does not exist or no step of it belongs to `teamIds` —
+     * one answer for both, so a member cannot probe run ids.
+     */
+    readonly getRunView: (input: {
+      readonly runId: string;
+      readonly teamIds: readonly string[];
+    }) => Effect.Effect<
+      Option.Option<Domain.RunView>,
       SqlError.SqlError | WorkflowRunRepositoryError
     >;
     /**
@@ -662,6 +757,51 @@ export class WorkflowRunRepository extends Context.Service<
             );
 
       /**
+       * The steps of the non-cancelled order run on each of `orderIds`, for
+       * the undo rule on item runs. A cancelled order run is skipped: its
+       * steps are nobody's and its key is kept only for un-cancel.
+       */
+      const orderRunStepsFor = (orderIds: readonly string[]) =>
+        orderIds.length === 0
+          ? Effect.succeed([])
+          : sql`
+              select s.*, r.orderId as orderId from WorkflowRunStep s
+              join WorkflowRun r on r.id = s.runId
+              where r.lineItemId is null and r.status <> 'cancelled'
+                and r.orderId in (select value from json_each(${json(orderIds)}))
+              order by s.runId, s.position
+            `.pipe(
+              Effect.flatMap(
+                decode(
+                  Schema.Array(
+                    Schema.Struct({
+                      ...Domain.WorkflowRunStep.fields,
+                      orderId: Schema.String,
+                    }),
+                  ),
+                  "Invalid order run step row",
+                ),
+              ),
+            );
+
+      /** The undo verdict for `step` of `run`, given every step of the run and of the order's order run. */
+      const undoVerdict = (
+        run: Domain.WorkflowRun,
+        step: Domain.WorkflowRunStep,
+        runSteps: readonly Domain.WorkflowRunStep[],
+        orderRunSteps: readonly (Domain.WorkflowRunStep & {
+          readonly orderId: string;
+        })[],
+      ) =>
+        undoBlockedBy(
+          step,
+          runSteps,
+          Domain.isOrderRun(run)
+            ? []
+            : orderRunSteps.filter((other) => other.orderId === run.orderId),
+        );
+
+      /**
        * `status` is a function of the steps; recomputing it in SQL from the
        * same rows the step write just touched is what keeps the two in one
        * transaction with nothing to drift. A started step counts as `active`
@@ -758,13 +898,14 @@ export class WorkflowRunRepository extends Context.Service<
           const [run] = yield* decodeRuns(
             yield* sql`
               insert into WorkflowRun (
-                id, workflowId, workflowName, orderId, orderName, lineItemId,
-                lineItemTitle, variantTitle, sku, quantity, customAttributes,
+                id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
+                lineItemId, lineItemTitle, variantTitle, sku, quantity, customAttributes,
                 source, status, flag, flagAt, flagDetail, createdAt, updatedAt,
                 cancelledAt
               ) values (
                 ${runId}, ${workflow.id}, ${workflow.name}, ${order.id},
-                ${order.name}, ${lineItem?.id ?? null}, ${lineItem?.title ?? null},
+                ${order.name}, ${order.processedAt},
+                ${lineItem?.id ?? null}, ${lineItem?.title ?? null},
                 ${lineItem?.variantTitle ?? null}, ${lineItem?.sku ?? null},
                 ${lineItem === null ? null : Domain.unitsToMake(lineItem)},
                 ${lineItem === null ? null : json(lineItem.customAttributes)},
@@ -1365,6 +1506,144 @@ export class WorkflowRunRepository extends Context.Service<
               },
             ];
           });
+        }),
+
+        listDone: Effect.fn("WorkflowRunRepository.listDone")(function* ({
+          teamIds,
+          since,
+          limit,
+        }: {
+          readonly teamIds: readonly string[];
+          readonly since: number;
+          readonly limit: number;
+        }) {
+          if (teamIds.length === 0) return [];
+          const done = yield* decodeSteps(
+            yield* sql`
+              select s.* from WorkflowRunStep s
+              join WorkflowRun r on r.id = s.runId
+              where s.completedAt >= ${since}
+                and s.teamId in (select value from json_each(${json(teamIds)}))
+                and r.status <> 'cancelled'
+              order by s.completedAt desc, s.position desc
+              limit ${limit}
+            `,
+          );
+          if (done.length === 0) return [];
+          const runIds = [...new Set(done.map((step) => step.runId))];
+          const runs = yield* decodeRuns(
+            yield* sql`
+              select * from WorkflowRun
+              where id in (select value from json_each(${json(runIds)}))
+            `,
+          );
+          const steps = yield* stepsForRuns(runIds);
+          const orderRunSteps = yield* orderRunStepsFor([
+            ...new Set(
+              runs
+                .filter((run) => !Domain.isOrderRun(run))
+                .map((run) => run.orderId),
+            ),
+          ]);
+          return done.flatMap((step): Domain.DoneItem[] => {
+            const run = runs.find((candidate) => candidate.id === step.runId);
+            return run === undefined
+              ? []
+              : [
+                  {
+                    run,
+                    step,
+                    undoBlockedBy: undoVerdict(
+                      run,
+                      step,
+                      steps.filter((other) => other.runId === run.id),
+                      orderRunSteps,
+                    ),
+                  },
+                ];
+          });
+        }),
+
+        uncompleteStep: Effect.fn("WorkflowRunRepository.uncompleteStep")(
+          function* ({
+            runStepId,
+            teamIds,
+          }: {
+            readonly runStepId: string;
+            readonly teamIds: readonly string[];
+          }) {
+            yield* sql.withTransaction(
+              Effect.gen(function* () {
+                const step = yield* requireStep(runStepId);
+                const run = yield* requireRun(step.runId);
+                if (run.status === "cancelled")
+                  yield* new RunTerminalError({
+                    runId: run.id,
+                    status: run.status,
+                  });
+                if (step.teamId === null || !teamIds.includes(step.teamId))
+                  yield* new RunNotAllowedError({
+                    runId: run.id,
+                    teamId: step.teamId ?? "",
+                  });
+                if (step.completedAt === null)
+                  yield* new StepNotReadyError({ runStepId });
+                const blocker = undoVerdict(
+                  run,
+                  step,
+                  yield* stepsForRuns([run.id]),
+                  yield* orderRunStepsFor([run.orderId]),
+                );
+                if (blocker !== null)
+                  yield* new StepUndoBlockedError({ runStepId, ...blocker });
+                const now = yield* Clock.currentTimeMillis;
+                yield* sql`
+                  update WorkflowRunStep
+                  set completedAt = null, completedBy = null, completedByEmail = null
+                  where id = ${runStepId}
+                `;
+                yield* recomputeStatus(run.id, now);
+              }),
+            );
+          },
+        ),
+
+        getRunView: Effect.fn("WorkflowRunRepository.getRunView")(function* ({
+          runId,
+          teamIds,
+        }: {
+          readonly runId: string;
+          readonly teamIds: readonly string[];
+        }) {
+          const found = yield* findRun(runId);
+          if (Option.isNone(found)) return Option.none();
+          const run = found.value;
+          const steps = yield* stepsForRuns([run.id]);
+          if (
+            !steps.some(
+              (step) => step.teamId !== null && teamIds.includes(step.teamId),
+            )
+          )
+            return Option.none();
+          const ready = yield* readySteps(run.id);
+          const orderRunSteps = yield* orderRunStepsFor([run.orderId]);
+          const items = yield* orderItems([run.orderId]);
+          const [noteRow] = yield* sql`
+            select note from ShopOrder where id = ${run.orderId}
+          `;
+          return Option.some({
+            run,
+            steps: steps.map((step): Domain.RunStepView => ({
+              ...step,
+              ready: ready.some((candidate) => candidate.id === step.id),
+              undoBlockedBy:
+                step.completedAt === null
+                  ? null
+                  : undoVerdict(run, step, steps, orderRunSteps),
+            })),
+            note: typeof noteRow?.note === "string" ? noteRow.note : null,
+            items: items.map(({ orderId: _orderId, ...item }) => item),
+          } satisfies Domain.RunView);
         }),
 
         startStep: Effect.fn("WorkflowRunRepository.startStep")(function* ({
