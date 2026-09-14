@@ -1,6 +1,6 @@
 # Set up Infomaniak email for `mw10013.com`
 
-Updated: **September 13, 2026**.
+Updated: **September 14, 2026**.
 
 ## Target
 
@@ -188,6 +188,84 @@ Only after all tests pass:
 4. Keep `mw10013@gmail.com` as the Infomaniak login and recovery address.
 5. Save a final export or screenshot of the working DNS records.
 
+## 9. Use Gmail as a client for the Infomaniak inbox
+
+Researched September 14, 2026. Question: can Gmail on the web and on iPhone show the Infomaniak inbox (both `michael@` and `support@`) and send as those identities.
+
+Short answer: yes for viewing, yes for sending, but do not build the workflow on Gmail-web POP fetching plus **Send mail as**. Google is removing exactly that path in January 2027. Use IMAP on iPhone and treat Infomaniak Mail as the webmail of record.
+
+### 9.1. One inbox, two identities; signatures do not cross over
+
+- `support@mw10013.com` remains an alias into the `michael@mw10013.com` inbox. It has no separate inbox, password, or IMAP folder. Any client logged in as `michael@` sees mail sent to either address. Distinguish by the `To:` header, not by account.
+- The Infomaniak **Settings -> Signatures -> Advanced Settings -> sender address** control only affects sending from the Infomaniak Mail web app at `https://ksuite.infomaniak.com/mail`. Infomaniak states there is no link between those signature settings and external mail clients. Each client defines its own `From:`.
+- Consequence: no `michael@` signature file is needed to make Gmail or iPhone work, and creating one does not help them. Keep the existing `Support` signature identity only for sending as `support@` from Infomaniak webmail. Sending as `support@` from an external client works because the alias exists on the Mail Service, not because a signature exists.
+
+### 9.2. Device passwords and server settings
+
+The Infomaniak login password does not work for IMAP/SMTP. Create one device password per client so each can be revoked independently:
+
+1. In Manager, open the Mail Service for `mw10013.com`, click `michael@mw10013.com`, open the **Devices** tab, click **Add a device**, name it (for example `gmail-app-iphone` or `apple-mail`), and copy the shown password once into a password manager. The same can be done from Infomaniak Mail web app -> Address settings -> Manage password.
+2. Use the full address `michael@mw10013.com` as the username everywhere.
+
+```text
+IMAP: mail.infomaniak.com, port 993, SSL/TLS
+SMTP: mail.infomaniak.com, port 587 + STARTTLS (recommended; 465 + SSL/TLS fallback)
+Auth: required, username = michael@mw10013.com + device password
+POP:  mail.infomaniak.com, port 995, SSL/TLS (avoid; see 9.3)
+```
+
+Do not mix POP and IMAP against the same mailbox. Infomaniak troubleshooting guidance is one protocol at a time for a given mailbox; POP plus IMAP together causes duplicates and sync surprises.
+
+### 9.3. Gmail on the web: possible today, removed January 2027
+
+The legacy bridge is **Check mail from other accounts** (POP3 fetch) plus **Send mail as** through Infomaniak SMTP:
+
+1. Gmail web -> Settings -> See all settings -> Accounts and Import -> **Check mail from other accounts** -> Add `michael@mw10013.com` with POP server `mail.infomaniak.com:995`, SSL, username plus device password. Leaving a copy on the server is required if Infomaniak stays the mailbox of record.
+2. In the same tab, **Send mail as** -> Add `michael@mw10013.com`, then `support@mw10013.com`, choosing the external-SMTP path with `mail.infomaniak.com:587`, TLS, username plus device password. Do not use the default Gmail relay for a custom domain: relaying breaks SPF/DKIM alignment and can show `on behalf of` in Outlook. Enable `Reply from the same address the message was sent to`. Verification codes arrive in the Infomaniak inbox.
+
+Do not adopt this except as a short bridge:
+
+- Google's removal notice states that starting January 2027, Gmail removes **Send as** for third-party addresses, Gmailify, and POP fetching on the web. Q3-Q4 2026 (now) is the transition period and Google says it may already restrict new configurations. Mobile IMAP access and Gmail-to-Gmail or Workspace Send-as are not affected.
+- POP is one-way, polled rather than push, drops folders/labels, and Sent mail stays split between Gmail Sent and Infomaniak Sent.
+- Re-adding a `support@` Send-as entry reintroduces the duplicate-copy behavior removed in section 8: Gmail-sent tests to `support@` get a local Gmail inbox copy with no `Received` headers alongside the real Infomaniak delivery.
+
+Imported messages already pulled into Gmail stay after removal; only fetching and sending stop.
+
+### 9.4. iPhone: supported and unaffected by the web removal
+
+Google keeps third-party accounts in the Gmail mobile app. Infomaniak documents the Gmail-app path directly.
+
+Option A, Gmail app (stays in the familiar app):
+
+1. Gmail app -> profile -> Add another account -> **Other (IMAP)**.
+2. Enter `michael@mw10013.com`, choose IMAP, enter the device password and `mail.infomaniak.com` for both incoming and outgoing servers.
+3. The Infomaniak mailbox appears as a separate switchable account, not merged into `mw10013@gmail.com`. The mobile app cannot configure POP fetching into one merged inbox the way Gmail web did.
+
+Limitation: the Gmail iOS app has no `From:` picker for IMAP-account aliases when composing, so plan phone sending as `support@` through option B or C.
+
+Option B, Apple Mail:
+
+Settings -> Apps -> Mail -> Mail Accounts -> Add Account -> Other -> Add Mail Account, choose IMAP, enter the section 9.2 servers, then add `support@mw10013.com` as an additional `From:` identity or second account entry pointing at the same mailbox. Verify SSL on (IMAP 993, SMTP 587 or 465) and SMTP authentication with the full address plus device password.
+
+Option C, Infomaniak Mail iOS app:
+
+Native alias and signature handling plus Push, versus IMAP polling in Gmail and Apple Mail. Use this on the phone if sending as `support@` from iOS matters. Infomaniak also offers signed `.mobileconfig` profiles for Apple Mail on iOS/macOS through its setup assistant at `https://config.infomaniak.com/`.
+
+### 9.5. Sending as `support@` from clients
+
+Because `support@` is a regular alias, Infomaniak SMTP accepts `From: support@mw10013.com` when authenticated as `michael@mw10013.com` with a device password. Configure the client identity, not the Infomaniak signature:
+
+- Desktop clients with identities (Thunderbird and equivalents): add the account once as `michael@`, then add `support@` as an alternate identity using the same SMTP credentials.
+- Clients without identities (Gmail iOS app IMAP): they send as the login address only. To send as `support@`, use Apple Mail with an alias identity, Infomaniak Mail app with the `Support` signature selected, or desktop webmail.
+- Gmail-web bridge only: add two separate **Send mail as** entries, one per identity, both using Infomaniak SMTP.
+
+### 9.6. Recommendation
+
+- Keep Infomaniak as the mailbox of record. Do not POP-drain it into Gmail.
+- On iPhone, add `michael@` as IMAP in the Gmail app if staying in that UI matters, and add Apple Mail or the Infomaniak Mail app for alias sending and Push.
+- On desktop web, keep `ksuite.infomaniak.com/mail` pinned alongside Gmail rather than re-creating the deleted Gmail Send-as and filter from section 8.
+- If a merged Gmail-web inbox is needed temporarily, the section 9.3 bridge works only until the January 2027 removal and should not gain new filters, labels, or automation.
+
 ## Rollback
 
 If Infomaniak cannot receive mail:
@@ -214,3 +292,13 @@ Messages in the inbox and ordinary folders have no expiration. Deleted messages 
 - [Configure Infomaniak mail with external DNS](https://www.infomaniak.com/en/support/faq/1775/link-an-infomaniak-mail-service-to-an-external-service)
 - [Add Infomaniak DKIM to Cloudflare](https://www.infomaniak.com/en/support/faq/1619/add-infomaniak-dkim-to-cloudflare)
 - [Restore deleted email](https://www.infomaniak.com/en/support/faq/1203/restore-a-mail-account-recover-deleted-emails)
+- [Sync email across devices (IMAP/SMTP settings, device passwords)](https://www.infomaniak.com/en/support/faq/2427/sync-your-emails-across-all-your-devices)
+- [Create a mail device password from the Mail Service](https://www.infomaniak.com/en/support/faq/1321/add-a-device-create-a-mail-password-from-the-mail-service)
+- [Manage device passwords from Infomaniak webmail](https://www.infomaniak.com/en/support/faq/711/manage-devices-passwords-from-the-infomaniak-web-mail-app)
+- [Configure Gmail app (iOS/Android) with IMAP](https://www.infomaniak.com/en/support/faq/1208/sync-gmail-ios-android)
+- [Manually configure Apple Mail on iOS with IMAP](https://www.infomaniak.com/en/support/faq/2369/manually-configure-apple-mail-ios-using-imap-email)
+- [Messaging ports and protocols](https://www.infomaniak.com/en/support/faq/468/understanding-messaging-ports-and-protocols)
+- [Gmail: send from a different address](https://support.google.com/mail/answer/22370?hl=en)
+- [Gmail: check mail from other accounts](https://support.google.com/mail/answer/21289?hl=en)
+- [Gmail: add another account in the Gmail app](https://support.google.com/mail/answer/6078445?hl=en&co=GENIE.Platform%3DiOS)
+- [Gmail: changes to third-party email support (Send-as and POP removal January 2027)](https://support.google.com/mail/answer/17101213?hl=en)
