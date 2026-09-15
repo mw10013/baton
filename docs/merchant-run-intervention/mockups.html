@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Merchant intervention mockups</title>
+    <style>
+      body {
+        font:
+          13px/1.45 -apple-system,
+          "Segoe UI",
+          sans-serif;
+        color: #303030;
+        background: #f1f1f1;
+        margin: 0;
+        padding: 24px;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 4px;
+      }
+      h2 {
+        font-size: 14px;
+        margin: 32px 0 8px;
+        color: #616161;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      p.lead {
+        color: #616161;
+        margin: 0 0 16px;
+        max-width: 70ch;
+      }
+      .card {
+        background: #fff;
+        border-radius: 12px;
+        box-shadow:
+          0 1px 0 rgba(0, 0, 0, 0.07),
+          0 0 0 1px rgba(0, 0, 0, 0.06);
+        padding: 16px;
+        max-width: 720px;
+        margin-bottom: 16px;
+      }
+      .card h3 {
+        font-size: 13px;
+        margin: 0 0 12px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .col {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .badge {
+        font-size: 12px;
+        padding: 1px 8px;
+        border-radius: 8px;
+        background: #e3e3e3;
+      }
+      .badge.success {
+        background: #cdfed4;
+        color: #0c5132;
+      }
+      .badge.info {
+        background: #e0f0ff;
+        color: #00527c;
+      }
+      .badge.warning {
+        background: #ffe6a8;
+        color: #5e4200;
+      }
+      .badge.critical {
+        background: #fed1cf;
+        color: #8e1f0b;
+      }
+      .sub {
+        color: #616161;
+      }
+      .strong {
+        font-weight: 600;
+      }
+      .done {
+        color: #8a8a8a;
+      }
+      .btn {
+        font-size: 12px;
+        padding: 4px 10px;
+        border-radius: 8px;
+        border: 1px solid #c9c9c9;
+        background: #fff;
+        cursor: default;
+      }
+      .btn.primary {
+        background: #303030;
+        color: #fff;
+        border-color: #303030;
+      }
+      .btn.critical {
+        background: #e51c00;
+        color: #fff;
+        border-color: #e51c00;
+      }
+      .btn.tertiary {
+        border-color: transparent;
+        text-decoration: underline;
+        padding-left: 0;
+      }
+      .btn[disabled] {
+        opacity: 0.5;
+      }
+      .step {
+        border: 1px solid #e3e3e3;
+        border-radius: 8px;
+        padding: 10px 12px;
+      }
+      .step.ready {
+        background: #f7f7f7;
+      }
+      select,
+      input {
+        font: inherit;
+        font-size: 12px;
+        padding: 3px 6px;
+        border: 1px solid #c9c9c9;
+        border-radius: 6px;
+      }
+      input {
+        width: 320px;
+      }
+      .toast {
+        display: inline-block;
+        background: #303030;
+        color: #fff;
+        padding: 6px 12px;
+        border-radius: 8px;
+        font-size: 12px;
+      }
+      .queue {
+        background: #fff;
+        border: 1px solid #e3e3e3;
+        border-radius: 8px;
+        padding: 10px 12px;
+        max-width: 420px;
+      }
+      .note {
+        margin-top: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Merchant intervention: order page mockups</h1>
+    <p class="lead">
+      Order #1042, one line item ("Walnut board — Large") with an item workflow
+      "Engraved boards" on it. Each card is one state of the same run. Copy is
+      the copy in the research doc.
+    </p>
+
+    <h2>1. Collapsed (unchanged from today, except Cancel left the header)</h2>
+    <div class="card">
+      <div class="col">
+        <div class="row">
+          <span class="strong">Engraved boards</span>
+          <span class="badge info">active</span>
+        </div>
+        <span class="sub">Stage 2 of 3</span>
+        <div class="row">
+          <span class="done">1 Cut ✓</span><span class="sub">(Cutting)</span>
+          <span class="sub">·</span>
+          <span class="strong">2 Engrave ●</span
+          ><span class="sub">(Engraving)</span>
+          <span class="sub">·</span>
+          <span>2 Polish</span><span class="sub">(Finishing)</span>
+          <span class="sub">·</span>
+          <span>3 Pack</span><span class="sub">(Packing)</span>
+        </div>
+        <span class="sub"
+          >Engrave note: customer wants the date on the back</span
+        >
+        <div class="row"><button class="btn tertiary">Manage</button></div>
+      </div>
+    </div>
+
+    <h2>2. Manage open, ordinary case</h2>
+    <div class="card">
+      <div class="col">
+        <div class="row">
+          <span class="strong">Engraved boards</span>
+          <span class="badge info">active</span>
+        </div>
+        <span class="sub">Stage 2 of 3</span>
+        <div class="row">
+          <span class="done">1 Cut ✓</span><span class="sub">(Cutting)</span
+          ><span class="sub">·</span> <span class="strong">2 Engrave ●</span
+          ><span class="sub">(Engraving)</span><span class="sub">·</span>
+          <span>2 Polish</span><span class="sub">(Finishing)</span
+          ><span class="sub">·</span> <span>3 Pack</span
+          ><span class="sub">(Packing)</span>
+        </div>
+        <div class="row"><button class="btn tertiary">Hide</button></div>
+
+        <div class="step">
+          <div class="col">
+            <div class="row">
+              <span class="strong">Cut</span
+              ><span class="sub">Cutting · stage 1</span
+              ><span class="badge">Done</span>
+            </div>
+            <span class="sub">Done by ana@maplebench.com · 14:02</span>
+            <div class="row">
+              <button class="btn">Reopen</button
+              ><button class="btn tertiary">Note</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="step ready">
+          <div class="col">
+            <div class="row">
+              <span class="strong">Engrave</span
+              ><span class="sub">Engraving · stage 2</span
+              ><span class="badge success">In progress</span>
+            </div>
+            <span class="sub"
+              >In progress since 14:10 by ben@maplebench.com</span
+            >
+            <span class="sub">Note: customer wants the date on the back</span>
+            <div class="row">
+              <button class="btn primary">Mark done</button>
+              <button class="btn tertiary">Edit note</button>
+              <select>
+                <option>Engraving</option>
+                <option>Finishing</option>
+                <option>Packing</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="step ready">
+          <div class="col">
+            <div class="row">
+              <span class="strong">Polish</span><span class="sub">stage 2</span
+              ><span class="badge critical">Unassigned</span
+              ><span class="badge info">Ready</span>
+            </div>
+            <span class="strong">Polish: assign a team.</span>
+            <div class="row">
+              <button class="btn primary">Mark done</button>
+              <button class="btn tertiary">Note</button>
+              <select>
+                <option>Choose a team</option>
+                <option>Engraving</option>
+                <option>Finishing</option>
+              </select>
+              <button class="btn">Assign</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="col">
+            <div class="row">
+              <span class="strong">Pack</span
+              ><span class="sub">Packing · stage 3</span>
+            </div>
+            <span class="sub">Waiting on step 2</span>
+            <div class="row">
+              <button class="btn tertiary">Note</button
+              ><select>
+                <option>Packing</option>
+                <option>Finishing</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top: 6px">
+          <input placeholder="What is stopping this? (optional)" />
+          <button class="btn critical">Block</button>
+          <button class="btn">Cancel</button>
+        </div>
+      </div>
+    </div>
+    <span class="toast">Engrave marked done</span>
+
+    <h2>3. Manage open, blocked run</h2>
+    <div class="card">
+      <div class="col">
+        <div class="row">
+          <span class="strong">Engraved boards</span>
+          <span class="badge info">active</span>
+          <span class="badge warning">Blocked: out of walnut stock</span>
+        </div>
+        <span class="sub">Stage 2 of 3</span>
+        <div class="row"><button class="btn tertiary">Hide</button></div>
+        <div class="step ready">
+          <div class="col">
+            <div class="row">
+              <span class="strong">Engrave</span
+              ><span class="sub">Engraving · stage 2</span
+              ><span class="badge info">Ready</span>
+            </div>
+            <span class="sub">Ready</span>
+            <div class="row">
+              <button class="btn primary">Mark done</button
+              ><button class="btn tertiary">Note</button
+              ><select>
+                <option>Engraving</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <span class="sub">… other steps …</span>
+        <div class="row" style="margin-top: 6px">
+          <span class="sub"
+            >Blocked by ben@maplebench.com · 14:20: out of walnut stock</span
+          >
+          <button class="btn">Unblock</button>
+          <button class="btn">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <h2>4. Reopen refused: downstream already started</h2>
+    <div class="card">
+      <div class="col">
+        <div class="step">
+          <div class="col">
+            <div class="row">
+              <span class="strong">Engrave</span
+              ><span class="sub">Engraving · stage 2</span
+              ><span class="badge">Done</span>
+            </div>
+            <span class="sub"
+              >Done by Merchant · 14:31 · started by ben@maplebench.com</span
+            >
+            <span class="sub"
+              >Pack started by cal@maplebench.com · reopen it first</span
+            >
+            <div class="row"><button class="btn tertiary">Note</button></div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="col">
+            <div class="row">
+              <span class="strong">Pack</span
+              ><span class="sub">Packing · stage 3</span
+              ><span class="badge success">In progress</span>
+            </div>
+            <span class="sub"
+              >In progress since 14:35 by cal@maplebench.com</span
+            >
+            <div class="row">
+              <button class="btn primary">Mark done</button
+              ><button class="btn tertiary">Note</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h2>5. What the worker sees after a merchant reopen</h2>
+    <p class="lead">
+      Queue card (left as today, one new line) and the work page's step box.
+    </p>
+    <div class="queue">
+      <div class="col">
+        <div class="row">
+          <span class="strong">#1042 · Walnut board — Large</span
+          ><span class="badge info">Ready</span>
+        </div>
+        <span class="sub">Engrave · Engraving</span>
+        <span class="sub">Reopened by Merchant · 10 min ago</span>
+        <span class="sub note"
+          >Note (Merchant): date was wrong, redo the back</span
+        >
+        <div class="row">
+          <button class="btn">Start</button
+          ><button class="btn primary">Done</button>
+        </div>
+      </div>
+    </div>
+    <br />
+    <div class="queue">
+      <div class="col">
+        <div class="row">
+          <span class="strong">Engrave</span
+          ><span class="sub">Engraving · stage 2</span
+          ><span class="badge success">In progress</span>
+        </div>
+        <span class="sub">In progress since 14:10 by ben@maplebench.com</span>
+        <span class="sub">Reopened by Merchant · 10 min ago</span>
+        <span class="sub">Note (Merchant): date was wrong, redo the back</span>
+        <div class="row">
+          <button class="btn primary">Done</button
+          ><button class="btn tertiary">Edit note</button>
+        </div>
+      </div>
+    </div>
+
+    <h2>6. Done tier entry, merchant completion</h2>
+    <div class="queue">
+      <div class="col">
+        <div class="row">
+          <span class="strong">#1042 · Walnut board — Large</span
+          ><span class="sub">Engrave</span>
+        </div>
+        <span class="sub">by Merchant at 14:31</span>
+        <div class="row">
+          <button class="btn">Undo</button
+          ><button class="btn tertiary">Note</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
