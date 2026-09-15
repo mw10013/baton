@@ -65,6 +65,9 @@ export interface SeedLineItem {
  * to. `advance` completes that many rounds of ready steps instead (item runs
  * first; the order run only once every item is made), `started` then Starts
  * whatever is ready, and `blocked` flags every open run with that reason.
+ * `byMerchant` records the completions and the block as the merchant instead
+ * of the seed member, which is the fixture for what a worker sees after an
+ * intervention; `started` stays the member's either way.
  */
 export interface SeedOrder {
   readonly n: number;
@@ -74,6 +77,7 @@ export interface SeedOrder {
   readonly advance?: number;
   readonly started?: boolean;
   readonly blocked?: string;
+  readonly byMerchant?: boolean;
   readonly note?: string;
   readonly lineItems: readonly SeedLineItem[];
 }

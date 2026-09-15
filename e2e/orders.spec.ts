@@ -140,3 +140,168 @@ test("the order page's order-workflow link lands on the order workflow page", as
   await frame.getByRole("link", { name: "Turn it on" }).click();
   await expect(frame.locator('s-page[heading="Order workflow"]')).toBeVisible();
 });
+
+/**
+ * The merchant's interventions end to end, against a seeded two-stage run:
+ * Manage opens, Mark done records the merchant on the step, Reopen takes it
+ * back, and Block / Unblock move the run flag. Each assertion reads the row's
+ * own attribution rather than a toast, because the row is what the next person
+ * to look at this order will see.
+ *
+ * No extra admin sign-in: the `e2e` project reuses the setup project's storage
+ * state, so this is one more page load on the session the file already has.
+ */
+test("the merchant marks a step done, reopens it, and blocks the run", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+
+  const MEMBER = "e2e.manage@example.com";
+  const CUT_TEAM = "E2E Manage Cut";
+  const POLISH_TEAM = "E2E Manage Polish";
+  await seedMembers(
+    seedConfig(),
+    [MEMBER],
+    [
+      { name: CUT_TEAM, members: [MEMBER] },
+      { name: POLISH_TEAM, members: [MEMBER] },
+    ],
+    [
+      {
+        name: "E2E Manage Cuff",
+        tags: ["e2e-manage"],
+        steps: [
+          { name: "Cut", team: CUT_TEAM },
+          { name: "Polish", team: POLISH_TEAM },
+        ],
+      },
+    ],
+    [
+      {
+        n: 9301,
+        lineItems: [{ title: "E2E Cuff", quantity: 1, tags: ["e2e-manage"] }],
+      },
+    ],
+  );
+
+  const frame = await gotoApp(page);
+  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await frame.getByRole("link", { name: "#9301" }).click();
+  await expect(frame.locator('s-page[heading="#9301"]')).toBeVisible();
+
+  /* Collapsed, the run offers nothing to click but the disclosure: the trail
+     is a glance, and every action lives behind Manage. */
+  await expect(frame.getByRole("button", { name: "Mark done" })).toBeHidden();
+  await frame.getByRole("button", { name: "Manage" }).click();
+
+  await expect(frame.getByText("Ready", { exact: true })).toBeVisible();
+  await frame.getByRole("button", { name: "Mark done" }).first().click();
+  await expect(frame.getByText("Done by Merchant")).toBeVisible();
+
+  await frame.getByRole("button", { name: "Reopen" }).click();
+  await expect(frame.getByText("Reopened by Merchant")).toBeVisible();
+  await expect(frame.getByText("Done by Merchant")).toBeHidden();
+
+  /* Both stages done takes the run to `done`, which is the badge the orders
+     index and the production state read. */
+  await frame.getByRole("button", { name: "Mark done" }).first().click();
+  await expect(frame.getByText("Done by Merchant")).toBeVisible();
+  await frame.getByRole("button", { name: "Mark done" }).first().click();
+  await expect(frame.getByText("done", { exact: true })).toBeVisible();
+});
+
+/**
+ * Reopen is not offered once someone downstream has moved — the same rule the
+ * worker's Undo obeys, with the instruction instead of "ask them". Both stages
+ * are marked done from this page, so Polish is the blocker on Cut's row.
+ */
+test("the merchant cannot reopen a step whose next stage is done", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+
+  const MEMBER = "e2e.reopen@example.com";
+  const CUT_TEAM = "E2E Reopen Cut";
+  const POLISH_TEAM = "E2E Reopen Polish";
+  await seedMembers(
+    seedConfig(),
+    [MEMBER],
+    [
+      { name: CUT_TEAM, members: [MEMBER] },
+      { name: POLISH_TEAM, members: [MEMBER] },
+    ],
+    [
+      {
+        name: "E2E Reopen Cuff",
+        tags: ["e2e-reopen"],
+        steps: [
+          { name: "Cut", team: CUT_TEAM },
+          { name: "Polish", team: POLISH_TEAM },
+        ],
+      },
+    ],
+    [
+      {
+        n: 9302,
+        advance: 2,
+        lineItems: [{ title: "E2E Cuff", quantity: 1, tags: ["e2e-reopen"] }],
+      },
+    ],
+  );
+
+  const frame = await gotoApp(page);
+  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await frame.getByRole("link", { name: "#9302" }).click();
+  await frame.getByRole("button", { name: "Manage" }).click();
+
+  await expect(
+    frame.getByText(`${POLISH_TEAM} started Polish · reopen it first`),
+  ).toBeVisible();
+  /* Polish itself is the last stage, so exactly one Reopen is on the page. */
+  await expect(frame.getByRole("button", { name: "Reopen" })).toHaveCount(1);
+});
+
+/**
+ * Block and Unblock from the same disclosure, with the attribution line under
+ * the badge. The reason travels into both.
+ */
+test("the merchant blocks a run with a reason and unblocks it", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+
+  const MEMBER = "e2e.block@example.com";
+  const TEAM = "E2E Block Bench";
+  await seedMembers(
+    seedConfig(),
+    [MEMBER],
+    [{ name: TEAM, members: [MEMBER] }],
+    [
+      {
+        name: "E2E Block Cuff",
+        tags: ["e2e-block"],
+        steps: [{ name: "Cut", team: TEAM }],
+      },
+    ],
+    [
+      {
+        n: 9303,
+        lineItems: [{ title: "E2E Cuff", quantity: 1, tags: ["e2e-block"] }],
+      },
+    ],
+  );
+
+  const frame = await gotoApp(page);
+  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await frame.getByRole("link", { name: "#9303" }).click();
+  await frame.getByRole("button", { name: "Manage" }).click();
+
+  await frame.getByLabel("Reason").fill("Out of walnut stock");
+  await frame.getByRole("button", { name: "Block" }).click();
+  await expect(frame.getByText("Blocked: Out of walnut stock")).toBeVisible();
+  await expect(frame.getByText("Blocked by Merchant")).toBeVisible();
+
+  await frame.getByRole("button", { name: "Unblock" }).click();
+  await expect(frame.getByText("Blocked by Merchant")).toBeHidden();
+  await expect(frame.getByRole("button", { name: "Block" })).toBeVisible();
+});

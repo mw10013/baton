@@ -15,6 +15,7 @@ import {
   isInvalidated,
   memberActions,
   openMemberSocket,
+  openMerchantSocket,
   type AgentSocket,
 } from "./agent-socket";
 import {
@@ -238,6 +239,33 @@ describe("member queue socket", () => {
     acting.close();
     teammate.close();
     elsewhere.close();
+  });
+
+  /**
+   * The merchant's half of the same fan-out. `merchantCompleteStep` carries no
+   * identity and no `teamIds` — the order page has neither — yet lands on a
+   * step owned by a team it is not on, and the worker watching that team hears
+   * about it over their own socket. The rules the merchant is still held to are
+   * the repository's and are tested there; this is the wire.
+   */
+  it("completes a member's step over a merchant socket and pushes it to the team", async () => {
+    const { shop, working, runStepId, alice } = await seedShopWithWork(
+      "queue-merchant.myshopify.com",
+    );
+    const worker = await openMemberSocket(shop, {
+      memberId: alice,
+      memberEmail: "alice@example.com",
+      teamIds: [working.id],
+    });
+    await subscribe(worker.socket, "sub-alice");
+
+    const merchant = await openMerchantSocket(shop);
+    expect(await merchant.completeStep({ runStepId })).toEqual({ _tag: "Ok" });
+
+    await worker.socket.waitForMessage(isInvalidated);
+    expect(await subscribe(worker.socket, "sub-alice")).toHaveLength(0);
+    merchant.close();
+    worker.close();
   });
 
   /**

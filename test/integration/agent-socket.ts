@@ -212,6 +212,31 @@ export const memberActions = (socket: AgentSocket) => ({
     socket.call<Domain.RunResult>("dismissFlag", input),
 });
 
+/**
+ * The merchant's five interventions, typed, over an already-open merchant
+ * socket. No identity on the wire and none on the connection either: the
+ * merchant *is* the shop, so the object supplies `{ role: "merchant" }` and no
+ * `teamIds` (`ShopAgent.merchantCompleteStep`).
+ */
+export const merchantActions = (socket: AgentSocket) => ({
+  completeStep: (input: typeof Domain.CompleteStepInput.Encoded) =>
+    socket.call<Domain.RunResult>("merchantCompleteStep", input),
+  uncompleteStep: (input: typeof Domain.UncompleteStepInput.Encoded) =>
+    socket.call<Domain.RunResult>("merchantUncompleteStep", input),
+  setStepNote: (input: typeof Domain.SetStepNoteInput.Encoded) =>
+    socket.call<Domain.RunResult>("merchantSetStepNote", input),
+  blockRun: (input: typeof Domain.BlockRunInput.Encoded) =>
+    socket.call<Domain.RunResult>("merchantBlockRun", input),
+  dismissFlag: (input: typeof Domain.RunIdInput.Encoded) =>
+    socket.call<Domain.RunResult>("merchantDismissFlag", input),
+});
+
+/** A merchant socket plus its typed interventions, the order page's half of the wire. */
+export const openMerchantSocket = async (shop: string) => {
+  const socket = await openAgentSocket(shop, merchantHeaders());
+  return { ...merchantActions(socket), socket, close: socket.close };
+};
+
 /** A member socket plus its typed mutations, the shape a test drives work through. */
 export const openMemberSocket = async (
   shop: string,

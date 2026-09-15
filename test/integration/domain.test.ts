@@ -167,6 +167,8 @@ const queueItem = (
   overrides: {
     readonly flag?: Domain.RunFlag;
     readonly startedBy?: string;
+    /** Defaults to `<startedBy>@example.com`; name it to make the id and the email disagree. */
+    readonly startedByEmail?: string;
   } = {},
 ): Domain.QueueItem => ({
   run: {
@@ -190,7 +192,12 @@ const queueItem = (
         overrides.startedBy === undefined
           ? null
           : Schema.decodeUnknownSync(Domain.MemberId)(overrides.startedBy),
-      startedByEmail: null,
+      startedByEmail:
+        overrides.startedBy === undefined
+          ? null
+          : Schema.decodeUnknownSync(Domain.Email)(
+              overrides.startedByEmail ?? `${overrides.startedBy}@example.com`,
+            ),
       completedAt: null,
       completedBy: null,
       completedByEmail: null,
@@ -212,9 +219,10 @@ const queueItem = (
 const runIds = (items: readonly Domain.QueueItem[]) =>
   items.map((item) => item.run.id).join(",");
 
+const ME = Schema.decodeUnknownSync(Domain.Email)("me@example.com");
+
 describe("tierQueue", () => {
   it("flag first, then mine, then a teammate's, then untouched; oldest order first within a tier", () => {
-    const me = Schema.decodeUnknownSync(Domain.MemberId)("me");
     const tiers = tierQueue(
       [
         queueItem("late-next", 30),
@@ -223,11 +231,32 @@ describe("tierQueue", () => {
         queueItem("theirs", 5, { startedBy: "them" }),
         queueItem("flagged-mine", 40, { flag: "blocked", startedBy: "me" }),
       ],
-      me,
+      ME,
     );
     strictEqual(runIds(tiers.attention), "flagged-mine");
     strictEqual(runIds(tiers.mine), "mine");
     strictEqual(runIds(tiers.inProgress), "theirs");
     strictEqual(runIds(tiers.upNext), "early-next,late-next");
+  });
+
+  /**
+   * The re-added member: removing and re-adding an address mints a new
+   * `Member.id`, so the row taken before that carries an id the connection no
+   * longer has. The email is the snapshot that survives, and the work is still
+   * theirs.
+   */
+  it("keeps a step under Mine when the id changed but the email did not", () => {
+    const tiers = tierQueue(
+      [
+        queueItem("re-added", 20, {
+          startedBy: "old-id",
+          startedByEmail: "me@example.com",
+        }),
+        queueItem("someone-else", 10, { startedBy: "them" }),
+      ],
+      ME,
+    );
+    strictEqual(runIds(tiers.mine), "re-added");
+    strictEqual(runIds(tiers.inProgress), "someone-else");
   });
 });

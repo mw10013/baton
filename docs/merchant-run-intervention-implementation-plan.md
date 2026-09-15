@@ -1,6 +1,9 @@
 # Merchant run intervention: implementation plan
 
-Status 2026-09-14: **Phases 1 and 2 in, uncommitted; Phases 3 to 8 not started**.
+Status 2026-09-14: **complete**. Phases 1 and 2 are committed (`2996d2b`);
+Phases 3 to 8 are in the working tree, uncommitted, with `pnpm typecheck`,
+`pnpm lint`, `pnpm test` (283) and the e2e suite green, and the four mockup
+states checked against the running dev server.
 See "Deviations" at the bottom. The reasoning and every product decision
 are in `docs/merchant-run-intervention-research.md` (the "Decisions" list is binding);
 the target states are drawn in `docs/merchant-run-intervention/mockups.html`. This
@@ -314,7 +317,9 @@ column.
 
 ## Deviations
 
-Recorded as the work lands. Phases 1 and 2 are in; Phases 3 to 8 are not started.
+Recorded as the work lands.
+
+### Phases 1 and 2 (committed as `2996d2b`)
 
 - **Phase 1 and Phase 2 landed together, plus the member call sites.** Phase 1's
   item 5 (the command types) is what the repository writes against, so Phase 1 alone
@@ -353,3 +358,67 @@ Recorded as the work lands. Phases 1 and 2 are in; Phases 3 to 8 are not started
   `noteByRole` for both roles and its clearing, and merchant `blockRun` / `dismissFlag`.
   The "member's downstream start blocks a merchant undo" case is folded into the
   stage-order test rather than standing alone.
+
+### Phases 3 to 8
+
+- **`undoBlockedBy` and `firstStarted` moved from `WorkflowRunRepository` into
+  `Domain`.** Plan 6.4 has the order page compute the Reopen verdict "using the
+  exported pure helper from `WorkflowRunRepository`", but a browser cannot import
+  that module: it is where the `WorkflowRunRepository` service class is
+  constructed, so the client bundle would carry `@effect/sql` and the Durable
+  Object SQLite client. The rule is pure and now sits next to `UndoBlocker` in
+  `Domain`, where the three readers — the repository's own write, the verdicts
+  it precomputes for the member pages, and the merchant's page — all reach it.
+  The repository keeps its `undoVerdict` wrapper (the per-order narrowing),
+  hoisted to module scope because oxlint's
+  `unicorn(consistent-function-scoping)` flags a closure that captures nothing.
+- **`Domain.stepNoteLine`.** `Note (Merchant): …` versus `Note: …` is needed on
+  the queue card, the work page, and the Manage rows; it is one exported helper
+  rather than three copies.
+- **The "Reopened by …" line is on the queue card too**, not only the work page
+  (plan 5.2). Mockup 5 shows it on both, and a worker whose card came back
+  should not have to open the run to find out why.
+- **The queue card's "In progress since … by …" hides the suffix by email.**
+  Plan 5.1 says "as today, now by email"; the comparison is now against the
+  viewer's `memberEmail` through `Domain.stepStartedBy`, so a merchant's start
+  always names `Merchant` and never falls into the "that's me" branch.
+- **The reopen refusal names the team, not a member.** `<team> started <step> ·
+reopen it first`, as plan 6.4 words it. Mockup 4 shows a member email there,
+  which `Domain.UndoBlocker` does not carry — it is `{ stepName, teamName }`,
+  the same value the worker's "ask them" line reads.
+- **Merchant callables use `callableEffect`, not a new `merchantCallableEffect`.**
+  They need the guard's verdict, not an identity, so the existing
+  `{ role: "merchant" }` option is the whole of it.
+- **`test/integration/agent-socket.ts` gained `merchantActions` /
+  `openMerchantSocket`**, the merchant twin of `memberActions` /
+  `openMemberSocket`, so the new socket test in `member-queue-socket.test.ts`
+  reads like its neighbours.
+- **Phase 7.1 is three tests, not one.** Manage → Mark done → Reopen → both
+  stages done; reopen refused; block and unblock. Splitting them keeps each
+  fixture minimal and each failure legible; the "reopen refused" case seeds
+  `advance: 2` rather than clicking through it.
+- **Phase 7.3 seeds the merchant's action instead of driving a second admin
+  page, and asserts the reopened line with a _member_ Undo.** The `member`
+  Playwright project deliberately has no Shopify admin session and no `setup`
+  dependency ("so a run never prompts for Keychain access",
+  `playwright.config.ts`), so a merchant page cannot be opened from it. Rather
+  than regress that, `Domain.SeedOrdersInput` gained **`byMerchant`**: a seeded
+  order records its `done` / `advance` / `blocked` progress as
+  `{ role: "merchant" }`, which puts exactly the rows in the object that
+  `merchantCompleteStep` would. `started` stays the seed member's whatever the
+  flag says, because there is no merchant Start. The member spec then asserts
+  `by Merchant` in the Done tier and `Done by Merchant` on the work page; the
+  `Reopened by …` rendering is one line with an actor in it, so it is asserted
+  there with the maker's own Undo and with the merchant's actor on the order
+  page (`orders.spec.ts`).
+- **Verification (Phase 8.2) ran as a throwaway Playwright spec**, not by hand:
+  one admin context and one member context against the running dev server,
+  screenshotting mockups 1 to 4 and the worker's queue. It confirmed the live
+  path the plan asks for — the merchant's **Mark done** in the admin put
+  `Done today · 1 · by Merchant at …` on the member's queue in the other
+  context with no reload — and was deleted afterwards. The four states render
+  with the mockup copy, including `Blocked by Merchant · <time>: <reason>` and
+  `Verify Polish started Polish · reopen it first`.
+- **`e2e/teams.spec.ts` flaked once** in the full-suite run (`No teams match.`
+  after typing into the team search) and passes on its own. It touches nothing
+  this work changed; noted so the run log is not mistaken for a regression.

@@ -69,18 +69,18 @@ const TIER_BADGE = {
   { readonly label: string; readonly tone: string } | null
 >;
 
+/** Who finished a Done-tier entry; empty rather than "nobody" for a row written before the role column. */
+const doneActorLabel = (step: Domain.WorkflowRunStep) => {
+  const actor = Domain.stepCompletedBy(step);
+  return actor === null ? "" : Domain.actorLabel(actor);
+};
+
 /** Whether the card has a step for `teamId`: the chip filter and the chip counts. */
 const onTeam = (item: Domain.QueueItem, teamId: string) =>
   item.steps.some((step) => step.teamId === teamId);
 
 function RouteComponent() {
-  const {
-    shop,
-    memberId,
-    memberEmail,
-    teams,
-    view: initialView,
-  } = Route.useLoaderData();
+  const { shop, memberEmail, teams, view: initialView } = Route.useLoaderData();
   /**
    * The subscribe pattern (`Domain.Subscription`): the loader's rows paint
    * first, then `subscribeQueue` re-reads them over the socket and registers
@@ -111,7 +111,7 @@ function RouteComponent() {
     teamFilter === null
       ? view.items
       : view.items.filter((item) => onTeam(item, teamFilter));
-  const tiers = tierQueue(visible, memberId);
+  const tiers = tierQueue(visible, memberEmail);
   const doneVisible =
     teamFilter === null
       ? view.done
@@ -119,6 +119,14 @@ function RouteComponent() {
 
   const renderStep = (item: Domain.QueueItem, step: Domain.QueueStep) => {
     const started = step.startedAt !== null;
+    /** The viewer's own name is noise on their own card; anyone else's is the point. */
+    const startedBy = Domain.stepStartedBy(step);
+    const startedBySomeoneElse =
+      startedBy === null ||
+      (startedBy.role === "member" && startedBy.email === memberEmail)
+        ? null
+        : startedBy;
+    const reopenedBy = Domain.stepReopenedBy(step);
     return (
       <s-box
         key={step.id}
@@ -143,13 +151,19 @@ function RouteComponent() {
             <s-text color="subdued">
               In progress since{" "}
               <LocalDateTime value={step.startedAt ?? 0} format="time" />
-              {step.startedBy === memberId || step.startedByEmail === null
+              {startedBySomeoneElse === null
                 ? ""
-                : ` by ${step.startedByEmail}`}
+                : ` by ${Domain.actorLabel(startedBySomeoneElse)}`}
+            </s-text>
+          )}
+          {reopenedBy !== null && step.reopenedAt !== null && (
+            <s-text color="subdued">
+              {`Reopened by ${Domain.actorLabel(reopenedBy)} · `}
+              <LocalDateTime value={step.reopenedAt} format="relative" />
             </s-text>
           )}
           {step.note !== null && (
-            <s-text color="subdued">{`Note: ${step.note}`}</s-text>
+            <s-text color="subdued">{Domain.stepNoteLine(step)}</s-text>
           )}
           <s-stack direction="inline" gap="base">
             {!started && (
@@ -258,9 +272,11 @@ function RouteComponent() {
           </s-text>
         </s-stack>
         <s-text color="subdued">
-          {`by ${entry.step.completedByEmail ?? ""} at `}
+          {`by ${doneActorLabel(entry.step)} at `}
           <LocalDateTime value={entry.step.completedAt ?? 0} format="time" />
-          {entry.step.note === null ? "" : ` · Note: ${entry.step.note}`}
+          {entry.step.note === null
+            ? ""
+            : ` · ${Domain.stepNoteLine(entry.step)}`}
         </s-text>
         <s-stack direction="inline" gap="base" alignItems="center">
           {entry.undoBlockedBy === null ? (

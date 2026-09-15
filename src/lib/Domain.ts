@@ -1306,6 +1306,14 @@ export const SeedOrdersInput = Schema.Struct({
       advance: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
       /** After `advance`, Start every ready step so the queue shows "In progress since … by <seed member>". */
       started: Schema.optionalKey(Schema.Boolean),
+      /**
+       * Record this order's `done` / `advance` / `blocked` progress as the
+       * **merchant** rather than the seed member, for a fixture of a merchant
+       * intervention ("Done by Merchant", "Blocked by Merchant"). `started`
+       * stays the member's whatever this says: there is no merchant Start —
+       * the merchant records work, they do not claim it.
+       */
+      byMerchant: Schema.optionalKey(Schema.Boolean),
       /** After `advance`, flag every open run `blocked` with this reason, the state a worker's Block leaves. */
       blocked: Schema.optionalKey(StepNote),
       note: Schema.optionalKey(Schema.String),
@@ -2189,6 +2197,17 @@ export const stepReopenedBy = (step: WorkflowRunStep): ActorDisplay | null => {
     : { role: "member", email: step.reopenedByEmail };
 };
 
+/**
+ * A step's note as every screen prints it. The merchant is named because a
+ * worker did not expect them; a member's note is unprefixed, since on the
+ * queue and the work page the author is a teammate by default and
+ * "Note (Member)" would say nothing a reader did not assume.
+ */
+export const stepNoteLine = (step: WorkflowRunStep) =>
+  step.noteByRole === "merchant"
+    ? `Note (Merchant): ${step.note ?? ""}`
+    : `Note: ${step.note ?? ""}`;
+
 /** An open run step whose team is gone: `teamId` null, or an id the roster no longer carries. */
 export const isRunStepUnassigned = (
   step: WorkflowRunStep,
@@ -2261,6 +2280,42 @@ export const UndoBlocker = Schema.Struct({
   teamName: TeamName,
 });
 export type UndoBlocker = typeof UndoBlocker.Type;
+
+/**
+ * The undo rule, on rows already in hand: the first step in a later stage of
+ * the same run that anyone has started, else — for an item run — the first
+ * started step of the order's open or finished order run. A `startedAt`
+ * test covers finished steps too, because Done backfills `startedAt`. Order
+ * runs whose item runs are all done are the only ones that can have started,
+ * so a null answer for an item run also means the packer has not begun.
+ *
+ * Pure and here rather than in `WorkflowRunRepository` so the three readers
+ * cannot disagree: the repository's own write, the verdicts it precomputes for
+ * the member pages, and the merchant's order page, which holds every step of
+ * every run on the order and decides client-side whether to offer Reopen. A
+ * browser cannot import the repository module — it carries the SQL service —
+ * and a second copy of this rule is exactly the drift to avoid.
+ */
+const firstStarted = (steps: readonly WorkflowRunStep[]) =>
+  steps
+    .filter((other) => other.startedAt !== null)
+    .toSorted((a, b) => a.stage - b.stage || a.position - b.position)[0];
+
+export const undoBlockedBy = (
+  step: WorkflowRunStep,
+  runSteps: readonly WorkflowRunStep[],
+  orderRunSteps: readonly WorkflowRunStep[],
+): UndoBlocker | null => {
+  const blocker =
+    firstStarted(
+      runSteps.filter(
+        (other) => other.runId === step.runId && other.stage > step.stage,
+      ),
+    ) ?? firstStarted(orderRunSteps);
+  return blocker === undefined
+    ? null
+    : { stepName: blocker.name, teamName: blocker.teamName };
+};
 
 /**
  * One entry of the queue's "Done today" tier: a step one of the member's

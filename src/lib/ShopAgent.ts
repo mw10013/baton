@@ -1059,6 +1059,16 @@ const isOpen = (run: Domain.WorkflowRun) =>
  * open, nothing open in an earlier stage of the run, and for an
  * order run no open item run and at least one done.
  */
+/**
+ * A seeded step write recorded as the merchant: no `teamIds`, which is the one
+ * rule a merchant skips (`Domain.CompleteStepCommand`). Module scope because
+ * it captures nothing — oxlint's `unicorn(consistent-function-scoping)`.
+ */
+const merchantStepCommand = (step: Domain.WorkflowRunStep) => ({
+  runStepId: step.id,
+  actor: { role: "merchant" } as const,
+});
+
 const seedReadySteps = (
   details: readonly Domain.WorkflowRunDetail[],
 ): Domain.WorkflowRunStep[] => {
@@ -2620,6 +2630,163 @@ export class ShopAgent extends Agent {
   }
 
   /**
+   * The merchant's five interventions on a run, from the order page's Manage
+   * rows. Separate methods rather than a role branch inside the member ones
+   * because the role gate is declared *per method* — `CALLABLE_ROLES` in
+   * `test/integration/shop-agent-callables.test.ts` enumerates the decorated
+   * surface and fails the build for any callable whose audience was not
+   * decided — and a single method admitting both populations would have to
+   * re-derive that decision at runtime from the connection.
+   *
+   * Each builds `actor: { role: "merchant" }` and passes **no** `teamIds`,
+   * which is the entire permission difference (`Domain.CompleteStepCommand`):
+   * the step's team need not be one of the caller's, because the merchant has
+   * none, and an unassigned step is exactly the case they are here to fix.
+   * Stage order, terminal runs, and the downstream undo guard still apply.
+   *
+   * They publish with {@link publishToTeams}, not `publish("all")`: the
+   * merchant's own order page is subscribed by order and the workers by team,
+   * and the team fan-out for the touched order already reaches both. There is
+   * no merchant Start — recording that a worker began is not the merchant's to
+   * do (`docs/merchant-run-intervention-research.md`, decision list).
+   *
+   * No member id in the log line: there isn't one.
+   */
+  @callable()
+  merchantCompleteStep(
+    input: typeof Domain.CompleteStepInput.Encoded,
+  ): Promise<Domain.RunResult> {
+    const shop = this.name;
+    const publish = (runStepId: string) => this.publishToTeams({ runStepId });
+    return this.runEffect(
+      callableEffect(
+        "ShopAgent.merchantCompleteStep",
+        Domain.CompleteStepInput,
+        { role: "merchant", parse: { onExcessProperty: "error" } },
+      )(({ runStepId }) =>
+        runResult(
+          Effect.gen(function* () {
+            yield* (yield* WorkflowRunRepository).completeStep({
+              runStepId,
+              actor: { role: "merchant" },
+            } satisfies Domain.CompleteStepCommand);
+            yield* Effect.logInfo(
+              `ShopAgent.merchantCompleteStep: shop=${shop} step=${runStepId}`,
+            ).pipe(Effect.annotateLogs({ shop, step: runStepId }));
+          }),
+        ).pipe(Effect.tap(() => publish(runStepId))),
+      )(input),
+    );
+  }
+
+  @callable()
+  merchantUncompleteStep(
+    input: typeof Domain.UncompleteStepInput.Encoded,
+  ): Promise<Domain.RunResult> {
+    const shop = this.name;
+    const publish = (runStepId: string) => this.publishToTeams({ runStepId });
+    return this.runEffect(
+      callableEffect(
+        "ShopAgent.merchantUncompleteStep",
+        Domain.UncompleteStepInput,
+        { role: "merchant", parse: { onExcessProperty: "error" } },
+      )(({ runStepId }) =>
+        runResult(
+          Effect.gen(function* () {
+            yield* (yield* WorkflowRunRepository).uncompleteStep({
+              runStepId,
+              actor: { role: "merchant" },
+            } satisfies Domain.UncompleteStepCommand);
+            yield* Effect.logInfo(
+              `ShopAgent.merchantUncompleteStep: shop=${shop} step=${runStepId}`,
+            ).pipe(Effect.annotateLogs({ shop, step: runStepId }));
+          }),
+        ).pipe(Effect.tap(() => publish(runStepId))),
+      )(input),
+    );
+  }
+
+  /** The note itself never reaches the log line, as on the member's {@link setStepNote}. */
+  @callable()
+  merchantSetStepNote(
+    input: typeof Domain.SetStepNoteInput.Encoded,
+  ): Promise<Domain.RunResult> {
+    const shop = this.name;
+    const publish = (runStepId: string) => this.publishToTeams({ runStepId });
+    return this.runEffect(
+      callableEffect("ShopAgent.merchantSetStepNote", Domain.SetStepNoteInput, {
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
+      })(({ runStepId, note }) =>
+        runResult(
+          Effect.gen(function* () {
+            yield* (yield* WorkflowRunRepository).setStepNote({
+              runStepId,
+              actor: { role: "merchant" },
+              note,
+            } satisfies Domain.SetStepNoteCommand);
+            yield* Effect.logInfo(
+              `ShopAgent.merchantSetStepNote: shop=${shop} step=${runStepId}`,
+            ).pipe(Effect.annotateLogs({ shop, step: runStepId }));
+          }),
+        ).pipe(Effect.tap(() => publish(runStepId))),
+      )(input),
+    );
+  }
+
+  @callable()
+  merchantBlockRun(
+    input: typeof Domain.BlockRunInput.Encoded,
+  ): Promise<Domain.RunResult> {
+    const shop = this.name;
+    const publish = (runId: string) => this.publishToTeams({ runId });
+    return this.runEffect(
+      callableEffect("ShopAgent.merchantBlockRun", Domain.BlockRunInput, {
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
+      })(({ runId, reason }) =>
+        runResult(
+          Effect.gen(function* () {
+            yield* (yield* WorkflowRunRepository).blockRun({
+              runId,
+              actor: { role: "merchant" },
+              reason,
+            } satisfies Domain.BlockRunCommand);
+            yield* Effect.logInfo(
+              `ShopAgent.merchantBlockRun: shop=${shop} runId=${runId}`,
+            ).pipe(Effect.annotateLogs({ shop, runId }));
+          }),
+        ).pipe(Effect.tap(() => publish(runId))),
+      )(input),
+    );
+  }
+
+  @callable()
+  merchantDismissFlag(
+    input: typeof Domain.RunIdInput.Encoded,
+  ): Promise<Domain.RunResult> {
+    const shop = this.name;
+    const publish = (runId: string) => this.publishToTeams({ runId });
+    return this.runEffect(
+      callableEffect("ShopAgent.merchantDismissFlag", Domain.RunIdInput, {
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
+      })(({ runId }) =>
+        runResult(
+          Effect.gen(function* () {
+            yield* (yield* WorkflowRunRepository).dismissFlag({
+              runId,
+            } satisfies Domain.DismissFlagCommand);
+            yield* Effect.logInfo(
+              `ShopAgent.merchantDismissFlag: shop=${shop} runId=${runId}`,
+            ).pipe(Effect.annotateLogs({ shop, runId }));
+          }),
+        ).pipe(Effect.tap(() => publish(runId))),
+      )(input),
+    );
+  }
+
+  /**
    * Member-area methods. Two idioms, split by whether the call has a socket:
    *
    * `listQueue` stays plain RPC, not `@callable()`. It is the queue page's
@@ -3350,21 +3517,26 @@ export class ShopAgent extends Agent {
                   ),
                 ),
               );
+          const memberActor = {
+            role: "member",
+            memberId,
+            email: memberEmail,
+          } satisfies Domain.MemberActor;
           const actor = (step: Domain.WorkflowRunStep) => ({
             runStepId: step.id,
-            actor: {
-              role: "member",
-              memberId,
-              email: memberEmail,
-            } satisfies Domain.MemberActor,
+            actor: memberActor,
             teamIds: step.teamId === null ? [] : [step.teamId],
           });
-          const completeOpenRuns = (orderId: string) =>
+          const stepCommand = (
+            step: Domain.WorkflowRunStep,
+            merchant: boolean,
+          ) => (merchant ? merchantStepCommand(step) : actor(step));
+          const completeOpenRuns = (orderId: string, merchant: boolean) =>
             Effect.gen(function* () {
               for (const { run, steps } of yield* listOpenRuns(orderId)) {
                 yield* Effect.forEach(
                   steps,
-                  (step) => runs.completeStep(actor(step)),
+                  (step) => runs.completeStep(stepCommand(step, merchant)),
                   { discard: true },
                 );
                 yield* Effect.logInfo(
@@ -3373,14 +3545,14 @@ export class ShopAgent extends Agent {
               }
             });
           /** One round: every step ready at the start of the round gets completed; what that makes ready waits for the next. */
-          const advanceRound = (orderId: string) =>
+          const advanceRound = (orderId: string, merchant: boolean) =>
             runs
               .listRunsForOrder({ orderId })
               .pipe(
                 Effect.flatMap((details) =>
                   Effect.forEach(
                     seedReadySteps(details),
-                    (step) => runs.completeStep(actor(step)),
+                    (step) => runs.completeStep(stepCommand(step, merchant)),
                     { discard: true },
                   ),
                 ),
@@ -3399,16 +3571,24 @@ export class ShopAgent extends Agent {
                   { discard: true },
                 );
             });
-          const blockOpenRuns = (orderId: string, reason: Domain.StepNote) =>
+          const blockOpenRuns = (
+            orderId: string,
+            reason: Domain.StepNote,
+            merchant: boolean,
+          ) =>
             Effect.gen(function* () {
               for (const { run, steps } of yield* listOpenRuns(orderId))
                 yield* runs
                   .blockRun({
                     runId: run.id,
-                    actor: { role: "member", memberId, email: memberEmail },
-                    teamIds: steps.flatMap((step) =>
-                      step.teamId === null ? [] : [step.teamId],
-                    ),
+                    ...(merchant
+                      ? { actor: { role: "merchant" as const } }
+                      : {
+                          actor: memberActor,
+                          teamIds: steps.flatMap((step) =>
+                            step.teamId === null ? [] : [step.teamId],
+                          ),
+                        }),
                     reason,
                   })
                   .pipe(
@@ -3472,12 +3652,13 @@ export class ShopAgent extends Agent {
             });
             // Item runs come first in `listRunsForOrder`, so by the time the
             // order run's steps are reached they are ready.
-            if (seed.done === true) yield* completeOpenRuns(id);
+            const merchant = seed.byMerchant === true;
+            if (seed.done === true) yield* completeOpenRuns(id, merchant);
             for (let round = 0; round < (seed.advance ?? 0); round += 1)
-              yield* advanceRound(id);
+              yield* advanceRound(id, merchant);
             if (seed.started === true) yield* startReadySteps(id);
             if (seed.blocked !== undefined)
-              yield* blockOpenRuns(id, seed.blocked);
+              yield* blockOpenRuns(id, seed.blocked, merchant);
           }
           yield* publish();
         }),

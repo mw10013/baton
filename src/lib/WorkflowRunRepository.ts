@@ -182,21 +182,6 @@ const isTerminal = (run: Domain.WorkflowRun) =>
   run.status === "done" || run.status === "cancelled";
 
 /**
- * The undo rule, on rows already in hand: the first step in a later stage of
- * the same run that anyone has started, else — for an item run — the first
- * started step of the order's open or finished order run. A `startedAt`
- * test covers finished steps too, because Done backfills `startedAt`. Order
- * runs whose item runs are all done are the only ones that can have started,
- * so a null answer for an item run also means the packer has not begun.
- * Pure and exported so the work page's per-step verdict, the Done tier, and
- * the write itself cannot disagree.
- */
-const firstStarted = (steps: readonly Domain.WorkflowRunStep[]) =>
-  steps
-    .filter((other) => other.startedAt !== null)
-    .toSorted((a, b) => a.stage - b.stage || a.position - b.position)[0];
-
-/**
  * An {@link Domain.Actor} flattened into the three columns a step's actor slot
  * holds. The merchant has no `Member` row, so the id and email are null beside
  * a `'merchant'` role — the role column is what readers discriminate on.
@@ -206,21 +191,30 @@ const actorColumns = (actor: Domain.Actor) =>
     ? { role: "merchant" as const, id: null, email: null }
     : { role: "member" as const, id: actor.memberId, email: actor.email };
 
-export const undoBlockedBy = (
+/**
+ * {@link Domain.undoBlockedBy} for a step of `run`, narrowing the order-run
+ * steps to that run's own order — the reads hand back every order run in the
+ * batch, and an item run can only be blocked by the packing of its own order.
+ * An order run has nothing downstream of it, hence the empty list.
+ *
+ * Module scope, not a closure inside the service: it captures nothing, and
+ * oxlint's `unicorn(consistent-function-scoping)` flags it there.
+ */
+const undoVerdict = (
+  run: Domain.WorkflowRun,
   step: Domain.WorkflowRunStep,
   runSteps: readonly Domain.WorkflowRunStep[],
-  orderRunSteps: readonly Domain.WorkflowRunStep[],
-): Domain.UndoBlocker | null => {
-  const blocker =
-    firstStarted(
-      runSteps.filter(
-        (other) => other.runId === step.runId && other.stage > step.stage,
-      ),
-    ) ?? firstStarted(orderRunSteps);
-  return blocker === undefined
-    ? null
-    : { stepName: blocker.name, teamName: blocker.teamName };
-};
+  orderRunSteps: readonly (Domain.WorkflowRunStep & {
+    readonly orderId: string;
+  })[],
+) =>
+  Domain.undoBlockedBy(
+    step,
+    runSteps,
+    Domain.isOrderRun(run)
+      ? []
+      : orderRunSteps.filter((other) => other.orderId === run.orderId),
+  );
 
 const NO_COUNTS: ReconcileCounts = {
   created: 0,
@@ -803,23 +797,6 @@ export class WorkflowRunRepository extends Context.Service<
                 ),
               ),
             );
-
-      /** The undo verdict for `step` of `run`, given every step of the run and of the order's order run. */
-      const undoVerdict = (
-        run: Domain.WorkflowRun,
-        step: Domain.WorkflowRunStep,
-        runSteps: readonly Domain.WorkflowRunStep[],
-        orderRunSteps: readonly (Domain.WorkflowRunStep & {
-          readonly orderId: string;
-        })[],
-      ) =>
-        undoBlockedBy(
-          step,
-          runSteps,
-          Domain.isOrderRun(run)
-            ? []
-            : orderRunSteps.filter((other) => other.orderId === run.orderId),
-        );
 
       /**
        * `status` is a function of the steps; recomputing it in SQL from the

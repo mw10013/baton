@@ -63,10 +63,51 @@ const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
   NotAllowed: () => "Not allowed.",
   NotReady: () => "A step in an earlier stage is still open.",
   Terminal: () => "That workflow run is already finished.",
-  // Undo is a member action; the merchant page never sends it.
+  // Reachable from Manage's Reopen: the row hides that button when the page's
+  // own `Domain.undoBlockedBy` says so, and this is the race where a worker
+  // started downstream between the render and the click.
   UndoBlocked: ({ teamName, stepName }) =>
     `${teamName} already started ${stepName}.`,
 });
+
+/**
+ * One merchant intervention, as the Manage rows send it. `kind` picks the
+ * callable and `toast` is the acknowledgement, written at the button so the
+ * step's own name reaches it ("Cut marked done") rather than a generic verb.
+ * Cancel and un-cancel ride the same union deliberately: one in-flight
+ * mutation on the page means one `busy` flag, and the merchant cannot start a
+ * second write while the first is unacknowledged.
+ */
+type Intervention =
+  | {
+      readonly kind: "complete";
+      readonly runStepId: string;
+      readonly toast: string;
+    }
+  | {
+      readonly kind: "reopen";
+      readonly runStepId: string;
+      readonly toast: string;
+    }
+  | {
+      readonly kind: "note";
+      readonly runStepId: string;
+      readonly note: string | null;
+      readonly toast: string;
+    }
+  | {
+      readonly kind: "block";
+      readonly runId: string;
+      readonly reason: string | null;
+      readonly toast: string;
+    }
+  | { readonly kind: "unblock"; readonly runId: string; readonly toast: string }
+  | { readonly kind: "cancel"; readonly runId: string; readonly toast: string }
+  | {
+      readonly kind: "uncancel";
+      readonly runId: string;
+      readonly toast: string;
+    };
 
 const RUN_STATUS_TONE = {
   pending: "info",
@@ -128,6 +169,68 @@ const fact = (label: string, value: React.ReactNode) =>
     </React.Fragment>
   );
 
+/** Whether two actor slots hold the same person, so a Done line can drop a repeated name. */
+const sameActor = (a: Domain.Actor, b: Domain.Actor) =>
+  a.role === "merchant"
+    ? b.role === "merchant"
+    : b.role === "member" && a.email === b.email;
+
+/**
+ * A step's state line inside a Manage row, in the work page's order — done,
+ * under way, ready, waiting — so the merchant and the worker describe one step
+ * the same way. `started by …` is appended to a Done line only when the
+ * starter is not the completer: "Done by Merchant · 14:31 · started by
+ * ben@…" is the shape of an intervention over someone's work, and printing
+ * one name twice is not.
+ */
+const manageStateLine = (
+  run: Domain.WorkflowRun,
+  step: Domain.WorkflowRunStep,
+  ready: boolean,
+): React.ReactNode => {
+  const completedBy = Domain.stepCompletedBy(step);
+  const startedBy = Domain.stepStartedBy(step);
+  if (step.completedAt !== null)
+    return (
+      <>
+        {completedBy === null
+          ? "Done · "
+          : `Done by ${Domain.actorLabel(completedBy)} · `}
+        <LocalDateTime value={step.completedAt} format="time" />
+        {startedBy === null ||
+        (completedBy !== null && sameActor(startedBy, completedBy))
+          ? ""
+          : ` · started by ${Domain.actorLabel(startedBy)}`}
+      </>
+    );
+  if (step.startedAt !== null)
+    return (
+      <>
+        In progress since <LocalDateTime value={step.startedAt} format="time" />
+        {startedBy === null ? "" : ` by ${Domain.actorLabel(startedBy)}`}
+      </>
+    );
+  if (ready) return "Ready";
+  if (Domain.isOrderRun(run) && step.stage === 1)
+    return "Waiting for every item to be made";
+  return `Waiting on step ${String(step.stage - 1)}`;
+};
+
+/** Who blocked the run and when, under the badge that already carries the reason. */
+const blockedLine = (run: Domain.WorkflowRun): React.ReactNode => {
+  const by = run.flagDetail?.by;
+  const reason = run.flagDetail?.reason;
+  return (
+    <>
+      {by === undefined
+        ? "Blocked · "
+        : `Blocked by ${Domain.actorLabel(by)} · `}
+      <LocalDateTime value={run.flagAt ?? 0} format="time" />
+      {reason === undefined ? "" : `: ${reason}`}
+    </>
+  );
+};
+
 /**
  * Steps as a compact inline trail — "1 Cut ✓ · 2 Engrave ● · 2 Polish" —
  * because the whole run must be readable at a glance inside the line item it
@@ -142,18 +245,19 @@ const fact = (label: string, value: React.ReactNode) =>
  * team with no members warns, linking to the team so the fix is one click.
  * Finished steps always show their snapshot.
  *
- * Every *open* step of an open run can be assigned to another team, started
- * or not (`Domain.AssignRunStepTeamResult`), but a row per step would bury
- * the trail, so the already-assigned ones sit behind a closed "Reassign"
- * disclosure. Unassigned steps stay outside it, always visible: they are the
- * attention state, and the disclosure would hide the one thing that must be
- * acted on.
+ * Reassigning an already-assigned step, and every other intervention, moved
+ * into the "Manage" disclosure below the trail (`manageRows`): one place to
+ * act on a run rather than two, and nothing here is a click target, so
+ * scanning an order never risks a stray "done". Unassigned steps keep their
+ * row outside Manage, always visible — they are the attention state, and a
+ * disclosure would hide the one thing that must be acted on. The per-step
+ * notes moved into Manage's rows for the same reason: a collapsed run is a
+ * glance, not a transcript.
  */
 const stepTrail = (
   { run, steps }: Domain.WorkflowRunDetail,
   teams: readonly Domain.TeamRoster[],
   assign: (runStepId: string) => React.ReactNode,
-  reassign: { readonly expanded: boolean; readonly handleToggle: () => void },
 ) => {
   const lowestOpenStage = steps
     .filter((step) => step.completedAt === null)
@@ -191,14 +295,6 @@ const stepTrail = (
         ).values(),
       ]
     : [];
-  /** Open and already on a team: reassignable, but behind the disclosure. */
-  const reassignable = open
-    ? steps.filter(
-        (step) =>
-          step.completedAt === null &&
-          !unassigned.some((other) => other.id === step.id),
-      )
-    : [];
   return (
     <s-stack gap="small-500">
       {progress !== null && <s-text color="subdued">{progress}</s-text>}
@@ -234,27 +330,6 @@ const stepTrail = (
           {assign(step.id)}
         </s-stack>
       ))}
-      {reassignable.length > 0 && (
-        <s-stack gap="small-500">
-          <s-stack direction="inline" justifyContent="start">
-            <s-button variant="tertiary" onClick={reassign.handleToggle}>
-              {reassign.expanded ? "Hide reassign" : "Reassign"}
-            </s-button>
-          </s-stack>
-          {reassign.expanded &&
-            reassignable.map((step) => (
-              <s-stack
-                key={step.id}
-                direction="inline"
-                gap="small-300"
-                alignItems="center"
-              >
-                <s-text>{`${step.name} \u00B7 ${step.teamName ?? ""}`}</s-text>
-                {assign(step.id)}
-              </s-stack>
-            ))}
-        </s-stack>
-      )}
       {emptyTeams.length > 0 && (
         <s-paragraph color="subdued">
           {"No members on "}
@@ -268,13 +343,6 @@ const stepTrail = (
           team.
         </s-paragraph>
       )}
-      {steps
-        .filter((step) => step.note !== null)
-        .map((step) => (
-          <s-text key={step.id} color="subdued">
-            {`${step.name} note: ${step.note ?? ""}`}
-          </s-text>
-        ))}
     </s-stack>
   );
 };
@@ -324,9 +392,18 @@ function RouteComponent() {
   const [assignChoice, setAssignChoice] = React.useState<
     Record<string, string>
   >({});
-  /** Which runs have their "Reassign" disclosure open; closed is the default. */
-  const [reassigning, setReassigning] = React.useState<ReadonlySet<string>>(
+  /** Which runs have their "Manage" disclosure open; closed is the default. */
+  const [managing, setManaging] = React.useState<ReadonlySet<string>>(
     new Set(),
+  );
+  /** Which step's note editor is open and its draft; one at a time, as on the work page. */
+  const [noteDraft, setNoteDraft] = React.useState<{
+    runStepId: string;
+    note: string;
+  } | null>(null);
+  /** The Block reason per run, kept while the disclosure is open. */
+  const [blockReason, setBlockReason] = React.useState<Record<string, string>>(
+    {},
   );
 
   const {
@@ -367,21 +444,38 @@ function RouteComponent() {
     onError,
   });
 
-  const runMutation = useMutation({
-    mutationFn: ({
-      runId,
-      action,
-    }: {
-      readonly runId: string;
-      readonly action: "cancel" | "uncancel";
-    }) =>
+  /**
+   * Every merchant write against a run, through one mutation: the five
+   * `merchant*` callables plus cancel and un-cancel, which the header used to
+   * send on their own. A refused write raises no banner — the row should not
+   * have offered it, so the honest answer is the toast plus the re-render the
+   * subscription brings, exactly as the worker's page behaves.
+   */
+  const interveneMutation = useMutation({
+    mutationFn: (input: Intervention) =>
       call((stub) =>
-        action === "cancel"
-          ? stub.cancelRun({ runId })
-          : stub.uncancelRun({ runId }),
+        Match.value(input).pipe(
+          Match.discriminatorsExhaustive("kind")({
+            complete: ({ runStepId }) =>
+              stub.merchantCompleteStep({ runStepId }),
+            reopen: ({ runStepId }) =>
+              stub.merchantUncompleteStep({ runStepId }),
+            note: ({ runStepId, note }) =>
+              stub.merchantSetStepNote({ runStepId, note }),
+            block: ({ runId, reason }) =>
+              stub.merchantBlockRun({ runId, reason }),
+            unblock: ({ runId }) => stub.merchantDismissFlag({ runId }),
+            cancel: ({ runId }) => stub.cancelRun({ runId }),
+            uncancel: ({ runId }) => stub.uncancelRun({ runId }),
+          }),
+        ),
       ).then(decodeRunResult),
-    onSuccess: async (result) => {
-      setBanner(runResultMessage(result));
+    onSuccess: async (result, input) => {
+      if (result._tag === "Ok") shopify.toast.show(input.toast);
+      else
+        shopify.toast.show(runResultMessage(result) ?? "Nothing changed.", {
+          isError: true,
+        });
       await invalidate();
     },
     onError,
@@ -506,8 +600,11 @@ function RouteComponent() {
   };
   const busy =
     attachMutation.isPending ||
-    runMutation.isPending ||
+    interveneMutation.isPending ||
     assignMutation.isPending;
+  const intervene = (input: Intervention) => {
+    interveneMutation.mutate(input);
+  };
 
   /**
    * A team picker and an Assign button for one open step, inline under the
@@ -571,58 +668,316 @@ function RouteComponent() {
       `${name} started for ${formatNumber(count)} item${count === 1 ? "" : "s"}`,
   );
 
-  const renderRun = (run: Domain.WorkflowRunDetail) => (
-    <s-stack key={run.run.id} gap="small-300">
-      <s-stack direction="inline" gap="small-300" alignItems="center">
-        <s-text type="strong">{run.run.workflowName}</s-text>
-        <s-badge tone={RUN_STATUS_TONE[run.run.status]}>
-          {run.run.status}
-        </s-badge>
-        {run.run.flag !== null && (
-          <s-badge tone="warning">{flagLabel(run.run)}</s-badge>
-        )}
-        {run.run.status === "pending" || run.run.status === "active" ? (
-          <s-button
-            variant="tertiary"
-            disabled={!identified || busy}
-            onClick={() => {
-              runMutation.mutate({ runId: run.run.id, action: "cancel" });
-            }}
-          >
-            Cancel
-          </s-button>
-        ) : null}
-        {run.run.status === "cancelled" && (
-          <s-button
-            variant="tertiary"
-            disabled={!identified || busy}
-            onClick={() => {
-              runMutation.mutate({ runId: run.run.id, action: "uncancel" });
-            }}
-          >
-            Undo cancel
-          </s-button>
-        )}
+  /**
+   * The note editor for one Manage row: the current text is in the field
+   * before it is overwritten, which is the whole of the "the merchant can
+   * overwrite a worker's note" safeguard (`docs/…-research.md` trade-offs).
+   */
+  const noteEditor = (step: Domain.WorkflowRunStep, draft: string) => (
+    <s-stack gap="small-300">
+      <s-text-field
+        label="Note"
+        labelAccessibilityVisibility="exclusive"
+        placeholder="Note about this step"
+        value={draft}
+        disabled={!identified || busy}
+        onInput={(event) => {
+          setNoteDraft({ runStepId: step.id, note: event.currentTarget.value });
+        }}
+      />
+      <s-stack direction="inline" gap="small-300">
+        <s-button
+          variant="primary"
+          disabled={!identified || busy}
+          onClick={() => {
+            interveneMutation.mutate(
+              {
+                kind: "note",
+                runStepId: step.id,
+                note: draft === "" ? null : draft,
+                toast: "Note saved",
+              },
+              {
+                onSuccess: (result) => {
+                  if (result._tag === "Ok") setNoteDraft(null);
+                },
+              },
+            );
+          }}
+        >
+          Save note
+        </s-button>
+        <s-button
+          variant="tertiary"
+          onClick={() => {
+            setNoteDraft(null);
+          }}
+        >
+          Cancel
+        </s-button>
       </s-stack>
-      {Domain.isOrderRun(run.run) &&
-        run.run.status === "pending" &&
-        openItemRuns > 0 && (
-          <s-text color="subdued">
-            {`Waiting for ${formatNumber(openItemRuns)} item${openItemRuns === 1 ? "" : "s"}`}
-          </s-text>
-        )}
-      {stepTrail(run, teams, assignTeam, {
-        expanded: reassigning.has(run.run.id),
-        handleToggle: () => {
-          setReassigning((open) => {
-            const next = new Set(open);
-            if (!next.delete(run.run.id)) next.add(run.run.id);
-            return next;
-          });
-        },
-      })}
     </s-stack>
   );
+
+  /**
+   * The Manage disclosure: one row per step in position order, then the
+   * run-level actions. Every intervention lives here and nowhere else, in the
+   * order the worker sees it on the work page, so the trail above stays a
+   * read-only glance.
+   *
+   * The Reopen verdict is computed here rather than fetched. The page already
+   * holds every step of every run on this order, which is exactly what the
+   * rule takes (`Domain.undoBlockedBy`) — the same function the write itself
+   * runs, so the button and the refusal cannot disagree — and asking the
+   * object for a verdict per step would only send back what is already here.
+   * There is no Start: the merchant records work, they do not claim it.
+   */
+  const manageRows = ({ run, steps }: Domain.WorkflowRunDetail) => {
+    const open = run.status === "pending" || run.status === "active";
+    const lowestOpenStage = steps
+      .filter((step) => step.completedAt === null)
+      .reduce<number | null>(
+        (lowest, step) =>
+          lowest === null ? step.stage : Math.min(lowest, step.stage),
+        null,
+      );
+    /** What a finished item step's undo can be blocked by, once packing has begun. */
+    const orderRunSteps = Domain.isOrderRun(run)
+      ? []
+      : orderRuns.flatMap((other) => other.steps);
+    const reason = blockReason[run.id] ?? "";
+    return (
+      <s-stack gap="small-300">
+        {steps.map((step) => {
+          const ready =
+            open && step.completedAt === null && step.stage === lowestOpenStage;
+          const blocker =
+            step.completedAt === null
+              ? null
+              : Domain.undoBlockedBy(step, steps, orderRunSteps);
+          const reopenedBy = Domain.stepReopenedBy(step);
+          const draft =
+            noteDraft?.runStepId === step.id ? noteDraft.note : null;
+          return (
+            <s-box
+              key={step.id}
+              padding="small"
+              borderWidth="base"
+              borderRadius="base"
+              background={ready ? "subdued" : "base"}
+            >
+              <s-stack gap="small-300">
+                <s-stack direction="inline" gap="small-300" alignItems="center">
+                  <s-text type="strong">{step.name}</s-text>
+                  <s-text color="subdued">
+                    {`${step.teamName} \u00B7 stage ${String(step.stage)}`}
+                  </s-text>
+                </s-stack>
+                <s-text color="subdued">
+                  {manageStateLine(run, step, ready)}
+                </s-text>
+                {reopenedBy !== null && step.reopenedAt !== null && (
+                  <s-text color="subdued">
+                    {`Reopened by ${Domain.actorLabel(reopenedBy)} \u00B7 `}
+                    <LocalDateTime value={step.reopenedAt} format="relative" />
+                  </s-text>
+                )}
+                {draft === null && step.note !== null && (
+                  <s-text color="subdued">{Domain.stepNoteLine(step)}</s-text>
+                )}
+                {draft !== null && noteEditor(step, draft)}
+                <s-stack direction="inline" gap="base" alignItems="center">
+                  {ready && (
+                    <s-button
+                      variant="primary"
+                      disabled={!identified || busy}
+                      onClick={() => {
+                        intervene({
+                          kind: "complete",
+                          runStepId: step.id,
+                          toast: `${step.name} marked done`,
+                        });
+                      }}
+                    >
+                      Mark done
+                    </s-button>
+                  )}
+                  {step.completedAt !== null &&
+                    (blocker === null ? (
+                      <s-button
+                        variant="secondary"
+                        disabled={!identified || busy}
+                        onClick={() => {
+                          intervene({
+                            kind: "reopen",
+                            runStepId: step.id,
+                            toast: `${step.name} reopened`,
+                          });
+                        }}
+                      >
+                        Reopen
+                      </s-button>
+                    ) : (
+                      <s-text color="subdued">
+                        {`${blocker.teamName} started ${blocker.stepName} \u00B7 reopen it first`}
+                      </s-text>
+                    ))}
+                  {draft === null && (
+                    <s-button
+                      variant="tertiary"
+                      disabled={!identified || busy}
+                      onClick={() => {
+                        setNoteDraft({
+                          runStepId: step.id,
+                          note: step.note ?? "",
+                        });
+                      }}
+                    >
+                      {step.note === null ? "Note" : "Edit note"}
+                    </s-button>
+                  )}
+                </s-stack>
+                {open && step.completedAt === null && assignTeam(step.id)}
+              </s-stack>
+            </s-box>
+          );
+        })}
+        {run.flag === "blocked" && (
+          <s-stack gap="small-300">
+            <s-text color="subdued">{blockedLine(run)}</s-text>
+            <s-stack direction="inline" gap="small-300">
+              <s-button
+                variant="secondary"
+                disabled={!identified || busy}
+                onClick={() => {
+                  intervene({
+                    kind: "unblock",
+                    runId: run.id,
+                    toast: "Run unblocked",
+                  });
+                }}
+              >
+                Unblock
+              </s-button>
+            </s-stack>
+          </s-stack>
+        )}
+        {open && run.flag !== "blocked" && (
+          <s-stack gap="small-300">
+            <s-text-field
+              label="Reason"
+              labelAccessibilityVisibility="exclusive"
+              placeholder="What is stopping this? (optional)"
+              value={reason}
+              disabled={!identified || busy}
+              onInput={(event) => {
+                const next = event.currentTarget.value;
+                setBlockReason((current) => ({ ...current, [run.id]: next }));
+              }}
+            />
+            <s-stack direction="inline" gap="small-300">
+              <s-button
+                variant="primary"
+                tone="critical"
+                disabled={!identified || busy}
+                onClick={() => {
+                  interveneMutation.mutate(
+                    {
+                      kind: "block",
+                      runId: run.id,
+                      reason: reason === "" ? null : reason,
+                      toast: "Run blocked",
+                    },
+                    {
+                      onSuccess: (result) => {
+                        if (result._tag === "Ok")
+                          setBlockReason((current) => ({
+                            ...current,
+                            [run.id]: "",
+                          }));
+                      },
+                    },
+                  );
+                }}
+              >
+                Block
+              </s-button>
+            </s-stack>
+          </s-stack>
+        )}
+        {open && (
+          <s-stack direction="inline" gap="small-300">
+            <s-button
+              variant="tertiary"
+              disabled={!identified || busy}
+              onClick={() => {
+                intervene({
+                  kind: "cancel",
+                  runId: run.id,
+                  toast: "Run cancelled",
+                });
+              }}
+            >
+              Cancel
+            </s-button>
+          </s-stack>
+        )}
+      </s-stack>
+    );
+  };
+
+  const renderRun = (detail: Domain.WorkflowRunDetail) => {
+    const { run } = detail;
+    const cancelled = run.status === "cancelled";
+    return (
+      <s-stack key={run.id} gap="small-300">
+        <s-stack direction="inline" gap="small-300" alignItems="center">
+          <s-text type="strong">{run.workflowName}</s-text>
+          <s-badge tone={RUN_STATUS_TONE[run.status]}>{run.status}</s-badge>
+          {run.flag !== null && (
+            <s-badge tone="warning">{flagLabel(run)}</s-badge>
+          )}
+          {cancelled ? (
+            <s-button
+              variant="tertiary"
+              disabled={!identified || busy}
+              onClick={() => {
+                intervene({
+                  kind: "uncancel",
+                  runId: run.id,
+                  toast: "Cancel undone",
+                });
+              }}
+            >
+              Undo cancel
+            </s-button>
+          ) : (
+            <s-button
+              variant="tertiary"
+              onClick={() => {
+                setManaging((current) => {
+                  const next = new Set(current);
+                  if (!next.delete(run.id)) next.add(run.id);
+                  return next;
+                });
+              }}
+            >
+              {managing.has(run.id) ? "Hide" : "Manage"}
+            </s-button>
+          )}
+        </s-stack>
+        {Domain.isOrderRun(run) &&
+          run.status === "pending" &&
+          openItemRuns > 0 && (
+            <s-text color="subdued">
+              {`Waiting for ${formatNumber(openItemRuns)} item${openItemRuns === 1 ? "" : "s"}`}
+            </s-text>
+          )}
+        {stepTrail(detail, teams, assignTeam)}
+        {!cancelled && managing.has(run.id) && manageRows(detail)}
+      </s-stack>
+    );
+  };
 
   const renderLineItem = (item: Domain.OrderLineItem) => {
     const removed = item.currentQuantity === 0;

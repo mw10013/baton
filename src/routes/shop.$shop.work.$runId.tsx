@@ -68,12 +68,16 @@ const stepState = (
     readonly tone: "neutral" | "success" | "info";
   } | null;
 } => {
+  const completedBy = Domain.stepCompletedBy(step);
+  const startedBy = Domain.stepStartedBy(step);
   if (step.completedAt !== null)
     return {
       badge: { label: "Done", tone: "neutral" },
       text: (
         <>
-          {`Done by ${step.completedByEmail ?? ""} · `}
+          {completedBy === null
+            ? "Done · "
+            : `Done by ${Domain.actorLabel(completedBy)} · `}
           <LocalDateTime value={step.completedAt} />
         </>
       ),
@@ -85,7 +89,7 @@ const stepState = (
         <>
           In progress since{" "}
           <LocalDateTime value={step.startedAt} format="time" />
-          {step.startedByEmail === null ? "" : ` by ${step.startedByEmail}`}
+          {startedBy === null ? "" : ` by ${Domain.actorLabel(startedBy)}`}
         </>
       ),
     };
@@ -131,6 +135,8 @@ function RouteComponent() {
   const renderStep = (step: Domain.RunStepView) => {
     if (view === null) return null;
     const state = stepState(view, step);
+    /** Shown only while the slot is filled: the next Done clears it (`Domain.WorkflowRunStep`). */
+    const reopenedBy = Domain.stepReopenedBy(step);
     const editingNote = noteDraft?.runStepId === step.id;
     const canAct = mine(step) && open;
     const ready = canAct && step.ready && step.completedAt === null;
@@ -154,9 +160,15 @@ function RouteComponent() {
             )}
           </s-stack>
           {state.text !== null && <s-text color="subdued">{state.text}</s-text>}
+          {reopenedBy !== null && step.reopenedAt !== null && (
+            <s-text color="subdued">
+              {`Reopened by ${Domain.actorLabel(reopenedBy)} · `}
+              <LocalDateTime value={step.reopenedAt} format="relative" />
+            </s-text>
+          )}
           {step.instructions !== null && <s-text>{step.instructions}</s-text>}
           {!editingNote && step.note !== null && (
-            <s-text color="subdued">{`Note: ${step.note}`}</s-text>
+            <s-text color="subdued">{Domain.stepNoteLine(step)}</s-text>
           )}
           {editingNote && (
             <s-stack gap="small-300">
@@ -371,14 +383,14 @@ function RouteComponent() {
                         );
                       }}
                     >
-                      Mark blocked
+                      Block
                     </s-button>
                   </s-stack>
                 </s-stack>
               ) : (
                 <s-stack gap="small-300">
                   <s-paragraph color="subdued">
-                    Dismiss once the reason is resolved; the card goes back to
+                    Unblock once the reason is resolved; the card goes back to
                     its place in the queue.
                   </s-paragraph>
                   <s-stack direction="inline" gap="small-300">
@@ -389,7 +401,7 @@ function RouteComponent() {
                         actions.dismiss.mutate(run.id);
                       }}
                     >
-                      Dismiss
+                      Unblock
                     </s-button>
                   </s-stack>
                 </s-stack>

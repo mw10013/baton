@@ -64,6 +64,12 @@ const seedQueue = (
     readonly keepIdentities: boolean;
     /** Adds the two-stage band order, for the tests about downstream work. */
     readonly withBand?: boolean;
+    /**
+     * Seeds the band order with its first stage already finished **by the
+     * merchant** — the state an intervention on the order page leaves behind,
+     * reached here without an admin session (`SeedOrder.byMerchant`).
+     */
+    readonly bandDoneByMerchant?: boolean;
   },
 ) =>
   seedMembers(
@@ -111,6 +117,9 @@ const seedQueue = (
             {
               n: 9403,
               lineItems: [{ title: "E2E Cuff", quantity: 1, tags: [BAND_TAG] }],
+              ...(options.bandDoneByMerchant === true
+                ? { advance: 1, byMerchant: true }
+                : {}),
             },
           ]
         : []),
@@ -431,7 +440,7 @@ test("the work page shows the step history and takes a note, a block, and Done",
   await expect(page.getByText("Note: Left edge is rough")).toBeVisible();
 
   await page.getByLabel("Reason").fill("Waiting on stones");
-  await clickWhenEnabled(page.getByRole("button", { name: "Mark blocked" }));
+  await clickWhenEnabled(page.getByRole("button", { name: "Block" }));
   await expect(page.getByText("Blocked: Waiting on stones")).toBeVisible();
   await expect(page.locator('s-section[heading="Blocked"]')).toBeVisible();
 
@@ -444,4 +453,44 @@ test("the work page shows the step history and takes a note, a block, and Done",
   /* Cut is done and Polish is the packer's, so the run is no card of the
      maker's any more; what remains of it on this page is the Done entry. */
   await expect(page.getByText("Done today · 1")).toBeVisible();
+});
+
+/**
+ * What a worker sees after the merchant has been in. The intervention is
+ * seeded rather than clicked: the merchant acts from the embedded admin, which
+ * this project deliberately has no session for (see `playwright.config.ts` —
+ * no `setup` dependency, so a run never prompts for Keychain access), and
+ * `SeedOrder.byMerchant` puts the same rows in the object that
+ * `merchantCompleteStep` would. `e2e/orders.spec.ts` drives the merchant's own
+ * buttons; this is the other end of the wire.
+ *
+ * The Undo here is the *member's*, which is the point of the second half: the
+ * "Reopened by …" line is one rendering, and a merchant reopen exercising it
+ * is asserted on the order page instead.
+ */
+test("a merchant's completion reads as Merchant on the queue and the work page", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedQueue(config, {
+    cutMembers: [MAKER],
+    keepIdentities: true,
+    withBand: true,
+    bandDoneByMerchant: true,
+  });
+  const page = await openQueue(browser, config, makerState);
+
+  await expect(page.getByText("Done today · 1")).toBeVisible();
+  await page.getByRole("button", { name: "Show" }).click();
+  await expect(page.getByText("by Merchant at")).toBeVisible();
+
+  await page.getByRole("link", { name: BAND_ORDER, exact: true }).click();
+  await expect(page.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
+  await expect(page.getByText("Done by Merchant")).toBeVisible();
+
+  /* The maker takes it back: the same line the merchant's reopen writes, with
+     the member in the slot, and Cut is ready again. */
+  await clickWhenEnabled(page.getByRole("button", { name: "Undo" }));
+  await expect(page.getByText(`Reopened by ${MAKER}`)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Done" })).toBeVisible();
 });
