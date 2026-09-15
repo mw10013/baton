@@ -40,6 +40,12 @@ const orderId = (n: number) => `gid://shopify/Order/${String(n)}`;
 const names = (page: Domain.OrdersPage) =>
   page.orders.map(({ order }) => order.name);
 const lineItemId = (n: number) => `gid://shopify/LineItem/${String(n)}`;
+const aTeamId = (value: string) =>
+  Schema.decodeUnknownSync(Domain.TeamId)(value);
+const rowOf = (page: Domain.OrdersPage, name: string) =>
+  page.orders.find((row) => row.order.name === name);
+const waitingOf = (page: Domain.OrdersPage, name: string) =>
+  rowOf(page, name)?.waitingOn;
 
 const anOrder = (
   overrides: Partial<Domain.ShopOrder> = {},
@@ -204,6 +210,7 @@ describe("OrderRepository.listOrders", () => {
           state: null,
           paid: null,
           attention: false,
+          team: null,
           teams: [],
         });
         return {
@@ -214,6 +221,7 @@ describe("OrderRepository.listOrders", () => {
             state: null,
             paid: null,
             attention: false,
+            team: null,
             teams: [],
           }),
         };
@@ -301,6 +309,7 @@ describe("OrderRepository.listOrders filters", () => {
             state,
             paid: null,
             attention: false,
+            team: null,
             teams: [],
           });
         return {
@@ -343,6 +352,7 @@ describe("OrderRepository.listOrders filters", () => {
             state: "ready_to_ship",
             paid: null,
             attention: false,
+            team: null,
             teams: [],
           }),
           unpaid: yield* repository.listOrders({
@@ -351,6 +361,7 @@ describe("OrderRepository.listOrders filters", () => {
             state: null,
             paid: false,
             attention: false,
+            team: null,
             teams: [],
           }),
         };
@@ -376,6 +387,7 @@ describe("OrderRepository.listOrders filters", () => {
           state: "ready_to_ship",
           paid: true,
           attention: false,
+          team: null,
           teams: [],
         });
         return {
@@ -386,6 +398,7 @@ describe("OrderRepository.listOrders filters", () => {
             state: "ready_to_ship",
             paid: true,
             attention: false,
+            team: null,
             teams: [],
           }),
           unpaid: yield* repository.listOrders({
@@ -394,6 +407,7 @@ describe("OrderRepository.listOrders filters", () => {
             state: null,
             paid: false,
             attention: false,
+            team: null,
             teams: [],
           }),
         };
@@ -403,6 +417,56 @@ describe("OrderRepository.listOrders filters", () => {
     deepStrictEqual(names(second), ["#1001"]);
     strictEqual(second.nextCursor, null);
     deepStrictEqual(names(unpaid), ["#1009"]);
+  });
+  /**
+   * `RunCounts.blocked` and `RunCounts.flagged` are the two alarms the index
+   * badge splits, and the split lives in SQL: one counter per `WorkflowRun`
+   * flag value, both restricted to open runs so a done run's stale flag
+   * counts in neither.
+   */
+  it("splits the worker's block from a reconcile flag, and ignores a done run's flag", async () => {
+    const { all } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* seedStates;
+        const sql = yield* SqlClient.SqlClient;
+        const flag = (runId: string, value: Domain.RunFlag) =>
+          sql`update WorkflowRun set flag = ${value}, flagAt = 1 where id = ${runId}`;
+        yield* flag("run-3-1", "blocked");
+        yield* flag("run-4-1", "item_removed");
+        yield* flag("run-1-0", "order_fulfilled");
+        return {
+          all: yield* repository.listOrders({
+            limit: 20,
+            cursor: null,
+            state: null,
+            paid: null,
+            attention: false,
+            team: null,
+            teams: [],
+          }),
+        };
+      }),
+    );
+    const runsOf = (name: string) =>
+      all.orders.find((row) => row.order.name === name)?.runs;
+    deepStrictEqual(runsOf("#1003"), {
+      open: 1,
+      done: 1,
+      flagged: 0,
+      blocked: 1,
+    });
+    deepStrictEqual(runsOf("#1004"), {
+      open: 1,
+      done: 1,
+      flagged: 1,
+      blocked: 0,
+    });
+    deepStrictEqual(runsOf("#1001"), {
+      open: 0,
+      done: 1,
+      flagged: 0,
+      blocked: 0,
+    });
   });
 });
 
@@ -445,6 +509,7 @@ describe("OrderRepository.listOrders attention", () => {
             state: null,
             paid: null,
             attention,
+            team: null,
             teams,
           });
         return { all: yield* list(false), only: yield* list(true) };
@@ -457,6 +522,253 @@ describe("OrderRepository.listOrders attention", () => {
     deepStrictEqual(names(only), ["#1004", "#1003"]);
     strictEqual(all.openCounts.attention, 2);
     strictEqual(only.openCounts.attention, 2);
+  });
+  /**
+   * The order run is the case the shared `readyWhere` buys: its steps are not
+   * ready while an item run on the order is still open, so an unstaffed
+   * packing step is not an alarm until the items are actually made. The
+   * looser hand-written predicate this replaced flagged it on arrival, when
+   * there was nothing for the merchant to do about it yet.
+   */
+  it("holds an unstaffed order-run step back until the item runs are done", async () => {
+    const teams = Schema.decodeUnknownSync(Schema.Array(Domain.TeamRoster))([
+      { id: "team-cut", name: "Cut", memberCount: 1 },
+      { id: "team-pack", name: "Pack", memberCount: 0 },
+    ]);
+    const { waiting, made } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* seedStates;
+        const sql = yield* SqlClient.SqlClient;
+        /* #1005 has no runs of its own in `seedStates`, so it carries the
+           pair on its own: one item run, plus the order run behind it. The
+           item columns move together — a check constraint ties
+           `lineItemTitle`, `quantity` and `customAttributes` to
+           `lineItemId` — which is what makes an order run recognizable. */
+        const run = (
+          id: string,
+          itemId: string | null,
+          status: Domain.RunStatus,
+        ) => sql`
+          insert into WorkflowRun (
+            id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
+            lineItemId, lineItemTitle, variantTitle, sku, quantity,
+            customAttributes, source, status, flag, flagAt, flagDetail,
+            createdAt, updatedAt, cancelledAt
+          ) values (
+            ${id}, 'wf', 'Workflow', ${orderId(5)}, '#1005', 0,
+            ${itemId}, ${itemId === null ? null : "Item"}, null, null,
+            ${itemId === null ? null : 1},
+            ${itemId === null ? null : "[]"}, 'tag', ${status},
+            null, null, null, 0, 0, null
+          )
+        `;
+        const step = (
+          id: string,
+          runId: string,
+          teamId: string,
+          completedAt: number | null,
+        ) => sql`
+          insert into WorkflowRunStep
+            (id, runId, position, stage, name, teamId, teamName, completedAt)
+          values (${id}, ${runId}, 1, 1, 'Step', ${teamId}, 'Team', ${completedAt})
+        `;
+        yield* run("run-item", lineItemId(5), "active");
+        yield* step("s-item", "run-item", "team-cut", null);
+        yield* run("run-order", null, "pending");
+        yield* step("s-order", "run-order", "team-pack", null);
+        const list = () =>
+          repository.listOrders({
+            limit: 20,
+            cursor: null,
+            state: null,
+            paid: null,
+            attention: true,
+            team: null,
+            teams,
+          });
+        const waiting = yield* list();
+        yield* sql`update WorkflowRunStep set completedAt = 1 where id = 's-item'`;
+        yield* sql`update WorkflowRun set status = 'done' where id = 'run-item'`;
+        return { waiting, made: yield* list() };
+      }),
+    );
+    deepStrictEqual(names(waiting), []);
+    strictEqual(waiting.openCounts.attention, 0);
+    deepStrictEqual(names(made), ["#1005"]);
+    strictEqual(made.openCounts.attention, 1);
+  });
+});
+
+/**
+ * `Domain.OrderRow.waitingOn`: the teams with a ready step on an open run,
+ * through the same `readyWhere` the worker queue runs on, so the cell and the
+ * filter are one fact rendered two ways. The fixture reuses `seedStates`'
+ * runs and hangs steps off them; on #1003 and #1004, `run-N-0` is done and
+ * `run-N-1` is open.
+ */
+describe("OrderRepository.listOrders waitingOn", () => {
+  /** Ids ascend cut → pack → polish while names ascend Anodize → Cut → Pack, so the two orders disagree. */
+  const teams = Schema.decodeUnknownSync(Schema.Array(Domain.TeamRoster))([
+    { id: "team-cut", name: "Cut", memberCount: 1 },
+    { id: "team-polish", name: "Anodize", memberCount: 1 },
+    { id: "team-pack", name: "Pack", memberCount: 1 },
+  ]);
+
+  const waitingFixture = Effect.gen(function* () {
+    const repository = yield* seedStates;
+    const sql = yield* SqlClient.SqlClient;
+    /* `position` is unique per run and only orders a queue, so it comes off a
+       counter; `stage` is what readiness is about and every case names it. */
+    let position = 0;
+    const step = (
+      id: string,
+      runId: string,
+      stage: number,
+      team: string,
+      completedAt: number | null = null,
+    ) => {
+      position += 1;
+      return sql`
+        insert into WorkflowRunStep
+          (id, runId, position, stage, name, teamId, teamName, completedAt)
+        values (${id}, ${runId}, ${position}, ${stage}, 'Step', ${team}, 'Team', ${completedAt})
+      `;
+    };
+    /* #1003: two open item runs both ready on Cut, so the id is distinct
+       across runs; the done run's step is on Cut too, and a run that is over
+       holds nobody up. */
+    yield* sql`
+      insert into WorkflowRun (
+        id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
+        lineItemId, lineItemTitle, variantTitle, sku, quantity, customAttributes,
+        source, status, flag, flagAt, flagDetail, createdAt, updatedAt,
+        cancelledAt
+      ) values (
+        'run-3-2', 'wf', 'Workflow', ${orderId(3)}, '#1003', 0,
+        ${`${lineItemId(3)}-2`}, 'Item', null, null, 1, '[]', 'tag', 'active',
+        null, null, null, 0, 0, null
+      )
+    `;
+    yield* step("s3a", "run-3-1", 1, "team-cut");
+    yield* step("s3b", "run-3-0", 1, "team-cut");
+    yield* step("s3e", "run-3-2", 1, "team-cut");
+    /* #1004: ready on Cut, with a later stage on Anodize that is not ready.
+       Anodize sorts first by name, so it would show if it counted. */
+    yield* step("s4a", "run-4-1", 1, "team-cut");
+    yield* step("s4b", "run-4-1", 2, "team-polish");
+    const list = (team: Domain.TeamId | null = null) =>
+      repository.listOrders({
+        limit: 20,
+        cursor: null,
+        state: null,
+        paid: null,
+        attention: false,
+        team,
+        teams,
+      });
+    return { sql, step, list };
+  });
+
+  it("names each team once, only for ready steps on open runs", async () => {
+    const page = await runInRepository(
+      Effect.gen(function* () {
+        const { list } = yield* waitingFixture;
+        return yield* list();
+      }),
+    );
+    deepStrictEqual(waitingOf(page, "#1003"), [aTeamId("team-cut")]);
+    deepStrictEqual(waitingOf(page, "#1004"), [aTeamId("team-cut")]);
+    // Every run done: nobody is holding it.
+    deepStrictEqual(waitingOf(page, "#1001"), []);
+  });
+
+  it("leaves out a team that has left the roster, which is attention instead", async () => {
+    const page = await runInRepository(
+      Effect.gen(function* () {
+        const { sql, list } = yield* waitingFixture;
+        yield* sql`update WorkflowRunStep set teamId = 'team-gone' where id in ('s3a', 's3e')`;
+        return yield* list();
+      }),
+    );
+    deepStrictEqual(waitingOf(page, "#1003"), []);
+    strictEqual(rowOf(page, "#1003")?.attention, true);
+  });
+
+  it("waits on the makers until the items are made, then on the packers", async () => {
+    const { before, after } = await runInRepository(
+      Effect.gen(function* () {
+        const { sql, step, list } = yield* waitingFixture;
+        /* #1004's order run: pending from the moment the order arrived, and
+           in nobody's queue until every item run is done. Its item columns
+           are all null — the check constraint ties them to `lineItemId`. */
+        yield* sql`
+          insert into WorkflowRun (
+            id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
+            lineItemId, lineItemTitle, variantTitle, sku, quantity,
+            customAttributes, source, status, flag, flagAt, flagDetail,
+            createdAt, updatedAt, cancelledAt
+          ) values (
+            'run-4-order', 'wf-order', 'Order workflow', ${orderId(4)},
+            '#1004', 0, null, null, null, null, null, null, 'tag', 'pending',
+            null, null, null, 0, 0, null
+          )
+        `;
+        yield* step("s4pack", "run-4-order", 1, "team-pack");
+        const before = yield* list();
+        yield* sql`update WorkflowRunStep set completedAt = 1 where runId = 'run-4-1'`;
+        yield* sql`update WorkflowRun set status = 'done' where id = 'run-4-1'`;
+        return { before, after: yield* list() };
+      }),
+    );
+    deepStrictEqual(waitingOf(before, "#1004"), [aTeamId("team-cut")]);
+    deepStrictEqual(waitingOf(after, "#1004"), [aTeamId("team-pack")]);
+  });
+
+  /**
+   * The filter is the column's membership test as a `where`, so the filtered
+   * page is exactly the rows whose cell names the team — and the stage strip
+   * stays independent of it, the way it is independent of `paid`.
+   */
+  it("keeps exactly the rows waiting on that team, and leaves the counts alone", async () => {
+    const { all, cut, polish, unknown } = await runInRepository(
+      Effect.gen(function* () {
+        const { list } = yield* waitingFixture;
+        return {
+          all: yield* list(),
+          cut: yield* list(aTeamId("team-cut")),
+          /* Anodize owns #1004's second stage, which is not ready yet. */
+          polish: yield* list(aTeamId("team-polish")),
+          unknown: yield* list(aTeamId("team-nobody")),
+        };
+      }),
+    );
+    deepStrictEqual(
+      all.orders
+        .filter((row) => row.waitingOn.includes(aTeamId("team-cut")))
+        .map((row) => row.order.name),
+      names(cut),
+    );
+    deepStrictEqual(names(cut), ["#1004", "#1003"]);
+    deepStrictEqual(names(polish), []);
+    deepStrictEqual(names(unknown), []);
+    deepStrictEqual(cut.openCounts, all.openCounts);
+    deepStrictEqual(unknown.openCounts, all.openCounts);
+  });
+
+  it("sorts by team name, not by id", async () => {
+    const page = await runInRepository(
+      Effect.gen(function* () {
+        const { step, list } = yield* waitingFixture;
+        yield* step("s3c", "run-3-1", 1, "team-pack");
+        yield* step("s3d", "run-3-1", 1, "team-polish");
+        return yield* list();
+      }),
+    );
+    deepStrictEqual(waitingOf(page, "#1003"), [
+      aTeamId("team-polish"),
+      aTeamId("team-cut"),
+      aTeamId("team-pack"),
+    ]);
   });
 });
 

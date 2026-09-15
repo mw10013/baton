@@ -127,6 +127,20 @@ test("the order page's order-workflow link lands on the order workflow page", as
 
   const frame = await gotoApp(page);
   await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+
+  /* The waiting-on column, on the way past: the seeded run's first step is on
+     E2E Bench, so the row names the team that is holding the order. Located
+     inside the row, because the filter control on the same page carries the
+     same words. */
+  await expect(
+    frame.locator("s-table-header", { hasText: "Waiting on" }),
+  ).toBeVisible();
+  await expect(
+    frame
+      .locator("s-table-row", { hasText: "#9201" })
+      .getByText(TEAM, { exact: true }),
+  ).toBeVisible();
+
   await frame.getByRole("link", { name: "#9201" }).click();
   await expect(frame.locator('s-page[heading="#9201"]')).toBeVisible();
   await expect(

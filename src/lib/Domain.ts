@@ -1399,6 +1399,18 @@ export const ListOrdersInput = Schema.Struct({
   paid: Schema.NullOr(Schema.Boolean),
   /** `true` keeps only orders with an open run that needs attention (see `OrderRow.attention`). */
   attention: Schema.Boolean,
+  /**
+   * `null` is any team; an id keeps only orders with a ready step on that
+   * team — "waiting on", the queue's own predicate, not "owns a step
+   * somewhere in the run". The looser reading pulls in orders the team
+   * finished days ago and orders it will not touch for two more stages, so
+   * the label carries the predicate.
+   *
+   * Always send the key. `subscribeOrders` parses with
+   * `onExcessProperty: "error"`, and an omitted key is a different failure
+   * than a null one.
+   */
+  team: Schema.NullOr(TeamId),
 });
 export type ListOrdersInput = typeof ListOrdersInput.Type;
 
@@ -1420,11 +1432,21 @@ export type ResyncOrderInput = typeof ResyncOrderInput.Type;
  * why the name avoids "order run". `open` counts `pending` and `active`
  * runs; cancelled runs count nowhere, so an order whose only runs were
  * cancelled reads as "No workflow" — which is what an admin has to act on.
+ *
+ * `flagged` and `blocked` are disjoint because `WorkflowRun.flag` is a single
+ * column, and they are two counters rather than one because the merchant's
+ * next click differs: `blocked` is a person waiting on them right now, so the
+ * remedy is the order page and probably an intervention, while a reconcile
+ * flag is Shopify having moved under a live run and the remedy is usually to
+ * accept it and move on.
  */
 export const RunCounts = Schema.Struct({
   open: Schema.Number,
   done: Schema.Number,
+  /** Open runs carrying a reconcile flag (`RunFlag` other than `blocked`): the order moved under a live run. */
   flagged: Schema.Number,
+  /** Open runs a worker or the merchant blocked. Disjoint from `flagged`: a run has one flag. */
+  blocked: Schema.Number,
 });
 export type RunCounts = typeof RunCounts.Type;
 
@@ -1446,6 +1468,24 @@ export const OrderRow = Schema.Struct({
    * are the remedies; either clears this with no further write.
    */
   attention: Schema.Boolean,
+  /**
+   * Teams with a ready step on an open run of this order, distinct, as ids:
+   * "who is holding it", answered at the altitude the list grows with — a
+   * shop has a handful of teams, while its runs are a cross product of line
+   * items and matching workflows.
+   *
+   * Unassigned ready steps contribute nothing, and neither does a team that
+   * has left the roster: both are `attention`, and rendering one fault in two
+   * cells makes it look like two alarms. A team still on the roster but with
+   * no members does contribute: it is `attention` too, but the badge names
+   * the team the merchant has to staff. So an order in production with an
+   * empty list is exactly an order whose every ready step is unassigned or
+   * on a deleted team, which is when the critical badge is showing.
+   *
+   * Ids, not names: the Durable Object has no team names. The route resolves
+   * them through `OrdersView.teams`, the roster the page was read against.
+   */
+  waitingOn: Schema.Array(TeamId),
 });
 export type OrderRow = typeof OrderRow.Type;
 
@@ -1458,11 +1498,15 @@ export type OrderRow = typeof OrderRow.Type;
  * historical order the window sync pulls in — reads as shipped rather than
  * as a "No workflow" warning nobody can act on. The SQL forms in
  * `OrderRepository.listOrders` restate these branches and must move with them.
+ *
+ * Takes the two fields it reads rather than a whole `OrderRow`, so the order
+ * page — which rebuilds the aggregate from its own run list — does not have
+ * to invent a value for every row field the index adds later.
  */
 export const productionState = ({
   order,
   runs,
-}: OrderRow): ProductionState | null =>
+}: Pick<OrderRow, "order" | "runs">): ProductionState | null =>
   Match.value({
     cancelled: isCancelled(order),
     fulfilled: isFulfilled(order),
@@ -1487,10 +1531,13 @@ export const runCounts = (runs: readonly WorkflowRun[]): RunCounts =>
       return {
         open: counts.open + (open ? 1 : 0),
         done: counts.done + (run.status === "done" ? 1 : 0),
-        flagged: counts.flagged + (open && run.flag !== null ? 1 : 0),
+        flagged:
+          counts.flagged +
+          (open && run.flag !== null && run.flag !== "blocked" ? 1 : 0),
+        blocked: counts.blocked + (open && run.flag === "blocked" ? 1 : 0),
       };
     },
-    { open: 0, done: 0, flagged: 0 },
+    { open: 0, done: 0, flagged: 0, blocked: 0 },
   );
 
 /**
@@ -1499,8 +1546,8 @@ export const runCounts = (runs: readonly WorkflowRun[]): RunCounts =>
  * over unfulfilled, uncancelled orders, so the count costs one row per open
  * order, not one per order ever stored. "All" and "Shipped" carry no count —
  * on a shop with years of history that would be a full-table read on every
- * refresh of a subscribed page. Independent of the `paid` filter so the strip
- * reads the same whichever payment view is showing.
+ * refresh of a subscribed page. Independent of the `paid` and `team` filters
+ * so the strip reads the same whichever payment view or team is showing.
  */
 export const OpenStageCounts = Schema.Struct({
   no_workflow: Schema.Number,
@@ -1592,6 +1639,12 @@ export type OrdersSyncResult = typeof OrdersSyncResult.Type;
 export const OrdersView = Schema.Struct({
   page: OrdersPage,
   syncState: SyncState,
+  /**
+   * The live D1 roster the page was read against — the same list `attention`
+   * and `OrderRow.waitingOn` were derived from, carried so the route can name
+   * the waiting-on ids and fill the team filter without a second read.
+   */
+  teams: Schema.Array(TeamRoster),
 });
 export type OrdersView = typeof OrdersView.Type;
 

@@ -17,10 +17,15 @@ import { SocketBanner } from "@/lib/SocketBanner";
 import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
 
 const ORDERS_PAGE_SIZE = 25;
+/**
+ * Caps both the Tags and the Waiting on cells, on purpose: two collapsing
+ * columns in one table should collapse at the same width and with the same
+ * `+N`, so the table has one idiom rather than two.
+ */
 const TAG_BADGE_LIMIT = 3;
 
 /**
- * Keyed by both filters as well as the shop: each filter combination is a
+ * Keyed by every filter as well as the shop: each filter combination is a
  * different read, and the order page's invalidation of `["orders", shop]` is
  * a prefix match so it still reaches every one of them.
  */
@@ -29,18 +34,21 @@ const ordersQueryKey = (
   state: Domain.ProductionState | null,
   paid: boolean | null,
   attention: boolean,
-) => ["orders", shop, state, paid, attention] as const;
+  team: Domain.TeamId | null,
+) => ["orders", shop, state, paid, attention, team] as const;
 
 /**
  * `?state=` picks a stage of the strip (`ready_to_ship` is the packer's view);
  * `?paid=` crosses it with the payment gate; `?attention=true` keeps only
- * orders with a run that needs attention (`Domain.OrderRow.attention`).
- * Absent means every order.
+ * orders with a run that needs attention (`Domain.OrderRow.attention`);
+ * `?team=` keeps only orders waiting on that team, which is the link the team
+ * detail page drills in with. Absent means every order.
  */
 const OrdersSearch = Schema.Struct({
   state: Schema.optionalKey(Domain.ProductionState),
   paid: Schema.optionalKey(Schema.Boolean),
   attention: Schema.optionalKey(Schema.Boolean),
+  team: Schema.optionalKey(Domain.TeamId),
 });
 
 /**
@@ -92,6 +100,15 @@ export const orderDetailHref = ({ legacyId }: Domain.ShopOrder) =>
  * start any, so its empty cell is correct rather than alarming. "Ready to
  * ship" is derived, never stored: it clears on its own once Shopify reports
  * the fulfilment.
+ *
+ * Three alarms can sit on an in-production row and each names a different
+ * remedy, which is why they are three badges rather than one. `Needs
+ * attention` (rendered by the row, not here) is a configuration fault: the
+ * remedy is the workflow editor or the members page. `Blocked` is a person
+ * waiting on the merchant right now, so the remedy is the order page. `Order
+ * changed` is Shopify having moved under a live run, and the remedy is
+ * usually just to accept it. `Blocked` is critical because someone is
+ * stopped; `Order changed` is a warning because nothing is.
  */
 const stateBadge = (row: Domain.OrderRow) =>
   Match.value(Domain.productionState(row)).pipe(
@@ -105,7 +122,10 @@ const stateBadge = (row: Domain.OrderRow) =>
         <s-badge tone="info">
           {`${formatNumber(row.runs.open)} active${row.runs.done > 0 ? ` · ${formatNumber(row.runs.done)} done` : ""}`}
         </s-badge>
-        {row.runs.flagged > 0 && <s-badge tone="warning">Flagged</s-badge>}
+        {row.runs.blocked > 0 && <s-badge tone="critical">Blocked</s-badge>}
+        {row.runs.flagged > 0 && (
+          <s-badge tone="warning">Order changed</s-badge>
+        )}
       </s-stack>
     )),
     Match.when("ready_to_ship", () => (
@@ -206,13 +226,17 @@ const OrdersLoaderInput = Schema.Struct({
   state: Schema.NullOr(Domain.ProductionState),
   paid: Schema.NullOr(Schema.Boolean),
   attention: Schema.Boolean,
+  team: Schema.NullOr(Domain.TeamId),
 });
 
 const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(OrdersLoaderInput))
   .middleware([shopifyServerFnMiddleware])
   .handler(
-    ({ data: { state, paid, attention }, context: { runEffect, session } }) =>
+    ({
+      data: { state, paid, attention, team },
+      context: { runEffect, session },
+    }) =>
       runEffect(
         ShopAgentClient.pipe(
           Effect.flatMap((client) =>
@@ -222,6 +246,7 @@ const getLoaderData = createServerFn({ method: "GET" })
               state,
               paid,
               attention,
+              team,
             }),
           ),
         ),
@@ -234,6 +259,7 @@ export const Route = createFileRoute("/app/orders/")({
     state: search.state ?? null,
     paid: search.paid ?? null,
     attention: search.attention ?? false,
+    team: search.team ?? null,
   }),
   loader: ({ deps }) => getLoaderData({ data: deps }),
   component: RouteComponent,
@@ -253,7 +279,12 @@ export const Route = createFileRoute("/app/orders/")({
  */
 function RouteComponent() {
   const { shop } = Route.useRouteContext();
-  const { state = null, paid = null, attention = false } = Route.useSearch();
+  const {
+    state = null,
+    paid = null,
+    attention = false,
+    team = null,
+  } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const shopify = useAppBridge();
   const resourceLinkTarget = useResourceLinkTarget();
@@ -277,6 +308,7 @@ function RouteComponent() {
     readonly state: Domain.ProductionState | null;
     readonly paid: boolean | null;
     readonly attention: boolean;
+    readonly team: Domain.TeamId | null;
   }) => {
     setCursors([null]);
     void navigate({
@@ -284,6 +316,7 @@ function RouteComponent() {
         ...(next.state === null ? {} : { state: next.state }),
         ...(next.paid === null ? {} : { paid: next.paid }),
         ...(next.attention ? { attention: true } : {}),
+        ...(next.team === null ? {} : { team: next.team }),
       },
     });
   };
@@ -295,7 +328,7 @@ function RouteComponent() {
     agent,
     identified,
   } = useSubscribedQuery({
-    queryKey: ordersQueryKey(shop, state, paid, attention),
+    queryKey: ordersQueryKey(shop, state, paid, attention, team),
     subscribe: (stub, subscriberId) =>
       stub
         .subscribeOrders({
@@ -304,6 +337,7 @@ function RouteComponent() {
           state,
           paid,
           attention,
+          team,
           subscriberId,
         })
         .then(decodeOrdersView),
@@ -341,7 +375,8 @@ function RouteComponent() {
 
   const syncInFlight = view !== undefined && view.syncState.workflowId !== null;
   const orders = view?.page.orders ?? [];
-  const filtered = state !== null || paid !== null || attention;
+  const filtered =
+    state !== null || paid !== null || attention || team !== null;
   /**
    * Nothing stored and nothing filtered: the shop has never had orders here,
    * so the card is the empty state alone. Declared beside `orders` rather than
@@ -349,6 +384,31 @@ function RouteComponent() {
    * `renderOrders` all branch on it.
    */
   const neverStored = orders.length === 0 && !filtered;
+  /**
+   * `OrderRow.waitingOn` is ids — the Durable Object has no team names — and
+   * this is the roster it was derived against, carried on the same view.
+   */
+  const teamName = new Map(
+    (view?.teams ?? []).map(({ id, name }) => [id, name]),
+  );
+
+  /**
+   * Who is holding the order: the teams with a ready step on one of its open
+   * runs, collapsed and capped like `tagBadges`. `"Unknown team"` should
+   * never render — the repository only emits ids that were in the roster it
+   * read — but the lookup is nullable and a blank badge is worse than a
+   * named gap.
+   */
+  const waitingOnBadges = (ids: readonly Domain.TeamId[]) => (
+    <s-stack direction="inline" gap="small-300">
+      {ids.slice(0, TAG_BADGE_LIMIT).map((id) => (
+        <s-badge key={id}>{teamName.get(id) ?? "Unknown team"}</s-badge>
+      ))}
+      {ids.length > TAG_BADGE_LIMIT && (
+        <s-text color="subdued">{`+${String(ids.length - TAG_BADGE_LIMIT)}`}</s-text>
+      )}
+    </s-stack>
+  );
 
   /**
    * Rendered twice: once into the page's `primary-action` slot, and once
@@ -452,6 +512,7 @@ function RouteComponent() {
           <s-table-header listSlot="secondary">Placed</s-table-header>
           <s-table-header listSlot="inline">Payment</s-table-header>
           <s-table-header listSlot="inline">Workflows</s-table-header>
+          <s-table-header listSlot="labeled">Waiting on</s-table-header>
           <s-table-header listSlot="labeled" format="numeric">
             Items
           </s-table-header>
@@ -487,6 +548,14 @@ function RouteComponent() {
                   )}
                 </s-stack>
               </s-table-cell>
+              {/* No placeholder for an empty cell. Empty means every ready
+                  step is unassigned or on a deleted team (an unstaffed team
+                  still shows, so the merchant knows whom to staff), and the
+                  critical badge beside it already says so; the one other way to get here is
+                  an order run whose item runs were all cancelled, which
+                  carries a flag badge. A dash would flatten both into
+                  "nothing to see". */}
+              <s-table-cell>{waitingOnBadges(row.waitingOn)}</s-table-cell>
               <s-table-cell>{formatNumber(row.itemUnits)}</s-table-cell>
               <s-table-cell>{tagBadges(row.order.tags)}</s-table-cell>
               {/* The packer's handoff: a made order is fulfilled in the
@@ -536,7 +605,7 @@ function RouteComponent() {
         key={value ?? "all"}
         pressed={state === value}
         onClick={() => {
-          setFilters({ state: value, paid, attention });
+          setFilters({ state: value, paid, attention, team });
         }}
       >
         {n === undefined || n === null
@@ -557,7 +626,7 @@ function RouteComponent() {
     <s-press-button
       pressed={paid === value}
       onClick={() => {
-        setFilters({ state, paid: value, attention });
+        setFilters({ state, paid: value, attention, team });
       }}
     >
       {label}
@@ -589,9 +658,9 @@ function RouteComponent() {
           </s-stack>
         </s-box>
         {/* One filter bar, gated on there being something to filter: see
-            `neverStored`. The two rows share a grid so "Stage" and "Payment"
-            line up in a label column and their controls start at the same
-            inline offset. */}
+            `neverStored`. The three rows share a grid so "Stage", "Payment"
+            and "Waiting on" line up in a label column and their controls
+            start at the same inline offset. */}
         {!neverStored && (
           <s-box padding="base">
             <s-stack gap="small-300">
@@ -622,7 +691,12 @@ function RouteComponent() {
                       variant={attention ? "primary" : "secondary"}
                       tone="critical"
                       onClick={() => {
-                        setFilters({ state, paid, attention: !attention });
+                        setFilters({
+                          state,
+                          paid,
+                          attention: !attention,
+                          team,
+                        });
                       }}
                     >
                       {`Needs attention · ${formatNumber(attentionCount)}`}
@@ -636,6 +710,7 @@ function RouteComponent() {
                           state: null,
                           paid: null,
                           attention: false,
+                          team: null,
                         });
                       }}
                     >
@@ -643,6 +718,55 @@ function RouteComponent() {
                     </s-button>
                   )}
                 </s-stack>
+                <s-text color="subdued">Waiting on</s-text>
+                {/* A select rather than the press-buttons beside it: the team
+                    list is unbounded where the payment states are three, and
+                    a select whose value is the team already reads as the
+                    active chip, so this is one control instead of a control
+                    plus a chip. The primary way in is the drill-in from team
+                    detail, which sets `?team=`.
+
+                    Options are names only. A count per option would be a new
+                    per-team aggregate on every refresh of a subscribed page,
+                    which is the cost `Domain.OpenStageCounts` is bounded to
+                    avoid. The grid caps the width: `s-select` fills whatever
+                    inline size it is given. */}
+                <s-grid
+                  gridTemplateColumns="minmax(0, 16rem)"
+                  justifyContent="start"
+                >
+                  <s-select
+                    label="Waiting on"
+                    labelAccessibilityVisibility="exclusive"
+                    value={team ?? ""}
+                    onChange={(event) => {
+                      const value = event.currentTarget.value;
+                      setFilters({
+                        state,
+                        paid,
+                        attention,
+                        team:
+                          view?.teams.find(({ id }) => id === value)?.id ??
+                          null,
+                      });
+                    }}
+                  >
+                    <s-option value="">Any team</s-option>
+                    {view?.teams.map(({ id, name }) => (
+                      <s-option key={id} value={id}>
+                        {name}
+                      </s-option>
+                    ))}
+                    {/* A link that set `?team=` outlives the team it named.
+                        Without this the control would read "Any team" while
+                        the list stayed filtered to nothing. */}
+                    {team !== null && !teamName.has(team) && (
+                      <s-option disabled value={team}>
+                        Deleted team
+                      </s-option>
+                    )}
+                  </s-select>
+                </s-grid>
               </s-grid>
               {/* Only alongside rows. With none, `emptyText` says the same
                   thing in the body ("0 orders with work in progress." over

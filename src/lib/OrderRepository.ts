@@ -4,6 +4,7 @@ import { Context, Effect, Layer, Match, Option, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 
 import * as Domain from "@/lib/Domain";
+import * as ReadyWhere from "@/lib/readyWhere";
 
 /**
  * Failure to map stored rows into domain types — a `Schema` decode error, the
@@ -145,7 +146,9 @@ export class OrderRepository extends Context.Service<
       readonly state: Domain.ProductionState | null;
       readonly paid: boolean | null;
       readonly attention: boolean;
-      /** The live D1 roster `attention` is derived against (`Domain.OrderRow.attention`). */
+      /** `null` is any team; an id is `Domain.ListOrdersInput.team` — waiting on that team. */
+      readonly team: Domain.TeamId | null;
+      /** The live D1 roster `attention` and `waitingOn` are derived against (`Domain.OrderRow`). */
       readonly teams: readonly Domain.TeamRoster[];
     }) => Effect.Effect<
       Domain.OrdersPage,
@@ -436,6 +439,7 @@ export class OrderRepository extends Context.Service<
           state,
           paid,
           attention,
+          team,
           teams,
         }: {
           readonly limit: number;
@@ -443,14 +447,15 @@ export class OrderRepository extends Context.Service<
           readonly state: Domain.ProductionState | null;
           readonly paid: boolean | null;
           readonly attention: boolean;
+          readonly team: Domain.TeamId | null;
           readonly teams: readonly Domain.TeamRoster[];
         }) {
           /**
            * `Domain.OrderRow.attention` in SQL, bound to the roster the
            * caller read from D1: an open step is unassigned when its team id
-           * is null or not in the roster, and a ready step (nothing open in
-           * an earlier stage, as `WorkflowRunRepository` defines it) on a
-           * team with no members is stuck in nobody's queue.
+           * is null or not in the roster, and a ready step (`readyWhere`, the
+           * one definition the worker queue also runs on) on a team with no
+           * members is stuck in nobody's queue.
            */
           const liveIds = teams.map(({ id }) => id);
           const emptyIds = teams
@@ -463,10 +468,7 @@ export class OrderRepository extends Context.Service<
           const emptyReady =
             emptyIds.length === 0
               ? sql.literal("1 = 0")
-              : sql`(${sql.in("s.teamId", emptyIds)} and not exists (
-                  select 1 from WorkflowRunStep p
-                  where p.runId = s.runId and p.completedAt is null and p.stage < s.stage
-                ))`;
+              : sql`(${sql.in("s.teamId", emptyIds)} and ${sql.literal(ReadyWhere.readyWhere("s"))})`;
           const attentionStep = sql`exists (
             select 1 from WorkflowRunStep s
             where s.runId = r.id and s.completedAt is null
@@ -480,6 +482,23 @@ export class OrderRepository extends Context.Service<
           const attentionFilter = attention
             ? attentionRun
             : sql.literal("1 = 1");
+          /**
+           * The waiting-on column's membership test as a `where`, so a
+           * filtered page is exactly the rows whose cell names the team —
+           * nothing to explain about why a row matched. Aliased `wr` for the
+           * same reason as `waitingRows` below: `readyWhere` binds `r`.
+           */
+          const teamFilter =
+            team === null
+              ? sql.literal("1 = 1")
+              : sql`exists (
+                  select 1 from WorkflowRun wr
+                  join WorkflowRunStep s on s.runId = wr.id
+                  where wr.orderId = ShopOrder.id
+                    and wr.status in ('pending', 'active')
+                    and s.teamId = ${team}
+                    and ${sql.literal(ReadyWhere.readyWhere("s"))}
+                )`;
           const stateFilter = Match.value(state).pipe(
             Match.when("no_workflow", () =>
               sql.and([OPEN, "fullyPaid = 1", `not exists (${ANY_RUN})`]),
@@ -530,7 +549,7 @@ export class OrderRepository extends Context.Service<
           const page = yield* decodeOrders(
             yield* sql`
               select ${orderColumns} from ShopOrder
-              where ${sql.and([keyset, stateFilter, paidFilter, attentionFilter])}
+              where ${sql.and([keyset, stateFilter, paidFilter, attentionFilter, teamFilter])}
               order by processedAt desc, id desc
               limit ${limit + 1}
             `,
@@ -560,7 +579,9 @@ export class OrderRepository extends Context.Service<
                     orderId,
                     sum(status in ('pending', 'active')) as open,
                     sum(status = 'done') as done,
-                    sum(flag is not null and status in ('pending', 'active')) as flagged
+                    sum(flag is not null and flag <> 'blocked'
+                        and status in ('pending', 'active')) as flagged,
+                    sum(flag = 'blocked' and status in ('pending', 'active')) as blocked
                   from WorkflowRun
                   where ${sql.in("orderId", ids)}
                   group by orderId
@@ -572,6 +593,58 @@ export class OrderRepository extends Context.Service<
                   select id from ShopOrder
                   where ${sql.in("id", ids)} and ${attentionRun}
                 `.values;
+          /**
+           * `Domain.OrderRow.waitingOn`: a fourth per-page read rather than a
+           * term on the page query, for the reason the comment above gives
+           * for the other aggregates — the `ShopOrder` decoder wants exactly
+           * its own columns, and this one returns several rows per order
+           * anyway. Gated on `liveIds` because a step pointing at a deleted
+           * team is `attention`, not somebody holding the order, and the
+           * outer run is aliased `wr`: `readyWhere` binds `r` for the step's
+           * own run inside its subqueries (see its JSDoc).
+           */
+          const waitingRows =
+            ids.length === 0 || liveIds.length === 0
+              ? []
+              : yield* sql`
+                  select distinct wr.orderId, s.teamId
+                  from WorkflowRunStep s
+                  join WorkflowRun wr on wr.id = s.runId
+                  where ${sql.in("wr.orderId", ids)}
+                    and wr.status in ('pending', 'active')
+                    and ${sql.in("s.teamId", liveIds)}
+                    and ${sql.literal(ReadyWhere.readyWhere("s"))}
+                `.values;
+          /**
+           * Grouped through the roster rather than by re-branding the stored
+           * string, and sorted here by team name rather than in the route:
+           * the cell collapses past three teams, so an unstable order would
+           * move which ones hide behind the `+N` between refreshes of a
+           * subscribed page.
+           */
+          const roster = new Map<string, Domain.TeamRoster>(
+            teams.map((team) => [team.id, team]),
+          );
+          const waiting = waitingRows.reduce<Map<string, Domain.TeamRoster[]>>(
+            (byOrder, row) => {
+              const team = roster.get(String(row[1]));
+              if (team === undefined) return byOrder;
+              const orderId = String(row[0]);
+              return byOrder.set(orderId, [
+                ...(byOrder.get(orderId) ?? []),
+                team,
+              ]);
+            },
+            new Map(),
+          );
+          const waitingOn = new Map(
+            [...waiting].map(([orderId, teams]) => [
+              orderId,
+              teams
+                .toSorted((a, b) => a.name.localeCompare(b.name))
+                .map(({ id }) => id),
+            ]),
+          );
           const needsAttention = new Set(
             attentionRows.map((row) => String(row[0])),
           );
@@ -585,6 +658,7 @@ export class OrderRepository extends Context.Service<
                 open: Number(row[1] ?? 0),
                 done: Number(row[2] ?? 0),
                 flagged: Number(row[3] ?? 0),
+                blocked: Number(row[4] ?? 0),
               } satisfies Domain.RunCounts,
             ]),
           );
@@ -607,8 +681,14 @@ export class OrderRepository extends Context.Service<
             orders: orders.map((order) => ({
               order,
               itemUnits: units.get(order.id) ?? 0,
-              runs: runs.get(order.id) ?? { open: 0, done: 0, flagged: 0 },
+              runs: runs.get(order.id) ?? {
+                open: 0,
+                done: 0,
+                flagged: 0,
+                blocked: 0,
+              },
               attention: needsAttention.has(order.id),
+              waitingOn: waitingOn.get(order.id) ?? [],
             })),
             limit,
             nextCursor:

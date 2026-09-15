@@ -543,9 +543,7 @@ function RouteComponent() {
    */
   const state = Domain.productionState({
     order,
-    itemUnits: 0,
     runs: Domain.runCounts(runs.map(({ run }) => run)),
-    attention: false,
   });
   const orderRuns = runs.filter(({ run }) => Domain.isOrderRun(run));
   const itemRunCount = runs.length - orderRuns.length;

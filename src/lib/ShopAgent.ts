@@ -1837,10 +1837,15 @@ export class ShopAgent extends Agent {
     state,
     paid,
     attention,
+    team,
   }: Domain.ListOrdersInput) {
-    const teams = () => this.teams();
+    const readTeams = () => this.teams();
     return Effect.gen(function* () {
       const repository = yield* OrderRepository;
+      /* One roster read for both consumers: the repository derives
+         `attention` and `waitingOn` from it, and the view carries it so the
+         route can name the ids it gets back. */
+      const teams = yield* readTeams();
       return {
         page: yield* repository.listOrders({
           limit,
@@ -1848,9 +1853,11 @@ export class ShopAgent extends Agent {
           state,
           paid,
           attention,
-          teams: yield* teams(),
+          team,
+          teams,
         }),
         syncState: yield* repository.getSyncState(),
+        teams,
       } satisfies Domain.OrdersView;
     });
   }

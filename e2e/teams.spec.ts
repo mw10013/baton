@@ -135,3 +135,69 @@ test("teams screen creates, staffs, renames, and deletes a team", async ({
   await expect(frame.locator('s-page[heading="Teams"]')).toBeVisible();
   await expect(frame.getByText(EMPTY_STATE)).toBeVisible();
 });
+
+/**
+ * The drill-in that makes the orders "Waiting on" filter discoverable from the
+ * suspicion that prompts it: the team page's secondary action lands on
+ * `/app/orders?team=<id>`, with the filter already set to that team and the
+ * list showing the order the team is holding.
+ *
+ * The link hoists into admin chrome like every other title-bar control, so it
+ * is located on `page` and driven through `clickHoisted`; the orders page it
+ * lands on is back inside the frame.
+ */
+test("the team page drills in to the orders waiting on that team", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+
+  const DRILL_MEMBER = "e2e.drillin@example.com";
+  const DRILL_TEAM = "E2E Drill Bench";
+  await seedMembers(
+    seedConfig(),
+    [DRILL_MEMBER],
+    [{ name: DRILL_TEAM, members: [DRILL_MEMBER] }],
+    [
+      {
+        name: "E2E Drill Cuff",
+        tags: ["e2e-drill"],
+        steps: [{ name: "Cut", team: DRILL_TEAM }],
+      },
+    ],
+    [
+      {
+        n: 9401,
+        lineItems: [{ title: "E2E Cuff", quantity: 1, tags: ["e2e-drill"] }],
+      },
+    ],
+  );
+
+  const frame = await gotoApp(page);
+  await clickHoisted(page.getByRole("link", { name: "Teams", exact: true }));
+  await frame.getByRole("link", { name: DRILL_TEAM }).click();
+  await expect(frame.locator(`s-page[heading="${DRILL_TEAM}"]`)).toBeVisible();
+
+  await clickHoisted(
+    page.getByRole("button", { name: "Orders waiting on this team" }),
+  );
+  await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
+
+  /* The select's value is the id the link carried — which is what makes the
+     control read as the active chip rather than as "Any team" over a
+     filtered list. `toHaveValue` cannot answer this: `s-select` is a custom
+     element, not an `<select>`, so its value is read off the element. */
+  const team = new URL(page.url()).searchParams.get("team");
+  expect(team).not.toBeNull();
+  const select = frame.getByRole("combobox", { name: "Waiting on" });
+  await expect
+    .poll(() =>
+      select.evaluate((el) => (el as unknown as HTMLSelectElement).value),
+    )
+    .toBe(team);
+
+  await expect(
+    frame
+      .locator("s-table-row", { hasText: "#9401" })
+      .getByText(DRILL_TEAM, { exact: true }),
+  ).toBeVisible();
+});

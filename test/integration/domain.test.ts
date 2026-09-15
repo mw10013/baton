@@ -28,17 +28,24 @@ const order = (
   ...overrides,
 });
 
+/** `Partial` runs: `productionState` reads only `open` and `done`, so a case spells out just the counters it turns on. */
 const row = (
-  runs: Domain.RunCounts,
+  runs: Partial<Domain.RunCounts>,
   overrides: Partial<Domain.ShopOrder> = {},
 ): Domain.OrderRow => ({
   order: order(overrides),
   itemUnits: 1,
-  runs,
+  runs: { ...NONE, ...runs },
   attention: false,
+  waitingOn: [],
 });
 
-const NONE = { open: 0, done: 0, flagged: 0 };
+const NONE = {
+  open: 0,
+  done: 0,
+  flagged: 0,
+  blocked: 0,
+} satisfies Domain.RunCounts;
 
 describe("Domain.productionState", () => {
   const cases: readonly [
@@ -114,16 +121,23 @@ const run = (
 });
 
 describe("Domain.runCounts", () => {
-  it("counts open, done, and flagged-open the way the index SQL does", () => {
+  /**
+   * The two flag counters are disjoint and both ignore terminal runs: a done
+   * run keeps whatever flag it carried, and counting it would leave an alarm
+   * on a row where nothing is open to act on.
+   */
+  it("counts open, done, blocked-open, and reconcile-flagged-open the way the index SQL does", () => {
     const counts = Domain.runCounts([
       run("pending", null),
       run("active", "blocked"),
+      run("active", "item_removed"),
       run("done", "item_added"),
       run("cancelled", "order_cancelled"),
     ]);
-    strictEqual(counts.open, 2);
+    strictEqual(counts.open, 3);
     strictEqual(counts.done, 1);
     strictEqual(counts.flagged, 1);
+    strictEqual(counts.blocked, 1);
   });
 });
 

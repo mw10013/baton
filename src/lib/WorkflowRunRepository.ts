@@ -4,6 +4,7 @@ import { Clock, Context, Effect, Layer, Option, Schema } from "effect";
 import { SqlClient, type Statement } from "effect/unstable/sql";
 
 import * as Domain from "@/lib/Domain";
+import * as ReadyWhere from "@/lib/readyWhere";
 
 /**
  * Failure to map stored rows into domain types — a `Schema` decode error, the
@@ -570,44 +571,9 @@ export class WorkflowRunRepository extends Context.Service<
           ),
         );
 
-      /**
-       * A step is ready when it is open and nothing in an earlier stage of
-       * the same run is still open. For an order run the item runs are stage
-       * zero: its steps are ready only when no item run on the order is open
-       * and at least one is done, so the order run exists from the moment
-       * the order arrives (the merchant can see packing is coming) but
-       * reaches nobody's queue until the items are made. Evaluated live, so
-       * a line item added by a later edit, or a workflow attached by hand,
-       * simply makes the order run wait longer. Every subquery is `exists`
-       * and stops at its first row; `WorkflowRun_order_items_idx` serves
-       * the two item-run probes. One definition, interpolated as a literal
-       * with the outer alias, so the queue and every action agree.
-       */
+      /** The predicate itself is in `readyWhere.ts`; the JSDoc there says why it does not live in this layer. */
       const readyWhere = (alias: string) =>
-        sql.literal(`(
-          ${alias}.completedAt is null
-          and not exists (
-            select 1 from WorkflowRunStep p
-            where p.runId = ${alias}.runId and p.completedAt is null and p.stage < ${alias}.stage
-          )
-          and (
-            exists (select 1 from WorkflowRun r where r.id = ${alias}.runId and r.lineItemId is not null)
-            or (
-              not exists (
-                select 1 from WorkflowRun i
-                join WorkflowRun r on r.orderId = i.orderId
-                where r.id = ${alias}.runId and i.lineItemId is not null
-                  and i.status in ('pending', 'active')
-              )
-              and exists (
-                select 1 from WorkflowRun i
-                join WorkflowRun r on r.orderId = i.orderId
-                where r.id = ${alias}.runId and i.lineItemId is not null
-                  and i.status = 'done'
-              )
-            )
-          )
-        )`);
+        sql.literal(ReadyWhere.readyWhere(alias));
 
       const readySteps = (runId: string) =>
         sql`

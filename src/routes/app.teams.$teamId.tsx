@@ -420,6 +420,18 @@ function RouteComponent() {
         </s-badge>
       )}
       {addButton(true)}
+      {/* The drill-in that makes the orders filter discoverable from the
+          suspicion that prompts it — "is this team backed up?" — rather than
+          from browsing a picker. `?team=` means waiting on: the orders whose
+          ready step is this team's right now, not every order it ever
+          touched. Production state stays on Orders; this page is the roster
+          (`UsedByCard` below is configuration, not run state). */}
+      <s-button
+        slot="secondary-actions"
+        href={`/app/orders?team=${encodeURIComponent(team.id)}`}
+      >
+        Orders waiting on this team
+      </s-button>
       <s-button slot="secondary-actions" commandFor="team-actions">
         More actions
       </s-button>
