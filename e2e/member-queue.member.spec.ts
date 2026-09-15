@@ -489,8 +489,11 @@ test("a merchant's completion reads as Merchant on the queue and the work page",
   await expect(page.getByText("Done by Merchant")).toBeVisible();
 
   /* The maker takes it back: the same line the merchant's reopen writes, with
-     the member in the slot, and Cut is ready again. */
+     the member in the slot, and Cut is ready again. Start is offered because
+     undo clears the merchant's backfilled start — the step is nobody's, not
+     "in progress by Merchant". */
   await clickWhenEnabled(page.getByRole("button", { name: "Undo" }));
   await expect(page.getByText(`Reopened by ${MAKER}`)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Done" })).toBeVisible();
 });

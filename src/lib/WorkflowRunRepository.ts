@@ -345,8 +345,10 @@ export class WorkflowRunRepository extends Context.Service<
     >;
     /**
      * Undo: clears the completed slot (all four columns) and recomputes the
-     * run's status; `startedAt` / `startedBy` stay, so the step returns to
-     * "in progress" under its original starter, and `reopenedAt` /
+     * run's status; a member's `startedAt` / `startedBy` stay, so the step
+     * returns to "in progress" under its original starter, while a
+     * merchant's started slot (only ever Done's backfill) is cleared so the
+     * step is Ready for a worker to Start. `reopenedAt` /
      * `reopenedByRole` / `reopenedByEmail` record who sent it back. Allowed
      * for the step's team while nothing downstream has started
      * (`StepUndoBlockedError` otherwise, naming the blocker). A `done` run
@@ -1599,10 +1601,17 @@ export class WorkflowRunRepository extends Context.Service<
                   yield* new StepUndoBlockedError({ runStepId, ...blocker });
                 const now = yield* Clock.currentTimeMillis;
                 const by = actorColumns(actor);
+                // A merchant "start" is only ever the backfill Done writes
+                // (there is no merchant Start), so keeping it would leave
+                // the step "In progress by Merchant" with the worker's Start
+                // hidden. Clear it and the step is plain Ready again; a
+                // member's start is real work and stays.
                 yield* sql`
                   update WorkflowRunStep
                   set completedAt = null, completedBy = null,
                       completedByEmail = null, completedByRole = null,
+                      startedAt = case when startedByRole = 'merchant' then null else startedAt end,
+                      startedByRole = case when startedByRole = 'merchant' then null else startedByRole end,
                       reopenedAt = ${now}, reopenedByRole = ${by.role},
                       reopenedByEmail = ${by.email}
                   where id = ${runStepId}

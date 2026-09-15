@@ -259,15 +259,15 @@ worth bundling here.
 
 ### What goes into the columns for each merchant action
 
-| Merchant action                | Step snapshot                                                                                                                                                                     |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Complete a step                | `completedAt=now`, `completedByRole='merchant'`, `completedBy=null`, `completedByEmail=null`; `startedAt` backfilled if null with `startedByRole='merchant'`; `reopened*` cleared |
-| Undo a step                    | `completedAt/ByRole/By/ByEmail = null`; `startedBy*` kept; `reopenedAt=now`, `reopenedByRole='merchant'`, `reopenedByEmail=null`                                                  |
-| Start a step                   | as the backfill above                                                                                                                                                             |
-| Note                           | `note=text`, `noteByRole='merchant'` (member edits set `'member'`)                                                                                                                |
-| Block                          | `flagDetail.by` becomes the `Actor` union: `{ role: "merchant" }`                                                                                                                 |
-| Dismiss flag                   | as today, no actor                                                                                                                                                                |
-| Cancel, un-cancel, assign team | as today, no actor                                                                                                                                                                |
+| Merchant action                | Step snapshot                                                                                                                                                                                                  |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Complete a step                | `completedAt=now`, `completedByRole='merchant'`, `completedBy=null`, `completedByEmail=null`; `startedAt` backfilled if null with `startedByRole='merchant'`; `reopened*` cleared                              |
+| Undo a step                    | `completedAt/ByRole/By/ByEmail = null`; a member's `startedBy*` kept, a merchant's (Done's backfill) cleared so the step is Ready again; `reopenedAt=now`, `reopenedByRole='merchant'`, `reopenedByEmail=null` |
+| Start a step                   | as the backfill above                                                                                                                                                                                          |
+| Note                           | `note=text`, `noteByRole='merchant'` (member edits set `'member'`)                                                                                                                                             |
+| Block                          | `flagDetail.by` becomes the `Actor` union: `{ role: "merchant" }`                                                                                                                                              |
+| Dismiss flag                   | as today, no actor                                                                                                                                                                                             |
+| Cancel, un-cancel, assign team | as today, no actor                                                                                                                                                                                             |
 
 A member undo writes the same `reopened*` slot with `'member'` and their email, so a
 teammate's card reads "Reopened by <email>". The earlier decision "undo records

@@ -2603,6 +2603,45 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
       }),
     ));
 
+  it("merchant undo of a merchant Done clears the backfilled start, so a member can Start; a member's start survives undo", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seedStaged;
+        const runs = yield* WorkflowRunRepository;
+        const detail = yield* stagedRun();
+        const artwork = detail.steps[0]?.id ?? "";
+        const stepNow = () =>
+          Effect.map(runs.getRun({ runId: detail.run.id }), (run) => {
+            const [step] = Option.getOrThrow(run).steps;
+            if (step === undefined) throw new Error("no step");
+            return step;
+          });
+        yield* runs.completeStep({ runStepId: artwork, actor: MERCHANT });
+        yield* runs.uncompleteStep({ runStepId: artwork, actor: MERCHANT });
+        const reopened = yield* stepNow();
+        strictEqual(reopened.startedAt, null);
+        strictEqual(reopened.startedByRole, null);
+        strictEqual(Domain.stepStartedBy(reopened), null);
+        strictEqual(reopened.reopenedByRole, "merchant");
+
+        yield* runs.startStep({
+          runStepId: artwork,
+          actor: memberActor("m1"),
+          teamIds: [TEAM_A.id],
+        });
+        const started = yield* stepNow();
+        strictEqual(started.startedByRole, "member");
+        strictEqual(started.startedByEmail, "m1@example.com");
+
+        yield* runs.completeStep({ runStepId: artwork, actor: MERCHANT });
+        yield* runs.uncompleteStep({ runStepId: artwork, actor: MERCHANT });
+        const backToMember = yield* stepNow();
+        strictEqual(backToMember.startedByRole, "member");
+        strictEqual(backToMember.startedByEmail, "m1@example.com");
+        strictEqual(backToMember.completedAt, null);
+      }),
+    ));
+
   it("undo records the reopener and the next Done clears the slot, for a member and for the merchant", () =>
     runInRepository(
       Effect.gen(function* () {
