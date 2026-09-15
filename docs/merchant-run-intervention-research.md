@@ -8,6 +8,32 @@ product question was settled on 2026-09-14 (see Decisions); the merchant UI is
 researched in the second half. Mockups of the recommended states are in
 `docs/merchant-run-intervention/mockups.html`.
 
+## Implementation status (2026-09-14)
+
+The recording design in "How a merchant action is recorded" is **built and verified
+against the running dev server**; the merchant surface in the second half is **not
+started**. Order of work and every deviation: `docs/merchant-run-intervention-implementation-plan.md`.
+
+In:
+
+- `Domain.Actor` (plus `ActorDisplay` and `actorLabel`), the three `*ByRole` columns,
+  `reopenedAt` / `reopenedByRole` / `reopenedByEmail`, `noteByRole`, and
+  `RunFlagDetail.by` as the `Actor` union — in the struct and in the initial schema.
+- Repository writes for all six actions, with `teamIds: undefined` as the merchant's
+  "skip the team clause" (every other rule still applies), and the step actor accessors
+  `stepStartedBy` / `stepCompletedBy` / `stepReopenedBy`.
+- Member callables rebuilt on `actor`; six new repository tests for the merchant paths.
+
+Verified live on the dev server after a `d1:reset` + `seed`: the DDL applies, the seed's
+start/complete write `'member'` roles with matching ids and emails, a member Undo through
+the socket fills the `reopened` slot and clears the completed one while keeping the
+starter, the next Done clears `reopened`, a note writes `noteByRole`, and the queue's
+blocked banner reads the new `flagDetail.by`.
+
+Not in: the five merchant callables, the Mine-tier-by-email change, and all UI (the
+merchant order page, the member-side attribution and "Reopened by" line, the Block /
+Unblock copy change).
+
 Companion docs: `docs/member-ux-research.md` (the worker's Undo and its deliberate lack
 of an audit trail), `docs/member-auth-and-shopify-access-research.md` (connection roles
 and what identity each side carries), `docs/teams-members-ux-research.md` (the merchant
@@ -253,8 +279,9 @@ the merchant or a teammate clearing a block; if that ever needs attribution, the
 role column pattern applies.
 
 `flagDetail` today has `by?: MemberId, byEmail?: Email`. It should carry the `Actor`
-union under one key; existing rows are a handful of dev-seeded runs, and the decoder can
-accept the old shape for one migration.
+union under one key. **Built as:** `by?: Actor`, `byEmail` removed, and no old-shape
+compatibility in the decoder — every Durable Object is reset from scratch while the app
+is in prototyping, so there are no old rows to read.
 
 ### What this does not keep
 
@@ -454,16 +481,21 @@ changes.
 
 ## Implementation notes, for when it is decided
 
+The first two bullets are built (see "Implementation status" at the top); the rest are not.
+
 - **Repository.** Generalise the `memberId, memberEmail, teamIds` arguments to an
   `Actor` plus an optional `teamIds`; a merchant actor passes `teamIds: undefined`
   and `requireActionable`/`requireReadyTeam` skip the team clause when it is absent.
   `uncompleteStep` gains the actor and writes the `reopened` slot; `completeStep`
   clears it. `setStepNote` starts writing `noteByRole` (it already receives `memberId`
   and drops it).
-- **Schema.** New `SqliteMigrator` migration on `WorkflowRunStep`: `startedByRole`,
-  `completedByRole`, `noteByRole` (text, nullable, `check (... in ('merchant','member'))`;
-  existing rows backfilled to `'member'` where the matching id or note is non-null),
-  `reopenedAt`, `reopenedByRole`, `reopenedByEmail`.
+- **Schema.** `startedByRole`, `completedByRole`, `noteByRole` (text, nullable,
+  `check (... in ('merchant','member'))`), `reopenedAt`, `reopenedByRole`,
+  `reopenedByEmail` on `WorkflowRunStep`. **Built as** columns in `"1_initialize schema"`
+  rather than a second `SqliteMigrator` migration, and with no backfill: the app is in
+  prototyping and every Durable Object is reset from scratch, so a migration would be
+  ceremony over an empty table. This is the one point in this doc that is worth
+  revisiting the day the app has real shops — from then on, a column is a migration.
 - **Member page copy.** `shop.$shop.work.$runId.tsx`: "Mark blocked" → "Block",
   "Dismiss" → "Unblock", and the explanatory sentence; nothing else.
 - **Mine tier.** `tierOf` takes `memberEmail` and compares `startedByEmail`; its

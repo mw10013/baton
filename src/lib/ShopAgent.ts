@@ -402,7 +402,13 @@ const memberCallableEffect =
  * `startedAt` / `startedBy` record Start and make the run `active` before
  * anything is completed; `note` is worker text about this particular item.
  * `flag = 'blocked'` is the one flag a person sets (with an optional reason
- * and `byEmail` in `flagDetail`) rather than reconcile.
+ * and the actor under `by` in `flagDetail`) rather than reconcile.
+ *
+ * `startedByRole` / `completedByRole` / `reopenedByRole` are the actor
+ * discriminator (`Domain.Actor`): the merchant acts on these rows from the
+ * order page and has no `Member` row, so the id and email columns beside a
+ * `'merchant'` role are null. `reopenedAt` / `reopenedBy*` hold the most
+ * recent Undo only; a later Done clears the three together.
  */
 const initializeSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -556,6 +562,12 @@ const initializeSchema = Effect.gen(function* () {
       completedBy text,
       completedByEmail text,
       note text,
+      startedByRole text check (startedByRole in ('merchant', 'member')),
+      completedByRole text check (completedByRole in ('merchant', 'member')),
+      reopenedAt integer,
+      reopenedByRole text check (reopenedByRole in ('merchant', 'member')),
+      reopenedByEmail text,
+      noteByRole text check (noteByRole in ('merchant', 'member')),
       unique (runId, position)
     );
     create index if not exists WorkflowRunStep_teamId_idx
@@ -2735,8 +2747,7 @@ export class ShopAgent extends Agent {
           Effect.gen(function* () {
             yield* (yield* WorkflowRunRepository).startStep({
               runStepId,
-              memberId,
-              memberEmail,
+              actor: { role: "member", memberId, email: memberEmail },
               teamIds,
             } satisfies Domain.StartStepCommand);
             yield* Effect.logInfo(
@@ -2758,12 +2769,12 @@ export class ShopAgent extends Agent {
     return this.runEffect(
       memberCallableEffect("ShopAgent.setStepNote", Domain.SetStepNoteInput, {
         onExcessProperty: "error",
-      })(({ runStepId, note }, { memberId, teamIds }) =>
+      })(({ runStepId, note }, { memberId, memberEmail, teamIds }) =>
         runResult(
           Effect.gen(function* () {
             yield* (yield* WorkflowRunRepository).setStepNote({
               runStepId,
-              memberId,
+              actor: { role: "member", memberId, email: memberEmail },
               teamIds,
               note,
             } satisfies Domain.SetStepNoteCommand);
@@ -2790,8 +2801,7 @@ export class ShopAgent extends Agent {
           Effect.gen(function* () {
             yield* (yield* WorkflowRunRepository).blockRun({
               runId,
-              memberId,
-              memberEmail,
+              actor: { role: "member", memberId, email: memberEmail },
               teamIds,
               reason,
             } satisfies Domain.BlockRunCommand);
@@ -2818,8 +2828,7 @@ export class ShopAgent extends Agent {
           Effect.gen(function* () {
             yield* (yield* WorkflowRunRepository).completeStep({
               runStepId,
-              memberId,
-              memberEmail,
+              actor: { role: "member", memberId, email: memberEmail },
               teamIds,
             } satisfies Domain.CompleteStepCommand);
             yield* Effect.logInfo(
@@ -2846,11 +2855,12 @@ export class ShopAgent extends Agent {
         "ShopAgent.uncompleteStep",
         Domain.UncompleteStepInput,
         { onExcessProperty: "error" },
-      )(({ runStepId }, { memberId, teamIds }) =>
+      )(({ runStepId }, { memberId, memberEmail, teamIds }) =>
         runResult(
           Effect.gen(function* () {
             yield* (yield* WorkflowRunRepository).uncompleteStep({
               runStepId,
+              actor: { role: "member", memberId, email: memberEmail },
               teamIds,
             } satisfies Domain.UncompleteStepCommand);
             yield* Effect.logInfo(
@@ -3342,8 +3352,11 @@ export class ShopAgent extends Agent {
               );
           const actor = (step: Domain.WorkflowRunStep) => ({
             runStepId: step.id,
-            memberId,
-            memberEmail,
+            actor: {
+              role: "member",
+              memberId,
+              email: memberEmail,
+            } satisfies Domain.MemberActor,
             teamIds: step.teamId === null ? [] : [step.teamId],
           });
           const completeOpenRuns = (orderId: string) =>
@@ -3392,8 +3405,7 @@ export class ShopAgent extends Agent {
                 yield* runs
                   .blockRun({
                     runId: run.id,
-                    memberId,
-                    memberEmail,
+                    actor: { role: "member", memberId, email: memberEmail },
                     teamIds: steps.flatMap((step) =>
                       step.teamId === null ? [] : [step.teamId],
                     ),

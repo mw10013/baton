@@ -55,6 +55,15 @@ const teamName = Schema.decodeUnknownSync(Domain.TeamName);
 const memberId = Schema.decodeUnknownSync(Domain.MemberId);
 const emailOf = Schema.decodeUnknownSync(Domain.Email);
 
+const memberActor = (id: string, email = `${id}@example.com`) =>
+  ({
+    role: "member",
+    memberId: memberId(id),
+    email: emailOf(email),
+  }) satisfies Domain.MemberActor;
+
+const MERCHANT = { role: "merchant" } satisfies Domain.Actor;
+
 const TEAM_A = { id: teamId("team-a"), name: teamName("Team A") };
 const TEAM_B = { id: teamId("team-b"), name: teamName("Team B") };
 const TEAM_C = { id: teamId("team-c"), name: teamName("Team C") };
@@ -265,8 +274,7 @@ const complete = (
     Effect.flatMap((runs) =>
       runs.completeStep({
         runStepId: detail.steps[position - 1]?.id ?? "",
-        memberId: memberId("member-1"),
-        memberEmail: emailOf("member-1@example.com"),
+        actor: memberActor("member-1"),
         teamIds,
       }),
     ),
@@ -340,8 +348,7 @@ const finishItemRuns = () =>
       for (const [index, team] of [TEAM_A, TEAM_B].entries())
         yield* runs.completeStep({
           runStepId: detail.steps[index]?.id ?? "",
-          memberId: memberId("member-1"),
-          memberEmail: emailOf("member-1@example.com"),
+          actor: memberActor("member-1"),
           teamIds: [team.id],
         });
   });
@@ -399,8 +406,7 @@ describe("WorkflowRunRepository order runs", () => {
           (yield* runs
             .startStep({
               runStepId: orderRun.steps[0]?.id ?? "",
-              memberId: memberId("member-1"),
-              memberEmail: emailOf("member-1@example.com"),
+              actor: memberActor("member-1"),
               teamIds: [TEAM_C.id],
             })
             .pipe(Effect.flip))._tag,
@@ -449,8 +455,7 @@ describe("WorkflowRunRepository order runs", () => {
         for (const [index, team] of [TEAM_A, TEAM_B].entries())
           yield* runs.completeStep({
             runStepId: second.steps[index]?.id ?? "",
-            memberId: memberId("member-1"),
-            memberEmail: emailOf("member-1@example.com"),
+            actor: memberActor("member-1"),
             teamIds: [team.id],
           });
         strictEqual((yield* packQueue()).length, 1);
@@ -796,8 +801,7 @@ describe("WorkflowRunRepository order runs", () => {
         // Start the order run so it is active; manual attach of the untagged item flags it.
         yield* runs.startStep({
           runStepId: orderRun.steps[0]?.id ?? "",
-          memberId: memberId("member-1"),
-          memberEmail: emailOf("member-1@example.com"),
+          actor: memberActor("member-1"),
           teamIds: [TEAM_C.id],
         });
         const { workflows } = yield* startContext();
@@ -846,8 +850,7 @@ describe("WorkflowRunRepository order runs", () => {
         for (const [index, team] of [TEAM_A, TEAM_B].entries())
           yield* runs.completeStep({
             runStepId: lateDetail.steps[index]?.id ?? "",
-            memberId: memberId("member-1"),
-            memberEmail: emailOf("member-1@example.com"),
+            actor: memberActor("member-1"),
             teamIds: [team.id],
           });
 
@@ -859,8 +862,7 @@ describe("WorkflowRunRepository order runs", () => {
         for (const step of orderRun.steps)
           yield* runs.completeStep({
             runStepId: step.id,
-            memberId: memberId("member-1"),
-            memberEmail: emailOf("member-1@example.com"),
+            actor: memberActor("member-1"),
             teamIds: [TEAM_C.id],
           });
         yield* upsertAndReconcile(order({ updatedAt: PROCESSED_AT + 2 }), [
@@ -929,8 +931,7 @@ describe("WorkflowRunRepository order runs", () => {
         );
         yield* runs.startStep({
           runStepId: lateDetail.steps[0]?.id ?? "",
-          memberId: memberId("member-1"),
-          memberEmail: emailOf("member-1@example.com"),
+          actor: memberActor("member-1"),
           teamIds: [TEAM_A.id],
         });
         const gone = yield* upsertAndReconcile(
@@ -979,8 +980,7 @@ describe("WorkflowRunRepository order runs", () => {
         if (orderRun === undefined) throw new Error("no order run");
         yield* runs.startStep({
           runStepId: orderRun.steps[0]?.id ?? "",
-          memberId: memberId("member-1"),
-          memberEmail: emailOf("member-1@example.com"),
+          actor: memberActor("member-1"),
           teamIds: [TEAM_C.id],
         });
         yield* upsertAndReconcile(
@@ -1064,8 +1064,7 @@ describe("WorkflowRunRepository order runs", () => {
           throw new Error("expected two item runs");
         yield* runs.startStep({
           runStepId: second.steps[0]?.id ?? "",
-          memberId: memberId("member-1"),
-          memberEmail: emailOf("member-1@example.com"),
+          actor: memberActor("member-1"),
           teamIds: [TEAM_A.id],
         });
         const zeroed = yield* upsertAndReconcile(
@@ -1628,8 +1627,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           if (orderRun === undefined) throw new Error("no order run");
           yield* runs.startStep({
             runStepId: orderRun.steps[0]?.id ?? "",
-            memberId: memberId("member-1"),
-            memberEmail: emailOf("member-1@example.com"),
+            actor: memberActor("member-1"),
             teamIds: [TEAM_C.id],
           });
           // A pending and an active item run alongside the two done ones.
@@ -1654,8 +1652,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           if (activeRun === undefined) throw new Error("no late run");
           yield* runs.startStep({
             runStepId: activeRun.steps[0]?.id ?? "",
-            memberId: memberId("member-1"),
-            memberEmail: emailOf("member-1@example.com"),
+            actor: memberActor("member-1"),
             teamIds: [TEAM_A.id],
           });
           const counts = yield* upsertAndReconcile(
@@ -2116,8 +2113,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         const wrongTeam = yield* runs
           .startStep({
             runStepId: artwork,
-            memberId: memberId("m1"),
-            memberEmail: emailOf("m1@example.com"),
+            actor: memberActor("m1"),
             teamIds: [TEAM_B.id],
           })
           .pipe(Effect.flip);
@@ -2125,8 +2121,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         const notReady = yield* runs
           .startStep({
             runStepId: produce,
-            memberId: memberId("m3"),
-            memberEmail: emailOf("m3@example.com"),
+            actor: memberActor("m3"),
             teamIds: [TEAM_C.id],
           })
           .pipe(Effect.flip);
@@ -2134,8 +2129,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
 
         yield* runs.startStep({
           runStepId: artwork,
-          memberId: memberId("m1"),
-          memberEmail: emailOf("m1@example.com"),
+          actor: memberActor("m1"),
           teamIds: [TEAM_A.id],
         });
         const started = Option.getOrThrow(
@@ -2148,8 +2142,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
 
         yield* runs.startStep({
           runStepId: artwork,
-          memberId: memberId("m2"),
-          memberEmail: emailOf("m2@example.com"),
+          actor: memberActor("m2"),
           teamIds: [TEAM_A.id],
         });
         const again = Option.getOrThrow(
@@ -2181,7 +2174,11 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         // Not yet done: nothing to undo.
         strictEqual(
           (yield* runs
-            .uncompleteStep({ runStepId: artwork, teamIds: [TEAM_A.id] })
+            .uncompleteStep({
+              runStepId: artwork,
+              actor: memberActor("m1"),
+              teamIds: [TEAM_A.id],
+            })
             .pipe(Effect.flip))._tag,
           "StepNotReadyError",
         );
@@ -2195,13 +2192,18 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         // Wrong team.
         strictEqual(
           (yield* runs
-            .uncompleteStep({ runStepId: artwork, teamIds: [TEAM_B.id] })
+            .uncompleteStep({
+              runStepId: artwork,
+              actor: memberActor("m1"),
+              teamIds: [TEAM_B.id],
+            })
             .pipe(Effect.flip))._tag,
           "RunNotAllowedError",
         );
         // Anyone on the step's team may undo, not only who pressed Done.
         yield* runs.uncompleteStep({
           runStepId: artwork,
+          actor: memberActor("m1"),
           teamIds: [TEAM_A.id],
         });
         const undone = Option.getOrThrow(
@@ -2225,12 +2227,15 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         yield* complete(detail, 1, [TEAM_A.id]);
         yield* runs.startStep({
           runStepId: produce,
-          memberId: memberId("m3"),
-          memberEmail: emailOf("m3@example.com"),
+          actor: memberActor("m3"),
           teamIds: [TEAM_C.id],
         });
         const blocked = yield* runs
-          .uncompleteStep({ runStepId: materials, teamIds: [TEAM_B.id] })
+          .uncompleteStep({
+            runStepId: materials,
+            actor: memberActor("m1"),
+            teamIds: [TEAM_B.id],
+          })
           .pipe(Effect.flip);
         strictEqual(blocked._tag, "StepUndoBlockedError");
         if (blocked._tag === "StepUndoBlockedError") {
@@ -2248,6 +2253,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         );
         yield* runs.uncompleteStep({
           runStepId: detail.steps[3]?.id ?? "",
+          actor: memberActor("m1"),
           teamIds: [TEAM_A.id],
         });
         strictEqual(
@@ -2260,7 +2266,11 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         yield* runs.cancelRun({ runId: detail.run.id });
         strictEqual(
           (yield* runs
-            .uncompleteStep({ runStepId: produce, teamIds: [TEAM_C.id] })
+            .uncompleteStep({
+              runStepId: produce,
+              actor: memberActor("m1"),
+              teamIds: [TEAM_C.id],
+            })
             .pipe(Effect.flip))._tag,
           "RunTerminalError",
         );
@@ -2301,8 +2311,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         );
         yield* runs.startStep({
           runStepId: detail.steps[2]?.id ?? "",
-          memberId: memberId("m3"),
-          memberEmail: emailOf("m3@example.com"),
+          actor: memberActor("m3"),
           teamIds: [TEAM_C.id],
         });
         const both = yield* runs.listDone({
@@ -2373,18 +2382,25 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         const finish = first.steps[1]?.id ?? "";
 
         // Nothing downstream started: allowed, and the packer's card goes.
-        yield* runs.uncompleteStep({ runStepId: finish, teamIds: [TEAM_B.id] });
+        yield* runs.uncompleteStep({
+          runStepId: finish,
+          actor: memberActor("m1"),
+          teamIds: [TEAM_B.id],
+        });
         strictEqual((yield* packQueue()).length, 0);
         strictEqual(
           (yield* runs
-            .uncompleteStep({ runStepId: finish, teamIds: [TEAM_B.id] })
+            .uncompleteStep({
+              runStepId: finish,
+              actor: memberActor("m1"),
+              teamIds: [TEAM_B.id],
+            })
             .pipe(Effect.flip))._tag,
           "StepNotReadyError",
         );
         yield* runs.completeStep({
           runStepId: finish,
-          memberId: memberId("member-1"),
-          memberEmail: emailOf("member-1@example.com"),
+          actor: memberActor("member-1"),
           teamIds: [TEAM_B.id],
         });
         strictEqual((yield* packQueue()).length, 1);
@@ -2392,12 +2408,15 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         // The packer starts QC: every item step is now locked.
         yield* runs.startStep({
           runStepId: ready.steps[0]?.id ?? "",
-          memberId: memberId("packer"),
-          memberEmail: emailOf("packer@example.com"),
+          actor: memberActor("packer"),
           teamIds: [TEAM_C.id],
         });
         const blocked = yield* runs
-          .uncompleteStep({ runStepId: finish, teamIds: [TEAM_B.id] })
+          .uncompleteStep({
+            runStepId: finish,
+            actor: memberActor("m1"),
+            teamIds: [TEAM_B.id],
+          })
           .pipe(Effect.flip);
         strictEqual(blocked._tag, "StepUndoBlockedError");
         if (blocked._tag === "StepUndoBlockedError") {
@@ -2426,7 +2445,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         const set = (value: Domain.StepNote | null, teamIds = [TEAM_A.id]) =>
           runs.setStepNote({
             runStepId: artwork,
-            memberId: memberId("m1"),
+            actor: memberActor("m1"),
             teamIds,
             note: value,
           });
@@ -2461,8 +2480,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         const wrongTeam = yield* runs
           .blockRun({
             runId: detail.run.id,
-            memberId: memberId("m3"),
-            memberEmail: emailOf("m3@example.com"),
+            actor: memberActor("m3"),
             teamIds: [TEAM_C.id],
             reason: null,
           })
@@ -2470,8 +2488,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         strictEqual(wrongTeam._tag, "RunNotAllowedError");
         yield* runs.blockRun({
           runId: detail.run.id,
-          memberId: memberId("m1"),
-          memberEmail: emailOf("m1@example.com"),
+          actor: memberActor("m1"),
           teamIds: [TEAM_A.id],
           reason: note("Out of chain"),
         });
@@ -2481,8 +2498,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         strictEqual(blocked.run.flag, "blocked");
         deepStrictEqual<unknown>(blocked.run.flagDetail, {
           reason: "Out of chain",
-          by: "m1",
-          byEmail: "m1@example.com",
+          by: { role: "member", memberId: "m1", email: "m1@example.com" },
         });
         const queue = yield* runs.listQueue({ teamIds: [TEAM_B.id] });
         strictEqual(queue[0]?.run.flag, "blocked");
@@ -2495,22 +2511,20 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
 
         yield* runs.blockRun({
           runId: detail.run.id,
-          memberId: memberId("m1"),
-          memberEmail: emailOf("m1@example.com"),
+          actor: memberActor("m1"),
           teamIds: [TEAM_A.id],
           reason: null,
         });
         deepStrictEqual<unknown>(
           Option.getOrThrow(yield* runs.getRun({ runId: detail.run.id })).run
             .flagDetail,
-          { by: "m1", byEmail: "m1@example.com" },
+          { by: { role: "member", memberId: "m1", email: "m1@example.com" } },
         );
         // Reconcile overwrites a person's block: a started run is active,
         // so the zeroed line item flags rather than cancels.
         yield* runs.startStep({
           runStepId: detail.steps[0]?.id ?? "",
-          memberId: memberId("m1"),
-          memberEmail: emailOf("m1@example.com"),
+          actor: memberActor("m1"),
           teamIds: [TEAM_A.id],
         });
         const counts = yield* upsertAndReconcile(
@@ -2531,6 +2545,233 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
       }),
     ));
 
+  it("merchant completes an unassigned step: no team clause, and the merchant fills both actor slots", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seedStaged;
+        const runs = yield* WorkflowRunRepository;
+        const sql = yield* SqlClient.SqlClient;
+        const detail = yield* stagedRun();
+        const artwork = detail.steps[0]?.id ?? "";
+        // The state a team delete leaves behind: in nobody's queue, which is
+        // the very run the merchant is there to unstick.
+        yield* sql`update WorkflowRunStep set teamId = null where id = ${artwork}`;
+        const refused = yield* runs
+          .completeStep({
+            runStepId: artwork,
+            actor: memberActor("m1"),
+            teamIds: [TEAM_A.id],
+          })
+          .pipe(Effect.flip);
+        strictEqual(refused._tag, "RunNotAllowedError");
+        yield* runs.completeStep({ runStepId: artwork, actor: MERCHANT });
+        const step = Option.getOrThrow(
+          yield* runs.getRun({ runId: detail.run.id }),
+        ).steps[0];
+        strictEqual(step?.completedByRole, "merchant");
+        strictEqual(step?.completedBy, null);
+        strictEqual(step?.completedByEmail, null);
+        strictEqual(step?.startedByRole, "merchant");
+        strictEqual(step?.startedBy, null);
+        strictEqual(step?.startedByEmail, null);
+        deepStrictEqual<unknown>(Domain.stepCompletedBy(step), {
+          role: "merchant",
+        });
+      }),
+    ));
+
+  it("merchant completes over a member's start: the started slot keeps the member", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seedStaged;
+        const runs = yield* WorkflowRunRepository;
+        const detail = yield* stagedRun();
+        const artwork = detail.steps[0]?.id ?? "";
+        yield* runs.startStep({
+          runStepId: artwork,
+          actor: memberActor("m1"),
+          teamIds: [TEAM_A.id],
+        });
+        yield* runs.completeStep({ runStepId: artwork, actor: MERCHANT });
+        const step = Option.getOrThrow(
+          yield* runs.getRun({ runId: detail.run.id }),
+        ).steps[0];
+        strictEqual(step?.startedByRole, "member");
+        strictEqual(step?.startedByEmail, "m1@example.com");
+        strictEqual(step?.completedByRole, "merchant");
+        strictEqual(step?.completedByEmail, null);
+      }),
+    ));
+
+  it("undo records the reopener and the next Done clears the slot, for a member and for the merchant", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seedStaged;
+        const runs = yield* WorkflowRunRepository;
+        const detail = yield* stagedRun();
+        const artwork = detail.steps[0]?.id ?? "";
+        const stepNow = () =>
+          Effect.map(runs.getRun({ runId: detail.run.id }), (run) => {
+            const [step] = Option.getOrThrow(run).steps;
+            if (step === undefined) throw new Error("no step");
+            return step;
+          });
+        yield* runs.completeStep({
+          runStepId: artwork,
+          actor: memberActor("m1"),
+          teamIds: [TEAM_A.id],
+        });
+        yield* runs.uncompleteStep({
+          runStepId: artwork,
+          actor: memberActor("m2"),
+          teamIds: [TEAM_A.id],
+        });
+        const byMember = yield* stepNow();
+        strictEqual(byMember.reopenedByRole, "member");
+        strictEqual(byMember.reopenedByEmail, "m2@example.com");
+        strictEqual(typeof byMember.reopenedAt, "number");
+        deepStrictEqual<unknown>(Domain.stepReopenedBy(byMember), {
+          role: "member",
+          email: "m2@example.com",
+        });
+
+        yield* runs.completeStep({
+          runStepId: artwork,
+          actor: memberActor("m1"),
+          teamIds: [TEAM_A.id],
+        });
+        const redone = yield* stepNow();
+        strictEqual(redone.reopenedAt, null);
+        strictEqual(redone.reopenedByRole, null);
+        strictEqual(redone.reopenedByEmail, null);
+        strictEqual(Domain.stepReopenedBy(redone), null);
+
+        yield* runs.uncompleteStep({ runStepId: artwork, actor: MERCHANT });
+        const byMerchant = yield* stepNow();
+        strictEqual(byMerchant.reopenedByRole, "merchant");
+        strictEqual(byMerchant.reopenedByEmail, null);
+        strictEqual(byMerchant.completedAt, null);
+        strictEqual(byMerchant.completedByRole, null);
+      }),
+    ));
+
+  it("the merchant is held to every rule but the team one: stage order, terminal runs, and the downstream undo guard", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seedStaged;
+        const runs = yield* WorkflowRunRepository;
+        const detail = yield* stagedRun();
+        const [artwork, materials, produce] = [
+          detail.steps[0]?.id ?? "",
+          detail.steps[1]?.id ?? "",
+          detail.steps[2]?.id ?? "",
+        ];
+        // Stage 2 is not ready while stage 1 is open.
+        const notReady = yield* runs
+          .completeStep({ runStepId: produce, actor: MERCHANT })
+          .pipe(Effect.flip);
+        strictEqual(notReady._tag, "StepNotReadyError");
+
+        yield* runs.completeStep({ runStepId: artwork, actor: MERCHANT });
+        yield* runs.completeStep({ runStepId: materials, actor: MERCHANT });
+        // A member downstream blocks the merchant's undo exactly as it would
+        // block a teammate's.
+        yield* runs.startStep({
+          runStepId: produce,
+          actor: memberActor("m3"),
+          teamIds: [TEAM_C.id],
+        });
+        const blocked = yield* runs
+          .uncompleteStep({ runStepId: artwork, actor: MERCHANT })
+          .pipe(Effect.flip);
+        strictEqual(blocked._tag, "StepUndoBlockedError");
+        strictEqual(
+          blocked._tag === "StepUndoBlockedError" ? blocked.stepName : null,
+          "Produce",
+        );
+        strictEqual(
+          blocked._tag === "StepUndoBlockedError" ? blocked.teamName : null,
+          TEAM_C.name,
+        );
+
+        yield* runs.cancelRun({ runId: detail.run.id });
+        const terminal = yield* runs
+          .completeStep({ runStepId: produce, actor: MERCHANT })
+          .pipe(Effect.flip);
+        strictEqual(terminal._tag, "RunTerminalError");
+      }),
+    ));
+
+  it("setStepNote records who wrote the note, and clearing it clears the attribution", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seedStaged;
+        const runs = yield* WorkflowRunRepository;
+        const detail = yield* stagedRun();
+        const artwork = detail.steps[0]?.id ?? "";
+        const stepNow = () =>
+          Effect.map(runs.getRun({ runId: detail.run.id }), (run) => {
+            const [step] = Option.getOrThrow(run).steps;
+            if (step === undefined) throw new Error("no step");
+            return step;
+          });
+        yield* runs.setStepNote({
+          runStepId: artwork,
+          actor: memberActor("m1"),
+          teamIds: [TEAM_A.id],
+          note: note("scuffed"),
+        });
+        strictEqual((yield* stepNow()).noteByRole, "member");
+        yield* runs.setStepNote({
+          runStepId: artwork,
+          actor: MERCHANT,
+          note: note("customer approved"),
+        });
+        const merchantNote = yield* stepNow();
+        strictEqual(merchantNote.noteByRole, "merchant");
+        strictEqual(merchantNote.note, "customer approved");
+        yield* runs.setStepNote({
+          runStepId: artwork,
+          actor: MERCHANT,
+          note: null,
+        });
+        const cleared = yield* stepNow();
+        strictEqual(cleared.note, null);
+        strictEqual(cleared.noteByRole, null);
+      }),
+    ));
+
+  it("blockRun and dismissFlag by the merchant: no ready-team requirement, and the flag records the merchant", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seedStaged;
+        const runs = yield* WorkflowRunRepository;
+        const detail = yield* stagedRun();
+        yield* runs.blockRun({
+          runId: detail.run.id,
+          actor: MERCHANT,
+          reason: note("waiting on the customer"),
+        });
+        const blocked = Option.getOrThrow(
+          yield* runs.getRun({ runId: detail.run.id }),
+        );
+        deepStrictEqual<unknown>(blocked.run.flagDetail, {
+          reason: "waiting on the customer",
+          by: { role: "merchant" },
+        });
+        strictEqual(
+          Domain.actorLabel(blocked.run.flagDetail?.by ?? { role: "merchant" }),
+          "Merchant",
+        );
+        yield* runs.dismissFlag({ runId: detail.run.id });
+        strictEqual(
+          Option.getOrThrow(yield* runs.getRun({ runId: detail.run.id })).run
+            .flag,
+          null,
+        );
+      }),
+    ));
+
   it("a started but uncompleted step protects the run from silent cancel on reconcile", () =>
     runInRepository(
       Effect.gen(function* () {
@@ -2541,8 +2782,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         if (detail === undefined) throw new Error("no run");
         yield* runs.startStep({
           runStepId: detail.steps[0]?.id ?? "",
-          memberId: memberId("m1"),
-          memberEmail: emailOf("m1@example.com"),
+          actor: memberActor("m1"),
           teamIds: [TEAM_A.id],
         });
         const counts = yield* upsertAndReconcile(
@@ -2642,8 +2882,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         for (const step of finished.steps)
           yield* runs.completeStep({
             runStepId: step.id,
-            memberId: memberId("m1"),
-            memberEmail: emailOf("m1@example.com"),
+            actor: memberActor("m1"),
             teamIds: step.teamId === null ? [] : [step.teamId],
           });
 
@@ -2679,14 +2918,12 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           throw new Error("no steps");
         yield* runs.startStep({
           runStepId: cut.id,
-          memberId: memberId("m1"),
-          memberEmail: emailOf("m1@example.com"),
+          actor: memberActor("m1"),
           teamIds: [TEAM_A.id],
         });
         yield* runs.completeStep({
           runStepId: cut.id,
-          memberId: memberId("m1"),
-          memberEmail: emailOf("m1@example.com"),
+          actor: memberActor("m1"),
           teamIds: [TEAM_A.id],
         });
         yield* runs.assignRunStepTeam({
@@ -2697,8 +2934,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         strictEqual(reassigned?.steps[0]?.id, finish.id);
         yield* runs.blockRun({
           runId: stillOpen.run.id,
-          memberId: memberId("m1"),
-          memberEmail: emailOf("m1@example.com"),
+          actor: memberActor("m1"),
           teamIds: [TEAM_C.id],
           reason: note("waiting on stock"),
         });
@@ -2806,15 +3042,13 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         const materials = detail.steps[1]?.id ?? "";
         yield* runs.startStep({
           runStepId: artwork,
-          memberId: memberId("m1"),
-          memberEmail: emailOf("m1@example.com"),
+          actor: memberActor("m1"),
           teamIds: [TEAM_A.id],
         });
         // Done without Start backfills the starter's email too.
         yield* runs.completeStep({
           runStepId: materials,
-          memberId: memberId("m2"),
-          memberEmail: emailOf("m2@example.com"),
+          actor: memberActor("m2"),
           teamIds: [TEAM_B.id],
         });
         const after = Option.getOrThrow(
@@ -2849,8 +3083,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         // Finish Cut (Team A) so it is the finished step that keeps its pointer.
         yield* runs.completeStep({
           runStepId: cut.id,
-          memberId: memberId("m1"),
-          memberEmail: emailOf("m1@example.com"),
+          actor: memberActor("m1"),
           teamIds: [TEAM_A.id],
         });
         yield* workflows.unassignTeam({ teamId: TEAM_A.id });
@@ -2872,8 +3105,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         const refused = yield* runs
           .startStep({
             runStepId: finish.id,
-            memberId: memberId("m2"),
-            memberEmail: emailOf("m2@example.com"),
+            actor: memberActor("m2"),
             teamIds: [TEAM_B.id],
           })
           .pipe(Effect.flip);
@@ -2903,8 +3135,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         strictEqual(queued?.steps[0]?.id, finish.id);
         yield* runs.completeStep({
           runStepId: finish.id,
-          memberId: memberId("m3"),
-          memberEmail: emailOf("m3@example.com"),
+          actor: memberActor("m3"),
           teamIds: [TEAM_C.id],
         });
         // A finished step is never reassigned; a missing step is not found.

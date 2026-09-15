@@ -1,5 +1,5 @@
 import { SqliteClient } from "@effect/sql-sqlite-do";
-import { strictEqual } from "@effect/vitest/utils";
+import { deepStrictEqual, strictEqual } from "@effect/vitest/utils";
 import { getAgentByName } from "agents";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
@@ -917,8 +917,11 @@ describe("ShopAgent workflow run callables", () => {
     const [blocked] = await queueItems(agent, [team.id]);
     strictEqual(blocked?.run.flag, "blocked");
     strictEqual(blocked?.run.flagDetail?.reason, "waiting on stock");
-    strictEqual(blocked?.run.flagDetail?.by, memberId);
-    strictEqual(blocked?.run.flagDetail?.byEmail, memberEmail);
+    deepStrictEqual<unknown>(blocked?.run.flagDetail?.by, {
+      role: "member",
+      memberId,
+      email: memberEmail,
+    });
     strictEqual(blocked?.steps[0]?.note, "spelling confirmed");
   });
 

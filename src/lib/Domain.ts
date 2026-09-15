@@ -258,7 +258,7 @@ export type MemberId = typeof MemberId.Type;
  * `TeamMember` cascades; nothing else structural points here.
  * Run history survives the delete because `WorkflowRunStep` snapshots the
  * actor's email (`startedByEmail` / `completedByEmail`, and the block flag's
- * `byEmail`) at the moment of the action, so no live join is ever needed. The
+ * `by`) at the moment of the action, so no live join is ever needed. The
  * bare `startedBy` / `completedBy` ids stay as text with no foreign key and
  * simply stop resolving. Re-adding the same email mints a new id; history
  * keeps the old email as text.
@@ -1839,6 +1839,42 @@ export const SubscriptionState = Schema.NullOr(Subscription);
 export const ConnectionRole = Schema.Literals(["merchant", "member"]);
 export type ConnectionRole = typeof ConnectionRole.Type;
 
+/**
+ * Who did a step action, as a closed union rather than a set of nullable
+ * columns read together. The merchant has no member id and no email — they
+ * act through the embedded admin, where identity is the Shopify session, not
+ * a `Member` row — so inferring "merchant" from a null email would make every
+ * reader re-derive the same rule and would collide with a member row whose
+ * email columns are legitimately null (a step nobody has touched). The role
+ * discriminator is stored beside the id and email on the row, and the
+ * accessors below ({@link stepStartedBy} and friends) are the only place the
+ * three columns are reassembled.
+ */
+export const Actor = Schema.Union([
+  Schema.Struct({
+    role: Schema.Literal("member"),
+    memberId: MemberId,
+    email: Email,
+  }),
+  Schema.Struct({ role: Schema.Literal("merchant") }),
+]);
+export type Actor = typeof Actor.Type;
+
+export type MemberActor = Extract<Actor, { readonly role: "member" }>;
+
+/**
+ * The part of an {@link Actor} a page displays. Separate from `Actor` because
+ * the `reopened` slot stores no member id and so cannot produce a full actor,
+ * yet reads the same way on the page ({@link stepReopenedBy}).
+ */
+export type ActorDisplay =
+  | { readonly role: "merchant" }
+  | { readonly role: "member"; readonly email: Email };
+
+/** How every page spells an actor: the merchant is `Merchant`, a member is their email. */
+export const actorLabel = (actor: ActorDisplay) =>
+  actor.role === "merchant" ? "Merchant" : actor.email;
+
 export const MerchantConnectionState = Schema.Struct({
   role: Schema.Literal("merchant"),
   subscription: Schema.NullOr(Subscription),
@@ -2005,9 +2041,11 @@ export const RunFlagDetail = Schema.Struct({
   from: Schema.optionalKey(Schema.Number),
   to: Schema.optionalKey(Schema.Number),
   reason: Schema.optionalKey(StepNote),
-  by: Schema.optionalKey(MemberId),
-  /** The blocker's email, snapshotted like the step actors so a deleted member still reads as who. */
-  byEmail: Schema.optionalKey(Email),
+  /**
+   * Who blocked the run. Snapshotted like the step actors, so a deleted
+   * member still reads as who; absent on reconcile flags, which have nobody.
+   */
+  by: Schema.optionalKey(Actor),
   /** The line item title behind an order run's `item_added` / `item_removed`. */
   item: Schema.optionalKey(Schema.String),
 });
@@ -2072,6 +2110,18 @@ export const isOrderRun = (run: WorkflowRun) => run.lineItemId === null;
  * the snapshots taken at the action that keep history readable after the
  * member is deleted.
  *
+ * Each of the three actor slots carries a `*ByRole` column, and that column
+ * is the discriminator: the merchant leaves the id and email null (they have
+ * no `Member` row), a member fills all three. Read them through
+ * {@link stepStartedBy} / {@link stepCompletedBy} / {@link stepReopenedBy}
+ * rather than by hand, and see {@link Actor} for why the role is stored
+ * rather than inferred from a null email.
+ *
+ * `reopened*` is a *last-actor slot*, not a history: it records the most
+ * recent Undo and the next `completeStep` clears it, so the line only shows
+ * while the step is genuinely back in progress. There is no `reopenedBy` id
+ * column — the reopener is only ever displayed, never joined.
+ *
  * A step is *ready* when it is open and nothing in an earlier stage is still
  * open; several steps of one run can be ready at once. `startedAt` is set by
  * Start (and backfilled by a Done without Start) and marks the run `active`.
@@ -2092,8 +2142,52 @@ export const WorkflowRunStep = Schema.Struct({
   completedBy: Schema.NullOr(MemberId),
   completedByEmail: Schema.NullOr(Email),
   note: Schema.NullOr(StepNote),
+  startedByRole: Schema.NullOr(ConnectionRole),
+  completedByRole: Schema.NullOr(ConnectionRole),
+  reopenedAt: Schema.NullOr(Schema.Number),
+  reopenedByRole: Schema.NullOr(ConnectionRole),
+  reopenedByEmail: Schema.NullOr(Email),
+  noteByRole: Schema.NullOr(ConnectionRole),
 });
 export type WorkflowRunStep = typeof WorkflowRunStep.Type;
+
+/**
+ * The three actor slots, reassembled from their role column and its
+ * companions. `null` when the action has not happened; a `member` role with a
+ * missing id or email cannot occur (the writes set the three together) and
+ * reads as nobody rather than throwing, because a display path is the wrong
+ * place to fail.
+ */
+const actorFrom = (
+  role: ConnectionRole | null,
+  memberId: MemberId | null,
+  email: Email | null,
+): Actor | null => {
+  if (role === null) return null;
+  if (role === "merchant") return { role: "merchant" };
+  return memberId === null || email === null
+    ? null
+    : { role: "member", memberId, email };
+};
+
+export const stepStartedBy = (step: WorkflowRunStep) =>
+  actorFrom(step.startedByRole, step.startedBy, step.startedByEmail);
+
+export const stepCompletedBy = (step: WorkflowRunStep) =>
+  actorFrom(step.completedByRole, step.completedBy, step.completedByEmail);
+
+/**
+ * The reopener. Narrower than the other two: the `reopened` slot has no id
+ * column (see {@link WorkflowRunStep}), so this is an {@link ActorDisplay} —
+ * enough for {@link actorLabel}, which is all anything does with it.
+ */
+export const stepReopenedBy = (step: WorkflowRunStep): ActorDisplay | null => {
+  if (step.reopenedByRole === null) return null;
+  if (step.reopenedByRole === "merchant") return { role: "merchant" };
+  return step.reopenedByEmail === null
+    ? null
+    : { role: "member", email: step.reopenedByEmail };
+};
 
 /** An open run step whose team is gone: `teamId` null, or an id the roster no longer carries. */
 export const isRunStepUnassigned = (
@@ -2356,43 +2450,51 @@ export type BlockRunInput = typeof BlockRunInput.Type;
  * from two values that were each already validated, and naming them is what
  * keeps "which fields are the browser's" answerable at a glance.
  *
- * The email rides along on the two commands that record an actor
- * (`startStep` / `completeStep` snapshot `startedByEmail` /
- * `completedByEmail`, `blockRun` the flag's `byEmail`) and is absent from the
- * two that do not.
+ * Identity is one {@link Actor}, not a loose `memberId` / `memberEmail` pair,
+ * because the merchant acts through these same commands from the order page
+ * and has neither. `teamIds` is *optional* and that is the whole permission
+ * difference: present, it is the member's membership and the step's team must
+ * be in it; absent, the caller is the merchant and the team clause is skipped
+ * entirely. Every other rule — stage order, terminal runs, the downstream
+ * undo guard — applies to both.
  */
 export interface StartStepCommand {
   readonly runStepId: string;
-  readonly memberId: MemberId;
-  readonly memberEmail: Email;
-  readonly teamIds: readonly string[];
+  /** Member-only: there is no merchant Start — the merchant never claims work. */
+  readonly actor: MemberActor;
+  readonly teamIds?: readonly string[] | undefined;
 }
-export type CompleteStepCommand = StartStepCommand;
+
+export interface CompleteStepCommand {
+  readonly runStepId: string;
+  readonly actor: Actor;
+  readonly teamIds?: readonly string[] | undefined;
+}
 
 export interface SetStepNoteCommand {
   readonly runStepId: string;
-  readonly memberId: MemberId;
-  readonly teamIds: readonly string[];
+  readonly actor: Actor;
+  readonly teamIds?: readonly string[] | undefined;
   readonly note: StepNote | null;
 }
 
 export interface BlockRunCommand {
   readonly runId: string;
-  readonly memberId: MemberId;
-  readonly memberEmail: Email;
-  readonly teamIds: readonly string[];
+  readonly actor: Actor;
+  readonly teamIds?: readonly string[] | undefined;
   readonly reason: StepNote | null;
 }
 
 export interface DismissFlagCommand {
   readonly runId: string;
-  readonly teamIds: readonly string[];
+  readonly teamIds?: readonly string[] | undefined;
 }
 
-/** No email: undo records nobody — the step keeps its original starter and simply reads as in progress again. */
+/** The actor lands in the step's `reopened` slot: undo is a fact worth showing, and the next Done clears it. */
 export interface UncompleteStepCommand {
   readonly runStepId: string;
-  readonly teamIds: readonly string[];
+  readonly actor: Actor;
+  readonly teamIds?: readonly string[] | undefined;
 }
 
 /** `WorkflowCannotStart` = off, zero steps, or an unassigned step (see {@link Workflow}). */

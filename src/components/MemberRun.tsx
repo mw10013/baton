@@ -46,9 +46,11 @@ export const flagMessage = (run: Domain.WorkflowRun) =>
         Match.exhaustive,
       );
 
-/** The person behind a `blocked` flag, for "· by m2@m.com". Reconcile flags have nobody. */
-export const flagActor = (run: Domain.WorkflowRun) =>
-  run.flagDetail?.byEmail ?? null;
+/** The person behind a `blocked` flag, for "· by m2@m.com" or "· Merchant". Reconcile flags have nobody. */
+export const flagActor = (run: Domain.WorkflowRun) => {
+  const by = run.flagDetail?.by;
+  return by === undefined ? null : Domain.actorLabel(by);
+};
 
 export const ITEM_STATUS = {
   pending: { label: "Not started", tone: "info" },

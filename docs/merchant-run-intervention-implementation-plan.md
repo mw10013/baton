@@ -1,6 +1,7 @@
 # Merchant run intervention: implementation plan
 
-Status 2026-09-14: **planned, not started**. The reasoning and every product decision
+Status 2026-09-14: **Phases 1 and 2 in, uncommitted; Phases 3 to 8 not started**.
+See "Deviations" at the bottom. The reasoning and every product decision
 are in `docs/merchant-run-intervention-research.md` (the "Decisions" list is binding);
 the target states are drawn in `docs/merchant-run-intervention/mockups.html`. This
 document is the order of work. Like `docs/member-ux-implementation-plan.md`, it is
@@ -313,4 +314,42 @@ column.
 
 ## Deviations
 
-(none yet)
+Recorded as the work lands. Phases 1 and 2 are in; Phases 3 to 8 are not started.
+
+- **Phase 1 and Phase 2 landed together, plus the member call sites.** Phase 1's
+  item 5 (the command types) is what the repository writes against, so Phase 1 alone
+  cannot typecheck: changing `StartStepCommand` and friends breaks every caller in
+  `WorkflowRunRepository.ts` and `ShopAgent.ts` the moment it is saved. The schema
+  checkpoint therefore covers Phase 1 + Phase 2 + the mechanical half of Phase 4.1
+  (member callables building `actor: { role: "member", ... }`). The five merchant
+  callables (Phase 4.2/4.3) are **not** in yet, so nothing yet writes a `'merchant'`
+  role over the wire — only the repository tests do.
+- **`Domain.ActorDisplay`, and `stepReopenedBy` returns it, not `Actor`.** Decision 10
+  drops the reopener's id column, so the `reopened` slot physically cannot produce a
+  full `Actor`. Rather than mint a fake `MemberId` from the email, the display half of
+  the union is its own type (`{ role: "merchant" } | { role: "member"; email }`),
+  `actorLabel` takes that, and `Actor` is assignable to it. `stepStartedBy` and
+  `stepCompletedBy` still return `Actor | null` as planned.
+- **`Domain.MemberActor` exported.** The plan suggested `Extract<Actor, { role:
+"member" }>` "if convenient" for `StartStepCommand`; it is used in three places
+  (the command, the seed helper, the test factory), so it is a named export.
+- **`teamIds` is `readonly string[] | undefined`, spelled explicitly.** Written as
+  `teamIds?: readonly string[] | undefined` on the commands so `exactOptionalPropertyTypes`
+  lets a caller pass an explicit `undefined` (the merchant path) as well as omit it.
+- **`actorColumns` is module-scoped**, not a closure inside the repository's `Effect.gen`:
+  it captures nothing, and oxlint's `unicorn(consistent-function-scoping)` flags it there.
+- **`uncompleteStep` keeps its inline team check** rather than routing through
+  `requireActionable` (plan Phase 2.1). Its terminal rule genuinely differs — a `done`
+  run is undoable, only a cancelled one is refused — so sharing the guard would mean
+  parameterising it for one caller. The `teamIds === undefined` skip is duplicated in
+  the two places with a comment pointing at `requireActionable`.
+- **Repository tests use a `memberActor(id, email?)` factory and a `MERCHANT` constant.**
+  The 35 existing `memberId:` / `memberEmail:` call sites were rewritten to
+  `actor: memberActor("m1")`, which defaults the email to `<id>@example.com` — the
+  convention every one of them already followed.
+- **Six new repository tests** cover Phase 2.4: merchant on an unassigned step, merchant
+  completing over a member's start, the reopened slot set by both roles and cleared by
+  the next Done, the merchant held to stage order / terminal / downstream-undo,
+  `noteByRole` for both roles and its clearing, and merchant `blockRun` / `dismissFlag`.
+  The "member's downstream start blocks a merchant undo" case is folded into the
+  stage-order test rather than standing alone.
