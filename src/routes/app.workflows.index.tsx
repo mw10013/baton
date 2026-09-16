@@ -113,6 +113,7 @@ function RouteComponent() {
   const [tag, setTag] = React.useState("");
   const [tagDirty, setTagDirty] = React.useState(false);
   const [nameError, setNameError] = React.useState<string | null>(null);
+  const [tagError, setTagError] = React.useState<string | null>(null);
   const [banner, setBanner] = React.useState<string | null>(null);
 
   /**
@@ -139,13 +140,16 @@ function RouteComponent() {
     mutationFn: () =>
       agent
         ? withSocketRecovery(agent)(() =>
-            agent.stub.createWorkflow({
-              name,
-              tags: tag.trim() === "" ? [] : [tag],
-            }),
+            agent.stub.createWorkflow({ name, tag }),
           ).then(decodeWorkflowResult)
         : Promise.reject(new Error("Still connecting. Try again in a moment.")),
     onSuccess: async (result) => {
+      // A workflow has two unique keys, so the refusal goes under the field
+      // the merchant typed rather than into a banner above both.
+      if (result._tag === "TagTaken") {
+        setTagError(workflowResultMessage(result));
+        return;
+      }
       if (result._tag !== "Ok") {
         setNameError(workflowResultMessage(result));
         return;
@@ -166,6 +170,7 @@ function RouteComponent() {
     setTag("");
     setTagDirty(false);
     setNameError(null);
+    setTagError(null);
   };
 
   /**
@@ -275,16 +280,7 @@ function RouteComponent() {
               </s-table-cell>
               <s-table-cell>{statusBadges(workflow)}</s-table-cell>
               <s-table-cell>
-                {workflow.tags.length === 0 ? (
-                  <s-text color="subdued">—</s-text>
-                ) : (
-                  <s-stack direction="inline" gap="small-300">
-                    <s-badge>{workflow.tags[0]}</s-badge>
-                    {workflow.tags.length > 1 && (
-                      <s-text color="subdued">{`+${String(workflow.tags.length - 1)}`}</s-text>
-                    )}
-                  </s-stack>
-                )}
+                <s-badge>{workflow.tag}</s-badge>
               </s-table-cell>
               <s-table-cell>{workflow.stepCount}</s-table-cell>
               <s-table-cell>
@@ -385,9 +381,11 @@ function RouteComponent() {
             details="Add this tag to your products in Shopify. Their items will follow this workflow."
             value={tag}
             maxLength={255}
+            {...(tagError === null ? {} : { error: tagError })}
             onInput={(event) => {
               setTag(event.currentTarget.value);
               setTagDirty(true);
+              setTagError(null);
             }}
           />
         </s-stack>
@@ -402,7 +400,9 @@ function RouteComponent() {
           slot="primary-action"
           variant="primary"
           loading={createMutation.isPending}
-          disabled={!identified || name.trim().length === 0}
+          disabled={
+            !identified || name.trim().length === 0 || tag.trim().length === 0
+          }
           onClick={() => {
             createMutation.mutate();
           }}

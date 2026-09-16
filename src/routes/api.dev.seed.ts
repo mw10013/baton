@@ -39,14 +39,11 @@ const DevSeedInput = Schema.Struct({
         name: Domain.WorkflowName,
         /** Defaults to on when the entry has steps and every step is assigned; see `Domain.SeedWorkflowsInput`. */
         active: Schema.optionalKey(Schema.Boolean),
-        tags: Domain.WorkflowTags,
+        tag: Domain.WorkflowTag,
         steps: Schema.Array(SeedStepByTeamName),
-        /** A pending draft beside the workflow's `steps`; `tags` default to the workflow's. */
+        /** A pending draft beside the workflow's `steps`; the tag is not drafted. */
         draft: Schema.optionalKey(
-          Schema.Struct({
-            tags: Schema.optionalKey(Domain.WorkflowTags),
-            steps: Schema.Array(SeedStepByTeamName),
-          }),
+          Schema.Struct({ steps: Schema.Array(SeedStepByTeamName) }),
         ),
       }),
     ),
@@ -197,9 +194,9 @@ export const Route = createFileRoute("/api/dev/seed")({
               const seedWorkflows: {
                 name: string;
                 active?: boolean;
-                tags: readonly string[];
+                tag: string;
                 steps: SeedStep[];
-                draft?: { tags?: readonly string[]; steps: SeedStep[] };
+                draft?: { steps: SeedStep[] };
               }[] = [];
               /** Team names → ids; the first step naming an unseeded team is the whole error. */
               const resolveSteps = (
@@ -237,18 +234,13 @@ export const Route = createFileRoute("/api/dev/seed")({
                 const draft =
                   workflow.draft === undefined || draftSteps === undefined
                     ? undefined
-                    : {
-                        ...(workflow.draft.tags === undefined
-                          ? {}
-                          : { tags: workflow.draft.tags }),
-                        steps: draftSteps,
-                      };
+                    : { steps: draftSteps };
                 seedWorkflows.push({
                   name: workflow.name,
                   ...(workflow.active === undefined
                     ? {}
                     : { active: workflow.active }),
-                  tags: workflow.tags,
+                  tag: workflow.tag,
                   steps,
                   ...(draft === undefined ? {} : { draft }),
                 });

@@ -391,12 +391,11 @@ export type WorkflowStepId = typeof WorkflowStepId.Type;
  * Arbitrary ceilings, enforced in the schemas below and re-checked by
  * `WorkflowRepository` before every insert, so the Durable Object never stores
  * an oversize row and the reorder UI stays a short list. Raise freely; they
- * exist so `position` loops and tag scans are bounded, not to model a plan tier.
+ * exist so `position` loops are bounded, not to model a plan tier.
  */
 export const WorkflowLimits = {
   maxWorkflows: 50,
   maxSteps: 20,
-  maxTags: 20,
 } as const;
 
 const trimmedName = <B extends string>(brand: B) =>
@@ -448,19 +447,19 @@ export const StepNote = trimmedText("StepNote", STEP_NOTE_MAX_LENGTH);
 export type StepNote = typeof StepNote.Type;
 
 /**
- * The workflow's tag: its own name in a form a product can carry. Baton
- * authors it (the create dialog prefills it from the workflow name) and the
- * merchant applies it to products in Shopify; a line item whose product
- * carries it follows the workflow. It is not a *product* tag — that is
+ * The workflow's one tag: its identity in a form a product can carry. Every
+ * workflow has exactly one, from birth, and no two workflows share one. Baton
+ * mints it (the create dialog prefills it from the workflow name) and the
+ * merchant puts it on products in Shopify; a line item whose product carries
+ * it follows the workflow. It is not a *product* tag — that is
  * `OrderLineItem.productTags`, the product's own merchandising facets, which
  * this is matched against.
  *
- * Trimmed *and* lowercased, unlike the names: a tag exists only to be matched
- * against `OrderLineItem.productTags`, merchants type `Engraving` and
- * `engraving` interchangeably, and Shopify's own admin search is
- * case-insensitive. Folding once at the boundary means matching later is a
- * plain set intersection over lowercased line-item tags. 255 is Shopify's tag
- * length limit.
+ * Trimmed *and* lowercased, unlike the names: merchants type `Engraving` and
+ * `engraving` interchangeably and Shopify's own admin search is
+ * case-insensitive, so folding once at the boundary keeps storage canonical
+ * and makes matching plain equality. 255 is Shopify's tag length limit; Baton
+ * adds no character rules of its own beyond what Shopify allows in a tag.
  */
 export const WorkflowTag = Schema.String.pipe(
   Schema.decodeTo(
@@ -476,52 +475,31 @@ export const WorkflowTag = Schema.String.pipe(
 export type WorkflowTag = typeof WorkflowTag.Type;
 
 /**
- * Dedupes *after* folding, so `["Engraving", "engraving"]` is one tag, and
- * drops blanks so a trailing comma in the tags field is not an error. The
- * ceiling is checked on what survives.
- */
-export const WorkflowTags = Schema.Array(Schema.String).pipe(
-  Schema.decodeTo(
-    Schema.Array(WorkflowTag).check(
-      Schema.isMaxLength(WorkflowLimits.maxTags, {
-        message: `At most ${String(WorkflowLimits.maxTags)} tags`,
-      }),
-    ),
-    {
-      decode: SchemaGetter.transform((tags) => [
-        ...new Set(tags.map((t) => t.trim().toLowerCase()).filter(Boolean)),
-      ]),
-      encode: SchemaGetter.transform((tags) => tags),
-    },
-  ),
-);
-export type WorkflowTags = typeof WorkflowTags.Type;
-
-/**
  * Vocabulary. A workflow definition has two nouns and the merchant never
  * meets a third:
  *
  * - **Workflow**: name, type, tag, steps, Active / Off. This is what
  *   starts runs. Runs copy it wholesale and never look back at it.
- * - **Draft**: a private copy of the workflow's tags and steps, created by
+ * - **Draft**: a private copy of the workflow's **steps**, created by
  *   Edit and living until Apply or Discard. Every edit writes to the draft
  *   immediately; there is no unsaved state anywhere.
  *
  * Verbs: **Edit** creates the draft. **Apply changes** replaces the
- * workflow's tags and steps with the draft's and deletes the draft.
+ * workflow's steps with the draft's and deletes the draft.
  * **Discard changes** deletes the draft. **Turn on** / **Turn off** set and
  * clear `activatedAt`; the switch and the draft are unrelated.
  *
- * How a workflow is chosen for work, in merchant copy. The workflow **has a
- * tag** (one in practice; `tags` allows more as an escape hatch for renames
- * and merges); the product **carries product tags**; a **match** is one of
- * the product's tags equalling the workflow's tag. The workflow's field is
- * never called a "product tag": that name points the arrow the wrong way,
- * since Baton mints the string and the merchant carries it out to Shopify.
+ * How a workflow is chosen for work, in merchant copy. Every workflow **has
+ * exactly one tag**, no two workflows share one, and the tag is edited like
+ * the name: immediately, never through the draft. The product **carries
+ * product tags**; a **match** is one of the product's tags equalling the
+ * workflow's tag. The workflow's field is never called a "product tag": that
+ * name points the arrow the wrong way, since Baton mints the string and the
+ * merchant carries it out to Shopify.
  *
  * - a workflow **starts when** an order **contains** a product **tagged with**
- *   one of its tags;
- * - an order or line item that no workflow's tags **match** shows
+ *   its tag;
+ * - an order or line item that no workflow's tag **matches** shows
  *   **"No workflow"**;
  * - the order page says a workflow **started for** N items;
  * - a workflow **applies to orders placed since** it was turned on; the
@@ -561,9 +539,10 @@ export type WorkflowTags = typeof WorkflowTags.Type;
  * badge for a workflow, run, or team with an unassigned step or a team with
  * no members; it is derived on every read, never stored, and the fix is
  * always **assign a team** or add a member. Unassigned refuses Apply and
- * Turn on; an empty team is a warning only. `tags` and steps change only
- * through Apply, so an order arriving between two edits sees a whole
- * definition, never a half one. Encoded side is the Durable Object row
+ * Turn on; an empty team is a warning only. Steps change only through Apply,
+ * so an order arriving between two edits sees a whole definition, never a
+ * half one; the tag and the name are immediate, because runs snapshot both at
+ * start. Encoded side is the Durable Object row
  * (epoch-ms integers).
  */
 const WorkflowFields = {
@@ -581,18 +560,18 @@ export const isActive = (workflow: { readonly activatedAt: number | null }) =>
 /** A workflow: chosen by its tag, running once per matching line item. */
 export const Workflow = Schema.Struct({
   ...WorkflowFields,
-  tags: Schema.fromJsonString(WorkflowTags),
+  tag: WorkflowTag,
 });
 export type Workflow = typeof Workflow.Type;
 
 /**
  * The draft side of {@link Workflow}: at most one per workflow (`workflowId`
- * is the primary key), holding the tags being edited; its steps are
- * `WorkflowDraftStep` rows. Nothing that starts runs ever reads it.
+ * is the primary key), holding the steps being edited as `WorkflowDraftStep`
+ * rows. The tag is not drafted; it lives on the workflow row. Nothing that
+ * starts runs ever reads the draft.
  */
 export const WorkflowDraft = Schema.Struct({
   workflowId: WorkflowId,
-  tags: Schema.fromJsonString(WorkflowTags),
   createdAt: Schema.Number,
   updatedAt: Schema.Number,
 });
@@ -634,7 +613,7 @@ export const WorkflowDraftStep = WorkflowStep;
 export type WorkflowDraftStep = typeof WorkflowDraftStep.Type;
 
 /**
- * List row. `tags` and `stepCount` describe the workflow; `hasDraft` says
+ * List row. `tag` and `stepCount` describe the workflow; `hasDraft` says
  * what starts runs today is not what is being edited. `needsAttention` is the
  * derived badge from {@link Workflow}: a step unassigned or on a team with no
  * members, computed against the live roster on every list read.
@@ -727,26 +706,38 @@ export type DeleteWorkflowInput = typeof DeleteWorkflowInput.Type;
 
 export const CreateWorkflowInput = Schema.Struct({
   name: WorkflowName,
-  tags: WorkflowTags,
+  tag: WorkflowTag,
 });
 export type CreateWorkflowInput = typeof CreateWorkflowInput.Type;
 
-/** Name only: a rename is immediate. Tags select line items and go through the draft ({@link UpdateWorkflowTagsInput}). */
+/** Name only: a rename is immediate. The tag has its own input ({@link UpdateWorkflowTagInput}) and is also immediate. */
 export const UpdateWorkflowInput = Schema.Struct({
   workflowId: BoundedId,
   name: WorkflowName,
 });
 export type UpdateWorkflowInput = typeof UpdateWorkflowInput.Type;
 
-/** Lands on the draft, never on the workflow; the draft is created if this is the first change. */
-export const UpdateWorkflowTagsInput = Schema.Struct({
+/**
+ * Lands on the workflow row, never on the draft: the tag is envelope state
+ * like the name. Runs snapshot the tag at start, so work in flight is
+ * untouched; the next order to arrive is matched against the new tag.
+ */
+export const UpdateWorkflowTagInput = Schema.Struct({
   workflowId: BoundedId,
-  tags: WorkflowTags,
+  tag: WorkflowTag,
 });
-export type UpdateWorkflowTagsInput = typeof UpdateWorkflowTagsInput.Type;
+export type UpdateWorkflowTagInput = typeof UpdateWorkflowTagInput.Type;
 
-/** The copy's name and the decision to leave its tags empty are the repository's ({@link WorkflowResult} carries the copy). */
-export const DuplicateWorkflowInput = WorkflowIdInput;
+/**
+ * The copy's name and tag are the merchant's, prefilled by the Duplicate
+ * dialog; the repository copies steps and stages and leaves the copy off with
+ * no draft ({@link WorkflowResult} carries the copy).
+ */
+export const DuplicateWorkflowInput = Schema.Struct({
+  workflowId: BoundedId,
+  name: WorkflowName,
+  tag: WorkflowTag,
+});
 export type DuplicateWorkflowInput = typeof DuplicateWorkflowInput.Type;
 
 export const CreateDraftInput = WorkflowIdInput;
@@ -821,8 +812,7 @@ export type UpdateStepInput = typeof UpdateStepInput.Type;
  * workflow. `active` is the fixture's word for the switch and defaults to
  * `true` when the entry has steps and every step is assigned; the
  * repository stores it as `activatedAt = now`, so seeded orders qualify.
- * `draft` seeds a pending draft (its own tags, defaulting to the workflow's,
- * and steps) for fixtures that show the draft UI.
+ * `draft` seeds a pending draft (steps) for fixtures that show the draft UI.
  */
 const SeedWorkflowStep = Schema.Struct({
   name: StepName,
@@ -836,13 +826,10 @@ export const SeedWorkflowsInput = Schema.Struct({
     Schema.Struct({
       name: WorkflowName,
       active: Schema.optionalKey(Schema.Boolean),
-      tags: WorkflowTags,
+      tag: WorkflowTag,
       steps: Schema.Array(SeedWorkflowStep),
       draft: Schema.optionalKey(
-        Schema.Struct({
-          tags: Schema.optionalKey(WorkflowTags),
-          steps: Schema.Array(SeedWorkflowStep),
-        }),
+        Schema.Struct({ steps: Schema.Array(SeedWorkflowStep) }),
       ),
     }),
   ),
@@ -886,20 +873,17 @@ export type TeamIdInput = typeof TeamIdInput.Type;
 export const WorkflowResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok"), workflow: Workflow }),
   Schema.Struct({ _tag: Schema.Literal("NameTaken") }),
+  Schema.Struct({
+    _tag: Schema.Literal("TagTaken"),
+    tag: WorkflowTag,
+    workflowName: WorkflowName,
+  }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("Limit"), limit: Schema.Number }),
 ]);
 export type WorkflowResult = typeof WorkflowResult.Type;
 
-/**
- * `StepUnassigned` names the offending steps so the page can say which to assign.
- *
- * `TagTaken` is the one-active-workflow-per-tag rule: a tag routes an item to
- * exactly one workflow, so it is refused only when this workflow is (or is
- * becoming) active and another *active* workflow already carries the tag. Off
- * workflows may share tags freely, so a replacement can be built and applied
- * before the swap; Turn on is where the collision finally bites.
- */
+/** `StepUnassigned` names the offending steps so the page can say which to assign. Apply is about steps only; the tag never reaches it. */
 export const ApplyResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok"), workflow: Workflow }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
@@ -908,11 +892,6 @@ export const ApplyResult = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal("StepUnassigned"),
     stepNames: Schema.Array(StepName),
-  }),
-  Schema.Struct({
-    _tag: Schema.Literal("TagTaken"),
-    tag: WorkflowTag,
-    workflowName: WorkflowName,
   }),
 ]);
 export type ApplyResult = typeof ApplyResult.Type;
@@ -937,9 +916,6 @@ export type DraftResult = typeof DraftResult.Type;
  * on starts runs on waiting orders; Turn **off** can start them too, because
  * removing one of two matching workflows resolves an ambiguity and the
  * survivor's runs begin — so the toast must read for both directions.
- *
- * `TagTaken`: see {@link ApplyResult}. Only the `active === true` branch checks
- * it, against the *applied* tags rather than the draft's.
  */
 export const ActivateResult = Schema.Union([
   Schema.Struct({
@@ -952,11 +928,6 @@ export const ActivateResult = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal("StepUnassigned"),
     stepNames: Schema.Array(StepName),
-  }),
-  Schema.Struct({
-    _tag: Schema.Literal("TagTaken"),
-    tag: WorkflowTag,
-    workflowName: WorkflowName,
   }),
 ]);
 export type ActivateResult = typeof ActivateResult.Type;
@@ -1184,7 +1155,7 @@ export type ShopOrder = typeof ShopOrder.Type;
  * one count a maker should never overshoot. `currentQuantity` stays as
  * "ordered" for display.
  *
- * `matchedWorkflowIds` is the active, startable workflows whose tags matched
+ * `matchedWorkflowIds` is the active, startable workflows whose tag matched
  * this item at the last reconcile, whether or not a run was started. Two or
  * more with no live run is an **ambiguity** the merchant resolves from the
  * order page; the picker there offers exactly these. Written by reconcile

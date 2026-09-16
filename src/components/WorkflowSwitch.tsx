@@ -10,7 +10,6 @@ import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import {
   changeActivatedAtResultMessage,
   startedToast,
-  tagTakenMessage,
   TURNED_OFF,
   turnOnBlocker,
   waitingOrdersLine,
@@ -56,7 +55,6 @@ export const activateResultMessage = Match.typeTags<
   NoSteps: () => "This workflow has no steps. Edit to add some, then apply.",
   StepUnassigned: ({ stepNames }) =>
     `These steps have no team: ${stepNames.join(", ")}.`,
-  TagTaken: tagTakenMessage,
 });
 
 const pad = (n: number) => String(n).padStart(2, "0");

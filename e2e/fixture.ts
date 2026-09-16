@@ -110,7 +110,7 @@ export const workflows: readonly SeedWorkflow[] = [
   {
     // three-step linear, the bread-and-butter product
     name: "Engraved cutting board",
-    tags: [TAG.board],
+    tag: TAG.board,
     steps: [
       step("Cut and sand", WOODSHOP, {
         instructions:
@@ -126,7 +126,7 @@ export const workflows: readonly SeedWorkflow[] = [
   {
     // parallel middle stage; Leather starts and returns at the end
     name: "Leather journal",
-    tags: [TAG.journal],
+    tag: TAG.journal,
     steps: [
       step("Cut leather", LEATHER, { stage: 1 }),
       step("Stamp monogram", ENGRAVING, {
@@ -140,7 +140,7 @@ export const workflows: readonly SeedWorkflow[] = [
   {
     // linear; instructions on every step; Jewelry starts and returns
     name: "Signet ring",
-    tags: [TAG.ring],
+    tag: TAG.ring,
     steps: [
       step("Cast", JEWELRY, {
         instructions: "Ring size and metal are in the personalization.",
@@ -157,7 +157,7 @@ export const workflows: readonly SeedWorkflow[] = [
     // two-step; a pending draft adds a third step so the list shows "Draft
     // pending" and the detail page shows both sides
     name: "Embroidered blanket",
-    tags: [TAG.blanket],
+    tag: TAG.blanket,
     steps: [
       step("Embroider", TEXTILES, {
         instructions: "Name and thread colour are in the personalization.",
@@ -179,7 +179,7 @@ export const workflows: readonly SeedWorkflow[] = [
     // row and it starts nothing until it is turned on
     name: "Photo frame",
     active: false,
-    tags: [TAG.frame],
+    tag: TAG.frame,
     steps: [
       step("Cut frame", WOODSHOP, { stage: 1 }),
       step("Engrave caption", ENGRAVING, { stage: 1 }),
@@ -192,13 +192,13 @@ export const workflows: readonly SeedWorkflow[] = [
     // team: "Needs attention" in the list, both banners on the detail page,
     // Turn on refused until the step is assigned
     name: "Pet tag (unassigned step)",
-    tags: [TAG.petTag],
+    tag: TAG.petTag,
     steps: [step("Stamp", null), step("Attach ring", RETIRED_TEAM_EMPTY)],
   },
   {
     // zero steps: "No steps"
     name: "Wholesale sample (no steps)",
-    tags: [TAG.sample],
+    tag: TAG.sample,
     steps: [],
   },
 ];

@@ -41,7 +41,7 @@ const CALLABLE_ROLES = {
   createWorkflow: "merchant",
   duplicateWorkflow: "merchant",
   updateWorkflow: "merchant",
-  updateWorkflowTags: "merchant",
+  updateWorkflowTag: "merchant",
   createDraft: "merchant",
   applyDraft: "merchant",
   discardDraft: "merchant",

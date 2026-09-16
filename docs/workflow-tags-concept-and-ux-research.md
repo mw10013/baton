@@ -1,5 +1,11 @@
 # Workflow tags: concept, UX, and implementation spec
 
+> **Superseded on tags (2026-09-16).** Everything this doc says about a
+> workflow's tags — the array, the cap, the optional/empty tag, and where tag
+> editing lives — is superseded by
+> [the workflow tag as identity](./workflow-tag-identity-research.md), which is
+> the source of truth. The rest stands.
+
 Research date: 2026-09-12. Scope: what a workflow tag _is_ in Baton, how the three
 comparable products treat theirs, where tag editing should live, and a handoff spec.
 No application code changed. Supersedes the interaction half of

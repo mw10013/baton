@@ -50,7 +50,7 @@ const runInRepository = <A, E>(
 
 const name = Schema.decodeUnknownSync(Domain.WorkflowName);
 const stepName = Schema.decodeUnknownSync(Domain.StepName);
-const tags = Schema.decodeUnknownSync(Domain.WorkflowTags);
+const workflowTag = Schema.decodeUnknownSync(Domain.WorkflowTag);
 const teamId = Schema.decodeUnknownSync(Domain.TeamId);
 const teamName = Schema.decodeUnknownSync(Domain.TeamName);
 const memberId = Schema.decodeUnknownSync(Domain.MemberId);
@@ -175,7 +175,7 @@ const seed = Effect.gen(function* () {
     Effect.gen(function* () {
       const created = yield* workflows.createWorkflow({
         name: name(`Workflow ${tag}`),
-        tags: tags([tag]),
+        tag: workflowTag(tag),
       });
       yield* workflows.addStep({
         workflowId: created.id,
@@ -204,7 +204,7 @@ const seedStaged = Effect.gen(function* () {
     workflows: [
       {
         name: name("Staged"),
-        tags: tags(["s"]),
+        tag: workflowTag("s"),
         steps: [
           {
             name: stepName("Artwork"),
@@ -376,7 +376,7 @@ describe("WorkflowRunRepository one live run per item", () => {
       const workflows = yield* WorkflowRepository;
       const created = yield* workflows.createWorkflow({
         name: name(`Rival ${tag}`),
-        tags: tags([tag]),
+        tag: workflowTag(tag),
       });
       yield* workflows.addStep({
         workflowId: created.id,
@@ -1255,7 +1255,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         // Draft only: has steps, never applied.
         const c = yield* workflows.createWorkflow({
           name: name("Drafted"),
-          tags: tags(["c"]),
+          tag: workflowTag("c"),
         });
         yield* workflows.addStep({
           workflowId: c.id,
@@ -2385,7 +2385,10 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           remaining.filter((d) => d.run.workflowId === b.id).length,
           1,
         );
-        yield* workflows.createWorkflow({ name: a.name, tags: tags(["a"]) });
+        yield* workflows.createWorkflow({
+          name: a.name,
+          tag: workflowTag("a"),
+        });
       }),
     ));
 
@@ -2407,7 +2410,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         // any less the item's current route.
         const replacement = yield* workflows.createWorkflow({
           name: name("Workflow a2"),
-          tags: tags(["a"]),
+          tag: workflowTag("a"),
         });
         yield* workflows.addStep({
           workflowId: replacement.id,

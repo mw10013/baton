@@ -1,5 +1,11 @@
 # How many workflows can one line item run?
 
+> **Superseded on tags (2026-09-16).** Everything this doc says about a
+> workflow's tags — the array, the cap, the optional/empty tag, and where tag
+> editing lives — is superseded by
+> [the workflow tag as identity](./workflow-tag-identity-research.md), which is
+> the source of truth. The rest stands.
+
 Research date: 2026-09-16. Scope: whether Baton should cap the number of workflows a
 single line item enters by tag match, what the cap should be, and what happens when it
 is exceeded. No application code changed. Revisits, and in one place reverses, the

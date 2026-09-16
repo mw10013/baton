@@ -160,7 +160,7 @@ export const matchesLineItem = (
   detail: Domain.WorkflowDetail,
   order: Domain.ShopOrder,
   lineItem: Domain.OrderLineItem,
-) => placedSince(detail.workflow, order) && matchesTags(detail, lineItem);
+) => placedSince(detail.workflow, order) && matchesTag(detail, lineItem);
 
 /** The date rule alone: placed on or after Turn on. Off never qualifies. */
 export const placedSince = (
@@ -169,15 +169,12 @@ export const placedSince = (
 ) => workflow.activatedAt !== null && order.processedAt >= workflow.activatedAt;
 
 /** The tag test alone, with units still to make; what the Turn on dialog's count uses, since it asks "would match if the date allowed". */
-export const matchesTags = (
+export const matchesTag = (
   { workflow }: Domain.WorkflowDetail,
   lineItem: Pick<Domain.OrderLineItem, "productTags" | "unfulfilledQuantity">,
 ) =>
   lineItem.unfulfilledQuantity > 0 &&
-  lineItem.productTags.some((tag) => {
-    const folded = tag.trim().toLowerCase();
-    return workflow.tags.some((candidate) => candidate === folded);
-  });
+  lineItem.productTags.some((tag) => workflow.tag === tag.trim().toLowerCase());
 
 const json = (value: unknown) => JSON.stringify(value);
 
@@ -255,8 +252,8 @@ export class WorkflowRunRepository extends Context.Service<
      * Three exclusions, all of them the one-live-run-per-item rule read
      * forward: an item whose tags do not match; an item already carrying a
      * live run, whoever started it, because a workflow turned on later never
-     * displaces one; and an item that another *active* workflow's tags also
-     * match, because that item would come out ambiguous and reconcile would
+     * displaces one; and an item that another *active* workflow's tag also
+     * matches, because that item would come out ambiguous and reconcile would
      * start nothing on it. The last is why the whole {@link StartContext} is
      * taken rather than the one workflow: ambiguity is a property of the set.
      *
@@ -1108,8 +1105,9 @@ export class WorkflowRunRepository extends Context.Service<
           workflows,
           teams,
         }: StartContext & { readonly workflow: Domain.WorkflowDetail }) {
-          // The open orders' line items with no live run on them; the tag test
-          // runs here because tags are JSON text.
+          // The open orders' line items with no live run on them. The tag
+          // test stays in TypeScript so this count and reconcile share one
+          // predicate, even though `Workflow.tag` is a plain column.
           const rows = yield* decode(
             Schema.Array(
               Schema.Struct({
@@ -1143,8 +1141,8 @@ export class WorkflowRunRepository extends Context.Service<
           );
           const matching = rows.filter(
             (row) =>
-              matchesTags(workflow, row) &&
-              !rivals.some((rival) => matchesTags(rival, row)),
+              matchesTag(workflow, row) &&
+              !rivals.some((rival) => matchesTag(rival, row)),
           );
           const byOrder = [
             ...new Map(matching.map((row) => [row.orderId, row])).values(),

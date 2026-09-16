@@ -171,7 +171,7 @@ test("the team page drills in to the orders waiting on that team", async ({
     [
       {
         name: "E2E Drill Cuff",
-        tags: ["e2e-drill"],
+        tag: "e2e-drill",
         steps: [{ name: "Cut", team: DRILL_TEAM }],
       },
     ],

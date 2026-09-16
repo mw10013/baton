@@ -321,9 +321,9 @@ const memberCallableEffect =
  * `Workflow` / `WorkflowStep` are the production-workflow *definitions* a
  * merchant configures: what starts runs. `WorkflowDraft` / `WorkflowDraftStep`
  * are the merchant's private copy under edit (see the vocabulary on
- * `Domain.Workflow`): Edit copies the workflow's tags and steps into the
- * draft, every editor write lands on the draft, Apply replaces the workflow's
- * tags and steps with the draft's and deletes it, Discard deletes it — each in
+ * `Domain.Workflow`): Edit copies the workflow's steps into the draft, every
+ * editor write lands on the draft, Apply replaces the workflow's steps with
+ * the draft's and deletes it, Discard deletes it — each in
  * one transaction, so run creation sees the old definition or the new one and
  * never a half-edit. A workflow has at most one draft (`workflowId` is the
  * draft's primary key), and the draft's steps cascade with it. Steps live in
@@ -462,8 +462,8 @@ const initializeSchema = Effect.gen(function* () {
     create table if not exists Workflow (
       id text primary key,
       name text not null check (name = trim(name) and length(name) > 0),
+      tag text not null unique check (tag = trim(tag) and length(tag) > 0),
       activatedAt integer,
-      tags text not null default '[]',
       createdAt integer not null,
       updatedAt integer not null
     );
@@ -482,7 +482,6 @@ const initializeSchema = Effect.gen(function* () {
     create index if not exists WorkflowStep_teamId_idx on WorkflowStep (teamId);
     create table if not exists WorkflowDraft (
       workflowId text primary key references Workflow (id) on delete cascade,
-      tags text not null default '[]',
       createdAt integer not null,
       updatedAt integer not null
     );
@@ -639,15 +638,23 @@ const workflowResult = <R>(
   effect: Effect.Effect<
     Domain.Workflow,
     | WorkflowNameTakenError
+    | WorkflowTagTakenError
     | WorkflowNotFoundError
     | WorkflowLimitError
     | SqlError.SqlError
-    | WorkflowRepositoryError,
+    | WorkflowRepositoryError
+    | WorkflowRunRepositoryError
+    | RepositoryError
+    | Schema.SchemaError,
     R
   >,
 ): Effect.Effect<
   Domain.WorkflowResult,
-  SqlError.SqlError | WorkflowRepositoryError,
+  | SqlError.SqlError
+  | WorkflowRepositoryError
+  | WorkflowRunRepositoryError
+  | RepositoryError
+  | Schema.SchemaError,
   R
 > =>
   effect.pipe(
@@ -655,6 +662,12 @@ const workflowResult = <R>(
     Effect.catchTags({
       WorkflowNameTakenError: () =>
         Effect.succeed<Domain.WorkflowResult>({ _tag: "NameTaken" }),
+      WorkflowTagTakenError: ({ tag, workflowName }) =>
+        Effect.succeed<Domain.WorkflowResult>({
+          _tag: "TagTaken",
+          tag,
+          workflowName,
+        }),
       WorkflowNotFoundError: () =>
         Effect.succeed<Domain.WorkflowResult>({ _tag: "NotFound" }),
       WorkflowLimitError: ({ limit }) =>
@@ -669,7 +682,6 @@ const applyResult = <R>(
     | NoDraftError
     | NoStepsError
     | StepUnassignedError
-    | WorkflowTagTakenError
     | SqlError.SqlError
     | WorkflowRepositoryError
     | WorkflowRunRepositoryError
@@ -699,12 +711,6 @@ const applyResult = <R>(
         Effect.succeed<Domain.ApplyResult>({
           _tag: "StepUnassigned",
           stepNames,
-        }),
-      WorkflowTagTakenError: ({ tag, workflowName }) =>
-        Effect.succeed<Domain.ApplyResult>({
-          _tag: "TagTaken",
-          tag,
-          workflowName,
         }),
     }),
   );
@@ -758,7 +764,6 @@ const activateResult = <R>(
     | WorkflowNotFoundError
     | NoStepsError
     | StepUnassignedError
-    | WorkflowTagTakenError
     | SqlError.SqlError
     | WorkflowRepositoryError
     | WorkflowRunRepositoryError
@@ -790,12 +795,6 @@ const activateResult = <R>(
         Effect.succeed<Domain.ActivateResult>({
           _tag: "StepUnassigned",
           stepNames,
-        }),
-      WorkflowTagTakenError: ({ tag, workflowName }) =>
-        Effect.succeed<Domain.ActivateResult>({
-          _tag: "TagTaken",
-          tag,
-          workflowName,
         }),
     }),
   );
@@ -1975,7 +1974,7 @@ export class ShopAgent extends Agent {
     );
   }
 
-  /** Duplicate: the copy is off, keeps the steps, and takes no product tags (`WorkflowRepository.duplicateWorkflow`). */
+  /** Duplicate: the copy is off, keeps the steps, and takes the name and tag the dialog collected (`WorkflowRepository.duplicateWorkflow`). */
   @callable()
   duplicateWorkflow(
     input: typeof Domain.DuplicateWorkflowInput.Encoded,
@@ -1986,11 +1985,13 @@ export class ShopAgent extends Agent {
         "ShopAgent.duplicateWorkflow",
         Domain.DuplicateWorkflowInput,
         { role: "merchant", parse: { onExcessProperty: "error" } },
-      )(({ workflowId }) =>
+      )(({ workflowId, name, tag }) =>
         workflowResult(
           Effect.gen(function* () {
             const copy = yield* (yield* WorkflowRepository).duplicateWorkflow({
               workflowId,
+              name,
+              tag,
             });
             yield* Effect.logInfo(
               `ShopAgent.duplicateWorkflow: shop=${shop} workflowId=${workflowId} copyId=${copy.id}`,
@@ -2022,26 +2023,42 @@ export class ShopAgent extends Agent {
     );
   }
 
-  /** Tags select line items, so the write lands on the draft and reaches the workflow only through Apply. */
+  /**
+   * Immediate, like `updateWorkflow`: lands on the workflow row, never the
+   * draft. Unlike a rename it changes how the workflow matches, so an on
+   * workflow reconciles every stored order once afterwards, as Apply does:
+   * an order already in Baton whose product carries the new tag starts now,
+   * not on Shopify's next edit. Runs in flight snapshot their tag and steps
+   * and are untouched. Publishes because the order pages read the reconcile.
+   */
   @callable()
-  updateWorkflowTags(
-    input: typeof Domain.UpdateWorkflowTagsInput.Encoded,
-  ): Promise<Domain.StepResult> {
+  updateWorkflowTag(
+    input: typeof Domain.UpdateWorkflowTagInput.Encoded,
+  ): Promise<Domain.WorkflowResult> {
+    const shop = this.name;
+    const publish = () => this.publish("all");
+    const reconcileAll = (workflow: Domain.Workflow) =>
+      this.reconcileAllIfActive("updateWorkflowTag", workflow);
     return this.runEffect(
       callableEffect(
-        "ShopAgent.updateWorkflowTags",
-        Domain.UpdateWorkflowTagsInput,
+        "ShopAgent.updateWorkflowTag",
+        Domain.UpdateWorkflowTagInput,
         { role: "merchant", parse: { onExcessProperty: "error" } },
-      )(({ workflowId, tags }) =>
-        stepResult(
+      )(({ workflowId, tag }) =>
+        workflowResult(
           Effect.gen(function* () {
-            yield* (yield* WorkflowRepository).updateWorkflowTags({
-              workflowId,
-              tags,
-            });
-            return { _tag: "Ok", step: null };
+            const workflow =
+              yield* (yield* WorkflowRepository).updateWorkflowTag({
+                workflowId,
+                tag,
+              });
+            yield* Effect.logInfo(
+              `ShopAgent.updateWorkflowTag: shop=${shop} workflowId=${workflowId} tag=${tag}`,
+            ).pipe(Effect.annotateLogs({ shop, workflowId, tag }));
+            yield* reconcileAll(workflow);
+            return workflow;
           }),
-        ),
+        ).pipe(Effect.tap(publish)),
       )(input),
     );
   }
@@ -2073,11 +2090,10 @@ export class ShopAgent extends Agent {
 
   /**
    * Apply changes. On an on workflow, reconciles every stored order once
-   * afterwards: a tag added on Apply can match paid, unfulfilled orders
-   * already in Baton, and they should start now rather than at whatever
-   * moment Shopify next edits them. Publishes because the next order starts
-   * against the new steps and tags, which the order page's workflow pickers
-   * reflect.
+   * afterwards: new steps can make an item startable that was not, and those
+   * orders should start now rather than at whatever moment Shopify next edits
+   * them. Publishes because the next order starts against the new steps,
+   * which the order page's workflow pickers reflect.
    */
   @callable()
   applyDraft(
@@ -2379,7 +2395,7 @@ export class ShopAgent extends Agent {
 
   /**
    * {@link reconcileAllNow}, skipped when the workflow is off: for the
-   * definition writes (Apply, the coverage date) that change *how* a workflow
+   * definition writes (Apply, Edit tag, the coverage date) that change *how* a workflow
    * matches. An off workflow matches nothing either way, so nothing about the
    * active set moved and the pass would be a full scan for no writes. Turn
    * off and delete do move it, and use {@link reconcileAllNow}.

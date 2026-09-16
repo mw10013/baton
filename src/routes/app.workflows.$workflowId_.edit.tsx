@@ -11,7 +11,6 @@ import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Schema } from "effect";
 
 import { AttentionBanner, StageFlow } from "@/components/WorkflowStages";
-import * as WorkflowTag from "@/components/WorkflowTag";
 import * as Domain from "@/lib/Domain";
 import { hideModal } from "@/lib/polarisModal";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
@@ -24,7 +23,6 @@ import {
   DELETE_WORKFLOW_WARNING,
   deleteWorkflowResultMessage,
   itemTriggerLine,
-  tagTakenMessage,
   workflowResultMessage,
 } from "@/lib/workflowShared";
 
@@ -65,7 +63,6 @@ const applyResultMessage = Match.typeTags<Domain.ApplyResult, string | null>()({
   NoSteps: () => "Add at least one step before you can apply.",
   StepUnassigned: ({ stepNames }) =>
     `Assign a team to ${stepNames.join(", ")} before you can apply.`,
-  TagTaken: tagTakenMessage,
 });
 
 const discardResultMessage = Match.typeTags<
@@ -94,22 +91,11 @@ const getLoaderData = createServerFn({ method: "GET" })
     ),
   );
 
-/**
- * `tag=edit` opens the tag dialog on arrival — the detail page's Edit tag
- * button lands here, so the one edit surface is one click away without the
- * detail page growing a second one. Hand-written so an unknown value reads
- * as absent instead of failing the route.
- */
+/** Hand-written so an unknown value reads as absent instead of failing the route. */
 const validateSearch = ({
-  tag,
   chrome,
-}: Record<string, unknown>): {
-  readonly tag?: "edit";
-  readonly chrome?: "window";
-} => ({
-  ...(tag === "edit" ? { tag } : {}),
-  ...(chrome === "window" ? { chrome } : {}),
-});
+}: Record<string, unknown>): { readonly chrome?: "window" } =>
+  chrome === "window" ? { chrome } : {};
 
 export const Route = createFileRoute("/app/workflows/$workflowId_/edit")({
   validateSearch,
@@ -139,14 +125,13 @@ export const Route = createFileRoute("/app/workflows/$workflowId_/edit")({
  */
 function RouteComponent() {
   const { workflowId } = Route.useParams();
-  const { tag: tagSearch, chrome } = Route.useSearch();
+  const { chrome } = Route.useSearch();
   /**
    * True when the admin opened this route inside an `s-app-window`; see
    * `workflowEditorWindow.ts`. The flag is a word, not `1`, because the
    * router's search parser JSON-decodes values and would hand back a number.
    */
   const inWindow = chrome === "window";
-  const keepSearch = inWindow ? { chrome: "window" as const } : {};
   const detail: Domain.WorkflowLoaderData = Route.useLoaderData();
   const router = useRouter();
   const navigate = useNavigate({ from: Route.fullPath });
@@ -261,17 +246,6 @@ function RouteComponent() {
     onError,
   });
 
-  const tagsMutation = useMutation({
-    mutationFn: (tags: readonly string[]) =>
-      call((stub) => stub.updateWorkflowTags({ workflowId, tags })).then(
-        decodeStepResult,
-      ),
-    onSuccess: async (result) => {
-      await onStepResult(result);
-    },
-    onError,
-  });
-
   const applyMutation = useMutation({
     mutationFn: () =>
       call((stub) => stub.applyDraft({ workflowId })).then(decodeApplyResult),
@@ -322,26 +296,6 @@ function RouteComponent() {
       }
       hideModal(RENAME_MODAL);
       await invalidate();
-    },
-    onError,
-  });
-
-  const duplicateMutation = useMutation({
-    mutationFn: () =>
-      call((stub) => stub.duplicateWorkflow({ workflowId })).then(
-        decodeWorkflowResult,
-      ),
-    onSuccess: async (result) => {
-      if (result._tag !== "Ok") {
-        setBanner(workflowResultMessage(result));
-        return;
-      }
-      shopify.toast.show(`Copied to “${result.workflow.name}”.`);
-      await navigate({
-        to: "/app/workflows/$workflowId/edit",
-        params: { workflowId: result.workflow.id },
-        search: keepSearch,
-      });
     },
     onError,
   });
@@ -451,7 +405,6 @@ function RouteComponent() {
 
   /** What the editor writes: the draft once one exists, the workflow itself until then. */
   const steps = draft?.steps ?? detail.steps;
-  const tags = draft?.draft.tags ?? workflow.tags;
   const hasDraft = draft !== null;
   const blocker = applyBlocker(steps);
   const selected = steps.find((step) => step.id === selectedStepId) ?? null;
@@ -462,7 +415,6 @@ function RouteComponent() {
     separateStepMutation.isPending ||
     joinStepMutation.isPending ||
     removeStepMutation.isPending ||
-    tagsMutation.isPending ||
     applyMutation.isPending ||
     discardMutation.isPending;
   const sharesStage = (step: Domain.StepWithTeamName) =>
@@ -675,16 +627,6 @@ function RouteComponent() {
           Rename
         </s-button>
         <s-button
-          icon="duplicate"
-          loading={duplicateMutation.isPending}
-          disabled={!identified || duplicateMutation.isPending}
-          onClick={() => {
-            duplicateMutation.mutate();
-          }}
-        >
-          Duplicate
-        </s-button>
-        <s-button
           icon="delete"
           tone="critical"
           commandFor={DELETE_MODAL}
@@ -722,27 +664,16 @@ function RouteComponent() {
                 border="base subdued dashed"
                 borderRadius="base"
               >
+                {/* No edit affordance here: the editor is about steps, and
+                    the tag is edited from the detail page. */}
                 <s-stack gap="small-300">
                   <s-text type="strong">Tag</s-text>
-                  <s-text color="subdued">{itemTriggerLine(tags)}</s-text>
-                  <WorkflowTag.WorkflowTag
-                    key={workflowId}
-                    tags={tags}
-                    disabled={!identified || busy}
-                    defaultOpen={tagSearch === "edit"}
-                    onClose={() => {
-                      // Drop the deep link so a refresh does not reopen the dialog.
-                      if (tagSearch === "edit")
-                        void navigate({ search: keepSearch, replace: true });
-                    }}
-                    onSave={async (nextTags) => {
-                      const result = await tagsMutation.mutateAsync(nextTags);
-                      if (result._tag !== "Ok")
-                        throw new Error(
-                          stepResultMessage(result) ?? "Couldn't save the tag.",
-                        );
-                    }}
-                  />
+                  <s-stack direction="inline" gap="small-300">
+                    <s-chip>{workflow.tag}</s-chip>
+                  </s-stack>
+                  <s-text color="subdued">
+                    {itemTriggerLine(workflow.tag)}
+                  </s-text>
                 </s-stack>
               </s-box>
             }

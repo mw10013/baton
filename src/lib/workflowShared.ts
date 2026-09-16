@@ -2,12 +2,47 @@ import { Match } from "effect";
 
 import * as Domain from "@/lib/Domain";
 
-/** Comma-separated text → tag list; the Durable Object normalises again. */
-export const splitTags = (text: string) =>
-  text
-    .split(",")
-    .map((tag) => tag.trim())
-    .filter((tag) => tag.length > 0);
+/** `Workflow_name_uidx` is `collate nocase`, so names collide case-insensitively. */
+const MAX_NAME_LENGTH = 64;
+
+/**
+ * The name the Duplicate dialog offers: `<name> copy`, then `<name> copy 2`,
+ * and so on until one is free, with the base trimmed so the result fits
+ * `Domain.WorkflowName`. The merchant can overwrite it; prefilling a free one
+ * means the dialog does not open on a collision.
+ *
+ * `taken.length + 1` candidates against `taken.length` taken names always
+ * leave one free, so the fallback is unreachable.
+ */
+export const copyName = (name: string, taken: readonly string[]): string => {
+  const used = new Set(taken.map((existing) => existing.toLowerCase()));
+  const withSuffix = (suffix: string) =>
+    `${name.slice(0, MAX_NAME_LENGTH - suffix.length).trimEnd()}${suffix}`;
+  const candidates = [
+    withSuffix(" copy"),
+    ...Array.from({ length: taken.length }, (_, index) =>
+      withSuffix(` copy ${String(index + 2)}`),
+    ),
+  ];
+  return (
+    candidates.find((candidate) => !used.has(candidate.toLowerCase())) ??
+    withSuffix(` copy ${String(taken.length + 2)}`)
+  );
+};
+
+/**
+ * `TagTaken`, reported under the tag field at Create, Duplicate, and Edit tag
+ * — the three places the merchant types one. It names the holder so they can
+ * decide whether to change this tag or go retag the other workflow. Curly
+ * quotes around the tag, matching {@link itemTriggerLine}.
+ */
+export const tagTakenMessage = ({
+  tag,
+  workflowName,
+}: {
+  readonly tag: string;
+  readonly workflowName: string;
+}) => `\u201C${tag}\u201D is already ${workflowName}'s tag. Choose another.`;
 
 export const workflowResultMessage = Match.typeTags<
   Domain.WorkflowResult,
@@ -16,6 +51,7 @@ export const workflowResultMessage = Match.typeTags<
   Ok: () => null,
   NameTaken: () =>
     "A workflow with that name already exists. Choose another name.",
+  TagTaken: tagTakenMessage,
   NotFound: () => "That workflow no longer exists.",
   Limit: ({ limit }) =>
     `This shop has reached its limit of ${String(limit)} workflows.`,
@@ -37,36 +73,13 @@ export const deleteWorkflowResultMessage = Match.typeTags<
 export const DELETE_WORKFLOW_WARNING = "This can't be undone.";
 
 /**
- * The trigger line: what has to be true of an order for this
- * workflow to start. The workflow's tag is the whole selector, so a workflow
- * without one never starts and says so. The match sentence speaks from the
- * order's side ("a product tagged"), which is where "product tag" is the
- * right phrase.
+ * The trigger line: what has to be true of an order for this workflow to
+ * start. Every workflow has exactly one tag, so there is no empty case. The
+ * match sentence speaks from the order's side ("a product tagged"), which is
+ * where "product tag" is the right phrase.
  */
-export const itemTriggerLine = (tags: readonly string[]) => {
-  if (tags.length === 0)
-    return "No tag yet, so nothing reaches this workflow. Add one, then put it on your products in Shopify.";
-  const quoted = tags.map((tag) => `“${tag}”`);
-  const list =
-    quoted.length === 1
-      ? quoted[0]
-      : `${quoted.slice(0, -1).join(", ")} or ${quoted.at(-1) ?? ""}`;
-  return `Starts when an order contains a product tagged ${list ?? ""}. Orders placed before this workflow was turned on are skipped. Each tag starts one workflow.`;
-};
-
-/**
- * `TagTaken`, both surfaces: a tag routes an item to exactly one workflow, so
- * the refusal names the holder and the one move that clears it. Curly quotes
- * around the tag, matching {@link itemTriggerLine}.
- */
-export const tagTakenMessage = ({
-  tag,
-  workflowName,
-}: {
-  readonly tag: string;
-  readonly workflowName: string;
-}) =>
-  `\u201C${tag}\u201D already starts ${workflowName}. Turn ${workflowName} off first, or change this tag.`;
+export const itemTriggerLine = (tag: string) =>
+  `Starts when an order contains a product tagged \u201C${tag}\u201D. Orders placed before this workflow was turned on are skipped.`;
 
 export const changeActivatedAtResultMessage = Match.typeTags<
   Domain.ChangeActivatedAtResult,

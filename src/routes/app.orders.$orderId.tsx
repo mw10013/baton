@@ -142,7 +142,7 @@ const CHANGE_WORKFLOW_MODAL = "change-workflow";
  * these pages is English written by hand, and a half-localised one reads worse
  * than a consistent one.
  */
-const nameList = (names: readonly string[]) =>
+const nameList = (names: readonly string[]): string =>
   names.length <= 1
     ? (names[0] ?? "")
     : `${names.slice(0, -1).join(", ")} and ${names.at(-1) ?? ""}`;
@@ -155,9 +155,16 @@ const nameList = (names: readonly string[]) =>
  */
 const SPELLED = ["", "One", "Two", "Three", "Four", "Five"] as const;
 
-/** The ambiguous item's own sentence: which workflows matched, and the ask. */
-const ambiguitySentence = (names: readonly string[]) =>
-  `${SPELLED[names.length] ?? formatNumber(names.length)} workflows match this item: ${nameList(names)}. Choose one.`;
+/**
+ * The ambiguous item's own sentence: which workflows matched, and the ask.
+ * Each is named with its tag because the tag is what the merchant would go and
+ * change on the product; the names alone leave them guessing which string on
+ * this item pulled which workflow in.
+ */
+const ambiguitySentence = (matched: readonly Domain.Workflow[]) =>
+  `${SPELLED[matched.length] ?? formatNumber(matched.length)} workflows match this item: ${nameList(
+    matched.map((workflow) => `${workflow.name} (\u201C${workflow.tag}\u201D)`),
+  )}. Choose one.`;
 
 /**
  * The confirmation body. Done outranks started because it is the bigger loss:
@@ -1362,15 +1369,13 @@ function RouteComponent() {
             {itemRuns.length === 0 ? (
               <s-paragraph color={ambiguous ? undefined : "subdued"}>
                 {ambiguous
-                  ? ambiguitySentence(matched.map(({ name }) => name))
+                  ? ambiguitySentence(matched)
                   : "No workflow on this item."}
               </s-paragraph>
             ) : (
               <>
                 {ambiguous && (
-                  <s-paragraph>
-                    {ambiguitySentence(matched.map(({ name }) => name))}
-                  </s-paragraph>
+                  <s-paragraph>{ambiguitySentence(matched)}</s-paragraph>
                 )}
                 {itemRuns.map(renderRun)}
               </>

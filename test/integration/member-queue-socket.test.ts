@@ -149,7 +149,10 @@ const seedShopWithWork = async (shopName: string) => {
   );
   await seedOrder(shopName);
   const agent = env.SHOP_AGENT.getByName(shopName);
-  const created = await agent.createWorkflow({ name: "Engrave", tags: [] });
+  const created = await agent.createWorkflow({
+    name: "Engrave",
+    tag: "engrave",
+  });
   if (created._tag !== "Ok") throw new Error(created._tag);
   await agent.addStep({
     workflowId: created.workflow.id,

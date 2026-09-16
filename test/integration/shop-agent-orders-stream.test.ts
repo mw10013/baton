@@ -270,7 +270,7 @@ describe("runShopAgentOrdersStream with afterWrite", () => {
         };
         const workflow = yield* workflows.createWorkflow({
           name: Schema.decodeUnknownSync(Domain.WorkflowName)("Engrave"),
-          tags: Schema.decodeUnknownSync(Domain.WorkflowTags)(["engraved"]),
+          tag: Schema.decodeUnknownSync(Domain.WorkflowTag)("engraved"),
         });
         yield* workflows.addStep({
           workflowId: workflow.id,

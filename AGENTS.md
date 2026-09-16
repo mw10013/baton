@@ -1,16 +1,15 @@
 # AGENTS.md
 
 - Prefer JSDoc for comments for complex and subtle behavior the code cannot show. A JSDoc must carry its reasoning inline and must never reference files under `docs/` — research docs go stale and get deleted. External URLs and `refs/` paths are acceptable.
-- Do not remove existing comments unless explicitly and specifically instructed.
 - Do not git commit unless you are explicitly instructed.
 - Commit to `main`. Do not create branches.
+- Please remove all mannered prose
 
 ## Project
 
-- `Baton` is a Shopify app for made-to-order production workflows, built with TanStack Start, Cloudflare, and Effect v4.
+- `Baton` is a Shopify app for made-to-order production workflows, built with TanStack Start, Cloudflare, and Effect.
 - Route modules are in `src/routes/` and use file route conventions.
 - Per-shop state lives in the `ShopAgent` Durable Object (`src/lib/ShopAgent.ts`) and its private SQLite; shared Shopify session state (`ShopSession`) lives in D1.
-- Billing code is present but gated: `BILLING_ENABLED` is `"false"` in `wrangler.jsonc`, so `SubscriptionPlan` grants every shop the default plan without calling the Partner API.
 
 ## Port Configuration
 
@@ -105,14 +104,8 @@ Effect.logError(`ShopAgent.getShopInfo: shop=${this.name}: ${message}`).pipe(
 
 ## TypeScript Guidelines
 
-- Always follow functional programming principles and effect v4 patterns and idioms.
+- Always follow functional programming principles and effect patterns and idioms (refs/effect).
 - Prefer immutable data (const, readonly)
-- Use optional chaining (?.) and nullish coalescing (??) operators
-- For function arguments, prefer destructuring directly in the function signature if the destructuring is short and shallow (e.g., `({ data: { value }, otherArg })`). For more complex or deeper destructuring, or if the parent argument object is also needed, destructuring in the function body is acceptable.
-- Import modules as namespace objects and access members through them (`Effect.gen`, `Schema.String`, `Domain.MemoryKey`) — never cherry-pick individual functions (`import { gen } from "effect/Effect"`). For `effect`, use named module imports from the barrel (`import { Effect, Schema, Layer } from "effect"`) — the documented v4 style; those named exports are module namespaces. Use `import * as X` for local modules (`import * as Domain from "@/lib/Domain"`) and libraries without namespace re-exports (`import * as ShopifyApi from "@shopify/shopify-api"`).
-- **Strict mode enabled**: All strict TypeScript checks are on
-- **No unused variables/parameters**: Prefix with `_` if intentionally unused
-- **Type imports**: Use `import type` for type-only imports when possible
 - **Path aliases**: Use `@/*` for `src/*` imports (configured in tsconfig.json)
 
 ## SQL Guidelines

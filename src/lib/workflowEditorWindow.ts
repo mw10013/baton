@@ -42,10 +42,10 @@ const editorPath = (workflowId: string): string =>
  * spread `windowProps` onto the element and point buttons at
  * `windowProps.id` with `command="--show"`, or call `open`.
  *
- * `open` sets `src` and shows the window; `src` is reset to the standing
- * value on hide so a later `--show` from a plain Edit button does not reopen
- * with a `tag=edit` deep link a previous Edit tag click left behind.
- * Whatever hides the window — the admin X, Escape, or an Apply inside — fires
+ * `open` points the window at one workflow and shows it; `src` is reset to
+ * the standing value on hide, so a later `--show` from a plain Edit button
+ * reopens on the page's own workflow rather than on the last one `open`
+ * named. Whatever hides the window — the admin X, Escape, or an Apply inside — fires
  * `onHide`, so the page refetches: the editor writes straight to the draft
  * and the page must not keep showing a stale Draft tab.
  *
@@ -68,11 +68,10 @@ export const useWorkflowEditorWindow = ({
     readonly id: string;
     readonly src: string;
   };
-  readonly open: (workflowId: string, search?: string) => void;
+  readonly open: (workflowId: string) => void;
 } => {
   const ref = React.useRef<SAppWindowElement | null>(null);
-  const editorSrc = (id: string, search = "") =>
-    `${editorPath(id)}?chrome=window${search}`;
+  const editorSrc = (id: string) => `${editorPath(id)}?chrome=window`;
   /**
    * The standing `src` must be a real app URL with a query string even when
    * there is no workflow yet: with `about:blank` App Bridge rewrote a later
@@ -128,11 +127,11 @@ export const useWorkflowEditorWindow = ({
     };
   }, []);
 
-  const open = (id: string, search = "") => {
+  const open = (id: string) => {
     const element = ref.current;
     if (!element) return;
     shown.current = id;
-    element.src = editorSrc(id, search);
+    element.src = editorSrc(id);
     void element.show();
   };
 

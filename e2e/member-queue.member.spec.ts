@@ -82,19 +82,19 @@ const seedQueue = (
     [
       {
         name: "E2E Queue Ring",
-        tags: [RING_TAG],
+        tag: RING_TAG,
         steps: [{ name: "Cut", team: CUT_TEAM }],
       },
       {
         name: "E2E Queue Box",
-        tags: [BOX_TAG],
+        tag: BOX_TAG,
         steps: [{ name: "Pack", team: PACK_TEAM }],
       },
       ...(options.withBand === true
         ? [
             {
               name: "E2E Queue Band",
-              tags: [BAND_TAG],
+              tag: BAND_TAG,
               steps: [
                 { name: "Cut", team: CUT_TEAM },
                 { name: "Polish", team: PACK_TEAM },

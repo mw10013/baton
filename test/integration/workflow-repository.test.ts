@@ -8,7 +8,8 @@ import { describe, it } from "vitest";
 
 import * as Domain from "@/lib/Domain";
 import { runShopAgentMigrations } from "@/lib/ShopAgent";
-import { copyName, WorkflowRepository } from "@/lib/WorkflowRepository";
+import { WorkflowRepository } from "@/lib/WorkflowRepository";
+import { copyName } from "@/lib/workflowShared";
 
 const runInRepository = <A, E>(
   program: Effect.Effect<A, E, WorkflowRepository | SqlClient.SqlClient>,
@@ -31,13 +32,13 @@ const runInRepository = <A, E>(
       ),
   );
 
-const tagsOf = (
+const tagOf = (
   workflow: Domain.Workflow | Domain.WorkflowSummary | null | undefined,
-): readonly string[] | null => workflow?.tags ?? null;
+): string | null => workflow?.tag ?? null;
 
 const name = Schema.decodeUnknownSync(Domain.WorkflowName);
 const stepName = Schema.decodeUnknownSync(Domain.StepName);
-const tags = Schema.decodeUnknownSync(Domain.WorkflowTags);
+const tag = Schema.decodeUnknownSync(Domain.WorkflowTag);
 const teamId = Schema.decodeUnknownSync(Domain.TeamId);
 
 const T1 = { id: teamId("t1"), memberCount: 1 };
@@ -53,20 +54,19 @@ const editable = (found: Option.Option<Domain.WorkflowWithDraft>) => {
 };
 
 describe("Domain workflow schemas", () => {
-  it("WorkflowTags trims, lowercases, dedupes, and drops blanks", () => {
-    deepStrictEqual<readonly string[]>(
-      tags([" Engraving", "engraving", "", "Wood "]),
-      ["engraving", "wood"],
-    );
+  it("WorkflowTag trims and lowercases", () => {
+    strictEqual(tag("  Engraving "), "engraving");
   });
 
-  it("WorkflowTags rejects more than the tag limit", () => {
-    const over = Array.from(
-      { length: Domain.WorkflowLimits.maxTags + 1 },
-      (_, i) => String(i),
+  it("WorkflowTag rejects blank and over-long values", () => {
+    strictEqual(
+      Option.isNone(Schema.decodeUnknownOption(Domain.WorkflowTag)("   ")),
+      true,
     );
     strictEqual(
-      Option.isNone(Schema.decodeUnknownOption(Domain.WorkflowTags)(over)),
+      Option.isNone(
+        Schema.decodeUnknownOption(Domain.WorkflowTag)("x".repeat(256)),
+      ),
       true,
     );
   });
@@ -93,13 +93,13 @@ describe("WorkflowRepository", () => {
         const repo = yield* WorkflowRepository;
         const created = yield* repo.createWorkflow({
           name: name("Engraving"),
-          tags: tags(["Engraving", "engrave"]),
+          tag: tag("engraving"),
         });
         const fresh = yield* found(created.id);
-        deepStrictEqual(tagsOf(fresh.workflow), ["engraving", "engrave"]);
+        strictEqual(tagOf(fresh.workflow), "engraving");
         strictEqual(fresh.draft, null);
         const dupe = yield* repo
-          .createWorkflow({ name: name("engraving"), tags: tags([]) })
+          .createWorkflow({ name: name("engraving"), tag: tag("other") })
           .pipe(Effect.flip);
         strictEqual(dupe._tag, "WorkflowNameTakenError");
         const all = yield* repo.listWorkflows({ teams: ALL_TEAMS });
@@ -112,7 +112,7 @@ describe("WorkflowRepository", () => {
         );
         const again = yield* repo.createWorkflow({
           name: name("ENGRAVING"),
-          tags: tags([]),
+          tag: tag("engraving"),
         });
         strictEqual(again.id !== created.id, true);
         const missing = yield* repo
@@ -122,28 +122,39 @@ describe("WorkflowRepository", () => {
       }),
     ));
 
-  it("updateWorkflow renames; updateWorkflowTags retags the draft; distinguishes taken from missing", () =>
+  it("updateWorkflow renames; updateWorkflowTag retags the workflow immediately; distinguishes taken from missing", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
         const a = yield* repo.createWorkflow({
           name: name("A"),
-          tags: tags([]),
+          tag: tag("a"),
         });
-        yield* repo.createWorkflow({ name: name("B"), tags: tags([]) });
+        yield* repo.createWorkflow({ name: name("B"), tag: tag("b") });
         const updated = yield* repo.updateWorkflow({
           workflowId: a.id,
           name: name("A2"),
         });
         strictEqual(updated.name, "A2");
-        const retagged = yield* repo.updateWorkflowTags({
+        const retagged = yield* repo.updateWorkflowTag({
           workflowId: a.id,
-          tags: tags(["X"]),
+          tag: tag("X"),
         });
-        deepStrictEqual<readonly string[]>(retagged.tags, ["x"]);
-        strictEqual(retagged.workflowId, updated.id);
-        // Tags reach the workflow only through Apply.
-        deepStrictEqual(tagsOf(updated), []);
+        strictEqual(tagOf(retagged), "x");
+        strictEqual(retagged.id, updated.id);
+        // Immediate, like the rename: no draft is created for it.
+        strictEqual((yield* found(a.id)).draft, null);
+        // Re-saving the workflow's own tag is not a collision.
+        strictEqual(
+          tagOf(
+            yield* repo.updateWorkflowTag({ workflowId: a.id, tag: tag("x") }),
+          ),
+          "x",
+        );
+        const tagTaken = yield* repo
+          .updateWorkflowTag({ workflowId: a.id, tag: tag("B") })
+          .pipe(Effect.flip);
+        strictEqual(tagTaken._tag, "WorkflowTagTakenError");
         const taken = yield* repo
           .updateWorkflow({ workflowId: a.id, name: name("b") })
           .pipe(Effect.flip);
@@ -152,10 +163,10 @@ describe("WorkflowRepository", () => {
           .updateWorkflow({ workflowId: "nope", name: name("C") })
           .pipe(Effect.flip);
         strictEqual(missing._tag, "WorkflowNotFoundError");
-        const missingTags = yield* repo
-          .updateWorkflowTags({ workflowId: "nope", tags: tags([]) })
+        const missingTag = yield* repo
+          .updateWorkflowTag({ workflowId: "nope", tag: tag("z") })
           .pipe(Effect.flip);
-        strictEqual(missingTags._tag, "WorkflowNotFoundError");
+        strictEqual(missingTag._tag, "WorkflowNotFoundError");
       }),
     ));
 
@@ -171,17 +182,17 @@ describe("WorkflowRepository", () => {
           (i) =>
             repo.createWorkflow({
               name: name(`W${String(i)}`),
-              tags: tags([]),
+              tag: tag(`w${String(i)}`),
             }),
           { discard: true },
         );
         const over = yield* repo
-          .createWorkflow({ name: name("Over"), tags: tags([]) })
+          .createWorkflow({ name: name("Over"), tag: tag("over") })
           .pipe(Effect.flip);
         strictEqual(over._tag, "WorkflowLimitError");
         const [first] = yield* repo.listWorkflows({ teams: ALL_TEAMS });
         yield* repo.deleteWorkflow({ workflowId: first?.id ?? "" });
-        yield* repo.createWorkflow({ name: name("Over"), tags: tags([]) });
+        yield* repo.createWorkflow({ name: name("Over"), tag: tag("over") });
       }),
     ));
 
@@ -191,7 +202,7 @@ describe("WorkflowRepository", () => {
         const repo = yield* WorkflowRepository;
         const w = yield* repo.createWorkflow({
           name: name("A"),
-          tags: tags([]),
+          tag: tag("a"),
         });
         const add = (n: string) =>
           repo.addStep({
@@ -261,7 +272,7 @@ describe("WorkflowRepository", () => {
         const repo = yield* WorkflowRepository;
         const w = yield* repo.createWorkflow({
           name: name("A"),
-          tags: tags([]),
+          tag: tag("a"),
         });
         const add = (n: string) =>
           repo.addStep({
@@ -346,7 +357,7 @@ describe("WorkflowRepository", () => {
           workflows: [
             {
               name: name("Staged"),
-              tags: tags(["s"]),
+              tag: tag("s"),
               steps: [
                 {
                   name: stepName("a"),
@@ -360,7 +371,7 @@ describe("WorkflowRepository", () => {
             },
             {
               name: name("Linear"),
-              tags: tags(["l"]),
+              tag: tag("l"),
               steps: [
                 { name: stepName("x"), teamId: teamId("t1") },
                 { name: stepName("y"), teamId: teamId("t2") },
@@ -394,7 +405,7 @@ describe("WorkflowRepository", () => {
             workflows: [
               {
                 name: name("Bad"),
-                tags: tags([]),
+                tag: tag("bad"),
                 steps: [
                   { name: stepName("a"), teamId: teamId("t1"), stage: 1 },
                   { name: stepName("b"), teamId: teamId("t1"), stage: 3 },
@@ -416,12 +427,12 @@ describe("WorkflowRepository", () => {
           workflows: [
             {
               name: name("Live"),
-              tags: tags(["live"]),
+              tag: tag("live"),
               steps: [{ name: stepName("a"), teamId: teamId("t1") }],
             },
             {
               name: name("Lost"),
-              tags: tags(["lost"]),
+              tag: tag("lost"),
               steps: [{ name: stepName("a"), teamId: null }],
             },
           ],
@@ -447,7 +458,7 @@ describe("WorkflowRepository", () => {
             {
               name: name("Active but empty"),
               active: true,
-              tags: tags(["x"]),
+              tag: tag("x"),
               steps: [],
             },
           ]))._tag,
@@ -468,7 +479,7 @@ describe("WorkflowRepository", () => {
         const repo = yield* WorkflowRepository;
         const w = yield* repo.createWorkflow({
           name: name("A"),
-          tags: tags([]),
+          tag: tag("a"),
         });
         const s = yield* repo.addStep({
           workflowId: w.id,
@@ -531,11 +542,11 @@ describe("WorkflowRepository", () => {
         const repo = yield* WorkflowRepository;
         const a = yield* repo.createWorkflow({
           name: name("A"),
-          tags: tags([]),
+          tag: tag("a"),
         });
         const b = yield* repo.createWorkflow({
           name: name("B"),
-          tags: tags([]),
+          tag: tag("b"),
         });
         yield* repo.addStep({
           workflowId: a.id,
@@ -596,7 +607,7 @@ describe("WorkflowRepository", () => {
         const sql = yield* SqlClient.SqlClient;
         const w = yield* repo.createWorkflow({
           name: name("A"),
-          tags: tags([]),
+          tag: tag("a"),
         });
         const s = yield* repo.addStep({
           workflowId: w.id,
@@ -622,13 +633,13 @@ describe("WorkflowRepository", () => {
 });
 
 describe("WorkflowRepository duplicate", () => {
-  it("copies the steps and their stages, drops the tags, lands off with no draft", () =>
+  it("copies the steps and their stages under the given name and tag, lands off with no draft", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
         const w = yield* repo.createWorkflow({
           name: name("Engraved ring"),
-          tags: tags(["engraved"]),
+          tag: tag("engraved"),
         });
         yield* twoSteps(w.id);
         const [first] = editable(
@@ -647,10 +658,14 @@ describe("WorkflowRepository duplicate", () => {
           teams: ALL_TEAMS,
         });
 
-        const copy = yield* repo.duplicateWorkflow({ workflowId: w.id });
+        const copy = yield* repo.duplicateWorkflow({
+          workflowId: w.id,
+          name: name("Engraved ring copy"),
+          tag: tag("Engraved copy"),
+        });
         strictEqual(copy.name, "Engraved ring copy");
         strictEqual(Domain.isActive(copy), false);
-        deepStrictEqual(tagsOf(copy), []);
+        strictEqual(tagOf(copy), "engraved copy");
         const copied = Option.getOrThrow(
           yield* repo.getWorkflow({ workflowId: copy.id }),
         );
@@ -669,12 +684,32 @@ describe("WorkflowRepository duplicate", () => {
         );
         // The source is untouched and still on.
         strictEqual(Domain.isActive(source.workflow), true);
-        deepStrictEqual(tagsOf(source.workflow), ["engraved"]);
-        // A second duplicate takes the next free name.
-        const second = yield* repo.duplicateWorkflow({ workflowId: w.id });
-        strictEqual(second.name, "Engraved ring copy 2");
+        strictEqual(tagOf(source.workflow), "engraved");
+
+        const nameTaken = yield* repo
+          .duplicateWorkflow({
+            workflowId: w.id,
+            name: name("Engraved ring copy"),
+            tag: tag("free"),
+          })
+          .pipe(Effect.flip);
+        strictEqual(nameTaken._tag, "WorkflowNameTakenError");
+        const tagTaken = yield* repo
+          .duplicateWorkflow({
+            workflowId: w.id,
+            name: name("Another copy"),
+            tag: tag("Engraved"),
+          })
+          .pipe(Effect.flip);
+        strictEqual(tagTaken._tag, "WorkflowTagTakenError");
+        if (tagTaken._tag === "WorkflowTagTakenError")
+          strictEqual(tagTaken.workflowName, "Engraved ring");
         const missing = yield* repo
-          .duplicateWorkflow({ workflowId: "nope" })
+          .duplicateWorkflow({
+            workflowId: "nope",
+            name: name("Ghost"),
+            tag: tag("ghost"),
+          })
           .pipe(Effect.flip);
         strictEqual(missing._tag, "WorkflowNotFoundError");
       }),
@@ -682,103 +717,98 @@ describe("WorkflowRepository duplicate", () => {
 });
 
 /**
- * One active workflow per tag. Off workflows may share a tag freely — that is
- * what lets a replacement be built and applied before the swap — so the rule
- * bites at Apply on an on workflow and at Turn on, and nowhere else.
+ * The tag is the workflow's key: unique across the shop, on or off, and
+ * refused where the merchant typed it. Turn on and Apply never see it.
  */
 describe("WorkflowRepository tag uniqueness", () => {
-  /** An on workflow with two steps carrying `tag`. */
-  const live = (workflowName: string, tag: string) =>
-    Effect.gen(function* () {
-      const repo = yield* WorkflowRepository;
-      const w = yield* repo.createWorkflow({
-        name: name(workflowName),
-        tags: tags([tag]),
-      });
-      yield* twoSteps(w.id);
-      yield* repo.applyDraft({ workflowId: w.id, teams: ALL_TEAMS });
-      return yield* repo.setWorkflowActive({
-        workflowId: w.id,
-        active: true,
-        teams: ALL_TEAMS,
-      });
-    });
-
-  it("Apply refuses a tag an active sibling carries, but only while this one is on", () =>
+  it("createWorkflow refuses a tag another workflow holds, on or off, and names the holder", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
-        const holder = yield* live("Engraving", "engraved");
-        const other = yield* live("Rush", "rush");
-
-        // On, and the draft takes the holder's tag: refused, named.
-        yield* repo.updateWorkflowTags({
-          workflowId: other.id,
-          tags: tags(["Engraved"]),
+        const holder = yield* repo.createWorkflow({
+          name: name("Engraving"),
+          tag: tag("engraved"),
         });
+        // Folded on both sides: `Engraved` collides with `engraved`.
         const refused = yield* repo
-          .applyDraft({ workflowId: other.id, teams: ALL_TEAMS })
+          .createWorkflow({ name: name("Rush"), tag: tag("Engraved") })
           .pipe(Effect.flip);
         strictEqual(refused._tag, "WorkflowTagTakenError");
         if (refused._tag === "WorkflowTagTakenError") {
-          // Folded on both sides: `Engraved` collides with `engraved`.
           strictEqual(refused.tag, "engraved");
           strictEqual(refused.workflowName, holder.name);
         }
-
-        // Off, the same draft applies: an off workflow starts nothing.
-        yield* repo.setWorkflowActive({
-          workflowId: other.id,
-          active: false,
-          teams: ALL_TEAMS,
-        });
-        const applied = yield* repo.applyDraft({
-          workflowId: other.id,
-          teams: ALL_TEAMS,
-        });
-        deepStrictEqual(tagsOf(applied), ["engraved"]);
-      }),
-    ));
-
-  it("Turn on refuses a taken tag; turning the holder off first clears it", () =>
-    runInRepository(
-      Effect.gen(function* () {
-        const repo = yield* WorkflowRepository;
-        const holder = yield* live("Engraving", "engraved");
-        // A second workflow with the same tag, built off: legal to build.
-        const replacement = yield* repo.createWorkflow({
-          name: name("Engraving v2"),
-          tags: tags(["engraved"]),
-        });
-        yield* twoSteps(replacement.id);
-        yield* repo.applyDraft({
-          workflowId: replacement.id,
-          teams: ALL_TEAMS,
-        });
-
-        const refused = yield* repo
-          .setWorkflowActive({
-            workflowId: replacement.id,
-            active: true,
-            teams: ALL_TEAMS,
-          })
-          .pipe(Effect.flip);
-        strictEqual(refused._tag, "WorkflowTagTakenError");
-        if (refused._tag === "WorkflowTagTakenError")
-          strictEqual(refused.workflowName, holder.name);
-
-        // The swap: turn v1 off, then v2 on.
+        // Still refused once the holder is on; the rule does not depend on it.
+        yield* twoSteps(holder.id);
+        yield* repo.applyDraft({ workflowId: holder.id, teams: ALL_TEAMS });
         yield* repo.setWorkflowActive({
           workflowId: holder.id,
-          active: false,
-          teams: ALL_TEAMS,
-        });
-        const on = yield* repo.setWorkflowActive({
-          workflowId: replacement.id,
           active: true,
           teams: ALL_TEAMS,
         });
-        strictEqual(Domain.isActive(on), true);
+        strictEqual(
+          (yield* repo
+            .createWorkflow({ name: name("Rush"), tag: tag("engraved") })
+            .pipe(Effect.flip))._tag,
+          "WorkflowTagTakenError",
+        );
+      }),
+    ));
+
+  it("reports a taken name and a taken tag independently", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const repo = yield* WorkflowRepository;
+        yield* repo.createWorkflow({
+          name: name("Engraving"),
+          tag: tag("engraved"),
+        });
+        const sameName = yield* repo
+          .createWorkflow({ name: name("engraving"), tag: tag("rush") })
+          .pipe(Effect.flip);
+        strictEqual(sameName._tag, "WorkflowNameTakenError");
+        const sameTag = yield* repo
+          .createWorkflow({ name: name("Rush"), tag: tag("engraved") })
+          .pipe(Effect.flip);
+        strictEqual(sameTag._tag, "WorkflowTagTakenError");
+      }),
+    ));
+
+  it("Turn on and Apply ignore tags: two active workflows with different tags coexist", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const repo = yield* WorkflowRepository;
+        const live = (workflowName: string, value: string) =>
+          Effect.gen(function* () {
+            const w = yield* repo.createWorkflow({
+              name: name(workflowName),
+              tag: tag(value),
+            });
+            yield* twoSteps(w.id);
+            yield* repo.applyDraft({ workflowId: w.id, teams: ALL_TEAMS });
+            return yield* repo.setWorkflowActive({
+              workflowId: w.id,
+              active: true,
+              teams: ALL_TEAMS,
+            });
+          });
+        const first = yield* live("Engraving", "engraved");
+        const second = yield* live("Rush", "rush");
+        strictEqual(Domain.isActive(first), true);
+        strictEqual(Domain.isActive(second), true);
+
+        // Apply on an active workflow leaves the tag alone.
+        yield* repo.addStep({
+          workflowId: second.id,
+          name: stepName("Pack"),
+          teamId: T3.id,
+        });
+        const applied = yield* repo.applyDraft({
+          workflowId: second.id,
+          teams: ALL_TEAMS,
+        });
+        strictEqual(tagOf(applied), "rush");
+        strictEqual(applied.name, "Rush");
       }),
     ));
 });
@@ -826,31 +856,32 @@ const stepNames = (steps: readonly { readonly name: string }[]) =>
   steps.map((s) => s.name);
 
 describe("WorkflowRepository workflow and draft", () => {
-  it("create → no steps, its tags, no draft, off, not listed for starting; apply refused without a draft or steps; discard allowed", () =>
+  it("create → no steps, its tag, no draft, off, not listed for starting; apply refused without a draft or steps; discard allowed", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
         const w = yield* repo.createWorkflow({
           name: name("A"),
-          tags: tags(["a"]),
+          tag: tag("a"),
         });
         strictEqual(Domain.isActive(w), false);
-        deepStrictEqual(tagsOf(w), ["a"]);
+        strictEqual(tagOf(w), "a");
         const fresh = yield* found(w.id);
         deepStrictEqual(fresh.steps, []);
         strictEqual(fresh.draft, null);
         deepStrictEqual(yield* repo.listActiveWorkflowDetails(), []);
         const [row] = yield* repo.listWorkflows({ teams: ALL_TEAMS });
         deepStrictEqual(
-          [row?.hasDraft, row?.stepCount, tagsOf(row)],
-          [false, 0, ["a"]],
+          [row?.hasDraft, row?.stepCount, tagOf(row)],
+          [false, 0, "a"],
         );
         const noDraft = yield* repo
           .applyDraft({ workflowId: w.id, teams: ALL_TEAMS })
           .pipe(Effect.flip);
         strictEqual(noDraft._tag, "NoDraftError");
-        // The first change makes the draft; it starts from the workflow's tags.
-        yield* repo.updateWorkflowTags({ workflowId: w.id, tags: tags(["b"]) });
+        // The first change makes the draft; a tag write never does, so this
+        // one goes through `createDraft`.
+        yield* repo.createDraft({ workflowId: w.id });
         const empty = yield* repo
           .applyDraft({ workflowId: w.id, teams: ALL_TEAMS })
           .pipe(Effect.flip);
@@ -876,13 +907,13 @@ describe("WorkflowRepository workflow and draft", () => {
       }),
     ));
 
-  it("apply replaces the workflow's tags and steps with the draft's, carries step ids over, and deletes the draft", () =>
+  it("apply replaces the workflow's steps with the draft's, carries step ids over, and deletes the draft", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
         const w = yield* repo.createWorkflow({
           name: name("A"),
-          tags: tags(["a"]),
+          tag: tag("a"),
         });
         yield* twoSteps(w.id);
         const before = yield* found(w.id);
@@ -891,7 +922,7 @@ describe("WorkflowRepository workflow and draft", () => {
           workflowId: w.id,
           teams: ALL_TEAMS,
         });
-        deepStrictEqual(tagsOf(applied), ["a"]);
+        strictEqual(tagOf(applied), "a");
         strictEqual(Domain.isActive(applied), false);
         const after = yield* found(w.id);
         strictEqual(after.draft, null);
@@ -902,8 +933,8 @@ describe("WorkflowRepository workflow and draft", () => {
         );
         const [row] = yield* repo.listWorkflows({ teams: ALL_TEAMS });
         deepStrictEqual(
-          [row?.hasDraft, row?.stepCount, tagsOf(row)],
-          [false, 2, ["a"]],
+          [row?.hasDraft, row?.stepCount, tagOf(row)],
+          [false, 2, "a"],
         );
         // Off: still invisible to run creation until turned on.
         deepStrictEqual(yield* repo.listActiveWorkflowDetails(), []);
@@ -914,7 +945,7 @@ describe("WorkflowRepository workflow and draft", () => {
         });
         const [detail] = yield* repo.listActiveWorkflowDetails();
         deepStrictEqual(stepNames(detail?.steps ?? []), ["Cut", "Finish"]);
-        deepStrictEqual(tagsOf(detail?.workflow), ["a"]);
+        strictEqual(tagOf(detail?.workflow), "a");
         // No draft: apply and discard refuse. There is nothing to promote or throw away.
         strictEqual(
           (yield* repo
@@ -939,24 +970,17 @@ describe("WorkflowRepository workflow and draft", () => {
           "Finish",
           "Pack",
         ]);
-        deepStrictEqual<readonly string[]>(lazy.draft?.draft.tags ?? [], ["a"]);
         // The workflow itself is untouched until Apply.
         deepStrictEqual(stepNames(lazy.steps), ["Cut", "Finish"]);
-        // A tag write lands on that same draft rather than starting a second one.
-        yield* repo.updateWorkflowTags({
-          workflowId: w.id,
-          tags: tags(["b"]),
-        });
+        // A tag write lands on the workflow at once and leaves the draft alone.
+        yield* repo.updateWorkflowTag({ workflowId: w.id, tag: tag("b") });
         const retagged = yield* found(w.id);
-        deepStrictEqual<readonly string[]>(retagged.draft?.draft.tags ?? [], [
-          "b",
-        ]);
+        strictEqual(tagOf(retagged.workflow), "b");
         deepStrictEqual(stepNames(retagged.draft?.steps ?? []), [
           "Cut",
           "Finish",
           "Pack",
         ]);
-        deepStrictEqual(tagsOf(retagged.workflow), ["a"]);
         // A step id from the live workflow starts the draft and edits its
         // copy; an id neither side carries is still not found.
         const [first] = after.steps;
@@ -981,13 +1005,13 @@ describe("WorkflowRepository workflow and draft", () => {
       }),
     ));
 
-  it("createDraft copies the workflow's tags and steps under their own ids and is idempotent; edits never touch the workflow", () =>
+  it("createDraft copies the workflow's steps under their own ids and is idempotent; edits never touch the workflow", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
         const w = yield* repo.createWorkflow({
           name: name("A"),
-          tags: tags(["a"]),
+          tag: tag("a"),
         });
         yield* twoSteps(w.id);
         yield* repo.applyDraft({ workflowId: w.id, teams: ALL_TEAMS });
@@ -997,7 +1021,6 @@ describe("WorkflowRepository workflow and draft", () => {
           teams: ALL_TEAMS,
         });
         const draft = yield* repo.createDraft({ workflowId: w.id });
-        deepStrictEqual<readonly string[]>(draft.tags, ["a"]);
         const again = yield* repo.createDraft({ workflowId: w.id });
         strictEqual(again.createdAt, draft.createdAt);
         const forked = yield* found(w.id);
@@ -1037,17 +1060,13 @@ describe("WorkflowRepository workflow and draft", () => {
           name: stepName("Label"),
           teamId: T1.id,
         });
-        yield* repo.updateWorkflowTags({ workflowId: w.id, tags: tags(["b"]) });
         const edited = yield* found(w.id);
         deepStrictEqual(
           edited.draft?.steps.map((s) => `${s.name}${String(s.stage)}`),
           ["Finish1", "Cut22", "Pack3", "Label3"],
         );
-        deepStrictEqual<readonly string[]>(edited.draft?.draft.tags ?? [], [
-          "b",
-        ]);
         deepStrictEqual(stepNames(edited.steps), ["Cut", "Finish"]);
-        deepStrictEqual(tagsOf(edited.workflow), ["a"]);
+        strictEqual(tagOf(edited.workflow), "a");
         const [detail] = yield* repo.listActiveWorkflowDetails();
         deepStrictEqual(stepNames(detail?.steps ?? []), ["Cut", "Finish"]);
         const missing = yield* repo
@@ -1064,7 +1083,7 @@ describe("WorkflowRepository workflow and draft", () => {
         const sql = yield* SqlClient.SqlClient;
         const w = yield* repo.createWorkflow({
           name: name("A"),
-          tags: tags(["a"]),
+          tag: tag("a"),
         });
         yield* twoSteps(w.id);
         yield* repo.applyDraft({ workflowId: w.id, teams: ALL_TEAMS });
@@ -1079,13 +1098,14 @@ describe("WorkflowRepository workflow and draft", () => {
           name: stepName("Pack"),
           teamId: T3.id,
         });
-        yield* repo.updateWorkflowTags({ workflowId: w.id, tags: tags(["b"]) });
+        // The tag lands on the workflow immediately; Apply does not carry it.
+        yield* repo.updateWorkflowTag({ workflowId: w.id, tag: tag("b") });
         const applied = yield* repo.applyDraft({
           workflowId: w.id,
           teams: ALL_TEAMS,
         });
         strictEqual(Domain.isActive(applied), true);
-        deepStrictEqual(tagsOf(applied), ["b"]);
+        strictEqual(tagOf(applied), "b");
         const after = yield* found(w.id);
         strictEqual(after.draft, null);
         deepStrictEqual(stepNames(after.steps), ["Cut", "Finish", "Pack"]);
@@ -1103,9 +1123,8 @@ describe("WorkflowRepository workflow and draft", () => {
           name: stepName("Ship"),
           teamId: T3.id,
         });
-        yield* repo.updateWorkflowTags({ workflowId: w.id, tags: tags(["c"]) });
         const discarded = yield* repo.discardDraft({ workflowId: w.id });
-        deepStrictEqual(tagsOf(discarded), ["b"]);
+        strictEqual(tagOf(discarded), "b");
         strictEqual(Domain.isActive(discarded), true);
         const back = yield* found(w.id);
         strictEqual(back.draft, null);
@@ -1125,7 +1144,7 @@ describe("WorkflowRepository workflow and draft", () => {
         const repo = yield* WorkflowRepository;
         const w = yield* repo.createWorkflow({
           name: name("A"),
-          tags: tags([]),
+          tag: tag("a"),
         });
         yield* twoSteps(w.id);
         yield* repo.applyDraft({ workflowId: w.id, teams: ALL_TEAMS });
@@ -1173,7 +1192,7 @@ describe("WorkflowRepository workflow and draft", () => {
           repo.setWorkflowActive({ workflowId, active: true, teams });
         const empty = yield* repo.createWorkflow({
           name: name("Empty"),
-          tags: tags([]),
+          tag: tag("empty"),
         });
         strictEqual(
           (yield* on(empty.id).pipe(Effect.flip))._tag,
@@ -1188,7 +1207,7 @@ describe("WorkflowRepository workflow and draft", () => {
 
         const a = yield* repo.createWorkflow({
           name: name("A"),
-          tags: tags(["a"]),
+          tag: tag("a"),
         });
         yield* twoSteps(a.id);
         yield* repo.applyDraft({ workflowId: a.id, teams: ALL_TEAMS });
@@ -1212,7 +1231,7 @@ describe("WorkflowRepository workflow and draft", () => {
         // A team delete nulls the pointer; turn on is refused until assigned.
         const lost = yield* repo.createWorkflow({
           name: name("Lost"),
-          tags: tags(["lost"]),
+          tag: tag("lost"),
         });
         yield* twoSteps(lost.id);
         yield* repo.applyDraft({ workflowId: lost.id, teams: ALL_TEAMS });
@@ -1234,7 +1253,7 @@ describe("WorkflowRepository workflow and draft", () => {
         const repo = yield* WorkflowRepository;
         const pack = (yield* repo.createWorkflow({
           name: name("Pack"),
-          tags: tags(["pack"]),
+          tag: tag("pack"),
         })).id;
         yield* twoSteps(pack);
         yield* repo.applyDraft({ workflowId: pack, teams: ALL_TEAMS });
@@ -1296,7 +1315,7 @@ describe("WorkflowRepository workflow and draft", () => {
         const repo = yield* WorkflowRepository;
         const w = yield* repo.createWorkflow({
           name: name("A"),
-          tags: tags([]),
+          tag: tag("a"),
         });
         const countT1 = () =>
           Effect.map(
@@ -1369,7 +1388,7 @@ describe("WorkflowRepository workflow and draft", () => {
       }),
     ));
 
-  it("seed: active defaults, explicit off, pending draft with its own tags, empty steps with no draft, unassigned", () =>
+  it("seed: active defaults, explicit off, pending draft, empty steps with no draft, unassigned, duplicate tag refused", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -1379,32 +1398,29 @@ describe("WorkflowRepository workflow and draft", () => {
         });
         yield* repo.replaceWorkflows({
           workflows: [
-            { name: name("On"), tags: tags(["on"]), steps: [step("a", T1.id)] },
+            { name: name("On"), tag: tag("on"), steps: [step("a", T1.id)] },
             {
               name: name("Off"),
               active: false,
-              tags: tags(["off"]),
+              tag: tag("off"),
               steps: [step("a", T1.id)],
             },
             {
               name: name("Pending"),
-              tags: tags(["p"]),
+              tag: tag("p"),
               steps: [step("a", T1.id)],
-              draft: {
-                tags: tags(["p2"]),
-                steps: [step("a", T1.id), step("b", T2.id)],
-              },
+              draft: { steps: [step("a", T1.id), step("b", T2.id)] },
             },
             {
-              name: name("Same tags"),
-              tags: tags(["s"]),
+              name: name("Second draft"),
+              tag: tag("s"),
               steps: [step("a", T1.id)],
               draft: { steps: [step("a", T2.id)] },
             },
-            { name: name("Empty"), tags: tags(["e"]), steps: [] },
+            { name: name("Empty"), tag: tag("e"), steps: [] },
             {
               name: name("Lost"),
-              tags: tags(["g"]),
+              tag: tag("g"),
               steps: [{ name: stepName("a"), teamId: null }],
             },
           ],
@@ -1417,15 +1433,15 @@ describe("WorkflowRepository workflow and draft", () => {
             w.hasDraft,
             w.stepCount,
             w.needsAttention,
-            tagsOf(w),
+            tagOf(w),
           ]),
           [
-            ["Empty", false, false, 0, false, ["e"]],
-            ["Lost", false, false, 1, true, ["g"]],
-            ["Off", false, false, 1, false, ["off"]],
-            ["On", true, false, 1, false, ["on"]],
-            ["Pending", true, true, 1, false, ["p"]],
-            ["Same tags", true, true, 1, false, ["s"]],
+            ["Empty", false, false, 0, false, "e"],
+            ["Lost", false, false, 1, true, "g"],
+            ["Off", false, false, 1, false, "off"],
+            ["On", true, false, 1, false, "on"],
+            ["Pending", true, true, 1, false, "p"],
+            ["Second draft", true, true, 1, false, "s"],
           ],
         );
         const pending = rows.find((w) => w.name === "Pending");
@@ -1435,15 +1451,6 @@ describe("WorkflowRepository workflow and draft", () => {
           "a",
           "b",
         ]);
-        deepStrictEqual<readonly string[]>(
-          pendingDetail.draft?.draft.tags ?? [],
-          ["p2"],
-        );
-        const same = rows.find((w) => w.name === "Same tags");
-        deepStrictEqual<readonly string[]>(
-          (yield* found(same?.id ?? "")).draft?.draft.tags ?? [],
-          ["s"],
-        );
         const empty = rows.find((w) => w.name === "Empty");
         const emptyDetail = yield* found(empty?.id ?? "");
         deepStrictEqual(emptyDetail.steps, []);
@@ -1452,14 +1459,27 @@ describe("WorkflowRepository workflow and draft", () => {
           (yield* repo.listActiveWorkflowDetails())
             .map(({ workflow }) => workflow.name)
             .toSorted(),
-          ["On", "Pending", "Same tags"],
+          ["On", "Pending", "Second draft"],
         );
         // An active fixture with no steps is refused.
         strictEqual(
           (yield* repo
             .replaceWorkflows({
               workflows: [
-                { name: name("Bad"), active: true, tags: tags([]), steps: [] },
+                { name: name("Bad"), active: true, tag: tag("bad"), steps: [] },
+              ],
+            })
+            .pipe(Effect.flip))._tag,
+          "WorkflowRepositoryError",
+        );
+        // So is a fixture whose two workflows claim one tag: the unique index
+        // would refuse it anyway, naming neither.
+        strictEqual(
+          (yield* repo
+            .replaceWorkflows({
+              workflows: [
+                { name: name("One"), tag: tag("shared"), steps: [] },
+                { name: name("Two"), tag: tag("shared"), steps: [] },
               ],
             })
             .pipe(Effect.flip))._tag,

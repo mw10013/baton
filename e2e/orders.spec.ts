@@ -114,7 +114,7 @@ test("the orders index names the team an open order is waiting on", async ({
     [
       {
         name: "E2E Ring",
-        tags: ["e2e-ring"],
+        tag: "e2e-ring",
         steps: [{ name: "Cut", team: TEAM }],
       },
     ],
@@ -165,7 +165,7 @@ test("the orders index searches by order number and clears back to the list", as
     [
       {
         name: "E2E Ring",
-        tags: ["e2e-ring"],
+        tag: "e2e-ring",
         steps: [{ name: "Cut", team: TEAM }],
       },
     ],
@@ -243,7 +243,7 @@ test("the merchant marks a step done, reopens it, and blocks the run", async ({
     [
       {
         name: "E2E Manage Cuff",
-        tags: ["e2e-manage"],
+        tag: "e2e-manage",
         steps: [
           { name: "Cut", team: CUT_TEAM },
           { name: "Polish", team: POLISH_TEAM },
@@ -307,7 +307,7 @@ test("the merchant cannot reopen a step whose next stage is done", async ({
     [
       {
         name: "E2E Reopen Cuff",
-        tags: ["e2e-reopen"],
+        tag: "e2e-reopen",
         steps: [
           { name: "Cut", team: CUT_TEAM },
           { name: "Polish", team: POLISH_TEAM },
@@ -356,7 +356,7 @@ test("the merchant blocks a run with a reason and unblocks it", async ({
     [
       {
         name: "E2E Block Cuff",
-        tags: ["e2e-block"],
+        tag: "e2e-block",
         steps: [{ name: "Cut", team: TEAM }],
       },
     ],
@@ -417,12 +417,12 @@ test("an item matching two workflows waits for the merchant to choose, then chan
     [
       {
         name: ENGRAVING,
-        tags: ["e2e-engraved"],
+        tag: "e2e-engraved",
         steps: [{ name: "Engrave", team: TEAM }],
       },
       {
         name: RUSH,
-        tags: ["e2e-rush"],
+        tag: "e2e-rush",
         steps: [{ name: "Expedite", team: TEAM }],
       },
     ],
@@ -459,11 +459,12 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   await expect(frame.locator('s-page[heading="#9401"]')).toBeVisible();
 
   /* The picker is open with no disclosure to press and offers exactly the two
-     that matched — the item's sentence names them both. */
+     that matched — the item's sentence names them both, with the tag that
+     pulled each one in. */
   const item = frame.locator('s-section[accessibilityLabel="E2E Twice"]');
   await expect(
     item.getByText(
-      `Two workflows match this item: ${ENGRAVING} and ${RUSH}. Choose one.`,
+      `Two workflows match this item: ${ENGRAVING} (\u201Ce2e-engraved\u201D) and ${RUSH} (\u201Ce2e-rush\u201D). Choose one.`,
       { exact: true },
     ),
   ).toBeVisible();

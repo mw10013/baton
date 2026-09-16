@@ -18,6 +18,7 @@ import {
   AppliesSince,
   WorkflowSwitch,
 } from "@/components/WorkflowSwitch";
+import * as WorkflowTag from "@/components/WorkflowTag";
 import * as Domain from "@/lib/Domain";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
@@ -25,6 +26,7 @@ import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
 import { useWorkflowEditorWindow } from "@/lib/workflowEditorWindow";
 import {
+  copyName,
   DELETE_WORKFLOW_WARNING,
   deleteWorkflowResultMessage,
   itemTriggerLine,
@@ -45,6 +47,7 @@ const validateSearch = ({
   tab === "draft" ? { tab } : {};
 
 const RENAME_MODAL = "rename-workflow";
+const DUPLICATE_MODAL = "duplicate-workflow";
 const DELETE_MODAL = "delete-workflow";
 
 const decodeWorkflowResult = Schema.decodeUnknownPromise(
@@ -55,13 +58,8 @@ const decodeDeleteWorkflowResult = Schema.decodeUnknownPromise(
 );
 
 /** The Turn on dialog's first line: the rule that will start runs once the switch is on. */
-const turnOnBody = (workflow: Domain.Workflow) => {
-  if (workflow.tags.length === 0)
-    return "This workflow has no tag, so nothing can reach it. Add one, then put it on your products.";
-  return `Every order placed from now with a line item tagged ${workflow.tags
-    .map((tag) => `“${tag}”`)
-    .join(" or ")} will start a run of this workflow.`;
-};
+const turnOnBody = (workflow: Domain.Workflow) =>
+  `Every order placed from now with a line item tagged \u201C${workflow.tag}\u201D will start a run of this workflow.`;
 
 /** Loader read for the same reason as the index's: a definition is configuration one person edits. */
 const getLoaderData = createServerFn({ method: "GET" })
@@ -103,6 +101,9 @@ function RouteComponent() {
   const [banner, setBanner] = React.useState<string | null>(null);
   const [name, setName] = React.useState(detail?.workflow.name ?? "");
   const [nameError, setNameError] = React.useState<string | null>(null);
+  const [copy, setCopy] = React.useState({ name: "", tag: "", dirty: false });
+  const [copyNameError, setCopyNameError] = React.useState<string | null>(null);
+  const [copyTagError, setCopyTagError] = React.useState<string | null>(null);
 
   const invalidate = () => router.invalidate({ sync: true });
 
@@ -143,14 +144,29 @@ function RouteComponent() {
 
   const duplicateMutation = useMutation({
     mutationFn: () =>
-      call((stub) => stub.duplicateWorkflow({ workflowId })).then(
-        decodeWorkflowResult,
-      ),
+      call((stub) =>
+        stub.duplicateWorkflow({
+          workflowId,
+          name: copy.name,
+          tag: copy.tag,
+        }),
+      ).then(decodeWorkflowResult),
     onSuccess: async (result) => {
+      // Routed by `_tag` rather than into the banner: the copy has two keys
+      // and the merchant typed both, so the refusal belongs under the field.
+      if (result._tag === "NameTaken") {
+        setCopyNameError(workflowResultMessage(result));
+        return;
+      }
+      if (result._tag === "TagTaken") {
+        setCopyTagError(workflowResultMessage(result));
+        return;
+      }
       if (result._tag !== "Ok") {
         setBanner(workflowResultMessage(result));
         return;
       }
+      await shopify.modal.hide(DUPLICATE_MODAL);
       shopify.toast.show(`Copied to “${result.workflow.name}”.`);
       await navigate({
         to: "/app/workflows/$workflowId/edit",
@@ -159,6 +175,23 @@ function RouteComponent() {
     },
     onError,
   });
+
+  /**
+   * The copy's tag mirrors its name until the merchant's first keystroke in
+   * the tag field, the same rule the create dialog follows: the fold is
+   * `trim().toLowerCase()`, what `Domain.WorkflowTag` applies at the schema
+   * boundary, so what they see is what will be stored.
+   */
+  const seedDuplicateForm = () => {
+    const suggested = copyName(detail?.workflow.name ?? "", []);
+    setCopy({
+      name: suggested,
+      tag: suggested.trim().toLowerCase(),
+      dirty: false,
+    });
+    setCopyNameError(null);
+    setCopyTagError(null);
+  };
 
   const deleteMutation = useMutation({
     mutationFn: () =>
@@ -209,7 +242,6 @@ function RouteComponent() {
 
   const showingDraft = tab === "draft" && draft !== null;
   const shownSteps = showingDraft ? draft.steps : steps;
-  const shownTags = showingDraft ? draft.draft.tags : workflow.tags;
   const blocker = turnOnBlocker(steps);
 
   const tabButton = (label: string, draftTab: boolean) => (
@@ -235,9 +267,7 @@ function RouteComponent() {
       ) : (
         <s-badge slot="accessory">Off</s-badge>
       )}
-      {workflow.tags.length > 0 && (
-        <s-badge slot="accessory">{workflow.tags.join(", ")}</s-badge>
-      )}
+      <s-badge slot="accessory">{workflow.tag}</s-badge>
       <s-button
         slot="primary-action"
         variant="primary"
@@ -264,11 +294,8 @@ function RouteComponent() {
         </s-button>
         <s-button
           icon="duplicate"
-          loading={duplicateMutation.isPending}
-          disabled={!identified || duplicateMutation.isPending}
-          onClick={() => {
-            duplicateMutation.mutate();
-          }}
+          commandFor={DUPLICATE_MODAL}
+          command="--show"
         >
           Duplicate
         </s-button>
@@ -330,24 +357,25 @@ function RouteComponent() {
               >
                 <s-stack gap="small-300">
                   <s-text type="strong">Tag</s-text>
-                  {shownTags.length > 0 && (
-                    <s-stack direction="inline" gap="small-300">
-                      {shownTags.map((tag) => (
-                        <s-chip key={tag}>{tag}</s-chip>
-                      ))}
-                    </s-stack>
-                  )}
-                  <s-text color="subdued">{itemTriggerLine(shownTags)}</s-text>
-                  {/* Editing happens in one place, the editor; navigating there creates no draft, only saving does. */}
-                  <s-box>
-                    <s-button
-                      onClick={() => {
-                        editor.open(workflowId, "&tag=edit");
-                      }}
-                    >
-                      Edit tag
-                    </s-button>
-                  </s-box>
+                  <s-text color="subdued">
+                    {itemTriggerLine(workflow.tag)}
+                  </s-text>
+                  {/* The tag is not drafted, so both tabs show the workflow's
+                      own and the write lands immediately. */}
+                  <WorkflowTag.WorkflowTag
+                    tag={workflow.tag}
+                    disabled={!identified}
+                    onSave={(tag) =>
+                      call((stub) =>
+                        stub.updateWorkflowTag({ workflowId, tag }),
+                      )
+                        .then(decodeWorkflowResult)
+                        .then(async (result) => {
+                          if (result._tag === "Ok") await invalidate();
+                          return result;
+                        })
+                    }
+                  />
                 </s-stack>
               </s-box>
             }
@@ -392,6 +420,64 @@ function RouteComponent() {
           }}
         >
           Save
+        </s-button>
+      </s-modal>
+
+      <s-modal
+        id={DUPLICATE_MODAL}
+        heading="Duplicate workflow"
+        onShow={seedDuplicateForm}
+      >
+        <s-stack gap="base">
+          <s-text-field
+            label="Name"
+            value={copy.name}
+            maxLength={64}
+            {...(copyNameError === null ? {} : { error: copyNameError })}
+            onInput={(event) => {
+              const next = event.currentTarget.value;
+              setCopy((current) => ({
+                ...current,
+                name: next,
+                ...(current.dirty ? {} : { tag: next.trim().toLowerCase() }),
+              }));
+              setCopyNameError(null);
+            }}
+          />
+          <s-text-field
+            label="Tag"
+            details="Put this tag on the products the copy should build."
+            value={copy.tag}
+            maxLength={255}
+            {...(copyTagError === null ? {} : { error: copyTagError })}
+            onInput={(event) => {
+              const next = event.currentTarget.value;
+              setCopy((current) => ({ ...current, tag: next, dirty: true }));
+              setCopyTagError(null);
+            }}
+          />
+        </s-stack>
+        <s-button
+          slot="secondary-actions"
+          commandFor={DUPLICATE_MODAL}
+          command="--hide"
+        >
+          Cancel
+        </s-button>
+        <s-button
+          slot="primary-action"
+          variant="primary"
+          loading={duplicateMutation.isPending}
+          disabled={
+            !identified ||
+            copy.name.trim().length === 0 ||
+            copy.tag.trim().length === 0
+          }
+          onClick={() => {
+            duplicateMutation.mutate();
+          }}
+        >
+          Duplicate
         </s-button>
       </s-modal>
 
