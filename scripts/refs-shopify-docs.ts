@@ -68,6 +68,16 @@ const SECTION_SOURCES: Record<DocSection, readonly SectionSource[]> = {
   ],
   api: [
     {
+      label: "api-admin-extensions",
+      kind: "sitemap-prefix",
+      prefix: `${ORIGIN}/docs/api/admin-extensions/latest`,
+    },
+    {
+      label: "api-admin-rest",
+      kind: "sitemap-prefix",
+      prefix: `${ORIGIN}/docs/api/admin-rest`,
+    },
+    {
       label: "api-usage",
       kind: "sitemap-prefix",
       prefix: `${ORIGIN}/docs/api/usage`,
@@ -78,6 +88,11 @@ const SECTION_SOURCES: Record<DocSection, readonly SectionSource[]> = {
       prefix: `${ORIGIN}/docs/api/app-home`,
     },
     {
+      label: "api-app-home-ui-extension",
+      kind: "sitemap-prefix",
+      prefix: `${ORIGIN}/docs/api/app-home-ui-extension/latest`,
+    },
+    {
       label: "api-polaris",
       kind: "sitemap-prefix",
       prefix: `${ORIGIN}/docs/api/polaris`,
@@ -86,6 +101,11 @@ const SECTION_SOURCES: Record<DocSection, readonly SectionSource[]> = {
       label: "api-shopify-cli",
       kind: "sitemap-prefix",
       prefix: `${ORIGIN}/docs/api/shopify-cli`,
+    },
+    {
+      label: "api-shopify-app-react-router",
+      kind: "sitemap-prefix",
+      prefix: `${ORIGIN}/docs/api/shopify-app-react-router/latest`,
     },
     {
       label: "api-partner",
