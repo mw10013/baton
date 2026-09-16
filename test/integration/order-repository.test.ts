@@ -682,6 +682,28 @@ describe("OrderRepository.listOrders waitingOn", () => {
     deepStrictEqual(waitingOf(page, "#1001"), []);
   });
 
+  /**
+   * A blocked run's ready step still satisfies `readyWhere` (the queue keeps
+   * showing it), but the team cannot move it, so the cell and the filter both
+   * leave the team out; `RunCounts.blocked` is where that run is counted.
+   */
+  it("leaves out a blocked run, which is counted as blocked instead", async () => {
+    const { page, filtered } = await runInRepository(
+      Effect.gen(function* () {
+        const { sql, list } = yield* waitingFixture;
+        yield* sql`update WorkflowRun set flag = 'blocked', flagAt = 1 where id = 'run-4-1'`;
+        return {
+          page: yield* list(),
+          filtered: yield* list(aTeamId("team-cut")),
+        };
+      }),
+    );
+    deepStrictEqual(waitingOf(page, "#1004"), []);
+    deepStrictEqual(waitingOf(page, "#1003"), [aTeamId("team-cut")]);
+    strictEqual(rowOf(filtered, "#1004"), undefined);
+    strictEqual(rowOf(filtered, "#1003")?.order.name, "#1003");
+  });
+
   it("leaves out a team that has left the roster, which is attention instead", async () => {
     const page = await runInRepository(
       Effect.gen(function* () {

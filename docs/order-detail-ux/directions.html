@@ -1,0 +1,1985 @@
+<title>Order Detail, Four Ways</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Inter:wght@400;500;600&display=swap"
+/>
+<style>
+  :root {
+    --ground: #eef1ed;
+    --surface: #ffffff;
+    --surface-2: #f6f8f5;
+    --surface-3: #e7ebe6;
+    --ink: #16211e;
+    --ink-2: #5b6764;
+    --ink-3: #7e8a86;
+    --rule: #dbe0da;
+    --rule-strong: #c2cac1;
+    --accent: #1f5e5b;
+    --accent-soft: #dcebe8;
+    --ok: #0b6b45;
+    --ok-bg: #dbf1e5;
+    --warn: #6a4805;
+    --warn-bg: #faeac4;
+    --crit: #9f251c;
+    --crit-bg: #fadfdc;
+    --info: #1e4d8c;
+    --info-bg: #dde8f7;
+    --shadow:
+      0 1px 2px rgba(20, 33, 30, 0.08), 0 6px 18px -12px rgba(20, 33, 30, 0.35);
+    --doc: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --ui: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #111614;
+      --surface: #1a201d;
+      --surface-2: #222a26;
+      --surface-3: #2b332e;
+      --ink: #e7ede9;
+      --ink-2: #9ba8a3;
+      --ink-3: #7d8a85;
+      --rule: #2f3833;
+      --rule-strong: #414b45;
+      --accent: #74bfb4;
+      --accent-soft: #1b312e;
+      --ok: #7fd3a6;
+      --ok-bg: #16301f;
+      --warn: #e8c780;
+      --warn-bg: #342a12;
+      --crit: #f0a098;
+      --crit-bg: #3a1e1b;
+      --info: #9cc3f2;
+      --info-bg: #17263a;
+      --shadow:
+        0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 24px -14px rgba(0, 0, 0, 0.8);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #111614;
+    --surface: #1a201d;
+    --surface-2: #222a26;
+    --surface-3: #2b332e;
+    --ink: #e7ede9;
+    --ink-2: #9ba8a3;
+    --ink-3: #7d8a85;
+    --rule: #2f3833;
+    --rule-strong: #414b45;
+    --accent: #74bfb4;
+    --accent-soft: #1b312e;
+    --ok: #7fd3a6;
+    --ok-bg: #16301f;
+    --warn: #e8c780;
+    --warn-bg: #342a12;
+    --crit: #f0a098;
+    --crit-bg: #3a1e1b;
+    --info: #9cc3f2;
+    --info-bg: #17263a;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 24px -14px rgba(0, 0, 0, 0.8);
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--doc);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 78rem;
+    margin: 0 auto;
+    padding-inline: 20px;
+    padding-block: 0;
+  }
+
+  .col {
+    max-width: 42rem;
+  }
+
+  /* ---------- document typography ---------- */
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    text-wrap: balance;
+    margin: 0;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+  }
+  h1 {
+    font-size: clamp(2rem, 5.5vw, 3.1rem);
+    line-height: 1.04;
+  }
+  h2 {
+    font-size: clamp(1.35rem, 3.2vw, 1.75rem);
+    line-height: 1.15;
+  }
+  h3 {
+    font-size: 1.05rem;
+    line-height: 1.3;
+  }
+  p {
+    margin: 0;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0;
+  }
+
+  .lede {
+    font-size: 1.12rem;
+    color: var(--ink-2);
+  }
+
+  a {
+    color: var(--accent);
+    text-underline-offset: 3px;
+  }
+
+  /* ---------- masthead ---------- */
+
+  header.masthead {
+    border-bottom: 1px solid var(--rule);
+    background: var(--surface);
+  }
+
+  .masthead-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding-block: 52px 44px;
+  }
+
+  .masthead h1 span {
+    color: var(--accent);
+  }
+
+  .rule-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 26px;
+    padding-top: 6px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--ink-3);
+  }
+
+  /* ---------- sticky direction nav ---------- */
+
+  nav.jump {
+    position: sticky;
+    top: env(safe-area-inset-top, 0px);
+    z-index: 20;
+    background: color-mix(in srgb, var(--ground) 88%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .jump-inner {
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    padding-block: 8px;
+    scrollbar-width: none;
+  }
+  .jump-inner::-webkit-scrollbar {
+    display: none;
+  }
+
+  .jump a {
+    flex: none;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 7px;
+    padding: 5px 11px;
+    border-radius: 7px;
+    font-size: 0.86rem;
+    text-decoration: none;
+    color: var(--ink-2);
+    white-space: nowrap;
+  }
+  .jump a:hover {
+    background: var(--surface-3);
+    color: var(--ink);
+  }
+  .jump a b {
+    font-family: var(--mono);
+    font-weight: 500;
+    color: var(--accent);
+    font-size: 0.78rem;
+  }
+
+  /* ---------- sections ---------- */
+
+  section {
+    padding-block: 56px;
+    border-bottom: 1px solid var(--rule);
+  }
+  section:last-of-type {
+    border-bottom: 0;
+  }
+
+  .sec-head {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 28px;
+  }
+
+  /* ---------- diagnosis list ---------- */
+
+  .faults {
+    display: grid;
+    gap: 0;
+    margin-top: 8px;
+    border-top: 1px solid var(--rule);
+  }
+
+  .fault {
+    display: grid;
+    grid-template-columns: 2.2rem minmax(0, 15rem) minmax(0, 1fr);
+    gap: 4px 18px;
+    padding-block: 16px;
+    border-bottom: 1px solid var(--rule);
+    align-items: start;
+  }
+  @media (max-width: 640px) {
+    .fault {
+      grid-template-columns: 2.2rem minmax(0, 1fr);
+    }
+    .fault .fix {
+      grid-column: 2;
+    }
+  }
+
+  .fault .n {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--ink-3);
+    padding-top: 0.25em;
+  }
+  .fault .what {
+    font-weight: 500;
+  }
+  .fault .fix {
+    color: var(--ink-2);
+    font-size: 0.95rem;
+  }
+  .fault .fix em {
+    font-style: normal;
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  /* ---------- direction blocks ---------- */
+
+  .dir-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 4px 20px;
+    align-items: baseline;
+    margin-bottom: 10px;
+  }
+
+  .dir-letter {
+    font-family: var(--mono);
+    font-size: 2.1rem;
+    font-weight: 500;
+    line-height: 1;
+    color: var(--accent);
+    grid-row: span 2;
+  }
+  .dir-head .thesis {
+    grid-column: 2;
+    color: var(--ink-2);
+    max-width: 44rem;
+  }
+
+  .frame {
+    margin-top: 26px;
+    border: 1px solid var(--rule);
+    border-radius: 14px;
+    overflow: hidden;
+    background: var(--surface-2);
+    box-shadow: var(--shadow);
+  }
+
+  .frame-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 14px;
+    background: var(--surface-3);
+    border-bottom: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--ink-3);
+  }
+  .dots {
+    display: flex;
+    gap: 5px;
+  }
+  .dots i {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--rule-strong);
+  }
+  .frame-bar .path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .frame-bar .toggle {
+    margin-left: auto;
+    flex: none;
+    font: inherit;
+    font-family: var(--mono);
+    color: var(--ink-2);
+    background: var(--surface);
+    border: 1px solid var(--rule-strong);
+    border-radius: 6px;
+    padding: 3px 9px;
+    cursor: pointer;
+  }
+  .frame-bar .toggle:hover {
+    color: var(--ink);
+    border-color: var(--accent);
+  }
+  .frame-bar .toggle[aria-pressed="true"] {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .stage {
+    padding: 20px 16px 24px;
+    background: var(--ground);
+  }
+
+  .tradeoff {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    gap: 14px 28px;
+    margin-top: 24px;
+  }
+  .tradeoff h4 {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    font-weight: 500;
+    margin-bottom: 8px;
+  }
+  .tradeoff .keeps h4 {
+    color: var(--ok);
+  }
+  .tradeoff .costs h4 {
+    color: var(--crit);
+  }
+  .tradeoff .fits h4 {
+    color: var(--ink-3);
+  }
+  .tradeoff ul {
+    margin: 0;
+    padding-left: 1.1em;
+    color: var(--ink-2);
+    font-size: 0.95rem;
+  }
+  .tradeoff li {
+    margin-block: 4px;
+  }
+  .tradeoff li::marker {
+    color: var(--rule-strong);
+  }
+
+  /* ================= mock UI system ================= */
+
+  .ui {
+    font-family: var(--ui);
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--ink);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-width: 47rem;
+    margin: 0 auto;
+  }
+
+  .ui-pagebar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding-bottom: 2px;
+  }
+  .ui-pagebar .name {
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .ui-pagebar .crumb {
+    color: var(--ink-3);
+  }
+  .ui-pagebar .spacer {
+    flex: 1 1 auto;
+    min-width: 8px;
+  }
+
+  .ui-card {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 11px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 11px;
+  }
+  .ui-card.flat {
+    box-shadow: none;
+  }
+
+  .ui-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+  .ui-row .spacer {
+    flex: 1 1 auto;
+    min-width: 4px;
+  }
+  .ui-col {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .ui-title {
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .ui-sub {
+    color: var(--ink-2);
+  }
+  .ui-dim {
+    color: var(--ink-3);
+  }
+  .ui-num {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ui-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    color: var(--ink-2);
+  }
+  .ui-meta b {
+    font-weight: 500;
+    color: var(--ink);
+  }
+
+  .ui-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 1px 8px;
+    border-radius: 7px;
+    font-size: 12px;
+    font-weight: 500;
+    background: var(--surface-3);
+    color: var(--ink-2);
+    white-space: nowrap;
+  }
+  .ui-badge.info {
+    background: var(--info-bg);
+    color: var(--info);
+  }
+  .ui-badge.ok {
+    background: var(--ok-bg);
+    color: var(--ok);
+  }
+  .ui-badge.warn {
+    background: var(--warn-bg);
+    color: var(--warn);
+  }
+  .ui-badge.crit {
+    background: var(--crit-bg);
+    color: var(--crit);
+  }
+
+  .ui-btn {
+    font: inherit;
+    font-weight: 500;
+    border-radius: 8px;
+    padding: 5px 11px;
+    border: 1px solid var(--rule-strong);
+    background: var(--surface);
+    color: var(--ink);
+    cursor: default;
+    white-space: nowrap;
+  }
+  .ui-btn.primary {
+    background: var(--ink);
+    color: var(--surface);
+    border-color: var(--ink);
+  }
+  .ui-btn.plain {
+    border-color: transparent;
+    background: transparent;
+    color: var(--accent);
+    padding-inline: 4px;
+  }
+  .ui-btn.icon {
+    padding: 4px 8px;
+    color: var(--ink-2);
+  }
+  .ui-btn.sm {
+    font-size: 12px;
+    padding: 3px 9px;
+  }
+
+  .ui-sep {
+    height: 1px;
+    background: var(--rule);
+    border: 0;
+    margin: 0;
+  }
+
+  /* attention strip — replaces the long-text badge */
+  .ui-strip {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 3px 9px;
+    padding: 9px 11px;
+    border-radius: 9px;
+    background: var(--warn-bg);
+    color: var(--warn);
+    border-left: 3px solid currentColor;
+  }
+  .ui-strip .k {
+    font-weight: 600;
+  }
+  .ui-strip .body {
+    grid-column: 2;
+  }
+  .ui-strip .reason {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+  }
+  .ui-strip .who {
+    font-size: 12px;
+    opacity: 0.8;
+  }
+  .ui-strip .acts {
+    grid-column: 2;
+    display: flex;
+    gap: 6px;
+    margin-top: 3px;
+  }
+  .ui-strip .ui-btn {
+    background: transparent;
+    border-color: currentColor;
+    color: inherit;
+  }
+
+  /* step trail */
+  .trail {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 6px;
+  }
+  .trail .step {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 4px;
+    border-radius: 6px;
+    color: var(--ink-3);
+    min-width: 0;
+  }
+  .trail .step .mark {
+    width: 15px;
+    height: 15px;
+    flex: none;
+    border-radius: 50%;
+    border: 1.5px solid var(--rule-strong);
+    display: grid;
+    place-items: center;
+    font-size: 9px;
+    line-height: 1;
+  }
+  .trail .step.done {
+    color: var(--ink-2);
+  }
+  .trail .step.done .mark {
+    background: var(--ok-bg);
+    border-color: transparent;
+    color: var(--ok);
+  }
+  .trail .step.now {
+    color: var(--ink);
+    font-weight: 600;
+    background: var(--accent-soft);
+  }
+  .trail .step.now .mark {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--surface);
+  }
+  .trail .step.blocked {
+    color: var(--warn);
+    font-weight: 600;
+    background: var(--warn-bg);
+  }
+  .trail .step.blocked .mark {
+    border-color: currentColor;
+  }
+  .trail .link {
+    color: var(--rule-strong);
+  }
+
+  /* the "now" panel: the one live step */
+  .now-panel {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    border-radius: 9px;
+    background: var(--surface-2);
+    border: 1px solid var(--rule);
+  }
+  .now-panel .label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  /* progress meter */
+  .meter {
+    display: flex;
+    gap: 3px;
+    align-items: center;
+  }
+  .meter i {
+    height: 5px;
+    width: 26px;
+    border-radius: 3px;
+    background: var(--surface-3);
+  }
+  .meter i.on {
+    background: var(--ok);
+  }
+  .meter i.now {
+    background: var(--accent);
+  }
+  .meter i.blocked {
+    background: var(--warn);
+  }
+
+  /* pipeline rail (direction B) */
+  .rail {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+  .phase {
+    flex: 1 1 15rem;
+    min-width: 0;
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 11px 12px;
+    background: var(--surface-2);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .phase.live {
+    background: var(--surface);
+    border-color: var(--accent);
+  }
+  .phase .phase-name {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .phase.live .phase-name {
+    color: var(--accent);
+  }
+  .phase .trail {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+  }
+  .phase .trail .step {
+    width: 100%;
+  }
+  .phase .trail .step .who {
+    margin-left: auto;
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--ink-3);
+  }
+
+  /* table (direction C) */
+  .tbl-scroll {
+    overflow-x: auto;
+    margin-inline: -14px;
+    padding-inline: 14px;
+  }
+  table.ui-tbl {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    min-width: 34rem;
+  }
+  .ui-tbl th {
+    text-align: left;
+    font-weight: 500;
+    font-size: 11px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding: 0 10px 7px 10px;
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  .ui-tbl td {
+    padding: 9px 10px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  .ui-tbl tr:last-child td {
+    border-bottom: 0;
+  }
+  .ui-tbl td:first-child,
+  .ui-tbl th:first-child {
+    padding-left: 13px;
+  }
+  .ui-tbl tr.attn td {
+    background: var(--warn-bg);
+  }
+  .ui-tbl tr.attn td:first-child {
+    box-shadow: inset 3px 0 0 var(--warn);
+  }
+  .ui-tbl tr.now td {
+    background: var(--surface-2);
+  }
+  .ui-tbl tr.now td:first-child {
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+  .ui-tbl .grp td {
+    background: var(--surface-3);
+    font-weight: 600;
+    font-size: 12px;
+    padding-block: 6px;
+    box-shadow: none !important;
+  }
+  .ui-tbl .st {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .ui-tbl .idx {
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-3);
+    margin-right: 5px;
+  }
+
+  /* drawer (direction D) */
+  .split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  @media (min-width: 820px) {
+    .split {
+      grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+      align-items: start;
+    }
+  }
+
+  .drawer {
+    background: var(--surface);
+    border: 1px solid var(--rule-strong);
+    border-radius: 11px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .drawer-head {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 11px 13px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--surface-2);
+  }
+  .drawer-body {
+    padding: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .drawer-foot {
+    padding: 11px 13px;
+    border-top: 1px solid var(--rule);
+    background: var(--surface-2);
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .step-row {
+    display: flex;
+    gap: 9px;
+    align-items: center;
+    flex-wrap: wrap;
+    padding: 9px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--rule);
+  }
+  .step-row.now {
+    border-color: var(--accent);
+    background: var(--surface-2);
+  }
+  .step-row .grow {
+    flex: 1 1 8rem;
+    min-width: 0;
+  }
+
+  .ui-field {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 5px 9px;
+    border: 1px solid var(--rule-strong);
+    border-radius: 8px;
+    color: var(--ink-3);
+    background: var(--surface);
+    min-width: 0;
+  }
+
+  .aside-card {
+    max-width: 19rem;
+  }
+
+  .note {
+    font-size: 0.9rem;
+    color: var(--ink-3);
+    font-family: var(--mono);
+    margin-top: 12px;
+    text-align: center;
+  }
+
+  /* ---------- recommendation ---------- */
+
+  .rec {
+    border: 1px solid var(--accent);
+    border-radius: 14px;
+    background: var(--surface);
+    padding: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .rec ol {
+    margin: 0;
+    padding-left: 1.3em;
+    color: var(--ink-2);
+  }
+  .rec ol li {
+    margin-block: 7px;
+  }
+  .rec ol li b {
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  .qs {
+    display: grid;
+    gap: 0;
+    border-top: 1px solid var(--rule);
+  }
+  .q {
+    display: grid;
+    grid-template-columns: 2.2rem minmax(0, 1fr);
+    gap: 4px 18px;
+    padding-block: 15px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .q .n {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--accent);
+    padding-top: 0.25em;
+  }
+  .q .why {
+    color: var(--ink-2);
+    font-size: 0.95rem;
+  }
+
+  footer {
+    padding-block: 34px 48px;
+    color: var(--ink-3);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+</style>
+
+<header class="masthead">
+  <div class="wrap masthead-inner">
+    <p class="eyebrow">Baton · /app/orders/$orderId</p>
+    <h1>Order detail,<br /><span>four ways</span></h1>
+    <p class="lede col">
+      The page is doing too much at once. Four directions for the same order —
+      #1008, one signet ring, blocked on a missing crest file — each committing
+      to a different answer for what a merchant opens this page to find out.
+    </p>
+    <div class="rule-row">
+      <span>7 faults diagnosed</span>
+      <span>4 directions</span>
+      <span>1 recommendation</span>
+      <span>5 open questions</span>
+    </div>
+  </div>
+</header>
+
+<nav class="jump">
+  <div class="wrap jump-inner">
+    <a href="#faults">What's wrong</a>
+    <a href="#a"><b>A</b> Quiet by default</a>
+    <a href="#b"><b>B</b> One pipeline</a>
+    <a href="#c"><b>C</b> Step table</a>
+    <a href="#d"><b>D</b> Glance &amp; drawer</a>
+    <a href="#rec">Recommendation</a>
+    <a href="#questions">Questions</a>
+  </div>
+</nav>
+
+<main class="wrap">
+  <section id="faults">
+    <div class="sec-head">
+      <p class="eyebrow">Diagnosis</p>
+      <h2>Seven things making the page hard to read</h2>
+      <p class="lede col">
+        Most of these are one fault wearing different clothes: the page shows
+        every fact at the same weight, so nothing reads as the answer.
+      </p>
+    </div>
+
+    <div class="faults">
+      <div class="fault">
+        <span class="n">01</span>
+        <span class="what">“Signet ring started for 1&nbsp;item”</span>
+        <span class="fix"
+          >It restates the card below it, above the card, in the quietest type
+          on the page. <em>Cut it.</em> On a multi-item order the same
+          information is a count in the header, not a paragraph.</span
+        >
+      </div>
+      <div class="fault">
+        <span class="n">02</span>
+        <span class="what">A “Line items” card wrapping one line item</span>
+        <span class="fix"
+          >Two headings for one thing, and the outer one is schema vocabulary.
+          <em>Drop the wrapper.</em> Each item is its own card, titled with the
+          product.</span
+        >
+      </div>
+      <div class="fault">
+        <span class="n">03</span>
+        <span class="what">“Workflow” vs “Order workflow”</span>
+        <span class="fix"
+          >Identical cards for two different ideas, told apart only by a
+          heading. <em>Name them by when they happen</em> — making the item,
+          then shipping the order — or fuse them into one pipeline (B).</span
+        >
+      </div>
+      <div class="fault">
+        <span class="n">04</span>
+        <span class="what">Free text inside a badge</span>
+        <span class="fix"
+          >A badge is for a closed vocabulary: <em>active</em>,
+          <em>pending</em>. A merchant's block reason is a sentence and will
+          someday be a paragraph. <em>Give it a strip</em> that wraps, clamps at
+          two lines, and carries its own Unblock.</span
+        >
+      </div>
+      <div class="fault">
+        <span class="n">05</span>
+        <span class="what">Manage unfolds a form per step</span>
+        <span class="fix"
+          >Three bordered boxes, three team pickers, a block field and a Cancel
+          — inside the card you were reading. <em>One action inline</em> (the
+          step that's actually ready), everything else behind an overflow menu
+          or a drawer.</span
+        >
+      </div>
+      <div class="fault">
+        <span class="n">06</span>
+        <span class="what">“Attach workflow” always on screen</span>
+        <span class="fix"
+          >A rare, deliberate act rendered as a permanent empty select on every
+          item, every visit. <em>Make it a link</em> that reveals the picker, or
+          move it into the overflow menu.</span
+        >
+      </div>
+      <div class="fault">
+        <span class="n">07</span>
+        <span class="what">Nothing says what to do next</span>
+        <span class="fix"
+          >Stage, trail, status, flag, actor, time — all present, none promoted.
+          <em>Promote the live step.</em> One line that names the step, its
+          team, and its one button.</span
+        >
+      </div>
+    </div>
+
+    <div class="col" style="margin-top: 28px">
+      <h3>On quantity in Order details</h3>
+      <p style="color: var(--ink-2); margin-top: 8px">
+        Your instinct to back off was right. Quantity is a property of a line
+        item, not the order — it already sits on the item card as <b>×1</b>, and
+        copying it into the aside means two numbers to keep in agreement. What
+        the aside <em>is</em> missing is the shape of the order, which is a
+        genuine order-level fact and only interesting above one:
+        <b>Items&nbsp;· 3 items, 7 units</b>. Show that row only when there's
+        more than one item.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================ DIRECTION A ============================ -->
+  <section id="a">
+    <div class="dir-head">
+      <span class="dir-letter">A</span>
+      <h2>Quiet by default</h2>
+      <p class="thesis">
+        The smallest change that fixes the noise. Same information architecture,
+        but everything not being acted on right now recedes: one card per item,
+        one live step with one button, everything else in an overflow menu.
+        Shipped as an edit to the page you have.
+      </p>
+    </div>
+
+    <div class="frame" data-mock="a">
+      <div class="frame-bar">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <span class="path">/apps/baton/app/orders/seed-1008</span>
+        <button
+          class="toggle"
+          type="button"
+          data-toggle="long"
+          aria-pressed="false"
+        >
+          long block reason
+        </button>
+      </div>
+      <div class="stage">
+        <div class="ui">
+          <div class="ui-pagebar">
+            <span class="crumb">Orders /</span>
+            <span class="name">#1008</span>
+            <span class="ui-badge info">In production</span>
+            <span class="spacer"></span>
+            <button class="ui-btn sm">View in Shopify</button>
+            <button class="ui-btn sm">Resync</button>
+          </div>
+
+          <div class="ui-card">
+            <div class="ui-row">
+              <span class="ui-title">Signet ring</span>
+              <span class="ui-sub ui-num">×1</span>
+              <span class="ui-badge">signet-ring</span>
+              <span class="spacer"></span>
+              <button class="ui-btn icon" aria-label="More actions">⋯</button>
+            </div>
+            <div class="ui-meta">
+              <span><b>Size</b> 10</span>
+              <span><b>Metal</b> Gold</span>
+            </div>
+
+            <hr class="ui-sep" />
+
+            <div class="ui-strip">
+              <span class="k">Blocked</span>
+              <span
+                class="reason"
+                data-short="Crest file missing from the order — asked the customer."
+                data-long="Crest file missing from the order — asked the customer twice by email and once through the Shop app, and they have not sent the artwork. Holding the bench slot until Friday, then we release it to the next job and re-quote the engraving."
+                >Crest file missing from the order — asked the customer.</span
+              >
+              <span class="body who">lead@m.com · 1:59 PM</span>
+              <span class="acts"
+                ><button class="ui-btn sm">Unblock</button></span
+              >
+            </div>
+
+            <div class="ui-col">
+              <div class="ui-row">
+                <span class="ui-sub">Signet ring workflow</span>
+                <span class="ui-dim">·</span>
+                <span class="ui-dim ui-num">stage 2 of 3</span>
+              </div>
+              <div class="trail">
+                <span class="step done"><span class="mark">✓</span>Cast</span>
+                <span class="link">—</span>
+                <span class="step blocked"
+                  ><span class="mark">●</span>Engrave crest</span
+                >
+                <span class="link">—</span>
+                <span class="step"><span class="mark"></span>Polish</span>
+              </div>
+            </div>
+
+            <div class="now-panel">
+              <span class="label">Now</span>
+              <span class="ui-title">Engrave crest</span>
+              <span class="ui-sub">Engraving</span>
+              <span class="spacer"></span>
+              <button class="ui-btn primary">Mark done</button>
+            </div>
+          </div>
+
+          <div class="ui-card">
+            <div class="ui-row">
+              <span class="ui-title">After every item is made</span>
+              <span class="ui-badge">waiting on 1 item</span>
+              <span class="spacer"></span>
+              <button class="ui-btn icon" aria-label="More actions">⋯</button>
+            </div>
+            <div class="trail">
+              <span class="step"><span class="mark"></span>Inspect</span>
+              <span class="link">—</span>
+              <span class="step"><span class="mark"></span>Pack</span>
+              <span class="link">—</span>
+              <span class="step"><span class="mark"></span>Print label</span>
+              <span class="link">—</span>
+              <span class="step"
+                ><span class="mark"></span>Hand to carrier</span
+              >
+            </div>
+          </div>
+
+          <div class="ui-row">
+            <button class="ui-btn plain">
+              ＋ Attach a workflow to an item
+            </button>
+          </div>
+        </div>
+        <p class="note">
+          ⋯ opens: Reopen a step · Assign team · Add note · Block · Cancel run
+        </p>
+      </div>
+    </div>
+
+    <div class="tradeoff">
+      <div class="keeps">
+        <h4>Keeps</h4>
+        <ul>
+          <li>
+            Your existing data flow, routes and mutations — this is a render
+            change.
+          </li>
+          <li>
+            The per-item mental model merchants already have from Shopify's own
+            order page.
+          </li>
+          <li>Every intervention, one click deeper instead of gone.</li>
+        </ul>
+      </div>
+      <div class="costs">
+        <h4>Costs</h4>
+        <ul>
+          <li>
+            Still two card types; the “order workflow” idea is only renamed, not
+            resolved.
+          </li>
+          <li>A 6-item order is still 6 tall cards with 6 menus.</li>
+          <li>
+            An overflow menu hides Reopen — discoverability drops for
+            rare-but-needed actions.
+          </li>
+        </ul>
+      </div>
+      <div class="fits">
+        <h4>Fits when</h4>
+        <ul>
+          <li>Orders are 1–3 items.</li>
+          <li>You want the fix this week.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ DIRECTION B ============================ -->
+  <section id="b">
+    <div class="dir-head">
+      <span class="dir-letter">B</span>
+      <h2>One pipeline: make, then ship</h2>
+      <p class="thesis">
+        Kills the “two kinds of workflow card” problem by denying the premise.
+        An order isn't item workflows plus an order workflow — it's one run of
+        work with a making phase and a shipping phase, and the second starts
+        when the first finishes. That sentence is the layout.
+      </p>
+    </div>
+
+    <div class="frame" data-mock="b">
+      <div class="frame-bar">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <span class="path">/apps/baton/app/orders/seed-1008</span>
+      </div>
+      <div class="stage">
+        <div class="ui">
+          <div class="ui-pagebar">
+            <span class="crumb">Orders /</span>
+            <span class="name">#1008</span>
+            <span class="ui-badge info">In production</span>
+            <span class="spacer"></span>
+            <button class="ui-btn sm">View in Shopify</button>
+            <button class="ui-btn sm">Resync</button>
+          </div>
+
+          <div class="ui-card">
+            <div class="ui-strip">
+              <span class="k">Blocked</span>
+              <span class="reason"
+                >Crest file missing from the order — asked the customer.</span
+              >
+              <span class="body who"
+                >Signet ring · Engrave crest · lead@m.com · 1:59 PM</span
+              >
+              <span class="acts">
+                <button class="ui-btn sm">Unblock</button>
+                <button class="ui-btn sm">Edit reason</button>
+              </span>
+            </div>
+
+            <div class="rail">
+              <div class="phase live">
+                <span class="phase-name"
+                  >Making <span class="ui-badge warn">blocked</span></span
+                >
+                <div class="ui-row">
+                  <span class="ui-title">Signet ring</span>
+                  <span class="ui-sub ui-num">×1</span>
+                  <span class="spacer"></span>
+                  <button class="ui-btn icon sm" aria-label="More actions">
+                    ⋯
+                  </button>
+                </div>
+                <div class="trail">
+                  <span class="step done"
+                    ><span class="mark">✓</span>Cast<span class="who"
+                      >lead@m.com · 1:59 PM</span
+                    ></span
+                  >
+                  <span class="step blocked"
+                    ><span class="mark">●</span>Engrave crest<span class="who"
+                      >Engraving</span
+                    ></span
+                  >
+                  <span class="step"
+                    ><span class="mark"></span>Polish<span class="who"
+                      >Jewelry</span
+                    ></span
+                  >
+                </div>
+              </div>
+
+              <div class="phase">
+                <span class="phase-name"
+                  >Shipping
+                  <span class="ui-badge"
+                    >starts when every item is made</span
+                  ></span
+                >
+                <div class="ui-row">
+                  <span class="ui-sub">Order workflow</span>
+                </div>
+                <div class="trail">
+                  <span class="step"
+                    ><span class="mark"></span>Inspect<span class="who"
+                      >Quality check</span
+                    ></span
+                  >
+                  <span class="step"
+                    ><span class="mark"></span>Pack<span class="who"
+                      >Packing</span
+                    ></span
+                  >
+                  <span class="step"
+                    ><span class="mark"></span>Print label<span class="who"
+                      >Shipping</span
+                    ></span
+                  >
+                  <span class="step"
+                    ><span class="mark"></span>Hand to carrier<span class="who"
+                      >Shipping</span
+                    ></span
+                  >
+                </div>
+              </div>
+            </div>
+
+            <div class="now-panel">
+              <span class="label">Now</span>
+              <span class="ui-title">Engrave crest</span>
+              <span class="ui-sub">Engraving · Signet ring</span>
+              <span class="spacer"></span>
+              <button class="ui-btn sm">Reassign</button>
+              <button class="ui-btn primary">Mark done</button>
+            </div>
+          </div>
+
+          <div class="ui-card">
+            <div class="ui-row">
+              <span class="ui-title">Signet ring</span>
+              <span class="ui-sub ui-num">×1</span>
+              <span class="ui-badge">signet-ring</span>
+              <span class="spacer"></span>
+              <button class="ui-btn plain sm">Attach workflow</button>
+            </div>
+            <div class="ui-meta">
+              <span><b>Size</b> 10</span>
+              <span><b>Metal</b> Gold</span>
+            </div>
+          </div>
+        </div>
+        <p class="note">
+          Item details drop below the pipeline — personalization is read at the
+          bench, not here
+        </p>
+      </div>
+    </div>
+
+    <div class="tradeoff">
+      <div class="keeps">
+        <h4>Keeps</h4>
+        <ul>
+          <li>One card, one story: the order's whole path left to right.</li>
+          <li>
+            “Starts when every item is made” is stated in the layout, not in a
+            paragraph of explanation.
+          </li>
+          <li>
+            The blocked strip rises to the top — one place to look when
+            something is wrong.
+          </li>
+        </ul>
+      </div>
+      <div class="costs">
+        <h4>Costs</h4>
+        <ul>
+          <li>
+            The Making column has to hold N items; at 5+ it becomes a list
+            inside a column.
+          </li>
+          <li>
+            Separates an item's <em>workflow</em> from its
+            <em>personalization</em>, which some merchants read together.
+          </li>
+          <li>Most work: a real restructure of the page, not a re-skin.</li>
+        </ul>
+      </div>
+      <div class="fits">
+        <h4>Fits when</h4>
+        <ul>
+          <li>
+            The order workflow is genuinely a shipping phase for most shops.
+          </li>
+          <li>You want the product to teach the model.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ DIRECTION C ============================ -->
+  <section id="c">
+    <div class="dir-head">
+      <span class="dir-letter">C</span>
+      <h2>The step table</h2>
+      <p class="thesis">
+        Stops pretending cards scale. Every step of every run on the order
+        becomes one row with the same five columns, so a 1-item order and a
+        9-item order read identically and attention is a stripe down the left
+        edge. The densest option, and the only one that survives a big order.
+      </p>
+    </div>
+
+    <div class="frame" data-mock="c">
+      <div class="frame-bar">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <span class="path">/apps/baton/app/orders/seed-1008</span>
+      </div>
+      <div class="stage">
+        <div class="ui">
+          <div class="ui-pagebar">
+            <span class="crumb">Orders /</span>
+            <span class="name">#1008</span>
+            <span class="ui-badge info">In production</span>
+            <span class="spacer"></span>
+            <button class="ui-btn sm">View in Shopify</button>
+            <button class="ui-btn sm">Resync</button>
+          </div>
+
+          <div class="ui-card" style="padding: 0; gap: 0">
+            <div class="ui-row" style="padding: 12px 13px 10px">
+              <span class="ui-title">Work on this order</span>
+              <span class="ui-badge warn">1 blocked</span>
+              <span class="ui-badge">1 of 7 done</span>
+              <span class="spacer"></span>
+              <button class="ui-btn plain sm">Attach workflow</button>
+            </div>
+            <div class="tbl-scroll" style="margin: 0; padding: 0">
+              <table class="ui-tbl">
+                <thead>
+                  <tr>
+                    <th>Step</th>
+                    <th>Team</th>
+                    <th>State</th>
+                    <th>Who</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="grp">
+                    <td colspan="5">
+                      Signet ring ×1 · Size 10, Gold · signet-ring
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><span class="idx">1</span>Cast</td>
+                    <td class="ui-sub">Jewelry</td>
+                    <td><span class="ui-badge ok">Done</span></td>
+                    <td class="ui-sub">lead@m.com · 1:59 PM</td>
+                    <td>
+                      <button class="ui-btn icon sm" aria-label="More actions">
+                        ⋯
+                      </button>
+                    </td>
+                  </tr>
+                  <tr class="attn">
+                    <td><span class="idx">2</span><b>Engrave crest</b></td>
+                    <td class="ui-sub">Engraving</td>
+                    <td>
+                      <div class="st">
+                        <span><span class="ui-badge warn">Blocked</span></span>
+                        <span style="color: var(--warn)"
+                          >Crest file missing from the order — asked the
+                          customer.</span
+                        >
+                      </div>
+                    </td>
+                    <td class="ui-sub">lead@m.com · 1:59 PM</td>
+                    <td>
+                      <button class="ui-btn icon sm" aria-label="More actions">
+                        ⋯
+                      </button>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><span class="idx">3</span>Polish</td>
+                    <td class="ui-sub">Jewelry</td>
+                    <td class="ui-dim">Waiting on step 2</td>
+                    <td class="ui-dim">—</td>
+                    <td>
+                      <button class="ui-btn icon sm" aria-label="More actions">
+                        ⋯
+                      </button>
+                    </td>
+                  </tr>
+                  <tr class="grp">
+                    <td colspan="5">
+                      Order workflow · starts when every item is made
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><span class="idx">1</span>Inspect</td>
+                    <td class="ui-sub">Quality check</td>
+                    <td class="ui-dim">Waiting for 1 item</td>
+                    <td class="ui-dim">—</td>
+                    <td>
+                      <button class="ui-btn icon sm" aria-label="More actions">
+                        ⋯
+                      </button>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><span class="idx">2</span>Pack</td>
+                    <td class="ui-sub">Packing</td>
+                    <td class="ui-dim">Waiting on step 1</td>
+                    <td class="ui-dim">—</td>
+                    <td>
+                      <button class="ui-btn icon sm" aria-label="More actions">
+                        ⋯
+                      </button>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><span class="idx">3</span>Print label</td>
+                    <td class="ui-sub">Shipping</td>
+                    <td class="ui-dim">Waiting on step 2</td>
+                    <td class="ui-dim">—</td>
+                    <td>
+                      <button class="ui-btn icon sm" aria-label="More actions">
+                        ⋯
+                      </button>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><span class="idx">4</span>Hand to carrier</td>
+                    <td class="ui-sub">Shipping</td>
+                    <td class="ui-dim">Waiting on step 3</td>
+                    <td class="ui-dim">—</td>
+                    <td>
+                      <button class="ui-btn icon sm" aria-label="More actions">
+                        ⋯
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <p class="note">
+          One row per step · stripe = needs attention · ⋯ = the whole Manage
+          menu, scoped to one step
+        </p>
+      </div>
+    </div>
+
+    <div class="tradeoff">
+      <div class="keeps">
+        <h4>Keeps</h4>
+        <ul>
+          <li>
+            Constant density: 1 item or 9, the page looks the same and scans the
+            same.
+          </li>
+          <li>
+            Each fact has a column, so nothing competes for the same spot.
+          </li>
+          <li>
+            Sorting, filtering and bulk “mark done” are natural next features.
+          </li>
+        </ul>
+      </div>
+      <div class="costs">
+        <h4>Costs</h4>
+        <ul>
+          <li>Reads as a database, not a workshop — coldest of the four.</li>
+          <li>
+            Personalization (Size, Metal) gets squeezed into a group row or a
+            second click.
+          </li>
+          <li>
+            Narrow windows force horizontal scroll, and the embedded admin frame
+            is already narrow.
+          </li>
+        </ul>
+      </div>
+      <div class="fits">
+        <h4>Fits when</h4>
+        <ul>
+          <li>Orders routinely carry 5+ items.</li>
+          <li>The merchant is a production manager, not the maker.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ DIRECTION D ============================ -->
+  <section id="d">
+    <div class="dir-head">
+      <span class="dir-letter">D</span>
+      <h2>Glance, then drawer</h2>
+      <p class="thesis">
+        Splits the page's two jobs apart instead of stacking them. The page is
+        read-only status you can take in from across the room; every
+        intervention opens a drawer with room to breathe. Nothing expands in
+        place, so the page never changes shape under you.
+      </p>
+    </div>
+
+    <div class="frame" data-mock="d">
+      <div class="frame-bar">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <span class="path">/apps/baton/app/orders/seed-1008</span>
+      </div>
+      <div class="stage">
+        <div class="ui" style="max-width: 56rem">
+          <div class="ui-pagebar">
+            <span class="crumb">Orders /</span>
+            <span class="name">#1008</span>
+            <span class="ui-badge info">In production</span>
+            <span class="spacer"></span>
+            <button class="ui-btn sm">View in Shopify</button>
+            <button class="ui-btn sm">Resync</button>
+          </div>
+
+          <div class="split">
+            <div class="ui-col" style="gap: 12px">
+              <div class="ui-card">
+                <div class="ui-row">
+                  <span class="ui-title">Signet ring</span>
+                  <span class="ui-sub ui-num">×1</span>
+                  <span class="spacer"></span>
+                  <span class="ui-badge warn">Blocked</span>
+                </div>
+                <div class="ui-meta">
+                  <span><b>Size</b> 10</span><span><b>Metal</b> Gold</span>
+                </div>
+                <div class="ui-row">
+                  <span
+                    class="meter"
+                    role="img"
+                    aria-label="Stage 2 of 3, blocked"
+                  >
+                    <i class="on"></i><i class="blocked"></i><i></i>
+                  </span>
+                  <span class="ui-sub">Engrave crest · Engraving</span>
+                </div>
+                <div class="ui-row">
+                  <span class="ui-dim"
+                    >Crest file missing from the order — asked the
+                    customer.</span
+                  >
+                </div>
+                <div class="ui-row">
+                  <button class="ui-btn">Open</button>
+                </div>
+              </div>
+
+              <div class="ui-card">
+                <div class="ui-row">
+                  <span class="ui-title">Shipping</span>
+                  <span class="spacer"></span>
+                  <span class="ui-badge">Waiting on 1 item</span>
+                </div>
+                <div class="ui-row">
+                  <span
+                    class="meter"
+                    role="img"
+                    aria-label="No step started of four"
+                  >
+                    <i></i><i></i><i></i><i></i>
+                  </span>
+                  <span class="ui-sub"
+                    >Inspect, Pack, Print label, Hand to carrier</span
+                  >
+                </div>
+                <div class="ui-row"><button class="ui-btn">Open</button></div>
+              </div>
+            </div>
+
+            <div class="drawer" aria-label="Signet ring workflow">
+              <div class="drawer-head">
+                <span class="ui-title">Signet ring</span>
+                <span class="ui-badge warn">Blocked</span>
+                <span class="spacer"></span>
+                <button class="ui-btn icon sm" aria-label="Close">✕</button>
+              </div>
+              <div class="drawer-body">
+                <div class="ui-strip">
+                  <span class="k">Blocked</span>
+                  <span class="reason"
+                    >Crest file missing from the order — asked the
+                    customer.</span
+                  >
+                  <span class="body who">lead@m.com · 1:59 PM</span>
+                  <span class="acts"
+                    ><button class="ui-btn sm">Unblock</button></span
+                  >
+                </div>
+
+                <div class="step-row">
+                  <span class="ui-col grow">
+                    <span
+                      ><b>1 Cast</b> <span class="ui-dim">Jewelry</span></span
+                    >
+                    <span class="ui-sub">Done by lead@m.com · 1:59 PM</span>
+                  </span>
+                  <button class="ui-btn sm">Reopen</button>
+                  <button class="ui-btn icon sm" aria-label="More actions">
+                    ⋯
+                  </button>
+                </div>
+
+                <div class="step-row now">
+                  <span class="ui-col grow">
+                    <span
+                      ><b>2 Engrave crest</b>
+                      <span class="ui-dim">Engraving</span></span
+                    >
+                    <span class="ui-sub">Ready</span>
+                  </span>
+                  <button class="ui-btn primary sm">Mark done</button>
+                  <button class="ui-btn icon sm" aria-label="More actions">
+                    ⋯
+                  </button>
+                </div>
+
+                <div class="step-row">
+                  <span class="ui-col grow">
+                    <span
+                      ><b>3 Polish</b> <span class="ui-dim">Jewelry</span></span
+                    >
+                    <span class="ui-sub">Waiting on step 2</span>
+                  </span>
+                  <button class="ui-btn icon sm" aria-label="More actions">
+                    ⋯
+                  </button>
+                </div>
+              </div>
+              <div class="drawer-foot">
+                <button class="ui-btn sm">Cancel run</button>
+                <span class="spacer"></span>
+                <span class="ui-field" style="min-width: 11rem"
+                  >Attach workflow <span>⌄</span></span
+                >
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="note">
+          On a phone the drawer is a full-screen sheet; on desktop it docks
+          beside the list
+        </p>
+      </div>
+    </div>
+
+    <div class="tradeoff">
+      <div class="keeps">
+        <h4>Keeps</h4>
+        <ul>
+          <li>
+            The page never reflows: opening Manage no longer pushes everything
+            below it down a screen.
+          </li>
+          <li>
+            Editing gets real room — notes, reasons and team pickers stop being
+            cramped.
+          </li>
+          <li>
+            Status is legible at a glance: meter, one line of context, one
+            badge.
+          </li>
+        </ul>
+      </div>
+      <div class="costs">
+        <h4>Costs</h4>
+        <ul>
+          <li>
+            Every action costs an extra click, including the common “mark this
+            done”.
+          </li>
+          <li>
+            A drawer needs its own live-update handling when a webhook lands
+            while it's open.
+          </li>
+          <li>
+            Two surfaces to keep in agreement, and <code>s-modal</code> owns the
+            layout inside it.
+          </li>
+        </ul>
+      </div>
+      <div class="fits">
+        <h4>Fits when</h4>
+        <ul>
+          <li>
+            Merchants mostly watch, and workers do the marking on the work page.
+          </li>
+          <li>Interventions are rare enough that a click is cheap.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ RECOMMENDATION ============================ -->
+  <section id="rec">
+    <div class="sec-head">
+      <p class="eyebrow">Recommendation</p>
+      <h2>B for the model, A for the chrome, D for Manage</h2>
+    </div>
+
+    <div class="rec col" style="max-width: 48rem">
+      <p style="color: var(--ink-2)">
+        The three fixes are independent and can land in that order. None of them
+        requires the others.
+      </p>
+      <ol>
+        <li>
+          <b>Ship A's chrome first.</b> Delete the “started for N items” line,
+          drop the “Line items” wrapper, move the block reason out of the badge
+          into a wrapping strip, put one Mark-done on the live step and
+          everything else behind <code>⋯</code>, and make Attach a link. That is
+          a render-only change to one route and it removes most of the noise.
+        </li>
+        <li>
+          <b>Then adopt B's naming, even without B's layout.</b> “Making” and
+          “Shipping” — or the workflow's own name with “after every item is
+          made” underneath — costs nothing and retires the “workflow card vs
+          order workflow card” confusion the fastest.
+        </li>
+        <li>
+          <b>Then move Manage into D's drawer</b> if step editing keeps growing.
+          It's the only one of the four that stays calm as interventions
+          accumulate.
+        </li>
+      </ol>
+      <p style="color: var(--ink-2)">
+        C I'd hold back — but keep it in mind for the orders index, where a
+        table of <em>what's blocked across every order</em> is the view a
+        production manager actually opens each morning, and where this page's
+        card model genuinely doesn't scale.
+      </p>
+      <hr class="ui-sep" />
+      <p style="color: var(--ink-2)">
+        <b>The rule underneath all four:</b> a badge holds a word from a closed
+        set; a strip holds a sentence; a card holds one thing you can name.
+        Applied consistently, the page gets quiet on its own.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================ QUESTIONS ============================ -->
+  <section id="questions">
+    <div class="sec-head">
+      <p class="eyebrow">Open questions</p>
+      <h2>Five answers that change the design</h2>
+    </div>
+
+    <div class="qs col" style="max-width: 48rem">
+      <div class="q">
+        <span class="n">01</span>
+        <span>
+          <span class="what"
+            ><b>How many line items does a real order carry?</b></span
+          >
+          <p class="why">
+            One or two makes A or B right. Five or more makes C right and makes
+            B's Making column awkward. Everything else follows from this.
+          </p>
+        </span>
+      </div>
+      <div class="q">
+        <span class="n">02</span>
+        <span>
+          <span class="what"
+            ><b
+              >Does the merchant mark steps done here, or only intervene?</b
+            ></span
+          >
+          <p class="why">
+            If they work the order from this page, the button stays inline
+            (A/B). If workers own the work page and the merchant only unblocks
+            and reopens, D's drawer costs nothing.
+          </p>
+        </span>
+      </div>
+      <div class="q">
+        <span class="n">03</span>
+        <span>
+          <span class="what"
+            ><b>Is the order workflow always shipping-shaped?</b></span
+          >
+          <p class="why">
+            B's “Making → Shipping” is a strong claim. If shops use the order
+            workflow for QA, invoicing or anything post-make, the honest phase
+            label is “After every item is made”.
+          </p>
+        </span>
+      </div>
+      <div class="q">
+        <span class="n">04</span>
+        <span>
+          <span class="what"
+            ><b>Can an item carry more than one workflow in practice?</b></span
+          >
+          <p class="why">
+            The data model allows it; if it's rare, the item card can assume one
+            run and treat a second as the exception — which simplifies every
+            direction above.
+          </p>
+        </span>
+      </div>
+      <div class="q">
+        <span class="n">05</span>
+        <span>
+          <span class="what"><b>Should block reasons be long?</b></span>
+          <p class="why">
+            Two lines clamped with “Show more” assumes a sentence. If merchants
+            write paragraphs, the reason belongs in a notes thread with a
+            timestamped history, not a field.
+          </p>
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Mockups are static HTML at Polaris-like proportions — spacing and tone are
+    indicative, not tokens.
+  </footer>
+</main>
+
+<script>
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-toggle='long']");
+    if (!button) return;
+    const on = button.getAttribute("aria-pressed") !== "true";
+    button.setAttribute("aria-pressed", String(on));
+    const frame = button.closest("[data-mock]");
+    frame.querySelectorAll(".reason[data-long]").forEach((node) => {
+      node.textContent = on ? node.dataset.long : node.dataset.short;
+    });
+  });
+</script>

@@ -82,9 +82,11 @@ test("orders screen syncs the window and lists orders", async ({ page }) => {
      personalization (`customAttributes`) and product tags are rendered — the
      fields the bulk path exists to collect. */
   await rows.first().getByRole("link").first().click();
-  await expect(
-    frame.locator('s-section[accessibilityLabel="Line items"]'),
-  ).toBeVisible();
+  /* One card per line item, each an unslotted top-level section headed by the
+     item's own title — which is a real synced order's, so the selector is
+     structural rather than a title this spec cannot know. The aside's sections
+     are slotted, so the first unslotted one is the first item card. */
+  await expect(frame.locator("s-section:not([slot])").first()).toBeVisible();
 
   const resync = page.getByRole("button", { name: "Resync from Shopify" });
   await expect.poll(() => hoistedEnabled(resync)).toBe(true);
@@ -144,12 +146,7 @@ test("the order page's order-workflow link lands on the order workflow page", as
   await frame.getByRole("link", { name: "#9201" }).click();
   await expect(frame.locator('s-page[heading="#9201"]')).toBeVisible();
   await expect(
-    frame.getByText(
-      "Order workflow is off, so it will not start on this order.",
-      {
-        exact: false,
-      },
-    ),
+    frame.getByText("Order workflow is off.", { exact: false }),
   ).toBeVisible();
   await frame.getByRole("link", { name: "Turn it on" }).click();
   await expect(frame.locator('s-page[heading="Order workflow"]')).toBeVisible();
@@ -276,8 +273,11 @@ test("the merchant cannot reopen a step whose next stage is done", async ({
 });
 
 /**
- * Block and Unblock from the same disclosure, with the attribution line under
- * the badge. The reason travels into both.
+ * Block from the disclosure, unblock from the strip the block raises on the
+ * card. The reason is merchant prose, so it renders as its own paragraph in
+ * that strip rather than inside the badge, and the strip names the step the run
+ * is stuck on. `Unblock` is offered in both places — the strip and the still-open
+ * disclosure — so the click takes the first of the two.
  */
 test("the merchant blocks a run with a reason and unblocks it", async ({
   page,
@@ -312,10 +312,13 @@ test("the merchant blocks a run with a reason and unblocks it", async ({
 
   await frame.getByLabel("Reason").fill("Out of walnut stock");
   await frame.getByRole("button", { name: "Block" }).click();
-  await expect(frame.getByText("Blocked: Out of walnut stock")).toBeVisible();
+  await expect(
+    frame.getByText("Blocked \u00B7 Cut", { exact: true }),
+  ).toBeVisible();
+  await expect(frame.getByText("Out of walnut stock")).toBeVisible();
   await expect(frame.getByText("Blocked by Merchant")).toBeVisible();
 
-  await frame.getByRole("button", { name: "Unblock" }).click();
+  await frame.getByRole("button", { name: "Unblock" }).first().click();
   await expect(frame.getByText("Blocked by Merchant")).toBeHidden();
   await expect(frame.getByRole("button", { name: "Block" })).toBeVisible();
 });

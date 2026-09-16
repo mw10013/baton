@@ -126,6 +126,12 @@ const RUN_FLAG_LABEL = {
   order_fulfilled: "Already shipped in Shopify",
 } as const satisfies Record<Domain.RunFlag, string>;
 
+/** Where the note editor starts counting down to `Domain.STEP_NOTE_MAX_LENGTH`. */
+const NOTE_COUNT_FROM = 800;
+
+/** Teams named in the order summary before it collapses to "+N more", as the index's cell caps its own. */
+const WAITING_ON_LIMIT = 3;
+
 const PRODUCTION_STATE_BADGE = {
   no_workflow: { label: "No workflow", tone: "warning" },
   in_production: { label: "In production", tone: "info" },
@@ -137,11 +143,16 @@ const PRODUCTION_STATE_BADGE = {
   { label: string; tone: string }
 >;
 
+/**
+ * A flag as a badge: a closed vocabulary plus, where the flag names a thing,
+ * that thing. `blocked` is deliberately absent from the second branch — its
+ * reason is merchant prose up to `Domain.StepNote`'s 1000 characters, and a
+ * badge sized for one word stretches the row until the run's own controls
+ * leave the viewport. The reason renders in `blockedStrip` instead.
+ */
 const flagLabel = (run: Domain.WorkflowRun) => {
   if (run.flag === null) return null;
-  if (run.flag === "blocked" && run.flagDetail?.reason !== undefined)
-    return `Blocked: ${run.flagDetail.reason}`;
-  if (run.flagDetail?.item !== undefined)
+  if (run.flag !== "blocked" && run.flagDetail?.item !== undefined)
     return `${RUN_FLAG_LABEL[run.flag]}: ${run.flagDetail.item}`;
   return RUN_FLAG_LABEL[run.flag];
 };
@@ -216,17 +227,149 @@ const manageStateLine = (
   return `Waiting on step ${String(step.stage - 1)}`;
 };
 
-/** Who blocked the run and when, under the badge that already carries the reason. */
+/**
+ * Who blocked the run and when. Attribution only: the reason is merchant prose
+ * and renders as its own wrapping paragraph in `blockedStrip`, so repeating it
+ * here would print the same 1000 characters twice on one card.
+ */
 const blockedLine = (run: Domain.WorkflowRun): React.ReactNode => {
   const by = run.flagDetail?.by;
-  const reason = run.flagDetail?.reason;
   return (
     <>
       {by === undefined
         ? "Blocked · "
         : `Blocked by ${Domain.actorLabel(by)} · `}
       <LocalDateTime value={run.flagAt ?? 0} format="time" />
-      {reason === undefined ? "" : `: ${reason}`}
+    </>
+  );
+};
+
+/** The lowest stage that still has an open step — the stage the run is at — or null once every step is done. */
+const lowestOpenStage = (steps: readonly Domain.WorkflowRunStep[]) =>
+  steps
+    .filter((step) => step.completedAt === null)
+    .reduce<number | null>(
+      (lowest, step) =>
+        lowest === null ? step.stage : Math.min(lowest, step.stage),
+      null,
+    );
+
+/** Stages, not steps: two steps that happen together read as one stop. */
+const stageCount = (steps: readonly Domain.WorkflowRunStep[]) =>
+  steps.reduce((max, step) => Math.max(max, step.stage), 0);
+
+/**
+ * The steps a run is at: open, and in its lowest open stage — the same rule the
+ * trail bolds and the queue claims. Several can be ready at once when a stage is
+ * parallel, so this is a list and every caller must cope with more than one.
+ */
+const readySteps = (
+  run: Domain.WorkflowRun,
+  steps: readonly Domain.WorkflowRunStep[],
+  openItemRuns: number,
+) => {
+  if (run.status === "cancelled" || run.status === "done") return [];
+  /* An order run's item runs are its stage zero (`readyWhere`): while any is
+     open, nothing on the order run is ready, so a blocked pending order run
+     says "Blocked", not "Blocked · Pack". */
+  if (Domain.isOrderRun(run) && openItemRuns > 0) return [];
+  const lowest = lowestOpenStage(steps);
+  return steps.filter(
+    (step) => step.completedAt === null && step.stage === lowest,
+  );
+};
+
+/**
+ * A run's blocked state as a wrapping block rather than a badge. The reason is
+ * merchant prose up to `Domain.StepNote`'s 1000 characters; a badge is sized for
+ * a closed vocabulary and a long reason there stretches the row until the run's
+ * own controls leave the viewport. The ready step is named because `blocked` is
+ * a run-level flag (`merchantBlockRun` takes a `runId`) and on a multi-stage run
+ * "blocked" alone does not say what is stuck.
+ *
+ * `unblock` arrives as a node rather than a callback because the button needs
+ * the page's `identified`, `busy` and mutation, none of which belong to a
+ * module-level render helper — the same shape `stepTrail` uses for its picker.
+ * It is offered here as well as inside Manage: a merchant who opened the
+ * disclosure should not have to close it to unblock.
+ */
+const blockedStrip = (
+  { run, steps }: Domain.WorkflowRunDetail,
+  openItemRuns: number,
+  unblock: React.ReactNode,
+) => {
+  const stuck = readySteps(run, steps, openItemRuns)
+    .map((step) => step.name)
+    .join(", ");
+  const reason = run.flagDetail?.reason;
+  return (
+    <s-box
+      background="subdued"
+      borderWidth="base"
+      borderRadius="base"
+      padding="small"
+    >
+      <s-stack gap="small-300">
+        <s-text type="strong">
+          {stuck === "" ? "Blocked" : `Blocked \u00B7 ${stuck}`}
+        </s-text>
+        {reason !== undefined && <s-paragraph>{reason}</s-paragraph>}
+        <s-stack direction="inline" gap="small-300" alignItems="center">
+          <s-text color="subdued">{blockedLine(run)}</s-text>
+          {unblock}
+        </s-stack>
+      </s-stack>
+    </s-box>
+  );
+};
+
+/**
+ * What the run is doing right now, as one read-only line under the trail. The
+ * merchant's question on this page is "where is this order", and before this
+ * line the answer was only implied — by which step the trail printed in bold.
+ *
+ * Deliberately a second phrasing beside `manageStateLine`, not a call into it.
+ * That one describes *one step* inside the Manage disclosure, in the work
+ * page's vocabulary, so the merchant and the worker say the same thing about
+ * the same step. This one describes *the run* on a collapsed card and has to
+ * cover a parallel stage (several ready steps at once) and a pending order run
+ * waiting on items, neither of which is a step state. Keeping them apart is
+ * cheaper than a shared function with a mode flag.
+ */
+const nowLine = (
+  { run, steps }: Domain.WorkflowRunDetail,
+  openItemRuns: number,
+): React.ReactNode => {
+  if (run.status === "cancelled") return null;
+  /* The strip above already names the stuck step; a Now line under it would
+     name the same step a second time on one card. */
+  if (run.flag === "blocked") return null;
+  if (run.status === "done") {
+    const stages = stageCount(steps);
+    return `Done \u00B7 ${String(stages)} stage${stages === 1 ? "" : "s"}`;
+  }
+  if (Domain.isOrderRun(run) && run.status === "pending" && openItemRuns > 0)
+    return `Waiting for ${formatNumber(openItemRuns)} item${openItemRuns === 1 ? "" : "s"}`;
+  const ready = readySteps(run, steps, openItemRuns);
+  if (ready.length === 0) return null;
+  const names = ready.map((step) => step.name).join(", ");
+  const teams = [...new Set(ready.map((step) => step.teamName))].join(", ");
+  /** The stage's start, not a step's: on a parallel stage the earliest claim is when the run got here. */
+  const since = ready.reduce<number | null>((earliest, step) => {
+    if (step.startedAt === null) return earliest;
+    return earliest === null
+      ? step.startedAt
+      : Math.min(earliest, step.startedAt);
+  }, null);
+  return (
+    <>
+      {`Now \u00B7 ${names} \u00B7 ${teams}`}
+      {since !== null && (
+        <>
+          {" \u00B7 since "}
+          <LocalDateTime value={since} format="time" />
+        </>
+      )}
     </>
   );
 };
@@ -259,24 +402,22 @@ const stepTrail = (
   teams: readonly Domain.TeamRoster[],
   assign: (runStepId: string) => React.ReactNode,
 ) => {
-  const lowestOpenStage = steps
-    .filter((step) => step.completedAt === null)
-    .reduce<number | null>(
-      (lowest, step) =>
-        lowest === null ? step.stage : Math.min(lowest, step.stage),
-      null,
-    );
+  const lowest = lowestOpenStage(steps);
   const isReady = (step: Domain.WorkflowRunStep) =>
     run.status !== "cancelled" &&
     step.completedAt === null &&
-    step.stage === lowestOpenStage;
-  const stageCount = steps.reduce((max, step) => Math.max(max, step.stage), 0);
-  const progress = (() => {
-    if (run.status === "done")
-      return `Done · ${String(stageCount)} stage${stageCount === 1 ? "" : "s"}`;
-    if (lowestOpenStage === null) return null;
-    return `Stage ${String(lowestOpenStage)} of ${String(stageCount)}`;
-  })();
+    step.stage === lowest;
+  /**
+   * `Stage 2 of 3` closes the trail row instead of heading it: the Now line
+   * below already says where the run is in words, and a second line above the
+   * trail saying it in numbers is one restatement too many inside a card with a
+   * four-row budget. A finished run says `Done · N stages` on the Now line, so
+   * there is nothing to count here.
+   */
+  const progress =
+    run.status === "done" || lowest === null
+      ? null
+      : `Stage ${String(lowest)} of ${String(stageCount(steps))}`;
   const open = run.status === "pending" || run.status === "active";
   const unassigned = open
     ? steps.filter((step) => Domain.isRunStepUnassigned(step, teams))
@@ -297,7 +438,6 @@ const stepTrail = (
     : [];
   return (
     <s-stack gap="small-500">
-      {progress !== null && <s-text color="subdued">{progress}</s-text>}
       <s-stack direction="inline" gap="small-300" alignItems="center">
         {steps.map((step, index) => {
           const lost = unassigned.some((other) => other.id === step.id);
@@ -318,6 +458,7 @@ const stepTrail = (
             </React.Fragment>
           );
         })}
+        {progress !== null && <s-text color="subdued">{progress}</s-text>}
       </s-stack>
       {unassigned.map((step) => (
         <s-stack
@@ -392,7 +533,25 @@ function RouteComponent() {
   const [assignChoice, setAssignChoice] = React.useState<
     Record<string, string>
   >({});
-  /** Which runs have their "Manage" disclosure open; closed is the default. */
+  /**
+   * Which line items have their "Attach workflow" picker revealed. Attaching by
+   * hand is the exception — the tag rules did not catch this item — so the
+   * picker is not worth a permanent empty `s-select` on every item on every
+   * visit.
+   */
+  const [attachOpen, setAttachOpen] = React.useState<ReadonlySet<string>>(
+    new Set(),
+  );
+  /**
+   * Which runs have their "Manage" disclosure open; closed is the default.
+   *
+   * It survives re-renders on purpose, and the next reader's instinct will be to
+   * reset it when new data arrives — do not. The subscription updates the query
+   * data without remounting, so a webhook or a worker's step action landing
+   * while the merchant has a disclosure open must leave it open. What it must
+   * not do is answer for a run that is no longer on this order, so reads go
+   * through `managingRun` against the runs actually in hand.
+   */
   const [managing, setManaging] = React.useState<ReadonlySet<string>>(
     new Set(),
   );
@@ -437,8 +596,22 @@ function RouteComponent() {
   const attachMutation = useMutation({
     mutationFn: (input: typeof Domain.AttachWorkflowInput.Encoded) =>
       call((stub) => stub.attachWorkflow(input)).then(decodeAttachResult),
-    onSuccess: async (result) => {
+    onSuccess: async (result, { lineItemId }) => {
       setBanner(attachResultMessage(result));
+      /* The picker is a disclosure now, so a successful attach must close it:
+         left open, the card shows the new run and, under it, a still-enabled
+         Attach for the same workflow. */
+      if (result._tag === "Ok") {
+        setAttachOpen((current) => {
+          const next = new Set(current);
+          next.delete(lineItemId);
+          return next;
+        });
+        setAttachChoice((current) => {
+          const { [lineItemId]: _done, ...rest } = current;
+          return rest;
+        });
+      }
       await invalidate();
     },
     onError,
@@ -546,6 +719,9 @@ function RouteComponent() {
     runs: Domain.runCounts(runs.map(({ run }) => run)),
   });
   const orderRuns = runs.filter(({ run }) => Domain.isOrderRun(run));
+  /** See `managing`: an id with no run on this order is stale and answers `false`. */
+  const managingRun = (run: Domain.WorkflowRun) =>
+    managing.has(run.id) && runs.some((other) => other.run.id === run.id);
   const itemRunCount = runs.length - orderRuns.length;
   /** Mirrors the date rule: placed before Turn on, unless a manual attach opted the order in. */
   const tooOld =
@@ -564,6 +740,73 @@ function RouteComponent() {
       (run.status === "pending" || run.status === "active"),
   ).length;
   /**
+   * The order in one line, above the cards: `3 items \u00B7 1 blocked \u00B7 1 made
+   * \u00B7 waiting on Engraving`. It earns its place only when the cards below
+   * cannot be taken in at a glance — more than one item, or something needing
+   * attention — because on a healthy one-item order it would restate the single
+   * card under it, which is what the deleted "<Workflow> started for N items"
+   * line did. Every clause drops at zero, so the line never pads itself with
+   * "0 blocked".
+   *
+   * `waiting on` is the orders index's own predicate restated over the runs in
+   * hand (`ReadyWhere.readyWhere`, which `OrderRepository` runs in SQL): the
+   * teams with a ready step on an open run, where an order run's steps are only
+   * ready once no item run is open and at least one is done. A team that no
+   * longer exists is an attention state, not somebody holding the order, so an
+   * unassigned step contributes nothing here — the trail's own `Assign team`
+   * row is where that is answered. Nor does a blocked run: the team cannot
+   * move it, and `<B> blocked` is its clause.
+   */
+  const orderSummary = (() => {
+    const flagged = runs.some(({ run }) => run.flag !== null);
+    const unassigned = runs.some(
+      ({ run, steps }) =>
+        (run.status === "pending" || run.status === "active") &&
+        steps.some((step) => Domain.isRunStepUnassigned(step, teams)),
+    );
+    if (lineItems.length <= 1 && !flagged && !unassigned) return null;
+    const blocked = lineItems.filter((item) =>
+      runs.some(
+        ({ run }) => run.lineItemId === item.id && run.flag === "blocked",
+      ),
+    ).length;
+    const made = lineItems.filter((item) => {
+      const live = runs.filter(
+        ({ run }) => run.lineItemId === item.id && run.status !== "cancelled",
+      );
+      return live.length > 0 && live.every(({ run }) => run.status === "done");
+    }).length;
+    const orderRunReady =
+      openItemRuns === 0 &&
+      runs.some(({ run }) => !Domain.isOrderRun(run) && run.status === "done");
+    const waitingOn = [
+      ...new Set(
+        runs
+          .filter(
+            ({ run }) =>
+              run.flag !== "blocked" &&
+              (!Domain.isOrderRun(run) || orderRunReady),
+          )
+          .flatMap(({ run, steps }) =>
+            readySteps(run, steps, openItemRuns)
+              .filter((step) => !Domain.isRunStepUnassigned(step, teams))
+              .map((step) => step.teamName),
+          ),
+      ),
+    ].toSorted((a, b) => a.localeCompare(b));
+    const extra = waitingOn.length - WAITING_ON_LIMIT;
+    return [
+      `${formatNumber(lineItems.length)} item${lineItems.length === 1 ? "" : "s"}`,
+      ...(blocked > 0 ? [`${formatNumber(blocked)} blocked`] : []),
+      ...(made > 0 ? [`${formatNumber(made)} made`] : []),
+      ...(waitingOn.length > 0
+        ? [
+            `waiting on ${waitingOn.slice(0, WAITING_ON_LIMIT).join(", ")}${extra > 0 ? ` +${formatNumber(extra)} more` : ""}`,
+          ]
+        : []),
+    ].join(" \u00B7 ");
+  })();
+  /**
    * One line per way the order run is not here yet, in the rule's own
    * order: a blocked definition first (the merchant can fix it), then the
    * order-side reasons it will never start, then the plain wait. Each is a
@@ -575,9 +818,8 @@ function RouteComponent() {
     if (orderWorkflowBlocker === "off")
       return (
         <>
-          {`${name} is off, so it will not start on this order. `}
+          {`${name} is off. `}
           <s-link href="/app/order-workflow">Turn it on</s-link>
-          {" to start it here once every item with a workflow is made."}
         </>
       );
     if (orderWorkflowBlocker !== null)
@@ -585,17 +827,29 @@ function RouteComponent() {
         <>
           {`${name} cannot start: it has ${orderWorkflowBlocker === "no_steps" ? "no steps" : "a step with no team"}. `}
           <s-link href="/app/order-workflow">Fix the workflow</s-link>
-          {" to start it here once every item with a workflow is made."}
         </>
       );
     if (tooOld)
-      return `${name} will not start here: this order was placed before ${name} was turned on. Attaching a workflow to an item by hand opts the order in.`;
-    if (itemRunCount === 0)
-      return `${name} will not start here: no item on this order has a workflow. Attaching a workflow to an item opts the order in.`;
+      return `Placed before ${name} was turned on. Attaching a workflow to an item opts the order in.`;
+    if (itemRunCount === 0) return "No item on this order has a workflow.";
     if (itemRunsAllCancelled)
-      return `${name} will not start here: every item run on this order was cancelled. Un-cancel one and finish it to start it.`;
-    return `${name} starts when every item with a workflow is made.`;
+      return "Every item run on this order was cancelled.";
+    return null;
   };
+  const orderWorkflowNote = orderWorkflowLine(orderWorkflow);
+  /**
+   * The section shows only when it carries something: an order run, a blocker
+   * the merchant can act on, or a reason this order will never get one. A
+   * healthy order workflow that simply has not started yet still shows — its
+   * trail is the answer to "what happens after this is made" — but an order
+   * with none of those would be a heading, a subtitle and nothing else.
+   */
+  const orderWorkflowShows =
+    orderRuns.length > 0 ||
+    orderWorkflowBlocker !== null ||
+    tooOld ||
+    itemRunCount === 0 ||
+    itemRunsAllCancelled;
   const busy =
     attachMutation.isPending ||
     interveneMutation.isPending ||
@@ -647,29 +901,38 @@ function RouteComponent() {
   );
 
   /**
-   * "<Workflow> started for N items": one line per item workflow with an
-   * open or done run on this order, the merchant-copy verb from
-   * `Domain.Workflow`. Cancelled runs are not "started" for this purpose.
+   * The one Unblock button, rendered both in the blocked strip on the card and
+   * in the Manage disclosure. Two call sites, one definition, so the disabled
+   * rule and the toast cannot drift apart.
    */
-  const startedLines = [
-    ...runs
-      .filter(
-        ({ run }) => !Domain.isOrderRun(run) && run.status !== "cancelled",
-      )
-      .reduce<Map<string, number>>(
-        (acc, { run }) =>
-          acc.set(run.workflowName, (acc.get(run.workflowName) ?? 0) + 1),
-        new Map(),
-      ),
-  ].map(
-    ([name, count]) =>
-      `${name} started for ${formatNumber(count)} item${count === 1 ? "" : "s"}`,
+  const unblockButton = (run: Domain.WorkflowRun) => (
+    <s-button
+      variant="secondary"
+      disabled={!identified || busy}
+      onClick={() => {
+        intervene({
+          kind: "unblock",
+          runId: run.id,
+          toast: "Run unblocked",
+        });
+      }}
+    >
+      Unblock
+    </s-button>
   );
 
   /**
-   * The note editor for one Manage row: the current text is in the field
-   * before it is overwritten, which is the whole of the "the merchant can
-   * overwrite a worker's note" safeguard (`docs/…-research.md` trade-offs).
+   * The note editor for one Manage row. It opens with the step's current text
+   * already in the field, and that is the whole of the safeguard against a
+   * merchant overwriting a worker: a step has one note, anyone with access to
+   * the step may write it, and last write wins silently — so the only warning
+   * anybody gets is seeing what they are about to destroy. Never open this
+   * empty.
+   *
+   * The count appears late, at `NOTE_COUNT_FROM`, because a counter on an
+   * empty field is a rule nobody asked about; it exists so the cap
+   * (`Domain.STEP_NOTE_MAX_LENGTH`) announces itself before the write refuses
+   * a paragraph that is already typed.
    */
   const noteEditor = (step: Domain.WorkflowRunStep, draft: string) => (
     <s-stack gap="small-300">
@@ -683,9 +946,9 @@ function RouteComponent() {
           setNoteDraft({ runStepId: step.id, note: event.currentTarget.value });
         }}
       />
-      <s-stack direction="inline" gap="small-300">
+      <s-stack direction="inline" gap="small-300" alignItems="center">
         <s-button
-          variant="primary"
+          variant="secondary"
           disabled={!identified || busy}
           onClick={() => {
             interveneMutation.mutate(
@@ -713,6 +976,11 @@ function RouteComponent() {
         >
           Cancel
         </s-button>
+        {draft.length >= NOTE_COUNT_FROM && (
+          <s-text color="subdued">
+            {`${formatNumber(Domain.STEP_NOTE_MAX_LENGTH - draft.length)} characters left`}
+          </s-text>
+        )}
       </s-stack>
     </s-stack>
   );
@@ -729,16 +997,22 @@ function RouteComponent() {
    * runs, so the button and the refusal cannot disagree — and asking the
    * object for a verdict per step would only send back what is already here.
    * There is no Start: the merchant records work, they do not claim it.
+   *
+   * No action here is primary — not `Mark done`, not `Block`, not `Save note`.
+   * Every write on this page is a merchant reaching past a worker — the bench
+   * claims and completes steps on the work page — and a primary button is the
+   * grammar of "this is what you came here to do", which is false here.
+   * `Block` keeps its critical tone; that says "irreversible for the bench",
+   * not "come here for this".
+   *
+   * A step with no state to change renders as one line rather than a bordered
+   * box: on a three-stage run the boxes are most of the disclosure's height,
+   * and a step two stages out has nothing to offer but its note and its team.
+   * Both ride along on that line, so nothing this disclosure offered is lost.
    */
   const manageRows = ({ run, steps }: Domain.WorkflowRunDetail) => {
     const open = run.status === "pending" || run.status === "active";
-    const lowestOpenStage = steps
-      .filter((step) => step.completedAt === null)
-      .reduce<number | null>(
-        (lowest, step) =>
-          lowest === null ? step.stage : Math.min(lowest, step.stage),
-        null,
-      );
+    const lowest = lowestOpenStage(steps);
     /** What a finished item step's undo can be blocked by, once packing has begun. */
     const orderRunSteps = Domain.isOrderRun(run)
       ? []
@@ -748,7 +1022,7 @@ function RouteComponent() {
       <s-stack gap="small-300">
         {steps.map((step) => {
           const ready =
-            open && step.completedAt === null && step.stage === lowestOpenStage;
+            open && step.completedAt === null && step.stage === lowest;
           const blocker =
             step.completedAt === null
               ? null
@@ -756,6 +1030,48 @@ function RouteComponent() {
           const reopenedBy = Domain.stepReopenedBy(step);
           const draft =
             noteDraft?.runStepId === step.id ? noteDraft.note : null;
+          /**
+           * The note as a wrapping paragraph in a quiet block, not an `s-text`
+           * beside the step's own name: it is up to
+           * `Domain.STEP_NOTE_MAX_LENGTH` characters of prose, and on one line
+           * it truncates or stretches the row.
+           */
+          const note = draft === null && step.note !== null && (
+            <s-box background="subdued" borderRadius="base" padding="small-300">
+              <s-paragraph color="subdued">
+                {Domain.stepNoteLine(step)}
+              </s-paragraph>
+            </s-box>
+          );
+          const noteButton = draft === null && (
+            <s-button
+              variant="tertiary"
+              disabled={!identified || busy}
+              onClick={() => {
+                setNoteDraft({
+                  runStepId: step.id,
+                  note: step.note ?? "",
+                });
+              }}
+            >
+              {step.note === null ? "Note" : "Edit note"}
+            </s-button>
+          );
+          if (!ready && step.completedAt === null)
+            return (
+              <s-stack key={step.id} gap="small-300">
+                <s-stack direction="inline" gap="small-300" alignItems="center">
+                  <s-text color="subdued">
+                    {`${String(step.stage)} ${step.name} \u00B7 ${step.teamName} \u00B7 `}
+                    {manageStateLine(run, step, false)}
+                  </s-text>
+                  {noteButton}
+                  {open && assignTeam(step.id)}
+                </s-stack>
+                {note}
+                {draft !== null && noteEditor(step, draft)}
+              </s-stack>
+            );
           return (
             <s-box
               key={step.id}
@@ -780,14 +1096,12 @@ function RouteComponent() {
                     <LocalDateTime value={step.reopenedAt} format="relative" />
                   </s-text>
                 )}
-                {draft === null && step.note !== null && (
-                  <s-text color="subdued">{Domain.stepNoteLine(step)}</s-text>
-                )}
+                {note}
                 {draft !== null && noteEditor(step, draft)}
                 <s-stack direction="inline" gap="base" alignItems="center">
                   {ready && (
                     <s-button
-                      variant="primary"
+                      variant="secondary"
                       disabled={!identified || busy}
                       onClick={() => {
                         intervene({
@@ -820,44 +1134,21 @@ function RouteComponent() {
                         {`${blocker.teamName} started ${blocker.stepName} \u00B7 reopen it first`}
                       </s-text>
                     ))}
-                  {draft === null && (
-                    <s-button
-                      variant="tertiary"
-                      disabled={!identified || busy}
-                      onClick={() => {
-                        setNoteDraft({
-                          runStepId: step.id,
-                          note: step.note ?? "",
-                        });
-                      }}
-                    >
-                      {step.note === null ? "Note" : "Edit note"}
-                    </s-button>
-                  )}
+                  {noteButton}
                 </s-stack>
                 {open && step.completedAt === null && assignTeam(step.id)}
               </s-stack>
             </s-box>
           );
         })}
+        {/* The step list is one object and the run's own actions are another:
+            Block, Unblock and Cancel act on the whole run, and mixed into the
+            steps they read as a fourth button on the last one. A done run has
+            no run action, so it gets no rule either. */}
+        {(open || run.flag === "blocked") && <s-divider />}
         {run.flag === "blocked" && (
-          <s-stack gap="small-300">
-            <s-text color="subdued">{blockedLine(run)}</s-text>
-            <s-stack direction="inline" gap="small-300">
-              <s-button
-                variant="secondary"
-                disabled={!identified || busy}
-                onClick={() => {
-                  intervene({
-                    kind: "unblock",
-                    runId: run.id,
-                    toast: "Run unblocked",
-                  });
-                }}
-              >
-                Unblock
-              </s-button>
-            </s-stack>
+          <s-stack direction="inline" gap="small-300">
+            {unblockButton(run)}
           </s-stack>
         )}
         {open && run.flag !== "blocked" && (
@@ -875,7 +1166,7 @@ function RouteComponent() {
             />
             <s-stack direction="inline" gap="small-300">
               <s-button
-                variant="primary"
+                variant="secondary"
                 tone="critical"
                 disabled={!identified || busy}
                 onClick={() => {
@@ -927,10 +1218,17 @@ function RouteComponent() {
   const renderRun = (detail: Domain.WorkflowRunDetail) => {
     const { run } = detail;
     const cancelled = run.status === "cancelled";
+    const now = nowLine(detail, openItemRuns);
     return (
       <s-stack key={run.id} gap="small-300">
         <s-stack direction="inline" gap="small-300" alignItems="center">
-          <s-text type="strong">{run.workflowName}</s-text>
+          {/* An order run's section is already headed by this very workflow's
+              name, so printing it again here is the two-headings fault the
+              "Line items" wrapper was deleted for. An item run keeps its name:
+              its section is headed by the line item, not the workflow. */}
+          {!Domain.isOrderRun(run) && (
+            <s-text type="strong">{run.workflowName}</s-text>
+          )}
           <s-badge tone={RUN_STATUS_TONE[run.status]}>{run.status}</s-badge>
           {run.flag !== null && (
             <s-badge tone="warning">{flagLabel(run)}</s-badge>
@@ -960,19 +1258,15 @@ function RouteComponent() {
                 });
               }}
             >
-              {managing.has(run.id) ? "Hide" : "Manage"}
+              {managingRun(run) ? "Hide" : "Manage"}
             </s-button>
           )}
         </s-stack>
-        {Domain.isOrderRun(run) &&
-          run.status === "pending" &&
-          openItemRuns > 0 && (
-            <s-text color="subdued">
-              {`Waiting for ${formatNumber(openItemRuns)} item${openItemRuns === 1 ? "" : "s"}`}
-            </s-text>
-          )}
+        {run.flag === "blocked" &&
+          blockedStrip(detail, openItemRuns, unblockButton(run))}
         {stepTrail(detail, teams, assignTeam)}
-        {!cancelled && managing.has(run.id) && manageRows(detail)}
+        {now !== null && <s-text color="subdued">{now}</s-text>}
+        {!cancelled && managingRun(run) && manageRows(detail)}
       </s-stack>
     );
   };
@@ -1027,7 +1321,19 @@ function RouteComponent() {
             ) : (
               itemRuns.map(renderRun)
             )}
-            {!removed && (
+            {!removed && !attachOpen.has(item.id) && (
+              <s-stack direction="inline" justifyContent="start">
+                <s-button
+                  variant="tertiary"
+                  onClick={() => {
+                    setAttachOpen((current) => new Set(current).add(item.id));
+                  }}
+                >
+                  Attach workflow
+                </s-button>
+              </s-stack>
+            )}
+            {!removed && attachOpen.has(item.id) && (
               /**
                * A grid, not an inline stack: a Polaris form control fills the
                * inline size it is given and has no width prop, so `s-select` in
@@ -1035,7 +1341,7 @@ function RouteComponent() {
                * next line at every window width.
                */
               <s-grid
-                gridTemplateColumns="minmax(0, 20rem) auto"
+                gridTemplateColumns="minmax(0, 20rem) auto auto"
                 gap="base"
                 alignItems="end"
                 justifyContent="start"
@@ -1073,6 +1379,18 @@ function RouteComponent() {
                   }}
                 >
                   Attach
+                </s-button>
+                <s-button
+                  variant="tertiary"
+                  onClick={() => {
+                    setAttachOpen((current) => {
+                      const next = new Set(current);
+                      next.delete(item.id);
+                      return next;
+                    });
+                  }}
+                >
+                  Cancel
                 </s-button>
               </s-grid>
             )}
@@ -1116,21 +1434,13 @@ function RouteComponent() {
         !order.lineItemsComplete ||
         state === "ready_to_ship" ||
         state === "no_workflow" ||
-        startedLines.length > 0) && (
+        orderSummary !== null) && (
         <s-stack slot="supplemental-start" gap="base">
+          {orderSummary !== null && <s-text>{orderSummary}</s-text>}
           {state === "no_workflow" && (
             <s-paragraph color="subdued">
               No workflow's product tags match the items in this order.
             </s-paragraph>
-          )}
-          {startedLines.length > 0 && (
-            <s-stack gap="small-500">
-              {startedLines.map((line) => (
-                <s-text key={line} color="subdued">
-                  {line}
-                </s-text>
-              ))}
-            </s-stack>
           )}
           {state === "ready_to_ship" && (
             <s-banner tone="success">
@@ -1151,22 +1461,26 @@ function RouteComponent() {
         </s-stack>
       )}
 
-      <s-section heading="Line items" accessibilityLabel="Line items">
-        {lineItems.length === 0 ? (
-          <s-paragraph color="subdued">No line items.</s-paragraph>
-        ) : (
-          lineItems.map(renderLineItem)
-        )}
-      </s-section>
+      {lineItems.length === 0 ? (
+        <s-paragraph color="subdued">No line items.</s-paragraph>
+      ) : (
+        lineItems.map(renderLineItem)
+      )}
 
-      {(orderRuns.length > 0 || Domain.canStartRuns(order)) && (
-        <s-section heading="Order workflow" accessibilityLabel="Order workflow">
+      {orderWorkflowShows && (
+        <s-section
+          heading={orderWorkflow.name}
+          accessibilityLabel="Order workflow"
+        >
           <s-stack gap="base">
+            {/* The invariant, never a guess at what the shop does in it: the
+                system's only stipulation is that every item run on the order is
+                done, and a shop using this phase for QA, photography or
+                invoicing would read "Shipping" as a lie. */}
+            <s-text color="subdued">Starts when every item is made</s-text>
             {orderRuns.length > 0 && orderRuns.map(renderRun)}
-            {orderRuns.length === 0 && (
-              <s-paragraph color="subdued">
-                {orderWorkflowLine(orderWorkflow)}
-              </s-paragraph>
+            {orderRuns.length === 0 && orderWorkflowNote !== null && (
+              <s-paragraph color="subdued">{orderWorkflowNote}</s-paragraph>
             )}
           </s-stack>
         </s-section>
@@ -1184,6 +1498,20 @@ function RouteComponent() {
           gap="small-200 base"
           alignItems="center"
         >
+          {/* Only on a multi-item order, and never a per-item quantity: each
+              card already prints its own "×N", and a second copy in the aside
+              is two numbers to keep in agreement. `unitsToMake` is the card's
+              own count, so the total cannot disagree with the parts. */}
+          {lineItems.length > 1 &&
+            fact(
+              "Items",
+              `${formatNumber(lineItems.length)} items, ${formatNumber(
+                lineItems.reduce(
+                  (total, item) => total + Domain.unitsToMake(item),
+                  0,
+                ),
+              )} units`,
+            )}
           {fact("Placed", <LocalDateTime value={order.processedAt} />)}
           {fact(
             "Payment",

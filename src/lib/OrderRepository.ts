@@ -496,6 +496,7 @@ export class OrderRepository extends Context.Service<
                   join WorkflowRunStep s on s.runId = wr.id
                   where wr.orderId = ShopOrder.id
                     and wr.status in ('pending', 'active')
+                    and (wr.flag is null or wr.flag <> 'blocked')
                     and s.teamId = ${team}
                     and ${sql.literal(ReadyWhere.readyWhere("s"))}
                 )`;
@@ -601,7 +602,11 @@ export class OrderRepository extends Context.Service<
            * anyway. Gated on `liveIds` because a step pointing at a deleted
            * team is `attention`, not somebody holding the order, and the
            * outer run is aliased `wr`: `readyWhere` binds `r` for the step's
-           * own run inside its subqueries (see its JSDoc).
+           * own run inside its subqueries (see its JSDoc). A blocked run is
+           * left out even though its step is ready: the team cannot move it,
+           * so naming them here would send the merchant to the wrong desk —
+           * `RunCounts.blocked` is that run's column. The queue still lists it
+           * (last), because the worker who blocked it is the one who unblocks.
            */
           const waitingRows =
             ids.length === 0 || liveIds.length === 0
@@ -612,6 +617,7 @@ export class OrderRepository extends Context.Service<
                   join WorkflowRun wr on wr.id = s.runId
                   where ${sql.in("wr.orderId", ids)}
                     and wr.status in ('pending', 'active')
+                    and (wr.flag is null or wr.flag <> 'blocked')
                     and ${sql.in("s.teamId", liveIds)}
                     and ${sql.literal(ReadyWhere.readyWhere("s"))}
                 `.values;

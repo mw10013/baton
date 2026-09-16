@@ -436,8 +436,15 @@ const trimmedText = <B extends string>(brand: B, maxLength: number) =>
 export const StepInstructions = trimmedText("StepInstructions", 2000);
 export type StepInstructions = typeof StepInstructions.Type;
 
+/**
+ * The cap {@link StepNote} enforces, exported so a field can count down to it.
+ * A decode failure mid-paragraph is the failure mode: the merchant has typed a
+ * thousand characters before anything refuses them.
+ */
+export const STEP_NOTE_MAX_LENGTH = 1000;
+
 /** Worker-written text about one run's step (or a block reason). Same trimming; `null` clears. */
-export const StepNote = trimmedText("StepNote", 1000);
+export const StepNote = trimmedText("StepNote", STEP_NOTE_MAX_LENGTH);
 export type StepNote = typeof StepNote.Type;
 
 /**
@@ -1476,7 +1483,9 @@ export const OrderRow = Schema.Struct({
    *
    * Unassigned ready steps contribute nothing, and neither does a team that
    * has left the roster: both are `attention`, and rendering one fault in two
-   * cells makes it look like two alarms. A team still on the roster but with
+   * cells makes it look like two alarms. A blocked run contributes nothing
+   * either: its team cannot move it, and `RunCounts.blocked` is its alarm. A
+   * team still on the roster but with
    * no members does contribute: it is `attention` too, but the badge names
    * the team the merchant has to staff. So an order in production with an
    * empty list is exactly an order whose every ready step is unassigned or
