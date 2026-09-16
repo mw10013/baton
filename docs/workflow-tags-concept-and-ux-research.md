@@ -19,7 +19,7 @@ Rename it to the workflow's **tag**, and:
 2. **Show it wherever the workflow is identified**, and keep **one** place to edit it —
    the editor, reached by an **Edit tag** button on the detail page.
 3. **Design the UI for one tag**, keeping the array as an escape hatch.
-4. **Add nothing else.** No suggestions, no uniqueness constraint, no duplicate warning.
+4. **Add nothing else.** No suggestions. (Superseded on uniqueness: one active workflow per tag, refused at Apply and Turn on — see the section below.)
    Drop the index tag filter.
 
 ## The naming problem
@@ -101,22 +101,16 @@ Hence **design for one, allow many**: the array stays (max 20,
 The `e2e/fixture.ts` workflows already carry exactly one tag each, which is independent
 evidence for the model.
 
-### Duplicate tags across workflows are fine
+### Duplicate tags across workflows — superseded
 
-Two workflows carrying the same tag start two runs on the same line item, because
-`matchesLineItem` evaluates each workflow independently
-(`src/lib/WorkflowRunRepository.ts:905-913`).
+This section argued that two workflows carrying the same tag was a coherent fan-out and
+should be neither warned about nor prevented. It was written when a line item could hold
+several runs at once; it no longer describes the app.
 
-An earlier draft called that a hazard and proposed a warning. **That was wrong.** It is
-the same fan-out that is correct on the product side, and there is no principled reason it
-becomes a defect when the two tags happen to match — a merchant who does that has said
-"this family goes through both," which is coherent. The one real accident vector is
-already closed: `duplicateWorkflow` deliberately copies everything _except_ the tags, and
-says why (`src/lib/WorkflowRepository.ts:268-277`).
-
-**Do not warn, do not enforce uniqueness.** Enforcement stays available — workflow _names_
-are already unique (`WorkflowNameTakenError`) — but it buys nothing and costs an error path
-at the create dialog, exactly where the merchant is still learning the field.
+The rule now is **one workflow per line item**, and with it **one active workflow per
+tag**, refused at Apply and Turn on (`WorkflowTagTakenError`). Off workflows may still
+share a tag, which is what lets a replacement be built before the swap. The reasoning is
+in `docs/workflow-per-item-cardinality-research.md`.
 
 ## What the comparable products do
 

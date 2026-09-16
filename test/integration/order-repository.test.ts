@@ -85,6 +85,7 @@ const aLineItem = (
   unfulfilledQuantity: 1,
   nonFulfillableQuantity: 0,
   productTags: ["engraved"],
+  matchedWorkflowIds: [],
   customAttributes: [{ key: "text", value: "Hello" }],
   requiresShipping: true,
   ...overrides,
@@ -247,6 +248,15 @@ describe("OrderRepository.listOrders", () => {
  * `WorkflowRunRepository` is not in this test's layer and the filters only
  * read status. `#1009` is unpaid with no runs: the `null` state, in no
  * stage and no count.
+ *
+ * `#1012` and `#1013` are the ambiguity cases, written with
+ * `matchedWorkflowIds` directly because reconcile is the only writer of that
+ * column and this test has no `WorkflowRunRepository`. `#1013` is the
+ * precedence case: an open run *and* an item still waiting on a choice,
+ * which `Domain.productionState` reads as `multiple_workflows` rather than
+ * `in_production`. Between them
+ * they are also the proof that `json_array_length` exists in Durable Object
+ * SQLite — every `AMBIGUOUS_ITEM` fragment would throw without it.
  */
 const seedStates = Effect.gen(function* () {
   const repository = yield* OrderRepository;
@@ -255,6 +265,8 @@ const seedStates = Effect.gen(function* () {
     readonly n: number;
     readonly order?: Partial<Domain.ShopOrder>;
     readonly statuses: readonly Domain.RunStatus[];
+    /** Written onto the order's own line item; two or more with no live run on it is ambiguous. */
+    readonly matched?: readonly string[];
   }[] = [
     { n: 1, statuses: ["done"] }, // ready
     { n: 2, statuses: ["done", "cancelled"] }, // ready
@@ -267,8 +279,17 @@ const seedStates = Effect.gen(function* () {
     { n: 9, order: { fullyPaid: false }, statuses: [] }, // null: unpaid, nothing to say
     { n: 10, statuses: ["cancelled"] }, // no workflow: a cancelled run is no run
     { n: 11, order: { fulfillmentStatus: "FULFILLED" }, statuses: [] }, // shipped, never started
+    { n: 12, statuses: [], matched: ["w1", "w2"] }, // choose a workflow
+    { n: 13, statuses: ["active"], matched: ["w1", "w2"] }, // choose a workflow, and one item in production
+    // Unpaid: the ambiguity is not a choice yet, so the manual run's stage wins.
+    {
+      n: 14,
+      order: { fullyPaid: false },
+      statuses: ["active"],
+      matched: ["w1", "w2"],
+    }, // in production
   ];
-  for (const { n, order, statuses } of cases) {
+  for (const { n, order, statuses, matched } of cases) {
     yield* upsert(
       repository,
       anOrder({
@@ -279,7 +300,18 @@ const seedStates = Effect.gen(function* () {
         fullyPaid: true,
         ...order,
       }),
-      [aLineItem(n, { orderId: orderId(n) })],
+      [
+        aLineItem(n, {
+          orderId: orderId(n),
+          ...(matched === undefined
+            ? {}
+            : {
+                matchedWorkflowIds: matched.map((id) =>
+                  Schema.decodeUnknownSync(Domain.WorkflowId)(id),
+                ),
+              }),
+        }),
+      ],
     );
     for (const [index, status] of statuses.entries())
       yield* sql`
@@ -318,6 +350,7 @@ describe("OrderRepository.listOrders filters", () => {
         return {
           all: yield* list(null),
           no_workflow: yield* list("no_workflow"),
+          multiple_workflows: yield* list("multiple_workflows"),
           in_production: yield* list("in_production"),
           ready_to_ship: yield* list("ready_to_ship"),
           shipped: yield* list("shipped"),
@@ -325,9 +358,10 @@ describe("OrderRepository.listOrders filters", () => {
         };
       }),
     );
-    strictEqual(pages.all.orders.length, 11);
+    strictEqual(pages.all.orders.length, 14);
     deepStrictEqual(names(pages.no_workflow), ["#1010", "#1005"]);
-    deepStrictEqual(names(pages.in_production), ["#1004", "#1003"]);
+    deepStrictEqual(names(pages.multiple_workflows), ["#1013", "#1012"]);
+    deepStrictEqual(names(pages.in_production), ["#1014", "#1004", "#1003"]);
     deepStrictEqual(names(pages.ready_to_ship), ["#1008", "#1002", "#1001"]);
     deepStrictEqual(names(pages.shipped), ["#1011", "#1007"]);
     deepStrictEqual(names(pages.cancelled), ["#1006"]);
@@ -372,9 +406,14 @@ describe("OrderRepository.listOrders filters", () => {
         };
       }),
     );
+    // `#1012` is excluded from `no_workflow` and `#1013` from
+    // `in_production`: the ambiguity outranks both, so the chips partition
+    // the open orders exactly as the lists do. `#1014` is unpaid, so its
+    // ambiguity is not a choice yet and its active run counts it in production.
     const expected = {
       no_workflow: 2,
-      in_production: 2,
+      multiple_workflows: 2,
+      in_production: 3,
       ready_to_ship: 3,
       attention: 0,
     };
@@ -424,7 +463,7 @@ describe("OrderRepository.listOrders filters", () => {
     deepStrictEqual(names(paid), ["#1008", "#1002"]);
     deepStrictEqual(names(second), ["#1001"]);
     strictEqual(second.nextCursor, null);
-    deepStrictEqual(names(unpaid), ["#1009"]);
+    deepStrictEqual(names(unpaid), ["#1014", "#1009"]);
   });
   /**
    * `RunCounts.blocked` and `RunCounts.flagged` are the two alarms the index

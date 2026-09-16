@@ -81,13 +81,24 @@ test("teams screen creates, staffs, renames, and deletes a team", async ({
     frame.getByText("A team with that name already exists."),
   ).toBeVisible();
   await frame.getByRole("button", { name: "Cancel" }).click();
+  /* The dialog releases focus on close; keys typed before that land in it and
+     vanish, which showed up as an intermittent miss on the empty state below. */
+  await expect(
+    frame.getByText("A team with that name already exists."),
+  ).toBeHidden();
 
   /* Search filters client-side; a miss shows the clear-filters state. Typed
      key by key: Polaris forwards native `input` events into its `onInput`,
-     and `fill` can land as one value swap the element does not report. */
-  await frame
-    .getByRole("searchbox", { name: "Search teams by name" })
-    .pressSequentially("zzz");
+     and `fill` can land as one value swap the element does not report. The
+     value is asserted first so a dropped keystroke fails here, by name,
+     rather than as a timeout on the paragraph. */
+  const search = frame.getByRole("searchbox", {
+    name: "Search teams by name",
+  });
+  await search.click();
+  await search.pressSequentially("zzz");
+  await expect(search).toHaveValue("zzz");
+  await expect(frame.getByText("Showing 0 of")).toBeVisible();
   await expect(frame.getByText("No teams match.")).toBeVisible();
   await frame.getByRole("button", { name: "Clear filters" }).click();
   await frame.getByRole("link", { name: TEAM }).click();

@@ -29,6 +29,17 @@ export class RunTerminalError extends Schema.TaggedError<RunTerminalError>()(
   { runId: Schema.String, status: Domain.RunStatus },
 ) {}
 
+/**
+ * Un-cancel refused: another live run already occupies the line item. One live
+ * run per item is a database invariant (`WorkflowRun_live_item_uidx`), so
+ * without this check the update would surface as a raw `SqlError` rather than
+ * as something the page can phrase. Names the occupant so it can.
+ */
+export class RunItemBusyError extends Schema.TaggedError<RunItemBusyError>()(
+  "RunItemBusyError",
+  { runId: Schema.String, workflowName: Domain.WorkflowName },
+) {}
+
 /** The step's team is not among the caller's teams. */
 export class RunNotAllowedError extends Schema.TaggedError<RunNotAllowedError>()(
   "RunNotAllowedError",
@@ -87,6 +98,13 @@ export interface ReconcileCounts {
   readonly created: number;
   readonly cancelled: number;
   readonly flagged: number;
+  /**
+   * Line items this pass left **ambiguous**: two or more startable workflows
+   * matched and no live run exists, so nothing was started and the merchant
+   * has to choose. Not a fault — a count worth logging, and the number the
+   * orders index turns into a stage.
+   */
+  readonly ambiguous: number;
 }
 
 export interface ReconcileAllCounts {
@@ -94,6 +112,8 @@ export interface ReconcileAllCounts {
   readonly orders: number;
   /** Runs created. */
   readonly created: number;
+  /** Line items left ambiguous; see {@link ReconcileCounts.ambiguous}. */
+  readonly ambiguous: number;
 }
 
 export interface StartContext {
@@ -192,6 +212,7 @@ const NO_COUNTS: ReconcileCounts = {
   created: 0,
   cancelled: 0,
   flagged: 0,
+  ambiguous: 0,
 };
 
 export class WorkflowRunRepository extends Context.Service<
@@ -227,30 +248,56 @@ export class WorkflowRunRepository extends Context.Service<
     >;
     /**
      * What the Turn on dialog asks: how many stored, open (unfulfilled, not
-     * cancelled) orders would match `workflow` if its date allowed them, paid
-     * or not, and the placed date of the earliest. A line item counts when
-     * its tags match and `(lineItemId, workflowId)` has no run. Row cost: the
-     * open orders' line items, once per dialog open.
+     * cancelled) orders **Include them would actually start** — not merely
+     * match — and the placed date of the earliest. Paid or not, since an
+     * unpaid one qualifies the day it pays.
+     *
+     * Three exclusions, all of them the one-live-run-per-item rule read
+     * forward: an item whose tags do not match; an item already carrying a
+     * live run, whoever started it, because a workflow turned on later never
+     * displaces one; and an item that another *active* workflow's tags also
+     * match, because that item would come out ambiguous and reconcile would
+     * start nothing on it. The last is why the whole {@link StartContext} is
+     * taken rather than the one workflow: ambiguity is a property of the set.
+     *
+     * Row cost: the open orders' line items, once per dialog open.
      */
-    readonly countWaitingOrders: (input: {
-      readonly workflow: Domain.WorkflowDetail;
-    }) => Effect.Effect<
+    readonly countWaitingOrders: (
+      input: StartContext & {
+        readonly workflow: Domain.WorkflowDetail;
+      },
+    ) => Effect.Effect<
       Domain.WaitingOrders,
       SqlError.SqlError | WorkflowRunRepositoryError
     >;
     /**
-     * Manual attach of a workflow. `None` when `(lineItemId, workflowId)`
-     * already has a run in any status. Attach is the merchant's opt-in, so
-     * the date rule does not apply to it.
+     * Manual attach, read as **set this item's workflow**. An item holds at
+     * most one live run, so this is a replace, done in one transaction:
+     *
+     * - a live run for *this* workflow is `None` — nothing to do, and the
+     *   caller reads it as "already there";
+     * - a live run for a different workflow is cancelled first, so the
+     *   partial index is free before the insert, and comes back as
+     *   `replaced`;
+     * - a *cancelled* run for `(lineItemId, workflowId)` is un-cancelled
+     *   rather than replaced by a fresh one. That is the existing recovery
+     *   semantics of the run key, and it is what the merchant means: the
+     *   steps already done on that earlier run come back with it.
+     *
+     * Attach is the merchant's opt-in, so the date rule does not apply to it.
      */
-    readonly createRun: (input: {
+    readonly setRun: (input: {
       readonly workflow: Domain.WorkflowDetail;
       readonly teams: StartContext["teams"];
       readonly order: Domain.ShopOrder;
       readonly lineItem: Domain.OrderLineItem;
       readonly source: Domain.RunSource;
     }) => Effect.Effect<
-      Option.Option<Domain.WorkflowRun>,
+      Option.Option<{
+        readonly run: Domain.WorkflowRun;
+        /** The run cancelled to make room, or null when the item was free. */
+        readonly replaced: Domain.WorkflowRun | null;
+      }>,
       SqlError.SqlError | WorkflowRunRepositoryError
     >;
     readonly markOrderDeleted: (input: {
@@ -277,7 +324,11 @@ export class WorkflowRunRepository extends Context.Service<
       | RunNotFoundError
       | RunTerminalError
     >;
-    /** Only from `cancelled`; status is recomputed from the steps. */
+    /**
+     * Only from `cancelled`; status is recomputed from the steps. Refused with
+     * {@link RunItemBusyError} when another live run has taken the line item
+     * in the meantime — one live run per item, so the occupant has to go first.
+     */
     readonly uncancelRun: (input: {
       readonly runId: string;
     }) => Effect.Effect<
@@ -286,6 +337,7 @@ export class WorkflowRunRepository extends Context.Service<
       | WorkflowRunRepositoryError
       | RunNotFoundError
       | RunTerminalError
+      | RunItemBusyError
     >;
     /** One row per run with at least one ready step owned by `teamIds`; flagged runs first, then oldest. */
     readonly listQueue: (input: {
@@ -752,6 +804,15 @@ export class WorkflowRunRepository extends Context.Service<
       /**
        * `canStart` has already required every step's team to be in `teams`,
        * so the `teamName` lookup cannot miss.
+       *
+       * The conflict target is unqualified because `WorkflowRun` now carries
+       * two unique indexes and either may fire: `(lineItemId, workflowId)`,
+       * the un-cancel key, means this workflow already ran on this item in
+       * some status; `WorkflowRun_live_item_uidx` means a *different*
+       * workflow holds the item live. Both mean "do not insert", and naming
+       * one target would turn the other into a thrown `SqlError` in the
+       * middle of a reconcile pass. No row returned is `Option.none()`, which
+       * every caller already reads as "nothing created".
        */
       const insertRun = Effect.fn("WorkflowRunRepository.insertRun")(
         function* ({
@@ -785,7 +846,7 @@ export class WorkflowRunRepository extends Context.Service<
                 ${json(lineItem.customAttributes)},
                 ${source}, 'pending', null, null, null, ${now}, ${now}, null
               )
-              on conflict (lineItemId, workflowId) do nothing
+              on conflict do nothing
               returning *
             `,
           );
@@ -886,16 +947,64 @@ export class WorkflowRunRepository extends Context.Service<
           const startable = workflows.filter((workflow) =>
             canStart(workflow, teams),
           );
+          /**
+           * One run per line item, not the cross product. Each item records
+           * every startable workflow that matched it, and only a *single*
+           * match with no live run starts anything:
+           *
+           * - two or more matches is an ambiguity, and picking for the
+           *   merchant would route work to the wrong team silently, so
+           *   nothing starts and the order page asks;
+           * - a live run (`pending`, `active` or `done`) already owns the
+           *   item, so a workflow turned on later never displaces it — which
+           *   is the whole of the "existing runs win" rule, no extra code.
+           *
+           * `matchedWorkflowIds` is written on every pass, including when the
+           * order cannot start runs yet, so an unpaid order already carries
+           * its matches the moment payment lands, and so the column can never
+           * go stale behind a definition change.
+           */
+          const matches = lineItems.map((lineItem) => ({
+            lineItem,
+            matched: startable.filter((workflow) =>
+              matchesLineItem(workflow, order, lineItem),
+            ),
+            hasLive: runs.some((run) => run.lineItemId === lineItem.id),
+          }));
+          yield* Effect.forEach(
+            matches,
+            ({ lineItem, matched }) => sql`
+              update OrderLineItem
+              set matchedWorkflowIds = ${json(matched.map(({ workflow }) => workflow.id))}
+              where id = ${lineItem.id}
+            `,
+            { discard: true },
+          );
+          const ambiguous = matches.filter(
+            ({ matched, hasLive }) => !hasLive && matched.length >= 2,
+          );
+          yield* Effect.forEach(
+            ambiguous,
+            ({ lineItem, matched }) =>
+              Effect.logInfo(
+                `WorkflowRunRepository.reconcileOrder: orderId=${orderId} lineItemId=${lineItem.id} matched=${String(matched.length)}: ambiguous, no run started`,
+              ).pipe(
+                Effect.annotateLogs({
+                  orderId,
+                  lineItemId: lineItem.id,
+                  matched: matched.length,
+                }),
+              ),
+            { discard: true },
+          );
           const inserted = orderCanStart
             ? yield* Effect.forEach(
-                lineItems.flatMap((lineItem) =>
-                  startable
-                    .filter((workflow) =>
-                      matchesLineItem(workflow, order, lineItem),
-                    )
-                    .map((workflow) => ({ workflow, lineItem })),
+                matches.flatMap(({ lineItem, matched, hasLive }) =>
+                  hasLive || matched.length !== 1 || matched[0] === undefined
+                    ? []
+                    : [{ lineItem, workflow: matched[0] }],
                 ),
-                ({ workflow, lineItem }) =>
+                ({ lineItem, workflow }) =>
                   insertRun({
                     workflow,
                     teams,
@@ -957,7 +1066,12 @@ export class WorkflowRunRepository extends Context.Service<
               cancelled: counts.cancelled + delta.cancelled,
               flagged: counts.flagged + delta.flagged,
             }),
-            { created, cancelled: 0, flagged: 0 },
+            {
+              created,
+              cancelled: 0,
+              flagged: 0,
+              ambiguous: ambiguous.length,
+            },
           );
         },
       );
@@ -979,6 +1093,10 @@ export class WorkflowRunRepository extends Context.Service<
             return {
               orders: ids.length,
               created: counts.reduce((sum, { created }) => sum + created, 0),
+              ambiguous: counts.reduce(
+                (sum, { ambiguous }) => sum + ambiguous,
+                0,
+              ),
             } satisfies ReconcileAllCounts;
           },
         ),
@@ -987,11 +1105,11 @@ export class WorkflowRunRepository extends Context.Service<
           "WorkflowRunRepository.countWaitingOrders",
         )(function* ({
           workflow,
-        }: {
-          readonly workflow: Domain.WorkflowDetail;
-        }) {
-          // The open orders' line items that this workflow has no run for
-          // yet; the tag test runs here because tags are JSON text.
+          workflows,
+          teams,
+        }: StartContext & { readonly workflow: Domain.WorkflowDetail }) {
+          // The open orders' line items with no live run on them; the tag test
+          // runs here because tags are JSON text.
           const rows = yield* decode(
             Schema.Array(
               Schema.Struct({
@@ -1011,20 +1129,79 @@ export class WorkflowRunRepository extends Context.Service<
                 and li.unfulfilledQuantity > 0
                 and not exists (
                   select 1 from WorkflowRun r
-                  where r.lineItemId = li.id and r.workflowId = ${workflow.workflow.id}
+                  where r.lineItemId = li.id and r.status <> 'cancelled'
                 )
             `,
           );
-          const matching = rows.filter((row) => matchesTags(workflow, row));
+          // Rivals: the other startable workflows. An item any of them also
+          // matches is ambiguous the moment this one goes on, and ambiguity
+          // starts nothing, so it is not a waiting order.
+          const rivals = workflows.filter(
+            (candidate) =>
+              candidate.workflow.id !== workflow.workflow.id &&
+              canStart(candidate, teams),
+          );
+          const matching = rows.filter(
+            (row) =>
+              matchesTags(workflow, row) &&
+              !rivals.some((rival) => matchesTags(rival, row)),
+          );
           const byOrder = [
             ...new Map(matching.map((row) => [row.orderId, row])).values(),
           ];
           return summarise(byOrder);
         }),
 
-        createRun: Effect.fn("WorkflowRunRepository.createRun")(
+        setRun: Effect.fn("WorkflowRunRepository.setRun")(
           (input: Parameters<typeof insertRun>[0]) =>
-            sql.withTransaction(insertRun(input)),
+            sql.withTransaction(
+              Effect.gen(function* () {
+                const existing = yield* decodeRuns(
+                  yield* sql`
+                    select * from WorkflowRun
+                    where lineItemId = ${input.lineItem.id}
+                  `,
+                );
+                const live = existing.find((run) => run.status !== "cancelled");
+                if (live?.workflowId === input.workflow.workflow.id)
+                  return Option.none();
+                const now = yield* Clock.currentTimeMillis;
+                // Cancel first: the partial index must be free before the
+                // insert or the un-cancel below touches the item.
+                if (live !== undefined)
+                  yield* sql`
+                    update WorkflowRun
+                    set status = 'cancelled', cancelledAt = ${now}, updatedAt = ${now}
+                    where id = ${live.id}
+                  `;
+                const replaced = live ?? null;
+                const cancelled = existing.find(
+                  (run) =>
+                    run.status === "cancelled" &&
+                    run.workflowId === input.workflow.workflow.id,
+                );
+                if (cancelled !== undefined) {
+                  yield* sql`update WorkflowRun set cancelledAt = null where id = ${cancelled.id}`;
+                  yield* recomputeStatus(cancelled.id, now);
+                  // Read back for the recomputed status. The row was just
+                  // updated inside this transaction, so the miss is
+                  // unreachable; `None` keeps the caller's one vocabulary.
+                  const [run] = yield* decodeRuns(
+                    yield* sql`select * from WorkflowRun where id = ${cancelled.id}`,
+                  );
+                  return run === undefined
+                    ? Option.none()
+                    : Option.some({ run, replaced });
+                }
+                // Every run this item already has for this workflow was
+                // handled above, live or cancelled, so the insert's
+                // `on conflict do nothing` cannot fire here.
+                const inserted = yield* insertRun(input);
+                return Option.isNone(inserted)
+                  ? Option.none()
+                  : Option.some({ run: inserted.value, replaced });
+              }),
+            ),
         ),
 
         markOrderDeleted: Effect.fn("WorkflowRunRepository.markOrderDeleted")(
@@ -1095,6 +1272,21 @@ export class WorkflowRunRepository extends Context.Service<
               const run = yield* requireRun(runId);
               if (run.status !== "cancelled")
                 yield* new RunTerminalError({ runId, status: run.status });
+              // The item may have been routed elsewhere since the cancel.
+              // Checked here rather than left to `WorkflowRun_live_item_uidx`,
+              // which would throw a raw `SqlError` the page cannot phrase.
+              const [occupant] = yield* decodeRuns(
+                yield* sql`
+                  select * from WorkflowRun
+                  where lineItemId = ${run.lineItemId} and status <> 'cancelled'
+                  limit 1
+                `,
+              );
+              if (occupant !== undefined)
+                yield* new RunItemBusyError({
+                  runId,
+                  workflowName: occupant.workflowName,
+                });
               const now = yield* Clock.currentTimeMillis;
               yield* sql`update WorkflowRun set cancelledAt = null where id = ${runId}`;
               yield* recomputeStatus(runId, now);

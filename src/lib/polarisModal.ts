@@ -122,3 +122,16 @@ export const hideModal = (modalId: string): void => {
     .querySelector<HTMLElement & { hideOverlay?: () => void }>(`#${modalId}`)
     ?.hideOverlay?.();
 };
+
+/**
+ * Shows an `s-modal` through the element, the counterpart to
+ * {@link hideModal} and for the same reason: `shopify.modal.show(id)` misses
+ * the window document's registry inside an `s-app-window`. For a modal opened
+ * from a handler that has to record *what* it is about first; a button that
+ * needs nothing but the dialog uses `commandFor` / `command="--show"`.
+ */
+export const showModal = (modalId: string): void => {
+  document
+    .querySelector<HTMLElement & { showOverlay?: () => void }>(`#${modalId}`)
+    ?.showOverlay?.();
+};

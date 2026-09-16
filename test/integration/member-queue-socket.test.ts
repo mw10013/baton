@@ -86,6 +86,7 @@ const seedOrder = (shop: string) =>
                 unfulfilledQuantity: 1,
                 nonFulfillableQuantity: 0,
                 productTags: [],
+                matchedWorkflowIds: [],
                 customAttributes: [],
                 requiresShipping: true,
               },

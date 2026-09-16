@@ -10,6 +10,7 @@ import { LocalDateTime } from "@/components/LocalDateTime";
 import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
 import { adminOrderUrl, useResourceLinkTarget } from "@/lib/orderLinks";
+import { hideModal, showModal } from "@/lib/polarisModal";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
@@ -68,6 +69,8 @@ const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
   // started downstream between the render and the click.
   UndoBlocked: ({ teamName, stepName }) =>
     `${teamName} already started ${stepName}.`,
+  ItemHasRun: ({ workflowName }) =>
+    `This item is already on ${workflowName}. Cancel that run first to bring this one back.`,
 });
 
 /**
@@ -131,8 +134,56 @@ const NOTE_COUNT_FROM = 800;
 /** Teams named in the order summary before it collapses to "+N more", as the index's cell caps its own. */
 const WAITING_ON_LIMIT = 3;
 
+/** The one confirmation on this page: replacing a live run that has work on it. */
+const CHANGE_WORKFLOW_MODAL = "change-workflow";
+
+/**
+ * `Engraving, Rush and Gift`. Not `Intl.ListFormat`: every other sentence on
+ * these pages is English written by hand, and a half-localised one reads worse
+ * than a consistent one.
+ */
+const nameList = (names: readonly string[]) =>
+  names.length <= 1
+    ? (names[0] ?? "")
+    : `${names.slice(0, -1).join(", ")} and ${names.at(-1) ?? ""}`;
+
+/**
+ * Spelled out to five, digits past that. `Domain.WorkflowLimits.maxWorkflows`
+ * is the real ceiling and "Seventeen workflows match this item" would be a
+ * sentence nobody reads to the end of; five is where the list itself stops
+ * being scannable anyway.
+ */
+const SPELLED = ["", "One", "Two", "Three", "Four", "Five"] as const;
+
+/** The ambiguous item's own sentence: which workflows matched, and the ask. */
+const ambiguitySentence = (names: readonly string[]) =>
+  `${SPELLED[names.length] ?? formatNumber(names.length)} workflows match this item: ${nameList(names)}. Choose one.`;
+
+/**
+ * The confirmation body. Done outranks started because it is the bigger loss:
+ * a finished step is work someone will have to do again under the new
+ * workflow, while a started one is work in progress. Steps do not carry over —
+ * the new run is copied from its own definition — so the sentence says so
+ * rather than leaving the merchant to assume otherwise.
+ */
+const changeWarning = (
+  from: Domain.WorkflowName,
+  to: string,
+  steps: readonly Domain.WorkflowRunStep[],
+) => {
+  const done = steps.filter((step) => step.completedAt !== null).length;
+  const started = steps.filter((step) => step.startedAt !== null).length;
+  const total = formatNumber(steps.length);
+  const progress =
+    done > 0
+      ? `${formatNumber(done)} of ${total} steps done`
+      : `${formatNumber(started)} of ${total} steps started`;
+  return `${from} has ${progress}. Change to ${to} anyway? Those steps will not carry over.`;
+};
+
 const PRODUCTION_STATE_BADGE = {
   no_workflow: { label: "No workflow", tone: "warning" },
+  multiple_workflows: { label: "Choose a workflow", tone: "warning" },
   in_production: { label: "In production", tone: "info" },
   ready_to_ship: { label: "Ready to ship", tone: "success" },
   shipped: { label: "Shipped", tone: "neutral" },
@@ -527,6 +578,18 @@ function RouteComponent() {
     new Set(),
   );
   /**
+   * What the Change confirmation is about, or null when it is closed. The
+   * modal is one element at page level rather than one per item, so the click
+   * that opens it has to say which item and which workflow it meant.
+   */
+  const [changing, setChanging] = React.useState<{
+    readonly lineItemId: string;
+    readonly workflowId: string;
+    readonly from: Domain.WorkflowName;
+    readonly to: string;
+    readonly warning: string;
+  } | null>(null);
+  /**
    * Which runs have their "Manage" disclosure open; closed is the default.
    *
    * It survives re-renders on purpose, and the next reader's instinct will be to
@@ -595,6 +658,15 @@ function RouteComponent() {
           const { [lineItemId]: _done, ...rest } = current;
           return rest;
         });
+        setChanging(null);
+        hideModal(CHANGE_WORKFLOW_MODAL);
+        /* A replace is two facts — what started and what stopped — and the
+           cancelled run's card stays on the page, so the toast is where the
+           merchant learns the second one was theirs to expect. */
+        if (result.replaced !== null)
+          shopify.toast.show(
+            `Changed to ${result.run.workflowName}. ${result.replaced.workflowName} was cancelled.`,
+          );
       }
       await invalidate();
     },
@@ -693,6 +765,10 @@ function RouteComponent() {
   const state = Domain.productionState({
     order,
     runs: Domain.runCounts(runs.map(({ run }) => run)),
+    ambiguousItems: Domain.ambiguousItems(
+      lineItems,
+      runs.map(({ run }) => run),
+    ),
   });
   /** See `managing`: an id with no run on this order is stale and answers `false`. */
   const managingRun = (run: Domain.WorkflowRun) =>
@@ -1166,10 +1242,84 @@ function RouteComponent() {
     );
   };
 
+  /**
+   * An item holds at most one live run, so the picker under it is one of three
+   * things and the item's own state decides which:
+   *
+   * - **ambiguous** — two or more workflows matched at the last reconcile and
+   *   none started, because the server will not pick for the merchant. The
+   *   picker is open with no way to close it and offers exactly the workflows
+   *   that matched: there is nothing to go back to, and the ask is the point
+   *   of the row.
+   * - **no run** — the ordinary manual attach, a disclosure over every active
+   *   workflow, as before.
+   * - **a live run** — a *change*, which cancels what is there. The options
+   *   drop the incumbent (choosing it again is a no-op the server answers with
+   *   `AlreadyExists`), and a run with any step started or done asks first.
+   *   A **done** run offers no change at all: see `changeable` below.
+   *
+   * Ambiguity is derived here rather than seeded into `attachOpen`: a cancel
+   * elsewhere on the page can make an item ambiguous again between renders,
+   * and state seeded once would not notice.
+   */
   const renderLineItem = (item: Domain.OrderLineItem) => {
     const removed = item.currentQuantity === 0;
     const toMake = Domain.unitsToMake(item);
     const itemRuns = runs.filter(({ run }) => run.lineItemId === item.id);
+    const live = itemRuns.find(({ run }) => run.status !== "cancelled");
+    const matched = itemWorkflows.filter((workflow) =>
+      item.matchedWorkflowIds.includes(workflow.id),
+    );
+    // The same test as `Domain.ambiguousItems`, on the raw id list, so the
+    // item and the page badge cannot disagree; `matched` only narrows the
+    // picker, and a matched workflow that has since lost a team or its
+    // steps simply drops out of the options.
+    const ambiguous =
+      live === undefined &&
+      item.matchedWorkflowIds.length >= 2 &&
+      toMake > 0 &&
+      !removed;
+    // A done run is finished work with a trail; changing it would rewrite
+    // that history to `cancelled` for a rework the run cards do not model.
+    // The server would allow it (done is live), so the page is the gate.
+    const changeable = live === undefined || live.run.status !== "done";
+    const options = (() => {
+      if (ambiguous) return matched;
+      if (live === undefined) return itemWorkflows;
+      return itemWorkflows.filter(
+        (workflow) => workflow.id !== live.run.workflowId,
+      );
+    })();
+    const pickerOpen = ambiguous || attachOpen.has(item.id);
+    const chosen = attachChoice[item.id];
+    const actionLabel = (() => {
+      if (ambiguous) return "Choose";
+      return live === undefined ? "Attach" : "Change";
+    })();
+    const submit = () => {
+      if (!chosen) return;
+      const touched =
+        live !== undefined &&
+        live.steps.some(
+          (step) => step.startedAt !== null || step.completedAt !== null,
+        );
+      if (live !== undefined && touched) {
+        setChanging({
+          lineItemId: item.id,
+          workflowId: chosen,
+          from: live.run.workflowName,
+          to: options.find((workflow) => workflow.id === chosen)?.name ?? "",
+          warning: changeWarning(
+            live.run.workflowName,
+            options.find((workflow) => workflow.id === chosen)?.name ?? "",
+            live.steps,
+          ),
+        });
+        showModal(CHANGE_WORKFLOW_MODAL);
+        return;
+      }
+      attachMutation.mutate({ lineItemId: item.id, workflowId: chosen });
+    };
     return (
       <s-section
         key={item.id}
@@ -1210,13 +1360,22 @@ function RouteComponent() {
 
           <s-stack gap="base">
             {itemRuns.length === 0 ? (
-              <s-paragraph color="subdued">
-                No workflow on this item.
+              <s-paragraph color={ambiguous ? undefined : "subdued"}>
+                {ambiguous
+                  ? ambiguitySentence(matched.map(({ name }) => name))
+                  : "No workflow on this item."}
               </s-paragraph>
             ) : (
-              itemRuns.map(renderRun)
+              <>
+                {ambiguous && (
+                  <s-paragraph>
+                    {ambiguitySentence(matched.map(({ name }) => name))}
+                  </s-paragraph>
+                )}
+                {itemRuns.map(renderRun)}
+              </>
             )}
-            {!removed && !attachOpen.has(item.id) && (
+            {!removed && changeable && !pickerOpen && (
               <s-stack direction="inline" justifyContent="start">
                 <s-button
                   variant="tertiary"
@@ -1224,11 +1383,11 @@ function RouteComponent() {
                     setAttachOpen((current) => new Set(current).add(item.id));
                   }}
                 >
-                  Attach workflow
+                  {live === undefined ? "Attach workflow" : "Change workflow"}
                 </s-button>
               </s-stack>
             )}
-            {!removed && attachOpen.has(item.id) && (
+            {!removed && changeable && pickerOpen && (
               /**
                * A grid, not an inline stack: a Polaris form control fills the
                * inline size it is given and has no width prop, so `s-select` in
@@ -1242,10 +1401,10 @@ function RouteComponent() {
                 justifyContent="start"
               >
                 <s-select
-                  label="Attach workflow"
+                  label={`${actionLabel} workflow`}
                   labelAccessibilityVisibility="exclusive"
-                  placeholder="Attach workflow"
-                  value={attachChoice[item.id] ?? ""}
+                  placeholder={`${actionLabel} workflow`}
+                  value={chosen ?? ""}
                   disabled={!identified || busy}
                   onChange={(event) => {
                     const workflowId = event.currentTarget.value;
@@ -1255,7 +1414,7 @@ function RouteComponent() {
                     }));
                   }}
                 >
-                  {itemWorkflows.map((workflow) => (
+                  {options.map((workflow) => (
                     <s-option key={workflow.id} value={workflow.id}>
                       {workflow.name}
                     </s-option>
@@ -1263,30 +1422,27 @@ function RouteComponent() {
                 </s-select>
                 <s-button
                   variant="secondary"
-                  disabled={!identified || busy || !attachChoice[item.id]}
-                  onClick={() => {
-                    const workflowId = attachChoice[item.id];
-                    if (workflowId)
-                      attachMutation.mutate({
-                        lineItemId: item.id,
-                        workflowId,
+                  disabled={!identified || busy || !chosen}
+                  onClick={submit}
+                >
+                  {actionLabel}
+                </s-button>
+                {/* Nothing to go back to on an ambiguous item: the picker is
+                    the row's whole answer, so it has no dismissal. */}
+                {!ambiguous && (
+                  <s-button
+                    variant="tertiary"
+                    onClick={() => {
+                      setAttachOpen((current) => {
+                        const next = new Set(current);
+                        next.delete(item.id);
+                        return next;
                       });
-                  }}
-                >
-                  Attach
-                </s-button>
-                <s-button
-                  variant="tertiary"
-                  onClick={() => {
-                    setAttachOpen((current) => {
-                      const next = new Set(current);
-                      next.delete(item.id);
-                      return next;
-                    });
-                  }}
-                >
-                  Cancel
-                </s-button>
+                    }}
+                  >
+                    Cancel
+                  </s-button>
+                )}
               </s-grid>
             )}
           </s-stack>
@@ -1329,12 +1485,19 @@ function RouteComponent() {
         !order.lineItemsComplete ||
         state === "ready_to_ship" ||
         state === "no_workflow" ||
+        state === "multiple_workflows" ||
         orderSummary !== null) && (
         <s-stack slot="supplemental-start" gap="base">
           {orderSummary !== null && <s-text>{orderSummary}</s-text>}
           {state === "no_workflow" && (
             <s-paragraph color="subdued">
               No workflow's product tags match the items in this order.
+            </s-paragraph>
+          )}
+          {state === "multiple_workflows" && (
+            <s-paragraph color="subdued">
+              An item on this order matches more than one workflow. Choose one
+              below to start it.
             </s-paragraph>
           )}
           {state === "ready_to_ship" && (
@@ -1361,6 +1524,38 @@ function RouteComponent() {
       ) : (
         lineItems.map(renderLineItem)
       )}
+
+      {/* One modal for the page, driven by `changing`: a per-item one would
+          mount a dialog under every line item of every order. */}
+      <s-modal id={CHANGE_WORKFLOW_MODAL} heading="Change workflow?">
+        <s-paragraph>{changing?.warning ?? ""}</s-paragraph>
+        <s-button
+          slot="secondary-actions"
+          commandFor={CHANGE_WORKFLOW_MODAL}
+          command="--hide"
+          onClick={() => {
+            setChanging(null);
+          }}
+        >
+          {changing === null ? "Cancel" : `Keep ${changing.from}`}
+        </s-button>
+        <s-button
+          slot="primary-action"
+          variant="primary"
+          tone="critical"
+          loading={attachMutation.isPending}
+          disabled={!identified || busy || changing === null}
+          onClick={() => {
+            if (changing !== null)
+              attachMutation.mutate({
+                lineItemId: changing.lineItemId,
+                workflowId: changing.workflowId,
+              });
+          }}
+        >
+          Change workflow
+        </s-button>
+      </s-modal>
 
       {order.note !== null && (
         <s-section slot="aside" heading="Order note">

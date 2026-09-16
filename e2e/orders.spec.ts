@@ -385,3 +385,128 @@ test("the merchant blocks a run with a reason and unblocks it", async ({
   await expect(frame.getByText("Blocked by Merchant")).toBeHidden();
   await expect(frame.getByRole("button", { name: "Block" })).toBeVisible();
 });
+
+/**
+ * One workflow per line item, at the two places a merchant meets it.
+ *
+ * Two active workflows with a tag each, both on the same product, is a state
+ * the app refuses to *create* — Apply and Turn on hold one active workflow per
+ * tag — and the local seed is what makes it reachable, because it writes
+ * definitions straight into SQLite. That is deliberate: the rule is enforced at
+ * the switch, but the runtime has to cope with the state anyway (two workflows
+ * whose tags land on one product through a merchant's retagging in Shopify),
+ * and this is the fixture for it.
+ *
+ * So: the item matches two, nothing starts, the index shows the order under
+ * _Choose a workflow_, and the order page asks. Then the same item is moved to
+ * the other workflow, which is a replace and has to be confirmed.
+ */
+test("an item matching two workflows waits for the merchant to choose, then changes", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+
+  const MEMBER = "e2e.orders@example.com";
+  const TEAM = "E2E Bench";
+  const ENGRAVING = "E2E Engraving";
+  const RUSH = "E2E Rush";
+  await seedMembers(
+    seedConfig(),
+    [MEMBER],
+    [{ name: TEAM, members: [MEMBER] }],
+    [
+      {
+        name: ENGRAVING,
+        tags: ["e2e-engraved"],
+        steps: [{ name: "Engrave", team: TEAM }],
+      },
+      {
+        name: RUSH,
+        tags: ["e2e-rush"],
+        steps: [{ name: "Expedite", team: TEAM }],
+      },
+    ],
+    [
+      {
+        n: 9401,
+        lineItems: [
+          {
+            title: "E2E Twice",
+            quantity: 1,
+            tags: ["e2e-engraved", "e2e-rush"],
+          },
+        ],
+      },
+    ],
+  );
+
+  const frame = await gotoApp(page);
+  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+
+  /* The stage strip carries the new chip with a count, and the row's badge
+     says the same thing. Scoped to the row for the badge, because the chip
+     above the table has the same words. */
+  await expect(
+    frame.getByRole("button", { name: /^Choose a workflow/u }),
+  ).toBeVisible();
+  await expect(
+    frame
+      .locator("s-table-row", { hasText: "#9401" })
+      .getByText("Choose a workflow", { exact: true }),
+  ).toBeVisible();
+
+  await frame.getByRole("link", { name: "#9401" }).click();
+  await expect(frame.locator('s-page[heading="#9401"]')).toBeVisible();
+
+  /* The picker is open with no disclosure to press and offers exactly the two
+     that matched — the item's sentence names them both. */
+  const item = frame.locator('s-section[accessibilityLabel="E2E Twice"]');
+  await expect(
+    item.getByText(
+      `Two workflows match this item: ${ENGRAVING} and ${RUSH}. Choose one.`,
+      { exact: true },
+    ),
+  ).toBeVisible();
+  const picker = item.getByRole("combobox");
+  await expect(picker.getByRole("option")).toHaveCount(2);
+
+  await picker.selectOption({ label: ENGRAVING });
+  await item.getByRole("button", { name: "Choose", exact: true }).click();
+
+  /* The run card replaces the ask, and the disclosure below it now offers a
+     change rather than an attach.
+
+     Wait on the disclosure before naming the workflow: it renders only when
+     the picker is closed, and while the picker is open the item carries the
+     workflow's name three more times (the `s-option`, the native `option`,
+     and the select's own value), which is a strict-mode violation rather than
+     a retryable failure. */
+  const change = item.getByRole("button", {
+    name: "Change workflow",
+    exact: true,
+  });
+  await expect(change).toBeVisible();
+  await expect(item.getByText("Choose one.", { exact: false })).toHaveCount(0);
+  await expect(item.getByText(ENGRAVING, { exact: true })).toBeVisible();
+
+  /* A pending run with nothing started changes with no confirmation: the
+     dialog is for work already done. */
+  await change.click();
+  await picker.selectOption({ label: RUSH });
+  await item.getByRole("button", { name: "Change", exact: true }).click();
+
+  await expect(change).toBeVisible();
+  await expect(item.getByText(RUSH, { exact: true })).toBeVisible();
+  /* The replaced run stays on the page, cancelled: a run is the record of a
+     decision, and the merchant should see the one they undid. The badge
+     prints `WorkflowRun.status` verbatim, so it is lower case. */
+  await expect(item.getByText("cancelled", { exact: true })).toBeVisible();
+
+  /* And the order has left the stage: one live run, nothing left to choose. */
+  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await expect(
+    frame
+      .locator("s-table-row", { hasText: "#9401" })
+      .getByText("Choose a workflow", { exact: true }),
+  ).toHaveCount(0);
+});

@@ -38,6 +38,19 @@ export class WorkflowNotFoundError extends Schema.TaggedError<WorkflowNotFoundEr
   { workflowId: Schema.String },
 ) {}
 
+/**
+ * A tag another **active** workflow already carries. A tag routes a line item
+ * to exactly one workflow, so two on at once would leave every item they both
+ * match ambiguous and started by nobody; refusing at the switch is where the
+ * merchant can still do something about it. Off workflows are not checked —
+ * that is what lets a replacement be built and applied before the swap — so
+ * the refusal names the holder and the merchant turns it off first.
+ */
+export class WorkflowTagTakenError extends Schema.TaggedError<WorkflowTagTakenError>()(
+  "WorkflowTagTakenError",
+  { tag: Domain.WorkflowTag, workflowName: Domain.WorkflowName },
+) {}
+
 /** A step id the editor sent that neither the draft nor the workflow carries — a step some other tab already removed, or a stale id. */
 export class StepNotFoundError extends Schema.TaggedError<StepNotFoundError>()(
   "StepNotFoundError",
@@ -236,13 +249,12 @@ export class WorkflowRepository extends Context.Service<
      * A copy of the workflow: {@link copyName}, its steps with their stages
      * under new ids, off, with **no product tags** and no draft.
      *
-     * Tags are deliberately not copied. Matching is per workflow with no
-     * arbitration (`WorkflowRunRepository.matchesLineItem`), so a copy
-     * carrying the original's tags would start a second, near-identical run
-     * on the same line item the moment it was turned on. Leaving them empty
-     * puts the one decision the merchant has to make in front of them
-     * instead: the copy's trigger line says it never starts until it has a
-     * tag.
+     * Tags are deliberately not copied. One active workflow holds a tag, so a
+     * copy carrying the original's could not be turned on at all while the
+     * original is on ({@link WorkflowTagTakenError}); leaving them empty
+     * spares the merchant a refusal and puts the one decision they have to
+     * make in front of them instead — the copy's trigger line says it never
+     * starts until it has a tag.
      */
     readonly duplicateWorkflow: (input: {
       readonly workflowId: string;
@@ -278,7 +290,11 @@ export class WorkflowRepository extends Context.Service<
      * to a team in `teams`; it writes `activatedAt = activatedAt ?? now`, the
      * coverage date every later reconcile compares orders against (the
      * caller passes an earlier date when the merchant chose to include
-     * waiting orders). A team with no members does not refuse. Off writes
+     * waiting orders). A team with no members does not refuse. On also
+     * requires every *applied* tag — not the draft's — to be free of other
+     * active workflows ({@link WorkflowTagTakenError}): whichever workflow is
+     * on is the one that holds the tag, so replacing v1 with v2 is turn v1
+     * off, then turn v2 on. Off writes
      * `activatedAt = null` and touches nothing else: open runs are days of
      * physical work and keep going; only new runs stop. Neither direction
      * creates, applies, or discards a draft, or looks at whether one exists.
@@ -295,6 +311,7 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowNotFoundError
       | NoStepsError
       | StepUnassignedError
+      | WorkflowTagTakenError
     >;
     /**
      * Moves the coverage date of an on workflow: the merchant's escape hatch
@@ -329,7 +346,11 @@ export class WorkflowRepository extends Context.Service<
      * Replaces the workflow's tags and steps with the draft's and deletes the
      * draft, in one transaction: an order sees the old definition or the new
      * one, never a half-edit. Refused with no draft, an empty draft, or an
-     * unassigned step, on and off alike. Does not touch `activatedAt`: the
+     * unassigned step, on and off alike. On an **active** workflow the
+     * draft's tags must also be free of other active workflows
+     * ({@link WorkflowTagTakenError}); an off workflow is not checked here,
+     * because it starts nothing and Turn on is where the collision matters.
+     * Does not touch `activatedAt`: the
      * workflow stays responsible for the orders it was responsible for, and
      * the caller reconciles them against the new definition. Draft step
      * ids carry over to the workflow.
@@ -345,6 +366,7 @@ export class WorkflowRepository extends Context.Service<
       | NoDraftError
       | NoStepsError
       | StepUnassignedError
+      | WorkflowTagTakenError
     >;
     /** Deletes the draft (steps cascade). Always allowed; a never-applied workflow is left with zero steps. */
     readonly discardDraft: (input: {
@@ -839,6 +861,42 @@ export class WorkflowRepository extends Context.Service<
           return steps;
         });
 
+      /**
+       * Apply and Turn on share the tag check: no other **active** workflow
+       * may carry any of these tags. Tags are stored folded
+       * (`Domain.WorkflowTag` lowercases and trims), on both sides, so plain
+       * equality is the whole comparison — the same equality
+       * `WorkflowRunRepository.matchesTags` uses. Fails on the first overlap;
+       * one collision is enough to tell the merchant about.
+       */
+      const requireTagsFree = (workflowId: string, tags: Domain.WorkflowTags) =>
+        Effect.gen(function* () {
+          if (tags.length === 0) return;
+          const rivals = yield* decode(
+            Schema.Array(
+              Schema.Struct({
+                name: Domain.WorkflowName,
+                tags: Schema.fromJsonString(Domain.WorkflowTags),
+              }),
+            ),
+            "Invalid Workflow tag row",
+          )(
+            yield* sql`
+              select name, tags from Workflow
+              where id <> ${workflowId} and activatedAt is not null
+            `,
+          );
+          for (const rival of rivals) {
+            const clash = tags.find((tag) => rival.tags.includes(tag));
+            // The failure short-circuits the loop; one collision is enough.
+            if (clash !== undefined)
+              yield* new WorkflowTagTakenError({
+                tag: clash,
+                workflowName: rival.name,
+              });
+          }
+        });
+
       return WorkflowRepository.of({
         listWorkflows: Effect.fn("WorkflowRepository.listWorkflows")(
           function* ({ teams }: { readonly teams: Teams }) {
@@ -1206,13 +1264,16 @@ export class WorkflowRepository extends Context.Service<
             readonly activatedAt?: number;
             readonly teams: Teams;
           }) {
-            yield* requireWorkflow(workflowId);
+            const current = yield* requireWorkflow(workflowId);
             if (active) {
               yield* requireStartableSteps(
                 workflowId,
                 yield* workflowSteps(workflowId),
                 teams,
               );
+              // The applied tags, not the draft's: turning on publishes what
+              // was applied, and an unapplied draft starts nothing.
+              yield* requireTagsFree(workflowId, current.tags);
             }
             const now = yield* Clock.currentTimeMillis;
             const [workflow] = yield* decodeWorkflows(
@@ -1274,10 +1335,14 @@ export class WorkflowRepository extends Context.Service<
         }) {
           return yield* sql.withTransaction(
             Effect.gen(function* () {
-              yield* requireWorkflow(workflowId);
+              const current = yield* requireWorkflow(workflowId);
               const draft = yield* requireDraft(workflowId);
               const steps = yield* draftSteps(workflowId);
               yield* requireStartableSteps(workflowId, steps, teams);
+              // Only while on: applying on an off workflow changes nothing
+              // about matching, and Turn on runs the same check.
+              if (Domain.isActive(current))
+                yield* requireTagsFree(workflowId, draft.tags);
               const now = yield* Clock.currentTimeMillis;
               yield* sql`delete from WorkflowStep where workflowId = ${workflowId}`;
               yield* sql`

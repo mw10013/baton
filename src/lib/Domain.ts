@@ -891,7 +891,15 @@ export const WorkflowResult = Schema.Union([
 ]);
 export type WorkflowResult = typeof WorkflowResult.Type;
 
-/** `StepUnassigned` names the offending steps so the page can say which to assign. */
+/**
+ * `StepUnassigned` names the offending steps so the page can say which to assign.
+ *
+ * `TagTaken` is the one-active-workflow-per-tag rule: a tag routes an item to
+ * exactly one workflow, so it is refused only when this workflow is (or is
+ * becoming) active and another *active* workflow already carries the tag. Off
+ * workflows may share tags freely, so a replacement can be built and applied
+ * before the swap; Turn on is where the collision finally bites.
+ */
 export const ApplyResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok"), workflow: Workflow }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
@@ -900,6 +908,11 @@ export const ApplyResult = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal("StepUnassigned"),
     stepNames: Schema.Array(StepName),
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal("TagTaken"),
+    tag: WorkflowTag,
+    workflowName: WorkflowName,
   }),
 ]);
 export type ApplyResult = typeof ApplyResult.Type;
@@ -919,7 +932,15 @@ export const DraftResult = Schema.Union([
 ]);
 export type DraftResult = typeof DraftResult.Type;
 
-/** `started` is how many runs the reconcile-all after Turn on created on waiting orders (0 for Turn off), so the toast can say so. */
+/**
+ * `started` is how many runs the reconcile-all after the switch created. Turn
+ * on starts runs on waiting orders; Turn **off** can start them too, because
+ * removing one of two matching workflows resolves an ambiguity and the
+ * survivor's runs begin — so the toast must read for both directions.
+ *
+ * `TagTaken`: see {@link ApplyResult}. Only the `active === true` branch checks
+ * it, against the *applied* tags rather than the draft's.
+ */
 export const ActivateResult = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal("Ok"),
@@ -931,6 +952,11 @@ export const ActivateResult = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal("StepUnassigned"),
     stepNames: Schema.Array(StepName),
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal("TagTaken"),
+    tag: WorkflowTag,
+    workflowName: WorkflowName,
   }),
 ]);
 export type ActivateResult = typeof ActivateResult.Type;
@@ -1157,6 +1183,13 @@ export type ShopOrder = typeof ShopOrder.Type;
  * refunded** while leaving `currentQuantity` alone for a refund, so it is the
  * one count a maker should never overshoot. `currentQuantity` stays as
  * "ordered" for display.
+ *
+ * `matchedWorkflowIds` is the active, startable workflows whose tags matched
+ * this item at the last reconcile, whether or not a run was started. Two or
+ * more with no live run is an **ambiguity** the merchant resolves from the
+ * order page; the picker there offers exactly these. Written by reconcile
+ * only — the order sync writes `[]`, because matching happens after the write,
+ * inside `afterWrite`.
  */
 export const OrderLineItem = Schema.Struct({
   id: Schema.String,
@@ -1171,6 +1204,7 @@ export const OrderLineItem = Schema.Struct({
   unfulfilledQuantity: Schema.Number,
   nonFulfillableQuantity: Schema.Number,
   productTags: Schema.fromJsonString(Schema.Array(Schema.String)),
+  matchedWorkflowIds: Schema.fromJsonString(Schema.Array(WorkflowId)),
   customAttributes: Schema.fromJsonString(Schema.Array(OrderAttribute)),
   requiresShipping: SqliteBoolean,
 });
@@ -1297,6 +1331,7 @@ export type SyncState = typeof SyncState.Type;
  */
 export const ProductionState = Schema.Literals([
   "no_workflow",
+  "multiple_workflows",
   "in_production",
   "ready_to_ship",
   "shipped",
@@ -1453,6 +1488,14 @@ export const OrderRow = Schema.Struct({
    * them through `OrdersView.teams`, the roster the page was read against.
    */
   waitingOn: Schema.Array(TeamId),
+  /**
+   * How many of the order's line items are **ambiguous**: two or more
+   * `matchedWorkflowIds`, units still to make, and no live run. Derived per
+   * read like {@link RunCounts}, never stored, so a cancel that leaves an item
+   * with two matches and no run reads as ambiguous again without another
+   * reconcile. See {@link ambiguousItems} for the shared definition.
+   */
+  ambiguousItems: Schema.Number,
 });
 export type OrderRow = typeof OrderRow.Type;
 
@@ -1466,29 +1509,65 @@ export type OrderRow = typeof OrderRow.Type;
  * as a "No workflow" warning nobody can act on. The SQL forms in
  * `OrderRepository.listOrders` restate these branches and must move with them.
  *
- * Takes the two fields it reads rather than a whole `OrderRow`, so the order
+ * `multiple_workflows` sits above `in_production` and below `shipped`: an
+ * ambiguity is a merchant decision blocking an item the merchant *meant* to
+ * route, so it outranks the aggregate stage even when other items on the order
+ * are already being made. A plain unrouted item is not a pending decision,
+ * which is why `no_workflow` stays below `in_production`.
+ *
+ * Takes the three fields it reads rather than a whole `OrderRow`, so the order
  * page — which rebuilds the aggregate from its own run list — does not have
  * to invent a value for every row field the index adds later.
  */
 export const productionState = ({
   order,
   runs,
-}: Pick<OrderRow, "order" | "runs">): ProductionState | null =>
+  ambiguousItems,
+}: Pick<
+  OrderRow,
+  "order" | "runs" | "ambiguousItems"
+>): ProductionState | null =>
   Match.value({
     cancelled: isCancelled(order),
     fulfilled: isFulfilled(order),
     none: runs.open === 0 && runs.done === 0,
     canStart: canStartRuns(order),
     open: runs.open > 0,
+    ambiguous: ambiguousItems > 0,
   }).pipe(
     Match.withReturnType<ProductionState | null>(),
     Match.when({ cancelled: true }, () => "cancelled"),
     Match.when({ fulfilled: true }, () => "shipped"),
+    Match.when(
+      { cancelled: false, fulfilled: false, canStart: true, ambiguous: true },
+      () => "multiple_workflows",
+    ),
     Match.when({ none: true, canStart: true }, () => "no_workflow"),
     Match.when({ none: true }, () => null),
     Match.when({ open: true }, () => "in_production"),
     Match.orElse(() => "ready_to_ship"),
   );
+
+/**
+ * The index's per-order ambiguity count, recomputed from a detail page's line
+ * items and run list so both pages share one definition — the SQL in
+ * `OrderRepository.listOrders` restates it and must move with it.
+ *
+ * "Live" is any status but `cancelled`: a `done` run means the item was
+ * routed and finished, and a finished item does not get a second route.
+ */
+export const ambiguousItems = (
+  lineItems: readonly OrderLineItem[],
+  runs: readonly WorkflowRun[],
+): number =>
+  lineItems.filter(
+    (lineItem) =>
+      lineItem.matchedWorkflowIds.length >= 2 &&
+      unitsToMake(lineItem) > 0 &&
+      !runs.some(
+        (run) => run.lineItemId === lineItem.id && run.status !== "cancelled",
+      ),
+  ).length;
 
 /** The index's per-order aggregate, recomputed from a detail page's run list so both pages share one definition. */
 export const runCounts = (runs: readonly WorkflowRun[]): RunCounts =>
@@ -1518,6 +1597,7 @@ export const runCounts = (runs: readonly WorkflowRun[]): RunCounts =>
  */
 export const OpenStageCounts = Schema.Struct({
   no_workflow: Schema.Number,
+  multiple_workflows: Schema.Number,
   in_production: Schema.Number,
   ready_to_ship: Schema.Number,
   /** Open orders with `OrderRow.attention`; a cross-cutting count, not a stage. */
@@ -2080,6 +2160,11 @@ export type RunFlagDetail = typeof RunFlagDetail.Type;
  * dropped from the order. No foreign keys to `ShopOrder`, `OrderLineItem`, or
  * `Workflow` for that reason. `unique (lineItemId, workflowId)` spans every
  * status, so a cancelled run keeps its key and the only way back is un-cancel.
+ *
+ * A second index, partial over `status <> 'cancelled'`, holds the cardinality
+ * rule: **one live run per line item**. `pending`, `active` and `done` are all
+ * live — a finished item does not get a second route — so replacing a
+ * workflow means cancelling the incumbent in the same transaction.
  */
 export const WorkflowRun = Schema.Struct({
   id: WorkflowRunId,
@@ -2530,9 +2615,21 @@ export interface UncompleteStepCommand {
   readonly teamIds?: readonly string[] | undefined;
 }
 
-/** `WorkflowCannotStart` = off, zero steps, or an unassigned step (see {@link Workflow}). */
+/**
+ * `WorkflowCannotStart` = off, zero steps, or an unassigned step (see
+ * {@link Workflow}).
+ *
+ * `replaced` is the run that was cancelled to make room, or null. An item
+ * holds at most one live run, so attaching over one is a *replace*: the server
+ * decides that from the item's state rather than from a separate input, and
+ * the page uses `replaced` to say which workflow it took the item off.
+ */
 export const AttachResult = Schema.Union([
-  Schema.Struct({ _tag: Schema.Literal("Ok"), run: WorkflowRun }),
+  Schema.Struct({
+    _tag: Schema.Literal("Ok"),
+    run: WorkflowRun,
+    replaced: Schema.NullOr(WorkflowRun),
+  }),
   Schema.Struct({ _tag: Schema.Literal("AlreadyExists") }),
   Schema.Struct({ _tag: Schema.Literal("LineItemNotFound") }),
   Schema.Struct({ _tag: Schema.Literal("WorkflowCannotStart") }),
@@ -2545,6 +2642,10 @@ export type AttachResult = typeof AttachResult.Type;
  * undo, not yet done); `Terminal` = the run is `done` or `cancelled` (or,
  * for un-cancel, is not cancelled); `UndoBlocked` = someone downstream has
  * started, and names them ({@link UndoBlocker}).
+ *
+ * `ItemHasRun` = un-cancel refused because another live run now occupies the
+ * line item. One live run per item is a database invariant, so the only way
+ * back for this one is to cancel the occupant first; the variant names it.
  */
 export const RunResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok") }),
@@ -2553,5 +2654,9 @@ export const RunResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("NotReady") }),
   Schema.Struct({ _tag: Schema.Literal("Terminal") }),
   Schema.Struct({ _tag: Schema.Literal("UndoBlocked"), ...UndoBlocker.fields }),
+  Schema.Struct({
+    _tag: Schema.Literal("ItemHasRun"),
+    workflowName: WorkflowName,
+  }),
 ]);
 export type RunResult = typeof RunResult.Type;

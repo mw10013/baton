@@ -26,6 +26,10 @@ export const runResultMessage = Match.typeTags<
   Terminal: () => "This workflow is already finished or cancelled.",
   UndoBlocked: ({ stepName, teamName }) =>
     `${teamName} already started ${stepName}. Ask them.`,
+  /* Un-cancel is a merchant action and no member surface offers it; the
+     variant is here because the union is one union, and a member reading a
+     stale result should still get a sentence rather than nothing. */
+  ItemHasRun: ({ workflowName }) => `This item is already on ${workflowName}.`,
 });
 
 /**

@@ -24,6 +24,7 @@ import {
   DELETE_WORKFLOW_WARNING,
   deleteWorkflowResultMessage,
   itemTriggerLine,
+  tagTakenMessage,
   workflowResultMessage,
 } from "@/lib/workflowShared";
 
@@ -64,6 +65,7 @@ const applyResultMessage = Match.typeTags<Domain.ApplyResult, string | null>()({
   NoSteps: () => "Add at least one step before you can apply.",
   StepUnassigned: ({ stepNames }) =>
     `Assign a team to ${stepNames.join(", ")} before you can apply.`,
+  TagTaken: tagTakenMessage,
 });
 
 const discardResultMessage = Match.typeTags<

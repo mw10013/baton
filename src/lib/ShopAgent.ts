@@ -62,12 +62,14 @@ import {
   type WorkflowNameTakenError,
   type WorkflowNotFoundError,
   type WorkflowOffError,
+  type WorkflowTagTakenError,
   WorkflowRepository,
   WorkflowRepositoryError,
 } from "@/lib/WorkflowRepository";
 import {
   canStart,
   type StartContext,
+  type RunItemBusyError,
   type RunNotAllowedError,
   type RunNotFoundError,
   type RunTerminalError,
@@ -366,8 +368,15 @@ const memberCallableEffect =
  * delete, a line item dropped by an edit, and a definition edit or rename,
  * because it is the record of work someone may already have started.
  * `unique (lineItemId, workflowId)` spans every status so a cancelled run
- * keeps its key: neither the sync nor manual attach can create a second one,
- * and recovery from a mistaken cancel is un-cancel. `status` is denormalized from the steps for
+ * keeps its key: it is now only the *un-cancel* key, the one that lets
+ * recovery from a mistaken cancel restore the steps already done rather than
+ * start a fresh run. The cardinality rule is the second index,
+ * `WorkflowRun_live_item_uidx`, partial over `status <> 'cancelled'`: **one
+ * live run per line item**, enforced by the database and not only by the
+ * write paths, so reconcile, manual attach, replace and un-cancel all have to
+ * be correct under it. `OrderLineItem.matchedWorkflowIds` is the other half:
+ * the workflows whose tags matched at the last reconcile, from which
+ * "ambiguous" (two or more, no live run) is derived at read time. `status` is denormalized from the steps for
  * the queue and the definitions badge; every step write recomputes it in the
  * same transaction. `(teamId, completedAt)` serves the member queue, which
  * asks for open steps by team. `WorkflowRunStep.teamId` is nullable for the
@@ -429,6 +438,7 @@ const initializeSchema = Effect.gen(function* () {
       unfulfilledQuantity integer not null,
       nonFulfillableQuantity integer not null,
       productTags text not null,
+      matchedWorkflowIds text not null default '[]',
       customAttributes text not null,
       requiresShipping integer not null
     );
@@ -510,6 +520,8 @@ const initializeSchema = Effect.gen(function* () {
       cancelledAt integer,
       unique (lineItemId, workflowId)
     );
+    create unique index if not exists WorkflowRun_live_item_uidx
+      on WorkflowRun (lineItemId) where status <> 'cancelled';
     create index if not exists WorkflowRun_orderId_idx on WorkflowRun (orderId);
     create index if not exists WorkflowRun_status_idx on WorkflowRun (status);
     create table if not exists WorkflowRunStep (
@@ -657,6 +669,7 @@ const applyResult = <R>(
     | NoDraftError
     | NoStepsError
     | StepUnassignedError
+    | WorkflowTagTakenError
     | SqlError.SqlError
     | WorkflowRepositoryError
     | WorkflowRunRepositoryError
@@ -686,6 +699,12 @@ const applyResult = <R>(
         Effect.succeed<Domain.ApplyResult>({
           _tag: "StepUnassigned",
           stepNames,
+        }),
+      WorkflowTagTakenError: ({ tag, workflowName }) =>
+        Effect.succeed<Domain.ApplyResult>({
+          _tag: "TagTaken",
+          tag,
+          workflowName,
         }),
     }),
   );
@@ -732,13 +751,14 @@ const draftResult = <R>(
     }),
   );
 
-/** `Ok` carries how many runs the reconcile-all after Turn on started, for the toast. */
+/** `Ok` carries how many runs the reconcile-all after the switch started — in either direction, since Turn off can resolve an ambiguity — for the toast. */
 const activateResult = <R>(
   effect: Effect.Effect<
     { readonly workflow: Domain.Workflow; readonly started: number },
     | WorkflowNotFoundError
     | NoStepsError
     | StepUnassignedError
+    | WorkflowTagTakenError
     | SqlError.SqlError
     | WorkflowRepositoryError
     | WorkflowRunRepositoryError
@@ -770,6 +790,12 @@ const activateResult = <R>(
         Effect.succeed<Domain.ActivateResult>({
           _tag: "StepUnassigned",
           stepNames,
+        }),
+      WorkflowTagTakenError: ({ tag, workflowName }) =>
+        Effect.succeed<Domain.ActivateResult>({
+          _tag: "TagTaken",
+          tag,
+          workflowName,
         }),
     }),
   );
@@ -854,6 +880,7 @@ const runResult = <R>(
     void,
     | RunNotFoundError
     | RunTerminalError
+    | RunItemBusyError
     | RunNotAllowedError
     | StepNotReadyError
     | StepUndoBlockedError
@@ -890,6 +917,8 @@ const runResult = <R>(
           stepName,
           teamName,
         }),
+      RunItemBusyError: ({ workflowName }) =>
+        Effect.succeed<Domain.RunResult>({ _tag: "ItemHasRun", workflowName }),
     }),
   );
 
@@ -2058,7 +2087,7 @@ export class ShopAgent extends Agent {
     const publish = () => this.publish("all");
     const teams = () => this.teams();
     const reconcileAll = (workflow: Domain.Workflow) =>
-      this.reconcileAll("applyDraft", workflow);
+      this.reconcileAllIfActive("applyDraft", workflow);
     return this.runEffect(
       callableEffect("ShopAgent.applyDraft", Domain.ApplyDraftInput, {
         role: "merchant",
@@ -2108,9 +2137,12 @@ export class ShopAgent extends Agent {
 
   /**
    * The on/off switch. On writes `activatedAt` (now, or the earlier date the
-   * dialog chose) and then reconciles every stored order once, so anything
-   * that now qualifies starts here rather than at whatever moment Shopify
-   * next edits it. Publishes for the reason on {@link applyDraft}.
+   * dialog chose); off nulls it. Either way every stored order is reconciled
+   * once, so anything that now qualifies starts here rather than at whatever
+   * moment Shopify next edits it — and off qualifies things too, because
+   * removing one of two matching workflows resolves an ambiguity and starts
+   * the survivor (see {@link reconcileAllNow}). Publishes for the reason on
+   * {@link applyDraft}.
    */
   @callable()
   setWorkflowActive(
@@ -2120,7 +2152,7 @@ export class ShopAgent extends Agent {
     const publish = () => this.publish("all");
     const teams = () => this.teams();
     const reconcileAll = (workflow: Domain.Workflow) =>
-      this.reconcileAll("setWorkflowActive", workflow);
+      this.reconcileAllNow("setWorkflowActive", workflow.id);
     return this.runEffect(
       callableEffect(
         "ShopAgent.setWorkflowActive",
@@ -2161,7 +2193,7 @@ export class ShopAgent extends Agent {
     const shop = this.name;
     const publish = () => this.publish("all");
     const reconcileAll = (workflow: Domain.Workflow) =>
-      this.reconcileAll("setWorkflowActivatedAt", workflow);
+      this.reconcileAllIfActive("setWorkflowActivatedAt", workflow);
     return this.runEffect(
       callableEffect(
         "ShopAgent.setWorkflowActivatedAt",
@@ -2194,6 +2226,7 @@ export class ShopAgent extends Agent {
   countWaitingOrders(
     input: typeof Domain.CountWaitingOrdersInput.Encoded,
   ): Promise<Domain.WaitingOrders> {
+    const startContext = () => this.startContext();
     return this.runEffect(
       callableEffect(
         "ShopAgent.countWaitingOrders",
@@ -2207,6 +2240,7 @@ export class ShopAgent extends Agent {
           if (Option.isNone(found))
             return { count: 0, earliestProcessedAt: null };
           return yield* (yield* WorkflowRunRepository).countWaitingOrders({
+            ...(yield* startContext()),
             workflow: {
               workflow: found.value.workflow,
               steps: found.value.steps,
@@ -2225,6 +2259,10 @@ export class ShopAgent extends Agent {
    * it), the same collision `getWorkflowDetail` sidesteps. Publishes because
    * the workflows list and any order page's attach picker — which lists
    * workflows — must repaint.
+   *
+   * Reconciles afterwards for the same reason Turn off does: the deleted
+   * workflow leaves the active set, so an item it made ambiguous now has one
+   * match and the survivor's run starts.
    */
   @callable()
   removeWorkflow(
@@ -2232,6 +2270,8 @@ export class ShopAgent extends Agent {
   ): Promise<Domain.DeleteWorkflowResult> {
     const shop = this.name;
     const publish = () => this.publish("all");
+    const reconcileAll = (workflowId: string) =>
+      this.reconcileAllNow("removeWorkflow", workflowId);
     return this.runEffect(
       callableEffect("ShopAgent.removeWorkflow", Domain.DeleteWorkflowInput, {
         role: "merchant",
@@ -2242,6 +2282,7 @@ export class ShopAgent extends Agent {
           yield* Effect.logInfo(
             `ShopAgent.removeWorkflow: shop=${shop} workflowId=${workflowId}`,
           ).pipe(Effect.annotateLogs({ shop, workflowId }));
+          yield* reconcileAll(workflowId);
           yield* publish();
           return { _tag: "Deleted" } satisfies Domain.DeleteWorkflowResult;
         }).pipe(
@@ -2295,38 +2336,59 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * After a definition write on an on workflow (turned on, its date moved,
-   * or a draft applied), reconcile every stored open order once, so
-   * anything that now qualifies starts at this moment rather than at
+   * Reconcile every stored open order once against the *current* active set,
+   * so anything that now qualifies starts at this moment rather than at
    * whatever moment Shopify next edits it. Reconcile is an idempotent state
    * check, so running it over every order is safe; orders placed before
-   * `activatedAt` are still excluded by the date rule. A no-op when the
-   * workflow is off. Not the write's transaction: the repository owns that
-   * one and Durable Object SQLite refuses to nest, but the Durable Object
-   * serialises callables so nothing interleaves. Returns how many runs it
-   * created.
+   * `activatedAt` are still excluded by the date rule. Not the write's
+   * transaction: the repository owns that one and Durable Object SQLite
+   * refuses to nest, but the Durable Object serialises callables so nothing
+   * interleaves. Returns how many runs it created.
+   *
+   * Unconditional, because the active set shrinking starts runs too: one item
+   * matched by two active workflows is ambiguous and carries no run, so
+   * turning one of them off — or deleting it — leaves a single match and the
+   * survivor's run begins. That is why {@link setWorkflowActive} and
+   * {@link removeWorkflow} call this directly rather than through
+   * {@link reconcileAllIfActive}, and why `ActivateResult.Ok.started` is
+   * meaningful on Turn off.
    */
-  private reconcileAll(caller: string, workflow: Domain.Workflow) {
+  private reconcileAllNow(caller: string, workflowId: string) {
     const shop = this.name;
     const startContext = () => this.startContext();
     return Effect.gen(function* () {
-      if (!Domain.isActive(workflow)) return 0;
-      const { orders, created } =
+      const { orders, created, ambiguous } =
         yield* (yield* WorkflowRunRepository).reconcileAll(
           yield* startContext(),
         );
       yield* Effect.logInfo(
-        `ShopAgent.reconcileAll: shop=${shop} caller=${caller} workflowId=${workflow.id} orders=${String(orders)} created=${String(created)}`,
+        `ShopAgent.reconcileAll: shop=${shop} caller=${caller} workflowId=${workflowId} orders=${String(orders)} created=${String(created)} ambiguous=${String(ambiguous)}`,
       ).pipe(
         Effect.annotateLogs({
           shop,
           caller,
-          workflowId: workflow.id,
+          workflowId,
           orders,
           created,
+          ambiguous,
         }),
       );
       return created;
+    });
+  }
+
+  /**
+   * {@link reconcileAllNow}, skipped when the workflow is off: for the
+   * definition writes (Apply, the coverage date) that change *how* a workflow
+   * matches. An off workflow matches nothing either way, so nothing about the
+   * active set moved and the pass would be a full scan for no writes. Turn
+   * off and delete do move it, and use {@link reconcileAllNow}.
+   */
+  private reconcileAllIfActive(caller: string, workflow: Domain.Workflow) {
+    const run = () => this.reconcileAllNow(caller, workflow.id);
+    return Effect.gen(function* () {
+      if (!Domain.isActive(workflow)) return 0;
+      return yield* run();
     });
   }
 
@@ -2338,9 +2400,9 @@ export class ShopAgent extends Agent {
       const runs = yield* WorkflowRunRepository;
       return (order: Domain.ShopOrder) =>
         runs.reconcileOrder({ ...context, orderId: order.id }).pipe(
-          Effect.tap(({ created, cancelled, flagged }) =>
+          Effect.tap(({ created, cancelled, flagged, ambiguous }) =>
             Effect.logInfo(
-              `ShopAgent.reconcileOrder: shop=${shop} orderId=${order.id} source=${source} created=${String(created)} cancelled=${String(cancelled)} flagged=${String(flagged)}`,
+              `ShopAgent.reconcileOrder: shop=${shop} orderId=${order.id} source=${source} created=${String(created)} cancelled=${String(cancelled)} flagged=${String(flagged)} ambiguous=${String(ambiguous)}`,
             ).pipe(
               Effect.annotateLogs({
                 shop,
@@ -2349,6 +2411,7 @@ export class ShopAgent extends Agent {
                 created,
                 cancelled,
                 flagged,
+                ambiguous,
               }),
             ),
           ),
@@ -2454,11 +2517,19 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Manual attach applies only the definition half of the start predicate
-   * (`canStart`): an admin choosing a workflow for a line item by hand is
-   * exactly the override for a missing tag, a fulfilled line, or an order
-   * placed before the workflow was turned on. The run key still refuses a
-   * duplicate.
+   * Manual attach, read as **set this item's workflow**. It applies only the
+   * definition half of the start predicate (`canStart`): an admin choosing a
+   * workflow for a line item by hand is exactly the override for a missing
+   * tag, a fulfilled line, or an order placed before the workflow was turned
+   * on.
+   *
+   * An item holds at most one live run, so attaching over one is a replace:
+   * the incumbent is cancelled in the same transaction and comes back as
+   * `replaced` for the toast. The same workflow again is `AlreadyExists`.
+   * Confirmation is the UI's job, not this one's — the server cannot know
+   * whether the merchant has seen the trail of work already done on the run
+   * it is about to cancel, and a server-side refusal would leave the page
+   * with nothing to offer but the same click again.
    */
   @callable()
   attachWorkflow(
@@ -2489,17 +2560,21 @@ export class ShopAgent extends Agent {
             return {
               _tag: "WorkflowCannotStart",
             } satisfies Domain.AttachResult;
-          const run = yield* (yield* WorkflowRunRepository).createRun({
+          const set = yield* (yield* WorkflowRunRepository).setRun({
             workflow: detail,
             teams: roster,
             order: target.value.order,
             lineItem: target.value.lineItem,
             source: "manual",
           });
-          if (Option.isNone(run))
+          if (Option.isNone(set))
             return { _tag: "AlreadyExists" } satisfies Domain.AttachResult;
           yield* publish([target.value.order.id]);
-          return { _tag: "Ok", run: run.value } satisfies Domain.AttachResult;
+          return {
+            _tag: "Ok",
+            run: set.value.run,
+            replaced: set.value.replaced,
+          } satisfies Domain.AttachResult;
         }),
       )(input),
     );
@@ -3563,6 +3638,7 @@ export class ShopAgent extends Agent {
                     item.unfulfilledQuantity ?? currentQuantity,
                   nonFulfillableQuantity: 0,
                   productTags: item.tags,
+                  matchedWorkflowIds: [],
                   customAttributes: item.customAttributes ?? [],
                   requiresShipping: true,
                 } satisfies Domain.OrderLineItem;

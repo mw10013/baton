@@ -12,6 +12,7 @@ import { runShopAgentMigrations } from "@/lib/ShopAgent";
 import { WorkflowRepository } from "@/lib/WorkflowRepository";
 import {
   type ReconcileCounts,
+  type RunItemBusyError,
   type StartContext,
   WorkflowRunRepository,
 } from "@/lib/WorkflowRunRepository";
@@ -114,6 +115,7 @@ const lineItem = (
   unfulfilledQuantity: 2,
   nonFulfillableQuantity: 0,
   productTags,
+  matchedWorkflowIds: [],
   customAttributes: [{ key: "Engraving", value: `Hello ${String(n)}` }],
   requiresShipping: true,
   ...overrides,
@@ -247,6 +249,7 @@ const upsertAndReconcile = (
       created: 0,
       cancelled: 0,
       flagged: 0,
+      ambiguous: 0,
     });
     yield* orders.upsertOrder({
       order: shopOrder,
@@ -316,10 +319,13 @@ describe("WorkflowRunRepository.countWaitingOrders", () => {
           [lineItem(1, ["a"])],
         );
         yield* seedOrder("o4", { processedAt: older - 2 }, [lineItem(1, [])]);
-        deepStrictEqual(yield* runs.countWaitingOrders({ workflow: detail }), {
-          count: 2,
-          earliestProcessedAt: older,
-        });
+        deepStrictEqual(
+          yield* runs.countWaitingOrders({
+            ...(yield* loadStartContext),
+            workflow: detail,
+          }),
+          { count: 2, earliestProcessedAt: older },
+        );
         // Include them: the date moves back to the earliest and reconcile-all
         // starts the paid, unfulfilled one; the unpaid one waits to pay.
         yield* workflows.setWorkflowActive({
@@ -331,17 +337,314 @@ describe("WorkflowRunRepository.countWaitingOrders", () => {
         deepStrictEqual(yield* runs.reconcileAll(yield* loadStartContext), {
           orders: 2,
           created: 1,
+          ambiguous: 0,
         });
-        deepStrictEqual(yield* runs.countWaitingOrders({ workflow: detail }), {
-          count: 1,
-          earliestProcessedAt: older,
+        deepStrictEqual(
+          yield* runs.countWaitingOrders({
+            ...(yield* loadStartContext),
+            workflow: detail,
+          }),
+          { count: 1, earliestProcessedAt: older },
+        );
+      }),
+    ));
+});
+
+/** What reconcile wrote on the item, sorted, read straight out of the column. */
+const matchedIds = (lineItemId: string) =>
+  SqlClient.SqlClient.pipe(
+    Effect.flatMap(
+      (sql) =>
+        sql`select matchedWorkflowIds from OrderLineItem where id = ${lineItemId}`,
+    ),
+    Effect.map(([row]) =>
+      Schema.decodeUnknownSync(
+        Schema.fromJsonString(Schema.Array(Schema.String)),
+      )(row?.matchedWorkflowIds).toSorted(),
+    ),
+  );
+
+/**
+ * One live run per line item. The invariant is a partial unique index
+ * (`WorkflowRun_live_item_uidx`), so these cover both halves: what the write
+ * paths do about it, and that the index itself is really there.
+ */
+describe("WorkflowRunRepository one live run per item", () => {
+  /** A second workflow whose tag also lands on item 1, so the item matches two. */
+  const rivalOn = (tag: string) =>
+    Effect.gen(function* () {
+      const workflows = yield* WorkflowRepository;
+      const created = yield* workflows.createWorkflow({
+        name: name(`Rival ${tag}`),
+        tags: tags([tag]),
+      });
+      yield* workflows.addStep({
+        workflowId: created.id,
+        name: stepName("Rush"),
+        teamId: TEAM_C.id,
+      });
+      return yield* goLive(created.id);
+    });
+
+  const ITEM_1 = lineItem(1, ["a", "rush"]).id;
+
+  it("starts nothing when two workflows match, and records both", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { a } = yield* seed;
+        const rival = yield* rivalOn("rush");
+        const counts = yield* upsertAndReconcile(order(), [
+          lineItem(1, ["a", "rush"]),
+        ]);
+        deepStrictEqual(counts, {
+          created: 0,
+          cancelled: 0,
+          flagged: 0,
+          ambiguous: 1,
         });
+        strictEqual((yield* runsForOrder()).length, 0);
+        deepStrictEqual(yield* matchedIds(ITEM_1), [a.id, rival.id].toSorted());
+      }),
+    ));
+
+  it("turning one of the two off resolves the ambiguity and starts the survivor", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { a } = yield* seed;
+        const rival = yield* rivalOn("rush");
+        const items = [lineItem(1, ["a", "rush"])];
+        yield* upsertAndReconcile(order(), items);
+        yield* turnOff(rival.id);
+        const after = yield* upsertAndReconcile(
+          order({ updatedAt: PROCESSED_AT + 1 }),
+          items,
+        );
+        deepStrictEqual(after, {
+          created: 1,
+          cancelled: 0,
+          flagged: 0,
+          ambiguous: 0,
+        });
+        const runs = yield* runsForOrder();
+        strictEqual(runs.length, 1);
+        strictEqual(runs[0]?.run.workflowId, a.id);
+        deepStrictEqual(yield* matchedIds(ITEM_1), [a.id]);
+      }),
+    ));
+
+  it("a live run wins: a second workflow turned on later is recorded but starts nothing", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { a } = yield* seed;
+        const items = [lineItem(1, ["a", "rush"])];
+        yield* upsertAndReconcile(order(), items);
+        strictEqual((yield* runsForOrder()).length, 1);
+        const rival = yield* rivalOn("rush");
+        const after = yield* upsertAndReconcile(
+          order({ updatedAt: PROCESSED_AT + 1 }),
+          items,
+        );
+        deepStrictEqual(after, {
+          created: 0,
+          cancelled: 0,
+          flagged: 0,
+          ambiguous: 0,
+        });
+        const runs = yield* runsForOrder();
+        strictEqual(runs.length, 1);
+        strictEqual(runs[0]?.run.workflowId, a.id);
+        // Both are recorded even though only one ever started: the column is
+        // the match, not the outcome.
+        deepStrictEqual(yield* matchedIds(ITEM_1), [a.id, rival.id].toSorted());
+      }),
+    ));
+
+  it("setRun over a live run cancels it in the same transaction and reports it as replaced", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { a, b } = yield* seed;
+        const runs = yield* WorkflowRunRepository;
+        const items = [lineItem(1, ["a"])];
+        yield* upsertAndReconcile(order(), items);
+        const [before] = yield* runsForOrder();
+        if (before === undefined) throw new Error("no run");
+        strictEqual(before.run.workflowId, a.id);
+        const set = Option.getOrThrow(
+          yield* runs.setRun({
+            workflow: yield* savedDetail(b.id),
+            teams: TEAMS,
+            order: order(),
+            lineItem: items[0] ?? lineItem(1, ["a"]),
+            source: "manual",
+          }),
+        );
+        strictEqual(set.replaced?.id, before.run.id);
+        strictEqual(set.run.workflowId, b.id);
+        strictEqual(set.run.status, "pending");
+        const after = yield* runsForOrder();
+        strictEqual(after.length, 2);
+        strictEqual(
+          after.find((d) => d.run.id === before.run.id)?.run.status,
+          "cancelled",
+        );
+      }),
+    ));
+
+  it("setRun on a workflow whose earlier run was cancelled un-cancels it, steps and all", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { a } = yield* seed;
+        const runs = yield* WorkflowRunRepository;
+        const items = [lineItem(1, ["a"])];
+        yield* upsertAndReconcile(order(), items);
+        const [first] = yield* runsForOrder();
+        if (first === undefined) throw new Error("no run");
+        yield* complete(first, 1, [TEAM_A.id]);
+        yield* runs.cancelRun({ runId: first.run.id });
+        const set = Option.getOrThrow(
+          yield* runs.setRun({
+            workflow: yield* savedDetail(a.id),
+            teams: TEAMS,
+            order: order(),
+            lineItem: items[0] ?? lineItem(1, ["a"]),
+            source: "manual",
+          }),
+        );
+        // The same row, back from cancelled with its finished step intact.
+        strictEqual(set.run.id, first.run.id);
+        strictEqual(set.replaced, null);
+        strictEqual(set.run.status, "active");
+        const [revived] = yield* runsForOrder();
+        strictEqual(
+          revived?.steps.filter((step) => step.completedAt !== null).length,
+          1,
+        );
+      }),
+    ));
+
+  it("un-cancel is refused while another live run occupies the item", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { a, b } = yield* seed;
+        const runs = yield* WorkflowRunRepository;
+        const items = [lineItem(1, ["a"])];
+        yield* upsertAndReconcile(order(), items);
+        const [first] = yield* runsForOrder();
+        if (first === undefined) throw new Error("no run");
+        strictEqual(first.run.workflowId, a.id);
+        yield* runs.setRun({
+          workflow: yield* savedDetail(b.id),
+          teams: TEAMS,
+          order: order(),
+          lineItem: items[0] ?? lineItem(1, ["a"]),
+          source: "manual",
+        });
+        const refused = yield* Effect.flip(
+          runs.uncancelRun({ runId: first.run.id }),
+        );
+        strictEqual(refused._tag, "RunItemBusyError");
+        strictEqual((refused as RunItemBusyError).workflowName, b.name);
+      }),
+    ));
+
+  it("the partial index itself refuses a second live run", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { a, b } = yield* seed;
+        const sql = yield* SqlClient.SqlClient;
+        const items = [lineItem(1, ["a"])];
+        yield* upsertAndReconcile(order(), items);
+        const [live] = yield* runsForOrder();
+        if (live === undefined) throw new Error("no run");
+        // Raw insert, bypassing every write path: the database itself refuses.
+        const raw = yield* Effect.flip(sql`
+          insert into WorkflowRun (
+            id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
+            lineItemId, lineItemTitle, variantTitle, sku, quantity,
+            customAttributes, source, status, flag, flagAt, flagDetail,
+            createdAt, updatedAt, cancelledAt
+          ) values (
+            'raw', ${b.id}, 'Workflow b', ${ORDER_ID}, '#1001', 0,
+            ${live.run.lineItemId}, 'Item', null, null, 1,
+            '[]', 'manual', 'pending', null, null, null, 0, 0, null
+          )
+        `);
+        strictEqual(raw._tag, "SqlError");
+        strictEqual((yield* runsForOrder()).length, 1);
+        strictEqual(live.run.workflowId, a.id);
+        // Cancelling frees the item, so the same insert then lands: the index
+        // is partial over `status <> 'cancelled'`, not over the item.
+        yield* (yield* WorkflowRunRepository).cancelRun({
+          runId: live.run.id,
+        });
+        yield* sql`
+          insert into WorkflowRun (
+            id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
+            lineItemId, lineItemTitle, variantTitle, sku, quantity,
+            customAttributes, source, status, flag, flagAt, flagDetail,
+            createdAt, updatedAt, cancelledAt
+          ) values (
+            'raw', ${b.id}, 'Workflow b', ${ORDER_ID}, '#1001', 0,
+            ${live.run.lineItemId}, 'Item', null, null, 1,
+            '[]', 'manual', 'pending', null, null, null, 0, 0, null
+          )
+        `;
+        strictEqual((yield* runsForOrder()).length, 2);
+      }),
+    ));
+
+  it("countWaitingOrders counts only what Include them would actually start", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { a } = yield* seed;
+        const runs = yield* WorkflowRunRepository;
+        const orders = yield* OrderRepository;
+        const sql = yield* SqlClient.SqlClient;
+        yield* rivalOn("rush");
+        // Placed before every workflow was turned on, which is exactly what
+        // the dialog is about: they match by tag, the date is what stops them.
+        const old = Date.now() - 60 * 60 * 1000;
+        const seedOrder = (id: string, itemTags: readonly string[]) =>
+          orders.upsertOrder({
+            order: order({ id, legacyId: id, name: id, processedAt: old }),
+            raw: "{}",
+            lineItems: [
+              { ...lineItem(1, itemTags), id: `${id}/li`, orderId: id },
+            ],
+            afterWrite: Effect.void,
+          });
+        yield* seedOrder("o1", ["a"]);
+        yield* seedOrder("o2", ["a"]);
+        yield* seedOrder("o3", ["a", "rush"]);
+        // o2's item is already routed — by whom does not matter, one live run
+        // per item means Include them would not start a second.
+        yield* sql`
+          insert into WorkflowRun (
+            id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
+            lineItemId, lineItemTitle, variantTitle, sku, quantity,
+            customAttributes, source, status, flag, flagAt, flagDetail,
+            createdAt, updatedAt, cancelledAt
+          ) values (
+            'busy', 'other', 'Other', 'o2', 'o2', 0,
+            'o2/li', 'Item', null, null, 1,
+            '[]', 'manual', 'pending', null, null, null, 0, 0, null
+          )
+        `;
+        // o3 would come out ambiguous — the rival's tag is on it too — and
+        // ambiguity starts nothing. Only o1 is left.
+        deepStrictEqual(
+          yield* runs.countWaitingOrders({
+            ...(yield* loadStartContext),
+            workflow: yield* savedDetail(a.id),
+          }),
+          { count: 1, earliestProcessedAt: old },
+        );
       }),
     ));
 });
 
 describe("WorkflowRunRepository.reconcileOrder", () => {
-  it("creates one run per matching workflow with copied steps and team names", () =>
+  it("creates one run per matching line item with copied steps and team names", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -353,6 +656,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           created: 2,
           cancelled: 0,
           flagged: 0,
+          ambiguous: 0,
         });
         const runs = yield* runsForOrder();
         strictEqual(runs.length, 2);
@@ -386,6 +690,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           created: 0,
           cancelled: 0,
           flagged: 0,
+          ambiguous: 0,
         });
         strictEqual((yield* runsForOrder()).length, 2);
 
@@ -451,7 +756,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         const counts = yield* upsertAndReconcile(old, items);
         strictEqual(counts.created, 0);
         const detail = yield* savedDetail(a.id);
-        const attached = yield* runs.createRun({
+        const attached = yield* runs.setRun({
           workflow: detail,
           teams: TEAMS,
           order: old,
@@ -459,8 +764,9 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           source: "manual",
         });
         strictEqual(Option.isSome(attached), true);
-        strictEqual(Option.getOrThrow(attached).source, "manual");
-        const duplicate = yield* runs.createRun({
+        strictEqual(Option.getOrThrow(attached).run.source, "manual");
+        strictEqual(Option.getOrThrow(attached).replaced, null);
+        const duplicate = yield* runs.setRun({
           workflow: detail,
           teams: TEAMS,
           order: old,
@@ -504,6 +810,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           created: 0,
           cancelled: 1,
           flagged: 1,
+          ambiguous: 0,
         });
         const after = yield* runsForOrder();
         const p = after.find((d) => d.run.id === pendingRun.run.id);
@@ -522,6 +829,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           created: 0,
           cancelled: 0,
           flagged: 1,
+          ambiguous: 0,
         });
         const gone = yield* runsForOrder();
         strictEqual(gone.length, 2);
@@ -556,6 +864,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           created: 0,
           cancelled: 0,
           flagged: 1,
+          ambiguous: 0,
         });
         const after = yield* runsForOrder();
         const p = after.find((d) => d.run.id === pendingRun.run.id);
@@ -581,6 +890,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           created: 1,
           cancelled: 0,
           flagged: 0,
+          ambiguous: 0,
         });
         strictEqual((yield* runsForOrder()).length, 2);
       }),
@@ -616,6 +926,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
             created: 0,
             cancelled: 0,
             flagged: 0,
+            ambiguous: 0,
           });
           const during = yield* runsForOrder();
           strictEqual(during.length, 2);
@@ -668,6 +979,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
             created: 0,
             cancelled: 1,
             flagged: 1,
+            ambiguous: 0,
           });
           const after = yield* runsForOrder();
           strictEqual(
@@ -713,6 +1025,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
             created: 0,
             cancelled: 0,
             flagged: 1,
+            ambiguous: 0,
           });
           const after = yield* runsForOrder();
           const p = after.find((d) => d.run.id === pendingRun.run.id);
@@ -754,6 +1067,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
             created: 0,
             cancelled: 1,
             flagged: 1,
+            ambiguous: 0,
           });
           const after = yield* runsForOrder();
           strictEqual(
@@ -806,14 +1120,14 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           });
           // A third, untouched run stays pending and is cancelled silently.
           const pendingRun = Option.getOrThrow(
-            yield* runs.createRun({
+            yield* runs.setRun({
               workflow: yield* savedDetail(activeRun.run.workflowId),
               teams: TEAMS,
               order: order(),
               lineItem: lineItem(3, []),
               source: "manual",
             }),
-          );
+          ).run;
           const counts = yield* upsertAndReconcile(
             order({
               updatedAt: PROCESSED_AT + 1,
@@ -825,7 +1139,12 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
               lineItem(3, [], { unfulfilledQuantity: 0 }),
             ],
           );
-          deepStrictEqual(counts, { created: 0, cancelled: 1, flagged: 1 });
+          deepStrictEqual(counts, {
+            created: 0,
+            cancelled: 1,
+            flagged: 1,
+            ambiguous: 0,
+          });
           const after = yield* runsForOrder();
           strictEqual(
             after.find((d) => d.run.id === pendingRun.id)?.run.status,
@@ -868,6 +1187,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
             created: 0,
             cancelled: 0,
             flagged: 1,
+            ambiguous: 0,
           });
           const after = yield* runsForOrder();
           strictEqual(
@@ -909,6 +1229,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           created: 0,
           cancelled: 1,
           flagged: 1,
+          ambiguous: 0,
         });
         const after = yield* runsForOrder();
         strictEqual(
@@ -1610,6 +1931,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           created: 0,
           cancelled: 0,
           flagged: 1,
+          ambiguous: 0,
         });
         const after = Option.getOrThrow(
           yield* runs.getRun({ runId: detail.run.id }),
@@ -1906,6 +2228,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           created: 0,
           cancelled: 0,
           flagged: 1,
+          ambiguous: 0,
         });
         const after = Option.getOrThrow(
           yield* runs.getRun({ runId: detail.run.id }),
@@ -2066,7 +2389,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
       }),
     ));
 
-  it("a run of a deleted workflow sits alongside a new run on the same line item", () =>
+  it("a run of a deleted workflow is replaced, not joined, by a new run on the same line item", () =>
     runInRepository(
       Effect.gen(function* () {
         const { a } = yield* seed;
@@ -2078,8 +2401,10 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         if (orphaned === undefined) throw new Error("no run");
         yield* workflows.deleteWorkflow({ workflowId: a.id });
 
-        // A fresh workflow on the same item: a different workflowId, so
-        // `unique (lineItemId, workflowId)` lets both runs stand.
+        // A fresh workflow on the same item. The orphaned run is still live,
+        // and one live run per item, so attaching cancels it rather than
+        // standing beside it — the deleted definition does not make its run
+        // any less the item's current route.
         const replacement = yield* workflows.createWorkflow({
           name: name("Workflow a2"),
           tags: tags(["a"]),
@@ -2090,7 +2415,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           teamId: TEAM_A.id,
         });
         yield* goLive(replacement.id);
-        const attached = yield* runs.createRun({
+        const attached = yield* runs.setRun({
           workflow: yield* savedDetail(replacement.id),
           teams: TEAMS,
           order: order(),
@@ -2098,14 +2423,20 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           source: "manual",
         });
         strictEqual(Option.isSome(attached), true);
+        strictEqual(Option.getOrThrow(attached).replaced?.id, orphaned.run.id);
         const both = yield* runsForOrder();
         deepStrictEqual(
           both.map((d) => d.run.workflowId).toSorted(),
           [a.id, replacement.id].toSorted(),
         );
+        // The orphan keeps its snapshotted name, cancelled.
         strictEqual(
           both.find((d) => d.run.id === orphaned.run.id)?.run.workflowName,
           a.name,
+        );
+        strictEqual(
+          both.find((d) => d.run.id === orphaned.run.id)?.run.status,
+          "cancelled",
         );
       }),
     ));

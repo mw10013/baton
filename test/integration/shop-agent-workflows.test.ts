@@ -457,7 +457,11 @@ describe("ShopAgent workflow callables", () => {
  * test isolate cannot stub, and what these cases exercise is the attach /
  * cancel logic over stored rows, not the fetch.
  */
-const seedOrder = (shop: string, processedAt: number) =>
+const seedOrder = (
+  shop: string,
+  processedAt: number,
+  productTags: readonly string[] = [],
+) =>
   runInDurableObject(
     env.SHOP_AGENT.get(env.SHOP_AGENT.idFromName(shop)),
     (_instance, state) =>
@@ -497,7 +501,8 @@ const seedOrder = (shop: string, processedAt: number) =>
                 currentQuantity: 1,
                 unfulfilledQuantity: 1,
                 nonFulfillableQuantity: 0,
-                productTags: [],
+                productTags: [...productTags],
+                matchedWorkflowIds: [],
                 customAttributes: [],
                 requiresShipping: true,
               },
@@ -559,6 +564,7 @@ describe("ShopAgent workflow run callables", () => {
     if (attached._tag !== "Ok") return;
     strictEqual(attached.run.source, "manual");
     strictEqual(attached.run.orderName, "#1001");
+    strictEqual(attached.replaced, null);
 
     const twice = await agent.attachWorkflow({
       lineItemId: "gid://shopify/LineItem/1",
@@ -589,6 +595,155 @@ describe("ShopAgent workflow run callables", () => {
       workflowId,
     });
     strictEqual(gone._tag, "WorkflowCannotStart");
+  });
+
+  it("attachWorkflow over a live run replaces it and names what it cancelled", async () => {
+    const shop = "wf-replace.myshopify.com";
+    const team = await seedTeam(shop, "Engraving");
+    await seedOrder(shop, Date.now() - 24 * 60 * 60 * 1000);
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const build = async (workflowName: string) => {
+      const created = await agent.createWorkflow({
+        name: workflowName,
+        tags: [],
+      });
+      if (created._tag !== "Ok") throw new Error(created._tag);
+      await agent.addStep({
+        workflowId: created.workflow.id,
+        name: "Do it",
+        teamId: team.id,
+      });
+      await goLive(agent, created.workflow.id);
+      return created.workflow;
+    };
+    const first = await build("Engraving");
+    const second = await build("Rush");
+
+    const attached = await agent.attachWorkflow({
+      lineItemId: "gid://shopify/LineItem/1",
+      workflowId: first.id,
+    });
+    if (attached._tag !== "Ok") throw new Error(attached._tag);
+
+    const replaced = await agent.attachWorkflow({
+      lineItemId: "gid://shopify/LineItem/1",
+      workflowId: second.id,
+    });
+    if (replaced._tag !== "Ok") throw new Error(replaced._tag);
+    strictEqual(replaced.replaced?.id, attached.run.id);
+    strictEqual(replaced.replaced?.workflowName, "Engraving");
+    strictEqual(replaced.run.workflowName, "Rush");
+
+    // The item is Rush's now, so the old run cannot be brought back until
+    // Rush's is cancelled.
+    expect(await agent.uncancelRun({ runId: attached.run.id })).toEqual({
+      _tag: "ItemHasRun",
+      workflowName: "Rush",
+    });
+    expect(await agent.cancelRun({ runId: replaced.run.id })).toEqual({
+      _tag: "Ok",
+    });
+    expect(await agent.uncancelRun({ runId: attached.run.id })).toEqual({
+      _tag: "Ok",
+    });
+  });
+
+  it("applyDraft and setWorkflowActive refuse a tag an active workflow already holds", async () => {
+    const shop = "wf-tagtaken.myshopify.com";
+    const team = await seedTeam(shop, "Engraving");
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const build = async (workflowName: string, tags: readonly string[]) => {
+      const created = await agent.createWorkflow({
+        name: workflowName,
+        tags: [...tags],
+      });
+      if (created._tag !== "Ok") throw new Error(created._tag);
+      await agent.addStep({
+        workflowId: created.workflow.id,
+        name: "Do it",
+        teamId: team.id,
+      });
+      return created.workflow;
+    };
+    const holder = await build("Engraving", ["engraved"]);
+    await goLive(agent, holder.id);
+    const other = await build("Rush", ["rush"]);
+    await goLive(agent, other.id);
+
+    await agent.updateWorkflowTags({
+      workflowId: other.id,
+      tags: ["engraved"],
+    });
+    expect(await agent.applyDraft({ workflowId: other.id })).toEqual({
+      _tag: "TagTaken",
+      tag: "engraved",
+      workflowName: "Engraving",
+    });
+
+    // Off, the same draft applies; turning it back on is where it is refused.
+    const turnedOff = await agent.setWorkflowActive({
+      workflowId: other.id,
+      active: false,
+    });
+    strictEqual(turnedOff._tag, "Ok");
+    const reapplied = await agent.applyDraft({ workflowId: other.id });
+    strictEqual(reapplied._tag, "Ok");
+    expect(
+      await agent.setWorkflowActive({ workflowId: other.id, active: true }),
+    ).toEqual({
+      _tag: "TagTaken",
+      tag: "engraved",
+      workflowName: "Engraving",
+    });
+  });
+
+  it("turning one of two matching workflows off starts the survivor and says how many", async () => {
+    const shop = "wf-ambiguous.myshopify.com";
+    const team = await seedTeam(shop, "Engraving");
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const build = async (workflowName: string, tag: string) => {
+      const created = await agent.createWorkflow({
+        name: workflowName,
+        tags: [tag],
+      });
+      if (created._tag !== "Ok") throw new Error(created._tag);
+      await agent.addStep({
+        workflowId: created.workflow.id,
+        name: "Do it",
+        teamId: team.id,
+      });
+      await goLive(agent, created.workflow.id);
+      return created.workflow;
+    };
+    // Both on *before* the order exists, so the first reconcile it ever sees
+    // already has two matches to choose between.
+    const keeper = await build("Engraving", "engraved");
+    const rival = await build("Rush", "rush");
+    // Placed after both went on, so only the ambiguity holds it back.
+    await seedOrder(shop, Date.now() + 60 * 60 * 1000, ["engraved", "rush"]);
+
+    // Any definition write on an on workflow reconciles every stored order.
+    const nudged = await agent.setWorkflowActivatedAt({
+      workflowId: keeper.id,
+      activatedAt: keeper.activatedAt ?? Date.now(),
+    });
+    if (nudged._tag !== "Ok") throw new Error(nudged._tag);
+    strictEqual(nudged.started, 0);
+    expect(
+      await agent.listRunsForOrder({ orderId: "gid://shopify/Order/1" }),
+    ).toHaveLength(0);
+
+    const off = await agent.setWorkflowActive({
+      workflowId: rival.id,
+      active: false,
+    });
+    if (off._tag !== "Ok") throw new Error(off._tag);
+    // Turn off started a run: `started` is meaningful in both directions.
+    strictEqual(off.started, 1);
+    const runs = await agent.listRunsForOrder({
+      orderId: "gid://shopify/Order/1",
+    });
+    expect(runs.map((d) => d.run.workflowId)).toEqual([keeper.id]);
   });
 
   it("cancelRun / uncancelRun / completeStep map repository failures to results", async () => {

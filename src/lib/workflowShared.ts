@@ -51,8 +51,22 @@ export const itemTriggerLine = (tags: readonly string[]) => {
     quoted.length === 1
       ? quoted[0]
       : `${quoted.slice(0, -1).join(", ")} or ${quoted.at(-1) ?? ""}`;
-  return `Starts when an order contains a product tagged ${list ?? ""}. Orders placed before this workflow was turned on are skipped.`;
+  return `Starts when an order contains a product tagged ${list ?? ""}. Orders placed before this workflow was turned on are skipped. Each tag starts one workflow.`;
 };
+
+/**
+ * `TagTaken`, both surfaces: a tag routes an item to exactly one workflow, so
+ * the refusal names the holder and the one move that clears it. Curly quotes
+ * around the tag, matching {@link itemTriggerLine}.
+ */
+export const tagTakenMessage = ({
+  tag,
+  workflowName,
+}: {
+  readonly tag: string;
+  readonly workflowName: string;
+}) =>
+  `\u201C${tag}\u201D already starts ${workflowName}. Turn ${workflowName} off first, or change this tag.`;
 
 export const changeActivatedAtResultMessage = Match.typeTags<
   Domain.ChangeActivatedAtResult,
@@ -73,11 +87,25 @@ export const waitingOrdersLine = ({ count }: Domain.WaitingOrders) =>
     ? null
     : `${String(count)} earlier ${count === 1 ? "order is" : "orders are"} unfulfilled and would match.`;
 
-/** The toast after Turn on or Change: names the runs the reconcile-all started, when it started any. */
-export const startedToast = (verb: string, started: number) =>
-  started === 0
-    ? `${verb}.`
+/** The `startedToast` verb for Turn off, shared so the fork below stays in step with the caller. */
+export const TURNED_OFF = "Turned off";
+
+/**
+ * The toast after Turn on, Turn off or Change: names the runs the reconcile-all
+ * started, when it started any.
+ *
+ * Turn **off** can start runs too, which is why the sentence does not say
+ * "waiting orders": an item matched by two active workflows carries no run, so
+ * taking one of them away leaves a single match and the survivor begins. That
+ * is the same number in a different story, so the copy forks on the verb.
+ */
+export const startedToast = (verb: string, started: number) => {
+  if (started === 0) return `${verb}.`;
+  const orders = `${String(started)} ${started === 1 ? "order" : "orders"}`;
+  return verb === TURNED_OFF
+    ? `${verb}. ${orders} moved to the workflow that still matches.`
     : `${verb}. Started ${String(started)} ${started === 1 ? "run" : "runs"} on waiting orders.`;
+};
 
 const stepList = (steps: readonly Domain.StepWithTeamName[]) =>
   steps.map((step) => step.name).join(", ");

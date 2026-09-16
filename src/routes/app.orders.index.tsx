@@ -76,6 +76,11 @@ const STAGES: readonly {
 }[] = [
   { state: null, label: "All orders", count: null },
   { state: "no_workflow", label: "No workflow", count: "no_workflow" },
+  {
+    state: "multiple_workflows",
+    label: "Choose a workflow",
+    count: "multiple_workflows",
+  },
   { state: "in_production", label: "In production", count: "in_production" },
   { state: "ready_to_ship", label: "Ready to ship", count: "ready_to_ship" },
   { state: "shipped", label: "Shipped", count: null },
@@ -118,6 +123,12 @@ export const orderDetailHref = ({ legacyId }: Domain.ShopOrder) =>
  * changed` is Shopify having moved under a live run, and the remedy is
  * usually just to accept it. `Blocked` is critical because someone is
  * stopped; `Order changed` is a warning because nothing is.
+ *
+ * "Choose a workflow" is the same kind of fact as "No workflow" — an item the
+ * merchant meant to route is not being made — but it outranks the aggregate
+ * stage, so a row can be waiting on a choice *and* have work in progress. Both
+ * are shown: the merchant otherwise reads the badge as "nothing is happening
+ * on this order", which would be wrong.
  */
 const stateBadge = (row: Domain.OrderRow) =>
   Match.value(Domain.productionState(row)).pipe(
@@ -125,6 +136,20 @@ const stateBadge = (row: Domain.OrderRow) =>
     Match.when(null, () => null),
     Match.when("no_workflow", () => (
       <s-badge tone="warning">No workflow</s-badge>
+    )),
+    Match.when("multiple_workflows", () => (
+      <s-stack direction="inline" gap="small-300">
+        <s-badge tone="warning">Choose a workflow</s-badge>
+        {row.runs.open > 0 && (
+          <s-badge tone="info">
+            {`${formatNumber(row.runs.open)} active${row.runs.done > 0 ? ` · ${formatNumber(row.runs.done)} done` : ""}`}
+          </s-badge>
+        )}
+        {row.runs.blocked > 0 && <s-badge tone="critical">Blocked</s-badge>}
+        {row.runs.flagged > 0 && (
+          <s-badge tone="warning">Order changed</s-badge>
+        )}
+      </s-stack>
     )),
     Match.when("in_production", () => (
       <s-stack direction="inline" gap="small-300">
@@ -196,6 +221,11 @@ const stageText = (
       () =>
         `${orders(counts.no_workflow)} paid with no matching workflow. Attach one from the order page.`,
     ),
+    Match.when("multiple_workflows", () =>
+      counts.multiple_workflows === 0
+        ? "No orders are waiting on a choice."
+        : `${orders(counts.multiple_workflows)} have an item that matches more than one workflow. Open each one to choose.`,
+    ),
     Match.when(
       "in_production",
       () => `${orders(counts.in_production)} with work in progress.`,
@@ -214,6 +244,7 @@ const stageText = (
 const emptyText = (state: Domain.ProductionState | null) =>
   Match.value(state).pipe(
     Match.when("no_workflow", () => "Every paid order has a workflow."),
+    Match.when("multiple_workflows", () => "No orders need a workflow chosen."),
     Match.when("in_production", () => "Nothing is in production."),
     Match.when(
       "ready_to_ship",

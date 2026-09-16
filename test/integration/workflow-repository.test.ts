@@ -681,6 +681,108 @@ describe("WorkflowRepository duplicate", () => {
     ));
 });
 
+/**
+ * One active workflow per tag. Off workflows may share a tag freely — that is
+ * what lets a replacement be built and applied before the swap — so the rule
+ * bites at Apply on an on workflow and at Turn on, and nowhere else.
+ */
+describe("WorkflowRepository tag uniqueness", () => {
+  /** An on workflow with two steps carrying `tag`. */
+  const live = (workflowName: string, tag: string) =>
+    Effect.gen(function* () {
+      const repo = yield* WorkflowRepository;
+      const w = yield* repo.createWorkflow({
+        name: name(workflowName),
+        tags: tags([tag]),
+      });
+      yield* twoSteps(w.id);
+      yield* repo.applyDraft({ workflowId: w.id, teams: ALL_TEAMS });
+      return yield* repo.setWorkflowActive({
+        workflowId: w.id,
+        active: true,
+        teams: ALL_TEAMS,
+      });
+    });
+
+  it("Apply refuses a tag an active sibling carries, but only while this one is on", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const repo = yield* WorkflowRepository;
+        const holder = yield* live("Engraving", "engraved");
+        const other = yield* live("Rush", "rush");
+
+        // On, and the draft takes the holder's tag: refused, named.
+        yield* repo.updateWorkflowTags({
+          workflowId: other.id,
+          tags: tags(["Engraved"]),
+        });
+        const refused = yield* repo
+          .applyDraft({ workflowId: other.id, teams: ALL_TEAMS })
+          .pipe(Effect.flip);
+        strictEqual(refused._tag, "WorkflowTagTakenError");
+        if (refused._tag === "WorkflowTagTakenError") {
+          // Folded on both sides: `Engraved` collides with `engraved`.
+          strictEqual(refused.tag, "engraved");
+          strictEqual(refused.workflowName, holder.name);
+        }
+
+        // Off, the same draft applies: an off workflow starts nothing.
+        yield* repo.setWorkflowActive({
+          workflowId: other.id,
+          active: false,
+          teams: ALL_TEAMS,
+        });
+        const applied = yield* repo.applyDraft({
+          workflowId: other.id,
+          teams: ALL_TEAMS,
+        });
+        deepStrictEqual(tagsOf(applied), ["engraved"]);
+      }),
+    ));
+
+  it("Turn on refuses a taken tag; turning the holder off first clears it", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const repo = yield* WorkflowRepository;
+        const holder = yield* live("Engraving", "engraved");
+        // A second workflow with the same tag, built off: legal to build.
+        const replacement = yield* repo.createWorkflow({
+          name: name("Engraving v2"),
+          tags: tags(["engraved"]),
+        });
+        yield* twoSteps(replacement.id);
+        yield* repo.applyDraft({
+          workflowId: replacement.id,
+          teams: ALL_TEAMS,
+        });
+
+        const refused = yield* repo
+          .setWorkflowActive({
+            workflowId: replacement.id,
+            active: true,
+            teams: ALL_TEAMS,
+          })
+          .pipe(Effect.flip);
+        strictEqual(refused._tag, "WorkflowTagTakenError");
+        if (refused._tag === "WorkflowTagTakenError")
+          strictEqual(refused.workflowName, holder.name);
+
+        // The swap: turn v1 off, then v2 on.
+        yield* repo.setWorkflowActive({
+          workflowId: holder.id,
+          active: false,
+          teams: ALL_TEAMS,
+        });
+        const on = yield* repo.setWorkflowActive({
+          workflowId: replacement.id,
+          active: true,
+          teams: ALL_TEAMS,
+        });
+        strictEqual(Domain.isActive(on), true);
+      }),
+    ));
+});
+
 describe("copyName", () => {
   it("takes the first free suffix and trims the base to fit the 64-character limit", () => {
     strictEqual(copyName("Engraved ring", []), "Engraved ring copy");

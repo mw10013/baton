@@ -307,3 +307,73 @@ test("turning on a workflow offers to include earlier unfulfilled orders, and in
     band.getByText("No workflow on this item.", { exact: false }),
   ).toHaveCount(0);
 });
+
+/**
+ * One active workflow per tag, at the switch. A tag routes a line item to
+ * exactly one workflow, so turning on a second that carries a tag an active
+ * one already holds is refused, and the refusal names the holder — the
+ * merchant's next move is to turn that one off, which is also the swap.
+ *
+ * The second workflow is seeded *off* with the same tag on purpose: building a
+ * replacement before the swap is the case the rule deliberately allows.
+ */
+test("turning on a workflow whose tag another active workflow holds is refused and names it", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+
+  const HOLDER = "E2E Ring";
+  const REPLACEMENT = "E2E Ring v2";
+  await seedMembers(
+    seedConfig(),
+    [MEMBER],
+    [{ name: TEAM, members: [MEMBER] }],
+    [
+      {
+        name: HOLDER,
+        active: true,
+        tags: ["e2e-ring"],
+        steps: [{ name: "Cut", team: TEAM }],
+      },
+      {
+        name: REPLACEMENT,
+        active: false,
+        tags: ["e2e-ring"],
+        steps: [{ name: "Cut", team: TEAM }],
+      },
+    ],
+  );
+
+  const frame = await gotoApp(page);
+  await clickHoisted(
+    page.getByRole("link", { name: "Workflows", exact: true }),
+  );
+  await frame.getByRole("link", { name: REPLACEMENT }).click();
+  await expect(frame.locator(`s-page[heading="${REPLACEMENT}"]`)).toBeVisible();
+
+  await clickHoisted(page.getByRole("button", { name: "Turn on" }));
+  await frame.getByRole("button", { name: "Turn on", exact: true }).click();
+  /* The dialog stays open on a refusal — there is nothing to confirm yet — so
+     it is dismissed before reading the banner behind it. */
+  await frame.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(
+    frame.getByText(`already starts ${HOLDER}`, { exact: false }),
+  ).toBeVisible();
+
+  /* The swap: turn the holder off, and the replacement goes on. `exact`
+     because `E2E Ring v2` starts with the holder's whole name. */
+  await clickHoisted(
+    page.getByRole("link", { name: "Workflows", exact: true }),
+  );
+  await frame.getByRole("link", { name: HOLDER, exact: true }).click();
+  await expect(frame.locator(`s-page[heading="${HOLDER}"]`)).toBeVisible();
+  await clickHoisted(page.getByRole("button", { name: "Turn off" }));
+
+  await clickHoisted(
+    page.getByRole("link", { name: "Workflows", exact: true }),
+  );
+  await frame.getByRole("link", { name: REPLACEMENT }).click();
+  await clickHoisted(page.getByRole("button", { name: "Turn on" }));
+  await frame.getByRole("button", { name: "Turn on", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Turn off" })).toBeVisible();
+});

@@ -10,6 +10,8 @@ import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import {
   changeActivatedAtResultMessage,
   startedToast,
+  tagTakenMessage,
+  TURNED_OFF,
   turnOnBlocker,
   waitingOrdersLine,
 } from "@/lib/workflowShared";
@@ -54,6 +56,7 @@ export const activateResultMessage = Match.typeTags<
   NoSteps: () => "This workflow has no steps. Edit to add some, then apply.",
   StepUnassigned: ({ stepNames }) =>
     `These steps have no team: ${stepNames.join(", ")}.`,
+  TagTaken: tagTakenMessage,
 });
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -173,10 +176,17 @@ export function WorkflowSwitch({
       if (result._tag === "Ok") {
         await shopify.modal.hide(TURN_ON_MODAL);
         setIncludeWaiting(false);
+        /* Turn off starts runs when it resolves an ambiguity, and that is
+           the more useful half to report; with nothing started, the
+           reassurance about work in progress is. */
+        const turnedOff =
+          result.started === 0
+            ? "Turned off. Open runs finish."
+            : startedToast(TURNED_OFF, result.started);
         shopify.toast.show(
           Domain.isActive(result.workflow)
             ? startedToast("Turned on", result.started)
-            : "Turned off. Open runs finish.",
+            : turnedOff,
         );
       }
       await onChanged();

@@ -111,6 +111,8 @@ export const toOrderLineItem = (
   unfulfilledQuantity: node.unfulfilledQuantity,
   nonFulfillableQuantity: node.nonFulfillableQuantity,
   productTags: node.product?.tags ?? [],
+  /** Reconcile owns this column; the sync writes the empty set and `afterWrite` fills it. */
+  matchedWorkflowIds: [],
   customAttributes: node.customAttributes,
   requiresShipping: node.requiresShipping,
 });

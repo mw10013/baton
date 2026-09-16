@@ -80,10 +80,13 @@ item is made`. The words "Shipping", "Packing", "Fulfilment" never appear as a
     ambiguous; the strip therefore reads `Blocked · <the ready step's name>` from the
     run's ready step, without any schema change.
 
-12. **Assume one workflow per item; do not enforce it.** The item card renders one
-    run inline. A second run on the same item stacks below it with its own trail —
-    correct, but visibly the exception. Nothing in the data model changes
-    (`unique (lineItemId, workflowId)` still permits several).
+12. **One workflow per item, enforced.** _Amended._ The item card renders one run
+    inline, as it always did; what changed is that it is now the only possibility.
+    A partial unique index over `status <> 'cancelled'` holds one **live** run per
+    line item, attaching over one is a replace, and two matching workflows leave
+    the item _ambiguous_ for the merchant to resolve. Cancelled runs still stack
+    below, as history. See
+    `docs/workflow-per-item-cardinality-research.md`.
 
 13. **`Manage` stays an inline expanding region.** Not an `s-menu` — a menu cannot
     hold the block-reason field or the note editor. Not an `s-modal` — that is
@@ -183,13 +186,14 @@ This also resolves the "workflow card vs order workflow card" confusion without
 inventing vocabulary. They are not two kinds of card. They are two phases of one
 order, and the second is labelled with the condition that starts it.
 
-### Can an item carry more than one workflow? — in principle yes, in practice one
+### Can an item carry more than one workflow? — no, one live run per item
 
-Small and medium shops will attach one workflow per item; more than one is
-manageable but incoherent as a default. The data model keeps allowing it
-(`unique (lineItemId, workflowId)` spans every status, so a cancelled run keeps its
-key). The UI stops _designing for_ it: one run renders inline as part of the item
-card, a second stacks below with its own trail and its own disclosure. Decision 12.
+_Amended._ This section originally concluded "in principle yes, in practice one".
+The practice won: a partial unique index over `status <> 'cancelled'` makes it one,
+and `(lineItemId, workflowId)` is now only the un-cancel key. One run renders inline
+as part of the item card; cancelled runs stack below it as history, each with its
+own trail and disclosure. Decision 12, as amended, and
+`docs/workflow-per-item-cardinality-research.md`.
 
 ## Notes and block reasons
 

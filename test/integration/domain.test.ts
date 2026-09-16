@@ -32,12 +32,14 @@ const order = (
 const row = (
   runs: Partial<Domain.RunCounts>,
   overrides: Partial<Domain.ShopOrder> = {},
+  ambiguousItems = 0,
 ): Domain.OrderRow => ({
   order: order(overrides),
   itemUnits: 1,
   runs: { ...NONE, ...runs },
   attention: false,
   waitingOn: [],
+  ambiguousItems,
 });
 
 const NONE = {
@@ -56,6 +58,36 @@ describe("Domain.productionState", () => {
     ["paid, no runs", row(NONE), "no_workflow"],
     ["unpaid, no runs", row(NONE, { fullyPaid: false }), null],
     ["open runs", row({ open: 1, done: 1, flagged: 0 }), "in_production"],
+    [
+      "paid, one ambiguous item, no runs",
+      row(NONE, {}, 1),
+      "multiple_workflows",
+    ],
+    [
+      "ambiguous outranks in_production: one item chosen, another waiting",
+      row({ open: 1, done: 0, flagged: 0 }, {}, 1),
+      "multiple_workflows",
+    ],
+    [
+      "ambiguous outranks ready_to_ship",
+      row({ open: 0, done: 2, flagged: 0 }, {}, 1),
+      "multiple_workflows",
+    ],
+    [
+      "unpaid cannot start, so an ambiguity is not yet a decision",
+      row(NONE, { fullyPaid: false }, 1),
+      null,
+    ],
+    [
+      "fulfilled outranks ambiguous",
+      row(NONE, { fulfillmentStatus: "FULFILLED" }, 1),
+      "shipped",
+    ],
+    [
+      "cancelled outranks ambiguous",
+      row(NONE, { cancelledAt: 1 }, 1),
+      "cancelled",
+    ],
     [
       "all done, unfulfilled",
       row({ open: 0, done: 2, flagged: 0 }),
@@ -138,6 +170,92 @@ describe("Domain.runCounts", () => {
     strictEqual(counts.done, 1);
     strictEqual(counts.flagged, 1);
     strictEqual(counts.blocked, 1);
+  });
+});
+
+const lineItem = (
+  id: string,
+  matchedWorkflowIds: readonly string[],
+  unfulfilledQuantity = 1,
+): Domain.OrderLineItem => ({
+  id,
+  orderId: "o",
+  productId: null,
+  variantId: null,
+  title: "Ring",
+  variantTitle: null,
+  sku: null,
+  quantity: 1,
+  currentQuantity: 1,
+  unfulfilledQuantity,
+  nonFulfillableQuantity: 0,
+  productTags: [],
+  matchedWorkflowIds: matchedWorkflowIds.map((id) =>
+    Schema.decodeUnknownSync(Domain.WorkflowId)(id),
+  ),
+  customAttributes: [],
+  requiresShipping: true,
+});
+
+const runOn = (
+  lineItemId: string,
+  status: Domain.RunStatus,
+): Domain.WorkflowRun => ({ ...run(status, null), lineItemId });
+
+describe("Domain.ambiguousItems", () => {
+  /**
+   * The same three conditions `OrderRepository`'s `AMBIGUOUS_ITEM` spells out
+   * in SQL. `done` counts as live on purpose: a finished item does not get a
+   * second route, so it is not a decision anyone is waiting on.
+   */
+  it("counts items with two matches, units to make, and no live run", () => {
+    strictEqual(
+      Domain.ambiguousItems([lineItem("a", ["w1", "w2"])], []),
+      1,
+      "two matches and no run",
+    );
+    strictEqual(
+      Domain.ambiguousItems([lineItem("a", ["w1"])], []),
+      0,
+      "one match is not a decision",
+    );
+    strictEqual(
+      Domain.ambiguousItems([lineItem("a", ["w1", "w2"], 0)], []),
+      0,
+      "nothing left to make",
+    );
+    strictEqual(
+      Domain.ambiguousItems(
+        [lineItem("a", ["w1", "w2"])],
+        [runOn("a", "pending")],
+      ),
+      0,
+      "a live run owns the item",
+    );
+    strictEqual(
+      Domain.ambiguousItems(
+        [lineItem("a", ["w1", "w2"])],
+        [runOn("a", "done")],
+      ),
+      0,
+      "done is live: a finished item gets no second route",
+    );
+    strictEqual(
+      Domain.ambiguousItems(
+        [lineItem("a", ["w1", "w2"])],
+        [runOn("a", "cancelled")],
+      ),
+      1,
+      "a cancel makes it a decision again",
+    );
+    strictEqual(
+      Domain.ambiguousItems(
+        [lineItem("a", ["w1", "w2"]), lineItem("b", ["w1", "w2"])],
+        [runOn("b", "active")],
+      ),
+      1,
+      "per item, not per order",
+    );
   });
 });
 

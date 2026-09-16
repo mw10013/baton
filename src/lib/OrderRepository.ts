@@ -79,6 +79,30 @@ const OPEN_RUN = `select 1 from WorkflowRun r
   where r.orderId = ShopOrder.id and r.status in ('pending', 'active')`;
 const DONE_RUN = `select 1 from WorkflowRun r
   where r.orderId = ShopOrder.id and r.status = 'done'`;
+/**
+ * `Domain.ambiguousItems` in SQL: an item with units still to make, two or
+ * more workflows matched at the last reconcile, and no live run. "Live" is any
+ * status but `cancelled`, so cancelling the only run on a twice-matched item
+ * makes it ambiguous again with no further reconcile — which is the point of
+ * deriving the stage rather than storing it.
+ *
+ * `json_array_length` is SQLite's JSON1, compiled into Durable Object SQLite;
+ * `order-repository.test.ts` is the proof.
+ */
+const LIVE_RUN_FOR_ITEM = `select 1 from WorkflowRun r
+  where r.lineItemId = li.id and r.status <> 'cancelled'`;
+const AMBIGUOUS_ITEM = `select 1 from OrderLineItem li
+  where li.orderId = ShopOrder.id and li.unfulfilledQuantity > 0
+    and json_array_length(li.matchedWorkflowIds) >= 2
+    and not exists (${LIVE_RUN_FOR_ITEM})`;
+/**
+ * The `multiple_workflows` stage as one predicate: `Domain.productionState`
+ * only reaches that branch when the order can start runs, so an unpaid order
+ * with an ambiguous item is *not* choosing — it reads as whatever its runs say.
+ * The other stages exclude this whole term, not the bare `AMBIGUOUS_ITEM`, or
+ * an unpaid order with a manual run would fall out of every bucket.
+ */
+const CHOOSING = `fullyPaid = 1 and exists (${AMBIGUOUS_ITEM})`;
 
 const bit = (value: boolean) => (value ? 1 : 0);
 
@@ -302,6 +326,12 @@ export class OrderRepository extends Context.Service<
           );
         });
 
+      /**
+       * `matchedWorkflowIds` is written on insert only and deliberately absent
+       * from the `do update set` list: reconcile owns the column, runs after
+       * this write in `afterWrite`, and a resync must not blank an item's
+       * matches in the window between the two.
+       */
       const insertLineItems = (lineItems: readonly Domain.OrderLineItem[]) =>
         Effect.forEach(
           lineItems,
@@ -309,15 +339,15 @@ export class OrderRepository extends Context.Service<
             insert into OrderLineItem (
               id, orderId, productId, variantId, title, variantTitle, sku,
               quantity, currentQuantity, unfulfilledQuantity,
-              nonFulfillableQuantity, productTags, customAttributes,
-              requiresShipping
+              nonFulfillableQuantity, productTags, matchedWorkflowIds,
+              customAttributes, requiresShipping
             ) values (
               ${item.id}, ${item.orderId}, ${item.productId}, ${item.variantId},
               ${item.title}, ${item.variantTitle}, ${item.sku},
               ${item.quantity}, ${item.currentQuantity},
               ${item.unfulfilledQuantity}, ${item.nonFulfillableQuantity},
-              ${json(item.productTags)}, ${json(item.customAttributes)},
-              ${bit(item.requiresShipping)}
+              ${json(item.productTags)}, ${json(item.matchedWorkflowIds)},
+              ${json(item.customAttributes)}, ${bit(item.requiresShipping)}
             )
             on conflict(id) do update set
               orderId = excluded.orderId,
@@ -516,18 +546,31 @@ export class OrderRepository extends Context.Service<
                     and s.teamId = ${team}
                     and ${sql.literal(ReadyWhere.readyWhere("s"))}
                 )`;
+          /**
+           * `multiple_workflows` outranks the three aggregate stages, exactly
+           * as `Domain.productionState` orders them, so the other three carry
+           * `not (CHOOSING)` and the filters stay a partition of
+           * the open orders — the chips have to add up to what the lists show.
+           */
           const stateFilter = Match.value(state).pipe(
             Match.when("no_workflow", () =>
-              sql.and([OPEN, "fullyPaid = 1", `not exists (${ANY_RUN})`]),
+              sql.and([
+                OPEN,
+                "fullyPaid = 1",
+                `not exists (${ANY_RUN})`,
+                `not (${CHOOSING})`,
+              ]),
             ),
+            Match.when("multiple_workflows", () => sql.and([OPEN, CHOOSING])),
             Match.when("in_production", () =>
-              sql.and([OPEN, `exists (${OPEN_RUN})`]),
+              sql.and([OPEN, `exists (${OPEN_RUN})`, `not (${CHOOSING})`]),
             ),
             Match.when("ready_to_ship", () =>
               sql.and([
                 OPEN,
                 `exists (${DONE_RUN})`,
                 `not exists (${OPEN_RUN})`,
+                `not (${CHOOSING})`,
               ]),
             ),
             Match.when("shipped", () =>
@@ -623,6 +666,23 @@ export class OrderRepository extends Context.Service<
                   where ${sql.in("id", ids)} and ${attentionRun}
                 `.values;
           /**
+           * `Domain.OrderRow.ambiguousItems`, restating `AMBIGUOUS_ITEM` per
+           * item rather than as an `exists`: the badge says how many items are
+           * waiting on a choice, not merely that one is.
+           */
+          const ambiguousRows =
+            ids.length === 0
+              ? []
+              : yield* sql`
+                  select li.orderId, count(*)
+                  from OrderLineItem li
+                  where ${sql.in("li.orderId", ids)}
+                    and li.unfulfilledQuantity > 0
+                    and json_array_length(li.matchedWorkflowIds) >= 2
+                    and not exists (${sql.literal(LIVE_RUN_FOR_ITEM)})
+                  group by li.orderId
+                `.values;
+          /**
            * `Domain.OrderRow.waitingOn`: a fourth per-page read rather than a
            * term on the page query, for the reason the comment above gives
            * for the other aggregates — the `ShopOrder` decoder wants exactly
@@ -682,6 +742,9 @@ export class OrderRepository extends Context.Service<
           const needsAttention = new Set(
             attentionRows.map((row) => String(row[0])),
           );
+          const ambiguous = new Map(
+            ambiguousRows.map((row) => [String(row[0]), Number(row[1] ?? 0)]),
+          );
           const units = new Map(
             unitRows.map((row) => [String(row[0]), Number(row[1] ?? 0)]),
           );
@@ -697,15 +760,22 @@ export class OrderRepository extends Context.Service<
             ]),
           );
           /**
-           * One pass over the open orders for all three counts, each term the
-           * same predicate as the matching `stateFilter` branch. Unpaid open
-           * orders with no runs are the `null` state and fall in no bucket.
+           * One pass over the open orders for all four stage counts, each term
+           * the same predicate as the matching `stateFilter` branch — including
+           * its `CHOOSING` exclusion, so the chips partition the open
+           * orders the way the lists do. Unpaid open orders with no runs are
+           * the `null` state and fall in no bucket. `attention` is
+           * cross-cutting and excludes nothing.
            */
           const [countRow] = yield* sql`
             select
-              sum(fullyPaid = 1 and not exists (${sql.literal(ANY_RUN)})),
-              sum(exists (${sql.literal(OPEN_RUN)})),
-              sum(exists (${sql.literal(DONE_RUN)}) and not exists (${sql.literal(OPEN_RUN)})),
+              sum(fullyPaid = 1 and not exists (${sql.literal(ANY_RUN)})
+                  and not (${sql.literal(CHOOSING)})),
+              sum(${sql.literal(CHOOSING)}),
+              sum(exists (${sql.literal(OPEN_RUN)})
+                  and not (${sql.literal(CHOOSING)})),
+              sum(exists (${sql.literal(DONE_RUN)}) and not exists (${sql.literal(OPEN_RUN)})
+                  and not (${sql.literal(CHOOSING)})),
               sum(${attentionRun})
             from ShopOrder
             where ${sql.literal(OPEN)}
@@ -723,6 +793,7 @@ export class OrderRepository extends Context.Service<
               },
               attention: needsAttention.has(order.id),
               waitingOn: waitingOn.get(order.id) ?? [],
+              ambiguousItems: ambiguous.get(order.id) ?? 0,
             })),
             limit,
             nextCursor:
@@ -731,9 +802,10 @@ export class OrderRepository extends Context.Service<
                 : null,
             openCounts: {
               no_workflow: Number(countRow?.[0] ?? 0),
-              in_production: Number(countRow?.[1] ?? 0),
-              ready_to_ship: Number(countRow?.[2] ?? 0),
-              attention: Number(countRow?.[3] ?? 0),
+              multiple_workflows: Number(countRow?.[1] ?? 0),
+              in_production: Number(countRow?.[2] ?? 0),
+              ready_to_ship: Number(countRow?.[3] ?? 0),
+              attention: Number(countRow?.[4] ?? 0),
             },
           } satisfies Domain.OrdersPage;
         }),
