@@ -19,12 +19,7 @@ export const workflowResultMessage = Match.typeTags<
   NotFound: () => "That workflow no longer exists.",
   Limit: ({ limit }) =>
     `This shop has reached its limit of ${String(limit)} workflows.`,
-  Singleton: () => SINGLETON_MESSAGE,
 });
-
-/** The order workflow has a fixed name and is never deleted; the UI never offers either, so this only answers a stale client. */
-const SINGLETON_MESSAGE =
-  "The order workflow can't be deleted or renamed. Turn it off instead.";
 
 export const deleteWorkflowResultMessage = Match.typeTags<
   Domain.DeleteWorkflowResult,
@@ -32,7 +27,6 @@ export const deleteWorkflowResultMessage = Match.typeTags<
 >()({
   Deleted: () => null,
   NotFound: () => "That workflow no longer exists.",
-  Singleton: () => SINGLETON_MESSAGE,
 });
 
 /**
@@ -43,19 +37,7 @@ export const deleteWorkflowResultMessage = Match.typeTags<
 export const DELETE_WORKFLOW_WARNING = "This can't be undone.";
 
 /**
- * The order-workflow trigger line, in the merchant copy of `Domain.Workflow`.
- * Three sentences because the trigger has three parts a merchant cannot
- * infer from "order workflow": the wait for item runs, the exclusion of
- * orders with no item workflow (a stock-only order never starts it), and
- * the date rule with its manual-attach exception. Every surface that
- * describes the trigger renders this string unmodified so no page states a
- * different rule from another.
- */
-export const ORDER_WORKFLOW_TRIGGER =
-  "Runs once per paid order, after every item with a workflow is made. An order where no item matches a workflow never starts it. Orders placed before this workflow was turned on are skipped, unless you attach a workflow to one of their items by hand.";
-
-/**
- * The item-workflow trigger line: what has to be true of an order for this
+ * The trigger line: what has to be true of an order for this
  * workflow to start. The workflow's tag is the whole selector, so a workflow
  * without one never starts and says so. The match sentence speaks from the
  * order's side ("a product tagged"), which is where "product tag" is the

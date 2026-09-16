@@ -55,18 +55,6 @@ export class WorkflowLimitError extends Schema.TaggedError<WorkflowLimitError>()
   { limit: Schema.Number },
 ) {}
 
-/**
- * Delete, rename, or duplicate aimed at the order workflow singleton
- * (`Domain.ORDER_WORKFLOW_ID`). The schema `check` would refuse the rename
- * and the delete would strand the shop without its one order workflow; the
- * UI never offers the controls, so this names the refusal for a stale
- * client. Zero reads: the id is the whole test.
- */
-export class SingletonWorkflowError extends Schema.TaggedError<SingletonWorkflowError>()(
-  "SingletonWorkflowError",
-  { workflowId: Schema.String },
-) {}
-
 /** `setWorkflowActivatedAt` on a workflow that is off: there is no coverage date to move. */
 export class WorkflowOffError extends Schema.TaggedError<WorkflowOffError>()(
   "WorkflowOffError",
@@ -166,36 +154,30 @@ export class WorkflowRepository extends Context.Service<
     /**
      * `teams` is the live roster: `needsAttention` is derived per row from
      * the workflow's steps against it (unassigned, or on a team with no
-     * members) and never stored. `type` narrows in SQL; the workflows page
-     * lists item workflows only, the order workflow having its own page.
+     * members) and never stored.
      */
     readonly listWorkflows: (input: {
       readonly teams: Teams;
-      readonly type?: Domain.WorkflowType;
     }) => Effect.Effect<
       readonly Domain.WorkflowSummary[],
       SqlError.SqlError | WorkflowRepositoryError
     >;
     /**
      * Deletes the definition only: the workflow row, and its steps, draft,
-     * and draft steps by cascade. The order workflow singleton refuses
-     * (`SingletonWorkflowError`); turn it off instead. Every run stays, open
+     * and draft steps by cascade. Every run stays, open
      * and finished, and keeps working — a run snapshots `workflowName`
      * and each step's `name`, `stage`, `instructions`, and `teamName`, and
      * no read joins a run back to `Workflow`, so an orphan run renders,
      * queues, starts, completes, blocks, and cancels unchanged.
      * `WorkflowRun.workflowId` stays `not null` because it is the conflict
-     * key of `unique (lineItemId, workflowId)` and `WorkflowRun_order_uidx`.
+     * key of `unique (lineItemId, workflowId)`.
      * No turn-off-first rule.
      */
     readonly deleteWorkflow: (input: {
       readonly workflowId: string;
     }) => Effect.Effect<
       void,
-      | SqlError.SqlError
-      | WorkflowRepositoryError
-      | WorkflowNotFoundError
-      | SingletonWorkflowError
+      SqlError.SqlError | WorkflowRepositoryError | WorkflowNotFoundError
     >;
     /** The workflow with its steps, and the draft with its steps when one exists. */
     readonly getWorkflow: (input: {
@@ -216,22 +198,9 @@ export class WorkflowRepository extends Context.Service<
       SqlError.SqlError | WorkflowRepositoryError
     >;
     /**
-     * The shop's one order workflow with its steps, in any state — on or
-     * off, with or without steps. `listActiveWorkflowDetails` cannot see an
-     * off one, and the order page must say when the order workflow is off.
-     * Always present: the schema inserts the singleton, so a missing row is
-     * a `WorkflowRepositoryError`, not an `Option`.
-     */
-    readonly getOrderWorkflow: () => Effect.Effect<
-      Domain.WorkflowDetail,
-      SqlError.SqlError | WorkflowRepositoryError
-    >;
-    /**
-     * Development seed only (`ShopAgent.seedWorkflows`): replaces every item
+     * Development seed only (`ShopAgent.seedWorkflows`): replaces every
      * definition, every draft, and every run with `workflows`, in one
-     * transaction, and rewrites the order workflow singleton in place from
-     * the fixture's `type: "order"` entry (steps, draft, switch) or resets it
-     * to off and empty when the fixture has none. Destructive on purpose — a
+     * transaction. Destructive on purpose — a
      * reseed exists to discard whatever the last one left behind, and
      * skipping existing names would preserve it.
      *
@@ -252,8 +221,7 @@ export class WorkflowRepository extends Context.Service<
      * The draft is the editor's record of unsaved changes and is created by
      * the first change (`ensureDraft`), so a fresh workflow has none and the
      * editor opens on "No changes yet" rather than on a Draft badge and a
-     * Discard button for nothing. Item workflows only: the order workflow is
-     * the schema's singleton.
+     * Discard button for nothing.
      */
     readonly createWorkflow: (
       input: Domain.CreateWorkflowInput,
@@ -274,7 +242,7 @@ export class WorkflowRepository extends Context.Service<
      * on the same line item the moment it was turned on. Leaving them empty
      * puts the one decision the merchant has to make in front of them
      * instead: the copy's trigger line says it never starts until it has a
-     * tag. The order workflow singleton refuses.
+     * tag.
      */
     readonly duplicateWorkflow: (input: {
       readonly workflowId: string;
@@ -285,9 +253,8 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowNotFoundError
       | WorkflowNameTakenError
       | WorkflowLimitError
-      | SingletonWorkflowError
     >;
-    /** Rename only; immediate, since runs snapshot the name. `type` is not editable. The order workflow singleton refuses. */
+    /** Rename only; immediate, since runs snapshot the name. */
     readonly updateWorkflow: (input: {
       readonly workflowId: string;
       readonly name: Domain.WorkflowName;
@@ -297,9 +264,8 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowRepositoryError
       | WorkflowNameTakenError
       | WorkflowNotFoundError
-      | SingletonWorkflowError
     >;
-    /** Writes `tags` on the draft, creating it if this is the first change. Non-empty tags on an order workflow are refused. */
+    /** Writes `tags` on the draft, creating it if this is the first change. */
     readonly updateWorkflowTags: (input: {
       readonly workflowId: string;
       readonly tags: Domain.WorkflowTags;
@@ -633,31 +599,6 @@ export class WorkflowRepository extends Context.Service<
           sql`select count(*) from WorkflowDraftStep where workflowId = ${workflowId}`,
         );
 
-      /** The singleton has a fixed name, no delete, and no copy; the id alone decides, so nothing is read. */
-      const requireNotSingleton = (workflowId: string) =>
-        workflowId === Domain.ORDER_WORKFLOW_ID
-          ? Effect.fail(new SingletonWorkflowError({ workflowId }))
-          : Effect.void;
-
-      /**
-       * Only `updateWorkflowTags` needs this: it is the one write that takes
-       * tags for a workflow whose kind the input cannot know. Create is
-       * item-only, and Apply copies a draft this guard already vetted; the
-       * SQL check on `Workflow.tags` backstops both.
-       */
-      const requireNoTagsForOrderWorkflow = (
-        type: Domain.WorkflowType,
-        tags: Domain.WorkflowTags,
-      ) =>
-        type === "order" && tags.length > 0
-          ? Effect.fail(
-              new WorkflowRepositoryError({
-                message: "An order workflow cannot have product tags",
-                cause: tags,
-              }),
-            )
-          : Effect.void;
-
       const insertDraft = ({
         workflowId,
         tags,
@@ -749,7 +690,7 @@ export class WorkflowRepository extends Context.Service<
           if (Option.isSome(existing)) return existing.value;
           const draft = yield* insertDraft({
             workflowId,
-            tags: workflow.type === "order" ? [] : workflow.tags,
+            tags: workflow.tags,
             now: yield* Clock.currentTimeMillis,
           });
           yield* Effect.forEach(
@@ -900,13 +841,7 @@ export class WorkflowRepository extends Context.Service<
 
       return WorkflowRepository.of({
         listWorkflows: Effect.fn("WorkflowRepository.listWorkflows")(
-          function* ({
-            teams,
-            type,
-          }: {
-            readonly teams: Teams;
-            readonly type?: Domain.WorkflowType;
-          }) {
+          function* ({ teams }: { readonly teams: Teams }) {
             const rows = yield* decode(
               Schema.Array(Domain.WorkflowSummaryRow),
               "Invalid WorkflowSummary row",
@@ -916,7 +851,6 @@ export class WorkflowRepository extends Context.Service<
                   exists (select 1 from WorkflowDraft d where d.workflowId = w.id) as hasDraft,
                   (select count(*) from WorkflowStep s where s.workflowId = w.id) as stepCount
                 from Workflow w
-                where ${type === undefined ? sql`1 = 1` : sql`w.type = ${type}`}
                 order by w.name collate nocase
               `,
             );
@@ -943,7 +877,6 @@ export class WorkflowRepository extends Context.Service<
 
         deleteWorkflow: Effect.fn("WorkflowRepository.deleteWorkflow")(
           function* ({ workflowId }: { readonly workflowId: string }) {
-            yield* requireNotSingleton(workflowId);
             yield* sql.withTransaction(
               Effect.gen(function* () {
                 yield* requireWorkflow(workflowId);
@@ -994,35 +927,13 @@ export class WorkflowRepository extends Context.Service<
           }));
         }),
 
-        getOrderWorkflow: Effect.fn("WorkflowRepository.getOrderWorkflow")(
-          function* () {
-            const workflow = yield* requireWorkflow(
-              Domain.ORDER_WORKFLOW_ID,
-            ).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new WorkflowRepositoryError({
-                    message: "The order workflow singleton is missing",
-                    cause,
-                  }),
-              ),
-            );
-            return {
-              workflow,
-              steps: yield* workflowSteps(workflow.id),
-            } satisfies Domain.WorkflowDetail;
-          },
-        ),
-
         /**
          * A fixture's `steps` become the workflow's steps, switched on
          * (`activatedAt = now`, so orders seeded afterwards qualify) unless
          * `active: false` or a step is unassigned. A fixture with no steps and
          * no `draft` has no draft either, the state `createWorkflow` leaves a
          * fresh workflow in. `draft` seeds a pending draft beside the
-         * workflow. The `type: "order"` entry updates the singleton in place
-         * rather than inserting: its steps, draft, and switch are rewritten,
-         * and its `name` is ignored (a warning when it differs).
+         * workflow.
          */
         replaceWorkflows: Effect.fn("WorkflowRepository.replaceWorkflows")(
           function* ({ workflows }: Domain.SeedWorkflowsInput) {
@@ -1077,27 +988,8 @@ export class WorkflowRepository extends Context.Service<
                 message: `replaceWorkflows: workflow=${invalid.name}: stages must be dense from 1 and non-decreasing`,
                 cause: invalid.steps.map((step) => step.stage),
               });
-            // The invariants the ordinary write path enforces that a fixture
+            // The invariant the ordinary write path enforces that a fixture
             // could otherwise silently break.
-            const taggedOrder = staged.find(
-              (workflow) =>
-                workflow.type === "order" &&
-                (workflow.tags.length > 0 ||
-                  (workflow.draft?.tags.length ?? 0) > 0),
-            );
-            if (taggedOrder !== undefined)
-              return yield* new WorkflowRepositoryError({
-                message: `replaceWorkflows: workflow=${taggedOrder.name}: an order workflow has no tags`,
-                cause: taggedOrder.tags,
-              });
-            const orderWorkflows = staged.filter(
-              (workflow) => workflow.type === "order",
-            );
-            if (orderWorkflows.length > 1)
-              return yield* new WorkflowRepositoryError({
-                message: `replaceWorkflows: ${String(orderWorkflows.length)} order workflows; at most one`,
-                cause: orderWorkflows.map((workflow) => workflow.name),
-              });
             const badActive = staged.find(
               (workflow) => workflow.active && workflow.steps.length === 0,
             );
@@ -1122,40 +1014,18 @@ export class WorkflowRepository extends Context.Service<
                   `,
                 { discard: true },
               );
-            const orderEntry = orderWorkflows[0];
-            if (
-              orderEntry !== undefined &&
-              orderEntry.name !== Domain.ORDER_WORKFLOW_NAME
-            )
-              yield* Effect.logWarning(
-                `WorkflowRepository.replaceWorkflows: workflow=${orderEntry.name}: the order workflow's name is fixed; fixture name ignored`,
-              ).pipe(Effect.annotateLogs({ workflow: orderEntry.name }));
             return yield* sql.withTransaction(
               Effect.gen(function* () {
                 yield* sql`delete from WorkflowRun`;
-                yield* sql`delete from Workflow where type = 'item'`;
-                // The singleton is rewritten in place: its steps and draft
-                // go (draft steps cascade), then the fixture's are written,
-                // or nothing when the fixture has no order entry.
-                yield* sql`delete from WorkflowStep where workflowId = ${Domain.ORDER_WORKFLOW_ID}`;
-                yield* sql`delete from WorkflowDraft where workflowId = ${Domain.ORDER_WORKFLOW_ID}`;
-                yield* sql`
-                  update Workflow
-                  set activatedAt = ${orderEntry?.active ? now : null}, updatedAt = ${now}
-                  where id = ${Domain.ORDER_WORKFLOW_ID}
-                `;
+                yield* sql`delete from Workflow`;
                 for (const workflow of staged) {
-                  const workflowId =
-                    workflow.type === "order"
-                      ? Domain.ORDER_WORKFLOW_ID
-                      : crypto.randomUUID();
-                  if (workflow.type !== "order")
-                    yield* sql`
-                      insert into Workflow
-                        (id, name, type, activatedAt, tags, createdAt, updatedAt)
-                      values
-                        (${workflowId}, ${workflow.name}, 'item', ${workflow.active ? now : null}, ${json(workflow.tags)}, ${now}, ${now})
-                    `;
+                  const workflowId = crypto.randomUUID();
+                  yield* sql`
+                    insert into Workflow
+                      (id, name, activatedAt, tags, createdAt, updatedAt)
+                    values
+                      (${workflowId}, ${workflow.name}, ${workflow.active ? now : null}, ${json(workflow.tags)}, ${now}, ${now})
+                  `;
                   yield* writeSteps(
                     sql.literal("WorkflowStep"),
                     workflowId,
@@ -1196,9 +1066,9 @@ export class WorkflowRepository extends Context.Service<
             const [workflow] = yield* decodeWorkflows(
               yield* sql`
                 insert or ignore into Workflow
-                  (id, name, type, activatedAt, tags, createdAt, updatedAt)
+                  (id, name, activatedAt, tags, createdAt, updatedAt)
                 values
-                  (${crypto.randomUUID()}, ${name}, 'item', null, ${json(tags)}, ${now}, ${now})
+                  (${crypto.randomUUID()}, ${name}, null, ${json(tags)}, ${now}, ${now})
                 returning *
               `,
             );
@@ -1208,7 +1078,6 @@ export class WorkflowRepository extends Context.Service<
 
         duplicateWorkflow: Effect.fn("WorkflowRepository.duplicateWorkflow")(
           function* ({ workflowId }: { readonly workflowId: string }) {
-            yield* requireNotSingleton(workflowId);
             const source = yield* requireWorkflow(workflowId);
             const open = yield* count(sql`select count(*) from Workflow`);
             if (open >= Domain.WorkflowLimits.maxWorkflows)
@@ -1238,9 +1107,9 @@ export class WorkflowRepository extends Context.Service<
                 const [workflow] = yield* decodeWorkflows(
                   yield* sql`
                     insert or ignore into Workflow
-                      (id, name, type, activatedAt, tags, createdAt, updatedAt)
+                      (id, name, activatedAt, tags, createdAt, updatedAt)
                     values
-                      (${copyId}, ${name}, ${source.type}, null, '[]', ${now}, ${now})
+                      (${copyId}, ${name}, null, '[]', ${now}, ${now})
                     returning *
                   `,
                 );
@@ -1279,7 +1148,6 @@ export class WorkflowRepository extends Context.Service<
             readonly workflowId: string;
             readonly name: Domain.WorkflowName;
           }) {
-            yield* requireNotSingleton(workflowId);
             yield* requireWorkflow(workflowId);
             const now = yield* Clock.currentTimeMillis;
             const [workflow] = yield* decodeWorkflows(
@@ -1304,8 +1172,7 @@ export class WorkflowRepository extends Context.Service<
           }) {
             return yield* sql.withTransaction(
               Effect.gen(function* () {
-                const existing = yield* requireWorkflow(workflowId);
-                yield* requireNoTagsForOrderWorkflow(existing.type, tags);
+                yield* requireWorkflow(workflowId);
                 yield* ensureDraft(workflowId);
                 const now = yield* Clock.currentTimeMillis;
                 const [draft] = yield* decodeDrafts(

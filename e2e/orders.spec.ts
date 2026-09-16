@@ -97,11 +97,10 @@ test("orders screen syncs the window and lists orders", async ({ page }) => {
 });
 
 /**
- * The order page names why the order workflow will not start here and links
- * to its own page: with the singleton off, "Turn it on" lands on
- * `/app/order-workflow`, the nav entry after Workflows.
+ * The waiting-on column on the orders index: the team holding each open
+ * order, read from the same `readyWhere` the worker queue runs on.
  */
-test("the order page's order-workflow link lands on the order workflow page", async ({
+test("the orders index names the team an open order is waiting on", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -145,11 +144,75 @@ test("the order page's order-workflow link lands on the order workflow page", as
 
   await frame.getByRole("link", { name: "#9201" }).click();
   await expect(frame.locator('s-page[heading="#9201"]')).toBeVisible();
+});
+
+/**
+ * Order-number search: the field narrows the table to the one order, the chip
+ * says a search is on, and removing it puts the rest of the list back. Two
+ * orders are seeded because a filter that cannot hide anything proves nothing.
+ */
+test("the orders index searches by order number and clears back to the list", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+
+  const MEMBER = "e2e.orders@example.com";
+  const TEAM = "E2E Bench";
+  await seedMembers(
+    seedConfig(),
+    [MEMBER],
+    [{ name: TEAM, members: [MEMBER] }],
+    [
+      {
+        name: "E2E Ring",
+        tags: ["e2e-ring"],
+        steps: [{ name: "Cut", team: TEAM }],
+      },
+    ],
+    [
+      {
+        n: 9301,
+        lineItems: [{ title: "E2E Band", quantity: 1, tags: ["e2e-ring"] }],
+      },
+      {
+        n: 9302,
+        lineItems: [{ title: "E2E Band", quantity: 1, tags: ["e2e-ring"] }],
+      },
+    ],
+  );
+
+  const frame = await gotoApp(page);
+  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await expect(frame.getByRole("link", { name: "#9302" })).toBeVisible();
+
+  /* The digits alone: `normaliseOrderSearch` supplies the `#`, which is what
+     the chip then shows back. Enter submits; the field does not debounce. */
+  await frame.getByRole("textbox", { name: "Order number" }).fill("9301");
+  await frame.getByRole("textbox", { name: "Order number" }).press("Enter");
+  await expect(frame.getByRole("link", { name: "#9301" })).toBeVisible();
+  await expect(frame.getByRole("link", { name: "#9302" })).toHaveCount(0);
+  const chip = frame.getByRole("button", { name: "Order #9301", exact: true });
+  await expect(chip).toBeVisible();
+
+  /* Removing the chip is the same write as clearing the field, so the list
+     comes back and the field empties with it. */
+  await chip.click();
+  await expect(frame.getByRole("link", { name: "#9302" })).toBeVisible();
   await expect(
-    frame.getByText("Order workflow is off.", { exact: false }),
+    frame.getByRole("textbox", { name: "Order number" }),
+  ).toHaveValue("");
+
+  /* A number no order carries: the empty state names it rather than falling
+     back to the stage copy. */
+  await frame.getByRole("textbox", { name: "Order number" }).fill("9999");
+  await frame.getByRole("textbox", { name: "Order number" }).press("Enter");
+  await expect(
+    frame.getByText('No order matches "#9999".', { exact: false }),
   ).toBeVisible();
-  await frame.getByRole("link", { name: "Turn it on" }).click();
-  await expect(frame.locator('s-page[heading="Order workflow"]')).toBeVisible();
+  /* `button`, not `link`: an `s-link` with no `href` is an action, and that
+     is what it exposes to a screen reader. */
+  await frame.getByRole("button", { name: "Clear the search" }).click();
+  await expect(frame.getByRole("link", { name: "#9302" })).toBeVisible();
 });
 
 /**

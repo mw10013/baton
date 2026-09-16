@@ -4,7 +4,6 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { useMutation } from "@tanstack/react-query";
 import {
   createFileRoute,
-  redirect,
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
@@ -112,13 +111,7 @@ const validateSearch = ({
 
 export const Route = createFileRoute("/app/workflows/$workflowId_/edit")({
   validateSearch,
-  loader: ({ params }) => {
-    // The order workflow's editor is its own route; a stale link lands there.
-    if (params.workflowId === Domain.ORDER_WORKFLOW_ID)
-      // eslint-disable-next-line @typescript-eslint/only-throw-error
-      throw redirect({ to: "/app/order-workflow/edit" });
-    return getLoaderData({ data: params });
-  },
+  loader: ({ params }) => getLoaderData({ data: params }),
   component: RouteComponent,
 });
 
@@ -439,7 +432,7 @@ function RouteComponent() {
     });
   }
 
-  if (detail === null || !Domain.isItemWorkflow(detail.workflow))
+  if (detail === null)
     return (
       <s-page heading="Workflow not found">
         <s-link slot="breadcrumb-actions" href="/app/workflows">

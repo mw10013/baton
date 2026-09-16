@@ -104,12 +104,12 @@ const run = (
   orderId: "o",
   orderName: "#1",
   orderProcessedAt: 0,
-  lineItemId: null,
-  lineItemTitle: null,
+  lineItemId: "li",
+  lineItemTitle: "Ring",
   variantTitle: null,
   sku: null,
-  quantity: null,
-  customAttributes: null,
+  quantity: 1,
+  customAttributes: [],
   source: "tag",
   status,
   flag,
@@ -131,7 +131,7 @@ describe("Domain.runCounts", () => {
       run("pending", null),
       run("active", "blocked"),
       run("active", "item_removed"),
-      run("done", "item_added"),
+      run("done", "item_removed"),
       run("cancelled", "order_cancelled"),
     ]);
     strictEqual(counts.open, 3);
@@ -160,7 +160,6 @@ describe("groupUsedBy", () => {
       ownedStep("w1", "Ring", "workflow", "Engrave"),
       ownedStep("w1", "Ring", "draft", "Engrave"),
       ownedStep("w2", "pendant", "draft", "Polish"),
-      ownedStep(Domain.ORDER_WORKFLOW_ID, "Order workflow", "workflow", "Pack"),
     ]);
     strictEqual(
       grouped
@@ -169,7 +168,7 @@ describe("groupUsedBy", () => {
             `${w.workflowName}:${w.draftOnly ? "draft" : "live"}:${w.href}`,
         )
         .join("|"),
-      "Order workflow:live:/app/order-workflow|pendant:draft:/app/workflows/w2|Ring:live:/app/workflows/w1",
+      "pendant:draft:/app/workflows/w2|Ring:live:/app/workflows/w1",
     );
     strictEqual(groupUsedBy([]).length, 0);
   });
@@ -227,7 +226,6 @@ const queueItem = (
   ],
   stageCount: 1,
   note: null,
-  items: [],
 });
 
 const runIds = (items: readonly Domain.QueueItem[]) =>
@@ -272,5 +270,18 @@ describe("tierQueue", () => {
     );
     strictEqual(runIds(tiers.mine), "re-added");
     strictEqual(runIds(tiers.inProgress), "someone-else");
+  });
+});
+
+describe("Domain.OrderSearch", () => {
+  const decode = Schema.decodeUnknownOption(Domain.OrderSearch);
+  it("normalises 1001, #1001, and padded #1001 to #1001", () => {
+    for (const q of ["1001", "#1001", " #1001 ", "##1001"])
+      strictEqual(Domain.normaliseOrderSearch(q), "#1001");
+  });
+  it("refuses # alone, which would normalise to a prefix every order shares", () => {
+    for (const q of ["#", "##", " # ", "", "  "])
+      strictEqual(decode(q)._tag, "None", q);
+    strictEqual(decode("#1")._tag, "Some");
   });
 });

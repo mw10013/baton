@@ -12,8 +12,7 @@ import { attentionLines } from "@/lib/workflowShared";
  * left as a column of numbers to decode.
  *
  * Shared by the read-only detail page and the editor; `onSelectStep` is what
- * separates them. The order workflow draws the same way: its steps, stages
- * and teams are the same shape, and only the `trigger` node differs.
+ * separates them.
  */
 
 /** The team under a step name, or the attention state standing in its place. */

@@ -6,7 +6,7 @@ import { Effect, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { MemberBar } from "@/components/MemberBar";
-import { FlagBanner, OrderItems, RunItem } from "@/components/MemberRun";
+import { FlagBanner, RunItem } from "@/components/MemberRun";
 import * as Domain from "@/lib/Domain";
 import { requireMember } from "@/lib/MemberAccess";
 import { memberServerFnMiddleware } from "@/lib/MemberServerFnMiddleware";
@@ -221,11 +221,7 @@ function RouteComponent() {
               />
             </s-text>
           </s-stack>
-          {Domain.isOrderRun(item.run) ? (
-            <OrderItems items={item.items} />
-          ) : (
-            <RunItem run={item.run} />
-          )}
+          <RunItem run={item.run} />
           {item.note !== null && item.note.length > 0 && (
             <s-text color="subdued">{`Order note: ${item.note}`}</s-text>
           )}
@@ -265,11 +261,7 @@ function RouteComponent() {
             {entry.run.orderName}
           </Link>
           <s-text type="strong">{entry.step.name}</s-text>
-          <s-text color="subdued">
-            {Domain.isOrderRun(entry.run)
-              ? entry.run.workflowName
-              : (entry.run.lineItemTitle ?? "")}
-          </s-text>
+          <s-text color="subdued">{entry.run.lineItemTitle}</s-text>
         </s-stack>
         <s-text color="subdued">
           {`by ${doneActorLabel(entry.step)} at `}

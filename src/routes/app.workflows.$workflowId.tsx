@@ -5,7 +5,6 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { useMutation } from "@tanstack/react-query";
 import {
   createFileRoute,
-  redirect,
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
@@ -56,7 +55,7 @@ const decodeDeleteWorkflowResult = Schema.decodeUnknownPromise(
 );
 
 /** The Turn on dialog's first line: the rule that will start runs once the switch is on. */
-const turnOnBody = (workflow: Domain.ItemWorkflow) => {
+const turnOnBody = (workflow: Domain.Workflow) => {
   if (workflow.tags.length === 0)
     return "This workflow has no tag, so nothing can reach it. Add one, then put it on your products.";
   return `Every order placed from now with a line item tagged ${workflow.tags
@@ -80,28 +79,18 @@ const getLoaderData = createServerFn({ method: "GET" })
 
 export const Route = createFileRoute("/app/workflows/$workflowId")({
   validateSearch,
-  loader: ({ params }) => {
-    // The order workflow has its own page; a stale link to it here lands
-    // there rather than on a not-found.
-    if (params.workflowId === Domain.ORDER_WORKFLOW_ID)
-      // eslint-disable-next-line @typescript-eslint/only-throw-error
-      throw redirect({ to: "/app/order-workflow" });
-    return getLoaderData({ data: params });
-  },
+  loader: ({ params }) => getLoaderData({ data: params }),
   component: RouteComponent,
 });
 
 /**
- * Item-workflow detail: what this workflow is, read-only. Every edit happens
+ * Workflow detail: what this workflow is, read-only. Every edit happens
  * on `/app/workflows/$workflowId/edit`, so this page has no step controls and
  * no form fields — the two tabs show the live workflow and, while one exists,
  * the draft, so a merchant can see what runs today next to what is being
  * written. There is no version history and no run history here on purpose: a
  * run copies its steps when it starts and is independent from then on, so the
  * workflow has exactly two states worth showing.
- *
- * Item workflows only; the order workflow's page is `/app/order-workflow`,
- * a copy of this one without the product-tag trigger, Rename, or Delete.
  */
 function RouteComponent() {
   const { workflowId } = Route.useParams();
@@ -203,7 +192,7 @@ function RouteComponent() {
     setName(loadedName);
   }
 
-  if (detail === null || !Domain.isItemWorkflow(detail.workflow))
+  if (detail === null)
     return (
       <s-page heading="Workflow not found">
         <s-link slot="breadcrumb-actions" href="/app/workflows">

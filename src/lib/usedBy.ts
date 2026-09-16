@@ -1,4 +1,4 @@
-import * as Domain from "@/lib/Domain";
+import type * as Domain from "@/lib/Domain";
 
 export interface UsedByWorkflow {
   readonly workflowId: Domain.WorkflowId;
@@ -8,11 +8,9 @@ export interface UsedByWorkflow {
   readonly href: string;
 }
 
-/** Where a step is edited: the order workflow has its own page; item workflows are under `/app/workflows`. */
+/** Where a step is edited. */
 export const workflowHref = (workflowId: Domain.WorkflowId) =>
-  workflowId === Domain.ORDER_WORKFLOW_ID
-    ? "/app/order-workflow"
-    : `/app/workflows/${workflowId}`;
+  `/app/workflows/${workflowId}`;
 
 /**
  * Collapses a team's owned steps to the workflows that use it, in the order

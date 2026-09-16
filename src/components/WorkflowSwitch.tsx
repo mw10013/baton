@@ -15,12 +15,12 @@ import {
 } from "@/lib/workflowShared";
 
 /**
- * The on/off switch of a workflow page, item and order alike: the Turn on /
- * Turn off button in the page's secondary actions, the Turn on dialog, and
- * the Change dialog behind the "Applies to orders placed since" line.
- * Shared because the two pages are copies that must not drift here: the
- * dialogs are the one place the merchant decides which orders a workflow
- * covers, and both pages have to ask the same question the same way.
+ * The on/off switch of the workflow page: the Turn on / Turn off button in
+ * the page's secondary actions, the Turn on dialog, and the Change dialog
+ * behind the "Applies to orders placed since" line. A component of its own
+ * because the dialogs are the one place the merchant decides which orders a
+ * workflow covers: owning them here means the page cannot restate the rule
+ * in its own words.
  *
  * The Turn on dialog asks about a count, not a date. Opening it reads
  * `countWaitingOrders`; when earlier open orders would match, one extra

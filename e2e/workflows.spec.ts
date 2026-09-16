@@ -2,11 +2,11 @@ import type { Page } from "@playwright/test";
 
 import { expect, test } from "@playwright/test";
 
-import { clickHoisted, editorFrame, gotoApp, hoistedEnabled } from "./app";
+import { clickHoisted, editorFrame, gotoApp } from "./app";
 import { seedConfig, seedMembers } from "./seed";
 
 /**
- * The three item-workflow screens end to end: the list, the read-only detail
+ * The three workflow screens end to end: the list, the read-only detail
  * page, and the editor.
  *
  * What it is really here to prove is the draft lifecycle, because that is the
@@ -248,97 +248,6 @@ test("workflows create, edit, apply, and discard through the draft", async ({
 });
 
 /**
- * The order workflow: the shop's singleton, reached from its own nav entry.
- * It exists from the start, off and empty, has no Rename or Delete (so no
- * More actions at all), and follows the same four verbs as an item workflow:
- * Edit, add steps, Apply, Turn on. Its trigger box is the shop-wide rule.
- */
-test("the order workflow opens from the nav, has no rename or delete, and turns on after steps are applied", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-
-  await seedMembers(
-    seedConfig(),
-    [MEMBER],
-    [{ name: TEAM, members: [MEMBER] }],
-    [
-      {
-        name: EXISTING,
-        tags: ["e2e-ring"],
-        steps: [{ name: "Cut", team: TEAM }],
-      },
-    ],
-  );
-
-  const frame = await gotoApp(page);
-  const editor = editorFrame(page);
-  await clickHoisted(
-    page.getByRole("link", { name: "Order workflow", exact: true }),
-  );
-  await expect(frame.locator('s-page[heading="Order workflow"]')).toBeVisible();
-  /* Scoped to the section: the Turn on dialog carries the same sentence. */
-  await expect(
-    frame
-      .locator("s-section")
-      .getByText("Runs once per paid order", { exact: false }),
-  ).toBeVisible();
-  /* No steps yet: Turn on is offered but disabled, with its reason. */
-  await expect(
-    frame.getByText("This workflow has no steps.", { exact: false }),
-  ).toBeVisible();
-  await expect
-    .poll(() => hoistedEnabled(page.getByRole("button", { name: "Turn on" })))
-    .toBe(false);
-  /* No Rename, Delete, or Duplicate anywhere: the admin's own title bar
-     carries a "More actions" of its own, so the menu items are the proof. */
-  for (const name of ["Rename", "Delete", "Duplicate"])
-    await expect(page.getByRole("button", { name, exact: true })).toHaveCount(
-      0,
-    );
-
-  /* The editor: the same steps canvas, no tag, in its own window. */
-  await clickHoisted(page.getByRole("button", { name: "Edit", exact: true }));
-  await expect(editor.getByRole("button", { name: "Edit tag" })).toHaveCount(0);
-  for (const name of ["Rename", "Delete", "Duplicate"])
-    await expect(page.getByRole("button", { name, exact: true })).toHaveCount(
-      0,
-    );
-  await editor.getByRole("button", { name: "Add the first step" }).click();
-  await editor.getByRole("textbox", { name: "Name", exact: true }).fill("Pack");
-  await editor
-    .getByRole("combobox", { name: "Team", exact: true })
-    .selectOption({ label: TEAM });
-  await editor.getByRole("button", { name: "Add step" }).click();
-  await expect(editor.getByText("Stage 1", { exact: true })).toBeVisible();
-  await clickHoisted(page.getByRole("button", { name: "Apply changes" }));
-  await expect(frame.locator('s-page[heading="Order workflow"]')).toBeVisible();
-
-  /* Turn on: a fresh shop has no waiting orders, so the dialog is a plain
-     confirm, and the page then says what "on" covers. It was disabled a
-     moment ago for want of steps; `clickHoisted` waits that out. */
-  await clickHoisted(page.getByRole("button", { name: "Turn on" }));
-  await expect(
-    frame.getByText("Checking earlier orders", { exact: false }),
-  ).toHaveCount(0);
-  await expect(frame.getByText("would match.", { exact: false })).toHaveCount(
-    0,
-  );
-  await frame.getByRole("button", { name: "Turn on", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Turn off" })).toBeVisible();
-  await expect(
-    frame
-      .locator("s-section")
-      .getByText("Applies to orders placed since", { exact: false }),
-  ).toBeVisible();
-
-  /* A stale link to the singleton under the item routes lands here. */
-  await expect(
-    frame.getByRole("link", { name: "Workflows", exact: true }),
-  ).toHaveCount(0);
-});
-
-/**
  * Turn on by count: a workflow turned on after an order was placed does not
  * start on it — unless the merchant includes the waiting orders from the
  * Turn on dialog, which moves the coverage date back to the earliest one.
@@ -385,11 +294,16 @@ test("turning on a workflow offers to include earlier unfulfilled orders, and in
   await frame.getByRole("button", { name: "Turn on", exact: true }).click();
   await expect(page.getByRole("button", { name: "Turn off" })).toBeVisible();
 
-  /* The order page shows the run that Include them started. */
+  /* The order page shows the run that Include them started: the line item's
+     section carries a run card naming the workflow, not "No workflow on this
+     item." Scoped to the section because the attach picker on the same page
+     lists every workflow by name too. */
   await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
   await frame.getByRole("link", { name: "#9101" }).click();
   await expect(frame.locator('s-page[heading="#9101"]')).toBeVisible();
+  const band = frame.locator('s-section[accessibilityLabel="E2E Band"]');
+  await expect(band.getByText(EXISTING, { exact: true })).toBeVisible();
   await expect(
-    frame.getByText(`${EXISTING} started for 1 item`, { exact: false }),
-  ).toBeVisible();
+    band.getByText("No workflow on this item.", { exact: false }),
+  ).toHaveCount(0);
 });

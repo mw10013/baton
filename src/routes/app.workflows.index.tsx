@@ -71,7 +71,6 @@ export const statusBadges = (workflow: Domain.WorkflowSummary) => (
  * Workflow definitions are configuration one person edits, so the read is a
  * loader (the loader-versus-socket rule on `ShopAgentClient`): SSR paint, and
  * `router.invalidate()` after each write. Only the writes use the socket.
- * Item workflows only: the order workflow has its own page.
  */
 const getLoaderData = createServerFn({ method: "GET" })
   .middleware([shopifyServerFnMiddleware])
@@ -93,11 +92,8 @@ export const Route = createFileRoute("/app/workflows/")({
 });
 
 /**
- * The workflows page: the item workflows as a filterable list. The order
- * workflow is not here — it has no tag, exactly one exists, and a shared
- * table would carry a blank column — so it lives at `/app/order-workflow`,
- * the nav entry right after this one. Delete lives on the detail page; the
- * index has no destructive control.
+ * The workflows page: every workflow as a filterable list. Delete lives on
+ * the detail page; the index has no destructive control.
  *
  * Creating asks for a name and a tag, the tag prefilled from the name — the
  * tag is what makes a workflow reachable at all, so it is asked for at the

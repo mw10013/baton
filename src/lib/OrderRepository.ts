@@ -53,6 +53,14 @@ const decodeCursor = (cursor: string) => {
     : Option.some({ processedAt, id: cursor.slice(separator + 1) });
 };
 
+/**
+ * Escapes the three characters `like` treats as pattern syntax, so a merchant
+ * typing `%` searches for a literal `%` and gets nothing rather than every
+ * order. The escape character is `\`, declared on every `like` that uses this.
+ */
+const escapeLike = (value: string) =>
+  value.replaceAll(/[\\%_]/gu, (match) => `\\${match}`);
+
 const json = (value: unknown) => JSON.stringify(value);
 
 /**
@@ -139,10 +147,16 @@ export class OrderRepository extends Context.Service<
      * `fulfillmentStatus <> 'FULFILLED' and cancelledAt is null` verbatim so
      * SQLite can prove they are served by the partial `ShopOrder_open_idx`,
      * which is what keeps a count from reading the shop's whole history.
+     *
+     * `openCounts` is the shop's open strip and honours none of the filters —
+     * not `state`, `paid`, `team`, `attention`, or `q` — so the numbers a
+     * merchant filters against do not move under the filter they just applied.
      */
     readonly listOrders: (input: {
       readonly limit: number;
       readonly cursor: string | null;
+      /** `null` is no search; otherwise a prefix match on `ShopOrder.name` (`Domain.ListOrdersInput.q`). */
+      readonly q: Domain.OrderSearch | null;
       readonly state: Domain.ProductionState | null;
       readonly paid: boolean | null;
       readonly attention: boolean;
@@ -436,6 +450,7 @@ export class OrderRepository extends Context.Service<
         listOrders: Effect.fn("OrderRepository.listOrders")(function* ({
           limit,
           cursor,
+          q,
           state,
           paid,
           attention,
@@ -444,6 +459,7 @@ export class OrderRepository extends Context.Service<
         }: {
           readonly limit: number;
           readonly cursor: string | null;
+          readonly q: Domain.OrderSearch | null;
           readonly state: Domain.ProductionState | null;
           readonly paid: boolean | null;
           readonly attention: boolean;
@@ -526,6 +542,18 @@ export class OrderRepository extends Context.Service<
             Match.when(null, () => sql.literal("1 = 1")),
             Match.exhaustive,
           );
+          /**
+           * Prefix, not substring. An order name is `#` plus digits and the
+           * merchant types the digits they read off the admin, so `#10`
+           * listing `#1001` … `#1099` is the useful answer; `%10%` would also
+           * match `#2100`, which nobody asked for. Case-insensitive because
+           * `name` is `text` with the default `binary` collation and a name is
+           * not always digits.
+           */
+          const searchFilter =
+            q === null
+              ? sql.literal("1 = 1")
+              : sql`name like ${`${escapeLike(Domain.normaliseOrderSearch(q))}%`} escape '\\' collate nocase`;
           const paidFilter = Match.value(paid).pipe(
             Match.when(true, () => sql.literal("fullyPaid = 1")),
             Match.when(false, () => sql.literal("fullyPaid = 0")),
@@ -550,7 +578,7 @@ export class OrderRepository extends Context.Service<
           const page = yield* decodeOrders(
             yield* sql`
               select ${orderColumns} from ShopOrder
-              where ${sql.and([keyset, stateFilter, paidFilter, attentionFilter, teamFilter])}
+              where ${sql.and([keyset, searchFilter, stateFilter, paidFilter, attentionFilter, teamFilter])}
               order by processedAt desc, id desc
               limit ${limit + 1}
             `,

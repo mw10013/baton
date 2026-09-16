@@ -1,0 +1,25 @@
+# Adds "Open in Baton" to More actions on an order in the Shopify admin. The
+# target is the CLI's own derivation for `ORDERS#SHOW`
+# (`contextToTarget` in refs/shopify-cli, and listed in the template the
+# generator wrote). `url` is relative to `application_url` because the app is
+# embedded; Shopify appends the store and resource ids, which
+# `/app/orders/from-shopify` reads and redirects on.
+#
+# `name` is a literal rather than the generator's `t:name`: the link text is
+# one fixed English string, and the locale files the template shipped only
+# existed to hold it.
+#
+# `uid` was minted by `shopify app generate extension` and must not be
+# regenerated — it is the identity the Partner dashboard tracks this extension
+# by across deploys.
+
+[[extensions]]
+name = "Open in Baton"
+description = "Open this order's production runs in Baton"
+handle = "baton-order-link"
+type = "admin_link"
+uid = "445a9561-6758-c8d6-c5e1-edbe263840a9403af10f"
+
+[[extensions.targeting]]
+target = "admin.order-details.action.link"
+url = "/app/orders/from-shopify"

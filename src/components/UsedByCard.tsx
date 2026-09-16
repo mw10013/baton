@@ -10,9 +10,9 @@ import { groupUsedBy } from "@/lib/usedBy";
  * It is a titled card in the page's aside rather than a sentence under the page
  * heading, because a bare paragraph is not something `s-page` lays out — it
  * lands on the page background between the header and the first card with
- * nothing naming it. The card also drops the article the prose form put in
- * front of the order workflow ("the Order workflow"): a list item is a name,
- * and the heading already supplies the framing.
+ * nothing naming it. The card drops the article the prose form put in front
+ * of a workflow name: a list item is a name, and the heading already supplies
+ * the framing.
  *
  * The `slot` lives on the section so the route can hand it straight to
  * `s-page`; the aside only renders while the page is `inlineSize="base"`.

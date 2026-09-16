@@ -59,7 +59,6 @@ export const Route = createFileRoute("/shop/$shop/work/$runId")({
 
 /** What a step's state line says, in the order a worker asks: done, under way, ready, waiting. */
 const stepState = (
-  view: Domain.RunView,
   step: Domain.RunStepView,
 ): {
   readonly text: React.ReactNode;
@@ -95,8 +94,6 @@ const stepState = (
     };
   if (step.ready)
     return { badge: { label: "Ready", tone: "info" }, text: "Ready" };
-  if (Domain.isOrderRun(view.run) && step.stage === 1)
-    return { badge: null, text: "Waiting for every item to be made" };
   return { badge: null, text: `Waiting on step ${String(step.stage - 1)}` };
 };
 
@@ -134,7 +131,7 @@ function RouteComponent() {
 
   const renderStep = (step: Domain.RunStepView) => {
     if (view === null) return null;
-    const state = stepState(view, step);
+    const state = stepState(step);
     /** Shown only while the slot is filled: the next Done clears it (`Domain.WorkflowRunStep`). */
     const reopenedBy = Domain.stepReopenedBy(step);
     const editingNote = noteDraft?.runStepId === step.id;
@@ -291,9 +288,9 @@ function RouteComponent() {
     );
 
   const { run } = view;
-  const others = Domain.isOrderRun(run)
-    ? []
-    : view.items.filter((item) => item.lineItemId !== run.lineItemId);
+  const others = view.items.filter(
+    (item) => item.lineItemId !== run.lineItemId,
+  );
   return (
     <>
       <MemberBar shop={shop} />
@@ -323,15 +320,8 @@ function RouteComponent() {
             <FlagBanner run={run} />
           </s-stack>
         </s-section>
-        <s-section
-          heading={Domain.isOrderRun(run) ? "Items on this order" : "This item"}
-          accessibilityLabel="Item"
-        >
-          {Domain.isOrderRun(run) ? (
-            <OrderItems items={view.items} />
-          ) : (
-            <RunItem run={run} />
-          )}
+        <s-section heading="This item" accessibilityLabel="Item">
+          <RunItem run={run} />
         </s-section>
         <s-section heading="Steps" accessibilityLabel="Steps">
           <s-stack gap="small-300">{view.steps.map(renderStep)}</s-stack>

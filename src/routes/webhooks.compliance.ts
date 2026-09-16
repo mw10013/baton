@@ -11,9 +11,18 @@ import { handleWebhook } from "@/lib/Shopify";
  * All compliance topics are verified no-ops. App/session/ShopAgent teardown is
  * handled by app/uninstalled immediately when OAuth tokens are revoked; doing it
  * from delayed shop/redact would risk resurrecting an already-destroyed
- * ShopAgent DO just to delete it again. This app stores no customer-scoped data,
- * so customers/redact and customers/data_request also have nothing to delete or
- * report.
+ * ShopAgent DO just to delete it again.
+ *
+ * customers/redact and customers/data_request are no-ops because Baton stores
+ * no customer identity fields: no name, email, phone, or address, and no
+ * `customer` selection in any order query. The order rows it does store are
+ * keyed by order and line item, so there is no customer to look one up by.
+ * The one caveat, and it is the reason this paragraph is specific rather than
+ * a blanket "no customer data": `ShopOrder.note` and the `customAttributes` on
+ * an order and its line items are free text a buyer may have typed personal
+ * details into. They are stored as Shopify sends them and are deleted with the
+ * shop on app/uninstalled, never in response to a per-customer request, which
+ * Baton has no key to satisfy. The privacy page says exactly this.
  *
  * app/uninstalled is therefore the sole teardown point, and its delivery budget
  * is finite: Shopify retries 8 times over roughly 4 hours

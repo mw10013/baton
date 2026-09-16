@@ -498,34 +498,6 @@ export const WorkflowTags = Schema.Array(Schema.String).pipe(
 export type WorkflowTags = typeof WorkflowTags.Type;
 
 /**
- * `item`: runs once per matching line item (chosen by the workflow's tag). `order`:
- * runs once per order — the shop's one order workflow, the singleton row
- * {@link ORDER_WORKFLOW_ID} that `initializeSchema` inserts, never
- * tag-selected, and {@link OrderWorkflow} carries no `tags`. Set on create,
- * never changed.
- *
- * The order run is created together with the item runs, when the order first
- * reconciles as paid with at least one item run and the order workflow is on
- * and qualifies by the same date rule, or on manual attach. Its steps become
- * ready only when every item run on the order is done or cancelled with at
- * least one done — a read-time readiness rule (`readyWhere` in
- * `WorkflowRunRepository`), not a write-time trigger, so nothing can be
- * missed while the switch happened to be off.
- */
-export const WorkflowType = Schema.Literals(["item", "order"]);
-export type WorkflowType = typeof WorkflowType.Type;
-
-/**
- * The fixed id and name of the shop's one order workflow. Fixed because the
- * row is inserted by the schema, never by a merchant: links, seeds, and tests
- * name it directly, `getOrderWorkflow` is a plain lookup, and no uuid can
- * collide with it. The merchant cannot delete, rename, or duplicate it; "I
- * don't want it" is Turn off.
- */
-export const ORDER_WORKFLOW_ID = Schema.decodeSync(WorkflowId)("order");
-export const ORDER_WORKFLOW_NAME = "Order workflow";
-
-/**
  * Vocabulary. A workflow definition has two nouns and the merchant never
  * meets a third:
  *
@@ -549,7 +521,6 @@ export const ORDER_WORKFLOW_NAME = "Order workflow";
  *
  * - a workflow **starts when** an order **contains** a product **tagged with**
  *   one of its tags;
- * - the order workflow **starts for every paid order** with an item run;
  * - an order or line item that no workflow's tags **match** shows
  *   **"No workflow"**;
  * - the order page says a workflow **started for** N items;
@@ -561,10 +532,9 @@ export const ORDER_WORKFLOW_NAME = "Order workflow";
  * retired, applied (as a state), route, routing, routable, pause, and
  * "product tag" for the workflow's own field.
  *
- * Merchant copy, the whole model in five sentences: **delete an item
- * workflow and its runs stay on their orders**, open ones finish, and the
- * order workflow is never deleted, only turned off; **turn off** stops new
- * runs and open ones finish; **a workflow needs at least one step before it
+ * Merchant copy, the whole model in five sentences: **delete a
+ * workflow and its runs stay on their orders**, open ones finish; **turn
+ * off** stops new runs and open ones finish; **a workflow needs at least one step before it
  * can be applied or turned on**, so zero steps is the state before the first
  * Apply and only that; **any open step on a run can be assigned to another
  * team**, a finished step is history; **deleting configuration never deletes
@@ -608,34 +578,12 @@ const WorkflowFields = {
 export const isActive = (workflow: { readonly activatedAt: number | null }) =>
   workflow.activatedAt !== null;
 
-/** An item workflow: chosen by its tag. */
-export const ItemWorkflow = Schema.Struct({
+/** A workflow: chosen by its tag, running once per matching line item. */
+export const Workflow = Schema.Struct({
   ...WorkflowFields,
-  type: Schema.Literal("item"),
   tags: Schema.fromJsonString(WorkflowTags),
 });
-export type ItemWorkflow = typeof ItemWorkflow.Type;
-
-/**
- * The order workflow: no `tags` field, so nothing can read or render tags for
- * it. Both variants decode from the same `Workflow` row (the row's `tags`
- * column is `'[]'` under a SQL check and is dropped here as an excess key),
- * so the discriminated union is a type-level fact and not a second table.
- */
-export const OrderWorkflow = Schema.Struct({
-  ...WorkflowFields,
-  type: Schema.Literal("order"),
-});
-export type OrderWorkflow = typeof OrderWorkflow.Type;
-
-export const Workflow = Schema.Union([ItemWorkflow, OrderWorkflow]);
 export type Workflow = typeof Workflow.Type;
-
-/** Narrows any workflow-shaped value (summary, row) to its item variant, which is the only one with `tags`. */
-export const isItemWorkflow = <W extends { readonly type: WorkflowType }>(
-  workflow: W,
-): workflow is Extract<W, { readonly type: "item" }> =>
-  workflow.type === "item";
 
 /**
  * The draft side of {@link Workflow}: at most one per workflow (`workflowId`
@@ -696,28 +644,18 @@ const WorkflowSummaryRowFields = {
   stepCount: Schema.Number,
 };
 /** The stored half of {@link WorkflowSummary}: what one list query returns before the roster join. */
-export const WorkflowSummaryRow = Schema.Union([
-  Schema.Struct({ ...ItemWorkflow.fields, ...WorkflowSummaryRowFields }),
-  Schema.Struct({ ...OrderWorkflow.fields, ...WorkflowSummaryRowFields }),
-]);
+export const WorkflowSummaryRow = Schema.Struct({
+  ...Workflow.fields,
+  ...WorkflowSummaryRowFields,
+});
 export type WorkflowSummaryRow = typeof WorkflowSummaryRow.Type;
 
-/** The item variant on its own: what the workflows page lists. */
-export const ItemWorkflowSummary = Schema.Struct({
-  ...ItemWorkflow.fields,
+/** What the workflows page lists. */
+export const WorkflowSummary = Schema.Struct({
+  ...Workflow.fields,
   ...WorkflowSummaryRowFields,
   needsAttention: Schema.Boolean,
 });
-export type ItemWorkflowSummary = typeof ItemWorkflowSummary.Type;
-
-export const WorkflowSummary = Schema.Union([
-  ItemWorkflowSummary,
-  Schema.Struct({
-    ...OrderWorkflow.fields,
-    ...WorkflowSummaryRowFields,
-    needsAttention: Schema.Boolean,
-  }),
-]);
 export type WorkflowSummary = typeof WorkflowSummary.Type;
 
 /** The shape run creation reads: a workflow with its steps. Drafts never appear here. */
@@ -787,7 +725,6 @@ export type WorkflowIdInput = typeof WorkflowIdInput.Type;
 export const DeleteWorkflowInput = WorkflowIdInput;
 export type DeleteWorkflowInput = typeof DeleteWorkflowInput.Type;
 
-/** Item workflows only: the order workflow is the schema's singleton ({@link ORDER_WORKFLOW_ID}) and is never created. */
 export const CreateWorkflowInput = Schema.Struct({
   name: WorkflowName,
   tags: WorkflowTags,
@@ -877,13 +814,7 @@ export type UpdateStepInput = typeof UpdateStepInput.Type;
  * exists to trigger has nothing left to catch — or `null`, which seeds the
  * step **unassigned** so the needs-attention state is visible after
  * `pnpm seed`. A step with no `stage` gets the previous step's stage + 1
- * (linear); the repository validates the stage invariant before writing. The
- * repository still enforces at most one `type: "order"` entry and no tags on
- * it (the schema's check and partial unique index would refuse either
- * anyway, but with a raw constraint error instead of a named one), since a
- * fixture that breaks either would leave the app in a state the ordinary
- * write path can never produce. An order entry describes the singleton
- * ({@link ORDER_WORKFLOW_ID}) rather than creating it: its `name` is ignored.
+ * (linear); the repository validates the stage invariant before writing.
  *
  * `steps` become the workflow's steps; a fixture with no steps and no
  * `draft` has no draft, the state the ordinary path produces for a fresh
@@ -904,7 +835,6 @@ export const SeedWorkflowsInput = Schema.Struct({
   workflows: Schema.Array(
     Schema.Struct({
       name: WorkflowName,
-      type: Schema.optionalKey(WorkflowType),
       active: Schema.optionalKey(Schema.Boolean),
       tags: WorkflowTags,
       steps: Schema.Array(SeedWorkflowStep),
@@ -958,8 +888,6 @@ export const WorkflowResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("NameTaken") }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("Limit"), limit: Schema.Number }),
-  /** Rename or duplicate aimed at the order workflow singleton, which has a fixed name and no copy. */
-  Schema.Struct({ _tag: Schema.Literal("Singleton") }),
 ]);
 export type WorkflowResult = typeof WorkflowResult.Type;
 
@@ -1046,11 +974,10 @@ export const StepResult = Schema.Union([
 ]);
 export type StepResult = typeof StepResult.Type;
 
-/** Delete an item workflow and its runs stay on their orders; only the order workflow singleton refuses. */
+/** Delete a workflow and its runs stay on their orders. */
 export const DeleteWorkflowResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Deleted") }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
-  Schema.Struct({ _tag: Schema.Literal("Singleton") }),
 ]);
 export type DeleteWorkflowResult = typeof DeleteWorkflowResult.Type;
 
@@ -1087,7 +1014,7 @@ export const TeamStepCounts = Schema.Struct({
 });
 export type TeamStepCounts = typeof TeamStepCounts.Type;
 
-/** A step of the workflow or of its draft that points at a team; the team page lists both sides and links each to its workflow page (`/app/order-workflow` for {@link ORDER_WORKFLOW_ID}). */
+/** A step of the workflow or of its draft that points at a team; the team page lists both sides and links each to its workflow page. */
 export const OwnedStep = Schema.Struct({
   workflowId: WorkflowId,
   workflowName: WorkflowName,
@@ -1305,9 +1232,8 @@ export const SeedOrdersInput = Schema.Struct({
       done: Schema.optionalKey(Schema.Boolean),
       /**
        * Rounds of progress before the order is left alone: each round
-       * completes every *ready* step of every open run on the order (item
-       * runs first, so a later round reaches the order run once the items
-       * are made). `advance: 1` on a three-step item is "step 1 done, step 2
+       * completes every *ready* step of every open run on the order.
+       * `advance: 1` on a three-step item is "step 1 done, step 2
        * up next". `done` is the limit of this; the two are not combined.
        */
       advance: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
@@ -1387,6 +1313,32 @@ export type ProductionState = typeof ProductionState.Type;
 export const OrdersCursor = Schema.String.check(Schema.isMaxLength(128));
 
 /**
+ * What the merchant types into the order-number field. Trimmed and capped
+ * because it reaches SQL as a `like` pattern: an order name is `#` plus a
+ * handful of digits, so anything past 32 characters is not a search anyone
+ * can satisfy, and letting it through would only widen the scan. `#` alone
+ * (or `##`) is refused too: {@link normaliseOrderSearch} would reduce it to
+ * `#`, a prefix every order name shares, and a chip reading `Order #` over
+ * the whole list is not a search either.
+ */
+export const OrderSearch = trimmedText("OrderSearch", 32).check(
+  Schema.makeFilter(
+    (q) => q.replace(/^#+/u, "").length > 0 || "an order number, not just #",
+  ),
+);
+export type OrderSearch = typeof OrderSearch.Type;
+
+/**
+ * `1001`, `#1001`, ` #1001 ` all mean the order named `#1001`. Shopify writes
+ * `ShopOrder.name` with the `#`, the merchant reads the number off the admin
+ * and may or may not type it, so the one normalisation lives here and both the
+ * SQL and the route's chip call it — a chip that said `1001` while the query
+ * matched `#1001` would be two facts where there is one.
+ */
+export const normaliseOrderSearch = (q: string): string =>
+  `#${q.trim().replace(/^#+/u, "")}`;
+
+/**
  * `subscriberId` is what subscribes the calling connection to invalidations —
  * the `subscribe<Feature>` convention documented on `ShopAgent.subscribeOrders`.
  * A page that only reads is a page that never hears about a write: the Durable
@@ -1400,6 +1352,13 @@ export const ListOrdersInput = Schema.Struct({
     Schema.isBetween({ minimum: 1, maximum: 50 }),
   ),
   cursor: Schema.NullOr(OrdersCursor),
+  /**
+   * Order-number search, matched against `ShopOrder.name` after
+   * {@link normaliseOrderSearch}: `null` is no search.
+   *
+   * Always send the key, for the same reason as `team`.
+   */
+  q: Schema.NullOr(OrderSearch),
   /** `null` is every order; each state has a SQL form in `OrderRepository.listOrders` that restates `productionState`. */
   state: Schema.NullOr(ProductionState),
   /** `null` is any payment state; `true`/`false` filters on `fullyPaid`, the run-creation gate. */
@@ -1434,9 +1393,8 @@ export type ResyncOrderInput = typeof ResyncOrderInput.Type;
 
 /**
  * Per-order production state for the index table, aggregated from
- * `WorkflowRun` rows in the same read. Counts every run on the order, item
- * runs and the order run alike; it is not a view of the order run, which is
- * why the name avoids "order run". `open` counts `pending` and `active`
+ * `WorkflowRun` rows in the same read. Counts every run on the order.
+ * `open` counts `pending` and `active`
  * runs; cancelled runs count nowhere, so an order whose only runs were
  * cancelled reads as "No workflow" — which is what an admin has to act on.
  *
@@ -1767,12 +1725,12 @@ export type OrdersIndexLoaderData = OrdersView;
 /** `/app/orders/$orderId` (`app.orders.$orderId`); `null` is not stored. */
 export type OrderLoaderData = OrderDetailView | null;
 
-/** `/app/workflows` (`app.workflows.index`). Item workflows only; the order workflow has its own page at `/app/order-workflow`. */
+/** `/app/workflows` (`app.workflows.index`). */
 export interface WorkflowsIndexLoaderData {
-  readonly workflows: readonly ItemWorkflowSummary[];
+  readonly workflows: readonly WorkflowSummary[];
 }
 
-/** `/app/workflows/$workflowId` (`app.workflows.$workflowId`) and its `/edit`, and `/app/order-workflow` and its `/edit`; `null` is not found. */
+/** `/app/workflows/$workflowId` (`app.workflows.$workflowId`) and its `/edit`; `null` is not found. */
 export type WorkflowLoaderData = WorkflowDetailView | null;
 
 /**
@@ -2085,14 +2043,8 @@ export type RunStatus = typeof RunStatus.Type;
  * marking the run as needing attention, with an optional reason. A later
  * reconcile flag overwrites it like any other.
  *
- * `item_added` is set only on an order run: a line item run appeared (new
- * item, manual attach, un-cancel) after the order run started, so "all items
- * made" no longer holds. Unlike item-run flags it lands on a `pending` order
- * run too, because there is no silent adjustment that restores the premise.
- *
  * `order_fulfilled` is set by reconcile alone when the stored order reaches
- * exactly `FULFILLED` while runs are open: active item runs and open order
- * runs (pending too, for the `item_added` reason) get it; pending item runs
+ * exactly `FULFILLED` while runs are open: active runs get it, pending runs
  * are cancelled instead. A partial fulfilment never sets it — the shipped
  * line's `unfulfilledQuantity` hits zero and reads as `item_removed`.
  */
@@ -2102,7 +2054,6 @@ export const RunFlag = Schema.Literals([
   "order_cancelled",
   "order_deleted",
   "blocked",
-  "item_added",
   "order_fulfilled",
 ]);
 export type RunFlag = typeof RunFlag.Type;
@@ -2116,25 +2067,19 @@ export const RunFlagDetail = Schema.Struct({
    * member still reads as who; absent on reconcile flags, which have nobody.
    */
   by: Schema.optionalKey(Actor),
-  /** The line item title behind an order run's `item_added` / `item_removed`. */
+  /** The line item title behind an `item_removed`. */
   item: Schema.optionalKey(Schema.String),
 });
 export type RunFlagDetail = typeof RunFlagDetail.Type;
 
 /**
- * One workflow applied to one line item, or — when `lineItemId` is null — to
- * one whole order (an *order run*, see `WorkflowType`). Every display field
+ * One workflow applied to one line item. Every display field
  * is a snapshot taken at creation — `workflowName`, `orderName`, the line
  * item's title and personalization — so the queue card reads only this row
  * and the run outlives an order delete, a definition rename, or a line item
  * dropped from the order. No foreign keys to `ShopOrder`, `OrderLineItem`, or
  * `Workflow` for that reason. `unique (lineItemId, workflowId)` spans every
- * status, so a cancelled run keeps its key and the only way back is un-cancel;
- * a partial unique index does the same for `(orderId, workflowId)` on order
- * runs.
- *
- * One struct with nullable fields rather than a union: every decoder, action,
- * and card reads the same row, and {@link isOrderRun} is the only branch.
+ * status, so a cancelled run keeps its key and the only way back is un-cancel.
  */
 export const WorkflowRun = Schema.Struct({
   id: WorkflowRunId,
@@ -2148,14 +2093,12 @@ export const WorkflowRun = Schema.Struct({
    * (which an order delete removes) to do it.
    */
   orderProcessedAt: Schema.Number,
-  lineItemId: Schema.NullOr(Schema.String),
-  lineItemTitle: Schema.NullOr(Schema.String),
+  lineItemId: Schema.String,
+  lineItemTitle: Schema.String,
   variantTitle: Schema.NullOr(Schema.String),
   sku: Schema.NullOr(Schema.String),
-  quantity: Schema.NullOr(Schema.Number),
-  customAttributes: Schema.NullOr(
-    Schema.fromJsonString(Schema.Array(OrderAttribute)),
-  ),
+  quantity: Schema.Number,
+  customAttributes: Schema.fromJsonString(Schema.Array(OrderAttribute)),
   source: RunSource,
   status: RunStatus,
   flag: Schema.NullOr(RunFlag),
@@ -2166,8 +2109,6 @@ export const WorkflowRun = Schema.Struct({
   cancelledAt: Schema.NullOr(Schema.Number),
 });
 export type WorkflowRun = typeof WorkflowRun.Type;
-
-export const isOrderRun = (run: WorkflowRun) => run.lineItemId === null;
 
 /**
  * A step copied from the definition at run creation. `teamName` is
@@ -2305,10 +2246,10 @@ export type QueueStep = typeof QueueStep.Type;
  * snapshotted because a merchant edits it while work is in progress.
  */
 /**
- * One line item of the order an *order run* is on, read live at queue time
- * (never snapshotted) so a late item shows on the card as soon as reconcile
- * stores it. `runStatus` is the worst status across that item's runs
- * (`pending` < `active` < `done`), or null when no item workflow touched it.
+ * One line item of the order a run is on, read live for the work page's
+ * "Also on this order" (never snapshotted) so a late item shows as soon as
+ * reconcile stores it. `runStatus` is the worst status across that item's runs
+ * (`pending` < `active` < `done`), or null when no workflow touched it.
  */
 export const QueueOrderItem = Schema.Struct({
   lineItemId: BoundedId,
@@ -2325,15 +2266,12 @@ export const QueueItem = Schema.Struct({
   steps: Schema.NonEmptyArray(QueueStep),
   stageCount: Schema.Number,
   note: Schema.NullOr(Schema.String),
-  /** Populated only for order runs; `[]` for item runs. */
-  items: Schema.Array(QueueOrderItem),
 });
 export type QueueItem = typeof QueueItem.Type;
 
 /**
  * What stands between a finished step and Undo: the first later step someone
- * has already started (or finished) — in a later stage of the same run, or,
- * for an item run, in the order run that its completion made ready. Once
+ * has already started (or finished), in a later stage of the same run. Once
  * downstream has moved the fix is a conversation, so the page names who to
  * ask rather than offering a button that would pull work out from under them.
  */
@@ -2345,11 +2283,8 @@ export type UndoBlocker = typeof UndoBlocker.Type;
 
 /**
  * The undo rule, on rows already in hand: the first step in a later stage of
- * the same run that anyone has started, else — for an item run — the first
- * started step of the order's open or finished order run. A `startedAt`
- * test covers finished steps too, because Done backfills `startedAt`. Order
- * runs whose item runs are all done are the only ones that can have started,
- * so a null answer for an item run also means the packer has not begun.
+ * the same run that anyone has started. A `startedAt` test covers finished
+ * steps too, because Done backfills `startedAt`.
  *
  * Pure and here rather than in `WorkflowRunRepository` so the three readers
  * cannot disagree: the repository's own write, the verdicts it precomputes for
@@ -2366,14 +2301,12 @@ const firstStarted = (steps: readonly WorkflowRunStep[]) =>
 export const undoBlockedBy = (
   step: WorkflowRunStep,
   runSteps: readonly WorkflowRunStep[],
-  orderRunSteps: readonly WorkflowRunStep[],
 ): UndoBlocker | null => {
-  const blocker =
-    firstStarted(
-      runSteps.filter(
-        (other) => other.runId === step.runId && other.stage > step.stage,
-      ),
-    ) ?? firstStarted(orderRunSteps);
+  const blocker = firstStarted(
+    runSteps.filter(
+      (other) => other.runId === step.runId && other.stage > step.stage,
+    ),
+  );
   return blocker === undefined
     ? null
     : { stepName: blocker.name, teamName: blocker.teamName };
@@ -2419,8 +2352,8 @@ export const DONE_LIMIT = 100;
  * A run step on the work page, decorated with what the page needs to offer
  * the right button: `ready` is the queue's readiness rule evaluated for this
  * step, and `undoBlockedBy` is the undo verdict for a finished one. Both are
- * facts about *other* rows (earlier stages, the order's item runs, later
- * stages), which is why the object computes them rather than the page.
+ * facts about *other* rows (earlier and later stages of the run), which is
+ * why the object computes them rather than the page.
  */
 export const RunStepView = Schema.Struct({
   ...WorkflowRunStep.fields,
@@ -2431,9 +2364,8 @@ export type RunStepView = typeof RunStepView.Type;
 
 /**
  * Everything `/shop/$shop/work/$runId` renders. `items` is the order's live
- * line items (the same read the queue's order-run card uses), so a maker sees
- * what else ships with the piece; the page drops the run's own line for an
- * item run. `note` is the order's live note.
+ * line items, so a maker sees what else ships with the piece; the page drops
+ * the run's own line. `note` is the order's live note.
  */
 export const RunView = Schema.Struct({
   run: WorkflowRun,
@@ -2461,23 +2393,7 @@ export const OrderDetailView = Schema.Struct({
   lineItems: Schema.Array(OrderLineItem),
   runs: Schema.Array(WorkflowRunDetail),
   /**
-   * The shop's order workflow in any state, so the page can say what will
-   * start once the items are made — or why nothing will. Always present: it
-   * is the schema's singleton ({@link ORDER_WORKFLOW_ID}).
-   */
-  orderWorkflow: Workflow,
-  /**
-   * Why the order workflow cannot start today, or `null` when it can:
-   * `off` (switched off), `no_steps`, or `unassigned` (a step with no team,
-   * or on a team that no longer exists). Mirrors `canStart` in the run
-   * repository, which reads only active workflows and so cannot tell the
-   * page about an off one.
-   */
-  orderWorkflowBlocker: Schema.NullOr(
-    Schema.Literals(["off", "no_steps", "unassigned"]),
-  ),
-  /**
-   * Active item workflows with at least one step — the manual-attach picker's
+   * Active workflows with at least one step — the manual-attach picker's
    * choices. Carried in the view rather than read by a second socket query so
    * the page has exactly one read, one key, and one push.
    */

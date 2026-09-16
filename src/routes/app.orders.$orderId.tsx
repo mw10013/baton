@@ -122,7 +122,6 @@ const RUN_FLAG_LABEL = {
   order_cancelled: "Order cancelled",
   order_deleted: "Order deleted",
   blocked: "Blocked",
-  item_added: "New item",
   order_fulfilled: "Already shipped in Shopify",
 } as const satisfies Record<Domain.RunFlag, string>;
 
@@ -195,7 +194,6 @@ const sameActor = (a: Domain.Actor, b: Domain.Actor) =>
  * one name twice is not.
  */
 const manageStateLine = (
-  run: Domain.WorkflowRun,
   step: Domain.WorkflowRunStep,
   ready: boolean,
 ): React.ReactNode => {
@@ -222,8 +220,6 @@ const manageStateLine = (
       </>
     );
   if (ready) return "Ready";
-  if (Domain.isOrderRun(run) && step.stage === 1)
-    return "Waiting for every item to be made";
   return `Waiting on step ${String(step.stage - 1)}`;
 };
 
@@ -266,13 +262,8 @@ const stageCount = (steps: readonly Domain.WorkflowRunStep[]) =>
 const readySteps = (
   run: Domain.WorkflowRun,
   steps: readonly Domain.WorkflowRunStep[],
-  openItemRuns: number,
 ) => {
   if (run.status === "cancelled" || run.status === "done") return [];
-  /* An order run's item runs are its stage zero (`readyWhere`): while any is
-     open, nothing on the order run is ready, so a blocked pending order run
-     says "Blocked", not "Blocked · Pack". */
-  if (Domain.isOrderRun(run) && openItemRuns > 0) return [];
   const lowest = lowestOpenStage(steps);
   return steps.filter(
     (step) => step.completedAt === null && step.stage === lowest,
@@ -295,10 +286,9 @@ const readySteps = (
  */
 const blockedStrip = (
   { run, steps }: Domain.WorkflowRunDetail,
-  openItemRuns: number,
   unblock: React.ReactNode,
 ) => {
-  const stuck = readySteps(run, steps, openItemRuns)
+  const stuck = readySteps(run, steps)
     .map((step) => step.name)
     .join(", ");
   const reason = run.flagDetail?.reason;
@@ -332,14 +322,10 @@ const blockedStrip = (
  * That one describes *one step* inside the Manage disclosure, in the work
  * page's vocabulary, so the merchant and the worker say the same thing about
  * the same step. This one describes *the run* on a collapsed card and has to
- * cover a parallel stage (several ready steps at once) and a pending order run
- * waiting on items, neither of which is a step state. Keeping them apart is
- * cheaper than a shared function with a mode flag.
+ * cover a parallel stage (several ready steps at once), which is not a step
+ * state. Keeping them apart is cheaper than a shared function with a mode flag.
  */
-const nowLine = (
-  { run, steps }: Domain.WorkflowRunDetail,
-  openItemRuns: number,
-): React.ReactNode => {
+const nowLine = ({ run, steps }: Domain.WorkflowRunDetail): React.ReactNode => {
   if (run.status === "cancelled") return null;
   /* The strip above already names the stuck step; a Now line under it would
      name the same step a second time on one card. */
@@ -348,9 +334,7 @@ const nowLine = (
     const stages = stageCount(steps);
     return `Done \u00B7 ${String(stages)} stage${stages === 1 ? "" : "s"}`;
   }
-  if (Domain.isOrderRun(run) && run.status === "pending" && openItemRuns > 0)
-    return `Waiting for ${formatNumber(openItemRuns)} item${openItemRuns === 1 ? "" : "s"}`;
-  const ready = readySteps(run, steps, openItemRuns);
+  const ready = readySteps(run, steps);
   if (ready.length === 0) return null;
   const names = ready.map((step) => step.name).join(", ");
   const teams = [...new Set(ready.map((step) => step.teamName))].join(", ");
@@ -701,15 +685,7 @@ function RouteComponent() {
       </s-page>
     );
 
-  const {
-    order,
-    lineItems,
-    runs,
-    orderWorkflow,
-    orderWorkflowBlocker,
-    itemWorkflows,
-    teams,
-  } = detail;
+  const { order, lineItems, runs, itemWorkflows, teams } = detail;
   /**
    * The same aggregate the index computes in SQL, rebuilt from the run list
    * this page already carries so both pages read one `productionState`.
@@ -718,27 +694,9 @@ function RouteComponent() {
     order,
     runs: Domain.runCounts(runs.map(({ run }) => run)),
   });
-  const orderRuns = runs.filter(({ run }) => Domain.isOrderRun(run));
   /** See `managing`: an id with no run on this order is stale and answers `false`. */
   const managingRun = (run: Domain.WorkflowRun) =>
     managing.has(run.id) && runs.some((other) => other.run.id === run.id);
-  const itemRunCount = runs.length - orderRuns.length;
-  /** Mirrors the date rule: placed before Turn on, unless a manual attach opted the order in. */
-  const tooOld =
-    orderWorkflow.activatedAt !== null &&
-    order.processedAt < orderWorkflow.activatedAt &&
-    !runs.some(({ run }) => !Domain.isOrderRun(run) && run.source === "manual");
-  const itemRunsAllCancelled =
-    itemRunCount > 0 &&
-    runs.every(
-      ({ run }) => Domain.isOrderRun(run) || run.status === "cancelled",
-    );
-  /** Open item runs: what a pending order run is waiting on (`readyWhere`), counted from the runs in hand. */
-  const openItemRuns = runs.filter(
-    ({ run }) =>
-      !Domain.isOrderRun(run) &&
-      (run.status === "pending" || run.status === "active"),
-  ).length;
   /**
    * The order in one line, above the cards: `3 items \u00B7 1 blocked \u00B7 1 made
    * \u00B7 waiting on Engraving`. It earns its place only when the cards below
@@ -750,8 +708,7 @@ function RouteComponent() {
    *
    * `waiting on` is the orders index's own predicate restated over the runs in
    * hand (`ReadyWhere.readyWhere`, which `OrderRepository` runs in SQL): the
-   * teams with a ready step on an open run, where an order run's steps are only
-   * ready once no item run is open and at least one is done. A team that no
+   * teams with a ready step on an open run. A team that no
    * longer exists is an attention state, not somebody holding the order, so an
    * unassigned step contributes nothing here — the trail's own `Assign team`
    * row is where that is answered. Nor does a blocked run: the team cannot
@@ -776,19 +733,12 @@ function RouteComponent() {
       );
       return live.length > 0 && live.every(({ run }) => run.status === "done");
     }).length;
-    const orderRunReady =
-      openItemRuns === 0 &&
-      runs.some(({ run }) => !Domain.isOrderRun(run) && run.status === "done");
     const waitingOn = [
       ...new Set(
         runs
-          .filter(
-            ({ run }) =>
-              run.flag !== "blocked" &&
-              (!Domain.isOrderRun(run) || orderRunReady),
-          )
+          .filter(({ run }) => run.flag !== "blocked")
           .flatMap(({ run, steps }) =>
-            readySteps(run, steps, openItemRuns)
+            readySteps(run, steps)
               .filter((step) => !Domain.isRunStepUnassigned(step, teams))
               .map((step) => step.teamName),
           ),
@@ -806,50 +756,6 @@ function RouteComponent() {
         : []),
     ].join(" \u00B7 ");
   })();
-  /**
-   * One line per way the order run is not here yet, in the rule's own
-   * order: a blocked definition first (the merchant can fix it), then the
-   * order-side reasons it will never start, then the plain wait. Each is a
-   * condition of order-run creation in `reconcileOrder` restated for the
-   * person looking at this order, so no order is silently skipped.
-   */
-  const orderWorkflowLine = (workflow: Domain.Workflow) => {
-    const name = workflow.name;
-    if (orderWorkflowBlocker === "off")
-      return (
-        <>
-          {`${name} is off. `}
-          <s-link href="/app/order-workflow">Turn it on</s-link>
-        </>
-      );
-    if (orderWorkflowBlocker !== null)
-      return (
-        <>
-          {`${name} cannot start: it has ${orderWorkflowBlocker === "no_steps" ? "no steps" : "a step with no team"}. `}
-          <s-link href="/app/order-workflow">Fix the workflow</s-link>
-        </>
-      );
-    if (tooOld)
-      return `Placed before ${name} was turned on. Attaching a workflow to an item opts the order in.`;
-    if (itemRunCount === 0) return "No item on this order has a workflow.";
-    if (itemRunsAllCancelled)
-      return "Every item run on this order was cancelled.";
-    return null;
-  };
-  const orderWorkflowNote = orderWorkflowLine(orderWorkflow);
-  /**
-   * The section shows only when it carries something: an order run, a blocker
-   * the merchant can act on, or a reason this order will never get one. A
-   * healthy order workflow that simply has not started yet still shows — its
-   * trail is the answer to "what happens after this is made" — but an order
-   * with none of those would be a heading, a subtitle and nothing else.
-   */
-  const orderWorkflowShows =
-    orderRuns.length > 0 ||
-    orderWorkflowBlocker !== null ||
-    tooOld ||
-    itemRunCount === 0 ||
-    itemRunsAllCancelled;
   const busy =
     attachMutation.isPending ||
     interveneMutation.isPending ||
@@ -1013,10 +919,6 @@ function RouteComponent() {
   const manageRows = ({ run, steps }: Domain.WorkflowRunDetail) => {
     const open = run.status === "pending" || run.status === "active";
     const lowest = lowestOpenStage(steps);
-    /** What a finished item step's undo can be blocked by, once packing has begun. */
-    const orderRunSteps = Domain.isOrderRun(run)
-      ? []
-      : orderRuns.flatMap((other) => other.steps);
     const reason = blockReason[run.id] ?? "";
     return (
       <s-stack gap="small-300">
@@ -1026,7 +928,7 @@ function RouteComponent() {
           const blocker =
             step.completedAt === null
               ? null
-              : Domain.undoBlockedBy(step, steps, orderRunSteps);
+              : Domain.undoBlockedBy(step, steps);
           const reopenedBy = Domain.stepReopenedBy(step);
           const draft =
             noteDraft?.runStepId === step.id ? noteDraft.note : null;
@@ -1063,7 +965,7 @@ function RouteComponent() {
                 <s-stack direction="inline" gap="small-300" alignItems="center">
                   <s-text color="subdued">
                     {`${String(step.stage)} ${step.name} \u00B7 ${step.teamName} \u00B7 `}
-                    {manageStateLine(run, step, false)}
+                    {manageStateLine(step, false)}
                   </s-text>
                   {noteButton}
                   {open && assignTeam(step.id)}
@@ -1087,9 +989,7 @@ function RouteComponent() {
                     {`${step.teamName} \u00B7 stage ${String(step.stage)}`}
                   </s-text>
                 </s-stack>
-                <s-text color="subdued">
-                  {manageStateLine(run, step, ready)}
-                </s-text>
+                <s-text color="subdued">{manageStateLine(step, ready)}</s-text>
                 {reopenedBy !== null && step.reopenedAt !== null && (
                   <s-text color="subdued">
                     {`Reopened by ${Domain.actorLabel(reopenedBy)} \u00B7 `}
@@ -1218,17 +1118,13 @@ function RouteComponent() {
   const renderRun = (detail: Domain.WorkflowRunDetail) => {
     const { run } = detail;
     const cancelled = run.status === "cancelled";
-    const now = nowLine(detail, openItemRuns);
+    const now = nowLine(detail);
     return (
       <s-stack key={run.id} gap="small-300">
         <s-stack direction="inline" gap="small-300" alignItems="center">
-          {/* An order run's section is already headed by this very workflow's
-              name, so printing it again here is the two-headings fault the
-              "Line items" wrapper was deleted for. An item run keeps its name:
-              its section is headed by the line item, not the workflow. */}
-          {!Domain.isOrderRun(run) && (
-            <s-text type="strong">{run.workflowName}</s-text>
-          )}
+          {/* The run keeps its workflow name: its section is headed by the
+              line item, not the workflow. */}
+          <s-text type="strong">{run.workflowName}</s-text>
           <s-badge tone={RUN_STATUS_TONE[run.status]}>{run.status}</s-badge>
           {run.flag !== null && (
             <s-badge tone="warning">{flagLabel(run)}</s-badge>
@@ -1262,8 +1158,7 @@ function RouteComponent() {
             </s-button>
           )}
         </s-stack>
-        {run.flag === "blocked" &&
-          blockedStrip(detail, openItemRuns, unblockButton(run))}
+        {run.flag === "blocked" && blockedStrip(detail, unblockButton(run))}
         {stepTrail(detail, teams, assignTeam)}
         {now !== null && <s-text color="subdued">{now}</s-text>}
         {!cancelled && managingRun(run) && manageRows(detail)}
@@ -1465,25 +1360,6 @@ function RouteComponent() {
         <s-paragraph color="subdued">No line items.</s-paragraph>
       ) : (
         lineItems.map(renderLineItem)
-      )}
-
-      {orderWorkflowShows && (
-        <s-section
-          heading={orderWorkflow.name}
-          accessibilityLabel="Order workflow"
-        >
-          <s-stack gap="base">
-            {/* The invariant, never a guess at what the shop does in it: the
-                system's only stipulation is that every item run on the order is
-                done, and a shop using this phase for QA, photography or
-                invoicing would read "Shipping" as a lie. */}
-            <s-text color="subdued">Starts when every item is made</s-text>
-            {orderRuns.length > 0 && orderRuns.map(renderRun)}
-            {orderRuns.length === 0 && orderWorkflowNote !== null && (
-              <s-paragraph color="subdued">{orderWorkflowNote}</s-paragraph>
-            )}
-          </s-stack>
-        </s-section>
       )}
 
       {order.note !== null && (

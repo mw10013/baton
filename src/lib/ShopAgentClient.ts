@@ -112,13 +112,9 @@ export class ShopAgentClient extends Context.Service<
       shop: string,
       input: Domain.GetOrderDetailInput,
     ) => Effect.Effect<Domain.OrderDetailView | null, ShopAgentClientError>;
-    /** Item workflows only; the order workflow is read by `getWorkflowDetail` with `Domain.ORDER_WORKFLOW_ID`. */
     readonly listWorkflows: (
       shop: string,
-    ) => Effect.Effect<
-      readonly Domain.ItemWorkflowSummary[],
-      ShopAgentClientError
-    >;
+    ) => Effect.Effect<readonly Domain.WorkflowSummary[], ShopAgentClientError>;
     readonly getWorkflowDetail: (
       shop: string,
       input: Domain.WorkflowIdInput,
@@ -201,7 +197,7 @@ export class ShopAgentClient extends Context.Service<
       );
       const ordersView = Schema.toType(Domain.OrdersView);
       const orderDetail = Schema.toType(Schema.NullOr(Domain.OrderDetailView));
-      const workflows = Schema.toType(Schema.Array(Domain.ItemWorkflowSummary));
+      const workflows = Schema.toType(Schema.Array(Domain.WorkflowSummary));
       const workflowDetail = Schema.toType(
         Schema.NullOr(Domain.WorkflowDetailView),
       );

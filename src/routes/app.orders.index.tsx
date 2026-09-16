@@ -3,7 +3,7 @@ import * as React from "react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
-import { Effect, Match, Schema } from "effect";
+import { Effect, Match, Option, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
 import * as Domain from "@/lib/Domain";
@@ -18,6 +18,12 @@ import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
 
 const ORDERS_PAGE_SIZE = 25;
 /**
+ * Raw field text to the branded search, or `None` for anything the schema
+ * refuses: empty, blank, or past its 32 characters. `None` is "no search",
+ * which is what an emptied field means, so the caller needs no second test.
+ */
+const decodeOrderSearch = Schema.decodeUnknownOption(Domain.OrderSearch);
+/**
  * Caps both the Tags and the Waiting on cells, on purpose: two collapsing
  * columns in one table should collapse at the same width and with the same
  * `+N`, so the table has one idiom rather than two.
@@ -31,20 +37,23 @@ const TAG_BADGE_LIMIT = 3;
  */
 const ordersQueryKey = (
   shop: string,
+  q: Domain.OrderSearch | null,
   state: Domain.ProductionState | null,
   paid: boolean | null,
   attention: boolean,
   team: Domain.TeamId | null,
-) => ["orders", shop, state, paid, attention, team] as const;
+) => ["orders", shop, q, state, paid, attention, team] as const;
 
 /**
- * `?state=` picks a stage of the strip (`ready_to_ship` is the packer's view);
- * `?paid=` crosses it with the payment gate; `?attention=true` keeps only
- * orders with a run that needs attention (`Domain.OrderRow.attention`);
- * `?team=` keeps only orders waiting on that team, which is the link the team
- * detail page drills in with. Absent means every order.
+ * `?q=` is the order-number search; `?state=` picks a stage of the strip
+ * (`ready_to_ship` is the packer's view); `?paid=` crosses it with the payment
+ * gate; `?attention=true` keeps only orders with a run that needs attention
+ * (`Domain.OrderRow.attention`); `?team=` keeps only orders waiting on that
+ * team, which is the link the team detail page drills in with. Absent means
+ * every order.
  */
 const OrdersSearch = Schema.Struct({
+  q: Schema.optionalKey(Domain.OrderSearch),
   state: Schema.optionalKey(Domain.ProductionState),
   paid: Schema.optionalKey(Schema.Boolean),
   attention: Schema.optionalKey(Schema.Boolean),
@@ -223,6 +232,7 @@ const emptyText = (state: Domain.ProductionState | null) =>
  * component state, so only the filter is a loader dep.
  */
 const OrdersLoaderInput = Schema.Struct({
+  q: Schema.NullOr(Domain.OrderSearch),
   state: Schema.NullOr(Domain.ProductionState),
   paid: Schema.NullOr(Schema.Boolean),
   attention: Schema.Boolean,
@@ -234,7 +244,7 @@ const getLoaderData = createServerFn({ method: "GET" })
   .middleware([shopifyServerFnMiddleware])
   .handler(
     ({
-      data: { state, paid, attention, team },
+      data: { q, state, paid, attention, team },
       context: { runEffect, session },
     }) =>
       runEffect(
@@ -243,6 +253,7 @@ const getLoaderData = createServerFn({ method: "GET" })
             client.listOrders(session.shop, {
               limit: ORDERS_PAGE_SIZE,
               cursor: null,
+              q,
               state,
               paid,
               attention,
@@ -256,6 +267,7 @@ const getLoaderData = createServerFn({ method: "GET" })
 export const Route = createFileRoute("/app/orders/")({
   validateSearch: Schema.toStandardSchemaV1(OrdersSearch),
   loaderDeps: ({ search }) => ({
+    q: search.q ?? null,
     state: search.state ?? null,
     paid: search.paid ?? null,
     attention: search.attention ?? false,
@@ -280,6 +292,7 @@ export const Route = createFileRoute("/app/orders/")({
 function RouteComponent() {
   const { shop } = Route.useRouteContext();
   const {
+    q = null,
     state = null,
     paid = null,
     attention = false,
@@ -305,6 +318,7 @@ function RouteComponent() {
 
   /** A filter change is a new list, so the cursor stack starts over. */
   const setFilters = (next: {
+    readonly q: Domain.OrderSearch | null;
     readonly state: Domain.ProductionState | null;
     readonly paid: boolean | null;
     readonly attention: boolean;
@@ -313,6 +327,7 @@ function RouteComponent() {
     setCursors([null]);
     void navigate({
       search: {
+        ...(next.q === null ? {} : { q: next.q }),
         ...(next.state === null ? {} : { state: next.state }),
         ...(next.paid === null ? {} : { paid: next.paid }),
         ...(next.attention ? { attention: true } : {}),
@@ -321,6 +336,21 @@ function RouteComponent() {
     });
   };
 
+  /**
+   * The field's text while it is being typed. The URL is the filter; this is
+   * the draft on the way to it, so a keystroke is not a navigation and not a
+   * read. It re-seeds whenever `q` changes from outside the field — Clear
+   * filters, the chip's own X, a back button — the same seeded-state shape
+   * the workflow pages use for a loaded name.
+   */
+  const [searchDraft, setSearchDraft] = React.useState(q ?? "");
+  const [seededSearch, setSeededSearch] = React.useState<string | null>(q);
+  if (q !== seededSearch) {
+    setSeededSearch(q);
+    setSearchDraft(q ?? "");
+  }
+  const searchField = React.useRef<HTMLElementTagNameMap["s-text-field"]>(null);
+
   const {
     data: view,
     query: ordersQuery,
@@ -328,12 +358,13 @@ function RouteComponent() {
     agent,
     identified,
   } = useSubscribedQuery({
-    queryKey: ordersQueryKey(shop, state, paid, attention, team),
+    queryKey: ordersQueryKey(shop, q, state, paid, attention, team),
     subscribe: (stub, subscriberId) =>
       stub
         .subscribeOrders({
           limit: ORDERS_PAGE_SIZE,
           cursor: cursorRef.current,
+          q,
           state,
           paid,
           attention,
@@ -356,6 +387,39 @@ function RouteComponent() {
     if (identified) void invalidate();
   }, [identified, invalidate, cursor]);
 
+  /**
+   * Enter and blur, not a debounce: every other control in this row navigates
+   * on the merchant's own action (a press-button click, a select change), and
+   * a timer that navigated mid-number would page the table under the typing.
+   * A no-op submit is dropped so re-blurring an unchanged field costs nothing.
+   */
+  const submitSearch = () => {
+    const next = Option.getOrNull(decodeOrderSearch(searchDraft));
+    if (next === q) return;
+    setFilters({ q: next, state, paid, attention, team });
+  };
+  /**
+   * The latest submit, held in a ref so the keydown listener below is attached
+   * once rather than re-attached on every keystroke: `submitSearch` closes over
+   * the draft and every filter, so it is a new function each render.
+   */
+  const submitRef = React.useRef(submitSearch);
+  React.useEffect(() => {
+    submitRef.current = submitSearch;
+  });
+  /** The field's shadow input does not submit a surrounding form, so Enter is listened for on the custom element (as `WorkflowTag` does). */
+  React.useEffect(() => {
+    const element = searchField.current;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Enter" && !event.isComposing) {
+        event.preventDefault();
+        submitRef.current();
+      }
+    };
+    element?.addEventListener("keydown", onKeyDown);
+    return () => element?.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   const startSync = () => {
     if (!agent) return;
     setSyncing(true);
@@ -376,7 +440,7 @@ function RouteComponent() {
   const syncInFlight = view !== undefined && view.syncState.workflowId !== null;
   const orders = view?.page.orders ?? [];
   const filtered =
-    state !== null || paid !== null || attention || team !== null;
+    q !== null || state !== null || paid !== null || attention || team !== null;
   /**
    * Nothing stored and nothing filtered: the shop has never had orders here,
    * so the card is the empty state alone. Declared beside `orders` rather than
@@ -487,7 +551,26 @@ function RouteComponent() {
     if (orders.length === 0 && filtered)
       return (
         <s-box padding="base">
-          <s-paragraph color="subdued">{emptyText(state)}</s-paragraph>
+          {/* The search names what it did not find, because the number the
+              merchant typed is the whole question they asked; the stage copy
+              answers a different one and would read as a non sequitur under a
+              search that missed. */}
+          {q === null ? (
+            <s-paragraph color="subdued">{emptyText(state)}</s-paragraph>
+          ) : (
+            <s-stack direction="inline" gap="small-300" alignItems="center">
+              <s-text color="subdued">
+                {`No order matches "${Domain.normaliseOrderSearch(q)}".`}
+              </s-text>
+              <s-link
+                onClick={() => {
+                  setFilters({ q: null, state, paid, attention, team });
+                }}
+              >
+                Clear the search
+              </s-link>
+            </s-stack>
+          )}
         </s-box>
       );
     if (orders.length === 0) return emptyState();
@@ -605,7 +688,7 @@ function RouteComponent() {
         key={value ?? "all"}
         pressed={state === value}
         onClick={() => {
-          setFilters({ state: value, paid, attention, team });
+          setFilters({ q, state: value, paid, attention, team });
         }}
       >
         {n === undefined || n === null
@@ -626,7 +709,7 @@ function RouteComponent() {
     <s-press-button
       pressed={paid === value}
       onClick={() => {
-        setFilters({ state, paid: value, attention, team });
+        setFilters({ q, state, paid: value, attention, team });
       }}
     >
       {label}
@@ -664,6 +747,29 @@ function RouteComponent() {
         {!neverStored && (
           <s-box padding="base">
             <s-stack gap="small-300">
+              {/* Above the facet grid rather than inside it: a search is the
+                  merchant arriving with an order in hand, not a facet crossed
+                  with the others, and the placeholder is its own label. Width
+                  capped like the team select, which fills whatever it is
+                  given. The chip that says a search is on lives with the other
+                  cross-cutting filters below. */}
+              <s-grid
+                gridTemplateColumns="minmax(0, 16rem)"
+                justifyContent="start"
+              >
+                <s-text-field
+                  ref={searchField}
+                  label="Order number"
+                  labelAccessibilityVisibility="exclusive"
+                  placeholder="Order number"
+                  value={searchDraft}
+                  maxLength={32}
+                  onInput={(event) => {
+                    setSearchDraft(event.currentTarget.value);
+                  }}
+                  onBlur={submitSearch}
+                />
+              </s-grid>
               <s-grid
                 gridTemplateColumns="auto 1fr"
                 gap="base"
@@ -692,6 +798,7 @@ function RouteComponent() {
                       tone="critical"
                       onClick={() => {
                         setFilters({
+                          q,
                           state,
                           paid,
                           attention: !attention,
@@ -702,11 +809,28 @@ function RouteComponent() {
                       {`Needs attention · ${formatNumber(attentionCount)}`}
                     </s-button>
                   )}
+                  {/* The chip for the search, in the cross-cutting filter
+                      row beside Clear filters and shaped like it. No
+                      `accessibilityLabel`: the visible text is the accessible
+                      name, so a locator and a screen reader read the same
+                      string, and the sibling clear control labels itself the
+                      same way. */}
+                  {q !== null && (
+                    <s-button
+                      variant="tertiary"
+                      onClick={() => {
+                        setFilters({ q: null, state, paid, attention, team });
+                      }}
+                    >
+                      {`Order ${Domain.normaliseOrderSearch(q)}`}
+                    </s-button>
+                  )}
                   {filtered && (
                     <s-button
                       variant="tertiary"
                       onClick={() => {
                         setFilters({
+                          q: null,
                           state: null,
                           paid: null,
                           attention: false,
@@ -742,6 +866,7 @@ function RouteComponent() {
                     onChange={(event) => {
                       const value = event.currentTarget.value;
                       setFilters({
+                        q,
                         state,
                         paid,
                         attention,

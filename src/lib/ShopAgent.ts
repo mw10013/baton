@@ -55,7 +55,6 @@ import { ShopifyAdmin } from "@/lib/ShopifyAdmin";
 import {
   type NoDraftError,
   type NoStepsError,
-  type SingletonWorkflowError,
   type StageNotFoundError,
   type StepNotFoundError,
   type StepUnassignedError,
@@ -339,19 +338,6 @@ const memberCallableEffect =
  * pays. A run starts on an order only when `ShopOrder.processedAt >=
  * activatedAt`.
  *
- * Item and order workflows (`type`) share these four tables on purpose: they
- * differ in one column and one cardinality rule, and in nothing about steps,
- * stages, drafts, team pointers, or the on/off switch. An order workflow has
- * no product tags — `tags` is `'[]'` under the `check`, and
- * `Domain.OrderWorkflow` has no `tags` field at all — and there is exactly
- * one per shop: the singleton row `id = 'order'`, `name = 'Order workflow'`,
- * inserted below and never deleted, renamed, or duplicated. The table
- * `check` forbids any other row of `type = 'order'` and any other name on
- * this one; `Workflow_order_uidx` (a partial unique index on the constant
- * `type`) is the second backstop. Separate `OrderWorkflow*` tables were
- * considered and rejected: they would duplicate every step/draft query for
- * one missing column.
- *
  * `WorkflowStep.teamId` is a D1 `Team.id` with no foreign key because none is
  * possible: `Team` lives in D1 and this table in the object's private SQLite,
  * and SQLite foreign keys do not cross databases. Integrity is
@@ -374,21 +360,14 @@ const memberCallableEffect =
  * ISO text: the two stores already differ, and one store should not mix.
  *
  * `WorkflowRun` / `WorkflowRunStep` are the *instances*: one workflow applied
- * to one line item **or to one order**, with the definition's steps copied
- * in. An order run (`Workflow.type = 'order'`) has `lineItemId` and the
- * three line-item snapshot columns null together (the `check`), is created
- * with the item runs, and its steps become ready once every item run on the
- * order is finished with at least one done (`readyWhere`;
- * `WorkflowRun_order_items_idx` serves that gate on every queue read). Every
- * display field is a snapshot and there is no foreign key to `ShopOrder`,
- * `OrderLineItem`, or `Workflow` — a run must survive an order delete, a
- * line item dropped by an edit, and a definition edit or rename, because it
- * is the record of work someone may already have started. `unique (lineItemId,
- * workflowId)` spans every status so a cancelled run keeps its key: neither
- * the sync nor manual attach can create a second one, and recovery from a
- * mistaken cancel is un-cancel. SQLite treats nulls as distinct in that
- * constraint, so the partial `WorkflowRun_order_uidx` is what makes an order
- * run single-use per `(orderId, workflowId)`. `status` is denormalized from the steps for
+ * to one line item, with the definition's steps copied
+ * in. Every display field is a snapshot and there is no foreign key to
+ * `ShopOrder`, `OrderLineItem`, or `Workflow` — a run must survive an order
+ * delete, a line item dropped by an edit, and a definition edit or rename,
+ * because it is the record of work someone may already have started.
+ * `unique (lineItemId, workflowId)` spans every status so a cancelled run
+ * keeps its key: neither the sync nor manual attach can create a second one,
+ * and recovery from a mistaken cancel is un-cancel. `status` is denormalized from the steps for
  * the queue and the definitions badge; every step write recomputes it in the
  * same transaction. `(teamId, completedAt)` serves the member queue, which
  * asks for open steps by team. `WorkflowRunStep.teamId` is nullable for the
@@ -412,7 +391,6 @@ const memberCallableEffect =
  */
 const initializeSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const now = yield* Clock.currentTimeMillis;
   yield* sql`
     create table if not exists ShopOrder (
       id text primary key,
@@ -474,18 +452,13 @@ const initializeSchema = Effect.gen(function* () {
     create table if not exists Workflow (
       id text primary key,
       name text not null check (name = trim(name) and length(name) > 0),
-      type text not null default 'item' check (type in ('item', 'order')),
       activatedAt integer,
-      tags text not null default '[]'
-        check (type = 'item' or tags = '[]'),
+      tags text not null default '[]',
       createdAt integer not null,
-      updatedAt integer not null,
-      check (type <> 'order' or (id = 'order' and name = 'Order workflow'))
+      updatedAt integer not null
     );
     create unique index if not exists Workflow_name_uidx
       on Workflow (name collate nocase);
-    create unique index if not exists Workflow_order_uidx
-      on Workflow (type) where type = 'order';
     create table if not exists WorkflowStep (
       id text primary key,
       workflowId text not null references Workflow (id) on delete cascade,
@@ -521,31 +494,24 @@ const initializeSchema = Effect.gen(function* () {
       orderId text not null,
       orderName text not null,
       orderProcessedAt integer not null,
-      lineItemId text,
-      lineItemTitle text,
+      lineItemId text not null,
+      lineItemTitle text not null,
       variantTitle text,
       sku text,
-      quantity integer,
-      customAttributes text,
+      quantity integer not null,
+      customAttributes text not null,
       source text not null check (source in ('tag', 'manual')),
       status text not null check (status in ('pending', 'active', 'done', 'cancelled')),
-      flag text check (flag in ('item_removed', 'quantity_changed', 'order_cancelled', 'order_deleted', 'blocked', 'item_added', 'order_fulfilled')),
+      flag text check (flag in ('item_removed', 'quantity_changed', 'order_cancelled', 'order_deleted', 'blocked', 'order_fulfilled')),
       flagAt integer,
       flagDetail text,
       createdAt integer not null,
       updatedAt integer not null,
       cancelledAt integer,
-      check ((lineItemId is null) = (lineItemTitle is null)
-         and (lineItemId is null) = (quantity is null)
-         and (lineItemId is null) = (customAttributes is null)),
       unique (lineItemId, workflowId)
     );
-    create unique index if not exists WorkflowRun_order_uidx
-      on WorkflowRun (orderId, workflowId) where lineItemId is null;
     create index if not exists WorkflowRun_orderId_idx on WorkflowRun (orderId);
     create index if not exists WorkflowRun_status_idx on WorkflowRun (status);
-    create index if not exists WorkflowRun_order_items_idx
-      on WorkflowRun (orderId, lineItemId, status);
     create table if not exists WorkflowRunStep (
       id text primary key,
       runId text not null references WorkflowRun (id) on delete cascade,
@@ -572,15 +538,6 @@ const initializeSchema = Effect.gen(function* () {
     );
     create index if not exists WorkflowRunStep_teamId_idx
       on WorkflowRunStep (teamId, completedAt);
-  `;
-  // The order workflow singleton, off and empty, the way `SyncState` is
-  // seeded: a fixed row the merchant fills in and switches, never creates or
-  // deletes. Its own statement because the timestamps are bound parameters
-  // and the block above is parameter-free DDL. `insert or ignore` on the
-  // primary key keeps it idempotent.
-  yield* sql`
-    insert or ignore into Workflow (id, name, type, activatedAt, tags, createdAt, updatedAt)
-    values (${Domain.ORDER_WORKFLOW_ID}, ${Domain.ORDER_WORKFLOW_NAME}, 'order', null, '[]', ${now}, ${now})
   `;
 });
 
@@ -672,7 +629,6 @@ const workflowResult = <R>(
     | WorkflowNameTakenError
     | WorkflowNotFoundError
     | WorkflowLimitError
-    | SingletonWorkflowError
     | SqlError.SqlError
     | WorkflowRepositoryError,
     R
@@ -691,8 +647,6 @@ const workflowResult = <R>(
         Effect.succeed<Domain.WorkflowResult>({ _tag: "NotFound" }),
       WorkflowLimitError: ({ limit }) =>
         Effect.succeed<Domain.WorkflowResult>({ _tag: "Limit", limit }),
-      SingletonWorkflowError: () =>
-        Effect.succeed<Domain.WorkflowResult>({ _tag: "Singleton" }),
     }),
   );
 
@@ -892,8 +846,8 @@ const stepResult = <R>(
 /**
  * Same shape as {@link workflowResult}: expected run failures become values.
  * `WorkflowRepositoryError` and `SchemaError` ride along because the actions
- * that can start an order run load the start context (active definitions
- * from this object, teams from D1) first.
+ * that can start a run load the start context (active definitions from this
+ * object, teams from D1) first.
  */
 const runResult = <R>(
   effect: Effect.Effect<
@@ -1053,11 +1007,9 @@ const isOpen = (run: Domain.WorkflowRun) =>
 /**
  * Readiness decided on a snapshot taken before any step of the
  * round is completed: completing stage 1 makes stage 2 ready at
- * once, and finishing the last item makes the order run ready, so
- * asking `completeStep` as the loop goes would run the whole order
- * to done in one round. Same rule as the repository's ready query:
- * open, nothing open in an earlier stage of the run, and for an
- * order run no open item run and at least one done.
+ * once, so asking `completeStep` as the loop goes would run the
+ * whole order to done in one round. Same rule as the repository's
+ * ready query: open, and nothing open in an earlier stage of the run.
  */
 /**
  * A seeded step write recorded as the merchant: no `teamIds`, which is the one
@@ -1071,24 +1023,19 @@ const merchantStepCommand = (step: Domain.WorkflowRunStep) => ({
 
 const seedReadySteps = (
   details: readonly Domain.WorkflowRunDetail[],
-): Domain.WorkflowRunStep[] => {
-  const itemRuns = details.filter(({ run }) => !Domain.isOrderRun(run));
-  const orderRunReady =
-    !itemRuns.some(({ run }) => isOpen(run)) &&
-    itemRuns.some(({ run }) => run.status === "done");
-  return details.flatMap(({ run, steps }) => {
-    if (!isOpen(run)) return [];
-    if (Domain.isOrderRun(run) && !orderRunReady) return [];
-    return steps.filter(
-      (step) =>
-        step.completedAt === null &&
-        !steps.some(
-          (earlier) =>
-            earlier.completedAt === null && earlier.stage < step.stage,
-        ),
-    );
-  });
-};
+): Domain.WorkflowRunStep[] =>
+  details.flatMap(({ run, steps }) =>
+    isOpen(run)
+      ? steps.filter(
+          (step) =>
+            step.completedAt === null &&
+            !steps.some(
+              (earlier) =>
+                earlier.completedAt === null && earlier.stage < step.stage,
+            ),
+        )
+      : [],
+  );
 
 export class ShopAgent extends Agent {
   declare private readonly runEffect: ReturnType<typeof makeRunEffect>;
@@ -1355,8 +1302,8 @@ export class ShopAgent extends Agent {
    * (`orderId: null`) is published to either way; a detail subscription only
    * for its own order. Workflow configuration is loader data and does not
    * publish, with one exception: Apply and the on/off switch change what
-   * starts runs, which the order page's `orderWorkflow` / `itemWorkflows`
-   * show, so those two publish `"all"`.
+   * starts runs, which the order page's `itemWorkflows` shows, so those two
+   * publish `"all"`.
    *
    * `teams` is the same idea for the other population. A member's subscription
    * is their queue, which is scoped by team rather than by order, so an order
@@ -1834,6 +1781,7 @@ export class ShopAgent extends Agent {
   private readOrders({
     limit,
     cursor,
+    q,
     state,
     paid,
     attention,
@@ -1850,6 +1798,7 @@ export class ShopAgent extends Agent {
         page: yield* repository.listOrders({
           limit,
           cursor,
+          q,
           state,
           paid,
           attention,
@@ -1908,15 +1857,13 @@ export class ShopAgent extends Agent {
    * loader-versus-socket rule documented there). Only the mutations stay on
    * the socket.
    */
-  listWorkflows(): Promise<readonly Domain.ItemWorkflowSummary[]> {
+  listWorkflows(): Promise<readonly Domain.WorkflowSummary[]> {
     const teams = () => this.teams();
     return this.runEffect(
       Effect.gen(function* () {
-        const rows = yield* (yield* WorkflowRepository).listWorkflows({
+        return yield* (yield* WorkflowRepository).listWorkflows({
           teams: yield* teams(),
-          type: "item",
         });
-        return rows.filter(Domain.isItemWorkflow);
       }).pipe(Effect.withLogSpan("ShopAgent.listWorkflows")),
     );
   }
@@ -2271,9 +2218,8 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Delete an item workflow and its runs stay on their orders (vocabulary on
-   * `Domain.Workflow`); the order workflow singleton answers `Singleton`.
-   * `removeWorkflow`, not `deleteWorkflow`: the Agents
+   * Delete a workflow and its runs stay on their orders (vocabulary on
+   * `Domain.Workflow`). `removeWorkflow`, not `deleteWorkflow`: the Agents
    * SDK base class already has a `deleteWorkflow(workflowId)` that drops a
    * Cloudflare Workflow instance's tracking row (`onWorkflowComplete` calls
    * it), the same collision `getWorkflowDetail` sidesteps. Publishes because
@@ -2302,10 +2248,6 @@ export class ShopAgent extends Agent {
           Effect.catchTags({
             WorkflowNotFoundError: () =>
               Effect.succeed<Domain.DeleteWorkflowResult>({ _tag: "NotFound" }),
-            SingletonWorkflowError: () =>
-              Effect.succeed<Domain.DeleteWorkflowResult>({
-                _tag: "Singleton",
-              }),
           }),
         ),
       )(input),
@@ -2396,9 +2338,9 @@ export class ShopAgent extends Agent {
       const runs = yield* WorkflowRunRepository;
       return (order: Domain.ShopOrder) =>
         runs.reconcileOrder({ ...context, orderId: order.id }).pipe(
-          Effect.tap(({ created, cancelled, flagged, orderRuns }) =>
+          Effect.tap(({ created, cancelled, flagged }) =>
             Effect.logInfo(
-              `ShopAgent.reconcileOrder: shop=${shop} orderId=${order.id} source=${source} created=${String(created)} cancelled=${String(cancelled)} flagged=${String(flagged)} orderRuns=${String(orderRuns)}`,
+              `ShopAgent.reconcileOrder: shop=${shop} orderId=${order.id} source=${source} created=${String(created)} cancelled=${String(cancelled)} flagged=${String(flagged)}`,
             ).pipe(
               Effect.annotateLogs({
                 shop,
@@ -2407,7 +2349,6 @@ export class ShopAgent extends Agent {
                 created,
                 cancelled,
                 flagged,
-                orderRuns,
               }),
             ),
           ),
@@ -2436,30 +2377,13 @@ export class ShopAgent extends Agent {
       const repository = yield* WorkflowRepository;
       const workflows = yield* repository.listActiveWorkflowDetails();
       const roster = yield* teams();
-      const orderWorkflow = yield* repository.getOrderWorkflow();
-      const orderWorkflowBlocker =
-        ((): Domain.OrderDetailView["orderWorkflowBlocker"] => {
-          if (!Domain.isActive(orderWorkflow.workflow)) return "off";
-          if (orderWorkflow.steps.length === 0) return "no_steps";
-          const assigned = orderWorkflow.steps.every(
-            (step) =>
-              step.teamId !== null &&
-              roster.some((team) => team.id === step.teamId),
-          );
-          return assigned ? null : "unassigned";
-        })();
       return {
         order,
         lineItems,
         runs: yield* runs.listRunsForOrder({ orderId: order.id }),
         teams: roster,
-        orderWorkflow: orderWorkflow.workflow,
-        orderWorkflowBlocker,
         itemWorkflows: workflows
-          .filter(
-            ({ workflow, steps }) =>
-              workflow.type === "item" && steps.length > 0,
-          )
+          .filter(({ steps }) => steps.length > 0)
           .map(({ workflow }) => workflow),
       } satisfies Domain.OrderDetailView;
     });
@@ -2534,9 +2458,7 @@ export class ShopAgent extends Agent {
    * (`canStart`): an admin choosing a workflow for a line item by hand is
    * exactly the override for a missing tag, a fulfilled line, or an order
    * placed before the workflow was turned on. The run key still refuses a
-   * duplicate. An attached item opts the order in: the startable order
-   * workflow is handed along so the order run is created with the item run
-   * when the order has none yet.
+   * duplicate.
    */
   @callable()
   attachWorkflow(
@@ -2559,25 +2481,16 @@ export class ShopAgent extends Agent {
           const found = yield* workflows.getWorkflow({ workflowId });
           const roster = yield* teams();
           // Only the workflow's own steps can start a run; a draft is never
-          // attachable. The order workflow is never attached to a line item:
-          // an attached item run brings the order run with it (below).
+          // attachable.
           const detail: Domain.WorkflowDetail | null = Option.isSome(found)
             ? { workflow: found.value.workflow, steps: found.value.steps }
             : null;
-          if (
-            detail === null ||
-            detail.workflow.type !== "item" ||
-            !canStart(detail, roster)
-          )
+          if (detail === null || !canStart(detail, roster))
             return {
               _tag: "WorkflowCannotStart",
             } satisfies Domain.AttachResult;
-          const orderWorkflow = yield* workflows.getOrderWorkflow();
           const run = yield* (yield* WorkflowRunRepository).createRun({
             workflow: detail,
-            orderWorkflow: canStart(orderWorkflow, roster)
-              ? orderWorkflow
-              : null,
             teams: roster,
             order: target.value.order,
             lineItem: target.value.lineItem,
@@ -2854,7 +2767,6 @@ export class ShopAgent extends Agent {
                 steps: [first, ...rest],
                 stageCount: row.stageCount,
                 note: row.note,
-                items: row.items,
               },
             ];
       });
@@ -3015,8 +2927,8 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Undo. Publishes to the order's teams like the others: re-opening an item
-   * step un-readies the order run, so the packing team's card must go too.
+   * Undo. Publishes to the order's teams like the others: the merchant's
+   * order page shows every run of the order.
    */
   @callable()
   uncompleteStep(
@@ -3483,8 +3395,8 @@ export class ShopAgent extends Agent {
    * Development seed for orders, same gate and reasoning as `seedWorkflows`.
    * Goes through `upsertOrder` + `reconcileOrder` rather than raw inserts so
    * the fixture exercises run creation, and `done` finishes steps through
-   * `completeStep` with the step's own team so the order run's readiness
-   * gate is exercised the way it is on the floor. `advance`, `started`, and
+   * `completeStep` with the step's own team so the readiness gate is
+   * exercised the way it is on the floor. `advance`, `started`, and
    * `blocked` go through the same actions for the same reason: a seeded
    * "step 2 of 3, in progress, blocked" card is indistinguishable from one a
    * worker produced. Only rows under `SEED_ORDER_ID_PREFIX` are replaced;
@@ -3657,8 +3569,6 @@ export class ShopAgent extends Agent {
               }),
               afterWrite: reconcile(order),
             });
-            // Item runs come first in `listRunsForOrder`, so by the time the
-            // order run's steps are reached they are ready.
             const merchant = seed.byMerchant === true;
             if (seed.done === true) yield* completeOpenRuns(id, merchant);
             for (let round = 0; round < (seed.advance ?? 0); round += 1)

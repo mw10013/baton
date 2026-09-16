@@ -3,8 +3,8 @@ import { createFileRoute } from "@tanstack/react-router";
 const collectItems = [
   "Shopify shop domain and Shopify shop identifier.",
   "Shopify authentication details that keep the app securely connected to your store, including the permissions you granted.",
-  "Flow trigger inputs submitted in the app, such as the selected test trigger name.",
-  "Flow action request details sent by Shopify Flow, such as action run identifiers and merchant-configured action values.",
+  "Orders and their line items, to the extent Baton needs them to run production: order number, order dates, payment and fulfilment status, order tags, the order note, custom attributes, line-item title, variant, SKU, quantities, product identifier, and product tags.",
+  "Team member accounts a merchant creates in Baton: name, email address, and sign-in details.",
   "Technical information generated when the app is used, such as request metadata, error logs, and security/debugging information.",
   "Information merchants provide when contacting support, such as email address and message contents.",
 ] as const;
@@ -14,14 +14,14 @@ const notCollectedItems = [
   "Customer email addresses.",
   "Customer phone numbers.",
   "Customer physical addresses.",
-  "Order history.",
+  "Customer accounts or customer profiles.",
   "Payment card or payment account details.",
   "Buyer storefront browsing behavior.",
 ] as const;
 
 const usageItems = [
   "Authenticate merchants and keep the app connected to Shopify.",
-  "Send custom Shopify Flow trigger events requested by merchants.",
+  "Create and track production runs for order line items, and show team members the items they are making.",
   "Maintain app security and prevent unauthorized access.",
   "Diagnose bugs, monitor reliability, and provide support.",
   "Comply with Shopify platform requirements and applicable legal obligations.",
@@ -47,7 +47,7 @@ function RouteComponent() {
         Baton
       </s-link>
       <s-stack gap="base">
-        <s-text tone="neutral">Last updated: July 28, 2026</s-text>
+        <s-text tone="neutral">Last updated: September 15, 2026</s-text>
         <s-paragraph>
           Baton is a Shopify admin app. This Privacy Policy explains what
           information Baton collects, how we use it, and how merchants can
@@ -64,9 +64,12 @@ function RouteComponent() {
         </s-paragraph>
         <PolicyList items={collectItems} />
         <s-paragraph>
-          Baton currently requests no Shopify Admin API access scopes. It does
-          not request access to products, orders, customers, payment details, or
-          checkout data.
+          Baton requests two Shopify Admin API access scopes. Order access is
+          held under write_orders, which Baton uses to read the orders and line
+          items it runs production for; Baton does not currently write to
+          orders. read_products is used to read the product tags that decide
+          which workflow an item follows. Baton does not request access to
+          customers, payment details, or checkout data.
         </s-paragraph>
       </PolicySection>
       <PolicySection heading="Information We Do Not Collect">
@@ -75,6 +78,13 @@ function RouteComponent() {
           Baton does not collect or store:
         </s-paragraph>
         <PolicyList items={notCollectedItems} />
+        <s-paragraph>
+          Order notes and custom attributes are free text that a customer or a
+          merchant may have typed personal details into. Baton stores them as
+          Shopify provides them, and shows them to the merchant and to the team
+          members working the order, because they are usually the
+          personalization instructions the item is made from.
+        </s-paragraph>
       </PolicySection>
       <PolicySection heading="How We Use Information">
         <s-paragraph>We use collected information to:</s-paragraph>
@@ -104,14 +114,37 @@ function RouteComponent() {
           related app data.
         </s-paragraph>
         <s-paragraph>
-          Baton does not store any of your customers' data. If Shopify sends a
-          customer data request or deletion request on a customer's behalf,
-          Baton confirms it but has no customer data to return or delete.
+          Baton stores order data for your store's own use. When your store
+          uninstalls Baton, Shopify sends an app/uninstalled notification and
+          Baton deletes the store's session and destroys the storage holding its
+          orders, workflows, and production runs.
+        </s-paragraph>
+        <s-paragraph>
+          Baton stores no customer identity fields — no name, email address,
+          phone number, or address — so when Shopify sends a customer data
+          request or a customer deletion request on a customer's behalf, Baton
+          confirms it and has no customer record to return or erase. What Baton
+          holds about an order is the production data listed above, which your
+          store controls and which is deleted with the rest when the app is
+          uninstalled.
         </s-paragraph>
         <s-paragraph>
           Some technical logs, backups, or security records may persist for a
           limited period where needed for security, debugging, legal compliance,
           or abuse prevention.
+        </s-paragraph>
+      </PolicySection>
+      <PolicySection heading="Team Members">
+        <s-paragraph>
+          Merchants can invite team members to Baton to work the items on their
+          orders. A team member signs in with their email address and sees only
+          what making the item requires: the order number, the item title,
+          variant, SKU, and quantity, the item's custom attributes, and the
+          order note.
+        </s-paragraph>
+        <s-paragraph>
+          Team members never see customer names, contact details, addresses, or
+          prices.
         </s-paragraph>
       </PolicySection>
       <PolicySection heading="Security">
@@ -139,8 +172,8 @@ function RouteComponent() {
         </s-paragraph>
         <s-paragraph>
           Customers of merchants should contact the merchant directly for
-          privacy requests about customer data. Baton does not currently store
-          customer-scoped data.
+          privacy requests. Baton stores no customer identity fields, and the
+          order data it does store belongs to the merchant's store.
         </s-paragraph>
       </PolicySection>
       <PolicySection heading="Changes">

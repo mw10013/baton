@@ -82,10 +82,9 @@ export interface SeedOrder {
   readonly lineItems: readonly SeedLineItem[];
 }
 
-/** A workflow definition to create, steps inline and in order. `type: "order"` describes the shop's one order workflow (fixed name; `tags: []`) rather than creating one. */
+/** A workflow definition to create, steps inline and in order. */
 export interface SeedWorkflow {
   readonly name: string;
-  readonly type?: "item" | "order";
   /** On/off switch; defaults to on when there are steps and every step is assigned. */
   readonly active?: boolean;
   readonly tags: readonly string[];

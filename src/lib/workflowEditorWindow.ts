@@ -34,7 +34,7 @@ export const postEditorWindowMessage = (message: EditorWindowMessage): void => {
   channel.close();
 };
 
-const itemEditorPath = (workflowId: string): string =>
+const editorPath = (workflowId: string): string =>
   `/app/workflows/${workflowId}/edit`;
 
 /**
@@ -55,14 +55,11 @@ const itemEditorPath = (workflowId: string): string =>
  */
 export const useWorkflowEditorWindow = ({
   workflowId,
-  editorPath = itemEditorPath,
   onHide,
   onDeleted,
 }: {
   /** The workflow the standing `src` points at; the list page has none until create. */
   readonly workflowId?: string;
-  /** Route of the editor for a workflow id; the order workflow has its own. */
-  readonly editorPath?: (workflowId: string) => string;
   readonly onHide: () => void;
   readonly onDeleted: (workflowId: string) => void;
 }): {

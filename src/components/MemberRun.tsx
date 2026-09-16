@@ -17,20 +17,15 @@ export const flagMessage = (run: Domain.WorkflowRun) =>
         Match.withReturnType<string>(),
         // Also covers a full refund and a line shipped ahead: all three zero
         // the units to make, and the maker's response is the same.
-        Match.when("item_removed", () =>
-          Domain.isOrderRun(run)
-            ? `No longer needed: ${run.flagDetail?.item ?? ""}`
-            : "No longer needed: this item was removed, refunded, or shipped.",
+        Match.when(
+          "item_removed",
+          () =>
+            "No longer needed: this item was removed, refunded, or shipped.",
         ),
         Match.when(
           "quantity_changed",
           () =>
-            `Quantity changed from ${formatNumber(run.flagDetail?.from ?? 0)} to ${formatNumber(run.flagDetail?.to ?? run.quantity ?? 0)}.`,
-        ),
-        Match.when("item_added", () =>
-          run.flagDetail?.item === undefined
-            ? "A new item was added to this order after it was ready."
-            : `New item: ${run.flagDetail.item}`,
+            `Quantity changed from ${formatNumber(run.flagDetail?.from ?? 0)} to ${formatNumber(run.flagDetail?.to ?? run.quantity)}.`,
         ),
         Match.when("order_cancelled", () => "The order was cancelled."),
         Match.when("order_deleted", () => "The order was deleted."),
@@ -104,23 +99,23 @@ export function RunItem({ run }: { readonly run: Domain.WorkflowRun }) {
     <s-stack gap="small-500">
       <s-text type="strong">
         {itemLabel({
-          title: run.lineItemTitle ?? "",
+          title: run.lineItemTitle,
           variantTitle: run.variantTitle,
-          quantity: run.quantity ?? 0,
+          quantity: run.quantity,
         })}
       </s-text>
       {run.sku !== null && <s-text color="subdued">{`SKU ${run.sku}`}</s-text>}
-      <Personalization attributes={run.customAttributes ?? []} />
+      <Personalization attributes={run.customAttributes} />
     </s-stack>
   );
 }
 
 /**
- * The order's live line items with each one's make status, as the packer
- * sees them on an order-run card and the maker under "Also on this order".
- * "No steps", not "No workflow": a worker never sees definitions, so an
- * absence stated in definition terms is nothing they can act on. What the
- * packer needs is that nothing was made for this item.
+ * The order's live line items with each one's make status, as the maker
+ * sees them under "Also on this order" on the work page. "No steps", not
+ * "No workflow": a worker never sees definitions, so an absence stated in
+ * definition terms is nothing they can act on. What the maker needs is that
+ * nothing was made for this item.
  */
 export function OrderItems({
   items,

@@ -26,17 +26,13 @@ import type {
  *
  * Logins, by role, so one browser profile per persona covers the product:
  *
- * - `lead@m.com` is on every team: one login that sees every queue, maker
- *   and packer alike. It is fixture data, not `ADMIN_EMAILS` — that env var
- *   grants the better-auth admin role and is deliberately not coupled to a
- *   reseed.
- * - `m1@m.com` … `m6@m.com` are makers, one per item-workflow team in the
+ * - `lead@m.com` is on every team: one login that sees every queue. It is
+ *   fixture data, not `ADMIN_EMAILS` — that env var grants the better-auth
+ *   admin role and is deliberately not coupled to a reseed.
+ * - `m1@m.com` … `m6@m.com` are makers, one per workflow team in the
  *   order the teams are listed. `m7@m.com` is on two maker teams, the one
  *   login whose queue is grouped by team. `m8@m.com` is on no team ("no
  *   teams" on the members page and "not on a team yet" after sign-in).
- * - `p1@m.com` … `p3@m.com` are the packing side, one per team that owns an
- *   order-workflow step; `p4@m.com` is on two of them. Keeping them a
- *   separate series means "sign in as a packer" needs no lookup.
  *
  * Every maker team owns steps in at least two workflows so no queue is
  * single-workflow, and every hand-off crosses a team boundary. Tags are the
@@ -49,23 +45,18 @@ import type {
  * leaves behind) and one on the empty team, `Wholesale sample (no steps)`
  * has none, and `Photo frame` is seeded off.
  *
- * Invariants the ordinary write path enforces and the seed only checks in
- * part, so the fixture must honour them by construction:
- *
- * - At most one `type: "order"` entry, and no tags on it
- *   (`WorkflowRepository.replaceWorkflows` refuses both).
- * - A workflow with an unassigned step cannot be on; the seed defaults it
- *   off.
+ * An invariant the ordinary write path enforces and the seed only checks in
+ * part, so the fixture must honour it by construction: a workflow with an
+ * unassigned step cannot be on; the seed defaults it off.
  *
  * Orders are written straight into the shop's object, bypassing Shopify, so
  * every lifecycle state a queue or order page can show exists without tagging
  * sandbox products. A populated queue from *real* orders additionally needs
- * the sandbox products tagged with the item-workflow tags by hand.
+ * the sandbox products tagged with the workflow tags by hand.
  */
 
 export const LEAD = "lead@m.com";
 const maker = (i: number) => `m${String(i)}@m.com`;
-const packer = (i: number) => `p${String(i)}@m.com`;
 
 // Maker teams, in `m1` … `m6` order.
 const WOODSHOP = "Woodshop";
@@ -74,16 +65,11 @@ const LEATHER = "Leather";
 const JEWELRY = "Jewelry";
 const TEXTILES = "Textiles";
 const FINISHING = "Finishing";
-// Packing side, in `p1` … `p3` order.
-const QC = "Quality check";
-const PACKING = "Packing";
-const SHIPPING = "Shipping";
 export const RETIRED_TEAM_EMPTY = "Retired team (empty)";
 
 export const members: readonly SeedMember[] = [
   LEAD,
   ...[1, 2, 3, 4, 5, 6, 7, 8].map(maker),
-  ...[1, 2, 3, 4].map(packer),
 ];
 
 export const teams: readonly SeedTeam[] = [
@@ -93,9 +79,6 @@ export const teams: readonly SeedTeam[] = [
   { name: JEWELRY, members: [LEAD, maker(4)] },
   { name: TEXTILES, members: [LEAD, maker(5)] },
   { name: FINISHING, members: [LEAD, maker(6), maker(7)] },
-  { name: QC, members: [LEAD, packer(1)] },
-  { name: PACKING, members: [LEAD, packer(2), packer(4)] },
-  { name: SHIPPING, members: [LEAD, packer(3), packer(4)] },
   // nobody on it: "No members" on the team page and on the steps it owns
   { name: RETIRED_TEAM_EMPTY, members: [] },
 ];
@@ -106,7 +89,7 @@ const step = (
   extra: Partial<Pick<SeedWorkflowStep, "stage" | "instructions">> = {},
 ): SeedWorkflowStep => ({ name, team, ...extra });
 
-// Product tags the item workflows match on; `orders` below carry the same.
+// Product tags the workflows match on; `orders` below carry the same.
 const TAG = {
   board: "engraved-cutting-board",
   journal: "leather-journal",
@@ -217,23 +200,6 @@ export const workflows: readonly SeedWorkflow[] = [
     name: "Wholesale sample (no steps)",
     tags: [TAG.sample],
     steps: [],
-  },
-  {
-    // the order workflow singleton, on: an inspection, then packing and the
-    // label in parallel, then the hand-off
-    name: "Order workflow",
-    type: "order",
-    tags: [],
-    steps: [
-      step("Inspect", QC, {
-        stage: 1,
-        instructions:
-          "Every item against the order. Personalization spelled right, no finish defects.",
-      }),
-      step("Pack", PACKING, { stage: 2 }),
-      step("Print label", SHIPPING, { stage: 2 }),
-      step("Hand to carrier", SHIPPING, { stage: 3 }),
-    ],
   },
 ];
 

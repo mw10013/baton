@@ -207,6 +207,7 @@ describe("OrderRepository.listOrders", () => {
         const first = yield* repository.listOrders({
           limit: 2,
           cursor: null,
+          q: null,
           state: null,
           paid: null,
           attention: false,
@@ -218,6 +219,7 @@ describe("OrderRepository.listOrders", () => {
           second: yield* repository.listOrders({
             limit: 2,
             cursor: first.nextCursor,
+            q: null,
             state: null,
             paid: null,
             attention: false,
@@ -306,6 +308,7 @@ describe("OrderRepository.listOrders filters", () => {
           repository.listOrders({
             limit: 20,
             cursor: null,
+            q: null,
             state,
             paid: null,
             attention: false,
@@ -349,6 +352,7 @@ describe("OrderRepository.listOrders filters", () => {
           ready: yield* repository.listOrders({
             limit: 2,
             cursor: null,
+            q: null,
             state: "ready_to_ship",
             paid: null,
             attention: false,
@@ -358,6 +362,7 @@ describe("OrderRepository.listOrders filters", () => {
           unpaid: yield* repository.listOrders({
             limit: 20,
             cursor: null,
+            q: null,
             state: null,
             paid: false,
             attention: false,
@@ -384,6 +389,7 @@ describe("OrderRepository.listOrders filters", () => {
         const paid = yield* repository.listOrders({
           limit: 2,
           cursor: null,
+          q: null,
           state: "ready_to_ship",
           paid: true,
           attention: false,
@@ -395,6 +401,7 @@ describe("OrderRepository.listOrders filters", () => {
           second: yield* repository.listOrders({
             limit: 2,
             cursor: paid.nextCursor,
+            q: null,
             state: "ready_to_ship",
             paid: true,
             attention: false,
@@ -404,6 +411,7 @@ describe("OrderRepository.listOrders filters", () => {
           unpaid: yield* repository.listOrders({
             limit: 20,
             cursor: null,
+            q: null,
             state: null,
             paid: false,
             attention: false,
@@ -438,6 +446,7 @@ describe("OrderRepository.listOrders filters", () => {
           all: yield* repository.listOrders({
             limit: 20,
             cursor: null,
+            q: null,
             state: null,
             paid: null,
             attention: false,
@@ -467,6 +476,94 @@ describe("OrderRepository.listOrders filters", () => {
       flagged: 0,
       blocked: 0,
     });
+  });
+});
+
+/**
+ * `Domain.ListOrdersInput.q`: a prefix match on `ShopOrder.name` after
+ * `normaliseOrderSearch`, so the `#` is the merchant's to type or omit, and
+ * `like`'s own metacharacters are escaped rather than honoured.
+ */
+describe("OrderRepository.listOrders q", () => {
+  const seedNames = Effect.gen(function* () {
+    const repository = yield* OrderRepository;
+    for (const [n, name] of [
+      [1, "#1001"],
+      [2, "#1002"],
+      [3, "#2100"],
+    ] as const)
+      yield* upsert(
+        repository,
+        anOrder({
+          id: orderId(n),
+          legacyId: String(n),
+          name,
+          processedAt: n * 1000,
+        }),
+        [aLineItem(n, { orderId: orderId(n) })],
+      );
+    return repository;
+  });
+
+  const search = (q: string) =>
+    Effect.gen(function* () {
+      const repository = yield* seedNames;
+      return yield* repository.listOrders({
+        limit: 20,
+        cursor: null,
+        q: Schema.decodeUnknownSync(Domain.OrderSearch)(q),
+        state: null,
+        paid: null,
+        attention: false,
+        team: null,
+        teams: [],
+      });
+    });
+
+  it("matches the full number with or without the #", async () => {
+    deepStrictEqual(names(await runInRepository(search("1001"))), ["#1001"]);
+    deepStrictEqual(names(await runInRepository(search("#1001"))), ["#1001"]);
+    deepStrictEqual(names(await runInRepository(search("  1001  "))), [
+      "#1001",
+    ]);
+  });
+
+  it("is a prefix, so #10 takes #1001 and #1002 but not #2100", async () => {
+    deepStrictEqual(names(await runInRepository(search("#10"))), [
+      "#1002",
+      "#1001",
+    ]);
+  });
+
+  it("escapes like's own wildcards rather than honouring them", async () => {
+    deepStrictEqual(names(await runInRepository(search("%"))), []);
+    deepStrictEqual(names(await runInRepository(search("100_"))), []);
+  });
+
+  it("leaves the open-stage counts alone, as the other filters do", async () => {
+    const { all, searched } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* seedNames;
+        const list = (q: Domain.OrderSearch | null) =>
+          repository.listOrders({
+            limit: 20,
+            cursor: null,
+            q,
+            state: null,
+            paid: null,
+            attention: false,
+            team: null,
+            teams: [],
+          });
+        return {
+          all: yield* list(null),
+          searched: yield* list(
+            Schema.decodeUnknownSync(Domain.OrderSearch)("1001"),
+          ),
+        };
+      }),
+    );
+    deepStrictEqual(searched.openCounts, all.openCounts);
   });
 });
 
@@ -506,6 +603,7 @@ describe("OrderRepository.listOrders attention", () => {
           repository.listOrders({
             limit: 20,
             cursor: null,
+            q: null,
             state: null,
             paid: null,
             attention,
@@ -522,80 +620,6 @@ describe("OrderRepository.listOrders attention", () => {
     deepStrictEqual(names(only), ["#1004", "#1003"]);
     strictEqual(all.openCounts.attention, 2);
     strictEqual(only.openCounts.attention, 2);
-  });
-  /**
-   * The order run is the case the shared `readyWhere` buys: its steps are not
-   * ready while an item run on the order is still open, so an unstaffed
-   * packing step is not an alarm until the items are actually made. The
-   * looser hand-written predicate this replaced flagged it on arrival, when
-   * there was nothing for the merchant to do about it yet.
-   */
-  it("holds an unstaffed order-run step back until the item runs are done", async () => {
-    const teams = Schema.decodeUnknownSync(Schema.Array(Domain.TeamRoster))([
-      { id: "team-cut", name: "Cut", memberCount: 1 },
-      { id: "team-pack", name: "Pack", memberCount: 0 },
-    ]);
-    const { waiting, made } = await runInRepository(
-      Effect.gen(function* () {
-        const repository = yield* seedStates;
-        const sql = yield* SqlClient.SqlClient;
-        /* #1005 has no runs of its own in `seedStates`, so it carries the
-           pair on its own: one item run, plus the order run behind it. The
-           item columns move together — a check constraint ties
-           `lineItemTitle`, `quantity` and `customAttributes` to
-           `lineItemId` — which is what makes an order run recognizable. */
-        const run = (
-          id: string,
-          itemId: string | null,
-          status: Domain.RunStatus,
-        ) => sql`
-          insert into WorkflowRun (
-            id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
-            lineItemId, lineItemTitle, variantTitle, sku, quantity,
-            customAttributes, source, status, flag, flagAt, flagDetail,
-            createdAt, updatedAt, cancelledAt
-          ) values (
-            ${id}, 'wf', 'Workflow', ${orderId(5)}, '#1005', 0,
-            ${itemId}, ${itemId === null ? null : "Item"}, null, null,
-            ${itemId === null ? null : 1},
-            ${itemId === null ? null : "[]"}, 'tag', ${status},
-            null, null, null, 0, 0, null
-          )
-        `;
-        const step = (
-          id: string,
-          runId: string,
-          teamId: string,
-          completedAt: number | null,
-        ) => sql`
-          insert into WorkflowRunStep
-            (id, runId, position, stage, name, teamId, teamName, completedAt)
-          values (${id}, ${runId}, 1, 1, 'Step', ${teamId}, 'Team', ${completedAt})
-        `;
-        yield* run("run-item", lineItemId(5), "active");
-        yield* step("s-item", "run-item", "team-cut", null);
-        yield* run("run-order", null, "pending");
-        yield* step("s-order", "run-order", "team-pack", null);
-        const list = () =>
-          repository.listOrders({
-            limit: 20,
-            cursor: null,
-            state: null,
-            paid: null,
-            attention: true,
-            team: null,
-            teams,
-          });
-        const waiting = yield* list();
-        yield* sql`update WorkflowRunStep set completedAt = 1 where id = 's-item'`;
-        yield* sql`update WorkflowRun set status = 'done' where id = 'run-item'`;
-        return { waiting, made: yield* list() };
-      }),
-    );
-    deepStrictEqual(names(waiting), []);
-    strictEqual(waiting.openCounts.attention, 0);
-    deepStrictEqual(names(made), ["#1005"]);
-    strictEqual(made.openCounts.attention, 1);
   });
 });
 
@@ -660,6 +684,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
       repository.listOrders({
         limit: 20,
         cursor: null,
+        q: null,
         state: null,
         paid: null,
         attention: false,
@@ -714,36 +739,6 @@ describe("OrderRepository.listOrders waitingOn", () => {
     );
     deepStrictEqual(waitingOf(page, "#1003"), []);
     strictEqual(rowOf(page, "#1003")?.attention, true);
-  });
-
-  it("waits on the makers until the items are made, then on the packers", async () => {
-    const { before, after } = await runInRepository(
-      Effect.gen(function* () {
-        const { sql, step, list } = yield* waitingFixture;
-        /* #1004's order run: pending from the moment the order arrived, and
-           in nobody's queue until every item run is done. Its item columns
-           are all null — the check constraint ties them to `lineItemId`. */
-        yield* sql`
-          insert into WorkflowRun (
-            id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
-            lineItemId, lineItemTitle, variantTitle, sku, quantity,
-            customAttributes, source, status, flag, flagAt, flagDetail,
-            createdAt, updatedAt, cancelledAt
-          ) values (
-            'run-4-order', 'wf-order', 'Order workflow', ${orderId(4)},
-            '#1004', 0, null, null, null, null, null, null, 'tag', 'pending',
-            null, null, null, 0, 0, null
-          )
-        `;
-        yield* step("s4pack", "run-4-order", 1, "team-pack");
-        const before = yield* list();
-        yield* sql`update WorkflowRunStep set completedAt = 1 where runId = 'run-4-1'`;
-        yield* sql`update WorkflowRun set status = 'done' where id = 'run-4-1'`;
-        return { before, after: yield* list() };
-      }),
-    );
-    deepStrictEqual(waitingOf(before, "#1004"), [aTeamId("team-cut")]);
-    deepStrictEqual(waitingOf(after, "#1004"), [aTeamId("team-pack")]);
   });
 
   /**
