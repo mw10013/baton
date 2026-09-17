@@ -22,7 +22,6 @@ import {
   applyBlocker,
   DELETE_WORKFLOW_WARNING,
   deleteWorkflowResultMessage,
-  itemTriggerLine,
   workflowResultMessage,
 } from "@/lib/workflowShared";
 
@@ -475,7 +474,6 @@ function RouteComponent() {
         })}
         <s-text-area
           label="Instructions"
-          placeholder="Optional. Shown to whoever picks the step up."
           rows={2}
           value={adding?.instructions ?? ""}
           disabled={busy}
@@ -586,13 +584,11 @@ function RouteComponent() {
           Close
         </s-link>
       )}
-      {hasDraft ? (
-        <s-badge slot="accessory" tone="info">
-          Draft
-        </s-badge>
-      ) : (
-        <s-badge slot="accessory">No changes yet</s-badge>
-      )}
+      {/* Always "Draft": the editor only ever writes to the draft, and the
+          disabled Apply button already says there is nothing to apply yet. */}
+      <s-badge slot="accessory" tone="info">
+        Draft
+      </s-badge>
       <s-button
         slot="primary-action"
         variant="primary"
@@ -641,12 +637,6 @@ function RouteComponent() {
       <s-section accessibilityLabel="Steps">
         <s-stack gap="base">
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
-          {!hasDraft && (
-            <s-paragraph color="subdued">
-              Nothing is saved yet. Your first change starts a draft; the
-              workflow keeps running as it is until you apply it.
-            </s-paragraph>
-          )}
           {hasDraft && blocker !== null && (
             <s-banner tone="warning" heading="Not ready to apply">
               {applyResultMessage(blocker)}
@@ -658,25 +648,6 @@ function RouteComponent() {
             steps={steps}
             selectedStepId={selectedStepId}
             onSelectStep={selectStep}
-            trigger={
-              <s-box
-                padding="base"
-                border="base subdued dashed"
-                borderRadius="base"
-              >
-                {/* No edit affordance here: the editor is about steps, and
-                    the tag is edited from the detail page. */}
-                <s-stack gap="small-300">
-                  <s-text type="strong">Tag</s-text>
-                  <s-stack direction="inline" gap="small-300">
-                    <s-chip>{workflow.tag}</s-chip>
-                  </s-stack>
-                  <s-text color="subdued">
-                    {itemTriggerLine(workflow.tag)}
-                  </s-text>
-                </s-stack>
-              </s-box>
-            }
             renderStageFooter={stageFooter}
             footer={canvasFooter()}
           />
@@ -690,15 +661,14 @@ function RouteComponent() {
               Pick a step to rename it, hand it to another team, or move it.
             </s-paragraph>
             <s-paragraph color="subdued">
-              Steps inside one dashed block run at the same time. The next stage
-              waits for all of them.
+              Steps in the same stage run at the same time. The next stage
+              starts when all of them are done.
             </s-paragraph>
           </s-stack>
         ) : (
           <s-stack gap="base">
             <s-text-field
               label="Name"
-              details="Name the step by the work, not the team."
               value={edit.name}
               disabled={busy}
               onInput={(event) => {
@@ -710,7 +680,6 @@ function RouteComponent() {
             })}
             <s-text-area
               label="Instructions"
-              placeholder="Optional. Shown to whoever picks the step up."
               rows={3}
               value={edit.instructions}
               disabled={busy}
@@ -718,37 +687,16 @@ function RouteComponent() {
                 setEdit({ ...edit, instructions: event.currentTarget.value });
               }}
             />
-            <s-button
-              variant="primary"
-              loading={updateStepMutation.isPending}
-              disabled={
-                !identified ||
-                busy ||
-                edit.name.trim().length === 0 ||
-                edit.teamId === ""
-              }
-              onClick={() => {
-                updateStepMutation.mutate({
-                  stepId: selected.id,
-                  name: edit.name,
-                  teamId: edit.teamId,
-                  instructions: instructionsOrNull(edit.instructions),
-                });
-              }}
-            >
-              Save step
-            </s-button>
-            <s-divider />
             {/*
-              Three verbs, two decisions. Move earlier / Move later change
-              order and never concurrency: the moved step always ends alone.
-              Run alongside / Run on its own change concurrency and never
-              order. Enabled state is decided from the step's stage, not its
-              index: a step that shares stage 1 can still move earlier.
+              Two arrangement decisions, never mixed. Move earlier / Move later
+              change order and never concurrency: the moved step always ends
+              alone. Run alongside / Run on its own change concurrency and
+              never order. Enabled state is decided from the step's stage, not
+              its index: a step that shares stage 1 can still move earlier.
             */}
-            <s-stack direction="inline" gap="small-300">
+            <s-button-group>
               <s-button
-                variant="tertiary"
+                slot="secondary-actions"
                 disabled={
                   busy || (!sharesStage(selected) && selected.stage === 1)
                 }
@@ -762,7 +710,7 @@ function RouteComponent() {
                 Move earlier
               </s-button>
               <s-button
-                variant="tertiary"
+                slot="secondary-actions"
                 disabled={
                   busy ||
                   (!sharesStage(selected) && selected.stage === lastStage)
@@ -776,11 +724,9 @@ function RouteComponent() {
               >
                 Move later
               </s-button>
-            </s-stack>
-            {sharesStage(selected) ? (
-              <s-stack direction="inline">
+              {sharesStage(selected) ? (
                 <s-button
-                  variant="tertiary"
+                  slot="secondary-actions"
                   disabled={busy}
                   onClick={() => {
                     separateStepMutation.mutate({ stepId: selected.id });
@@ -788,12 +734,10 @@ function RouteComponent() {
                 >
                   Run on its own
                 </s-button>
-              </s-stack>
-            ) : (
-              selected.stage > 1 && (
-                <s-stack direction="inline">
+              ) : (
+                selected.stage > 1 && (
                   <s-button
-                    variant="tertiary"
+                    slot="secondary-actions"
                     disabled={busy}
                     onClick={() => {
                       joinStepMutation.mutate({ stepId: selected.id });
@@ -801,12 +745,19 @@ function RouteComponent() {
                   >
                     Run alongside the previous step
                   </s-button>
-                </s-stack>
-              )
-            )}
-            <s-stack direction="inline">
+                )
+              )}
+            </s-button-group>
+            <s-divider />
+            {/*
+              Slots, not source order, decide where these sit: Polaris places
+              `primary-action` where the admin expects a commit and leaves the
+              critical one in `secondary-actions`. Delete needs no confirm
+              here — it edits the draft, and Discard changes undoes the lot.
+            */}
+            <s-button-group>
               <s-button
-                variant="tertiary"
+                slot="secondary-actions"
                 tone="critical"
                 loading={removeStepMutation.isPending}
                 disabled={busy}
@@ -814,9 +765,30 @@ function RouteComponent() {
                   removeStepMutation.mutate({ stepId: selected.id });
                 }}
               >
-                Remove step
+                Delete
               </s-button>
-            </s-stack>
+              <s-button
+                slot="primary-action"
+                variant="primary"
+                loading={updateStepMutation.isPending}
+                disabled={
+                  !identified ||
+                  busy ||
+                  edit.name.trim().length === 0 ||
+                  edit.teamId === ""
+                }
+                onClick={() => {
+                  updateStepMutation.mutate({
+                    stepId: selected.id,
+                    name: edit.name,
+                    teamId: edit.teamId,
+                    instructions: instructionsOrNull(edit.instructions),
+                  });
+                }}
+              >
+                Save
+              </s-button>
+            </s-button-group>
           </s-stack>
         )}
       </s-section>

@@ -6,8 +6,10 @@ import { attentionLines } from "@/lib/workflowShared";
 
 /**
  * The steps of an item workflow drawn as the merchant reads them: top to
- * bottom, one block per stage, with the steps that run at the same time
- * inside one dashed block. The stage number is a fact about the run — the
+ * bottom, one block per stage. Steps that run at the same
+ * time are simply the steps listed under one stage label: no box and no
+ * "at once" caption, because the label and the single arrow between stages
+ * already say where a run waits. The stage number is a fact about the run — the
  * next stage waits for every step of this one — so it is drawn rather than
  * left as a column of numbers to decode.
  *
@@ -94,8 +96,9 @@ export function StageFlow({
   footer,
 }: {
   readonly steps: readonly Domain.StepWithTeamName[];
-  /** The card above the first stage: what starts a run. */
-  readonly trigger: React.ReactNode;
+  /** The card above the first stage: what starts a run. Omitted by the
+      editor, which edits steps and shows no read-only trigger. */
+  readonly trigger?: React.ReactNode;
   readonly selectedStepId?: string | null;
   readonly onSelectStep?: (stepId: string) => void;
   /** The editor's "at the same time" control, keyed by the stage it adds to. */
@@ -107,35 +110,22 @@ export function StageFlow({
     <s-stack gap="small-300">
       {trigger}
       {groups.map((group, index) => {
-        const parallel = group.length > 1;
         const stage = group[0]?.stage ?? index + 1;
         return (
           <s-stack key={stage} gap="small-300">
-            <Connector />
-            <s-box
-              padding={parallel ? "small-300" : "none"}
-              border={parallel ? "base subdued dashed" : "none"}
-              borderRadius="base"
-            >
-              <s-stack gap="small-300">
-                <s-text color="subdued">
-                  {parallel
-                    ? `Stage ${String(index + 1)} · at the same time`
-                    : `Stage ${String(index + 1)}`}
-                </s-text>
-                {group.map((step) => (
-                  <StepCard
-                    key={step.id}
-                    step={step}
-                    selected={selectedStepId === step.id}
-                    {...(onSelectStep === undefined
-                      ? {}
-                      : { onSelect: onSelectStep })}
-                  />
-                ))}
-                {renderStageFooter?.(stage)}
-              </s-stack>
-            </s-box>
+            {(trigger !== undefined || index > 0) && <Connector />}
+            <s-text color="subdued">{`Stage ${String(index + 1)}`}</s-text>
+            {group.map((step) => (
+              <StepCard
+                key={step.id}
+                step={step}
+                selected={selectedStepId === step.id}
+                {...(onSelectStep === undefined
+                  ? {}
+                  : { onSelect: onSelectStep })}
+              />
+            ))}
+            {renderStageFooter?.(stage)}
           </s-stack>
         );
       })}

@@ -352,7 +352,7 @@ function RouteComponent() {
             trigger={
               <s-box
                 padding="base"
-                border="base subdued dashed"
+                border="base subdued solid"
                 borderRadius="base"
               >
                 <s-stack gap="small-300">

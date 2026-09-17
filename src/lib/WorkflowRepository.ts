@@ -203,8 +203,7 @@ export class WorkflowRepository extends Context.Service<
      * Inserts the workflow: off, no steps, carrying its tag, and **no draft**.
      * The draft is the editor's record of unsaved changes and is created by
      * the first change (`ensureDraft`), so a fresh workflow has none and the
-     * editor opens on "No changes yet" rather than on a Draft badge and a
-     * Discard button for nothing. Both keys are checked before the insert so
+     * editor opens without a Discard button for nothing. Both keys are checked before the insert so
      * the dialog can say which one to change.
      */
     readonly createWorkflow: (
