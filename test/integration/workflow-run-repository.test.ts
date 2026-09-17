@@ -1941,6 +1941,80 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
       }),
     ));
 
+  /**
+   * The edit is text and nothing else. `by` and `flagAt` record who set the
+   * hold and when, and a correction to its wording must not restate either —
+   * the merchant reading the queue is chasing the person who blocked it, not
+   * whoever last fixed a typo.
+   */
+  it("setBlockReason rewrites the reason, keeps by, and refuses anything that is not a standing block", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seedStaged;
+        const runs = yield* WorkflowRunRepository;
+        const detail = yield* stagedRun();
+        const flagDetail = () =>
+          runs
+            .getRun({ runId: detail.run.id })
+            .pipe(Effect.map((run) => Option.getOrThrow(run).run.flagDetail));
+
+        const unflagged = yield* runs
+          .setBlockReason({
+            runId: detail.run.id,
+            teamIds: [TEAM_B.id],
+            reason: note("too early"),
+          })
+          .pipe(Effect.flip);
+        // Its own tag: the caller's teams were fine, the hold was the thing
+        // missing, and the page says so rather than crying team.
+        strictEqual(unflagged._tag, "RunNotBlockedError");
+
+        yield* runs.blockRun({
+          runId: detail.run.id,
+          actor: memberActor("m1"),
+          teamIds: [TEAM_A.id],
+          reason: note("Waiting on stones"),
+        });
+        const by = {
+          role: "member",
+          memberId: "m1",
+          email: "m1@example.com",
+        };
+
+        const wrongTeam = yield* runs
+          .setBlockReason({
+            runId: detail.run.id,
+            teamIds: [TEAM_C.id],
+            reason: note("nope"),
+          })
+          .pipe(Effect.flip);
+        strictEqual(wrongTeam._tag, "RunNotAllowedError");
+
+        // A teammate, not the blocker, and the text keeps its line breaks.
+        yield* runs.setBlockReason({
+          runId: detail.run.id,
+          teamIds: [TEAM_B.id],
+          reason: note("Waiting on stones\nCalled the supplier"),
+        });
+        deepStrictEqual<unknown>(yield* flagDetail(), {
+          reason: "Waiting on stones\nCalled the supplier",
+          by,
+        });
+
+        // The merchant passes no teams and is refused by nothing.
+        yield* runs.setBlockReason({
+          runId: detail.run.id,
+          reason: null,
+        });
+        deepStrictEqual<unknown>(yield* flagDetail(), { by });
+        strictEqual(
+          Option.getOrThrow(yield* runs.getRun({ runId: detail.run.id })).run
+            .flag,
+          "blocked",
+        );
+      }),
+    ));
+
   it("merchant completes an unassigned step: no team clause, and the merchant fills both actor slots", () =>
     runInRepository(
       Effect.gen(function* () {

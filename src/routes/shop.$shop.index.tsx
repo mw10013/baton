@@ -6,11 +6,11 @@ import { Effect, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { MemberBar } from "@/components/MemberBar";
-import { FlagBanner, RunItem } from "@/components/MemberRun";
+import { FlagBanner, Prose, RunItem } from "@/components/MemberRun";
 import * as Domain from "@/lib/Domain";
 import { requireMember } from "@/lib/MemberAccess";
 import { memberServerFnMiddleware } from "@/lib/MemberServerFnMiddleware";
-import { TIER_LABEL, TIERS, tierQueue, type Tier } from "@/lib/queueTiers";
+import { TIER_LABEL, TIERS, tierQueue } from "@/lib/queueTiers";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { SocketBanner } from "@/lib/SocketBanner";
 import { useMemberRunActions } from "@/lib/useMemberRunActions";
@@ -54,20 +54,19 @@ const getLoaderData = createServerFn({ method: "GET" })
 
 export const Route = createFileRoute("/shop/$shop/")({
   loader: ({ params }) => getLoaderData({ data: { shop: params.shop } }),
-  head: () => ({ meta: [{ title: "Your work — Baton" }] }),
+  head: () => ({ meta: [{ title: "Queue — Baton" }] }),
   component: RouteComponent,
 });
 
-/** The status badge that encodes the tier; "Up next" carries none. */
-const TIER_BADGE = {
-  attention: { label: "Blocked", tone: "critical" },
-  mine: { label: "Mine", tone: "success" },
-  inProgress: { label: "In progress", tone: "info" },
-  upNext: null,
-} as const satisfies Record<
-  Tier,
-  { readonly label: string; readonly tone: string } | null
->;
+/**
+ * How many Up next cards render before the "Show all" button. The tier is
+ * oldest-order-first, so the top of it *is* the work: a member reaches past
+ * ten only to find one order by name, and that is the rarer trip. It is also
+ * the whole of the scaling story for 1.0 — the other tiers are small by
+ * construction (one person holds a few things; a team has a few benches),
+ * and Up next is the only unbounded one.
+ */
+const UP_NEXT_CAP = 10;
 
 /** Who finished a Done-tier entry; empty rather than "nobody" for a row written before the role column. */
 const doneActorLabel = (step: Domain.WorkflowRunStep) => {
@@ -106,6 +105,8 @@ function RouteComponent() {
   /** The team chip; client state, not a search param — a bench does not share URLs. */
   const [teamFilter, setTeamFilter] = React.useState<string | null>(null);
   const [doneOpen, setDoneOpen] = React.useState(false);
+  /** Reset by the chip: "Show all 37" on All is not a promise about Engraving. */
+  const [upNextAll, setUpNextAll] = React.useState(false);
 
   const visible =
     teamFilter === null
@@ -117,7 +118,14 @@ function RouteComponent() {
       ? view.done
       : view.done.filter((entry) => entry.step.teamId === teamFilter);
 
-  const renderStep = (item: Domain.QueueItem, step: Domain.QueueStep) => {
+  /**
+   * `flagged` hides Start and Done. A flag means the work has stopped or
+   * changed under the maker, so a Start button beneath a banner that says
+   * "Blocked" is the card arguing with itself; the one action offered is the
+   * one in the banner. The fixer's extra tap (Unblock, then Done) is the
+   * price, and they are the rare reader.
+   */
+  const renderStep = (step: Domain.QueueStep, flagged: boolean) => {
     const started = step.startedAt !== null;
     /** The viewer's own name is noise on their own card; anyone else's is the point. */
     const startedBy = Domain.stepStartedBy(step);
@@ -136,16 +144,7 @@ function RouteComponent() {
         background="subdued"
       >
         <s-stack gap="small-300">
-          <s-text type="strong">
-            {`${step.name} · step ${String(step.stage)} of ${String(item.stageCount)}`}
-          </s-text>
-          {step.siblings.length > 0 && (
-            <s-text color="subdued">
-              {`together with: ${step.siblings
-                .map((sibling) => `${sibling.name} (${sibling.teamName})`)
-                .join(", ")}`}
-            </s-text>
-          )}
+          <s-text type="strong">{step.name}</s-text>
           {step.instructions !== null && <s-text>{step.instructions}</s-text>}
           {started && (
             <s-text color="subdued">
@@ -163,37 +162,39 @@ function RouteComponent() {
             </s-text>
           )}
           {step.note !== null && (
-            <s-text color="subdued">{Domain.stepNoteLine(step)}</s-text>
+            <Prose color="subdued">{Domain.stepNoteLine(step)}</Prose>
           )}
-          <s-stack direction="inline" gap="base">
-            {!started && (
+          {!flagged && (
+            <s-stack direction="inline" gap="base">
+              {!started && (
+                <s-button
+                  variant="secondary"
+                  disabled={actions.pending}
+                  onClick={() => {
+                    actions.start.mutate(step.id);
+                  }}
+                >
+                  Start
+                </s-button>
+              )}
               <s-button
-                variant="secondary"
+                variant="primary"
                 disabled={actions.pending}
                 onClick={() => {
-                  actions.start.mutate(step.id);
+                  actions.complete.mutate(step.id);
                 }}
               >
-                Start
+                Done
               </s-button>
-            )}
-            <s-button
-              variant="primary"
-              disabled={actions.pending}
-              onClick={() => {
-                actions.complete.mutate(step.id);
-              }}
-            >
-              Done
-            </s-button>
-          </s-stack>
+            </s-stack>
+          )}
         </s-stack>
       </s-box>
     );
   };
 
-  const renderItem = (item: Domain.QueueItem, tier: Tier) => {
-    const badge = TIER_BADGE[tier];
+  const renderItem = (item: Domain.QueueItem) => {
+    const flagged = item.run.flag !== null;
     return (
       <s-box
         key={item.run.id}
@@ -209,10 +210,6 @@ function RouteComponent() {
             >
               <s-heading>{item.run.orderName}</s-heading>
             </Link>
-            <s-badge>{item.run.workflowName}</s-badge>
-            {badge !== null && (
-              <s-badge tone={badge.tone}>{badge.label}</s-badge>
-            )}
             <s-text color="subdued">
               ordered{" "}
               <LocalDateTime
@@ -223,23 +220,24 @@ function RouteComponent() {
           </s-stack>
           <RunItem run={item.run} />
           {item.note !== null && item.note.length > 0 && (
-            <s-text color="subdued">{`Order note: ${item.note}`}</s-text>
+            <Prose color="subdued">{`Order note: ${item.note}`}</Prose>
           )}
-          <FlagBanner run={item.run} />
-          {item.run.flag !== null && (
-            <s-stack direction="inline" gap="base">
+          <FlagBanner
+            run={item.run}
+            actions={
               <s-button
+                slot="secondary-actions"
                 variant="secondary"
                 disabled={actions.pending}
                 onClick={() => {
                   actions.dismiss.mutate(item.run.id);
                 }}
               >
-                Dismiss
+                {item.run.flag === "blocked" ? "Unblock" : "Dismiss"}
               </s-button>
-            </s-stack>
-          )}
-          {item.steps.map((step) => renderStep(item, step))}
+            }
+          />
+          {item.steps.map((step) => renderStep(step, flagged))}
         </s-stack>
       </s-box>
     );
@@ -298,6 +296,7 @@ function RouteComponent() {
           variant={teamFilter === null ? "primary" : "secondary"}
           onClick={() => {
             setTeamFilter(null);
+            setUpNextAll(false);
           }}
         >
           {`All · ${String(view.items.length)}`}
@@ -308,6 +307,7 @@ function RouteComponent() {
             variant={teamFilter === team.id ? "primary" : "secondary"}
             onClick={() => {
               setTeamFilter(team.id);
+              setUpNextAll(false);
             }}
           >
             {`${team.name} · ${String(
@@ -320,12 +320,11 @@ function RouteComponent() {
 
   return (
     <>
-      <MemberBar shop={shop} />
-      <s-page heading="Your work" inlineSize="small">
+      <MemberBar shop={shop} email={memberEmail} />
+      <s-page heading="Queue" inlineSize="small">
         <SocketBanner />
-        <s-section accessibilityLabel="Your work">
+        <s-section accessibilityLabel="Queue">
           <s-stack gap="base">
-            <s-text color="subdued">{memberEmail}</s-text>
             {actions.banner !== null && (
               <s-banner tone="critical">{actions.banner}</s-banner>
             )}
@@ -342,16 +341,35 @@ function RouteComponent() {
                     Nothing to do right now.
                   </s-paragraph>
                 )}
-                {TIERS.map((tier) =>
-                  tiers[tier].length === 0 ? null : (
+                {TIERS.map((tier) => {
+                  if (tiers[tier].length === 0) return null;
+                  const capped =
+                    tier === "upNext" && !upNextAll
+                      ? tiers[tier].slice(0, UP_NEXT_CAP)
+                      : tiers[tier];
+                  const hidden = tiers[tier].length - capped.length;
+                  return (
                     <s-stack key={tier} gap="small-300">
+                      {/* The heading counts the whole tier; the cap is a
+                          rendering, not a filter, so the number a member
+                          reads is the number of things waiting. */}
                       <s-heading>
                         {`${TIER_LABEL[tier]} · ${String(tiers[tier].length)}`}
                       </s-heading>
-                      {tiers[tier].map((item) => renderItem(item, tier))}
+                      {capped.map(renderItem)}
+                      {hidden > 0 && (
+                        <s-button
+                          variant="secondary"
+                          onClick={() => {
+                            setUpNextAll(true);
+                          }}
+                        >
+                          {`Show all ${String(tiers[tier].length)}`}
+                        </s-button>
+                      )}
                     </s-stack>
-                  ),
-                )}
+                  );
+                })}
                 {doneVisible.length > 0 && (
                   <s-stack gap="small-300">
                     <s-stack

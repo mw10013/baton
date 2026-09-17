@@ -18,8 +18,19 @@ import { signOutFn } from "@/lib/memberSignOut";
  * The shop is the `myshopify.com` domain, the only name Baton stores for it.
  * It links to the queue, which is the area's landing page, so the mark plus
  * shop doubles as "back to the start" wherever the member is.
+ *
+ * `email` is the "who am I" half, and it lives here rather than under a page
+ * heading so it is answered on every screen at the cost of one line on none
+ * of them. A shared bench tablet is the case that needs it: the person who
+ * picks it up has to know whose session they are about to press Done in.
  */
-export function MemberBar({ shop }: { readonly shop: string }) {
+export function MemberBar({
+  shop,
+  email,
+}: {
+  readonly shop: string;
+  readonly email?: string;
+}) {
   const signOut = useServerFn(signOutFn);
   const signOutMutation = useMutation({ mutationFn: () => signOut({}) });
   return (
@@ -57,15 +68,18 @@ export function MemberBar({ shop }: { readonly shop: string }) {
             <s-text type="strong">{shop}</s-text>
           </s-stack>
         </Link>
-        <s-button
-          variant="tertiary"
-          {...(signOutMutation.isPending ? { loading: true } : {})}
-          onClick={() => {
-            signOutMutation.mutate();
-          }}
-        >
-          Sign out
-        </s-button>
+        <s-stack direction="inline" gap="small-300" alignItems="center">
+          {email !== undefined && <s-text color="subdued">{email}</s-text>}
+          <s-button
+            variant="tertiary"
+            {...(signOutMutation.isPending ? { loading: true } : {})}
+            onClick={() => {
+              signOutMutation.mutate();
+            }}
+          >
+            Sign out
+          </s-button>
+        </s-stack>
       </s-stack>
     </div>
   );

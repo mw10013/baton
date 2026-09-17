@@ -88,6 +88,20 @@ details[open] > .live-value-summary .live-value-preview {
   display: none;
 }
 
+/*
+ * Free text a member typed: a step note, a block reason, an order note.
+ * Every one of them is one field, editable by anyone, last write wins and no
+ * history — so the line breaks the writer put in are the only structure the
+ * text has, and collapsing them (the HTML default) loses the dated, initialled
+ * running log people write by hand. `overflow-wrap: anywhere` is for the other
+ * half of typed-at-a-bench text: an unspaced SKU or URL must not widen a phone
+ * card past the viewport.
+ */
+.member-prose {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .live-memory-list {
   display: none;
   margin: 0;
@@ -137,9 +151,16 @@ details[open] > .live-value-summary .live-value-preview {
   background: var(--s-color-bg-surface, #fff);
 }
 
-/* The member work page prints as a job ticket: chrome and every button go. */
+/*
+ * The member work page prints as a job ticket: chrome and every button go.
+ * The queue breadcrumb is named here rather than wrapped in `.print-hide`
+ * because `class` is not in the Polaris elements' JSX props and a wrapping
+ * div would take the `breadcrumb-actions` slot in the link's place — see the
+ * `QueueBreadcrumb` JSDoc in `shop.$shop.work.$runId.tsx`.
+ */
 @media print {
   .print-hide,
+  s-link[slot="breadcrumb-actions"],
   s-button {
     display: none !important;
   }

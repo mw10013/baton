@@ -49,7 +49,8 @@ Companion docs: `docs/teams-members-ux-research.md` (the merchant side of member
    my own work at the top without hiding the rest.
 9. **A light top bar with the Baton mark.** The member area has no App Bridge chrome, so
    it needs one persistent line of orientation: the mark, the shop name, Sign out. The
-   page heading is then free to say "Your work".
+   page heading is then free to say "Your work". Superseded: the heading is now "Queue"
+   and the member email joined the bar (2026-09-17, `member-queue-ux-research.md`).
 10. **No printing yet.** A print stylesheet on the work page gives a job ticket for free;
     a print action or a print gate waits until a merchant asks.
 11. **Live updates, polling first.** The queue is shared by a team, and a teammate's

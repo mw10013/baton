@@ -71,6 +71,7 @@ import {
   type StartContext,
   type RunItemBusyError,
   type RunNotAllowedError,
+  type RunNotBlockedError,
   type RunNotFoundError,
   type RunTerminalError,
   type StepNotReadyError,
@@ -881,6 +882,7 @@ const runResult = <R>(
     | RunTerminalError
     | RunItemBusyError
     | RunNotAllowedError
+    | RunNotBlockedError
     | StepNotReadyError
     | StepUndoBlockedError
     | SqlError.SqlError
@@ -908,6 +910,8 @@ const runResult = <R>(
         Effect.succeed<Domain.RunResult>({ _tag: "Terminal" }),
       RunNotAllowedError: () =>
         Effect.succeed<Domain.RunResult>({ _tag: "NotAllowed" }),
+      RunNotBlockedError: () =>
+        Effect.succeed<Domain.RunResult>({ _tag: "NotBlocked" }),
       StepNotReadyError: () =>
         Effect.succeed<Domain.RunResult>({ _tag: "NotReady" }),
       StepUndoBlockedError: ({ stepName, teamName }) =>
@@ -2773,6 +2777,33 @@ export class ShopAgent extends Agent {
   }
 
   @callable()
+  merchantSetBlockReason(
+    input: typeof Domain.SetBlockReasonInput.Encoded,
+  ): Promise<Domain.RunResult> {
+    const shop = this.name;
+    const publish = (runId: string) => this.publishToTeams({ runId });
+    return this.runEffect(
+      callableEffect(
+        "ShopAgent.merchantSetBlockReason",
+        Domain.SetBlockReasonInput,
+        { role: "merchant", parse: { onExcessProperty: "error" } },
+      )(({ runId, reason }) =>
+        runResult(
+          Effect.gen(function* () {
+            yield* (yield* WorkflowRunRepository).setBlockReason({
+              runId,
+              reason,
+            } satisfies Domain.SetBlockReasonCommand);
+            yield* Effect.logInfo(
+              `ShopAgent.merchantSetBlockReason: shop=${shop} runId=${runId}`,
+            ).pipe(Effect.annotateLogs({ shop, runId }));
+          }),
+        ).pipe(Effect.tap(() => publish(runId))),
+      )(input),
+    );
+  }
+
+  @callable()
   merchantDismissFlag(
     input: typeof Domain.RunIdInput.Encoded,
   ): Promise<Domain.RunResult> {
@@ -2984,6 +3015,34 @@ export class ShopAgent extends Agent {
             } satisfies Domain.BlockRunCommand);
             yield* Effect.logInfo(
               `ShopAgent.blockRun: shop=${shop} runId=${runId} memberId=${memberId}`,
+            ).pipe(Effect.annotateLogs({ shop, runId, memberId }));
+          }),
+        ).pipe(Effect.tap(() => publish(runId))),
+      )(input),
+    );
+  }
+
+  @callable()
+  setBlockReason(
+    input: typeof Domain.SetBlockReasonInput.Encoded,
+  ): Promise<Domain.RunResult> {
+    const shop = this.name;
+    const publish = (runId: string) => this.publishToTeams({ runId });
+    return this.runEffect(
+      memberCallableEffect(
+        "ShopAgent.setBlockReason",
+        Domain.SetBlockReasonInput,
+        { onExcessProperty: "error" },
+      )(({ runId, reason }, { memberId, teamIds }) =>
+        runResult(
+          Effect.gen(function* () {
+            yield* (yield* WorkflowRunRepository).setBlockReason({
+              runId,
+              teamIds,
+              reason,
+            } satisfies Domain.SetBlockReasonCommand);
+            yield* Effect.logInfo(
+              `ShopAgent.setBlockReason: shop=${shop} runId=${runId} memberId=${memberId}`,
             ).pipe(Effect.annotateLogs({ shop, runId, memberId }));
           }),
         ).pipe(Effect.tap(() => publish(runId))),

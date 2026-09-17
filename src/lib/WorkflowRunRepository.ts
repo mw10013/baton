@@ -46,6 +46,17 @@ export class RunNotAllowedError extends Schema.TaggedError<RunNotAllowedError>()
   { runId: Schema.String, teamId: Schema.String },
 ) {}
 
+/**
+ * A write that only a standing block admits found none. Its own tag rather
+ * than {@link RunNotAllowedError}: the caller had every right to the run, and
+ * the page must say the hold was lifted rather than accuse the reader of
+ * reaching into another team.
+ */
+export class RunNotBlockedError extends Schema.TaggedError<RunNotBlockedError>()(
+  "RunNotBlockedError",
+  { runId: Schema.String },
+) {}
+
 /** A step in an earlier stage is still open, or this step is already completed — or, for undo, not yet completed. */
 export class StepNotReadyError extends Schema.TaggedError<StepNotReadyError>()(
   "StepNotReadyError",
@@ -467,6 +478,28 @@ export class WorkflowRunRepository extends Context.Service<
     readonly listOrderTeamIds: (
       input: { readonly runStepId: string } | { readonly runId: string },
     ) => Effect.Effect<readonly string[], SqlError.SqlError>;
+    /**
+     * Rewrites `flagDetail.reason` on a run that is already `blocked`;
+     * `null` clears the text and leaves the hold standing. `by` and `flagAt`
+     * are untouched — they record who set the hold and when, not who last
+     * corrected its wording, and an edit is only text. Last write wins with
+     * no history, exactly as a step note does: one rule for every free-text
+     * field is what keeps the system learnable.
+     *
+     * Fails `RunNotBlockedError` unless the flag is `blocked`. A reconcile
+     * flag's body is generated from the run, so there is nothing to write,
+     * and an unflagged run would be a hold set by nobody.
+     */
+    readonly setBlockReason: (
+      input: Domain.SetBlockReasonCommand,
+    ) => Effect.Effect<
+      void,
+      | SqlError.SqlError
+      | WorkflowRunRepositoryError
+      | RunNotFoundError
+      | RunNotAllowedError
+      | RunNotBlockedError
+    >;
     /** Allowed when any ready step of the run belongs to one of `teamIds`, or unconditionally for the merchant (`teamIds` undefined). */
     readonly dismissFlag: (
       input: Domain.DismissFlagCommand,
@@ -1629,6 +1662,34 @@ export class WorkflowRunRepository extends Context.Service<
             `;
             return rows.flatMap((row) =>
               typeof row.teamId === "string" ? [row.teamId] : [],
+            );
+          },
+        ),
+
+        setBlockReason: Effect.fn("WorkflowRunRepository.setBlockReason")(
+          function* ({ runId, teamIds, reason }: Domain.SetBlockReasonCommand) {
+            // Transactional where `dismissFlag` is not: this one reads
+            // `flagDetail` and writes it back, so an Unblock landing in
+            // between would leave the cleared flag carrying a reason again.
+            yield* sql.withTransaction(
+              Effect.gen(function* () {
+                const run = yield* requireRun(runId);
+                if (run.flag !== "blocked")
+                  yield* new RunNotBlockedError({ runId });
+                yield* requireReadyTeam(runId, teamIds);
+                const now = yield* Clock.currentTimeMillis;
+                // Spread and delete rather than rebuild: `by` is the fact this
+                // write must not disturb, and `item` / `from` / `to` are not
+                // this flag's but cost nothing to carry.
+                const { reason: _dropped, ...rest } = run.flagDetail ?? {};
+                const detail: Domain.RunFlagDetail =
+                  reason === null ? rest : { ...rest, reason };
+                yield* sql`
+                  update WorkflowRun
+                  set flagDetail = ${json(detail)}, updatedAt = ${now}
+                  where id = ${run.id}
+                `;
+              }),
             );
           },
         ),

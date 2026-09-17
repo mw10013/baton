@@ -442,6 +442,16 @@ export type StepInstructions = typeof StepInstructions.Type;
  */
 export const STEP_NOTE_MAX_LENGTH = 1000;
 
+/**
+ * Where a note or reason field starts counting down to
+ * {@link STEP_NOTE_MAX_LENGTH}. Late, because a counter on an empty field is a
+ * rule nobody asked about; early enough that the cap announces itself while
+ * there is still a paragraph's room to land in. Shared by the merchant's step
+ * notes and the member's notes and block reasons so one number governs every
+ * field the same text can be typed into.
+ */
+export const NOTE_COUNT_FROM = 800;
+
 /** Worker-written text about one run's step (or a block reason). Same trimming; `null` clears. */
 export const StepNote = trimmedText("StepNote", STEP_NOTE_MAX_LENGTH);
 export type StepNote = typeof StepNote.Type;
@@ -2533,6 +2543,20 @@ export const BlockRunInput = Schema.Struct({
 export type BlockRunInput = typeof BlockRunInput.Type;
 
 /**
+ * Rewrites the reason on a run that is *already* blocked; `reason: null`
+ * clears the text and keeps the hold. Separate from {@link BlockRunInput}
+ * because blocking and correcting what the block says are different acts: a
+ * block records who and when, and an edit must not restate either — the
+ * mistake this exists for ("typo", "I wrote the wrong thing") is not a new
+ * hold by a new person.
+ */
+export const SetBlockReasonInput = Schema.Struct({
+  runId: BoundedId,
+  reason: Schema.NullOr(StepNote),
+});
+export type SetBlockReasonInput = typeof SetBlockReasonInput.Type;
+
+/**
  * The whole write, as the run repository takes it: the wire input above joined
  * to the acting member's identity from the connection. Types rather than
  * schemas because nothing decodes them — they are assembled inside the object
@@ -2579,6 +2603,18 @@ export interface DismissFlagCommand {
   readonly teamIds?: readonly string[] | undefined;
 }
 
+/**
+ * No `actor`: the reason is one field anyone with access may write, last
+ * write wins, and `flagDetail.by` stays whoever set the hold. Recording the
+ * editor would be an attribution the UI never shows and a second person to
+ * explain on a card with no room for one.
+ */
+export interface SetBlockReasonCommand {
+  readonly runId: string;
+  readonly teamIds?: readonly string[] | undefined;
+  readonly reason: StepNote | null;
+}
+
 /** The actor lands in the step's `reopened` slot: undo is a fact worth showing, and the next Done clears it. */
 export interface UncompleteStepCommand {
   readonly runStepId: string;
@@ -2617,11 +2653,17 @@ export type AttachResult = typeof AttachResult.Type;
  * `ItemHasRun` = un-cancel refused because another live run now occupies the
  * line item. One live run per item is a database invariant, so the only way
  * back for this one is to cancel the occupant first; the variant names it.
+ *
+ * `NotBlocked` = a write that only a standing block admits (rewriting its
+ * reason) found no block. Separate from `NotAllowed` because the cause is a
+ * race, not a permission: the hold was lifted while the editor was open, and
+ * "this belongs to another team" would send the reader after the wrong thing.
  */
 export const RunResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok") }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("NotAllowed") }),
+  Schema.Struct({ _tag: Schema.Literal("NotBlocked") }),
   Schema.Struct({ _tag: Schema.Literal("NotReady") }),
   Schema.Struct({ _tag: Schema.Literal("Terminal") }),
   Schema.Struct({ _tag: Schema.Literal("UndoBlocked"), ...UndoBlocker.fields }),

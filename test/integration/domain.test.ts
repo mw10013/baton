@@ -2,6 +2,7 @@ import { strictEqual } from "@effect/vitest/utils";
 import { Schema } from "effect";
 import { describe, it } from "vitest";
 
+import { flagBody, flagHeading, flagTone } from "@/components/MemberRun";
 import * as Domain from "@/lib/Domain";
 import { tierQueue } from "@/lib/queueTiers";
 import { groupUsedBy } from "@/lib/usedBy";
@@ -289,6 +290,53 @@ describe("groupUsedBy", () => {
       "pendant:draft:/app/workflows/w2|Ring:live:/app/workflows/w1",
     );
     strictEqual(groupUsedBy([]).length, 0);
+  });
+});
+
+/**
+ * One fact, once: the heading names the flag and the body carries only the
+ * detail, so no body repeats its own heading and two of them are empty. The
+ * table is here rather than in a route test because the copy is the contract
+ * between the queue card and the work page, which share one banner.
+ */
+describe("flagHeading / flagBody / flagTone", () => {
+  const cases: readonly [
+    Domain.RunFlag,
+    string,
+    string | null,
+    "critical" | "warning",
+  ][] = [
+    ["blocked", "Blocked", null, "critical"],
+    ["quantity_changed", "Quantity changed", "From 0 to 1.", "warning"],
+    [
+      "item_removed",
+      "No longer needed",
+      "Removed, refunded, or shipped in Shopify.",
+      "warning",
+    ],
+    ["order_cancelled", "Order cancelled", null, "critical"],
+    ["order_deleted", "Order deleted", null, "critical"],
+    ["order_fulfilled", "Already shipped", "Fulfilled in Shopify.", "warning"],
+  ];
+  for (const [flag, heading, body, tone] of cases)
+    it(`${flag} reads "${heading}"`, () => {
+      const flagged = run("active", flag);
+      strictEqual(flagHeading(flagged), heading);
+      strictEqual(flagBody(flagged), body);
+      strictEqual(flagTone(flagged), tone);
+    });
+
+  it("a blocked run's body is the reason as typed, with no prefix; an unflagged run has no banner", () => {
+    const reason = Schema.decodeUnknownSync(Domain.StepNote)(
+      "Crest file missing\nAsked the customer",
+    );
+    strictEqual(
+      flagBody({ ...run("active", "blocked"), flagDetail: { reason } }),
+      "Crest file missing\nAsked the customer",
+    );
+    strictEqual(flagHeading(run("active", null)), null);
+    strictEqual(flagBody(run("active", null)), null);
+    strictEqual(flagTone(run("active", null)), null);
   });
 });
 

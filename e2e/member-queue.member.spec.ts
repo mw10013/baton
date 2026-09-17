@@ -46,9 +46,20 @@ const BOX_ORDER = "#9402";
 /** Routed Cut → Polish across the two teams; seeded only where a test needs downstream work. */
 const BAND_ORDER = "#9403";
 const BAND_TAG = "e2e-queue-band";
-const CUT_STEP = "Cut · step 1 of 1";
+/** The queue card names the step and nothing else: progress is the work page's. */
+const CUT_STEP = "Cut";
 const STARTED = "In progress since";
 const EMPTY = "Nothing to do right now.";
+/** Every seeded order is `#94xx`, which is how a card is counted rather than read. */
+const ORDER_LINK = /^#94\d\d$/u;
+/**
+ * Ten filler Cut orders, numbered clear of the three named ones. Ten and not
+ * eleven: the ring order is a Cut order too, so the mate's Up next comes to
+ * twelve and the maker's to eleven — both over `UP_NEXT_CAP` (10), and the
+ * two counts differ, so an assertion cannot pass by reading the wrong page.
+ */
+const BULK_COUNT = 10;
+const BULK_FIRST = 9410;
 
 /**
  * One workflow per team and one order for each, so every assertion about who
@@ -70,6 +81,12 @@ const seedQueue = (
      * reached here without an admin session (`SeedOrder.byMerchant`).
      */
     readonly bandDoneByMerchant?: boolean;
+    /**
+     * Ten more Cut orders, which is the only way past `UP_NEXT_CAP`. They
+     * carry nothing a test reads but their names: the cap is about how many
+     * cards render, not what is on them.
+     */
+    readonly withBulk?: boolean;
   },
 ) =>
   seedMembers(
@@ -122,6 +139,18 @@ const seedQueue = (
                 : {}),
             },
           ]
+        : []),
+      ...(options.withBulk === true
+        ? Array.from({ length: BULK_COUNT }, (_unused, index) => ({
+            n: BULK_FIRST + index,
+            lineItems: [
+              {
+                title: `E2E Bulk Ring ${String(index + 1)}`,
+                quantity: 1,
+                tags: [RING_TAG],
+              },
+            ],
+          }))
         : []),
     ],
     { keepIdentities: options.keepIdentities },
@@ -180,7 +209,7 @@ const openQueue = async (
   contexts.push(context);
   const page = await context.newPage();
   await gotoMember(page, `/shop/${config.shop}`);
-  await expect(page.locator('s-page[heading="Your work"]')).toBeVisible();
+  await expect(page.locator('s-page[heading="Queue"]')).toBeVisible();
   return page;
 };
 
@@ -213,7 +242,7 @@ test.beforeAll(async ({ browser }) => {
     const page = await context.newPage();
     await signIn(page, email);
     // A one-shop member lands on the queue itself, not the picker.
-    await expect(page.locator('s-page[heading="Your work"]')).toBeVisible();
+    await expect(page.locator('s-page[heading="Queue"]')).toBeVisible();
     const state = await context.storageState();
     await context.close();
     return state;
@@ -241,7 +270,7 @@ test("a member starts and completes their team's ready step over the socket", as
   const page = await openQueue(browser, config, makerState);
 
   await expect(page.getByText(RING_ORDER, { exact: true })).toBeVisible();
-  await expect(page.getByText(CUT_STEP)).toBeVisible();
+  await expect(page.getByText(CUT_STEP, { exact: true })).toBeVisible();
   await expect(page.getByText(STARTED)).toBeHidden();
   await markDocument(page);
 
@@ -351,11 +380,46 @@ test("a started card moves to Mine for the starter and In progress for a teammat
   await clickWhenEnabled(maker.getByRole("button", { name: "Start" }));
   await expect(maker.getByText("Mine · 1")).toBeVisible();
   await expect(maker.getByText("Up next")).toBeHidden();
-  await expect(card(maker, RING_ORDER).getByText("Mine")).toBeVisible();
+  /* The tier is said by its heading and by nothing on the card: the card that
+     moved under "Mine · 1" carries no badge repeating it. */
+  await expect(card(maker, RING_ORDER).getByText("Mine")).toHaveCount(0);
 
   await expect(mate.getByText("In progress · 1")).toBeVisible();
   await expect(mate.getByText("Up next · 1")).toBeVisible();
   await expect(mate.getByText(`by ${MAKER}`)).toBeVisible();
+});
+
+/**
+ * The one place in the member area where the number in a heading is not the
+ * number of cards under it. Up next is capped at ten and its heading still
+ * counts the tier, which is the promise being tested: a member who reads
+ * "Up next · 12" above ten cards must be able to reach the other two, and a
+ * member who then narrows to one team must not be shown a stale expansion
+ * from the wider list. The teammate drives it because the team chips only
+ * render for someone on more than one team.
+ */
+test("Up next caps at ten, expands on Show all, and re-caps when the team changes", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedQueue(config, {
+    cutMembers: [MAKER, MATE],
+    keepIdentities: true,
+    withBulk: true,
+  });
+  const page = await openQueue(browser, config, mateState);
+
+  await expect(page.getByText("Up next · 12")).toBeVisible();
+  await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(10);
+
+  await page.getByRole("button", { name: "Show all 12" }).click();
+  await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(12);
+  await expect(page.getByRole("button", { name: /^Show all/u })).toHaveCount(0);
+
+  await page.getByRole("button", { name: `${CUT_TEAM} · 11` }).click();
+  await expect(page.getByText("Up next · 11")).toBeVisible();
+  await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(10);
+  await expect(page.getByRole("button", { name: "Show all 11" })).toBeVisible();
 });
 
 /**
@@ -434,22 +498,56 @@ test("the work page shows the step history and takes a note, a block, and Done",
   await expect(page.getByText("E2E Cuff ×1")).toBeVisible();
   await expect(page.getByText("Waiting on step 1")).toBeVisible();
 
-  await clickWhenEnabled(page.getByRole("button", { name: "Note" }));
+  await clickWhenEnabled(page.getByRole("button", { name: "Add note" }));
+  /* The cap announces itself before the write refuses it: past
+     `Domain.NOTE_COUNT_FROM` (800) the field counts down to
+     `Domain.STEP_NOTE_MAX_LENGTH` (1000). Nothing says so below the
+     threshold, which is the other half of the rule. */
+  await page.getByLabel("Note").fill("x".repeat(799));
+  await expect(page.getByText("characters left")).toBeHidden();
+  await page.getByLabel("Note").fill("x".repeat(950));
+  await expect(page.getByText("50 characters left")).toBeVisible();
   await page.getByLabel("Note").fill("Left edge is rough");
   await clickWhenEnabled(page.getByRole("button", { name: "Save note" }));
   await expect(page.getByText("Note: Left edge is rough")).toBeVisible();
 
+  /* The block, and what a block means: the banner heading names the flag, the
+     body is the reason with no prefix, and Done is gone until the hold is
+     lifted. Edit reason rewrites the text in place — two lines, kept as
+     typed — without touching the hold. */
   await page.getByLabel("Reason").fill("Waiting on stones");
   await clickWhenEnabled(page.getByRole("button", { name: "Block" }));
-  await expect(page.getByText("Blocked: Waiting on stones")).toBeVisible();
-  await expect(page.locator('s-section[heading="Blocked"]')).toBeVisible();
+  await expect(page.locator('s-banner[heading="Blocked"]')).toBeVisible();
+  await expect(page.getByText("Waiting on stones")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Done" })).toHaveCount(0);
 
+  await clickWhenEnabled(page.getByRole("button", { name: "Edit reason" }));
+  await page
+    .getByLabel("Reason")
+    .fill("Waiting on stones\nCalled the supplier");
+  await clickWhenEnabled(page.getByRole("button", { name: "Save reason" }));
+  await expect(page.getByText("Called the supplier")).toBeVisible();
+  await expect(page.locator('s-banner[heading="Blocked"]')).toBeVisible();
+
+  /* The same hold as the queue reads it: the card carries its one action
+     inside the banner and offers no step buttons at all, which is the whole
+     of "blocked means stop". */
+  await page.getByRole("link", { name: "Queue", exact: true }).click();
+  await expect(page.locator('s-page[heading="Queue"]')).toBeVisible();
+  const blocked = card(page, BAND_ORDER);
+  await expect(blocked.getByRole("button", { name: "Unblock" })).toBeVisible();
+  await expect(blocked.getByRole("button", { name: "Start" })).toHaveCount(0);
+  await expect(blocked.getByRole("button", { name: "Done" })).toHaveCount(0);
+  await page.getByRole("link", { name: BAND_ORDER, exact: true }).click();
+  await expect(page.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
+
+  await clickWhenEnabled(page.getByRole("button", { name: "Unblock" }));
   await clickWhenEnabled(page.getByRole("button", { name: "Done" }));
   await expect(page.getByText(`Done by ${MAKER}`)).toBeVisible();
   await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
 
-  await page.getByRole("link", { name: "‹ Your work" }).click();
-  await expect(page.locator('s-page[heading="Your work"]')).toBeVisible();
+  await page.getByRole("link", { name: "Queue", exact: true }).click();
+  await expect(page.locator('s-page[heading="Queue"]')).toBeVisible();
   /* Cut is done and Polish is the packer's, so the run is no card of the
      maker's any more; what remains of it on this page is the Done entry. */
   await expect(page.getByText("Done today · 1")).toBeVisible();

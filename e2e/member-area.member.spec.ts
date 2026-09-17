@@ -68,7 +68,7 @@ test("a seeded member signs in by magic link, lands on their queue, and signs ou
   await followMagicLink(page);
 
   await expect(page).toHaveURL(new RegExp(`/shop/${config.shop}$`, "u"));
-  await expect(page.locator('s-page[heading="Your work"]')).toBeVisible();
+  await expect(page.locator('s-page[heading="Queue"]')).toBeVisible();
   await expect(page.getByText(config.shop, { exact: true })).toBeVisible();
   await expect(page.getByText(MEMBER_EMAIL, { exact: true })).toBeVisible();
   /* Seeded with no team: membership is login, teams are work, so a member with
@@ -82,7 +82,7 @@ test("a seeded member signs in by magic link, lands on their queue, and signs ou
     page.locator(`s-section[heading="${MEMBER_EMAIL}"]`),
   ).toBeVisible();
   await page.getByRole("link", { name: config.shop }).click();
-  await expect(page.locator('s-page[heading="Your work"]')).toBeVisible();
+  await expect(page.locator('s-page[heading="Queue"]')).toBeVisible();
 
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/localhost:\d+\/$/u);
@@ -105,7 +105,7 @@ test("removing a member closes the shop page on their live session", async ({
 
   await requestMagicLink(page, MEMBER_EMAIL);
   await followMagicLink(page);
-  await expect(page.locator('s-page[heading="Your work"]')).toBeVisible();
+  await expect(page.locator('s-page[heading="Queue"]')).toBeVisible();
 
   await seedMembers(config, []);
   await gotoMember(page, `/shop/${config.shop}`);
@@ -141,7 +141,7 @@ test("a member sees the teams they are on, and only those", async ({
 
   await requestMagicLink(page, MEMBER_EMAIL);
   await followMagicLink(page);
-  await expect(page.locator('s-page[heading="Your work"]')).toBeVisible();
+  await expect(page.locator('s-page[heading="Queue"]')).toBeVisible();
 
   await expect(page.getByRole("button", { name: `${TEAM} · 0` })).toBeVisible();
   await expect(

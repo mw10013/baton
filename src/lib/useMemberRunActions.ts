@@ -21,6 +21,9 @@ export const runResultMessage = Match.typeTags<
   Ok: () => null,
   NotFound: () => "That work no longer exists.",
   NotAllowed: () => "This step belongs to another team.",
+  /* Only the reason editor can reach this: somebody unblocked the run while
+     it was open, so the edit has nothing to write on. */
+  NotBlocked: () => "This work is no longer blocked.",
   NotReady: () =>
     "Someone finished an earlier step just now, or this step is waiting on another team. Refresh.",
   Terminal: () => "This workflow is already finished or cancelled.",
@@ -98,11 +101,25 @@ export const useMemberRunActions = ({
         settle,
       ),
   });
+  const setBlockReason = useMutation({
+    mutationFn: ({ runId, reason }: { runId: string; reason: string }) =>
+      call((stub) =>
+        stub.setBlockReason({ runId, reason: textOrNull(reason) }),
+      ).then(settle),
+  });
   const dismiss = useMutation({
     mutationFn: (runId: string) =>
       call((stub) => stub.dismissFlag({ runId })).then(settle),
   });
-  const mutations = [start, complete, uncomplete, note, block, dismiss];
+  const mutations = [
+    start,
+    complete,
+    uncomplete,
+    note,
+    block,
+    setBlockReason,
+    dismiss,
+  ];
   /**
    * Disabled while a write is in flight, and while the socket is not
    * identified: these actions have no other transport, so offering them
@@ -117,5 +134,15 @@ export const useMemberRunActions = ({
       .map((mutation) => mutation.data && runResultMessage(mutation.data))
       .find((message) => typeof message === "string") ??
     null;
-  return { start, complete, uncomplete, note, block, dismiss, pending, banner };
+  return {
+    start,
+    complete,
+    uncomplete,
+    note,
+    block,
+    setBlockReason,
+    dismiss,
+    pending,
+    banner,
+  };
 };

@@ -62,6 +62,9 @@ const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
   Ok: () => null,
   NotFound: () => "That workflow run no longer exists.",
   NotAllowed: () => "Not allowed.",
+  /* No merchant button sets a block reason yet (`merchantSetBlockReason` has
+     no surface); the tag is here because the union is one union. */
+  NotBlocked: () => "That workflow run is no longer blocked.",
   NotReady: () => "A step in an earlier stage is still open.",
   Terminal: () => "That workflow run is already finished.",
   // Reachable from Manage's Reopen: the row hides that button when the page's
@@ -128,9 +131,6 @@ const RUN_FLAG_LABEL = {
   blocked: "Blocked",
   order_fulfilled: "Already shipped in Shopify",
 } as const satisfies Record<Domain.RunFlag, string>;
-
-/** Where the note editor starts counting down to `Domain.STEP_NOTE_MAX_LENGTH`. */
-const NOTE_COUNT_FROM = 800;
 
 /** Teams named in the order summary before it collapses to "+N more", as the index's cell caps its own. */
 const WAITING_ON_LIMIT = 3;
@@ -891,10 +891,10 @@ function RouteComponent() {
    * anybody gets is seeing what they are about to destroy. Never open this
    * empty.
    *
-   * The count appears late, at `NOTE_COUNT_FROM`, because a counter on an
-   * empty field is a rule nobody asked about; it exists so the cap
+   * The count appears late, at `Domain.NOTE_COUNT_FROM`, so the cap
    * (`Domain.STEP_NOTE_MAX_LENGTH`) announces itself before the write refuses
-   * a paragraph that is already typed.
+   * a paragraph that is already typed. The member's fields count from the same
+   * number: the same text is typed into both.
    */
   const noteEditor = (step: Domain.WorkflowRunStep, draft: string) => (
     <s-stack gap="small-300">
@@ -938,7 +938,7 @@ function RouteComponent() {
         >
           Cancel
         </s-button>
-        {draft.length >= NOTE_COUNT_FROM && (
+        {draft.length >= Domain.NOTE_COUNT_FROM && (
           <s-text color="subdued">
             {`${formatNumber(Domain.STEP_NOTE_MAX_LENGTH - draft.length)} characters left`}
           </s-text>
