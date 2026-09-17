@@ -308,17 +308,17 @@ test("turning on a workflow offers to include earlier unfulfilled orders, and in
   await expect(page.getByRole("button", { name: "Turn off" })).toBeVisible();
 
   /* The order page shows the run that Include them started: the line item's
-     section carries a run card naming the workflow, not "No workflow on this
-     item." Scoped to the section because the attach picker on the same page
-     lists every workflow by name too. */
+     section carries a run card naming the workflow, and with a run on it the
+     card carries no workflow picker at rest. Scoped to the section because
+     another item's picker on the same page lists every workflow by name. */
   await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
   await frame.getByRole("link", { name: "#9101" }).click();
   await expect(frame.locator('s-page[heading="#9101"]')).toBeVisible();
-  const band = frame.locator('s-section[accessibilityLabel="E2E Band"]');
+  const band = frame.locator("s-section").filter({
+    has: frame.getByRole("heading", { name: "E2E Band", exact: true }),
+  });
   await expect(band.getByText(EXISTING, { exact: true })).toBeVisible();
-  await expect(
-    band.getByText("No workflow on this item.", { exact: false }),
-  ).toHaveCount(0);
+  await expect(band.getByRole("combobox")).toHaveCount(0);
 });
 
 /**

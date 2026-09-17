@@ -276,12 +276,12 @@ test("the merchant marks a step done, reopens it, and blocks the run", async ({
   await expect(frame.getByText("Reopened by Merchant")).toBeVisible();
   await expect(frame.getByText("Done by Merchant")).toBeHidden();
 
-  /* Both stages done takes the run to `done`, which is the badge the orders
-     index and the production state read. */
+  /* Both stages done takes the run to `done`. The card's badge says it in
+     merchant words, not `WorkflowRun.status`. */
   await frame.getByRole("button", { name: "Mark done" }).first().click();
   await expect(frame.getByText("Done by Merchant")).toBeVisible();
   await frame.getByRole("button", { name: "Mark done" }).first().click();
-  await expect(frame.getByText("done", { exact: true })).toBeVisible();
+  await expect(frame.getByText("Done", { exact: true })).toBeVisible();
 });
 
 /**
@@ -458,50 +458,65 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   await frame.getByRole("link", { name: "#9401" }).click();
   await expect(frame.locator('s-page[heading="#9401"]')).toBeVisible();
 
-  /* The picker is open with no disclosure to press and offers exactly the two
-     that matched — the item's sentence names them both, with the tag that
-     pulled each one in. */
-  const item = frame.locator('s-section[accessibilityLabel="E2E Twice"]');
+  /* An item with no run carries the picker at rest, and on an ambiguous one it
+     offers exactly the two that matched — the item's sentence names them both,
+     with the tag that pulled each one in. */
+  const item = frame.locator("s-section").filter({
+    has: frame.getByRole("heading", { name: "E2E Twice", exact: true }),
+  });
   await expect(
     item.getByText(
-      `Two workflows match this item: ${ENGRAVING} (\u201Ce2e-engraved\u201D) and ${RUSH} (\u201Ce2e-rush\u201D). Choose one.`,
+      `Two workflows match this item: ${ENGRAVING} (\u201Ce2e-engraved\u201D) and ${RUSH} (\u201Ce2e-rush\u201D). Choose one to start.`,
       { exact: true },
     ),
   ).toBeVisible();
-  const picker = item.getByRole("combobox");
+  const picker = item.getByRole("combobox", { name: "Choose workflow" });
   await expect(picker.getByRole("option")).toHaveCount(2);
 
   await picker.selectOption({ label: ENGRAVING });
   await item.getByRole("button", { name: "Choose", exact: true }).click();
 
-  /* The run card replaces the ask, and the disclosure below it now offers a
-     change rather than an attach.
+  /* The run replaces the ask, and with it the picker: an item with a live run
+     carries no workflow control at rest, only the header's Manage.
 
-     Wait on the disclosure before naming the workflow: it renders only when
-     the picker is closed, and while the picker is open the item carries the
-     workflow's name three more times (the `s-option`, the native `option`,
-     and the select's own value), which is a strict-mode violation rather than
-     a retryable failure. */
+     Wait on that button before naming the workflow: while the picker is open
+     the item carries the workflow's name three more times (the `s-option`, the
+     native `option`, and the select's own value), which is a strict-mode
+     violation rather than a retryable failure. */
+  const manage = item.getByRole("button", { name: "Manage" });
+  await expect(manage).toBeVisible();
+  await expect(
+    item.getByText("Choose one to start.", { exact: false }),
+  ).toHaveCount(0);
+  await expect(item.getByText(ENGRAVING, { exact: true })).toBeVisible();
+
+  /* Changing is a rare intervention, so it is inside the disclosure with the
+     other ones. A pending run with nothing started changes with no
+     confirmation: the dialog is for work already done. */
+  await manage.click();
   const change = item.getByRole("button", {
     name: "Change workflow",
     exact: true,
   });
-  await expect(change).toBeVisible();
-  await expect(item.getByText("Choose one.", { exact: false })).toHaveCount(0);
-  await expect(item.getByText(ENGRAVING, { exact: true })).toBeVisible();
-
-  /* A pending run with nothing started changes with no confirmation: the
-     dialog is for work already done. */
   await change.click();
-  await picker.selectOption({ label: RUSH });
+  await item
+    .getByRole("combobox", { name: "Change workflow" })
+    .selectOption({ label: RUSH });
   await item.getByRole("button", { name: "Change", exact: true }).click();
 
-  await expect(change).toBeVisible();
+  /* The change replaces the run, so the disclosure the old one had open closes
+     with it — `managing` and `changeOpen` are both keyed by run id. The picker
+     going is the gate: `Manage` is on the card in every state, so waiting on it
+     would pass before the write landed and read the workflow's name off the
+     still-open select. */
+  await expect(
+    item.getByRole("combobox", { name: "Change workflow" }),
+  ).toHaveCount(0);
+  await expect(manage).toBeVisible();
   await expect(item.getByText(RUSH, { exact: true })).toBeVisible();
   /* The replaced run stays on the page, cancelled: a run is the record of a
-     decision, and the merchant should see the one they undid. The badge
-     prints `WorkflowRun.status` verbatim, so it is lower case. */
-  await expect(item.getByText("cancelled", { exact: true })).toBeVisible();
+     decision, and the merchant should see the one they undid. */
+  await expect(item.getByText("Cancelled", { exact: true })).toBeVisible();
 
   /* And the order has left the stage: one live run, nothing left to choose. */
   await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
