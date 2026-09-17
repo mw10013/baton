@@ -6,22 +6,29 @@ import { Match, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
 import * as Domain from "@/lib/Domain";
+import { hideModal } from "@/lib/polarisModal";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import {
   changeActivatedAtResultMessage,
   startedToast,
+  TURN_OFF_BODY,
+  TURN_OFF_HEADING,
   TURNED_OFF,
   turnOnBlocker,
   waitingOrdersLine,
 } from "@/lib/workflowShared";
 
 /**
- * The on/off switch of the workflow page: the Turn on / Turn off button in
- * the page's secondary actions, the Turn on dialog, and the Change dialog
+ * The on/off switch of the workflow page and of the editor: the Turn on /
+ * Turn off button, the Turn on and Turn off dialogs, and the Change dialog
  * behind the "Applies to orders placed since" line. A component of its own
  * because the dialogs are the one place the merchant decides which orders a
- * workflow covers: owning them here means the page cannot restate the rule
- * in its own words.
+ * workflow covers: owning them here means neither surface can restate the
+ * rule in its own words.
+ *
+ * Both directions confirm. Turn off is destructive in the merchant's terms —
+ * the floor stops getting new work — so it is the critical primary and asks
+ * first, the same shape as Turn on.
  *
  * The Turn on dialog asks about a count, not a date. Opening it reads
  * `countWaitingOrders`; when earlier open orders would match, one extra
@@ -34,6 +41,7 @@ import {
  * keep exact instants.
  */
 const TURN_ON_MODAL = "turn-on-workflow";
+const TURN_OFF_MODAL = "turn-off-workflow";
 export const CHANGE_ACTIVATED_AT_MODAL = "change-activated-at";
 
 const decodeActivateResult = Schema.decodeUnknownPromise(
@@ -46,15 +54,16 @@ const decodeWaitingOrders = Schema.decodeUnknownPromise(
   Schema.toType(Domain.WaitingOrders),
 );
 
+/** Imperative: a blocker banner's job is to name the next action, not to restate the state the badges already carry. */
 export const activateResultMessage = Match.typeTags<
   Domain.ActivateResult,
   string | null
 >()({
   Ok: () => null,
   NotFound: () => "That workflow no longer exists.",
-  NoSteps: () => "This workflow has no steps. Edit to add some, then apply.",
+  NoSteps: () => "Add a step to this workflow.",
   StepUnassigned: ({ stepNames }) =>
-    `These steps have no team: ${stepNames.join(", ")}.`,
+    `Assign a team to ${stepNames.join(", ")}.`,
 });
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -109,14 +118,32 @@ export function WorkflowSwitch({
   workflow,
   steps,
   turnOnBody,
+  slot,
+  showControl = true,
+  appliesFirst = false,
   onChanged,
   onMessage,
 }: {
   readonly workflow: Domain.Workflow;
-  /** The workflow's own steps (never the draft's): what Turn on checks. */
+  /** The steps Turn on will check: the workflow's own, or the draft's when {@link appliesFirst} will promote them. */
   readonly steps: readonly Domain.StepWithTeamName[];
   /** The rule that will start runs once the switch is on, for the Turn on dialog's first line. */
   readonly turnOnBody: string;
+  /** Where the button goes: both surfaces make it the primary, but the editor and the detail page slot their other controls differently. */
+  readonly slot: "primary-action" | "secondary-actions";
+  /**
+   * False hides the button and keeps the dialogs, which the Change control on
+   * {@link AppliesSince} still needs. The detail page hides it while an
+   * inactive workflow has a draft: what the merchant would be turning on is
+   * not what the editor is holding.
+   */
+  readonly showControl?: boolean;
+  /**
+   * Turn on applies the draft in the same click, for a workflow that has
+   * never been applied: promoting steps that have never run and switching the
+   * workflow on are one decision (`ShopAgent.applyAndActivate`).
+   */
+  readonly appliesFirst?: boolean;
   readonly onChanged: () => Promise<void>;
   /** A banner line, or `null` to clear it. */
   readonly onMessage: (message: string | null) => void;
@@ -156,23 +183,33 @@ export function WorkflowSwitch({
   });
 
   const activeMutation = useMutation({
-    mutationFn: (input: { readonly active: boolean }) =>
-      call((stub) =>
-        stub.setWorkflowActive({
-          workflowId,
-          active: input.active,
-          ...(input.active &&
-          includeWaiting &&
-          waiting.data?.earliestProcessedAt !== null &&
-          waiting.data?.earliestProcessedAt !== undefined
-            ? { activatedAt: waiting.data.earliestProcessedAt }
-            : {}),
-        }),
-      ).then(decodeActivateResult),
+    mutationFn: (input: { readonly active: boolean }) => {
+      const coverage =
+        input.active &&
+        includeWaiting &&
+        waiting.data?.earliestProcessedAt !== null &&
+        waiting.data?.earliestProcessedAt !== undefined
+          ? { activatedAt: waiting.data.earliestProcessedAt }
+          : {};
+      return call((stub) =>
+        input.active && appliesFirst
+          ? stub.applyAndActivate({ workflowId, ...coverage })
+          : stub.setWorkflowActive({
+              workflowId,
+              active: input.active,
+              ...coverage,
+            }),
+      ).then(decodeActivateResult);
+    },
     onSuccess: async (result) => {
       onMessage(activateResultMessage(result));
       if (result._tag === "Ok") {
-        await shopify.modal.hide(TURN_ON_MODAL);
+        /* `hideModal`, not `shopify.modal.hide`: inside the editor's
+           `s-app-window` the host registry cannot see this document's modals
+           (the JSDoc on `hideModal`), and the element call works on both
+           surfaces. */
+        hideModal(TURN_ON_MODAL);
+        hideModal(TURN_OFF_MODAL);
         setIncludeWaiting(false);
         /* Turn off starts runs when it resolves an ambiguity, and that is
            the more useful half to report; with nothing started, the
@@ -200,7 +237,7 @@ export function WorkflowSwitch({
     onSuccess: async (result) => {
       onMessage(changeActivatedAtResultMessage(result));
       if (result._tag === "Ok") {
-        await shopify.modal.hide(CHANGE_ACTIVATED_AT_MODAL);
+        hideModal(CHANGE_ACTIVATED_AT_MODAL);
         shopify.toast.show(startedToast("Updated", result.started));
       }
       await onChanged();
@@ -233,27 +270,30 @@ export function WorkflowSwitch({
 
   return (
     <>
-      {Domain.isActive(workflow) ? (
-        <s-button
-          slot="secondary-actions"
-          loading={switching}
-          disabled={!identified || switching}
-          onClick={() => {
-            activeMutation.mutate({ active: false });
-          }}
-        >
-          Turn off
-        </s-button>
-      ) : (
-        <s-button
-          slot="secondary-actions"
-          disabled={!identified || switching || blocker !== null}
-          commandFor={TURN_ON_MODAL}
-          command="--show"
-        >
-          Turn on
-        </s-button>
-      )}
+      {showControl &&
+        (Domain.isActive(workflow) ? (
+          <s-button
+            slot={slot}
+            variant="primary"
+            tone="critical"
+            loading={switching}
+            disabled={!identified || switching}
+            commandFor={TURN_OFF_MODAL}
+            command="--show"
+          >
+            Turn off
+          </s-button>
+        ) : (
+          <s-button
+            slot={slot}
+            variant="primary"
+            disabled={!identified || switching || blocker !== null}
+            commandFor={TURN_ON_MODAL}
+            command="--show"
+          >
+            Turn on
+          </s-button>
+        ))}
 
       <s-modal
         id={TURN_ON_MODAL}
@@ -268,6 +308,9 @@ export function WorkflowSwitch({
       >
         <s-stack gap="base">
           <s-paragraph>{turnOnBody}</s-paragraph>
+          {appliesFirst && (
+            <s-paragraph>Your steps are applied at the same time.</s-paragraph>
+          )}
           {/* Named while it loads: Turn on is disabled until the count is in, and a silent disabled button reads as broken. */}
           {waiting.isFetching && (
             <s-text color="subdued">Checking earlier orders…</s-text>
@@ -303,6 +346,28 @@ export function WorkflowSwitch({
           }}
         >
           Turn on
+        </s-button>
+      </s-modal>
+
+      <s-modal id={TURN_OFF_MODAL} heading={TURN_OFF_HEADING}>
+        <s-paragraph>{TURN_OFF_BODY}</s-paragraph>
+        <s-button
+          slot="secondary-actions"
+          commandFor={TURN_OFF_MODAL}
+          command="--hide"
+        >
+          Cancel
+        </s-button>
+        <s-button
+          slot="primary-action"
+          variant="primary"
+          loading={switching}
+          disabled={!identified || switching}
+          onClick={() => {
+            activeMutation.mutate({ active: false });
+          }}
+        >
+          Turn off
         </s-button>
       </s-modal>
 

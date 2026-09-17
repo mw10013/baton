@@ -10,7 +10,9 @@ import {
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Schema } from "effect";
 
+import { LocalDateTime } from "@/components/LocalDateTime";
 import { AttentionBanner, StageFlow } from "@/components/WorkflowStages";
+import { WorkflowSwitch } from "@/components/WorkflowSwitch";
 import * as Domain from "@/lib/Domain";
 import { hideModal } from "@/lib/polarisModal";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
@@ -19,9 +21,19 @@ import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
 import { postEditorWindowMessage } from "@/lib/workflowEditorWindow";
 import {
+  APPLY_BODY,
+  APPLY_HEADING,
   applyBlocker,
   DELETE_WORKFLOW_WARNING,
   deleteWorkflowResultMessage,
+  DELETED_TOAST,
+  DISCARD_BODY,
+  DISCARD_HEADING,
+  neverApplied,
+  RENAME_FIELD_LABEL,
+  RENAME_HEADING,
+  RENAMED_TOAST,
+  turnOnBody,
   workflowResultMessage,
 } from "@/lib/workflowShared";
 
@@ -55,13 +67,14 @@ const stepResultMessage = Match.typeTags<Domain.StepResult, string | null>()({
   TeamNotFound: () => "That team no longer exists. Choose another.",
 });
 
+/** Imperative: a blocker banner's job is to name the next action, not to restate the state the badges already carry. */
 const applyResultMessage = Match.typeTags<Domain.ApplyResult, string | null>()({
   Ok: () => null,
   NotFound: () => "That workflow no longer exists.",
   NoDraft: () => "There are no changes to apply.",
-  NoSteps: () => "Add at least one step before you can apply.",
+  NoSteps: () => "Add a step to this workflow.",
   StepUnassigned: ({ stepNames }) =>
-    `Assign a team to ${stepNames.join(", ")} before you can apply.`,
+    `Assign a team to ${stepNames.join(", ")}.`,
 });
 
 const discardResultMessage = Match.typeTags<
@@ -118,7 +131,19 @@ export const Route = createFileRoute("/app/workflows/$workflowId_/edit")({
  * the workflow itself when one does not — the first change is what creates
  * the draft, and because a step keeps its id from the workflow into the draft
  * (`WorkflowRepository.ensureDraft`) the step being edited is the same step
- * either way. Until then the header says so and offers no Apply or Discard.
+ * either way.
+ *
+ * The header is the state, in one primary button and one badge:
+ *
+ * - never applied — `Draft`, and **Turn on**, which applies and activates in
+ *   one confirmed step (`ShopAgent.applyAndActivate`). Apply on its own would
+ *   leave the merchant with steps in force that start nothing, then ask them
+ *   to turn on the thing they just applied;
+ * - applied with no draft — no badge, and the plain on/off switch, because
+ *   there is nothing here to commit;
+ * - applied with a draft — `Draft`, **Discard changes** and **Apply changes**,
+ *   and no activation control: the switch is about what is in force, and what
+ *   is in force is not what is on the canvas.
  *
  * Close leaves the draft alone; only Apply and Discard end it.
  */
@@ -153,7 +178,6 @@ function RouteComponent() {
     readonly instructions: string;
   } | null>(null);
   const [name, setName] = React.useState(detail?.workflow.name ?? "");
-  const [nameError, setNameError] = React.useState<string | null>(null);
 
   const invalidate = () => router.invalidate({ sync: true });
 
@@ -287,13 +311,15 @@ function RouteComponent() {
       call((stub) => stub.updateWorkflow({ workflowId, name })).then(
         decodeWorkflowResult,
       ),
+    /** Names are labels, so only `NotFound` is left and that is about the workflow, not what was typed. */
     onSuccess: async (result) => {
       const message = workflowResultMessage(result);
       if (message !== null) {
-        setNameError(message);
+        setBanner(message);
         return;
       }
       hideModal(RENAME_MODAL);
+      shopify.toast.show(RENAMED_TOAST);
       await invalidate();
     },
     onError,
@@ -310,6 +336,7 @@ function RouteComponent() {
         return;
       }
       hideModal(DELETE_MODAL);
+      shopify.toast.show(DELETED_TOAST);
       if (inWindow) {
         postEditorWindowMessage({ type: "deleted", workflowId });
         return;
@@ -405,6 +432,13 @@ function RouteComponent() {
   /** What the editor writes: the draft once one exists, the workflow itself until then. */
   const steps = draft?.steps ?? detail.steps;
   const hasDraft = draft !== null;
+  const fresh = neverApplied(detail);
+  /**
+   * Turn on rather than Apply. `hasDraft` is true here too — the first added
+   * step creates the draft — so this check comes first, and what it means is
+   * that nothing has ever been in force, which is the whole difference.
+   */
+  const showSwitch = fresh || !hasDraft;
   const blocker = applyBlocker(steps);
   const selected = steps.find((step) => step.id === selectedStepId) ?? null;
   const busy =
@@ -584,40 +618,56 @@ function RouteComponent() {
           Close
         </s-link>
       )}
-      {/* Always "Draft": the editor only ever writes to the draft, and the
-          disabled Apply button already says there is nothing to apply yet. */}
-      <s-badge slot="accessory" tone="info">
-        Draft
-      </s-badge>
-      <s-button
-        slot="primary-action"
-        variant="primary"
-        loading={applyMutation.isPending}
-        disabled={!identified || !hasDraft || busy || blocker !== null}
-        {...(Domain.isActive(workflow)
-          ? { commandFor: APPLY_MODAL, command: "--show" as const }
-          : {
-              onClick: () => {
-                applyMutation.mutate();
-              },
-            })}
-      >
-        Apply changes
-      </s-button>
-      {hasDraft && (
-        <s-button
-          slot="secondary-actions"
-          tone="critical"
-          disabled={!identified || busy}
-          commandFor={DISCARD_MODAL}
-          command="--show"
-        >
-          Discard changes
-        </s-button>
+      {/* The one signal that the canvas is not what runs. Absent once there is
+          nothing unapplied: an applied workflow with no draft is what it says
+          it is. */}
+      {(fresh || hasDraft) && (
+        <s-badge slot="accessory" tone="info">
+          Draft
+        </s-badge>
       )}
       <s-button slot="secondary-actions" commandFor="editor-actions">
         More actions
       </s-button>
+      {showSwitch ? (
+        <WorkflowSwitch
+          workflow={workflow}
+          steps={steps}
+          turnOnBody={turnOnBody(workflow.tag)}
+          slot="primary-action"
+          appliesFirst={fresh}
+          onChanged={invalidate}
+          onMessage={setBanner}
+        />
+      ) : (
+        <>
+          {/* Plain, not critical: the critical tone belongs on the confirm,
+              where the loss actually happens. */}
+          <s-button
+            slot="secondary-actions"
+            disabled={!identified || busy}
+            commandFor={DISCARD_MODAL}
+            command="--show"
+          >
+            Discard changes
+          </s-button>
+          <s-button
+            slot="primary-action"
+            variant="primary"
+            loading={applyMutation.isPending}
+            disabled={!identified || busy || blocker !== null}
+            {...(Domain.isActive(workflow)
+              ? { commandFor: APPLY_MODAL, command: "--show" as const }
+              : {
+                  onClick: () => {
+                    applyMutation.mutate();
+                  },
+                })}
+          >
+            Apply changes
+          </s-button>
+        </>
+      )}
       <s-menu id="editor-actions" accessibilityLabel="More actions">
         <s-button icon="edit" commandFor={RENAME_MODAL} command="--show">
           Rename
@@ -637,9 +687,20 @@ function RouteComponent() {
       <s-section accessibilityLabel="Steps">
         <s-stack gap="base">
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
-          {hasDraft && blocker !== null && (
-            <s-banner tone="warning" heading="Not ready to apply">
-              {applyResultMessage(blocker)}
+          {/* Only while the header offers Turn on or Apply: an active
+              workflow with no draft has neither, and its unassigned steps are
+              `AttentionBanner`'s to report. */}
+          {blocker !== null && !(showSwitch && Domain.isActive(workflow)) && (
+            <s-banner
+              tone="warning"
+              heading={
+                showSwitch ? "Turn on is unavailable" : "Not ready to apply"
+              }
+            >
+              {/* Wrapped, like {@link AttentionBanner}'s lines: `s-banner`
+                  renders its body from elements, and a bare string child
+                  never reaches the page. */}
+              <s-paragraph>{applyResultMessage(blocker)}</s-paragraph>
             </s-banner>
           )}
           <AttentionBanner steps={steps} />
@@ -651,21 +712,40 @@ function RouteComponent() {
             renderStageFooter={stageFooter}
             footer={canvasFooter()}
           />
+
+          {/* Every step control writes as it is used, so there is no Save for
+              the canvas and nothing on screen would otherwise say the work is
+              safe. The date is the draft's while one exists: that is the edit
+              this line is about. */}
+          <s-text color="subdued">
+            {busy ? (
+              "Saving…"
+            ) : (
+              <>
+                {"\u2713 Saved \u00B7 Last changed on "}
+                <LocalDateTime
+                  value={draft?.draft.updatedAt ?? workflow.updatedAt}
+                />
+              </>
+            )}
+          </s-text>
         </s-stack>
       </s-section>
 
-      <s-section slot="aside" heading={selected === null ? "Editing" : "Step"}>
-        {selected === null ? (
-          <s-stack gap="small-300">
-            <s-paragraph color="subdued">
-              Pick a step to rename it, hand it to another team, or move it.
-            </s-paragraph>
-            <s-paragraph color="subdued">
-              Steps in the same stage run at the same time. The next stage
-              starts when all of them are done.
-            </s-paragraph>
-          </s-stack>
-        ) : (
+      {/*
+        Something is always in the `aside` slot: `s-page` gives the aside a
+        column of its own only while it is filled, so dropping it reflows the
+        canvas from 606px to 934px and back on every card click (measured
+        2026-09-17). With nothing selected that something is an empty `s-box`
+        rather than an empty `s-section`, which would draw a card with nothing
+        in it. No standing caption either — two sentences explaining what
+        clicking a card does are a caption on a control the merchant is
+        already looking at.
+      */}
+      {selected === null ? (
+        <s-box slot="aside" />
+      ) : (
+        <s-section slot="aside" heading="Step">
           <s-stack gap="base">
             <s-text-field
               label="Name"
@@ -790,13 +870,11 @@ function RouteComponent() {
               </s-button>
             </s-button-group>
           </s-stack>
-        )}
-      </s-section>
+        </s-section>
+      )}
 
-      <s-modal id={APPLY_MODAL} heading="Apply changes?">
-        <s-paragraph>
-          {`${workflow.name} is on. Orders that come in after you apply follow the new steps. Runs already open keep the steps they started with.`}
-        </s-paragraph>
+      <s-modal id={APPLY_MODAL} heading={APPLY_HEADING}>
+        <s-paragraph>{APPLY_BODY}</s-paragraph>
         <s-button
           slot="secondary-actions"
           commandFor={APPLY_MODAL}
@@ -817,10 +895,8 @@ function RouteComponent() {
         </s-button>
       </s-modal>
 
-      <s-modal id={DISCARD_MODAL} heading="Discard changes?">
-        <s-paragraph>
-          {`The draft is deleted and ${workflow.name} stays exactly as it is. This can't be undone.`}
-        </s-paragraph>
+      <s-modal id={DISCARD_MODAL} heading={DISCARD_HEADING}>
+        <s-paragraph>{DISCARD_BODY}</s-paragraph>
         <s-button
           slot="secondary-actions"
           commandFor={DISCARD_MODAL}
@@ -842,17 +918,22 @@ function RouteComponent() {
         </s-button>
       </s-modal>
 
-      <s-modal id={RENAME_MODAL} heading="Rename workflow">
-        <s-text-field
-          label="Name"
-          value={name}
-          maxLength={64}
-          {...(nameError === null ? {} : { error: nameError })}
-          onInput={(event) => {
-            setName(event.currentTarget.value);
-            setNameError(null);
-          }}
-        />
+      <s-modal id={RENAME_MODAL} heading={RENAME_HEADING}>
+        <s-stack gap="small-300">
+          <s-text-field
+            label={RENAME_FIELD_LABEL}
+            value={name}
+            maxLength={Domain.NAME_MAX_LENGTH}
+            onInput={(event) => {
+              setName(event.currentTarget.value);
+            }}
+          />
+          {/* `s-text-field` has no counter of its own, and the limit is worth
+              seeing while typing: the field silently stops accepting. */}
+          <s-text color="subdued">
+            {`${String(name.length)}/${String(Domain.NAME_MAX_LENGTH)}`}
+          </s-text>
+        </s-stack>
         <s-button
           slot="secondary-actions"
           commandFor={RENAME_MODAL}

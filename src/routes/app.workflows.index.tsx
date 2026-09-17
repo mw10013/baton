@@ -11,13 +11,18 @@ import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
+import * as WorkflowTag from "@/components/WorkflowTag";
 import * as Domain from "@/lib/Domain";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
 import { useWorkflowEditorWindow } from "@/lib/workflowEditorWindow";
-import { workflowResultMessage } from "@/lib/workflowShared";
+import {
+  STATUS_ACTIVE,
+  STATUS_INACTIVE,
+  workflowResultMessage,
+} from "@/lib/workflowShared";
 
 const CREATE_MODAL = "create-workflow";
 
@@ -33,12 +38,12 @@ const CREATE_MODAL = "create-workflow";
  * the route: a wrong filter is not an error condition.
  */
 interface WorkflowsSearch {
-  readonly status?: "active" | "off";
+  readonly status?: "active" | "inactive";
 }
 const validateSearch = ({
   status,
 }: Record<string, unknown>): WorkflowsSearch =>
-  status === "active" || status === "off" ? { status } : {};
+  status === "active" || status === "inactive" ? { status } : {};
 
 const decodeWorkflowResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.WorkflowResult),
@@ -55,9 +60,9 @@ const decodeWorkflowResult = Schema.decodeUnknownPromise(
 export const statusBadges = (workflow: Domain.WorkflowSummary) => (
   <s-stack direction="inline" gap="small-300">
     {Domain.isActive(workflow) ? (
-      <s-badge tone="success">Active</s-badge>
+      <s-badge tone="success">{STATUS_ACTIVE}</s-badge>
     ) : (
-      <s-badge>Off</s-badge>
+      <s-badge>{STATUS_INACTIVE}</s-badge>
     )}
     {workflow.hasDraft && <s-badge tone="info">Draft</s-badge>}
     {workflow.stepCount === 0 && <s-badge tone="warning">No steps</s-badge>}
@@ -98,6 +103,10 @@ export const Route = createFileRoute("/app/workflows/")({
  * Creating asks for a name and a tag, the tag prefilled from the name — the
  * tag is what makes a workflow reachable at all, so it is asked for at the
  * moment the merchant forms the model of the object, not behind the editor.
+ * The name is asked for even though it is only a label and nothing depends on
+ * it: the tag mirrors the name as the merchant types, so the name field is how
+ * most of them will produce a tag at all, and dropping it would leave the tag
+ * field alone with nothing to mirror.
  * Steps are decisions made in the editor, in front of the trigger card that
  * says what they do, so the page carries no standing form.
  */
@@ -112,8 +121,11 @@ function RouteComponent() {
   const [name, setName] = React.useState("");
   const [tag, setTag] = React.useState("");
   const [tagDirty, setTagDirty] = React.useState(false);
-  const [nameError, setNameError] = React.useState<string | null>(null);
   const [tagError, setTagError] = React.useState<string | null>(null);
+  const [tagHolder, setTagHolder] = React.useState<{
+    readonly workflowId: string;
+    readonly workflowName: string;
+  } | null>(null);
   const [banner, setBanner] = React.useState<string | null>(null);
 
   /**
@@ -144,14 +156,18 @@ function RouteComponent() {
           ).then(decodeWorkflowResult)
         : Promise.reject(new Error("Still connecting. Try again in a moment.")),
     onSuccess: async (result) => {
-      // A workflow has two unique keys, so the refusal goes under the field
-      // the merchant typed rather than into a banner above both.
+      // The tag is the workflow's one unique key, so it is the one refusal
+      // that goes under a field rather than into the banner above both.
       if (result._tag === "TagTaken") {
         setTagError(workflowResultMessage(result));
+        setTagHolder({
+          workflowId: result.workflowId,
+          workflowName: result.workflowName,
+        });
         return;
       }
       if (result._tag !== "Ok") {
-        setNameError(workflowResultMessage(result));
+        setBanner(workflowResultMessage(result));
         return;
       }
       await shopify.modal.hide(CREATE_MODAL);
@@ -169,8 +185,8 @@ function RouteComponent() {
     setName("");
     setTag("");
     setTagDirty(false);
-    setNameError(null);
     setTagError(null);
+    setTagHolder(null);
   };
 
   /**
@@ -184,7 +200,6 @@ function RouteComponent() {
    */
   const onNameInput = (next: string) => {
     setName(next);
-    setNameError(null);
     if (!tagDirty) setTag(next.trim().toLowerCase());
   };
 
@@ -196,14 +211,14 @@ function RouteComponent() {
   const trimmed = query.trim().toLowerCase();
   const rows = workflows.filter((workflow) => {
     if (status === "active" && !Domain.isActive(workflow)) return false;
-    if (status === "off" && Domain.isActive(workflow)) return false;
+    if (status === "inactive" && Domain.isActive(workflow)) return false;
     if (trimmed !== "" && !workflow.name.toLowerCase().includes(trimmed))
       return false;
     return true;
   });
   const filtered = status !== undefined || trimmed !== "";
 
-  const statusButton = (label: string, value?: "active" | "off") => (
+  const statusButton = (label: string, value?: "active" | "inactive") => (
     <s-button
       variant={status === value ? "primary" : "tertiary"}
       onClick={() => {
@@ -231,14 +246,7 @@ function RouteComponent() {
         <s-box padding="base">
           <s-grid gap="base" justifyItems="center" paddingBlock="large-400">
             <s-grid justifyItems="center" maxInlineSize="450px" gap="base">
-              <s-stack alignItems="center" gap="small-300">
-                <s-heading>No item workflows yet</s-heading>
-                <s-paragraph color="subdued">
-                  Each one is the ordered list of steps a line item passes
-                  through, each owned by a team. Each workflow has a tag;
-                  products carrying it follow that workflow.
-                </s-paragraph>
-              </s-stack>
+              <s-heading>No item workflows yet</s-heading>
               {createButton(false)}
             </s-grid>
           </s-grid>
@@ -308,22 +316,11 @@ function RouteComponent() {
 
       {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
 
-      {/* `padding="none"` so the table runs edge to edge; the description
-          goes inside a padded intro box instead of a slotted heading. */}
+      {/* `padding="none"` so the table runs edge to edge; the filters go
+          inside a padded box instead of a slotted heading. The card carries no
+          description: the badges and the Turn on / Turn off buttons already
+          say what a workflow is and what its state means. */}
       <s-section padding="none" accessibilityLabel="Item workflows">
-        {/* Only with rows: on empty the centred empty state already explains
-            what a workflow is, and two subdued paragraphs saying nearly the
-            same thing is what this card used to look like. */}
-        {workflows.length > 0 && (
-          <s-box padding="base" paddingBlockEnd="none">
-            <s-paragraph color="subdued">
-              Each one is the ordered list of steps a line item passes through,
-              chosen by its tag. Turn one off to stop new runs while open runs
-              finish.
-            </s-paragraph>
-          </s-box>
-        )}
-
         {workflows.length > 0 && (
           <s-box padding="base">
             <s-stack gap="small-300">
@@ -334,8 +331,8 @@ function RouteComponent() {
               >
                 <s-stack direction="inline" gap="small-300">
                   {statusButton("All")}
-                  {statusButton("Active", "active")}
-                  {statusButton("Off", "off")}
+                  {statusButton(STATUS_ACTIVE, "active")}
+                  {statusButton(STATUS_INACTIVE, "inactive")}
                 </s-stack>
                 <s-search-field
                   label="Search workflows by name"
@@ -370,8 +367,7 @@ function RouteComponent() {
             placeholder="e.g. Engraved ring"
             details="You'll add the steps next."
             value={name}
-            maxLength={64}
-            {...(nameError === null ? {} : { error: nameError })}
+            maxLength={Domain.NAME_MAX_LENGTH}
             onInput={(event) => {
               onNameInput(event.currentTarget.value);
             }}
@@ -386,8 +382,10 @@ function RouteComponent() {
               setTag(event.currentTarget.value);
               setTagDirty(true);
               setTagError(null);
+              setTagHolder(null);
             }}
           />
+          <WorkflowTag.TagTakenLink holder={tagHolder} />
         </s-stack>
         <s-button
           slot="secondary-actions"

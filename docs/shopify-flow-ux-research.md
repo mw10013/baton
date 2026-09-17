@@ -2,6 +2,11 @@
 
 Research date: 2026-09-06. Research only, not a spec.
 
+> Partly superseded by `shopify-flow-workflow-lifecycle-research.md` (2026-09-17), which redid the
+> create / edit / apply / discard / turn-on / turn-off state machine from first principles and
+> corrects several claims below. Still the only record of the list-page filter row (§1) and the
+> condition-builder side panel (§4).
+
 Scope: Shopify Flow's own UI/UX for managing workflows, observed live in `sandbox-shop-01` via the embedded Flow app (`https://admin.shopify.com/store/sandbox-shop-01/apps/flow/`). Anchor object is the existing workflow **"Tag orders that include specific products"** (`01a07082-bf17-73f8-9a7e-f64547510ecb`). Goals: list page (table, filter badges, primary actions), workflow detail view (layout, More actions, Saved/Draft/Version-history tabs, Recent runs), and the edit interaction (how drafts are created, applied, discarded; editor More actions; Rename; Cancel/Close semantics).
 
 All screenshots below live in `docs/shopify-flow-ux/` and are referenced relatively so another agent can read this doc and look at the images. Screenshots were taken 2026-09-06 against the sandbox as found, plus changes made during the session (documented in §7).

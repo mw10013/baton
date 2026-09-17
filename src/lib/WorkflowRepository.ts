@@ -22,18 +22,6 @@ export class WorkflowRepositoryError extends Schema.TaggedError<WorkflowReposito
   },
 ) {}
 
-/**
- * Another workflow already holds the name, case-insensitively. Uniqueness is
- * among existing rows only — a delete frees the name at once. Detected by a
- * `select` inside the write's transaction, never by matching constraint text:
- * the workflow has two unique keys and a constraint failure cannot say which
- * one the merchant has to change.
- */
-export class WorkflowNameTakenError extends Schema.TaggedError<WorkflowNameTakenError>()(
-  "WorkflowNameTakenError",
-  { name: Domain.WorkflowName },
-) {}
-
 export class WorkflowNotFoundError extends Schema.TaggedError<WorkflowNotFoundError>()(
   "WorkflowNotFoundError",
   { workflowId: Schema.String },
@@ -44,11 +32,17 @@ export class WorkflowNotFoundError extends Schema.TaggedError<WorkflowNotFoundEr
  * workflow's key — the one string a product can carry that names it — and the
  * `unique` on `Workflow.tag` is the rule. This error exists so the refusal can
  * name the holder and the merchant is told which field to change, at the
- * moment they typed it: Create, Duplicate, and Edit tag.
+ * moment they typed it: Create, Duplicate, and Edit tag. The holder's id
+ * rides along with its name because names repeat: a link is the only way the
+ * merchant can be sure which workflow the refusal meant.
  */
 export class WorkflowTagTakenError extends Schema.TaggedError<WorkflowTagTakenError>()(
   "WorkflowTagTakenError",
-  { tag: Domain.WorkflowTag, workflowName: Domain.WorkflowName },
+  {
+    tag: Domain.WorkflowTag,
+    workflowId: Domain.WorkflowId,
+    workflowName: Domain.WorkflowName,
+  },
 ) {}
 
 /** A step id the editor sent that neither the draft nor the workflow carries — a step some other tab already removed, or a stale id. */
@@ -191,7 +185,7 @@ export class WorkflowRepository extends Context.Service<
      * to `Workflow` (a run snapshots its definition so it survives a rename),
      * so nothing cascades from the `Workflow` delete to it.
      *
-     * Bypasses the name, limit, and team checks the ordinary write path
+     * Bypasses the limit and team checks the ordinary write path
      * enforces: positions come from array order and `teamId` from `Team` rows
      * the caller created moments earlier, so there is nothing left to race.
      * The Durable Object gates the callable on `ENVIRONMENT === "local"`.
@@ -203,8 +197,8 @@ export class WorkflowRepository extends Context.Service<
      * Inserts the workflow: off, no steps, carrying its tag, and **no draft**.
      * The draft is the editor's record of unsaved changes and is created by
      * the first change (`ensureDraft`), so a fresh workflow has none and the
-     * editor opens without a Discard button for nothing. Both keys are checked before the insert so
-     * the dialog can say which one to change.
+     * editor opens without a Discard button for nothing. The tag is checked
+     * before the insert so the dialog can name its holder.
      */
     readonly createWorkflow: (
       input: Domain.CreateWorkflowInput,
@@ -212,15 +206,14 @@ export class WorkflowRepository extends Context.Service<
       Domain.Workflow,
       | SqlError.SqlError
       | WorkflowRepositoryError
-      | WorkflowNameTakenError
       | WorkflowTagTakenError
       | WorkflowLimitError
     >;
     /**
      * A copy of the workflow's steps, with their stages under new ids, under
      * the name and tag the merchant chose in the Duplicate dialog; off, with
-     * no draft. Both keys are checked before the insert so the dialog can say
-     * which one to change.
+     * no draft. The tag is checked before the insert so the dialog can name
+     * its holder.
      */
     readonly duplicateWorkflow: (input: {
       readonly workflowId: string;
@@ -231,20 +224,16 @@ export class WorkflowRepository extends Context.Service<
       | SqlError.SqlError
       | WorkflowRepositoryError
       | WorkflowNotFoundError
-      | WorkflowNameTakenError
       | WorkflowTagTakenError
       | WorkflowLimitError
     >;
-    /** Rename only; immediate, since runs snapshot the name. */
+    /** Rename only; immediate, since runs snapshot the name. Unconditional: names are labels, so nothing can refuse one. */
     readonly updateWorkflow: (input: {
       readonly workflowId: string;
       readonly name: Domain.WorkflowName;
     }) => Effect.Effect<
       Domain.Workflow,
-      | SqlError.SqlError
-      | WorkflowRepositoryError
-      | WorkflowNameTakenError
-      | WorkflowNotFoundError
+      SqlError.SqlError | WorkflowRepositoryError | WorkflowNotFoundError
     >;
     /**
      * Writes the tag on the workflow row immediately, like a rename, and
@@ -333,6 +322,28 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowRepositoryError
       | WorkflowNotFoundError
       | NoDraftError
+      | NoStepsError
+      | StepUnassignedError
+    >;
+    /**
+     * Apply and Turn on in one transaction, for the editor's Turn on on a
+     * workflow that has never been applied: promoting steps that have never
+     * run and then switching the workflow on are one decision, and doing them
+     * as two calls leaves a window where the first succeeded and the second
+     * did not. An absent draft is not a refusal here — there is simply nothing
+     * to promote, and the startable check on the workflow's own steps then
+     * decides. Otherwise the same rules as {@link applyDraft} and
+     * {@link setWorkflowActive}, including `activatedAt`.
+     */
+    readonly applyAndActivate: (input: {
+      readonly workflowId: string;
+      readonly activatedAt?: number;
+      readonly teams: Teams;
+    }) => Effect.Effect<
+      Domain.Workflow,
+      | SqlError.SqlError
+      | WorkflowRepositoryError
+      | WorkflowNotFoundError
       | NoStepsError
       | StepUnassignedError
     >;
@@ -826,41 +837,63 @@ export class WorkflowRepository extends Context.Service<
           return steps;
         });
 
+      /**
+       * The Apply write itself, with neither the transaction nor the question
+       * of whether a draft exists: the draft's steps replace the workflow's,
+       * the draft goes, and `updatedAt` moves so "Last updated on" reflects
+       * the Apply. Shared by `applyDraft` and `applyAndActivate`, which ask
+       * that question differently — Apply refuses without a draft, while the
+       * editor's Turn on on a never-applied workflow simply has nothing to
+       * promote. The tag is not drafted, so nothing here reads or writes it.
+       */
+      const promoteDraft = (workflowId: string, teams: Teams) =>
+        Effect.gen(function* () {
+          const steps = yield* draftSteps(workflowId);
+          yield* requireStartableSteps(workflowId, steps, teams);
+          const now = yield* Clock.currentTimeMillis;
+          yield* sql`delete from WorkflowStep where workflowId = ${workflowId}`;
+          yield* sql`
+            insert into WorkflowStep
+              (id, workflowId, position, stage, name, teamId, instructions)
+            select id, workflowId, position, stage, name, teamId, instructions
+            from WorkflowDraftStep
+            where workflowId = ${workflowId}
+          `;
+          const [workflow] = yield* decodeWorkflows(
+            yield* sql`
+              update Workflow
+              set updatedAt = ${now}
+              where id = ${workflowId}
+              returning *
+            `,
+          );
+          yield* sql`delete from WorkflowDraft where workflowId = ${workflowId}`;
+          return workflow ?? (yield* new WorkflowNotFoundError({ workflowId }));
+        });
+
       const decodeHolders = decode(
-        Schema.Array(Schema.Struct({ name: Domain.WorkflowName })),
-        "Invalid Workflow name row",
+        Schema.Array(
+          Schema.Struct({
+            id: Domain.WorkflowId,
+            name: Domain.WorkflowName,
+          }),
+        ),
+        "Invalid Workflow holder row",
       );
 
       /**
-       * Which workflow, if any, already holds `name`, excluding `workflowId`
-       * so a rename may keep the workflow's own name. `Workflow_name_uidx` is
-       * the guarantee; this select exists so the refusal can say the name is
-       * the field that collided rather than the tag. Runs inside the caller's
+       * Which workflow, if any, already holds `tag`, excluding `workflowId` so
+       * a retag may keep the workflow's own tag. The `unique` on
+       * `Workflow.tag` is the guarantee; this select exists so the refusal can
+       * name the holder, which a constraint failure cannot. Tags are stored
+       * folded (`Domain.WorkflowTag` trims and lowercases), so plain equality
+       * is the whole comparison — the same equality
+       * `WorkflowRunRepository.matchesTag` uses. Runs inside the caller's
        * transaction on the Durable Object's synchronous SQLite, so nothing can
-       * interleave between it and the write that follows.
-       */
-      const requireNameFree = (
-        name: Domain.WorkflowName,
-        workflowId: string | null,
-      ) =>
-        Effect.gen(function* () {
-          const [holder] = yield* decodeHolders(
-            yield* sql`
-              select name from Workflow
-              where name = ${name} collate nocase
-                and (${workflowId} is null or id <> ${workflowId})
-            `,
-          );
-          if (holder !== undefined) yield* new WorkflowNameTakenError({ name });
-        });
-
-      /**
-       * The same question for the tag, whose `unique` on `Workflow.tag` is the
-       * guarantee. Tags are stored folded (`Domain.WorkflowTag` trims and
-       * lowercases), so plain equality is the whole comparison — the same
-       * equality `WorkflowRunRepository.matchesTag` uses. The holder's name
-       * rides back so the merchant can decide whether to change this tag or go
-       * retag the other workflow.
+       * interleave between it and the write that follows. The holder's id and
+       * name both ride back: the merchant decides whether to change this tag
+       * or go retag the other workflow, and only the id can take them there,
+       * since two workflows may share a name.
        */
       const requireTagFree = (
         tag: Domain.WorkflowTag,
@@ -869,7 +902,7 @@ export class WorkflowRepository extends Context.Service<
         Effect.gen(function* () {
           const [holder] = yield* decodeHolders(
             yield* sql`
-              select name from Workflow
+              select id, name from Workflow
               where tag = ${tag}
                 and (${workflowId} is null or id <> ${workflowId})
             `,
@@ -877,6 +910,7 @@ export class WorkflowRepository extends Context.Service<
           if (holder !== undefined)
             yield* new WorkflowTagTakenError({
               tag,
+              workflowId: holder.id,
               workflowName: holder.name,
             });
         });
@@ -1097,9 +1131,10 @@ export class WorkflowRepository extends Context.Service<
         ),
 
         /**
-         * The name and the tag are each asked about before the insert, inside
-         * one transaction: the workflow has two unique keys and the merchant
-         * typed both, so the refusal has to name the field that collided.
+         * The tag is asked about before the insert, inside one transaction:
+         * it is the workflow's one unique key, and the refusal has to name
+         * the holder, which the `unique` constraint alone cannot. The name is
+         * not asked about at all — names are labels and may repeat.
          */
         createWorkflow: Effect.fn("WorkflowRepository.createWorkflow")(
           function* ({ name, tag }: Domain.CreateWorkflowInput) {
@@ -1110,7 +1145,6 @@ export class WorkflowRepository extends Context.Service<
                   return yield* new WorkflowLimitError({
                     limit: Domain.WorkflowLimits.maxWorkflows,
                   });
-                yield* requireNameFree(name, null);
                 yield* requireTagFree(tag, null);
                 const now = yield* Clock.currentTimeMillis;
                 const [workflow] = yield* decodeWorkflows(
@@ -1153,7 +1187,6 @@ export class WorkflowRepository extends Context.Service<
                   return yield* new WorkflowLimitError({
                     limit: Domain.WorkflowLimits.maxWorkflows,
                   });
-                yield* requireNameFree(name, null);
                 yield* requireTagFree(tag, null);
                 const steps = yield* workflowSteps(workflowId);
                 const now = yield* Clock.currentTimeMillis;
@@ -1191,7 +1224,7 @@ export class WorkflowRepository extends Context.Service<
           },
         ),
 
-        /** The rename excludes the workflow's own row, so re-saving the current name is not a collision. */
+        /** Unconditional: a name is a label, so any name is available and a rename can only fail by the workflow being gone. */
         updateWorkflow: Effect.fn("WorkflowRepository.updateWorkflow")(
           function* ({
             workflowId,
@@ -1203,7 +1236,6 @@ export class WorkflowRepository extends Context.Service<
             return yield* sql.withTransaction(
               Effect.gen(function* () {
                 yield* requireWorkflow(workflowId);
-                yield* requireNameFree(name, workflowId);
                 const now = yield* Clock.currentTimeMillis;
                 const [workflow] = yield* decodeWorkflows(
                   yield* sql`
@@ -1339,34 +1371,48 @@ export class WorkflowRepository extends Context.Service<
             Effect.gen(function* () {
               yield* requireWorkflow(workflowId);
               yield* requireDraft(workflowId);
-              const steps = yield* draftSteps(workflowId);
-              yield* requireStartableSteps(workflowId, steps, teams);
-              const now = yield* Clock.currentTimeMillis;
-              yield* sql`delete from WorkflowStep where workflowId = ${workflowId}`;
-              yield* sql`
-                insert into WorkflowStep
-                  (id, workflowId, position, stage, name, teamId, instructions)
-                select id, workflowId, position, stage, name, teamId, instructions
-                from WorkflowDraftStep
-                where workflowId = ${workflowId}
-              `;
-              // Steps only; the tag is not drafted. `updatedAt` still moves so
-              // the detail page's "Last updated on" reflects the Apply.
-              const [workflow] = yield* decodeWorkflows(
-                yield* sql`
-                  update Workflow
-                  set updatedAt = ${now}
-                  where id = ${workflowId}
-                  returning *
-                `,
-              );
-              yield* sql`delete from WorkflowDraft where workflowId = ${workflowId}`;
-              return (
-                workflow ?? (yield* new WorkflowNotFoundError({ workflowId }))
-              );
+              return yield* promoteDraft(workflowId, teams);
             }),
           );
         }),
+
+        applyAndActivate: Effect.fn("WorkflowRepository.applyAndActivate")(
+          function* ({
+            workflowId,
+            activatedAt,
+            teams,
+          }: {
+            readonly workflowId: string;
+            readonly activatedAt?: number;
+            readonly teams: Teams;
+          }) {
+            return yield* sql.withTransaction(
+              Effect.gen(function* () {
+                yield* requireWorkflow(workflowId);
+                const draft = yield* findDraft(workflowId);
+                if (Option.isSome(draft))
+                  yield* promoteDraft(workflowId, teams);
+                yield* requireStartableSteps(
+                  workflowId,
+                  yield* workflowSteps(workflowId),
+                  teams,
+                );
+                const now = yield* Clock.currentTimeMillis;
+                const [workflow] = yield* decodeWorkflows(
+                  yield* sql`
+                    update Workflow
+                    set activatedAt = ${activatedAt ?? now}, updatedAt = ${now}
+                    where id = ${workflowId}
+                    returning *
+                  `,
+                );
+                return (
+                  workflow ?? (yield* new WorkflowNotFoundError({ workflowId }))
+                );
+              }),
+            );
+          },
+        ),
 
         discardDraft: Effect.fn("WorkflowRepository.discardDraft")(function* ({
           workflowId,
@@ -1603,14 +1649,15 @@ export class WorkflowRepository extends Context.Service<
               "Invalid OwnedStep row",
             )(
               yield* sql`
-                select workflowId, workflowName, side, stepName from (
+                select workflowId, workflowName, workflowTag, side, stepName from (
                   select w.id as workflowId, w.name as workflowName,
+                    w.tag as workflowTag,
                     'workflow' as side, 0 as sideOrder, s.name as stepName, s.position
                   from WorkflowStep s
                   join Workflow w on w.id = s.workflowId
                   where s.teamId = ${teamId}
                   union all
-                  select w.id, w.name, 'draft', 1, s.name, s.position
+                  select w.id, w.name, w.tag, 'draft', 1, s.name, s.position
                   from WorkflowDraftStep s
                   join Workflow w on w.id = s.workflowId
                   where s.teamId = ${teamId}
@@ -1628,14 +1675,15 @@ export class WorkflowRepository extends Context.Service<
               "Invalid OwnedStepByTeam row",
             )(
               yield* sql`
-                select teamId, workflowId, workflowName, side, stepName from (
+                select teamId, workflowId, workflowName, workflowTag, side, stepName from (
                   select s.teamId, w.id as workflowId, w.name as workflowName,
+                    w.tag as workflowTag,
                     'workflow' as side, 0 as sideOrder, s.name as stepName, s.position
                   from WorkflowStep s
                   join Workflow w on w.id = s.workflowId
                   where s.teamId is not null
                   union all
-                  select s.teamId, w.id, w.name, 'draft', 1, s.name, s.position
+                  select s.teamId, w.id, w.name, w.tag, 'draft', 1, s.name, s.position
                   from WorkflowDraftStep s
                   join Workflow w on w.id = s.workflowId
                   where s.teamId is not null

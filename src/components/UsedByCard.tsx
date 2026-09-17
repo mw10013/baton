@@ -5,7 +5,9 @@ import { groupUsedBy } from "@/lib/usedBy";
 /**
  * The aside card answering "where is this team used?": the workflows whose
  * steps point at the team, each a link to where those steps are edited.
- * Draft-only use is badged "draft".
+ * Each carries its tag, because a name does not identify a workflow — two may
+ * share one — and the tag is the key the merchant already knows. Draft-only
+ * use is badged "draft".
  *
  * It is a titled card in the page's aside rather than a sentence under the page
  * heading, because a bare paragraph is not something `s-page` lays out — it
@@ -37,6 +39,7 @@ export function UsedByCard({
               alignItems="center"
             >
               <s-link href={workflow.href}>{workflow.workflowName}</s-link>
+              <s-badge>{workflow.workflowTag}</s-badge>
               {workflow.draftOnly && <s-badge>draft</s-badge>}
             </s-stack>
           ))}

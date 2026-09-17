@@ -87,7 +87,7 @@ describe("Domain workflow schemas", () => {
 });
 
 describe("WorkflowRepository", () => {
-  it("creates, lists with stepCount, rejects a nocase duplicate name, and frees it on delete", () =>
+  it("creates, lists with stepCount, takes a name another workflow already uses, and deletes", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -98,10 +98,17 @@ describe("WorkflowRepository", () => {
         const fresh = yield* found(created.id);
         strictEqual(tagOf(fresh.workflow), "engraving");
         strictEqual(fresh.draft, null);
-        const dupe = yield* repo
-          .createWorkflow({ name: name("engraving"), tag: tag("other") })
-          .pipe(Effect.flip);
-        strictEqual(dupe._tag, "WorkflowNameTakenError");
+        // The name is a label: the same one under a free tag is a second workflow.
+        const twin = yield* repo.createWorkflow({
+          name: name("engraving"),
+          tag: tag("other"),
+        });
+        strictEqual(twin.id !== created.id, true);
+        strictEqual(
+          (yield* repo.listWorkflows({ teams: ALL_TEAMS })).length,
+          2,
+        );
+        yield* repo.deleteWorkflow({ workflowId: twin.id });
         const all = yield* repo.listWorkflows({ teams: ALL_TEAMS });
         strictEqual(all.length, 1);
         strictEqual(all[0]?.stepCount, 0);
@@ -155,10 +162,12 @@ describe("WorkflowRepository", () => {
           .updateWorkflowTag({ workflowId: a.id, tag: tag("B") })
           .pipe(Effect.flip);
         strictEqual(tagTaken._tag, "WorkflowTagTakenError");
-        const taken = yield* repo
-          .updateWorkflow({ workflowId: a.id, name: name("b") })
-          .pipe(Effect.flip);
-        strictEqual(taken._tag, "WorkflowNameTakenError");
+        // A rename onto another workflow's name is not a collision.
+        strictEqual(
+          (yield* repo.updateWorkflow({ workflowId: a.id, name: name("b") }))
+            .name,
+          "b",
+        );
         const missing = yield* repo
           .updateWorkflow({ workflowId: "nope", name: name("C") })
           .pipe(Effect.flip);
@@ -686,14 +695,15 @@ describe("WorkflowRepository duplicate", () => {
         strictEqual(Domain.isActive(source.workflow), true);
         strictEqual(tagOf(source.workflow), "engraved");
 
-        const nameTaken = yield* repo
-          .duplicateWorkflow({
+        // The copy's name may repeat the one the first copy took.
+        strictEqual(
+          (yield* repo.duplicateWorkflow({
             workflowId: w.id,
             name: name("Engraved ring copy"),
             tag: tag("free"),
-          })
-          .pipe(Effect.flip);
-        strictEqual(nameTaken._tag, "WorkflowNameTakenError");
+          })).name,
+          "Engraved ring copy",
+        );
         const tagTaken = yield* repo
           .duplicateWorkflow({
             workflowId: w.id,
@@ -755,22 +765,26 @@ describe("WorkflowRepository tag uniqueness", () => {
       }),
     ));
 
-  it("reports a taken name and a taken tag independently", () =>
+  it("refuses the tag alone: the same name under a free tag goes through", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
-        yield* repo.createWorkflow({
+        const holder = yield* repo.createWorkflow({
           name: name("Engraving"),
           tag: tag("engraved"),
         });
-        const sameName = yield* repo
-          .createWorkflow({ name: name("engraving"), tag: tag("rush") })
-          .pipe(Effect.flip);
-        strictEqual(sameName._tag, "WorkflowNameTakenError");
+        const sameName = yield* repo.createWorkflow({
+          name: name("engraving"),
+          tag: tag("rush"),
+        });
+        strictEqual(sameName.name, "engraving");
         const sameTag = yield* repo
           .createWorkflow({ name: name("Rush"), tag: tag("engraved") })
           .pipe(Effect.flip);
         strictEqual(sameTag._tag, "WorkflowTagTakenError");
+        // The refusal links to the holder, since its name no longer picks it out.
+        if (sameTag._tag === "WorkflowTagTakenError")
+          strictEqual(sameTag.workflowId, holder.id);
       }),
     ));
 
@@ -813,20 +827,98 @@ describe("WorkflowRepository tag uniqueness", () => {
     ));
 });
 
+/**
+ * The name is a label, not a key: the id identifies a workflow and the tag is
+ * the one thing no two may share. Every write that takes a name takes any.
+ */
+describe("WorkflowRepository names are labels", () => {
+  it("two workflows share a name, a rename takes an existing one, and a duplicate keeps the source's", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const repo = yield* WorkflowRepository;
+        const first = yield* repo.createWorkflow({
+          name: name("Engraving"),
+          tag: tag("engraved"),
+        });
+        const second = yield* repo.createWorkflow({
+          name: name("Engraving"),
+          tag: tag("rush"),
+        });
+        strictEqual(second.name, "Engraving");
+        strictEqual(first.id !== second.id, true);
+
+        const renamed = yield* repo.updateWorkflow({
+          workflowId: second.id,
+          name: name("engraving"),
+        });
+        strictEqual(renamed.name, "engraving");
+
+        yield* twoSteps(first.id);
+        const copy = yield* repo.duplicateWorkflow({
+          workflowId: first.id,
+          name: name("Engraving"),
+          tag: tag("third"),
+        });
+        strictEqual(copy.name, "Engraving");
+        strictEqual(
+          (yield* repo.listWorkflows({ teams: ALL_TEAMS })).length,
+          3,
+        );
+      }),
+    ));
+});
+
+/** The editor's Turn on on a never-applied workflow: one call, one transaction. */
+describe("WorkflowRepository applyAndActivate", () => {
+  it("promotes the draft and turns the switch on; refuses an empty workflow and leaves it off", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const repo = yield* WorkflowRepository;
+        const w = yield* repo.createWorkflow({
+          name: name("Engraving"),
+          tag: tag("engraved"),
+        });
+
+        // Nothing to promote and nothing in force: refused, and still off.
+        const empty = yield* repo
+          .applyAndActivate({ workflowId: w.id, teams: ALL_TEAMS })
+          .pipe(Effect.flip);
+        strictEqual(empty._tag, "NoStepsError");
+        strictEqual(
+          Domain.isActive(
+            yield* found(w.id).pipe(Effect.map((detail) => detail.workflow)),
+          ),
+          false,
+        );
+
+        yield* twoSteps(w.id);
+        const on = yield* repo.applyAndActivate({
+          workflowId: w.id,
+          teams: ALL_TEAMS,
+        });
+        strictEqual(Domain.isActive(on), true);
+        const after = yield* found(w.id);
+        strictEqual(after.draft, null);
+        deepStrictEqual(stepNames(after.steps), ["Cut", "Finish"]);
+
+        // No draft left: the second call is a plain re-activation.
+        const again = yield* repo.applyAndActivate({
+          workflowId: w.id,
+          activatedAt: 1000,
+          teams: ALL_TEAMS,
+        });
+        strictEqual(again.activatedAt, 1000);
+      }),
+    ));
+});
+
 describe("copyName", () => {
-  it("takes the first free suffix and trims the base to fit the 64-character limit", () => {
-    strictEqual(copyName("Engraved ring", []), "Engraved ring copy");
-    strictEqual(
-      copyName("Engraved ring", ["Engraved ring copy"]),
-      "Engraved ring copy 2",
-    );
-    // The index is `collate nocase`, so a differently-cased name is taken.
-    strictEqual(
-      copyName("Engraved ring", ["engraved ring COPY", "Engraved ring copy 2"]),
-      "Engraved ring copy 3",
-    );
+  it("suffixes the name and trims the base to fit the 64-character limit", () => {
+    strictEqual(copyName("Engraved ring"), "Engraved ring copy");
+    // Names repeat, so the suffix is plain: copying twice offers the same name.
+    strictEqual(copyName("Engraved ring copy"), "Engraved ring copy copy");
     const long = "x".repeat(64);
-    const copied = copyName(long, []);
+    const copied = copyName(long);
     strictEqual(copied.length, 64);
     strictEqual(copied.endsWith(" copy"), true);
   });

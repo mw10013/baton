@@ -29,22 +29,20 @@ import {
   copyName,
   DELETE_WORKFLOW_WARNING,
   deleteWorkflowResultMessage,
+  DELETED_TOAST,
   itemTriggerLine,
+  neverApplied,
+  RENAME_FIELD_LABEL,
+  RENAME_HEADING,
+  RENAMED_TOAST,
+  STATUS_ACTIVE,
+  STATUS_INACTIVE,
   turnOnBlocker,
+  turnOnBody,
   workflowResultMessage,
 } from "@/lib/workflowShared";
 
 const WorkflowParams = Schema.Struct({ workflowId: Schema.String });
-
-/**
- * `tab=draft` is the Draft tab; anything else, including a value the page
- * does not know or a draft that no longer exists, is the live workflow.
- * Hand-written so an unknown value falls back instead of failing the route.
- */
-const validateSearch = ({
-  tab,
-}: Record<string, unknown>): { readonly tab?: "draft" } =>
-  tab === "draft" ? { tab } : {};
 
 const RENAME_MODAL = "rename-workflow";
 const DUPLICATE_MODAL = "duplicate-workflow";
@@ -57,9 +55,16 @@ const decodeDeleteWorkflowResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.DeleteWorkflowResult),
 );
 
-/** The Turn on dialog's first line: the rule that will start runs once the switch is on. */
-const turnOnBody = (workflow: Domain.Workflow) =>
-  `Every order placed from now with a line item tagged \u201C${workflow.tag}\u201D will start a run of this workflow.`;
+/** The holder a `TagTaken` named, for the link under the field; see `WorkflowTag.TagTakenLink`. */
+type TagHolder = {
+  readonly workflowId: string;
+  readonly workflowName: string;
+} | null;
+
+const tagHolder = (result: Domain.WorkflowResult): TagHolder =>
+  result._tag === "TagTaken"
+    ? { workflowId: result.workflowId, workflowName: result.workflowName }
+    : null;
 
 /** Loader read for the same reason as the index's: a definition is configuration one person edits. */
 const getLoaderData = createServerFn({ method: "GET" })
@@ -76,23 +81,33 @@ const getLoaderData = createServerFn({ method: "GET" })
   );
 
 export const Route = createFileRoute("/app/workflows/$workflowId")({
-  validateSearch,
   loader: ({ params }) => getLoaderData({ data: params }),
   component: RouteComponent,
 });
 
 /**
- * Workflow detail: what this workflow is, read-only. Every edit happens
- * on `/app/workflows/$workflowId/edit`, so this page has no step controls and
- * no form fields — the two tabs show the live workflow and, while one exists,
- * the draft, so a merchant can see what runs today next to what is being
- * written. There is no version history and no run history here on purpose: a
- * run copies its steps when it starts and is independent from then on, so the
- * workflow has exactly two states worth showing.
+ * Workflow detail: what this workflow does today, read-only. Every edit
+ * happens on `/app/workflows/$workflowId/edit`, so this page has no step
+ * controls and no form fields.
+ *
+ * The page shows what is in force and nothing else — the steps that start
+ * runs now. A `Draft` accessory badge is the whole signal that the editor
+ * holds unapplied changes; the editor, one click away, is where they are
+ * read, applied, or discarded. There is no draft tab, no banner and no
+ * sentence saying so: a badge and a button already say it, and a second
+ * telling is what makes a page feel like a form. There is no version history
+ * and no run history here either, on purpose: a run copies its steps when it
+ * starts and is independent from then on.
+ *
+ * The header reads left to right as look · change · commit: `Edit`, `More
+ * actions`, then the on/off switch as the primary. The switch is absent while
+ * the workflow has never been applied (there is nothing in force to turn on —
+ * the editor's Turn on applies and activates in one step) and while an
+ * inactive workflow has a draft (what would be turned on is not what the
+ * editor is holding).
  */
 function RouteComponent() {
   const { workflowId } = Route.useParams();
-  const { tab } = Route.useSearch();
   const detail: Domain.WorkflowLoaderData = Route.useLoaderData();
   const router = useRouter();
   const navigate = useNavigate({ from: Route.fullPath });
@@ -100,10 +115,9 @@ function RouteComponent() {
   const { agent, identified } = useShopAgent();
   const [banner, setBanner] = React.useState<string | null>(null);
   const [name, setName] = React.useState(detail?.workflow.name ?? "");
-  const [nameError, setNameError] = React.useState<string | null>(null);
   const [copy, setCopy] = React.useState({ name: "", tag: "", dirty: false });
-  const [copyNameError, setCopyNameError] = React.useState<string | null>(null);
   const [copyTagError, setCopyTagError] = React.useState<string | null>(null);
+  const [copyTagHolder, setCopyTagHolder] = React.useState<TagHolder>(null);
 
   const invalidate = () => router.invalidate({ sync: true });
 
@@ -130,13 +144,19 @@ function RouteComponent() {
       call((stub) => stub.updateWorkflow({ workflowId, name })).then(
         decodeWorkflowResult,
       ),
+    /**
+     * Nothing a rename can be refused for belongs under the field any more:
+     * names are labels, so only `NotFound` is left and that is about the
+     * workflow, not what was typed.
+     */
     onSuccess: async (result) => {
       const message = workflowResultMessage(result);
       if (message !== null) {
-        setNameError(message);
+        setBanner(message);
         return;
       }
       await shopify.modal.hide(RENAME_MODAL);
+      shopify.toast.show(RENAMED_TOAST);
       await invalidate();
     },
     onError,
@@ -152,14 +172,11 @@ function RouteComponent() {
         }),
       ).then(decodeWorkflowResult),
     onSuccess: async (result) => {
-      // Routed by `_tag` rather than into the banner: the copy has two keys
-      // and the merchant typed both, so the refusal belongs under the field.
-      if (result._tag === "NameTaken") {
-        setCopyNameError(workflowResultMessage(result));
-        return;
-      }
+      // The tag is the copy's one unique key, so it is the one refusal that
+      // goes under a field rather than into the banner above both.
       if (result._tag === "TagTaken") {
         setCopyTagError(workflowResultMessage(result));
+        setCopyTagHolder(tagHolder(result));
         return;
       }
       if (result._tag !== "Ok") {
@@ -183,14 +200,14 @@ function RouteComponent() {
    * boundary, so what they see is what will be stored.
    */
   const seedDuplicateForm = () => {
-    const suggested = copyName(detail?.workflow.name ?? "", []);
+    const suggested = copyName(detail?.workflow.name ?? "");
     setCopy({
       name: suggested,
       tag: suggested.trim().toLowerCase(),
       dirty: false,
     });
-    setCopyNameError(null);
     setCopyTagError(null);
+    setCopyTagHolder(null);
   };
 
   const deleteMutation = useMutation({
@@ -201,6 +218,7 @@ function RouteComponent() {
     onSuccess: async (result) => {
       if (result._tag === "Deleted") {
         await shopify.modal.hide(DELETE_MODAL);
+        shopify.toast.show(DELETED_TOAST);
         await navigate({ to: "/app/workflows" });
         return;
       }
@@ -240,37 +258,44 @@ function RouteComponent() {
   const { draft, steps } = detail;
   const workflow = detail.workflow;
 
-  const showingDraft = tab === "draft" && draft !== null;
-  const shownSteps = showingDraft ? draft.steps : steps;
+  const fresh = neverApplied(detail);
+  const hasDraft = draft !== null;
   const blocker = turnOnBlocker(steps);
-
-  const tabButton = (label: string, draftTab: boolean) => (
-    <s-button
-      variant={showingDraft === draftTab ? "primary" : "tertiary"}
-      onClick={() => {
-        void navigate({ search: draftTab ? { tab: "draft" } : {} });
-      }}
-    >
-      {label}
-    </s-button>
-  );
+  const active = Domain.isActive(workflow);
+  /** Flow's asymmetry: Turn off is always offered, Turn on only when what would go on is what the editor is holding. */
+  const showSwitch = !fresh && (active || !hasDraft);
 
   return (
     <s-page heading={workflow.name} inlineSize="base">
       <s-link slot="breadcrumb-actions" href="/app/workflows">
         Workflows
       </s-link>
-      {Domain.isActive(workflow) ? (
-        <s-badge slot="accessory" tone="success">
-          Active
+      {/* A workflow that has never been applied has no state to report: it is
+          a draft and nothing else, so the one badge says that instead of
+          calling it inactive. */}
+      {fresh ? (
+        <s-badge slot="accessory" tone="info">
+          Draft
         </s-badge>
       ) : (
-        <s-badge slot="accessory">Off</s-badge>
+        <>
+          {active ? (
+            <s-badge slot="accessory" tone="success">
+              {STATUS_ACTIVE}
+            </s-badge>
+          ) : (
+            <s-badge slot="accessory">{STATUS_INACTIVE}</s-badge>
+          )}
+          {hasDraft && (
+            <s-badge slot="accessory" tone="info">
+              Draft
+            </s-badge>
+          )}
+        </>
       )}
       <s-badge slot="accessory">{workflow.tag}</s-badge>
       <s-button
-        slot="primary-action"
-        variant="primary"
+        slot="secondary-actions"
         icon="edit"
         commandFor={editor.windowProps.id}
         command="--show"
@@ -278,13 +303,6 @@ function RouteComponent() {
         Edit
       </s-button>
       <s-app-window {...editor.windowProps} />
-      <WorkflowSwitch
-        workflow={workflow}
-        steps={steps}
-        turnOnBody={turnOnBody(workflow)}
-        onChanged={invalidate}
-        onMessage={setBanner}
-      />
       <s-button slot="secondary-actions" commandFor="workflow-actions">
         More actions
       </s-button>
@@ -308,29 +326,34 @@ function RouteComponent() {
           Delete
         </s-button>
       </s-menu>
+      <WorkflowSwitch
+        workflow={workflow}
+        steps={steps}
+        turnOnBody={turnOnBody(workflow.tag)}
+        slot="primary-action"
+        showControl={showSwitch}
+        onChanged={invalidate}
+        onMessage={setBanner}
+      />
 
       <SocketBanner />
+
+      <s-paragraph color="subdued">
+        Last updated on <LocalDateTime value={workflow.updatedAt} />
+      </s-paragraph>
 
       <s-section accessibilityLabel="Workflow">
         <s-stack gap="base">
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
-          {!Domain.isActive(workflow) && blocker !== null && (
+          {showSwitch && !active && blocker !== null && (
             <s-banner tone="info" heading="Turn on is unavailable">
-              {activateResultMessage(blocker)}
+              {/* Wrapped, like `AttentionBanner`'s lines: `s-banner` renders
+                  its body from elements, and a bare string child never
+                  reaches the page. */}
+              <s-paragraph>{activateResultMessage(blocker)}</s-paragraph>
             </s-banner>
           )}
-          {/* One tab is not a choice: with no draft there is only the
-              workflow, so the row would be a lone selected pill. */}
-          {draft !== null && (
-            <s-stack direction="inline" gap="small-300" alignItems="center">
-              {tabButton("Live workflow", false)}
-              {tabButton("Draft", true)}
-            </s-stack>
-          )}
 
-          <s-paragraph color="subdued">
-            Last updated on <LocalDateTime value={workflow.updatedAt} />
-          </s-paragraph>
           {workflow.activatedAt !== null && (
             <AppliesSince
               activatedAt={workflow.activatedAt}
@@ -338,17 +361,10 @@ function RouteComponent() {
             />
           )}
 
-          {showingDraft && (
-            <s-banner tone="info" heading="Not running yet">
-              These changes take effect when you apply them in the editor.
-            </s-banner>
-          )}
-
-          {/* Under the tabs, because which side it is about is the tab. */}
-          <AttentionBanner steps={shownSteps} />
+          <AttentionBanner steps={steps} />
 
           <StageFlow
-            steps={shownSteps}
+            steps={steps}
             trigger={
               <s-box
                 padding="base"
@@ -360,8 +376,7 @@ function RouteComponent() {
                   <s-text color="subdued">
                     {itemTriggerLine(workflow.tag)}
                   </s-text>
-                  {/* The tag is not drafted, so both tabs show the workflow's
-                      own and the write lands immediately. */}
+                  {/* The tag is not drafted, so this is the workflow's own and the write lands immediately. */}
                   <WorkflowTag.WorkflowTag
                     tag={workflow.tag}
                     disabled={!identified}
@@ -379,30 +394,26 @@ function RouteComponent() {
                 </s-stack>
               </s-box>
             }
-            {...(shownSteps.length === 0
-              ? {
-                  footer: (
-                    <s-paragraph color="subdued">
-                      No steps yet. Edit to add some.
-                    </s-paragraph>
-                  ),
-                }
-              : {})}
           />
         </s-stack>
       </s-section>
 
-      <s-modal id={RENAME_MODAL} heading="Rename workflow">
-        <s-text-field
-          label="Name"
-          value={name}
-          maxLength={64}
-          {...(nameError === null ? {} : { error: nameError })}
-          onInput={(event) => {
-            setName(event.currentTarget.value);
-            setNameError(null);
-          }}
-        />
+      <s-modal id={RENAME_MODAL} heading={RENAME_HEADING}>
+        <s-stack gap="small-300">
+          <s-text-field
+            label={RENAME_FIELD_LABEL}
+            value={name}
+            maxLength={Domain.NAME_MAX_LENGTH}
+            onInput={(event) => {
+              setName(event.currentTarget.value);
+            }}
+          />
+          {/* `s-text-field` has no counter of its own, and the limit is worth
+              seeing while typing: the field silently stops accepting. */}
+          <s-text color="subdued">
+            {`${String(name.length)}/${String(Domain.NAME_MAX_LENGTH)}`}
+          </s-text>
+        </s-stack>
         <s-button
           slot="secondary-actions"
           commandFor={RENAME_MODAL}
@@ -432,8 +443,7 @@ function RouteComponent() {
           <s-text-field
             label="Name"
             value={copy.name}
-            maxLength={64}
-            {...(copyNameError === null ? {} : { error: copyNameError })}
+            maxLength={Domain.NAME_MAX_LENGTH}
             onInput={(event) => {
               const next = event.currentTarget.value;
               setCopy((current) => ({
@@ -441,7 +451,6 @@ function RouteComponent() {
                 name: next,
                 ...(current.dirty ? {} : { tag: next.trim().toLowerCase() }),
               }));
-              setCopyNameError(null);
             }}
           />
           <s-text-field
@@ -454,8 +463,10 @@ function RouteComponent() {
               const next = event.currentTarget.value;
               setCopy((current) => ({ ...current, tag: next, dirty: true }));
               setCopyTagError(null);
+              setCopyTagHolder(null);
             }}
           />
+          <WorkflowTag.TagTakenLink holder={copyTagHolder} />
         </s-stack>
         <s-button
           slot="secondary-actions"

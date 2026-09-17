@@ -2,32 +2,14 @@ import { Match } from "effect";
 
 import * as Domain from "@/lib/Domain";
 
-/** `Workflow_name_uidx` is `collate nocase`, so names collide case-insensitively. */
-const MAX_NAME_LENGTH = 64;
-
 /**
- * The name the Duplicate dialog offers: `<name> copy`, then `<name> copy 2`,
- * and so on until one is free, with the base trimmed so the result fits
- * `Domain.WorkflowName`. The merchant can overwrite it; prefilling a free one
- * means the dialog does not open on a collision.
- *
- * `taken.length + 1` candidates against `taken.length` taken names always
- * leave one free, so the fallback is unreachable.
+ * The Duplicate dialog's prefilled name. Names may repeat, so there is no
+ * search for a free one: `<name> copy`, with the base trimmed so the result
+ * still fits `Domain.WorkflowName`.
  */
-export const copyName = (name: string, taken: readonly string[]): string => {
-  const used = new Set(taken.map((existing) => existing.toLowerCase()));
-  const withSuffix = (suffix: string) =>
-    `${name.slice(0, MAX_NAME_LENGTH - suffix.length).trimEnd()}${suffix}`;
-  const candidates = [
-    withSuffix(" copy"),
-    ...Array.from({ length: taken.length }, (_, index) =>
-      withSuffix(` copy ${String(index + 2)}`),
-    ),
-  ];
-  return (
-    candidates.find((candidate) => !used.has(candidate.toLowerCase())) ??
-    withSuffix(` copy ${String(taken.length + 2)}`)
-  );
+export const copyName = (name: string): string => {
+  const suffix = " copy";
+  return `${name.slice(0, Domain.NAME_MAX_LENGTH - suffix.length).trimEnd()}${suffix}`;
 };
 
 /**
@@ -49,8 +31,6 @@ export const workflowResultMessage = Match.typeTags<
   string | null
 >()({
   Ok: () => null,
-  NameTaken: () =>
-    "A workflow with that name already exists. Choose another name.",
   TagTaken: tagTakenMessage,
   NotFound: () => "That workflow no longer exists.",
   Limit: ({ limit }) =>
@@ -66,11 +46,44 @@ export const deleteWorkflowResultMessage = Match.typeTags<
 });
 
 /**
- * The delete dialog's body, both surfaces. It says nothing about runs
- * because none are lost: a delete removes the definition only, and every run
- * stays on its order (the merchant copy of `Domain.Workflow`).
+ * A workflow that has never been applied has no steps of its own: Apply is the
+ * only writer of `WorkflowStep`, and a fresh workflow starts with none (the
+ * JSDoc on `Domain.Workflow`). Zero steps after the first Apply is impossible,
+ * since Apply refuses an empty draft (`NoStepsError`). So "no steps" and
+ * "never applied" are the same fact, and the editor can offer Turn on instead
+ * of Apply on the strength of it.
  */
-export const DELETE_WORKFLOW_WARNING = "This can't be undone.";
+export const neverApplied = (detail: {
+  readonly steps: readonly unknown[];
+}): boolean => detail.steps.length === 0;
+
+/**
+ * Every dialog string the detail page and the editor both show, in one place
+ * so the two surfaces cannot drift apart. Sentence case throughout, and the
+ * dismiss verb is `Cancel` everywhere.
+ */
+export const APPLY_HEADING = "Apply changes?";
+export const APPLY_BODY =
+  "This workflow is turned on. Once you apply changes, they'll take effect immediately. Runs already open keep the steps they started with.";
+export const DISCARD_HEADING = "Discard changes?";
+export const DISCARD_BODY = "Are you sure you want to discard these changes?";
+export const TURN_OFF_HEADING = "Turn off workflow?";
+export const TURN_OFF_BODY =
+  "New orders won't start this workflow. Runs already in progress keep going.";
+export const RENAME_HEADING = "Rename workflow";
+export const RENAME_FIELD_LABEL = "New name";
+export const RENAMED_TOAST = "Workflow renamed";
+export const DELETED_TOAST = "Workflow deleted";
+export const STATUS_ACTIVE = "Active";
+export const STATUS_INACTIVE = "Inactive";
+
+/**
+ * The delete dialog's body, both surfaces. It names what survives rather than
+ * only what goes: a delete removes the definition, its steps and its draft,
+ * and every run stays on its order (the merchant copy of `Domain.Workflow`).
+ */
+export const DELETE_WORKFLOW_WARNING =
+  "This workflow will be permanently deleted. Runs already on orders are kept.";
 
 /**
  * The trigger line: what has to be true of an order for this workflow to
@@ -80,6 +93,10 @@ export const DELETE_WORKFLOW_WARNING = "This can't be undone.";
  */
 export const itemTriggerLine = (tag: string) =>
   `Starts when an order contains a product tagged \u201C${tag}\u201D. Orders placed before this workflow was turned on are skipped.`;
+
+/** The Turn on dialog's first line, both surfaces: the rule that will start runs once the switch is on. */
+export const turnOnBody = (tag: string) =>
+  `Every order placed from now with a line item tagged \u201C${tag}\u201D will start a run of this workflow.`;
 
 export const changeActivatedAtResultMessage = Match.typeTags<
   Domain.ChangeActivatedAtResult,

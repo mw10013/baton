@@ -202,6 +202,7 @@ function RouteComponent() {
                           <s-link href={workflow.href}>
                             {workflow.workflowName}
                           </s-link>
+                          <s-badge>{workflow.workflowTag}</s-badge>
                           {workflow.draftOnly && <s-badge>draft</s-badge>}
                         </React.Fragment>
                       ))}

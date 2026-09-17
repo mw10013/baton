@@ -25,26 +25,32 @@ const clickMenuItem = (frame: FrameLocator, name: string) =>
  * page, and the editor.
  *
  * What it is really here to prove is the draft lifecycle, because that is the
- * part no unit test can see: opening the editor writes nothing, the first
- * saved change starts the draft, Apply promotes it and the Draft tab
- * disappears, and Discard throws it away. It also covers the one thing that
- * makes the lazy draft possible — editing a step that only exists on the
+ * part no unit test can see. A workflow that has never been applied is a
+ * draft and nothing else, so the editor offers **Turn on** and that one click
+ * applies and activates; from then on the first saved change starts a draft,
+ * Apply promotes it, and Discard throws it away. It also covers the one thing
+ * that makes the lazy draft possible — editing a step that only exists on the
  * workflow so far, whose id the draft then carries (`ensureDraft`).
  *
- * Title-bar controls (Create, Edit, Apply, Turn on, Close, More actions) are
- * hoisted out of the iframe by App Bridge, so they are driven with
- * `clickHoisted` and are all buttons there. `clickHoisted` waits for the
+ * The draft state is asserted through the header's buttons rather than the
+ * `Draft` accessory badge: App Bridge hoists accessory badges into admin
+ * chrome, where "Draft" is not ours to locate reliably, while the button set
+ * is the same fact and is what the merchant acts on.
+ *
+ * Title-bar controls (Create, Edit, Apply, Turn on, Turn off, Close, More
+ * actions) are hoisted out of the iframe by App Bridge, so they are driven
+ * with `clickHoisted` and are all buttons there. `clickHoisted` waits for the
  * hoisted proxy to be enabled, which matters here more than anywhere: the
- * editor's Apply and Discard are disabled until the `ShopAgent` socket
- * identifies, a second or two after the window paints.
+ * editor's controls are disabled until the `ShopAgent` socket identifies, a
+ * second or two after the window paints.
  *
  * Two frames, and which one a control is in is not a detail: the list and
  * detail pages are `frame` (`appFrame`), while the editor runs in its own
  * `s-app-window` iframe, `editor` (`editorFrame`), that the admin mounts
  * beside the app's rather than inside it. Create opens the editor straight
- * away, so everything between Create and Apply — the trigger card, Edit tag,
- * the step forms, the canvas — is `editor`, and the detail page only comes
- * back once the window hides. Modals render in whichever frame opened them.
+ * away, so everything between Create and Turn on — the step forms, the canvas
+ * — is `editor`, and the detail page only comes back once the window hides.
+ * Modals render in whichever frame opened them.
  *
  * Budget: this spec makes far more round trips than `teams.spec.ts` and each
  * one re-runs the Shopify auth middleware, so it pins its own timeout for the
@@ -75,7 +81,15 @@ const closeEditor = (page: Page) =>
       .getByRole("button", { name: "Close" }),
   );
 
-test("workflows create, edit, apply, and discard through the draft", async ({
+/**
+ * The step panel's Save and Delete, which are section buttons rather than
+ * hoisted page actions and share their names with the Rename and Delete
+ * dialogs' confirms. Scoped to the aside so the two never collide.
+ */
+const stepPanel = (editor: FrameLocator) =>
+  editor.locator('s-section[slot="aside"]');
+
+test("a fresh workflow turns on from the editor, then edits go through the draft", async ({
   page,
 }) => {
   test.setTimeout(180_000);
@@ -122,16 +136,19 @@ test("workflows create, edit, apply, and discard through the draft", async ({
   /* Create lands in the editor, as Flow's does, so the new workflow's first
      screen is the canvas rather than its detail page. */
   await expect(editor.locator(`s-page[heading="${CREATED}"]`)).toBeVisible();
-  await expect(
-    editor.getByText("Starts when an order contains a product tagged", {
-      exact: false,
-    }),
-  ).toBeVisible();
 
-  /* The editor shows the tag and offers no way to change it: the tag is the
-     workflow's identity, edited from the detail page, and the editor is about
-     steps. */
-  await expect(editor.getByRole("button", { name: "Edit tag" })).toHaveCount(0);
+  /* Never applied: Turn on is the only commit on offer, and it is blocked
+     until there is a step to apply. */
+  await expect(page.getByRole("button", { name: "Turn on" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Apply changes" })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("button", { name: "Discard changes" }),
+  ).toHaveCount(0);
+  await expect(
+    editor.getByText("Add a step to this workflow.", { exact: true }),
+  ).toBeVisible();
 
   await editor.getByRole("button", { name: "Add the first step" }).click();
   await stepName.fill("Bake");
@@ -140,28 +157,38 @@ test("workflows create, edit, apply, and discard through the draft", async ({
     .selectOption({ label: TEAM });
   await editor.getByRole("button", { name: "Add step" }).click();
   await expect(editor.getByText("Stage 1", { exact: true })).toBeVisible();
+  await expect(editor.getByText("✓ Saved", { exact: false })).toBeVisible();
 
-  /* Off, so Apply needs no confirmation. */
-  await clickHoisted(page.getByRole("button", { name: "Apply changes" }));
-  await expect(frame.locator(`s-page[heading="${CREATED}"]`)).toBeVisible();
-  await expect(frame.getByRole("button", { name: "Draft" })).toHaveCount(0);
-
-  /* Turn on is its own decision, and it confirms. */
+  /* One click applies the steps and turns the switch on, and the dialog says
+     both halves. */
   await clickHoisted(page.getByRole("button", { name: "Turn on" }));
   await expect(
-    frame.getByText("will start a run of this workflow", { exact: false }),
+    editor.getByText("will start a run of this workflow", { exact: false }),
   ).toBeVisible();
-  await frame.getByRole("button", { name: "Turn on", exact: true }).click();
-  /* The state badge sits in the `accessory` slot, which App Bridge hoists out
-     of the frame, so the proof that it is on is the title bar offering the
-     other direction. */
+  await expect(
+    editor.getByText("Your steps are applied at the same time.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await editor.getByRole("button", { name: "Turn on", exact: true }).click();
+  /* Applied and on: the editor now offers the other direction and nothing to
+     apply. */
   await expect(page.getByRole("button", { name: "Turn off" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Apply changes" })).toHaveCount(
+    0,
+  );
+
+  /* The detail page shows what is in force, with no tabs: there is one
+     answer and the editor holds the other. */
+  await closeEditor(page);
+  await expect(frame.locator(`s-page[heading="${CREATED}"]`)).toBeVisible();
+  await expect(frame.getByText("Bake", { exact: true })).toBeVisible();
+  await expect(
+    frame.getByRole("button", { name: "Live workflow" }),
+  ).toHaveCount(0);
 
   /* Opening the editor is not an edit: no draft, so nothing to discard. */
   await clickHoisted(page.getByRole("button", { name: "Edit", exact: true }));
-  await expect(
-    editor.getByText("Nothing is saved yet.", { exact: false }),
-  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Discard changes" }),
   ).toHaveCount(0);
@@ -170,18 +197,19 @@ test("workflows create, edit, apply, and discard through the draft", async ({
      the workflow so far, which is the id-preserving copy under test. */
   await editor.getByRole("button", { name: "Edit Bake" }).click();
   await stepName.fill("Bake and cool");
-  await editor.getByRole("button", { name: "Save step" }).click();
-  await expect(
-    editor.getByText("Nothing is saved yet.", { exact: false }),
-  ).toHaveCount(0);
+  await stepPanel(editor)
+    .getByRole("button", { name: "Save", exact: true })
+    .click();
   await expect(
     page.getByRole("button", { name: "Discard changes" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Apply changes" }),
   ).toBeVisible();
 
   /* Two decisions, three verbs. A second step lands in its own stage;
      "Run alongside the previous step" is the only thing that makes the two
-     parallel, "Run on its own" splits them back, and moving only reorders —
-     both stages stay solo across the move. */
+     parallel, "Run on its own" splits them back, and moving only reorders. */
   await editor.getByRole("button", { name: "Add a step", exact: true }).click();
   await stepName.fill("Ice");
   await editor
@@ -194,16 +222,10 @@ test("workflows create, edit, apply, and discard through the draft", async ({
   await editor
     .getByRole("button", { name: "Run alongside the previous step" })
     .click();
-  await expect(
-    editor.getByText("Stage 1 · at the same time", { exact: true }),
-  ).toBeVisible();
   await expect(editor.getByText("Stage 2", { exact: true })).toHaveCount(0);
 
   await editor.getByRole("button", { name: "Run on its own" }).click();
   await expect(editor.getByText("Stage 2", { exact: true })).toBeVisible();
-  await expect(
-    editor.getByText("Stage 1 · at the same time", { exact: true }),
-  ).toHaveCount(0);
 
   /* Card order in the canvas: the label the card carries, top to bottom. */
   const stepOrder = () =>
@@ -214,50 +236,57 @@ test("workflows create, edit, apply, and discard through the draft", async ({
       );
   await editor.getByRole("button", { name: "Move earlier" }).click();
   await expect.poll(stepOrder).toEqual(["Edit Ice", "Edit Bake and cool"]);
-  await expect(editor.getByText("Stage 1", { exact: true })).toBeVisible();
-  await expect(editor.getByText("Stage 2", { exact: true })).toBeVisible();
   await editor.getByRole("button", { name: "Move later" }).click();
   await expect.poll(stepOrder).toEqual(["Edit Bake and cool", "Edit Ice"]);
-  await editor.getByRole("button", { name: "Remove step" }).click();
+  await stepPanel(editor)
+    .getByRole("button", { name: "Delete", exact: true })
+    .click();
   await expect(editor.getByText("Stage 2", { exact: true })).toHaveCount(0);
 
-  /* Close keeps the draft, and the two tabs show the two answers. */
+  /* Close keeps the draft, and the detail page still shows only what runs. */
   await closeEditor(page);
-  await frame.getByRole("button", { name: "Draft", exact: true }).click();
-  await expect(frame.getByText("Bake and cool")).toBeVisible();
-  await frame.getByRole("button", { name: "Live workflow" }).click();
   await expect(frame.getByText("Bake", { exact: true })).toBeVisible();
+  await expect(frame.getByText("Bake and cool")).toHaveCount(0);
 
-  /* Discard leaves the workflow exactly as it was, and the tab goes with it.
-     Its confirm dialog belongs to the editor's document, not the app's. */
+  /* Discard leaves the workflow exactly as it was. Its confirm dialog belongs
+     to the editor's document, not the app's. */
   await clickHoisted(page.getByRole("button", { name: "Edit", exact: true }));
   await clickHoisted(page.getByRole("button", { name: "Discard changes" }));
+  await expect(
+    editor.getByText("Are you sure you want to discard these changes?", {
+      exact: true,
+    }),
+  ).toBeVisible();
   await editor.getByRole("button", { name: "Discard", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Discard changes" }),
   ).toHaveCount(0);
-  await expect(
-    editor.getByText("Nothing is saved yet.", { exact: false }),
-  ).toBeVisible();
   await expect(editor.getByText("Bake", { exact: true })).toBeVisible();
 
   /* Apply on a workflow that is ON asks first, and that confirm is the one
      place a hoisted title-bar button has to open a modal back inside the
      window's own document. Applying from in there closes the window and the
-     detail page comes back on the new live steps. */
+     detail page comes back on the new steps. */
   await editor.getByRole("button", { name: "Edit Bake" }).click();
   await stepName.fill("Bake and rest");
-  await editor.getByRole("button", { name: "Save step" }).click();
+  await stepPanel(editor)
+    .getByRole("button", { name: "Save", exact: true })
+    .click();
   await clickHoisted(page.getByRole("button", { name: "Apply changes" }));
   await expect(
-    editor.getByText("Orders that come in after you apply", { exact: false }),
+    editor.getByText("This workflow is turned on.", { exact: false }),
   ).toBeVisible();
   await editor.getByRole("button", { name: "Apply", exact: true }).click();
   await expect(frame.locator(`s-page[heading="${CREATED}"]`)).toBeVisible();
-  await expect(
-    frame.getByRole("button", { name: "Draft", exact: true }),
-  ).toHaveCount(0);
   await expect(frame.getByText("Bake and rest", { exact: true })).toBeVisible();
+
+  /* Turn off confirms too, and says what keeps going. */
+  await clickHoisted(page.getByRole("button", { name: "Turn off" }));
+  await expect(
+    frame.getByText("Runs already in progress keep going.", { exact: false }),
+  ).toBeVisible();
+  await frame.getByRole("button", { name: "Turn off", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Turn on" })).toBeVisible();
 });
 
 /**
@@ -429,7 +458,7 @@ test("duplicate asks for a name and a tag, and the copy is off with the given ta
   await expect(
     copyRow.getByText("e2e-ring-copy", { exact: true }),
   ).toBeVisible();
-  await expect(copyRow.getByText("Off", { exact: true })).toBeVisible();
+  await expect(copyRow.getByText("Inactive", { exact: true })).toBeVisible();
 });
 
 /** Edit tag: on the detail page, immediate, and it makes no draft. */
@@ -483,6 +512,7 @@ test("editing the tag from the detail page writes immediately and starts no draf
   await expect(
     frame.getByText("a product tagged “e2e-ring-2”", { exact: false }),
   ).toBeVisible();
-  /* Immediate, not drafted: the Draft tab never appears. */
-  await expect(frame.getByRole("button", { name: "Draft" })).toHaveCount(0);
+  /* Immediate, not drafted: the page still shows the workflow's own steps and
+     the editor holds nothing. */
+  await expect(frame.getByText("Cut", { exact: true })).toBeVisible();
 });

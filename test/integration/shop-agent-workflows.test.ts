@@ -237,6 +237,34 @@ describe("ShopAgent workflow callables", () => {
     });
   });
 
+  it("applyAndActivate promotes the draft and turns the switch on in one call; an empty workflow is refused", async () => {
+    const shop = "wf-apply-activate.myshopify.com";
+    const team = await seedTeam(shop, "T");
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const created = await agent.createWorkflow({ name: "W", tag: "w" });
+    if (created._tag !== "Ok") throw new Error(created._tag);
+    const workflowId = created.workflow.id;
+
+    // Nothing to promote and nothing in force.
+    const empty = await agent.applyAndActivate({ workflowId });
+    strictEqual(empty._tag, "NoSteps");
+
+    const step = await agent.addStep({
+      workflowId,
+      name: "S",
+      teamId: team.id,
+    });
+    if (step._tag !== "Ok") throw new Error(step._tag);
+
+    const result = await agent.applyAndActivate({ workflowId });
+    strictEqual(result._tag, "Ok");
+    if (result._tag !== "Ok") return;
+    strictEqual(Domain.isActive(result.workflow), true);
+    const detail = await agent.getWorkflowDetail({ workflowId });
+    strictEqual(detail?.draft, null);
+    expect(detail?.steps.map((s) => s.name)).toEqual(["S"]);
+  });
+
   it("a step whose team was deleted resolves teamName null; removeWorkflow takes the definition and its draft", async () => {
     const shop = "wf-removed.myshopify.com";
     const team = await seedTeam(shop, "T");
@@ -257,16 +285,22 @@ describe("ShopAgent workflow callables", () => {
     expect(detail?.draft?.steps[0]?.teamName).toBe(null);
     expect(detail?.teams).toEqual([]);
 
-    const dupe = await agent.createWorkflow({ name: "w", tag: "dupe" });
-    strictEqual(dupe._tag, "NameTaken");
-    // The tag is the other key, refused under its own name.
+    // The name is a label: the same one under a free tag is a second workflow.
+    const twin = await agent.createWorkflow({ name: "w", tag: "dupe" });
+    strictEqual(twin._tag, "Ok");
+    // The tag is the one key, refused under its own field.
     const dupeTag = await agent.createWorkflow({ name: "Other", tag: "W" });
     strictEqual(dupeTag._tag, "TagTaken");
     // Never applied: the list counts saved steps, and there are none.
     const list = await agent.listWorkflows();
-    expect(list.map((w) => [w.name, w.stepCount, w.hasDraft])).toEqual([
-      ["W", 0, true],
-    ]);
+    expect(
+      list
+        .map(
+          (w) =>
+            `${w.name}:${w.tag}:${String(w.stepCount)}:${String(w.hasDraft)}`,
+        )
+        .toSorted(),
+    ).toEqual(["W:w:0:true", "w:dupe:0:false"]);
 
     expect(
       await agent.removeWorkflow({ workflowId: created.workflow.id }),
@@ -280,7 +314,9 @@ describe("ShopAgent workflow callables", () => {
     );
     const removeMissing = await agent.removeStep({ stepId: step.step.id });
     strictEqual(removeMissing._tag, "NotFound");
-    expect(await agent.listWorkflows()).toEqual([]);
+    // The twin is untouched: two rows shared a name, and only one was deleted.
+    const remaining = await agent.listWorkflows();
+    expect(remaining.map((w) => w.tag)).toEqual(["dupe"]);
     // The name is free at once.
     const recreated = await agent.createWorkflow({ name: "w", tag: "w" });
     strictEqual(recreated._tag, "Ok");
@@ -679,6 +715,7 @@ describe("ShopAgent workflow run callables", () => {
     ).toEqual({
       _tag: "TagTaken",
       tag: "engraved",
+      workflowId: holder.id,
       workflowName: "Engraving",
     });
     // Edit tag: the same refusal on an existing workflow.
@@ -687,9 +724,10 @@ describe("ShopAgent workflow run callables", () => {
     ).toEqual({
       _tag: "TagTaken",
       tag: "engraved",
+      workflowId: holder.id,
       workflowName: "Engraving",
     });
-    // Duplicate: the copy's own two keys.
+    // Duplicate: the copy's own tag.
     expect(
       await agent.duplicateWorkflow({
         workflowId: other.id,
@@ -699,6 +737,7 @@ describe("ShopAgent workflow run callables", () => {
     ).toEqual({
       _tag: "TagTaken",
       tag: "engraved",
+      workflowId: holder.id,
       workflowName: "Engraving",
     });
 

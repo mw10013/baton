@@ -268,6 +268,9 @@ const ownedStep = (
 ): Domain.OwnedStep => ({
   workflowId: Schema.decodeUnknownSync(Domain.WorkflowId)(workflowId),
   workflowName: Schema.decodeUnknownSync(Domain.WorkflowName)(workflowName),
+  workflowTag: Schema.decodeUnknownSync(Domain.WorkflowTag)(
+    workflowName.toLowerCase(),
+  ),
   side,
   stepName: Schema.decodeUnknownSync(Domain.StepName)(stepName),
 });
@@ -284,10 +287,10 @@ describe("groupUsedBy", () => {
       grouped
         .map(
           (w) =>
-            `${w.workflowName}:${w.draftOnly ? "draft" : "live"}:${w.href}`,
+            `${w.workflowName}:${w.workflowTag}:${w.draftOnly ? "draft" : "live"}:${w.href}`,
         )
         .join("|"),
-      "pendant:draft:/app/workflows/w2|Ring:live:/app/workflows/w1",
+      "pendant:pendant:draft:/app/workflows/w2|Ring:ring:live:/app/workflows/w1",
     );
     strictEqual(groupUsedBy([]).length, 0);
   });

@@ -398,10 +398,13 @@ export const WorkflowLimits = {
   maxSteps: 20,
 } as const;
 
+/** The length of every trimmed name: the schema check, the field `maxLength`, and the rename dialog's counter all read this. */
+export const NAME_MAX_LENGTH = 64;
+
 const trimmedName = <B extends string>(brand: B) =>
   Schema.String.pipe(
     Schema.decodeTo(
-      Schema.NonEmptyString.check(Schema.isMaxLength(64)).pipe(
+      Schema.NonEmptyString.check(Schema.isMaxLength(NAME_MAX_LENGTH)).pipe(
         Schema.brand(brand),
       ),
       {
@@ -411,7 +414,11 @@ const trimmedName = <B extends string>(brand: B) =>
     ),
   );
 
-/** Same shape and reasoning as {@link TeamName}: trimmed, case preserved. */
+/**
+ * Same shape and reasoning as {@link TeamName}: trimmed, case preserved.
+ * Unlike {@link TeamName} it is **not** unique — see {@link Workflow}, where
+ * the tag is the one key and the name is a label.
+ */
 export const WorkflowName = trimmedName("WorkflowName");
 export type WorkflowName = typeof WorkflowName.Type;
 
@@ -528,9 +535,11 @@ export type WorkflowTag = typeof WorkflowTag.Type;
  * team**, a finished step is history; **deleting configuration never deletes
  * work**. Delete removes the definition, its steps, and its draft, nothing
  * else — a run is self-sufficient, so it needs no confirm counts and the
- * dialog says only that it can't be undone. The name is freed at once, so
- * uniqueness is among existing rows only. A rename is immediate and cosmetic
- * because runs snapshot `workflowName`.
+ * dialog says only what survives. The id is identity, the tag is the one
+ * unique key, and the name is a label two workflows may share — so everything
+ * that shows a workflow to the merchant outside its own page shows the tag
+ * beside the name. A rename is immediate and cosmetic because runs snapshot
+ * `workflowName`.
  *
  * `activatedAt` is the on/off switch and the coverage date in one column,
  * stored and never derived: null is off; Turn on sets it to now, or to an
@@ -771,6 +780,19 @@ export const SetWorkflowActiveInput = Schema.Struct({
 });
 export type SetWorkflowActiveInput = typeof SetWorkflowActiveInput.Type;
 
+/**
+ * The editor's Turn on for a workflow that has never been applied: one click
+ * that promotes the draft and turns the switch on, so the merchant is not
+ * asked to Apply steps that have never run and then turn on the thing they
+ * just applied. `activatedAt` means what it means on
+ * {@link SetWorkflowActiveInput}.
+ */
+export const ApplyAndActivateInput = Schema.Struct({
+  workflowId: BoundedId,
+  activatedAt: Schema.optionalKey(Schema.Number),
+});
+export type ApplyAndActivateInput = typeof ApplyAndActivateInput.Type;
+
 /** The workflow page's Change control: moves the coverage date of an on workflow. */
 export const SetWorkflowActivatedAtInput = Schema.Struct({
   workflowId: BoundedId,
@@ -877,15 +899,20 @@ export type TeamIdInput = typeof TeamIdInput.Type;
 /**
  * Expected failures cross the socket as values, not throws: `runEffect`
  * collapses every failure into one `Error(message)` at the RPC seam, which is
- * fine for faults but loses the tag the page needs to put "name taken" on the
- * field rather than in a banner.
+ * fine for faults but loses the tag the page needs to put "tag taken" on the
+ * tag field rather than in a banner.
+ *
+ * `TagTaken` carries the holder's `workflowId` as well as its name because a
+ * name no longer identifies a workflow: two may share one, so the refusal
+ * links to the holder rather than naming it and leaving the merchant to guess
+ * which of two rows it meant.
  */
 export const WorkflowResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok"), workflow: Workflow }),
-  Schema.Struct({ _tag: Schema.Literal("NameTaken") }),
   Schema.Struct({
     _tag: Schema.Literal("TagTaken"),
     tag: WorkflowTag,
+    workflowId: WorkflowId,
     workflowName: WorkflowName,
   }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
@@ -1025,6 +1052,8 @@ export type TeamStepCounts = typeof TeamStepCounts.Type;
 export const OwnedStep = Schema.Struct({
   workflowId: WorkflowId,
   workflowName: WorkflowName,
+  /** Beside the name wherever a workflow is listed off its own page: names may repeat, the tag may not. */
+  workflowTag: WorkflowTag,
   side: Schema.Literals(["workflow", "draft"]),
   stepName: StepName,
 });

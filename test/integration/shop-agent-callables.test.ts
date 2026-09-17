@@ -47,6 +47,7 @@ const CALLABLE_ROLES = {
   applyDraft: "merchant",
   discardDraft: "merchant",
   setWorkflowActive: "merchant",
+  applyAndActivate: "merchant",
   setWorkflowActivatedAt: "merchant",
   countWaitingOrders: "merchant",
   removeWorkflow: "merchant",

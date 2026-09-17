@@ -3,6 +3,8 @@ import type * as Domain from "@/lib/Domain";
 export interface UsedByWorkflow {
   readonly workflowId: Domain.WorkflowId;
   readonly workflowName: Domain.WorkflowName;
+  /** Shown beside the name: two workflows may share a name, so the tag is what tells them apart. */
+  readonly workflowTag: Domain.WorkflowTag;
   /** Every step this team owns on the workflow is on its draft side: the live workflow does not use the team yet. */
   readonly draftOnly: boolean;
   readonly href: string;
@@ -29,6 +31,7 @@ export const groupUsedBy = (
       byWorkflow.set(step.workflowId, {
         workflowId: step.workflowId,
         workflowName: step.workflowName,
+        workflowTag: step.workflowTag,
         draftOnly: step.side === "draft",
         href: workflowHref(step.workflowId),
       });

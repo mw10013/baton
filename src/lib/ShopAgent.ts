@@ -59,7 +59,6 @@ import {
   type StepNotFoundError,
   type StepUnassignedError,
   type WorkflowLimitError,
-  type WorkflowNameTakenError,
   type WorkflowNotFoundError,
   type WorkflowOffError,
   type WorkflowTagTakenError,
@@ -468,8 +467,6 @@ const initializeSchema = Effect.gen(function* () {
       createdAt integer not null,
       updatedAt integer not null
     );
-    create unique index if not exists Workflow_name_uidx
-      on Workflow (name collate nocase);
     create table if not exists WorkflowStep (
       id text primary key,
       workflowId text not null references Workflow (id) on delete cascade,
@@ -632,13 +629,12 @@ const shopifyAdminLayer = (session: ShopifyApi.Session) =>
  * page decodes, leaving faults (`SqlError`, decode errors) to propagate and
  * become a thrown `Error` at the `runEffect` seam. Expected failures must be
  * *values* here because that seam collapses every failure into one message
- * string, which would leave the browser unable to tell "name taken" (a field
+ * string, which would leave the browser unable to tell "tag taken" (a field
  * error) from "limit reached" (a banner).
  */
 const workflowResult = <R>(
   effect: Effect.Effect<
     Domain.Workflow,
-    | WorkflowNameTakenError
     | WorkflowTagTakenError
     | WorkflowNotFoundError
     | WorkflowLimitError
@@ -661,12 +657,11 @@ const workflowResult = <R>(
   effect.pipe(
     Effect.map((workflow): Domain.WorkflowResult => ({ _tag: "Ok", workflow })),
     Effect.catchTags({
-      WorkflowNameTakenError: () =>
-        Effect.succeed<Domain.WorkflowResult>({ _tag: "NameTaken" }),
-      WorkflowTagTakenError: ({ tag, workflowName }) =>
+      WorkflowTagTakenError: ({ tag, workflowId, workflowName }) =>
         Effect.succeed<Domain.WorkflowResult>({
           _tag: "TagTaken",
           tag,
+          workflowId,
           workflowName,
         }),
       WorkflowNotFoundError: () =>
@@ -2195,6 +2190,55 @@ export class ShopAgent extends Agent {
                 shop,
                 workflowId,
                 active,
+                activatedAt: workflow.activatedAt,
+              }),
+            );
+            return { workflow, started: yield* reconcileAll(workflow) };
+          }),
+        ).pipe(Effect.tap(publish)),
+      )(input),
+    );
+  }
+
+  /**
+   * The editor's Turn on for a workflow that has never been applied: applies
+   * the draft and turns the switch on in one transaction, then reconciles
+   * every stored order once, exactly as {@link setWorkflowActive} does — the
+   * merchant made one decision, so a failure must leave the workflow
+   * untouched rather than applied and off.
+   */
+  @callable()
+  applyAndActivate(
+    input: typeof Domain.ApplyAndActivateInput.Encoded,
+  ): Promise<Domain.ActivateResult> {
+    const shop = this.name;
+    const publish = () => this.publish("all");
+    const teams = () => this.teams();
+    const reconcileAll = (workflow: Domain.Workflow) =>
+      this.reconcileAllNow("applyAndActivate", workflow.id);
+    return this.runEffect(
+      callableEffect(
+        "ShopAgent.applyAndActivate",
+        Domain.ApplyAndActivateInput,
+        {
+          role: "merchant",
+          parse: { onExcessProperty: "error" },
+        },
+      )(({ workflowId, activatedAt }) =>
+        activateResult(
+          Effect.gen(function* () {
+            const workflow =
+              yield* (yield* WorkflowRepository).applyAndActivate({
+                workflowId,
+                ...(activatedAt === undefined ? {} : { activatedAt }),
+                teams: yield* teams(),
+              });
+            yield* Effect.logInfo(
+              `ShopAgent.applyAndActivate: shop=${shop} workflowId=${workflowId} activatedAt=${String(workflow.activatedAt)}`,
+            ).pipe(
+              Effect.annotateLogs({
+                shop,
+                workflowId,
                 activatedAt: workflow.activatedAt,
               }),
             );
