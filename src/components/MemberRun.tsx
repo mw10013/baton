@@ -106,7 +106,7 @@ export function Prose({
   );
 }
 
-/** The person behind a `blocked` flag, for "· by m2@m.com" or "· Merchant". Reconcile flags have nobody. */
+/** The person behind a `blocked` flag, as the banner's attribution line names them ("m2@m.com · 3m ago", "Merchant · 3m ago"). Reconcile flags have nobody. */
 export const flagActor = (run: Domain.WorkflowRun) => {
   const by = run.flagDetail?.by;
   return by === undefined ? null : Domain.actorLabel(by);

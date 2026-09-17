@@ -361,12 +361,6 @@ function RouteComponent() {
     (item) => item.lineItemId !== run.lineItemId,
   );
   /**
-   * Unblock lifts the hold and nothing else: the run goes back to the tier
-   * and the steps it had, and whoever lifted it presses Done next if the work
-   * is in fact done. Dismiss is the other word on purpose — a reconcile flag
-   * is not a hold anybody set, and acknowledging it is all there is to do.
-   */
-  /**
    * The open draft, or `null`: a draft stamped with a `flagAt` other than the
    * one on screen belongs to a hold that has since been lifted, and is dead.
    */
@@ -374,6 +368,14 @@ function RouteComponent() {
     run.flag === "blocked" && reasonDraft?.at === run.flagAt
       ? reasonDraft.text
       : null;
+  /**
+   * Unblock lifts the hold and nothing else: the run goes back to the tier
+   * and the steps it had, and whoever lifted it presses Done next if the work
+   * is in fact done. Dismiss is the other word on purpose — a reconcile flag
+   * is not a hold anybody set, and acknowledging it is all there is to do.
+   * Edit reason is offered only while no editor is open; the editor's own
+   * Save and Cancel are the buttons for that state.
+   */
   const flagActions =
     run.flag === null ? null : (
       <>
