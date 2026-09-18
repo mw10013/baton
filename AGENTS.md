@@ -57,7 +57,8 @@ pnpm typecheck          # TypeScript type checking (includes wrangler types gene
 pnpm lint               # Run oxlint
 pnpm fmt                # Format the repo with oxfmt (excludes refs/ and dist/)
 pnpm test               # Run tests with Vitest.
-npm run test:e2e --     # Playwright via npm (uses pnpm exec in script); pass args after -- and may be helpful to use --trace on
+npm run test:e2e --     # Full local E2E suite, headless; pass Playwright args after --
+npm run test:e2e:headed -- # Same suite with visible browsers for debugging
 pnpm graphql-codegen    # Validate #graphql template literal strings against the Shopify Admin schema
 pnpm tail               # Tail deployed remote logs (raw logs/tail.log, compact logs/tail-compact.log)
 pnpm seed               # Seed local dev data (members, teams, workflows) via /api/dev/seed
@@ -123,15 +124,17 @@ Effect.logError(`ShopAgent.getShopInfo: shop=${this.name}: ${message}`).pipe(
 
 ## Playwright CLI
 
-**Default to headed mode** (visible browser) unless the user explicitly requests headless. Use `--headed` flag.
+Routine E2E test execution is headless: use `npm run test:e2e --`. Use `npm run test:e2e:headed --` when a visible test browser is needed for debugging. Both commands run the embedded and member projects against local development.
+
+For interactive browser exploration with `playwright-cli`, default to headless mode (omit `--headed`). Use `--headed` when the user requests a visible browser or manual interaction is needed, such as signing in.
 
 Run it through the package script: `pnpm playwright-cli`.
 
 **Session naming:** `{port}-{purpose}` (e.g., `$(pnpm port)-localdev`, `$(pnpm port)-testing`)
 
 ```bash
-# Open with headed browser (default for LLM use)
-pnpm playwright-cli --headed --session="$(pnpm port)-localdev" open "http://localhost:$(pnpm port)"
+# Open headless (default)
+pnpm playwright-cli --session="$(pnpm port)-localdev" open "http://localhost:$(pnpm port)"
 
 # Subsequent commands use the same session
 pnpm playwright-cli --session="$(pnpm port)-localdev" type "Hello World"

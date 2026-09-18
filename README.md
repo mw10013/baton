@@ -25,11 +25,66 @@ The current home page exposes foundational production-workflow data:
 - **Shop** — read from the Shopify Admin API _by the Durable Object_, using the offline session stored in D1.
 - **Plan** — resolved from the plan handle cached on the D1 session row.
 
-## Billing is off
+## Billing
 
-There are no App Pricing plans in Partners yet, so `BILLING_ENABLED` is `"false"` in `wrangler.jsonc`. `SubscriptionPlan` then short-circuits to `Domain.DEFAULT_PLAN_HANDLE` without a Partner API call, and every gate downstream — the `/app` route boundary, the WebSocket connect check, `resolveEntitlements` — keeps running in its real shape and simply always passes.
+Baton bills through Shopify App Pricing. Plans are configured in the Partner Dashboard, never
+in code; the app reads the merchant's plan handle through the Partner API
+(`src/lib/ShopifyPartner.ts`) and caches it on the D1 session row (`src/lib/SubscriptionPlan.ts`).
 
-To turn billing on: create the plans in Partners, rename the handles in `Domain.PlanHandle`, set `SHOPIFY_PARTNER_API_TOKEN`, and flip the var. No call sites change.
+While `BILLING_ENABLED` is `"false"` in `wrangler.jsonc`, `SubscriptionPlan` short-circuits to
+`Domain.DEFAULT_PLAN_HANDLE` without a Partner API call, and every gate downstream (the `/app`
+route boundary, the WebSocket connect check, `resolveEntitlements`) keeps running in its real
+shape and always passes.
+
+### Plans to create
+
+Two public plans, one per tier. Handles must match `Domain.PlanHandle` exactly (case-sensitive);
+limits must match `ENTITLEMENTS` in `src/lib/Domain.ts`. All numbers are provisional.
+
+| Field          | Basic                                                                    | Pro                                                                         |
+| -------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| Handle         | `baton-basic`                                                            | `baton-pro`                                                                 |
+| Display name   | Basic                                                                    | Pro                                                                         |
+| Billing period | Monthly                                                                  | Monthly                                                                     |
+| Monthly charge | $29                                                                      | $79                                                                         |
+| Free trial     | 14 days                                                                  | none                                                                        |
+| Usage meters   | none                                                                     | none                                                                        |
+| Welcome link   | `/app`                                                                   | `/app`                                                                      |
+| Top features   | Up to 250 orders a month. 3 team members. Unlimited workflows and teams. | Up to 1,000 orders a month. 10 team members. Unlimited workflows and teams. |
+
+- No free plan. No yearly option: usage-based charges, if added later, require monthly billing.
+- The welcome link is a relative App Home path. Shopify appends `?plan_handle=<handle>` to it,
+  and `src/routes/app.tsx` treats any `plan_handle` in the search string as the billing redirect
+  that forces a fresh Partner API read.
+- Plans belong to an app, so create them once per app: `baton-local` (`shopify.app.toml`) now,
+  `baton-staging` and the production app when those exist.
+- Test handles: none. Development stores in the same Partner organization get every public
+  plan at $0, so `Domain.PlanHandle` carries only the two public handles.
+
+Where: Partner Dashboard > App distribution > All apps > the app > Distribution > Manage
+listing > the locale > Pricing content > Manage > Public plans > Add. Each plan needs a display
+name and top features for every published language or it does not show.
+
+### Credentials
+
+- `SHOPIFY_PARTNER_API_TOKEN` (`.env`): a Partner API client token with the **Manage apps**
+  permission. Partner Dashboard > Settings > Partner API clients > Create. One token serves all
+  apps in the organization.
+- `SHOPIFY_PARTNER_ORG_ID` (`wrangler.jsonc`): the number in the Partner Dashboard URL.
+- `SHOPIFY_PARTNER_APP_ID` (`wrangler.jsonc`): the numeric app id from the app's Partner
+  Dashboard URL. Filled for local; empty for staging and production until those apps exist.
+- `SHOPIFY_APP_HANDLE` (`wrangler.jsonc`): the app handle, used to build the plan selection URL
+  `https://admin.shopify.com/store/<store>/charges/<handle>/pricing_plans`.
+
+### Turning billing on
+
+1. Create the plans above for the app.
+2. Confirm `SHOPIFY_PARTNER_APP_ID` and `SHOPIFY_APP_HANDLE` for the environment.
+3. Set `BILLING_ENABLED` to `"true"` for that environment only in `wrangler.jsonc`.
+4. On a development store: open the app, confirm it redirects to the plan selection page,
+   pick a plan, confirm it returns to `/app`, and confirm `/admin/shop/<shop>` shows the handle.
+   The plan cache is 24 hours (`PLAN_HANDLE_MAX_AGE_MS`); use the admin page's refresh button
+   instead of waiting.
 
 ## Run locally
 
