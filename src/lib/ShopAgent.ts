@@ -40,7 +40,6 @@ import {
   OrderSyncResponse,
   orderSyncVariables,
   toOrderLineItem,
-  toOrderRaw,
   toShopOrder,
 } from "@/lib/OrderSync";
 import {
@@ -49,7 +48,10 @@ import {
   ORDERS_SYNC_WORKFLOW_NAME,
 } from "@/lib/orderSyncConstants";
 import { Repository, type RepositoryError } from "@/lib/Repository";
-import { runShopAgentOrdersStream } from "@/lib/ShopAgentOrdersStream";
+import {
+  type OrdersStreamCounts,
+  runShopAgentOrdersStream,
+} from "@/lib/ShopAgentOrdersStream";
 import { Shopify } from "@/lib/Shopify";
 import { ShopifyAdmin } from "@/lib/ShopifyAdmin";
 import {
@@ -310,9 +312,21 @@ const memberCallableEffect =
  *
  * `WebhookDelivery` is the `X-Shopify-Webhook-Id` dedupe log — Shopify retries
  * 8 times over 4 hours replaying the original payload, and warns the same
- * delivery may arrive more than once. `SyncState` is one row under
- * `check (id = 1)`, seeded here so every read is a plain `select` and the
+ * delivery may arrive more than once. `receivedAt` is indexed so its retention
+ * sweep walks the oldest rows instead of the table. `SyncState` is one row
+ * under `check (id = 1)`, seeded here so every read is a plain `select` and the
  * reservation write in `syncOrders` is an `update` that cannot race an insert.
+ *
+ * `ShopUsage` is the same one-row shape and holds everything the Worker needs
+ * to compare this shop against its plan without the object knowing what the
+ * plan is: the calendar month's counted orders, when the live-run ceiling last
+ * refused an auto-start, and when retention last swept. `monthKey` is seeded
+ * empty so the first counted order of any month rolls it over, which is the
+ * only moment a rollover can matter.
+ *
+ * `ShopOrder_closed_idx` is the negation of `ShopOrder_open_idx`, ordered by
+ * `updatedAt`: the retention sweep's one access path, so ageing out closed
+ * orders never reads the open working set.
  *
  * The `(processedAt desc, id desc)` index is the keyset the orders page pages
  * on; `id desc` is in it so the tiebreak is index-ordered too, since a shop
@@ -416,7 +430,7 @@ const initializeSchema = Effect.gen(function* () {
       note text,
       customAttributes text not null,
       lineItemsComplete integer not null,
-      raw text not null,
+      lineItemsTruncated integer not null default 0,
       syncedAt integer not null,
       syncSource text not null
     );
@@ -425,6 +439,10 @@ const initializeSchema = Effect.gen(function* () {
     create index if not exists ShopOrder_open_idx
       on ShopOrder (processedAt desc, id desc)
       where fulfillmentStatus <> 'FULFILLED' and cancelledAt is null;
+    create index if not exists ShopOrder_closed_idx
+      on ShopOrder (updatedAt)
+      where fulfillmentStatus = 'FULFILLED' or cancelledAt is not null
+        or closedAt is not null;
     create table if not exists OrderLineItem (
       id text primary key,
       orderId text not null references ShopOrder(id) on delete cascade,
@@ -450,6 +468,8 @@ const initializeSchema = Effect.gen(function* () {
       triggeredAt integer not null,
       receivedAt integer not null
     );
+    create index if not exists WebhookDelivery_receivedAt_idx
+      on WebhookDelivery (receivedAt);
     create table if not exists SyncState (
       id integer primary key check (id = 1),
       workflowId text,
@@ -459,6 +479,14 @@ const initializeSchema = Effect.gen(function* () {
       lastError text
     );
     insert or ignore into SyncState (id) values (1);
+    create table if not exists ShopUsage (
+      id integer primary key check (id = 1),
+      monthKey text not null,
+      ordersThisMonth integer not null default 0,
+      liveRunsLimitedAt integer,
+      lastSweepAt integer
+    );
+    insert or ignore into ShopUsage (id, monthKey) values (1, '');
     create table if not exists Workflow (
       id text primary key,
       name text not null check (name = trim(name) and length(name) > 0),
@@ -1421,7 +1449,6 @@ export class ShopAgent extends Agent {
       });
       const { written } = yield* (yield* OrderRepository).upsertOrder({
         order: shopOrder,
-        raw: toOrderRaw(order),
         lineItems: order.lineItems.nodes.map((node) =>
           toOrderLineItem(order.id, node),
         ),
@@ -1474,6 +1501,7 @@ export class ShopAgent extends Agent {
         }),
       );
     const publish = () => this.publish("all");
+    const readDatabaseSize = () => this.ctx.storage.sql.databaseSize;
     return this.runEffect(
       Effect.gen(function* () {
         // The one `@callable()` that takes no input, so it has no
@@ -1500,6 +1528,36 @@ export class ShopAgent extends Agent {
             return current;
           }
           yield* repository.clearSync();
+        }
+        /**
+         * The storage guard, and the only place `databaseSize` gates anything.
+         * Webhooks are deliberately not gated: a single-order write keeps the
+         * production floor running and costs kilobytes, while a bulk import is
+         * the one operation that can add gigabytes to an object that has no
+         * way to grow past its limit. Refusing it leaves the merchant with a
+         * visible error on the orders page rather than a sync that fails deep
+         * inside a stream.
+         */
+        const databaseSize = readDatabaseSize();
+        yield* Effect.logInfo(
+          `ShopAgent.syncOrders: shop=${shop} databaseSize=${String(databaseSize)}`,
+        ).pipe(Effect.annotateLogs({ shop, databaseSize }));
+        if (databaseSize >= Domain.ShopLimits.storageSoftLimitBytes) {
+          yield* Effect.logError(
+            `ShopAgent.syncOrders: shop=${shop} status=storage-limit databaseSize=${String(databaseSize)}`,
+          ).pipe(
+            Effect.annotateLogs({
+              shop,
+              status: "storage-limit",
+              databaseSize,
+            }),
+          );
+          const state = yield* repository.setSyncError({
+            error:
+              "Storage limit reached; this shop's order sync is paused. Contact support.",
+          });
+          yield* publish();
+          return state;
         }
         const { field, windowStart } = orderSyncWindow(
           now,
@@ -1567,14 +1625,11 @@ export class ShopAgent extends Agent {
    * it, and it takes a URL that must only ever come from a bulk operation this
    * shop started.
    */
-  onOrdersStream(input: { readonly url: string }): Promise<{
-    readonly ordersSeen: number;
-    readonly ordersUpserted: number;
-    readonly lineItemsUpserted: number;
-  }> {
+  onOrdersStream(input: { readonly url: string }): Promise<OrdersStreamCounts> {
     const shop = this.name;
     const publish = () => this.publish("all");
     const reconciler = () => this.reconciler("bulk");
+    const databaseSize = () => this.ctx.storage.sql.databaseSize;
     return this.runEffect(
       callableEffect("ShopAgent.onOrdersStream", OrdersStreamInput, {
         role: "rpc",
@@ -1584,9 +1639,27 @@ export class ShopAgent extends Agent {
             url,
             afterWrite: yield* reconciler(),
           });
+          /**
+           * The retention pass rides the import: it is merchant-triggered,
+           * already the heaviest thing this object does, and the one moment
+           * where paying for a batch of deletes is invisible next to what the
+           * request is doing anyway.
+           */
+          const swept = yield* (yield* OrderRepository).sweepExpiredOrders({
+            now: yield* Clock.currentTimeMillis,
+          });
+          const size = databaseSize();
           yield* Effect.logInfo(
-            `ShopAgent.onOrdersStream: shop=${shop} ordersSeen=${String(counts.ordersSeen)} ordersUpserted=${String(counts.ordersUpserted)} lineItemsUpserted=${String(counts.lineItemsUpserted)}`,
-          ).pipe(Effect.annotateLogs({ shop, ...counts }));
+            `ShopAgent.onOrdersStream: shop=${shop} ordersSeen=${String(counts.ordersSeen)} ordersUpserted=${String(counts.ordersUpserted)} ordersInserted=${String(counts.ordersInserted)} lineItemsUpserted=${String(counts.lineItemsUpserted)} ordersTruncated=${String(counts.ordersTruncated)} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)} databaseSize=${String(size)}`,
+          ).pipe(
+            Effect.annotateLogs({
+              shop,
+              ...counts,
+              sweptOrders: swept.orders,
+              sweptRuns: swept.runs,
+              databaseSize: size,
+            }),
+          );
           yield* publish();
           return counts;
         }),
@@ -1754,9 +1827,64 @@ export class ShopAgent extends Agent {
               return;
             }
             yield* fetchAndUpsert(orderId);
+            /**
+             * The second retention carrier, rate-limited by `lastSweepAt`
+             * rather than run on every delivery: a busy shop must not pay for
+             * a batch of deletes per webhook, and a shop quiet enough never to
+             * sync still needs its closed orders to age out eventually. One
+             * extra row read per delivery buys that.
+             */
+            const now = yield* Clock.currentTimeMillis;
+            const usage = yield* repository.getUsage();
+            if (
+              usage.lastSweepAt === null ||
+              now - usage.lastSweepAt >= Domain.ShopLimits.sweepIntervalMs
+            ) {
+              const swept = yield* repository.sweepExpiredOrders({ now });
+              if (swept.orders > 0 || swept.runs > 0)
+                yield* Effect.logInfo(
+                  `ShopAgent.syncOrder: shop=${shop} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)}`,
+                ).pipe(
+                  Effect.annotateLogs({
+                    shop,
+                    sweptOrders: swept.orders,
+                    sweptRuns: swept.runs,
+                  }),
+                );
+            }
             yield* publish([orderId]);
           }),
       )(input),
+    );
+  }
+
+  /**
+   * What the Worker compares against the shop's plan: the object counts, the
+   * Worker owns the ceilings ({@link Domain.Entitlements}). `@callable()` so
+   * the `/app` socket can read it, and on `ShopAgentClient` so loaders can.
+   *
+   * `monthKey` is rolled forward in the *returned* value when the stored row
+   * lags the current month, without writing: a shop that has counted nothing
+   * this month has an `ordersThisMonth` belonging to an older month, and
+   * showing it would tell the merchant they had spent a quota they have not.
+   * The write happens on the first counted order (`OrderRepository`).
+   */
+  @callable()
+  getUsage(): Promise<Domain.ShopUsage> {
+    const databaseSize = () => this.ctx.storage.sql.databaseSize;
+    return this.runEffect(
+      Effect.gen(function* () {
+        yield* connectionRoleGuard("merchant");
+        const usage = yield* (yield* OrderRepository).getUsage();
+        const monthKey = Domain.monthKeyOf(yield* Clock.currentTimeMillis);
+        return {
+          ...usage,
+          monthKey,
+          ordersThisMonth:
+            usage.monthKey === monthKey ? usage.ordersThisMonth : 0,
+          databaseSize: databaseSize(),
+        } satisfies Domain.ShopUsage;
+      }).pipe(Effect.withLogSpan("ShopAgent.getUsage")),
     );
   }
 
@@ -2639,7 +2767,11 @@ export class ShopAgent extends Agent {
             run: set.value.run,
             replaced: set.value.replaced,
           } satisfies Domain.AttachResult;
-        }),
+        }).pipe(
+          Effect.catchTag("WorkflowRunLimitError", ({ limit }) =>
+            Effect.succeed<Domain.AttachResult>({ _tag: "RunLimit", limit }),
+          ),
+        ),
       )(input),
     );
   }
@@ -2706,8 +2838,10 @@ export class ShopAgent extends Agent {
    * They publish with {@link publishToTeams}, not `publish("all")`: the
    * merchant's own order page is subscribed by order and the workers by team,
    * and the team fan-out for the touched order already reaches both. There is
-   * no merchant Start — recording that a worker began is not the merchant's to
-   * do (`docs/merchant-run-intervention-research.md`, decision list).
+   * no merchant Start: "started" records that a worker picked the step up,
+   * and a merchant marking it started on their behalf would put a name on
+   * work nobody has begun. The merchant either completes it outright or leaves
+   * it for the team.
    *
    * No member id in the log line: there isn't one.
    */
@@ -3735,12 +3869,12 @@ export class ShopAgent extends Agent {
               note: seed.note ?? null,
               customAttributes: [],
               lineItemsComplete: true,
+              lineItemsTruncated: false,
               syncedAt: now,
               syncSource: "manual",
             };
             yield* orderRepository.upsertOrder({
               order,
-              raw: "{}",
               lineItems: seed.lineItems.map((item, position) => {
                 const currentQuantity = item.currentQuantity ?? item.quantity;
                 return {

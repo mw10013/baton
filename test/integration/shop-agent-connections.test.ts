@@ -210,7 +210,11 @@ describe("ShopAgent team delete revocation", () => {
             name: teamNameOf("Engraving"),
           });
           const email = emailOf("maker@example.com");
-          yield* repository.addMember({ shop, email });
+          yield* repository.addMember({
+            shop,
+            email,
+            limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+          });
           const access = yield* repository.findMemberAccess({ shop, email });
           const memberId = Option.isNone(access)
             ? yield* Effect.die("member missing right after addMember")

@@ -112,6 +112,14 @@ export class ShopAgentClient extends Context.Service<
       shop: string,
       input: Domain.GetOrderDetailInput,
     ) => Effect.Effect<Domain.OrderDetailView | null, ShopAgentClientError>;
+    /**
+     * The quota surfaces' loader read. `@callable()` on the object as well, for
+     * the socket; both are the same method, since usage is read by a page that
+     * paints server-side and by one that refreshes on order pushes.
+     */
+    readonly getUsage: (
+      shop: string,
+    ) => Effect.Effect<Domain.ShopUsage, ShopAgentClientError>;
     readonly listWorkflows: (
       shop: string,
     ) => Effect.Effect<readonly Domain.WorkflowSummary[], ShopAgentClientError>;
@@ -197,6 +205,7 @@ export class ShopAgentClient extends Context.Service<
       );
       const ordersView = Schema.toType(Domain.OrdersView);
       const orderDetail = Schema.toType(Schema.NullOr(Domain.OrderDetailView));
+      const usage = Schema.toType(Domain.ShopUsage);
       const workflows = Schema.toType(Schema.Array(Domain.WorkflowSummary));
       const workflowDetail = Schema.toType(
         Schema.NullOr(Domain.WorkflowDetailView),
@@ -241,6 +250,9 @@ export class ShopAgentClient extends Context.Service<
             call("getOrderDetail", orderDetail, shop, (stub) =>
               stub.getOrderDetail(input),
             ),
+        ),
+        getUsage: Effect.fn("ShopAgentClient.getUsage")((shop: string) =>
+          call("getUsage", usage, shop, (stub) => stub.getUsage()),
         ),
         listWorkflows: Effect.fn("ShopAgentClient.listWorkflows")(
           (shop: string) =>

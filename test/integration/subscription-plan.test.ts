@@ -155,10 +155,10 @@ describe("SubscriptionPlan", () => {
           activeSubscription,
           Effect.gen(function* () {
             const plan = yield* SubscriptionPlan;
-            yield* seedShopSession("baton-pro-test", 2000);
+            yield* seedShopSession("baton-pro", 2000);
             assert.deepStrictEqual(yield* plan.resolve(shop), {
               _tag: "Subscribed",
-              handle: "baton-pro-test",
+              handle: "baton-pro",
               plan: "pro",
             });
             yield* seedShopSession(null, 2000);

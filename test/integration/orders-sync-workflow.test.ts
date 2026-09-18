@@ -1,10 +1,11 @@
-import type * as Domain from "@/lib/Domain";
-
 import * as ShopifyApi from "@shopify/shopify-api";
 import { getAgentByName } from "agents";
 import { introspectWorkflow } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+
+import * as Domain from "@/lib/Domain";
+import { bulkOrdersQueryText } from "@/lib/OrdersBulkRepository";
 
 const sessionProps = (shop: string) =>
   new ShopifyApi.Session({
@@ -143,5 +144,57 @@ describe("OrdersSyncWorkflow shape", () => {
     expect(second.startedAt).toBe(first.startedAt);
     const instances = await introspector.get();
     expect(instances.length).toBe(1);
+  });
+});
+
+/**
+ * The storage guard, with the ceiling lowered to zero for the duration — the
+ * real one is two gigabytes and no test is going to write that. Same seam, and
+ * same reasoning, as `withMaxLiveRuns` in `workflow-run-repository.test.ts`.
+ */
+describe("syncOrders storage guard", () => {
+  it("refuses the bulk import and leaves the reason on the sync state", async () => {
+    const shop = "orders-storage.myshopify.com";
+    const limits = Domain.ShopLimits as { storageSoftLimitBytes: number };
+    const original = limits.storageSoftLimitBytes;
+    limits.storageSoftLimitBytes = 0;
+    try {
+      await using introspector = await introspectWorkflow(
+        env.ORDERS_SYNC_WORKFLOW,
+      );
+      const agent = await getAgentByName(env.SHOP_AGENT, shop);
+      const state = await agent.syncOrders();
+      expect(state.workflowId).toBeNull();
+      expect(state.lastError).toContain("Storage limit reached");
+      const instances = await introspector.get();
+      expect(instances.length).toBe(0);
+    } finally {
+      limits.storageSoftLimitBytes = original;
+    }
+  });
+});
+
+/**
+ * The query string is built at runtime from the window, so codegen validates
+ * the document but not the filter. These are the filter.
+ */
+describe("bulkOrdersQueryText", () => {
+  const windowStart = Date.UTC(2026, 8, 1);
+
+  it("narrows the first sync to the open working set", () => {
+    const text = bulkOrdersQueryText({ field: "created_at", windowStart });
+    expect(text).toContain(
+      `created_at:>='${new Date(windowStart).toISOString()}'`,
+    );
+    expect(text).toContain("status:open -fulfillment_status:fulfilled");
+  });
+
+  it("leaves later syncs unfiltered so a fulfilled order still updates", () => {
+    const text = bulkOrdersQueryText({ field: "updated_at", windowStart });
+    expect(text).toContain(
+      `updated_at:>='${new Date(windowStart).toISOString()}'`,
+    );
+    expect(text).not.toContain("status:open");
+    expect(text).not.toContain("fulfillment_status");
   });
 });

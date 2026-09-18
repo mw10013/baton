@@ -93,6 +93,7 @@ const order = (
   note: "Gift wrap please",
   customAttributes: [],
   lineItemsComplete: true,
+  lineItemsTruncated: false,
   syncedAt: PROCESSED_AT,
   syncSource: "webhook",
   ...overrides,
@@ -253,7 +254,6 @@ const upsertAndReconcile = (
     });
     yield* orders.upsertOrder({
       order: shopOrder,
-      raw: "{}",
       lineItems,
       afterWrite: runs
         .reconcileOrder({ ...context, orderId: shopOrder.id })
@@ -301,7 +301,6 @@ describe("WorkflowRunRepository.countWaitingOrders", () => {
         ) =>
           orders.upsertOrder({
             order: order({ id, legacyId: id, name: id, ...overrides }),
-            raw: "{}",
             lineItems: items.map((item) => ({
               ...item,
               id: `${id}/${item.id}`,
@@ -607,7 +606,6 @@ describe("WorkflowRunRepository one live run per item", () => {
         const seedOrder = (id: string, itemTags: readonly string[]) =>
           orders.upsertOrder({
             order: order({ id, legacyId: id, name: id, processedAt: old }),
-            raw: "{}",
             lineItems: [
               { ...lineItem(1, itemTags), id: `${id}/li`, orderId: id },
             ],
@@ -2638,5 +2636,103 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           "RunNotFoundError",
         );
       }),
+    ));
+});
+
+/**
+ * The ceiling is 5,000 live runs, which no test can reach by creating runs, so
+ * these lower the constant for the duration. It is a plain object behind a
+ * `readonly` type, and the alternative — threading a limit through
+ * `reconcileOrder` and `setRun` for nobody but this file — would put a test
+ * seam in the production signature.
+ */
+const withMaxLiveRuns = <A>(limit: number, body: () => Promise<A>) => {
+  const limits = Domain.ShopLimits as { maxLiveRuns: number };
+  const original = limits.maxLiveRuns;
+  limits.maxLiveRuns = limit;
+  return body().finally(() => {
+    limits.maxLiveRuns = original;
+  });
+};
+
+const usageRow = () =>
+  SqlClient.SqlClient.pipe(
+    Effect.flatMap(
+      (sql) => sql`select liveRunsLimitedAt from ShopUsage where id = 1`.values,
+    ),
+    Effect.map((rows) => rows[0]?.[0] ?? null),
+  );
+
+describe("WorkflowRunRepository live-run ceiling", () => {
+  it("auto-start yields to the ceiling and records it; finishing the run clears the flag", () =>
+    withMaxLiveRuns(1, () =>
+      runInRepository(
+        Effect.gen(function* () {
+          yield* seed;
+          // Two matching items, room for one run.
+          const counts = yield* upsertAndReconcile(order(), [
+            lineItem(1, ["a"]),
+            lineItem(2, ["b"]),
+          ]);
+          strictEqual(counts.created, 1);
+          const limitedAt = yield* usageRow();
+          strictEqual(typeof limitedAt, "number");
+          // The order itself is stored either way: failing here would fail the
+          // webhook, and Shopify would retry it for four hours.
+          const stored = yield* (yield* OrderRepository).getOrder(ORDER_ID);
+          strictEqual(Option.isSome(stored), true);
+          // Finish the one run: both steps done takes it out of `pending`/
+          // `active`, which is what releases the flag.
+          const [detail] = yield* runsForOrder();
+          if (detail === undefined) throw new Error("no run");
+          yield* complete(detail, 1, [TEAM_A.id]);
+          yield* complete(detail, 2, [TEAM_B.id]);
+          strictEqual(yield* usageRow(), null);
+        }),
+      ),
+    ));
+
+  it("manual attach fails at the ceiling rather than silently doing nothing", () =>
+    withMaxLiveRuns(1, () =>
+      runInRepository(
+        Effect.gen(function* () {
+          const { a, b } = yield* seed;
+          const runs = yield* WorkflowRunRepository;
+          const orders = yield* OrderRepository;
+          yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
+          const target = Option.getOrThrow(
+            yield* orders.getLineItem("gid://shopify/LineItem/1"),
+          );
+          // Attaching a *different* workflow to an item that already has a run
+          // cancels the incumbent first, so it still fits under the ceiling.
+          const replaced = yield* runs.setRun({
+            workflow: yield* savedDetail(b.id),
+            teams: TEAMS,
+            order: target.order,
+            lineItem: target.lineItem,
+            source: "manual",
+          });
+          strictEqual(Option.isSome(replaced), true);
+          // A second item has nowhere to go.
+          yield* orders.upsertOrder({
+            order: order({ updatedAt: PROCESSED_AT + 1 }),
+            lineItems: [lineItem(1, ["a"]), lineItem(2, [])],
+            afterWrite: Effect.void,
+          });
+          const second = Option.getOrThrow(
+            yield* orders.getLineItem("gid://shopify/LineItem/2"),
+          );
+          const refused = yield* Effect.flip(
+            runs.setRun({
+              workflow: yield* savedDetail(a.id),
+              teams: TEAMS,
+              order: second.order,
+              lineItem: second.lineItem,
+              source: "manual",
+            }),
+          );
+          strictEqual(refused._tag, "WorkflowRunLimitError");
+        }),
+      ),
     ));
 });

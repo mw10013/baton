@@ -129,7 +129,11 @@ describe("ShopAgent connect gate", () => {
           shop,
           name: teamNameOf("Cut & Sew"),
         });
-        yield* repository.addMember({ shop, email: MEMBER });
+        yield* repository.addMember({
+          shop,
+          email: MEMBER,
+          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+        });
         const access = yield* repository.findMemberAccess({
           shop,
           email: MEMBER,
@@ -171,7 +175,11 @@ describe("ShopAgent connect gate", () => {
       Effect.gen(function* () {
         const shop = shopOf("gate-spoof.myshopify.com");
         yield* seedSubscribedShop(shop);
-        yield* (yield* Repository).addMember({ shop, email: MEMBER });
+        yield* (yield* Repository).addMember({
+          shop,
+          email: MEMBER,
+          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+        });
         const cookie = yield* signInThroughWorker(MEMBER);
         const response = yield* upgrade(
           `http://localhost/agents/shop-agent/${shop}`,
@@ -195,6 +203,7 @@ describe("ShopAgent connect gate", () => {
         yield* (yield* Repository).addMember({
           shop: otherShop,
           email: STRANGER,
+          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
         });
         const cookie = yield* signInThroughWorker(STRANGER);
         const response = yield* upgrade(
@@ -239,7 +248,11 @@ describe("ShopAgent connect gate", () => {
           planHandle: null,
           planHandleExpiresAt: Date.now() + 60 * 60 * 1000,
         });
-        yield* repository.addMember({ shop, email: MEMBER });
+        yield* repository.addMember({
+          shop,
+          email: MEMBER,
+          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+        });
         const cookie = yield* signInThroughWorker(MEMBER);
         const response = yield* upgrade(
           `http://localhost/agents/shop-agent/${shop}`,

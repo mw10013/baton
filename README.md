@@ -60,6 +60,10 @@ limits must match `ENTITLEMENTS` in `src/lib/Domain.ts`. All numbers are provisi
   `baton-staging` and the production app when those exist.
 - Test handles: none. Development stores in the same Partner organization get every public
   plan at $0, so `Domain.PlanHandle` carries only the two public handles.
+- Leave Shopify's built-in private `shopify-test` plan untouched: no stores under "Stores with
+  plan access", redirect URL as shipped. Its store list only controls which stores see that one
+  private plan on the selection page; it has nothing to do with install access or with dev
+  stores getting the public plans free. Test against `baton-basic` and `baton-pro` directly.
 
 Where: Partner Dashboard > App distribution > All apps > the app > Distribution > Manage
 listing > the locale > Pricing content > Manage > Public plans > Add. Each plan needs a display
@@ -163,6 +167,16 @@ pnpm test
 pnpm test:browser
 pnpm test:e2e
 ```
+
+`pnpm test:e2e` is headless and never touches billing. Plan switching drives Shopify's hosted
+pricing page, which sits behind a Cloudflare bot check that challenges headless browsers, so it
+lives in its own Playwright project and runs headed, by hand, and not in a loop:
+
+```bash
+pnpm test:e2e:billing
+```
+
+It moves the dev store's real subscription and restores the starting plan when it finishes.
 
 ## Deploying
 

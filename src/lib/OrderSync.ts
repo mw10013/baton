@@ -53,26 +53,25 @@ export const LineItemNode = Schema.Struct({
 });
 export type LineItemNode = typeof LineItemNode.Type;
 
-/**
- * Re-encodes the decoded node back to its wire shape for the `raw` column.
- * Total for anything this schema just produced, which is the only input it
- * ever gets — and re-encoding rather than keeping the original response is
- * what makes `raw` identical from both paths, since the bulk line carries a
- * `__typename` the query response does not and the query response nests
- * `lineItems` the bulk line does not.
- */
-const encodeOrderNode = Schema.encodeSync(OrderNode);
-
 export const toShopOrder = ({
   node,
   source,
   syncedAt,
   lineItemsComplete,
+  lineItemsTruncated = !lineItemsComplete,
 }: {
   readonly node: OrderNode;
   readonly source: Domain.OrderSyncSource;
   readonly syncedAt: number;
   readonly lineItemsComplete: boolean;
+  /**
+   * Defaults to the negation of `lineItemsComplete`, which is the single-order
+   * path's answer: a fetch that reported another page stored less than the
+   * order has. The bulk path passes it explicitly, because there the set is
+   * complete as far as pagination goes and short only where this app capped it
+   * ({@link Domain.ShopLimits.maxLineItemsPerOrder}).
+   */
+  readonly lineItemsTruncated?: boolean;
 }): Domain.ShopOrder => ({
   id: node.id,
   legacyId: node.legacyResourceId,
@@ -88,12 +87,10 @@ export const toShopOrder = ({
   note: node.note,
   customAttributes: node.customAttributes,
   lineItemsComplete,
+  lineItemsTruncated,
   syncedAt,
   syncSource: source,
 });
-
-export const toOrderRaw = (node: OrderNode) =>
-  JSON.stringify(encodeOrderNode(node));
 
 export const toOrderLineItem = (
   orderId: string,

@@ -22,6 +22,7 @@
     "test": "vitest run",
     "test:e2e": "pnpm exec playwright test --project=e2e --project=member",
     "test:e2e:headed": "pnpm exec playwright test --project=e2e --project=member --headed",
+    "test:e2e:billing": "pnpm exec playwright test --project=billing --headed",
     "test:integration": "pnpm vitest --config test/integration/vitest.config.ts run",
     "test:browser": "pnpm vitest --config test/browser/vitest.config.ts run",
     "test:browser:headed": "VITEST_BROWSER_HEADLESS=false pnpm vitest --config test/browser/vitest.config.ts run",

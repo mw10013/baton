@@ -138,3 +138,5 @@ create table if not exists Verification (
 );
 
 create index if not exists Verification_identifier_idx on Verification (identifier);
+
+create index if not exists Verification_expiresAt_idx on Verification (expiresAt);

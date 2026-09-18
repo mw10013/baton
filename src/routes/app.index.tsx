@@ -2,15 +2,24 @@ import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
+import { QuotaBanners } from "@/components/QuotaBanners";
 import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
+import { Repository } from "@/lib/Repository";
+import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { resolveEntitlements } from "@/lib/SubscriptionPlan";
 
 /**
- * The current merchant-facing page displays the entitlement resolved
- * from D1's cached plan handle (granted unconditionally while
- * `BILLING_ENABLED` is off).
+ * The merchant-facing plan page: what the tier grants, beside what the shop has
+ * actually used.
+ *
+ * Three sources, one request, and the split is the whole design. The
+ * *entitlement* comes from D1's cached plan handle (granted unconditionally
+ * while `BILLING_ENABLED` is off). The *order count* comes from the shop's
+ * Durable Object, which meters usage and knows nothing about plans. The
+ * *member count* comes from D1, where members live. Nothing compares them but
+ * this page and the banner it renders.
  *
  * The plan is resolved server-side rather than read from `/app` route context,
  * even though `beforeLoad` already has it: this loader is isomorphic and runs
@@ -27,6 +36,8 @@ const getLoaderData = createServerFn({ method: "GET" })
         );
         return {
           entitlements: yield* resolveEntitlements(shop),
+          usage: yield* (yield* ShopAgentClient).getUsage(session.shop),
+          memberCount: yield* (yield* Repository).countMembers(shop),
         } satisfies Domain.AppIndexLoaderData;
       }),
     ),
@@ -38,29 +49,42 @@ export const Route = createFileRoute("/app/")({
 });
 
 function RouteComponent() {
-  const { entitlements } = Route.useLoaderData();
+  const { entitlements, usage, memberCount } = Route.useLoaderData();
   const { plan, managePlanUrl } = Route.useRouteContext();
+
+  const managePlan = (
+    <s-button
+      variant="secondary"
+      onClick={() => {
+        window.open(managePlanUrl, "_top");
+      }}
+    >
+      Manage plan
+    </s-button>
+  );
 
   return (
     <s-page heading="Baton" inlineSize="base">
+      <QuotaBanners
+        usage={usage}
+        ordersPerMonth={entitlements.ordersPerMonth}
+        action={managePlan}
+      />
       <s-section heading="Plan" accessibilityLabel="Plan">
         <s-stack gap="base">
+          {/* No claim about whether billing is switched on: `BILLING_ENABLED`
+              is per environment, and a sentence asserting it goes stale the
+              moment the flag moves. Where the handle comes from is true either
+              way. */}
           <s-paragraph color="subdued">
-            Resolved from the plan handle cached on the shop&apos;s D1 session.
-            Billing is disabled, so every shop is granted the widest tier.
+            Resolved from the plan handle cached on the shop&apos;s session.
           </s-paragraph>
           <s-heading>{plan}</s-heading>
-          <s-paragraph>{`Daily action limit: ${formatNumber(entitlements.dailyActionLimit)}`}</s-paragraph>
-          <s-stack alignItems="start">
-            <s-button
-              variant="secondary"
-              onClick={() => {
-                window.open(managePlanUrl, "_top");
-              }}
-            >
-              Manage plan
-            </s-button>
-          </s-stack>
+          {/* Used against granted, in that order: the number a merchant is
+              looking for is what they have spent, not what they were sold. */}
+          <s-paragraph>{`Orders this month: ${formatNumber(usage.ordersThisMonth)} of ${formatNumber(entitlements.ordersPerMonth)}`}</s-paragraph>
+          <s-paragraph>{`Members: ${formatNumber(memberCount)} of ${formatNumber(entitlements.maxMembers)}`}</s-paragraph>
+          <s-stack alignItems="start">{managePlan}</s-stack>
         </s-stack>
       </s-section>
     </s-page>

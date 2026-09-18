@@ -3,6 +3,7 @@ import { assertFalse, assertTrue, strictEqual } from "@effect/vitest/utils";
 import { Effect } from "effect";
 import { afterEach } from "vitest";
 
+import * as Domain from "@/lib/Domain";
 import { Repository } from "@/lib/Repository";
 
 import {
@@ -77,7 +78,11 @@ describe("member area", () => {
       Effect.gen(function* () {
         const repository = yield* Repository;
         yield* seedShop(SHOP);
-        yield* repository.addMember({ shop: SHOP, email: MEMBER });
+        yield* repository.addMember({
+          shop: SHOP,
+          email: MEMBER,
+          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+        });
         const cookie = yield* signInThroughWorker(MEMBER);
         const response = yield* fetchWorker("http://localhost/shop", {
           headers: { cookie },
@@ -96,7 +101,11 @@ describe("member area", () => {
         const repository = yield* Repository;
         yield* seedShop(SHOP);
         yield* seedShop(OTHER_SHOP);
-        yield* repository.addMember({ shop: SHOP, email: MEMBER });
+        yield* repository.addMember({
+          shop: SHOP,
+          email: MEMBER,
+          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+        });
         const cookie = yield* signInThroughWorker(MEMBER);
         const response = yield* fetchWorker(
           `http://localhost/shop/${OTHER_SHOP}`,
@@ -119,7 +128,11 @@ describe("member area", () => {
       Effect.gen(function* () {
         const repository = yield* Repository;
         yield* seedShop(SHOP);
-        yield* repository.addMember({ shop: SHOP, email: MEMBER });
+        yield* repository.addMember({
+          shop: SHOP,
+          email: MEMBER,
+          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+        });
         const cookie = yield* signInThroughWorker(MEMBER);
         const shopUrl = `http://localhost/shop/${SHOP}`;
         const page = yield* fetchWorker(shopUrl, { headers: { cookie } });
@@ -138,7 +151,11 @@ describe("member area", () => {
           (yield* Effect.promise(() => listing.text())).includes(SHOP),
         );
         // Re-adding restores; the same session cookie works again.
-        yield* repository.addMember({ shop: SHOP, email: MEMBER });
+        yield* repository.addMember({
+          shop: SHOP,
+          email: MEMBER,
+          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+        });
         strictEqual(
           (yield* fetchWorker(shopUrl, { headers: { cookie } })).status,
           200,
@@ -164,7 +181,11 @@ describe("member queue", () => {
         const repository = yield* Repository;
         yield* seedShop(SHOP);
         yield* seedShop(OTHER_SHOP);
-        yield* repository.addMember({ shop: SHOP, email: MEMBER });
+        yield* repository.addMember({
+          shop: SHOP,
+          email: MEMBER,
+          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+        });
         const cookie = yield* signInThroughWorker(MEMBER);
         strictEqual(
           (yield* fetchWorker(`http://localhost/shop/${SHOP}`, {
@@ -211,11 +232,19 @@ describe("member queue", () => {
           planHandle: null,
           planHandleExpiresAt: Date.now() + 60 * 60 * 1000,
         });
-        yield* repository.addMember({ shop: SHOP, email: MEMBER });
+        yield* repository.addMember({
+          shop: SHOP,
+          email: MEMBER,
+          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+        });
         // A magic link is only minted for someone who is a member somewhere.
         yield* seedShop(OTHER_SHOP);
         const STRANGER = emailOf("stranger@example.com");
-        yield* repository.addMember({ shop: OTHER_SHOP, email: STRANGER });
+        yield* repository.addMember({
+          shop: OTHER_SHOP,
+          email: STRANGER,
+          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+        });
         const cookie = yield* signInThroughWorker(MEMBER);
         const stranger = yield* signInThroughWorker(STRANGER);
         for (const path of [`/shop/${SHOP}`, `/shop/${SHOP}/work/none`]) {
@@ -258,7 +287,11 @@ describe("admin console", () => {
       Effect.gen(function* () {
         const repository = yield* Repository;
         yield* seedShop(SHOP);
-        yield* repository.addMember({ shop: SHOP, email: MEMBER });
+        yield* repository.addMember({
+          shop: SHOP,
+          email: MEMBER,
+          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+        });
         const cookie = yield* signInThroughWorker(MEMBER);
         const response = yield* fetchWorker("http://localhost/admin", {
           headers: { cookie },
@@ -305,7 +338,11 @@ describe("login-callback", () => {
         Effect.gen(function* () {
           const repository = yield* Repository;
           yield* seedShop(SHOP);
-          yield* repository.addMember({ shop: SHOP, email: MEMBER });
+          yield* repository.addMember({
+            shop: SHOP,
+            email: MEMBER,
+            limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+          });
           const cookie = yield* signInThroughWorker(MEMBER);
           const one = yield* fetchWorker("http://localhost/login-callback", {
             headers: { cookie },
@@ -314,7 +351,11 @@ describe("login-callback", () => {
           strictEqual(one.headers.get("location"), `/shop/${SHOP}`);
 
           yield* seedShop(OTHER_SHOP);
-          yield* repository.addMember({ shop: OTHER_SHOP, email: MEMBER });
+          yield* repository.addMember({
+            shop: OTHER_SHOP,
+            email: MEMBER,
+            limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+          });
           const two = yield* fetchWorker("http://localhost/login-callback", {
             headers: { cookie },
           });

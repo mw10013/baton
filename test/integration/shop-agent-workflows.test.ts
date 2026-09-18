@@ -523,10 +523,10 @@ const seedOrder = (
               note: null,
               customAttributes: [],
               lineItemsComplete: true,
+              lineItemsTruncated: false,
               syncedAt: processedAt,
               syncSource: "manual",
             },
-            raw: "{}",
             lineItems: [
               {
                 id: "gid://shopify/LineItem/1",
@@ -915,7 +915,11 @@ describe("ShopAgent workflow run callables", () => {
       Effect.gen(function* () {
         const repo = yield* Repository;
         const email = Schema.decodeUnknownSync(Domain.Email)(memberEmail);
-        yield* repo.addMember({ shop: shopOf(shop), email });
+        yield* repo.addMember({
+          shop: shopOf(shop),
+          email,
+          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+        });
         const members = yield* repo.listMembers(shopOf(shop));
         return members.find((m) => m.email === email)?.id ?? "";
       }).pipe(Effect.provide(layer)),

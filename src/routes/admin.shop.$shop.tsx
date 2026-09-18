@@ -12,6 +12,7 @@ import { CloudflareEnv } from "@/lib/CloudflareEnv";
 import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
 import { Repository } from "@/lib/Repository";
+import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { SubscriptionPlan } from "@/lib/SubscriptionPlan";
 
 const shopInput = Schema.Struct({ shop: Domain.Shop });
@@ -25,8 +26,9 @@ const shopInput = Schema.Struct({ shop: Domain.Shop });
  * join `/app` performs on every merchant page view, one shop over.
  *
  * A missing row is the honest answer for an uninstalled shop, since uninstall
- * deletes it. This page derives the Durable Object id without calling the
- * object, so viewing arbitrary paths cannot materialize an empty object.
+ * deletes it, and it is returned *before* the usage read — so viewing an
+ * arbitrary path still cannot materialize an empty Durable Object. The id shown
+ * beside it is derived, never fetched, for the same reason.
  *
  * The plan is decoded from the row, never resolved: `SubscriptionPlan.resolve`
  * calls the Partner API and rewrites D1 on a miss, which would make viewing
@@ -53,6 +55,8 @@ const getLoaderData = createServerFn({ method: "GET" })
           shopSession: shopSession.value,
           plan,
           entitlements: Domain.adminShopEntitlements(plan),
+          usage: yield* (yield* ShopAgentClient).getUsage(shop),
+          memberCount: yield* (yield* Repository).countMembers(shop),
           derivedShopAgentId: (yield* CloudflareEnv).SHOP_AGENT.idFromName(
             shop,
           ).toString(),
@@ -212,7 +216,14 @@ const shopContent = ({
   );
 
 function FoundShop({
-  data: { shopSession, plan, entitlements, derivedShopAgentId },
+  data: {
+    shopSession,
+    plan,
+    entitlements,
+    usage,
+    memberCount,
+    derivedShopAgentId,
+  },
   refreshing,
   refreshError,
   onRefresh,
@@ -246,9 +257,41 @@ function FoundShop({
               }
             />
             <Field
-              label="Daily action limit"
+              label="Orders this month"
+              value={`${formatNumber(usage.ordersThisMonth)} of ${
+                entitlements === null
+                  ? "—"
+                  : formatNumber(entitlements.ordersPerMonth)
+              }`}
+            />
+            <Field
+              label="Members"
+              value={`${formatNumber(memberCount)} of ${
+                entitlements === null
+                  ? "—"
+                  : formatNumber(entitlements.maxMembers)
+              }`}
+            />
+            {/* One decimal, not a rounded integer: a healthy shop sits well
+                under a megabyte, and "0 MB" reads as "not measured". */}
+            <Field
+              label="Database size"
+              value={`${(usage.databaseSize / 1_000_000).toFixed(1)} MB`}
+            />
+            <Field
+              label="Last retention sweep"
               value={
-                entitlements && formatNumber(entitlements.dailyActionLimit)
+                usage.lastSweepAt === null ? null : (
+                  <LocalDateTime value={usage.lastSweepAt} />
+                )
+              }
+            />
+            <Field
+              label="Live runs limited"
+              value={
+                usage.liveRunsLimitedAt === null ? null : (
+                  <LocalDateTime value={usage.liveRunsLimitedAt} />
+                )
               }
             />
           </s-grid>

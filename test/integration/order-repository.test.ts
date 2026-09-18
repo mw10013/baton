@@ -64,6 +64,7 @@ const anOrder = (
   note: null,
   customAttributes: [{ key: "gift", value: "yes" }],
   lineItemsComplete: true,
+  lineItemsTruncated: false,
   syncedAt: 1000,
   syncSource: "bulk",
   ...overrides,
@@ -95,7 +96,7 @@ const upsert = (
   repository: typeof OrderRepository.Service,
   order: Domain.ShopOrder,
   lineItems: readonly Domain.OrderLineItem[],
-) => repository.upsertOrder({ order, raw: "{}", lineItems });
+) => repository.upsertOrder({ order, lineItems });
 
 describe("OrderRepository.upsertOrder", () => {
   it("stores an order with its line items", async () => {
@@ -848,6 +849,191 @@ describe("OrderRepository.recordWebhookDelivery", () => {
     );
     strictEqual(first, true);
     strictEqual(second, false);
+  });
+
+  it("sweeps deliveries past the retention window and keeps the new one", async () => {
+    const remaining = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        const sql = yield* SqlClient.SqlClient;
+        const now = 30 * 86_400_000;
+        yield* repository.recordWebhookDelivery({
+          webhookId: "wh-old",
+          topic: "orders/updated",
+          orderId: orderId(1),
+          triggeredAt: 0,
+          receivedAt:
+            now -
+            (Domain.ShopLimits.webhookDeliveryRetentionDays + 1) * 86_400_000,
+        });
+        yield* repository.recordWebhookDelivery({
+          webhookId: "wh-new",
+          topic: "orders/updated",
+          orderId: orderId(1),
+          triggeredAt: now,
+          receivedAt: now,
+        });
+        const rows = yield* sql`select webhookId from WebhookDelivery`.values;
+        return rows.map((row) => String(row[0]));
+      }),
+    );
+    deepStrictEqual(remaining, ["wh-new"]);
+  });
+});
+
+describe("OrderRepository usage", () => {
+  const paid = (n: number, overrides: Partial<Domain.ShopOrder> = {}) =>
+    anOrder({
+      id: orderId(n),
+      name: `#100${String(n)}`,
+      fullyPaid: true,
+      financialStatus: "PAID",
+      processedAt: MONTH,
+      updatedAt: MONTH,
+      syncedAt: MONTH,
+      ...overrides,
+    });
+  /** Mid-month, so `processedAt: MONTH - 1` is unambiguously the month before. */
+  const MONTH = Date.UTC(2026, 5, 15);
+  const NEXT_MONTH = Date.UTC(2026, 6, 15);
+
+  it("counts fresh, paid, in-month orders once each and rolls the month over", async () => {
+    const { first, second } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        yield* upsert(repository, paid(1), []);
+        yield* upsert(repository, paid(2), []);
+        yield* upsert(repository, paid(3), []);
+        // A backfilled order: placed before the month started.
+        yield* upsert(
+          repository,
+          paid(4, { processedAt: Date.UTC(2026, 4, 20) }),
+          [],
+        );
+        // Unpaid, and cancelled: neither is work the quota meters.
+        yield* upsert(repository, paid(5, { fullyPaid: false }), []);
+        yield* upsert(repository, paid(6, { cancelledAt: MONTH }), []);
+        // A second write of a stored order is not a second order.
+        yield* upsert(repository, paid(1, { updatedAt: MONTH + 1 }), []);
+        const first = yield* repository.getUsage();
+        yield* upsert(
+          repository,
+          paid(7, {
+            processedAt: NEXT_MONTH,
+            updatedAt: NEXT_MONTH,
+            syncedAt: NEXT_MONTH,
+          }),
+          [],
+        );
+        return { first, second: yield* repository.getUsage() };
+      }),
+    );
+    strictEqual(first.ordersThisMonth, 3);
+    strictEqual(first.monthKey, "2026-06");
+    strictEqual(second.ordersThisMonth, 1);
+    strictEqual(second.monthKey, "2026-07");
+  });
+
+  it("reports whether the upsert created the row", async () => {
+    const { created, updated } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        const created = yield* upsert(repository, anOrder(), []);
+        const updated = yield* upsert(
+          repository,
+          anOrder({ updatedAt: 2000 }),
+          [],
+        );
+        return { created, updated };
+      }),
+    );
+    strictEqual(created.fresh, true);
+    strictEqual(updated.fresh, false);
+  });
+});
+
+const NOW = 200 * 86_400_000;
+const OLD = NOW - (Domain.ShopLimits.orderRetentionDays + 10) * 86_400_000;
+const RECENT = NOW - 10 * 86_400_000;
+
+/** A run written straight to SQL: these tests care about the sweep, not how the run got there. */
+const runWith =
+  (orderId: string, status: string, updatedAt: number) =>
+  (sql: SqlClient.SqlClient) =>
+    sql`
+      insert into WorkflowRun (
+        id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
+        lineItemId, lineItemTitle, variantTitle, sku, quantity,
+        customAttributes, source, status, flag, flagAt, flagDetail,
+        createdAt, updatedAt, cancelledAt
+      ) values (
+        ${`run-${orderId}-${status}`}, 'wf', 'Workflow', ${orderId}, '#1',
+        0, ${`li-${orderId}`}, 'Item', null, null, 1, '[]', 'tag',
+        ${status}, null, null, null, ${updatedAt}, ${updatedAt}, null
+      )
+    `;
+
+describe("OrderRepository.sweepExpiredOrders", () => {
+  it("deletes only closed, untouched orders with no live run, plus orphaned runs", async () => {
+    const { swept, orders, runs, usage } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        const sql = yield* SqlClient.SqlClient;
+        // Expired and free: goes.
+        yield* upsert(
+          repository,
+          anOrder({
+            id: orderId(1),
+            name: "#1001",
+            fulfillmentStatus: "FULFILLED",
+            updatedAt: OLD,
+          }),
+          [],
+        );
+        yield* runWith(orderId(1), "done", OLD)(sql);
+        // Expired but someone is still working on it: stays.
+        yield* upsert(
+          repository,
+          anOrder({
+            id: orderId(2),
+            name: "#1002",
+            fulfillmentStatus: "FULFILLED",
+            updatedAt: OLD,
+          }),
+          [],
+        );
+        yield* runWith(orderId(2), "active", OLD)(sql);
+        // Old but still open: stays, whatever its age.
+        yield* upsert(
+          repository,
+          anOrder({ id: orderId(3), name: "#1003", updatedAt: OLD }),
+          [],
+        );
+        // Closed but touched recently: stays.
+        yield* upsert(
+          repository,
+          anOrder({
+            id: orderId(4),
+            name: "#1004",
+            cancelledAt: RECENT,
+            updatedAt: RECENT,
+          }),
+          [],
+        );
+        // A run whose order was deleted by `orders/delete`, long ago.
+        yield* runWith("gid://shopify/Order/999", "done", OLD)(sql);
+        const swept = yield* repository.sweepExpiredOrders({ now: NOW });
+        const orders = (yield* sql`select id from ShopOrder order by id`
+          .values).map((row) => String(row[0]));
+        const runs = (yield* sql`select id from WorkflowRun order by id`
+          .values).map((row) => String(row[0]));
+        return { swept, orders, runs, usage: yield* repository.getUsage() };
+      }),
+    );
+    deepStrictEqual(swept, { orders: 1, runs: 2 });
+    deepStrictEqual(orders, [orderId(2), orderId(3), orderId(4)]);
+    deepStrictEqual(runs, [`run-${orderId(2)}-active`]);
+    strictEqual(usage.lastSweepAt, NOW);
   });
 });
 

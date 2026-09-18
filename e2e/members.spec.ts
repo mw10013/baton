@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import * as Domain from "@/lib/Domain";
+
 import { clickHoisted, gotoApp } from "./app";
 import { seedConfig, seedMembers } from "./seed";
 
@@ -85,4 +87,41 @@ test("members screen adds, staffs, normalizes, and removes a member", async ({
     .last()
     .click();
   await expect(frame.getByText(EMPTY_STATE)).toBeVisible();
+});
+
+/**
+ * The plan's member cap, asserted at the surface a merchant sees. The seed
+ * writes `Domain.MAX_ENTITLEMENTS.maxMembers` rows (it bypasses the cap on
+ * purpose: `api.dev.seed` has no plan to resolve), which is at or over every
+ * tier's ceiling, so the next add is refused whichever plan the store is on.
+ * The number in the copy is therefore matched, not asserted: what this test
+ * pins is that `MemberLimitError` becomes the banner sentence rather than a
+ * 500, and that no row was written.
+ */
+test("adding a member past the plan's cap is refused with the plan's ceiling", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const seeded = Array.from(
+    { length: Domain.MAX_ENTITLEMENTS.maxMembers },
+    (_, index) => `e2e.cap${String(index)}@example.com`,
+  );
+  await seedMembers(seedConfig(), seeded, []);
+
+  const frame = await gotoApp(page);
+  await clickHoisted(page.getByRole("link", { name: "Members", exact: true }));
+  await expect(frame.locator('s-page[heading="Members"]')).toBeVisible();
+  await expect(frame.getByText(seeded[0] ?? "", { exact: true })).toBeVisible();
+
+  await clickHoisted(page.getByRole("button", { name: "Add member" }));
+  await frame
+    .getByRole("textbox", { name: "Email", exact: true })
+    .fill(MEMBER_EMAIL);
+  await frame.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(
+    frame.getByText(
+      /Your plan allows [\d,]+ members?\. Upgrade to add more\./u,
+    ),
+  ).toBeVisible();
+  await expect(frame.getByText(MEMBER_EMAIL, { exact: true })).toHaveCount(0);
 });

@@ -20,6 +20,9 @@ import { groupUsedBy } from "@/lib/usedBy";
 
 const CREATE_MODAL = "create-team";
 
+const teamLimitMessage = (limit: number) =>
+  `A shop can have ${String(limit)} teams. Delete one to add another.`;
+
 const TeamNameInput = Schema.Struct({
   name: Schema.String.check(Schema.isNonEmpty({ message: "Name is required" })),
 });
@@ -53,7 +56,12 @@ const createTeamFn = createServerFn({ method: "POST" })
           shop: yield* sessionShop(session.shop),
           name: yield* decodeName(data.name),
         });
-      }).pipe(Effect.catchTag("TeamNameTakenError", failWith(NAME_TAKEN))),
+      }).pipe(
+        Effect.catchTag("TeamNameTakenError", failWith(NAME_TAKEN)),
+        Effect.catchTag("TeamLimitError", ({ limit }) =>
+          Effect.fail(new Error(teamLimitMessage(limit))),
+        ),
+      ),
     ),
   );
 

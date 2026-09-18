@@ -159,7 +159,13 @@ export const Route = createFileRoute("/api/dev/seed")({
               for (const email of members) {
                 if (keepIdentities !== true)
                   yield* sql`delete from User where email = ${email}`;
-                yield* repository.addMember({ shop, email });
+                // The seed is local-only and has no plan to resolve, so it
+                // seeds against the widest tier rather than a merchant's.
+                yield* repository.addMember({
+                  shop,
+                  email,
+                  limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+                });
               }
               const memberIds = new Map(
                 (yield* repository.listMembers(shop)).map((member) => [

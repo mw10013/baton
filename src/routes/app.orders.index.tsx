@@ -6,6 +6,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Option, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
+import { QuotaBanners } from "@/components/QuotaBanners";
 import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
 import { adminOrderUrl, useResourceLinkTarget } from "@/lib/orderLinks";
@@ -14,6 +15,7 @@ import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
+import { resolveEntitlements } from "@/lib/SubscriptionPlan";
 import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
 
 const ORDERS_PAGE_SIZE = 25;
@@ -279,9 +281,13 @@ const getLoaderData = createServerFn({ method: "GET" })
       context: { runEffect, session },
     }) =>
       runEffect(
-        ShopAgentClient.pipe(
-          Effect.flatMap((client) =>
-            client.listOrders(session.shop, {
+        Effect.gen(function* () {
+          const client = yield* ShopAgentClient;
+          const shop = yield* Schema.decodeUnknownEffect(Domain.Shop)(
+            session.shop,
+          );
+          return {
+            view: yield* client.listOrders(session.shop, {
               limit: ORDERS_PAGE_SIZE,
               cursor: null,
               q,
@@ -290,8 +296,10 @@ const getLoaderData = createServerFn({ method: "GET" })
               attention,
               team,
             }),
-          ),
-        ),
+            usage: yield* client.getUsage(session.shop),
+            ordersPerMonth: (yield* resolveEntitlements(shop)).ordersPerMonth,
+          } satisfies Domain.OrdersIndexLoaderData;
+        }),
       ),
   );
 
@@ -332,7 +340,7 @@ function RouteComponent() {
   const navigate = useNavigate({ from: Route.fullPath });
   const shopify = useAppBridge();
   const resourceLinkTarget = useResourceLinkTarget();
-  const loaderData = Route.useLoaderData();
+  const { view: initialView, usage, ordersPerMonth } = Route.useLoaderData();
   /**
    * The repository pages forward only (keyset on `processedAt, id`), so
    * "previous" is a stack of the cursors already visited: the top is the
@@ -403,7 +411,7 @@ function RouteComponent() {
           subscriberId,
         })
         .then(decodeOrdersView),
-    initialData: loaderData,
+    initialData: initialView,
   });
 
   /**
@@ -752,6 +760,9 @@ function RouteComponent() {
   return (
     <s-page heading="Orders" inlineSize="large">
       <SocketBanner />
+      {/* Above the sync button on purpose: the merchant who notices an order
+          missing here is the one these two banners are for. */}
+      <QuotaBanners usage={usage} ordersPerMonth={ordersPerMonth} />
       {/* Unconditional, empty list included: the resource-index template keeps
           the title-bar primary action and lets the empty state carry a second
           copy, so "sync is top right" holds on the visit where it matters most

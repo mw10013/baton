@@ -376,6 +376,7 @@ const storedOrder = (updatedAt: number): Domain.ShopOrder => ({
   note: null,
   customAttributes: [],
   lineItemsComplete: true,
+  lineItemsTruncated: false,
   syncedAt: updatedAt,
   syncSource: "bulk",
 });
@@ -388,7 +389,6 @@ const seedOrder = (updatedAt: number) =>
         yield* repository.deleteOrder(ORDER_ID);
         yield* repository.upsertOrder({
           order: storedOrder(updatedAt),
-          raw: "{}",
           lineItems: [],
         });
       }),

@@ -37,6 +37,7 @@ const CALLABLE_ROLES = {
   uncompleteStep: "member",
   subscribeRun: "member",
   syncOrders: "merchant",
+  getUsage: "merchant",
   resyncOrder: "merchant",
   subscribeOrders: "merchant",
   createWorkflow: "merchant",

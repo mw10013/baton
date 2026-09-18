@@ -56,7 +56,11 @@ const seedMember = (email: Domain.Email) =>
       refreshToken: null,
       refreshTokenExpiresAt: null,
     });
-    yield* repository.addMember({ shop, email });
+    yield* repository.addMember({
+      shop,
+      email,
+      limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+    });
   });
 
 /**
@@ -89,6 +93,7 @@ const signIn = (email: string) =>
 
 afterEach(async () => {
   await env.D1.batch([
+    env.D1.prepare("delete from Session"),
     env.D1.prepare("delete from User"),
     env.D1.prepare("delete from Verification"),
     env.D1.prepare("delete from Member"),
@@ -199,6 +204,46 @@ describe("magic-link sign-in", () => {
         strictEqual(user.role, "user");
         strictEqual(user.banned, false);
         strictEqual(session.userId, user.id);
+      }),
+    ),
+  );
+
+  /**
+   * `it.live`, not `it.effect`: the sweep compares against `Clock`, and the
+   * default test clock sits at the epoch, where nothing is expired.
+   */
+  it.live("sweeps expired Session and Verification rows on the way out", () =>
+    run(
+      Effect.gen(function* () {
+        const email = emailOf("member@example.com");
+        yield* seedMember(email);
+        const past = new Date(Date.now() - 86_400_000).toISOString();
+        yield* Effect.promise(() =>
+          env.D1.batch([
+            env.D1.prepare(
+              `insert into Verification (id, identifier, value, expiresAt, createdAt, updatedAt)
+               values ('stale', 'stale@example.com', 'x', ?, ?, ?)`,
+            ).bind(past, past, past),
+            env.D1.prepare(
+              `insert into User (id, name, email, emailVerified, createdAt, updatedAt)
+               values ('stale-user', 'Stale', 'stale@example.com', 1, ?, ?)`,
+            ).bind(past, past),
+            env.D1.prepare(
+              `insert into Session (id, expiresAt, token, createdAt, updatedAt, userId)
+               values ('stale-session', ?, 'stale-token', ?, ?, 'stale-user')`,
+            ).bind(past, past, past),
+          ]),
+        );
+        // The send is what carries the sweep, so requesting a link is enough.
+        yield* signIn(email);
+        const { results } = yield* Effect.promise(() =>
+          env.D1.prepare(
+            `select (select count(*) from Verification where id = 'stale') as verification,
+                    (select count(*) from Session where id = 'stale-session') as session`,
+          ).all<{ verification: number; session: number }>(),
+        );
+        strictEqual(results[0]?.verification, 0);
+        strictEqual(results[0]?.session, 0);
       }),
     ),
   );

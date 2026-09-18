@@ -45,7 +45,7 @@ export default defineConfig({
     {
       name: "e2e",
       testMatch: ["**/*.spec.ts"],
-      testIgnore: ["**/*.member.spec.ts"],
+      testIgnore: ["**/*.member.spec.ts", "**/*.billing.spec.ts"],
       dependencies: ["setup"],
       use: {
         channel: "chrome",
@@ -69,6 +69,28 @@ export default defineConfig({
         channel: "chrome",
         baseURL: `http://localhost:${process.env.PORT ?? "3000"}`,
         storageState: { cookies: [], origins: [] },
+      },
+    },
+    /**
+     * Plan switching drives Shopify's hosted pricing page, which sits behind a
+     * Cloudflare bot check that challenges a headless browser and cannot be
+     * solved programmatically. So this project is never selected by
+     * `test:e2e` (headless, the routine run); it runs only through
+     * `test:e2e:billing`, headed, by hand, and not in a loop, because the check
+     * also fires after several plan changes in a short window. `headless:
+     * false` is set here as well so a bare `--project=billing` does not walk
+     * into the challenge. Each spec mutates the shared dev store's real
+     * subscription and restores it in `finally`.
+     */
+    {
+      name: "billing",
+      testMatch: ["**/*.billing.spec.ts"],
+      dependencies: ["setup"],
+      use: {
+        channel: "chrome",
+        headless: false,
+        baseURL: process.env.SHOPIFY_PREVIEW_URL,
+        storageState: storageStatePath,
       },
     },
   ],

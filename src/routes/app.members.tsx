@@ -11,10 +11,12 @@ import { LocalDateTime } from "@/components/LocalDateTime";
 import { MemberTeamsFields } from "@/components/MemberTeamsFields";
 import * as Domain from "@/lib/Domain";
 import { fieldError, mutationErrorMessage } from "@/lib/form";
+import { formatNumber } from "@/lib/format";
 import { Repository, RepositoryError } from "@/lib/Repository";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
+import { resolveEntitlements } from "@/lib/SubscriptionPlan";
 import { failWith, sessionShop } from "@/lib/teams";
 
 const ADD_MODAL = "add-member";
@@ -41,6 +43,8 @@ const decodeMemberId = Schema.decodeUnknownEffect(Domain.MemberId);
 const decodeTeamIds = Schema.decodeUnknownEffect(Schema.Array(Domain.TeamId));
 
 const MEMBER_GONE = "That member no longer exists.";
+const memberLimitMessage = (limit: number) =>
+  `Your plan allows ${formatNumber(limit)} ${limit === 1 ? "member" : "members"}. Upgrade to add more.`;
 
 const getLoaderData = createServerFn({ method: "GET" })
   .middleware([shopifyServerFnMiddleware])
@@ -80,7 +84,8 @@ const addMemberFn = createServerFn({ method: "POST" })
         const repository = yield* Repository;
         const shop = yield* sessionShop(session.shop);
         const email = yield* decodeEmail(data.email);
-        yield* repository.addMember({ shop, email });
+        const { maxMembers } = yield* resolveEntitlements(shop);
+        yield* repository.addMember({ shop, email, limit: maxMembers });
         if (data.teamIds.length === 0) return;
         const member = yield* repository.findMember({ shop, email }).pipe(
           Effect.flatMap(
@@ -99,7 +104,11 @@ const addMemberFn = createServerFn({ method: "POST" })
           memberId: member.id,
           teamIds: yield* decodeTeamIds(data.teamIds),
         });
-      }),
+      }).pipe(
+        Effect.catchTag("MemberLimitError", ({ limit }) =>
+          Effect.fail(new Error(memberLimitMessage(limit))),
+        ),
+      ),
     ),
   );
 

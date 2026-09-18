@@ -20,8 +20,6 @@ export class OrderRepositoryError extends Schema.TaggedError<OrderRepositoryErro
 
 export interface OrderUpsert<E = never> {
   readonly order: Domain.ShopOrder;
-  /** Order-level JSON only; see {@link Domain.ShopOrder}. */
-  readonly raw: string;
   readonly lineItems: readonly Domain.OrderLineItem[];
   /**
    * Runs inside the upsert's transaction, after the line items are written and
@@ -33,6 +31,18 @@ export interface OrderUpsert<E = never> {
    */
   readonly afterWrite?: Effect.Effect<void, E>;
 }
+
+/**
+ * The `ShopUsage` row as stored. {@link Domain.ShopUsage} is this plus
+ * `databaseSize`, which only the Durable Object can read.
+ */
+export const ShopUsageRow = Schema.Struct({
+  monthKey: Schema.String,
+  ordersThisMonth: Schema.Number,
+  liveRunsLimitedAt: Schema.NullOr(Schema.Number),
+  lastSweepAt: Schema.NullOr(Schema.Number),
+});
+export type ShopUsageRow = typeof ShopUsageRow.Type;
 
 export interface WebhookDelivery {
   readonly webhookId: string;
@@ -134,7 +144,18 @@ export class OrderRepository extends Context.Service<
      */
     readonly upsertOrder: <E = never>(
       input: OrderUpsert<E>,
-    ) => Effect.Effect<{ readonly written: boolean }, SqlError.SqlError | E>;
+    ) => Effect.Effect<
+      {
+        readonly written: boolean;
+        /**
+         * The order had no row before this write. What `ShopUsage` counts
+         * against the plan's monthly quota — a resync of a stored order is not
+         * a second order — and what the bulk stream reports as `ordersInserted`.
+         */
+        readonly fresh: boolean;
+      },
+      SqlError.SqlError | E
+    >;
     readonly deleteOrder: (
       orderId: string,
     ) => Effect.Effect<void, SqlError.SqlError>;
@@ -239,6 +260,37 @@ export class OrderRepository extends Context.Service<
       Domain.SyncState,
       SqlError.SqlError | OrderRepositoryError
     >;
+    /**
+     * Records a refusal that happened *before* any reservation existed — the
+     * storage guard in `syncOrders`. Deliberately not {@link failSync}, which
+     * releases a claim identified by its `startedAt` and would match nothing
+     * here.
+     */
+    readonly setSyncError: (input: {
+      readonly error: string;
+    }) => Effect.Effect<
+      Domain.SyncState,
+      SqlError.SqlError | OrderRepositoryError
+    >;
+    /** The stored counters; `databaseSize` is the object's to add (`ShopAgent.getUsage`). */
+    readonly getUsage: () => Effect.Effect<
+      ShopUsageRow,
+      SqlError.SqlError | OrderRepositoryError
+    >;
+    /**
+     * One retention pass: at most `ShopLimits.sweepBatch` closed orders past
+     * `ShopLimits.orderRetentionDays`, with their runs, plus a batch of runs
+     * orphaned by an `orders/delete`. Deliberately batched and deliberately
+     * carried by a request that was already doing heavy work — there is no
+     * alarm and no cron — so a shop with years of history drains over several
+     * passes instead of one request paying for all of it.
+     */
+    readonly sweepExpiredOrders: (input: {
+      readonly now: number;
+    }) => Effect.Effect<
+      { readonly orders: number; readonly runs: number },
+      SqlError.SqlError
+    >;
   }
 >()("OrderRepository") {
   static readonly layer: Layer.Layer<
@@ -259,15 +311,11 @@ export class OrderRepository extends Context.Service<
             ),
           );
 
-      /**
-       * `raw` is deliberately absent: it exists for `json_extract` during
-       * prototyping, and pulling it through every list read would carry a
-       * kilobyte per order over the socket for nothing.
-       */
       const orderColumns = sql.literal(
         `id, legacyId, name, processedAt, updatedAt, cancelledAt,
          closedAt, financialStatus, fulfillmentStatus, fullyPaid, tags, note,
-         customAttributes, lineItemsComplete, syncedAt, syncSource`,
+         customAttributes, lineItemsComplete, lineItemsTruncated, syncedAt,
+         syncSource`,
       );
 
       /**
@@ -367,22 +415,88 @@ export class OrderRepository extends Context.Service<
           { discard: true },
         );
 
+      /**
+       * The monthly quota meter, inside the upsert's transaction so a counted
+       * order and its count cannot come apart.
+       *
+       * Four conditions, each load-bearing. **Fresh**, because a webhook
+       * storm on one order is one order. **Paid**, because an abandoned
+       * unpaid order is not work the merchant asked Baton to carry, and
+       * `Domain.canStartRuns` already refuses to start runs on it. **Not
+       * cancelled**, for the same reason — and a later cancel does *not* give
+       * the count back, since the work was already carried. **Placed this
+       * month**, which is what exempts the 30-day backfill on install: a shop
+       * signing up on the 28th must not burn its first month's quota on
+       * orders it placed before it had the app.
+       *
+       * The rollover rides the counting path rather than a clock: a quiet
+       * shop's stored `monthKey` may lag by months, and the only moment that
+       * can matter is the first counted order of a new month — which is
+       * exactly here. Readers roll forward in the value they return
+       * (`ShopAgent.getUsage`) so a stale row never shows last month's count.
+       */
+      const countTowardQuota = (order: Domain.ShopOrder, fresh: boolean) => {
+        if (
+          !fresh ||
+          !order.fullyPaid ||
+          order.cancelledAt !== null ||
+          order.processedAt < Domain.monthStartOf(order.syncedAt)
+        )
+          return Effect.void;
+        const monthKey = Domain.monthKeyOf(order.syncedAt);
+        return Effect.andThen(
+          sql`
+            update ShopUsage
+            set monthKey = ${monthKey}, ordersThisMonth = 0
+            where monthKey <> ${monthKey}
+          `,
+          sql`
+            update ShopUsage
+            set ordersThisMonth = ordersThisMonth + 1
+            where id = 1
+          `,
+        );
+      };
+
+      const decodeUsage = decode(
+        Schema.Array(ShopUsageRow),
+        "Invalid ShopUsage row",
+      );
+
+      const readUsage = Effect.fn("OrderRepository.getUsage")(function* () {
+        const [usage] = yield* decodeUsage(
+          yield* sql`
+            select monthKey, ordersThisMonth, liveRunsLimitedAt, lastSweepAt
+            from ShopUsage where id = 1
+          `,
+        );
+        if (usage === undefined)
+          return yield* Effect.fail(
+            new OrderRepositoryError({
+              message: "ShopUsage row is missing",
+              cause: null,
+            }),
+          );
+        return usage;
+      });
+
       return OrderRepository.of({
-        upsertOrder: <E>({
-          order,
-          raw,
-          lineItems,
-          afterWrite,
-        }: OrderUpsert<E>) =>
+        upsertOrder: <E>({ order, lineItems, afterWrite }: OrderUpsert<E>) =>
           sql
             .withTransaction(
               Effect.gen(function* () {
+                // One primary-key probe, before the upsert makes the answer
+                // unknowable: `returning id` cannot distinguish an insert from
+                // an update, and the quota counts orders, not writes.
+                const existing =
+                  yield* sql`select 1 from ShopOrder where id = ${order.id} limit 1`;
+                const fresh = existing.length === 0;
                 const written = yield* sql`
                 insert into ShopOrder (
                   id, legacyId, name, processedAt, updatedAt,
                   cancelledAt, closedAt, financialStatus, fulfillmentStatus,
                   fullyPaid, tags, note, customAttributes, lineItemsComplete,
-                  raw, syncedAt, syncSource
+                  lineItemsTruncated, syncedAt, syncSource
                 ) values (
                   ${order.id}, ${order.legacyId}, ${order.name},
                   ${order.processedAt}, ${order.updatedAt},
@@ -390,7 +504,8 @@ export class OrderRepository extends Context.Service<
                   ${order.financialStatus}, ${order.fulfillmentStatus},
                   ${bit(order.fullyPaid)}, ${json(order.tags)}, ${order.note},
                   ${json(order.customAttributes)},
-                  ${bit(order.lineItemsComplete)}, ${raw}, ${order.syncedAt},
+                  ${bit(order.lineItemsComplete)},
+                  ${bit(order.lineItemsTruncated)}, ${order.syncedAt},
                   ${order.syncSource}
                 )
                 on conflict(id) do update set
@@ -407,18 +522,20 @@ export class OrderRepository extends Context.Service<
                   note = excluded.note,
                   customAttributes = excluded.customAttributes,
                   lineItemsComplete = excluded.lineItemsComplete,
-                  raw = excluded.raw,
+                  lineItemsTruncated = excluded.lineItemsTruncated,
                   syncedAt = excluded.syncedAt,
                   syncSource = excluded.syncSource
                 where excluded.updatedAt >= ShopOrder.updatedAt
                 returning id
               `;
-                if (written.length === 0) return { written: false };
+                if (written.length === 0)
+                  return { written: false, fresh: false };
                 if (order.lineItemsComplete)
                   yield* sql`delete from OrderLineItem where orderId = ${order.id}`;
                 yield* insertLineItems(lineItems);
+                yield* countTowardQuota(order, fresh);
                 if (afterWrite !== undefined) yield* afterWrite;
-                return { written: true };
+                return { written: true, fresh };
               }),
             )
             .pipe(Effect.withSpan("OrderRepository.upsertOrder")),
@@ -822,6 +939,32 @@ export class OrderRepository extends Context.Service<
             )
             returning webhookId
           `;
+          /**
+           * The dedupe log only has to outlive Shopify's retry schedule, which
+           * tops out at four hours, so a week is already generous and anything
+           * older is dead weight in a table nothing else reads. Swept here
+           * rather than on a timer because this is the one statement every
+           * delivery already pays for, and the table only grows on this path:
+           * no alarm, no cron, nothing to schedule.
+           *
+           * `delete ... limit` needs a compile-time flag Durable Object SQLite
+           * may not carry, hence the `in (select ... limit ?)` form; the bound
+           * keeps a single delivery from paying for an unbounded delete.
+           */
+          const deleted = yield* sql`
+            delete from WebhookDelivery
+            where webhookId in (
+              select webhookId from WebhookDelivery
+              where receivedAt < ${delivery.receivedAt - Domain.ShopLimits.webhookDeliveryRetentionDays * 86_400_000}
+              order by receivedAt
+              limit ${Domain.ShopLimits.sweepBatch}
+            )
+            returning webhookId
+          `;
+          if (deleted.length > 0)
+            yield* Effect.logDebug(
+              `OrderRepository.recordWebhookDelivery: swept=${String(deleted.length)}`,
+            ).pipe(Effect.annotateLogs({ swept: deleted.length }));
           return inserted.length > 0;
         }),
 
@@ -893,6 +1036,90 @@ export class OrderRepository extends Context.Service<
             `,
           );
         }),
+
+        setSyncError: Effect.fn("OrderRepository.setSyncError")(function* ({
+          error,
+        }: {
+          readonly error: string;
+        }) {
+          return yield* syncState(
+            yield* sql`
+              update SyncState set lastError = ${error}
+              where id = 1
+              returning workflowId, startedAt, lastFullSyncAt,
+                        lastFullSyncWindowStart, lastError
+            `,
+          );
+        }),
+
+        getUsage: readUsage,
+
+        sweepExpiredOrders: Effect.fn("OrderRepository.sweepExpiredOrders")(
+          function* ({ now }: { readonly now: number }) {
+            const expiredBefore =
+              now - Domain.ShopLimits.orderRetentionDays * 86_400_000;
+            return yield* sql.withTransaction(
+              Effect.gen(function* () {
+                /**
+                 * `updatedAt` is Shopify's and every upsert refreshes it, so
+                 * "closed and untouched for the window" is what ages out — an
+                 * order a merchant edited last week stays whatever its
+                 * `closedAt` says. The terms are spelled to match
+                 * `ShopOrder_closed_idx` so SQLite can prove the index serves
+                 * them; a live run is an absolute veto, since deleting the
+                 * order would delete work someone is still doing.
+                 */
+                const expired = yield* sql`
+                  select id from ShopOrder
+                  where (fulfillmentStatus = 'FULFILLED' or cancelledAt is not null
+                         or closedAt is not null)
+                    and updatedAt < ${expiredBefore}
+                    and not exists (
+                      select 1 from WorkflowRun r
+                      where r.orderId = ShopOrder.id
+                        and r.status in ('pending', 'active')
+                    )
+                  order by updatedAt
+                  limit ${Domain.ShopLimits.sweepBatch}
+                `.values;
+                const ids = expired.map((row) => String(row[0]));
+                let runs = 0;
+                if (ids.length > 0) {
+                  // Chunked so the bound parameters stay well inside the
+                  // Durable Object's per-statement limit, whatever
+                  // `sweepBatch` is set to.
+                  for (let at = 0; at < ids.length; at += 90) {
+                    const chunk = ids.slice(at, at + 90);
+                    const deletedRuns =
+                      yield* sql`delete from WorkflowRun where ${sql.in("orderId", chunk)} returning id`;
+                    runs += deletedRuns.length;
+                    // `OrderLineItem` cascades; `WorkflowRunStep` cascaded
+                    // with the runs above.
+                    yield* sql`delete from ShopOrder where ${sql.in("id", chunk)}`;
+                  }
+                }
+                /**
+                 * Runs whose order is already gone: `markOrderDeleted` flags
+                 * them rather than deleting so a member sees why their work
+                 * stopped, and they age out here on their own `updatedAt`,
+                 * the order's being unavailable.
+                 */
+                const orphaned = yield* sql`
+                  delete from WorkflowRun
+                  where id in (
+                    select id from WorkflowRun
+                    where updatedAt < ${expiredBefore}
+                      and orderId not in (select id from ShopOrder)
+                    limit ${Domain.ShopLimits.sweepBatch}
+                  )
+                  returning id
+                `;
+                yield* sql`update ShopUsage set lastSweepAt = ${now} where id = 1`;
+                return { orders: ids.length, runs: runs + orphaned.length };
+              }),
+            );
+          },
+        ),
       });
     }),
   );

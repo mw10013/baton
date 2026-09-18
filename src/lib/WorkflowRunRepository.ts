@@ -40,6 +40,18 @@ export class RunItemBusyError extends Schema.TaggedError<RunItemBusyError>()(
   { runId: Schema.String, workflowName: Domain.WorkflowName },
 ) {}
 
+/**
+ * The shop already holds `Domain.ShopLimits.maxLiveRuns` runs in `pending` or
+ * `active`. A safety valve rather than a product limit: at the ceiling a shop
+ * is far outside anything the app is designed for, and the alternative — a
+ * Durable Object whose run table grows without bound — is worse than a refusal
+ * the merchant can act on by finishing or cancelling work.
+ */
+export class WorkflowRunLimitError extends Schema.TaggedError<WorkflowRunLimitError>()(
+  "WorkflowRunLimitError",
+  { limit: Schema.Number },
+) {}
+
 /** The step's team is not among the caller's teams. */
 export class RunNotAllowedError extends Schema.TaggedError<RunNotAllowedError>()(
   "RunNotAllowedError",
@@ -306,7 +318,7 @@ export class WorkflowRunRepository extends Context.Service<
         /** The run cancelled to make room, or null when the item was free. */
         readonly replaced: Domain.WorkflowRun | null;
       }>,
-      SqlError.SqlError | WorkflowRunRepositoryError
+      SqlError.SqlError | WorkflowRunRepositoryError | WorkflowRunLimitError
     >;
     readonly markOrderDeleted: (input: {
       readonly orderId: string;
@@ -584,7 +596,8 @@ export class WorkflowRunRepository extends Context.Service<
       const orderColumns = sql.literal(
         `id, legacyId, name, processedAt, updatedAt, cancelledAt,
          closedAt, financialStatus, fulfillmentStatus, fullyPaid, tags, note,
-         customAttributes, lineItemsComplete, syncedAt, syncSource`,
+         customAttributes, lineItemsComplete, lineItemsTruncated, syncedAt,
+         syncSource`,
       );
 
       const findRun = (runId: string) =>
@@ -788,7 +801,8 @@ export class WorkflowRunRepository extends Context.Service<
        * a run from being silently cancelled by reconcile.
        */
       const recomputeStatus = (runId: string, now: number) =>
-        sql`
+        Effect.andThen(
+          sql`
           update WorkflowRun set
             status = (
               select case
@@ -800,7 +814,44 @@ export class WorkflowRunRepository extends Context.Service<
             ),
             updatedAt = ${now}
           where id = ${runId}
-        `;
+        `,
+          // The one transition that can free a live-run slot is a run going
+          // `done`, and it goes `done` here or nowhere.
+          releaseLiveRunLimit(),
+        );
+
+      /**
+       * `WorkflowRun_status_idx` serves this; the scan it costs is bounded by
+       * the ceiling itself, which is the whole reason the ceiling exists. A
+       * second maintained counter would be cheaper per insert and would have
+       * to stay correct across cancel, un-cancel, reconcile and every step
+       * write — one derived count beats four places that must agree.
+       */
+      const liveRunCount = Effect.fn("WorkflowRunRepository.liveRunCount")(
+        function* () {
+          const rows =
+            yield* sql`select count(*) from WorkflowRun where status in ('pending', 'active')`
+              .values;
+          return Number(rows[0]?.[0] ?? 0);
+        },
+      );
+
+      /**
+       * Clears the banner once the shop is back under the ceiling. The flag is
+       * read first so the common case — never limited — is one row read and no
+       * count, which matters because this runs on transitions as ordinary as
+       * completing a step.
+       */
+      const releaseLiveRunLimit = Effect.fn(
+        "WorkflowRunRepository.releaseLiveRunLimit",
+      )(function* () {
+        const rows =
+          yield* sql`select liveRunsLimitedAt from ShopUsage where id = 1`
+            .values;
+        if (rows[0]?.[0] === null || rows[0]?.[0] === undefined) return;
+        if ((yield* liveRunCount()) < Domain.ShopLimits.maxLiveRuns)
+          yield* sql`update ShopUsage set liveRunsLimitedAt = null where id = 1`;
+      });
 
       const cancelPending = (orderId: string, now: number) =>
         sql`
@@ -808,7 +859,10 @@ export class WorkflowRunRepository extends Context.Service<
           set status = 'cancelled', cancelledAt = ${now}, updatedAt = ${now}
           where orderId = ${orderId} and status = 'pending'
           returning id
-        `.pipe(Effect.map((rows) => rows.length));
+        `.pipe(
+          Effect.tap(() => releaseLiveRunLimit()),
+          Effect.map((rows) => rows.length),
+        );
 
       const flagWhere = (
         status: Statement.Fragment,
@@ -1027,27 +1081,61 @@ export class WorkflowRunRepository extends Context.Service<
               ),
             { discard: true },
           );
-          const inserted = orderCanStart
-            ? yield* Effect.forEach(
-                matches.flatMap(({ lineItem, matched, hasLive }) =>
-                  hasLive || matched.length !== 1 || matched[0] === undefined
-                    ? []
-                    : [{ lineItem, workflow: matched[0] }],
-                ),
-                ({ lineItem, workflow }) =>
-                  insertRun({
-                    workflow,
-                    teams,
-                    order,
-                    lineItem,
-                    source: "tag",
-                  }).pipe(
-                    Effect.map(
-                      Option.map((run) => ({ run, item: lineItem.title })),
-                    ),
-                  ),
-              ).pipe(Effect.map((results) => results.filter(Option.isSome)))
+          const toStart = orderCanStart
+            ? matches.flatMap(({ lineItem, matched, hasLive }) =>
+                hasLive || matched.length !== 1 || matched[0] === undefined
+                  ? []
+                  : [{ lineItem, workflow: matched[0] }],
+              )
             : [];
+          /**
+           * Auto-start yields to the ceiling rather than failing: this runs
+           * inside the order's upsert transaction, so failing would fail the
+           * webhook, Shopify would retry it for four hours, and no retry can
+           * fix a condition that only finishing work clears — the order write
+           * would be lost for nothing. The order is stored, shows on the index
+           * with no workflow, `ShopUsage.liveRunsLimitedAt` raises a persistent
+           * banner naming the cause, and the next `reconcileAll` starts it once
+           * there is room, because that pass walks every open order.
+           */
+          const capacity = Math.max(
+            0,
+            toStart.length === 0
+              ? 0
+              : Domain.ShopLimits.maxLiveRuns - (yield* liveRunCount()),
+          );
+          const declined = toStart.length - Math.min(capacity, toStart.length);
+          if (declined > 0) {
+            yield* sql`
+              update ShopUsage
+              set liveRunsLimitedAt = coalesce(liveRunsLimitedAt, ${now})
+              where id = 1
+            `;
+            yield* Effect.logError(
+              `WorkflowRunRepository.reconcileOrder: orderId=${orderId} declined=${String(declined)} limit=${String(Domain.ShopLimits.maxLiveRuns)}: live-run ceiling reached, runs not started`,
+            ).pipe(
+              Effect.annotateLogs({
+                orderId,
+                declined,
+                limit: Domain.ShopLimits.maxLiveRuns,
+              }),
+            );
+          }
+          const inserted = yield* Effect.forEach(
+            toStart.slice(0, capacity),
+            ({ lineItem, workflow }) =>
+              insertRun({
+                workflow,
+                teams,
+                order,
+                lineItem,
+                source: "tag",
+              }).pipe(
+                Effect.map(
+                  Option.map((run) => ({ run, item: lineItem.title })),
+                ),
+              ),
+          ).pipe(Effect.map((results) => results.filter(Option.isSome)));
           const created = inserted.length;
           const openRuns = runs.filter((run) => !isTerminal(run));
           /**
@@ -1227,6 +1315,16 @@ export class WorkflowRunRepository extends Context.Service<
                 // Every run this item already has for this workflow was
                 // handled above, live or cancelled, so the insert's
                 // `on conflict do nothing` cannot fire here.
+                //
+                // Unlike auto-start this *fails*: a merchant clicked, nobody
+                // is retrying on their behalf, and a silent no-op would read
+                // as the attach having worked. Counted after the replace above
+                // cancelled any incumbent, so swapping one item's workflow at
+                // the ceiling still works.
+                if ((yield* liveRunCount()) >= Domain.ShopLimits.maxLiveRuns)
+                  return yield* new WorkflowRunLimitError({
+                    limit: Domain.ShopLimits.maxLiveRuns,
+                  });
                 const inserted = yield* insertRun(input);
                 return Option.isNone(inserted)
                   ? Option.none()
@@ -1289,6 +1387,7 @@ export class WorkflowRunRepository extends Context.Service<
                 set status = 'cancelled', cancelledAt = ${now}, updatedAt = ${now}
                 where id = ${runId}
               `;
+              yield* releaseLiveRunLimit();
             }),
           );
         }),

@@ -136,6 +136,42 @@ describe("runShopAgentOrdersStream", () => {
     strictEqual(Option.getOrThrow(second).lineItems.length, 1);
   });
 
+  it("caps an order's line items and flags it rather than failing the import", async () => {
+    const over = Domain.ShopLimits.maxLineItemsPerOrder + 1;
+    const { counts, detail } = await runInDo(
+      ndjson(
+        orderLine(1, "2026-08-01T10:00:00Z"),
+        ...Array.from({ length: over }, (_, index) =>
+          lineItemLine(index + 1, 1),
+        ),
+      ),
+      Effect.gen(function* () {
+        const counts = yield* runShopAgentOrdersStream({ url: BULK_URL });
+        return {
+          counts,
+          detail: yield* (yield* OrderRepository).getOrder(orderGid(1)),
+        };
+      }),
+    );
+    strictEqual(counts.ordersSeen, 1);
+    strictEqual(counts.ordersTruncated, 1);
+    strictEqual(counts.ordersInserted, 1);
+    strictEqual(
+      counts.lineItemsUpserted,
+      Domain.ShopLimits.maxLineItemsPerOrder,
+    );
+    const stored = Option.getOrThrow(detail);
+    strictEqual(
+      stored.lineItems.length,
+      Domain.ShopLimits.maxLineItemsPerOrder,
+    );
+    strictEqual(stored.order.lineItemsTruncated, true);
+    // The bulk path's set is complete in Shopify's sense — nothing paginated —
+    // and short only where this app capped it, which is the whole distinction
+    // between the two flags.
+    strictEqual(stored.order.lineItemsComplete, true);
+  });
+
   it("fails when a line item names a parent that is not the open order", async () => {
     const message = await runInDo(
       ndjson(orderLine(1, "2026-08-01T10:00:00Z"), lineItemLine(1, 99)),
@@ -187,10 +223,10 @@ describe("runShopAgentOrdersStream", () => {
             note: null,
             customAttributes: [],
             lineItemsComplete: true,
+            lineItemsTruncated: false,
             syncedAt: 0,
             syncSource: "webhook",
           },
-          raw: "{}",
           lineItems: [],
         });
         return {

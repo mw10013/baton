@@ -1,11 +1,10 @@
-import type * as Domain from "@/lib/Domain";
-
 import { SqliteClient } from "@effect/sql-sqlite-do";
 import { runInDurableObject } from "cloudflare:test";
 import { env, exports as workerExports } from "cloudflare:workers";
 import { Effect, Layer, Option } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
+import * as Domain from "@/lib/Domain";
 import { OrderRepository } from "@/lib/OrderRepository";
 import { Repository } from "@/lib/Repository";
 import { runShopAgentMigrations } from "@/lib/ShopAgent";
@@ -68,10 +67,10 @@ const seedOrder = (shop: string) =>
               note: null,
               customAttributes: [],
               lineItemsComplete: true,
+              lineItemsTruncated: false,
               syncedAt: processedAt,
               syncSource: "manual",
             },
-            raw: "{}",
             lineItems: [
               {
                 id: LINE_ITEM_ID,
@@ -125,7 +124,11 @@ const seedShopWithWork = async (shopName: string) => {
         });
         const memberIdOf = (email: Domain.Email, teamId: Domain.TeamId) =>
           Effect.gen(function* () {
-            yield* repository.addMember({ shop, email });
+            yield* repository.addMember({
+              shop,
+              email,
+              limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+            });
             const access = yield* repository.findMemberAccess({ shop, email });
             const memberId = Option.isNone(access)
               ? yield* Effect.die("member missing right after addMember")

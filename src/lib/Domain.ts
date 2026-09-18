@@ -24,11 +24,9 @@ export type SessionId = typeof SessionId.Type;
 /**
  * The plan handles Shopify may report for an active App Pricing contract.
  *
- * Four handles, two tiers: the `-test` variants are private plans restricted to
- * named development stores, which is the only mechanism Shopify offers for
- * limiting a plan to specific shops. They are the same product tier as their
- * public counterparts, so the split never reaches business logic — it stops at
- * {@link planOfHandle}.
+ * Two handles, two tiers, and no private `-test` variants: a development store
+ * in the same Partner organization is granted every public plan at $0, which
+ * is the whole thing a store-restricted private plan would have bought.
  *
  * The allowlist is total and identical in every environment: a handle outside
  * it means the catalog changed under us, which must resolve to no access rather
@@ -39,12 +37,7 @@ export type SessionId = typeof SessionId.Type;
  * these literals are never matched against a real contract. Rename them to the
  * real handles before flipping that var on.
  */
-export const PlanHandle = Schema.Literals([
-  "baton-basic",
-  "baton-pro",
-  "baton-basic-test",
-  "baton-pro-test",
-]);
+export const PlanHandle = Schema.Literals(["baton-basic", "baton-pro"]);
 export type PlanHandle = typeof PlanHandle.Type;
 
 /**
@@ -63,37 +56,39 @@ export type Plan = typeof Plan.Type;
  * {@link entitlementsOfPlan}.
  */
 export const planOfHandle = (handle: PlanHandle): Plan =>
-  handle === "baton-pro" || handle === "baton-pro-test" ? "pro" : "basic";
+  handle === "baton-pro" ? "pro" : "basic";
 
 export interface Entitlements {
-  readonly dailyActionLimit: number;
+  /** Orders counted toward the calendar-month quota. A soft limit: the UI warns, nothing blocks. */
+  readonly ordersPerMonth: number;
+  /** Hard cap on `Member` rows per shop, enforced at add time. */
+  readonly maxMembers: number;
 }
 
 /**
  * What each tier grants. The Worker owns this table and the Durable Object
- * never sees it: every limit reaches `ShopAgent` as a required RPC argument
- * resolved from D1 at that moment, so an upgrade grants headroom on the very
- * next action and a downgrade tightens on the very next action, with nothing
- * to invalidate and no plan state in the object to fall out of sync.
- *
- * Passing the integer rather than the plan handle is what keeps that true: a
- * handle would put this table inside the DO, duplicating the catalog and
- * pushing an unrecognized-handle failure deep inside a SQLite transaction.
+ * never sees it, but the split is *compare here, count there*, not "pass the
+ * number in": `ordersPerMonth` is compared in the Worker against the
+ * {@link ShopUsage} row the object keeps and reports, and `maxMembers` against
+ * a D1 `count(*)`. Neither number reaches `ShopAgent`, so the object stores no
+ * plan state to fall out of sync, and an upgrade or downgrade lands on the very
+ * next page view with nothing to invalidate.
  *
  * `satisfies Record<Plan, Entitlements>` makes the lookup total by
  * construction — a new `Plan` literal fails to compile here.
  *
- * `dailyActionLimit` is a placeholder: the skeleton displays it and enforces
- * nothing. Whatever the real product meters goes here, and the enforcement
- * site passes it into the Durable Object per call.
+ * Provisional. Working proposals, not tuned figures: nothing was measured to
+ * arrive at them and nothing should be derived from them. Change freely, and
+ * move the Partner Dashboard plan copy (and the table in `README.md`) with
+ * them.
  *
- * Raising a limit is always safe; lowering one is not, if the eventual
- * comparison is per-call with no grandfathering: a cut applies to existing
- * shops immediately.
+ * Raising a limit is always safe; lowering one is not, with no grandfathering:
+ * a cut applies to existing shops immediately. `maxMembers` only blocks
+ * *adding*, so a downgrade never removes anybody.
  */
 const ENTITLEMENTS = {
-  basic: { dailyActionLimit: 2000 },
-  pro: { dailyActionLimit: 10_000 },
+  basic: { ordersPerMonth: 250, maxMembers: 3 },
+  pro: { ordersPerMonth: 1000, maxMembers: 10 },
 } as const satisfies Record<Plan, Entitlements>;
 
 export const entitlementsOfPlan = (plan: Plan): Entitlements =>
@@ -397,6 +392,70 @@ export const WorkflowLimits = {
   maxWorkflows: 50,
   maxSteps: 20,
 } as const;
+
+/**
+ * Plan-independent ceilings and retention windows for one shop's Durable
+ * Object, and the batch sizes the sweeps that enforce them run at.
+ *
+ * Provisional in exactly the sense {@link Entitlements} is: working proposals,
+ * nothing measured. Unlike an entitlement these are not a product promise — a
+ * merchant never sees them unless something has gone wrong — so they exist to
+ * bound the object's storage and per-request row counts, not to price a tier.
+ */
+export const ShopLimits = {
+  /** `Team` rows per shop. */
+  maxTeams: 25,
+  /** `WorkflowRun` rows in `pending` or `active` per shop; a safety valve, not a product limit. */
+  maxLiveRuns: 5000,
+  /** Line items kept per order on the bulk path; the rest are dropped and the order flagged. */
+  maxLineItemsPerOrder: 250,
+  /** A closed order untouched for this long is deleted with its runs. */
+  orderRetentionDays: 90,
+  /** `WebhookDelivery` rows older than this are deleted; Shopify retries for at most 4 hours. */
+  webhookDeliveryRetentionDays: 7,
+  /** `syncOrders` refuses to start a bulk import when the object's SQLite is past this. */
+  storageSoftLimitBytes: 2_000_000_000,
+  /** Rows deleted per sweep pass, so no carrier request pays for more than this. */
+  sweepBatch: 200,
+  /** Minimum gap between retention passes triggered from the webhook path. */
+  sweepIntervalMs: 6 * 60 * 60 * 1000,
+} as const;
+
+/**
+ * What one shop has consumed, as the Durable Object counts it. The Worker
+ * compares this against {@link Entitlements}; the object itself enforces
+ * nothing from it beyond {@link ShopLimits}.
+ *
+ * `ordersThisMonth` counts *new, paid, in-month* orders only — a re-sync of an
+ * order already stored is not a second order, and the 30-day backfill on
+ * install is not this month's usage. Cancelling an order does not give the
+ * count back.
+ */
+export const ShopUsage = Schema.Struct({
+  /** `YYYY-MM` in UTC; see {@link monthKeyOf}. */
+  monthKey: Schema.String,
+  ordersThisMonth: Schema.Number,
+  /** Set when reconcile declined to auto-start a run because of `ShopLimits.maxLiveRuns`; null once under the ceiling again. */
+  liveRunsLimitedAt: Schema.NullOr(Schema.Number),
+  /** `ctx.storage.sql.databaseSize` at read time. */
+  databaseSize: Schema.Number,
+  lastSweepAt: Schema.NullOr(Schema.Number),
+});
+export type ShopUsage = typeof ShopUsage.Type;
+
+/**
+ * UTC, not the shop's timezone: the quota is an app-side meter, and a month
+ * boundary that moves with the merchant's locale would make the stored
+ * `monthKey` ambiguous for the object that has no locale.
+ */
+export const monthKeyOf = (now: number) =>
+  new Date(now).toISOString().slice(0, 7);
+
+/** First instant of `now`'s UTC month, the cutoff that exempts a backfill from the month's count. */
+export const monthStartOf = (now: number) => {
+  const date = new Date(now);
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
+};
 
 /** The length of every trimmed name: the schema check, the field `maxLength`, and the rename dialog's counter all read this. */
 export const NAME_MAX_LENGTH = 64;
@@ -1141,13 +1200,6 @@ export type OrderAttribute = typeof OrderAttribute.Type;
  *
  * `financialStatus` is nullable because `Order.displayFinancialStatus` is —
  * `displayFulfillmentStatus` is the non-null one of the pair.
- *
- * The `raw` column is not part of this shape: it exists so a new order-level
- * field can be promoted to a column via `json_extract` without a resync, and
- * nothing renders it. Both ingestion paths write the same thing there — the
- * order node's own fields, never its line items — because the bulk NDJSON
- * flattens connections onto separate lines and would otherwise produce a
- * differently-shaped blob for the same order.
  */
 export const ShopOrder = Schema.Struct({
   id: Schema.String,
@@ -1178,6 +1230,16 @@ export const ShopOrder = Schema.Struct({
    * not paginated.
    */
   lineItemsComplete: SqliteBoolean,
+  /**
+   * Whether line items were **dropped** on the way in, past
+   * {@link ShopLimits.maxLineItemsPerOrder}. The complement of
+   * `lineItemsComplete` rather than a second name for it: `lineItemsComplete`
+   * false says the fetch saw more than it stored and so must merge, while this
+   * says the stored set is knowingly short of the order — which is what the
+   * order page warns about. The single-order path sets both together, since a
+   * fetch that paginated is also a set that is not the whole order.
+   */
+  lineItemsTruncated: SqliteBoolean,
   syncedAt: Schema.Number,
   syncSource: OrderSyncSource,
 });
@@ -1796,12 +1858,19 @@ export type AdminShopLoaderData =
       readonly shopSession: ShopSessionRedacted;
       readonly plan: AdminShopPlanCache;
       readonly entitlements: Entitlements | null;
+      /** Read from the shop's Durable Object; the counters the plan is compared against. */
+      readonly usage: ShopUsage;
+      /** `Member` rows in D1, so this page reads used-of-granted like `/app` does. */
+      readonly memberCount: number;
       readonly derivedShopAgentId: string;
     };
 
 /** `/app` home (`app.index`). */
 export interface AppIndexLoaderData {
   readonly entitlements: Entitlements;
+  readonly usage: ShopUsage;
+  /** `Member` rows in D1, against `Entitlements.maxMembers`. */
+  readonly memberCount: number;
 }
 
 /** `/login` (`login`). */
@@ -1809,8 +1878,21 @@ export interface LoginLoaderData {
   readonly isDemoMode: boolean;
 }
 
-/** `/app/orders` (`app.orders.index`): the first page; the socket takes over on identify. */
-export type OrdersIndexLoaderData = OrdersView;
+/**
+ * `/app/orders` (`app.orders.index`): the first page, plus the quota context
+ * the page's banners need.
+ *
+ * `view` is what the socket replaces on every order push; `usage` and
+ * `ordersPerMonth` are loader-only and deliberately do not move under the
+ * socket. A quota is a monthly fact and a plan an even slower one — refreshing
+ * either on every webhook would be a read per push for a number that changes
+ * on a scale of days.
+ */
+export interface OrdersIndexLoaderData {
+  readonly view: OrdersView;
+  readonly usage: ShopUsage;
+  readonly ordersPerMonth: number;
+}
 
 /** `/app/orders/$orderId` (`app.orders.$orderId`); `null` is not stored. */
 export type OrderLoaderData = OrderDetailView | null;
@@ -2669,6 +2751,8 @@ export const AttachResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("AlreadyExists") }),
   Schema.Struct({ _tag: Schema.Literal("LineItemNotFound") }),
   Schema.Struct({ _tag: Schema.Literal("WorkflowCannotStart") }),
+  /** The shop is at `ShopLimits.maxLiveRuns`; the attach started nothing. */
+  Schema.Struct({ _tag: Schema.Literal("RunLimit"), limit: Schema.Number }),
 ]);
 export type AttachResult = typeof AttachResult.Type;
 

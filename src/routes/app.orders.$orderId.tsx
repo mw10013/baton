@@ -46,6 +46,8 @@ const attachResultMessage = Match.typeTags<
   LineItemNotFound: () => "That line item no longer exists.",
   WorkflowCannotStart: () =>
     "That workflow cannot start: it is off, has no steps, or has an unassigned step.",
+  RunLimit: ({ limit }) =>
+    `Baton is already running ${formatNumber(limit)} workflows. Finish or cancel some before starting another.`,
 });
 
 const assignResultMessage = Match.typeTags<
@@ -1583,6 +1585,7 @@ function RouteComponent() {
       <SocketBanner />
       {(banner !== null ||
         !order.lineItemsComplete ||
+        order.lineItemsTruncated ||
         state === "ready_to_ship" ||
         orderSummary !== null) && (
         /* In the main column, not `slot="supplemental-start"`: that slot
@@ -1605,6 +1608,14 @@ function RouteComponent() {
             <s-banner tone="warning">
               This order has more line items than one fetch returns; the list
               below is partial.
+            </s-banner>
+          )}
+          {/* Only the bulk-import cap: the single-order path sets
+              `lineItemsTruncated` together with `lineItemsComplete = false`,
+              which the banner above already explains in its own terms. */}
+          {order.lineItemsTruncated && order.lineItemsComplete && (
+            <s-banner tone="warning">
+              {`This order has more than ${formatNumber(Domain.ShopLimits.maxLineItemsPerOrder)} line items. Only the first ${formatNumber(Domain.ShopLimits.maxLineItemsPerOrder)} are shown.`}
             </s-banner>
           )}
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}

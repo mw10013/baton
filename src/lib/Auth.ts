@@ -15,7 +15,7 @@ import { CloudflareEnv } from "@/lib/CloudflareEnv";
 import * as Domain from "@/lib/Domain";
 import { Email } from "@/lib/Email";
 import { KV } from "@/lib/KV";
-import { makeRunPromise } from "@/lib/LayerEx";
+import { causeToErrorMessage, makeRunPromise } from "@/lib/LayerEx";
 import { Repository } from "@/lib/Repository";
 
 export class AuthError extends Schema.TaggedError<AuthError>()("AuthError", {
@@ -150,6 +150,21 @@ const make = Effect.gen(function* () {
         sendMagicLink: ({ email, url }) =>
           runPromise(
             Effect.gen(function* () {
+              /**
+               * The one request that creates a `Verification` row is the one
+               * that pays to trim the expired ones — and the `Session` rows
+               * those sign-ins left behind. Logged and swallowed on failure:
+               * storage housekeeping must never be the reason a merchant
+               * cannot sign in.
+               */
+              yield* (yield* Repository).sweepExpiredAuth().pipe(
+                Effect.catchCause((cause) => {
+                  const message = causeToErrorMessage(cause);
+                  return Effect.logWarning(
+                    `Auth.sendMagicLink: email=${email}: expired-auth sweep failed: ${message}`,
+                  ).pipe(Effect.annotateLogs({ email, message }));
+                }),
+              );
               if (config.demoMode) {
                 const kv = yield* KV;
                 yield* kv.put(magicLinkKvKey(email), url, {

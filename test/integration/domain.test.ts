@@ -24,6 +24,7 @@ const order = (
   note: null,
   customAttributes: [],
   lineItemsComplete: true,
+  lineItemsTruncated: false,
   syncedAt: 0,
   syncSource: "webhook",
   ...overrides,

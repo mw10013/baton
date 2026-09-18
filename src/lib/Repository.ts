@@ -36,6 +36,22 @@ export class TeamNameTakenError extends Schema.TaggedError<TeamNameTakenError>()
 ) {}
 
 /**
+ * The shop is at its plan's `maxMembers` and the email is not already a
+ * member. Carries the limit so the page can name it without resolving the
+ * plan a second time.
+ */
+export class MemberLimitError extends Schema.TaggedError<MemberLimitError>()(
+  "MemberLimitError",
+  { shop: Domain.Shop, limit: Schema.Number },
+) {}
+
+/** The shop is at `Domain.ShopLimits.maxTeams`. Plan-independent, unlike {@link MemberLimitError}. */
+export class TeamLimitError extends Schema.TaggedError<TeamLimitError>()(
+  "TeamLimitError",
+  { shop: Domain.Shop, limit: Schema.Number },
+) {}
+
+/**
  * No team in this shop is addressable by that id for the attempted write.
  * Membership removal never fails this way (see `setTeamMember`).
  */
@@ -150,9 +166,20 @@ export class Repository extends Context.Service<
       readonly Domain.Member[],
       SqlError.SqlError | RepositoryError
     >;
+    /**
+     * Idempotent for the row, and the cap is applied to *additions* only: an
+     * email already on the roster is re-added without ever consulting `limit`,
+     * so a shop sitting at or over its plan (a downgrade, a lowered constant)
+     * can still re-run the same add without being told it is full.
+     */
     readonly addMember: (
-      member: Pick<Domain.Member, "shop" | "email">,
-    ) => Effect.Effect<void, SqlError.SqlError>;
+      member: Pick<Domain.Member, "shop" | "email"> & {
+        readonly limit: number;
+      },
+    ) => Effect.Effect<void, SqlError.SqlError | MemberLimitError>;
+    readonly countMembers: (
+      shop: Domain.Shop,
+    ) => Effect.Effect<number, SqlError.SqlError>;
     /**
      * The merchant-facing delete: the row goes, `TeamMember` cascades,
      * `ShopSession` is untouched. Returns the deleted member's id, which the
@@ -197,11 +224,14 @@ export class Repository extends Context.Service<
       readonly Domain.TeamSummary[],
       SqlError.SqlError | RepositoryError
     >;
+    readonly countTeams: (
+      shop: Domain.Shop,
+    ) => Effect.Effect<number, SqlError.SqlError>;
     readonly createTeam: (
       team: Pick<Domain.Team, "shop" | "name">,
     ) => Effect.Effect<
       Domain.Team,
-      SqlError.SqlError | RepositoryError | TeamNameTakenError
+      SqlError.SqlError | RepositoryError | TeamNameTakenError | TeamLimitError
     >;
     readonly renameTeam: (
       team: Pick<Domain.Team, "shop" | "id" | "name">,
@@ -252,6 +282,16 @@ export class Repository extends Context.Service<
       Option.Option<Domain.MemberAccess>,
       SqlError.SqlError | RepositoryError
     >;
+    /**
+     * Deletes expired `Session` and `Verification` rows, `ShopLimits.sweepBatch`
+     * of each. Both tables only grow on the sign-in path, so the sign-in path
+     * is where they are trimmed: no alarm, no cron, and the cost lands on the
+     * request that created the rows in the first place. Better-auth already
+     * refuses an expired row, so this frees storage and nothing else — which
+     * is why the caller is expected to log and continue on failure rather than
+     * fail the sign-in.
+     */
+    readonly sweepExpiredAuth: () => Effect.Effect<void, SqlError.SqlError>;
   }
 >()("Repository") {
   /**
@@ -496,10 +536,53 @@ export class Repository extends Context.Service<
         )(rows);
       });
 
-      /** Idempotent: re-adding an existing email is a no-op, and the id survives. */
-      const addMember = Effect.fn("Repository.addMember")(function* (
-        member: Pick<Domain.Member, "shop" | "email">,
+      const countMembers = Effect.fn("Repository.countMembers")(function* (
+        shop: Domain.Shop,
       ) {
+        const rows =
+          yield* sqlPrimary`select count(*) from Member where shop = ${shop}`
+            .values;
+        return Number(rows[0]?.[0] ?? 0);
+      });
+
+      const countTeams = Effect.fn("Repository.countTeams")(function* (
+        shop: Domain.Shop,
+      ) {
+        const rows =
+          yield* sqlPrimary`select count(*) from Team where shop = ${shop}`
+            .values;
+        return Number(rows[0]?.[0] ?? 0);
+      });
+
+      /**
+       * Idempotent: re-adding an existing email is a no-op, and the id
+       * survives.
+       *
+       * Count-then-insert as two statements rather than one transaction: D1
+       * has no interactive transactions (the driver rejects `withTransaction`),
+       * and a batch cannot branch on the count. The race that leaves is two
+       * merchants adding the last seat in the same instant and both winning —
+       * one member over a cap of three or ten, on a screen only the shop owner
+       * reaches. Buying that back would mean a `count` inside the insert, which
+       * neither expresses "already a member is exempt" nor reports which of the
+       * two conditions refused.
+       */
+      const addMember = Effect.fn("Repository.addMember")(function* (
+        member: Pick<Domain.Member, "shop" | "email"> & {
+          readonly limit: number;
+        },
+      ) {
+        const existing = yield* sqlPrimary`
+          select 1 from Member where shop = ${member.shop} and email = ${member.email}
+        `;
+        if (
+          existing.length === 0 &&
+          (yield* countMembers(member.shop)) >= member.limit
+        )
+          yield* new MemberLimitError({
+            shop: member.shop,
+            limit: member.limit,
+          });
         const createdAt = new Date(
           yield* Clock.currentTimeMillis,
         ).toISOString();
@@ -670,6 +753,14 @@ export class Repository extends Context.Service<
       const createTeam = Effect.fn("Repository.createTeam")(function* (
         team: Pick<Domain.Team, "shop" | "name">,
       ) {
+        // Same count-then-insert shape, and the same accepted race, as
+        // `addMember`; a team name is unique per shop, so there is no
+        // "already exists" case to exempt.
+        if ((yield* countTeams(team.shop)) >= Domain.ShopLimits.maxTeams)
+          return yield* new TeamLimitError({
+            shop: team.shop,
+            limit: Domain.ShopLimits.maxTeams,
+          });
         const createdAt = new Date(
           yield* Clock.currentTimeMillis,
         ).toISOString();
@@ -907,6 +998,26 @@ export class Repository extends Context.Service<
         },
       );
 
+      const sweepExpiredAuth = Effect.fn("Repository.sweepExpiredAuth")(
+        function* () {
+          const now = new Date(yield* Clock.currentTimeMillis).toISOString();
+          // `in (select ... limit ?)`, not `delete ... limit`: the latter needs
+          // a SQLite compile-time flag that is not guaranteed here.
+          yield* sqlPrimary`
+            delete from Session where id in (
+              select id from Session where expiresAt < ${now}
+              limit ${Domain.ShopLimits.sweepBatch}
+            )
+          `;
+          yield* sqlPrimary`
+            delete from Verification where id in (
+              select id from Verification where expiresAt < ${now}
+              limit ${Domain.ShopLimits.sweepBatch}
+            )
+          `;
+        },
+      );
+
       return Repository.of({
         findShopSession,
         upsertShopSession,
@@ -920,12 +1031,14 @@ export class Repository extends Context.Service<
         findOrphanShopAgentIds,
         listMembers,
         addMember,
+        countMembers,
         deleteMember,
         listMemberTeams,
         setMemberTeams,
         findMember,
         listMemberShops,
         listTeams,
+        countTeams,
         createTeam,
         renameTeam,
         deleteTeam,
@@ -933,6 +1046,7 @@ export class Repository extends Context.Service<
         setTeamMember,
         addTeamMembers,
         findMemberAccess,
+        sweepExpiredAuth,
       });
     }),
   );

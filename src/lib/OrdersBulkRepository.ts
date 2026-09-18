@@ -22,6 +22,9 @@ import { ShopifyAdmin } from "@/lib/ShopifyAdmin";
  */
 const BULK_ORDERS_FILTER = "__ORDER_SYNC_FILTER__";
 
+/** See {@link bulkOrdersQueryText}; first sync only. */
+const OPEN_WORK_FILTER = "status:open -fulfillment_status:fulfilled";
+
 const BulkOrdersQuery = `#graphql
 query BulkOrdersQuery {
   orders(query: "__ORDER_SYNC_FILTER__") {
@@ -66,6 +69,23 @@ query BulkOrdersQuery {
 }`;
 
 /**
+ * A maker's day-one working set is the orders still to be made, so the first
+ * sync — the one keyed on `created_at`, see `orderSyncWindow` — asks Shopify
+ * only for those: everything already shipped, closed, or cancelled inside the
+ * window has no production value and would occupy the object's SQLite for
+ * nothing. Later syncs are keyed on `updated_at` and deliberately carry no
+ * such filter, so an order that fulfils after it was imported is *updated*
+ * rather than left behind at its last open state.
+ *
+ * `status:open` is Shopify's "neither closed nor cancelled";
+ * `-fulfillment_status:fulfilled` is the negation of fully fulfilled, which
+ * keeps partially fulfilled orders — still work on the floor — in the set.
+ * `unshipped` is deliberately not used: Shopify defines it as
+ * `fulfillment_status` *null*, which drops exactly those partials. No
+ * `financial_status` term either: an unpaid order is work the maker will see
+ * as soon as payment lands, and `Domain.canStartRuns` already keeps runs off
+ * it until then.
+ *
  * `windowStart` is inclusive and formatted as ISO 8601, which the order search
  * syntax accepts for both `created_at` and `updated_at`.
  */
@@ -78,7 +98,9 @@ export const bulkOrdersQueryText = ({
 }) =>
   BulkOrdersQuery.replace(
     BULK_ORDERS_FILTER,
-    `${field}:>='${new Date(windowStart).toISOString()}'`,
+    `${field}:>='${new Date(windowStart).toISOString()}'${
+      field === "created_at" ? ` ${OPEN_WORK_FILTER}` : ""
+    }`,
   );
 
 const UserError = Schema.Struct({
