@@ -15,6 +15,34 @@ const SeedStepByTeamName = Schema.Struct({
   instructions: Schema.optionalKey(Domain.StepInstructions),
 });
 
+/**
+ * The route's own order shape. Identical to `Domain.SeedOrdersInput`'s orders
+ * except that a line item names the workflow it wants set on it, for the same
+ * reason a step names its team: workflow ids are minted by this request
+ * moments earlier, so a caller could not know one.
+ */
+const SeedOrderByWorkflowName = Schema.Struct({
+  n: Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0)),
+  fulfillmentStatus: Schema.optionalKey(Schema.String),
+  unpaid: Schema.optionalKey(Schema.Boolean),
+  ...Domain.SeedProgress.fields,
+  note: Schema.optionalKey(Schema.String),
+  lineItems: Schema.Array(
+    Schema.Struct({
+      title: Schema.String,
+      quantity: Schema.Number,
+      currentQuantity: Schema.optionalKey(Schema.Number),
+      unfulfilledQuantity: Schema.optionalKey(Schema.Number),
+      tags: Schema.Array(Schema.String),
+      customAttributes: Schema.optionalKey(Schema.Array(Domain.OrderAttribute)),
+      progress: Schema.optionalKey(Domain.SeedProgress),
+      /** One of the seeded `workflows`, by name; set on the item as the merchant's Choose does. */
+      workflow: Schema.optionalKey(Domain.WorkflowName),
+    }),
+  ),
+  after: Schema.optionalKey(Domain.SeedOrderChange),
+});
+
 const DevSeedInput = Schema.Struct({
   shop: Domain.Shop,
   members: Schema.Array(Domain.Email),
@@ -52,7 +80,7 @@ const DevSeedInput = Schema.Struct({
    * Seeded after workflows so they route. `done` orders are completed as the
    * first listed member, so every finished step names a real member.
    */
-  orders: Schema.optionalKey(Domain.SeedOrdersInput.fields.orders),
+  orders: Schema.optionalKey(Schema.Array(SeedOrderByWorkflowName)),
   /**
    * Keep the better-auth identity (`User`, and the `Session` rows that cascade
    * from it) of every listed email instead of deleting it, so a browser that
@@ -251,17 +279,44 @@ export const Route = createFileRoute("/api/dev/seed")({
               }
               // Always called, even with no workflows: an empty fixture must
               // still clear what the previous seed left in the object.
-              yield* Effect.tryPromise(() =>
+              const seededWorkflows = yield* Effect.tryPromise(() =>
                 env.SHOP_AGENT.getByName(shop).seedWorkflows({
                   workflows: seedWorkflows,
                 }),
               );
+              /** Workflow names → the ids the object just minted, for `lineItems[].workflow`. */
+              const workflowIds = new Map(
+                seededWorkflows.map(({ name, id }) => [name, id]),
+              );
+              type SeedOrder =
+                (typeof Domain.SeedOrdersInput.Encoded)["orders"][number];
+              const seedOrders: SeedOrder[] = [];
+              for (const order of orders ?? []) {
+                const lineItems: SeedOrder["lineItems"][number][] = [];
+                for (const item of order.lineItems) {
+                  const { workflow, ...rest } = item;
+                  const workflowId =
+                    workflow === undefined
+                      ? undefined
+                      : workflowIds.get(workflow);
+                  if (workflow !== undefined && workflowId === undefined)
+                    return new Response(
+                      `order ${String(order.n)} item ${item.title} references unseeded workflow ${workflow}`,
+                      { status: 400 },
+                    );
+                  lineItems.push({
+                    ...rest,
+                    ...(workflowId === undefined ? {} : { workflowId }),
+                  });
+                }
+                seedOrders.push({ ...order, lineItems });
+              }
               const seedMemberEmail = members[0];
               const seedMemberId =
                 seedMemberEmail === undefined
                   ? undefined
                   : memberIds.get(seedMemberEmail);
-              if (seedMemberId === undefined && (orders ?? []).length > 0)
+              if (seedMemberId === undefined && seedOrders.length > 0)
                 return new Response("orders need at least one seeded member", {
                   status: 400,
                 });
@@ -271,7 +326,7 @@ export const Route = createFileRoute("/api/dev/seed")({
                   env.SHOP_AGENT.getByName(shop).seedOrders({
                     memberId: seedMemberId,
                     memberEmail: seedMemberEmail,
-                    orders: orders ?? [],
+                    orders: seedOrders,
                   }),
                 );
               // Last, once every write has landed, and with the PRE-seed ids:

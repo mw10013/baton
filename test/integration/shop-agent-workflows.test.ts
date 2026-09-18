@@ -1090,3 +1090,239 @@ describe("ShopAgent workflow run callables", () => {
     ).toEqual({ _tag: "NotFound" });
   });
 });
+
+/**
+ * The seed callables, at the level the fixture uses them: the phases of
+ * `seedOrders` (a chosen workflow, per-item progress, the `after` state) and
+ * the two mechanics a reseed depends on — the usage counter not climbing, and
+ * `seedWorkflows` leaving surviving orders matched against what it just wrote.
+ */
+const seedMember = { memberId: "seed-member", memberEmail: "lead@m.com" };
+const seedOrderId = (n: number) => `${Domain.SEED_ORDER_ID_PREFIX}${String(n)}`;
+
+/** The index's own read, unfiltered, so a row can be put through `Domain.productionState`. */
+const ordersPage = async (
+  agent: Awaited<ReturnType<typeof getAgentByName<Cloudflare.Env, ShopAgent>>>,
+) => {
+  const view = await agent.subscribeOrders({
+    subscriberId: "seed-test",
+    limit: 50,
+    cursor: null,
+    q: null,
+    state: null,
+    paid: null,
+    attention: false,
+    team: null,
+  });
+  return view.page.orders;
+};
+
+const twoStep = (name: string, tag: string, teamId: string) => ({
+  name,
+  tag,
+  steps: [
+    { name: `Make ${name}`, teamId },
+    { name: `Finish ${name}`, teamId },
+  ],
+});
+
+describe("ShopAgent seed callables", () => {
+  it("seedOrders runs each item on its own progress and leaves its siblings alone", async () => {
+    const shop = "seed-per-item.myshopify.com";
+    const team = await seedTeam(shop, "Bench");
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    await agent.seedWorkflows({
+      workflows: [
+        twoStep("Board", "board", team.id),
+        twoStep("Ring", "ring", team.id),
+      ],
+    });
+    await agent.seedOrders({
+      ...seedMember,
+      orders: [
+        {
+          n: 1,
+          // The order's own keys, which the board overrides and the ring takes.
+          advance: 1,
+          lineItems: [
+            {
+              title: "Board",
+              quantity: 1,
+              tags: ["board"],
+              progress: { done: true },
+            },
+            { title: "Ring", quantity: 1, tags: ["ring"] },
+          ],
+        },
+      ],
+    });
+    const runs = await agent.listRunsForOrder({ orderId: seedOrderId(1) });
+    expect(
+      runs
+        .map(({ run, steps }) => ({
+          workflow: run.workflowName,
+          status: run.status,
+          done: steps.filter((step) => step.completedAt !== null).length,
+        }))
+        .toSorted((a, b) => a.workflow.localeCompare(b.workflow)),
+    ).toEqual([
+      { workflow: "Board", status: "done", done: 2 },
+      { workflow: "Ring", status: "active", done: 1 },
+    ]);
+  });
+
+  it("seedOrders chooses a workflow for an item two claim, and the order stops asking", async () => {
+    const shop = "seed-choose.myshopify.com";
+    const team = await seedTeam(shop, "Bench");
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const seeded = await agent.seedWorkflows({
+      workflows: [
+        twoStep("Board", "board", team.id),
+        twoStep("Rush order", "rush", team.id),
+      ],
+    });
+    const boardId = seeded.find(({ name }) => name === "Board")?.id;
+    if (boardId === undefined) throw new Error("seedWorkflows returned no id");
+
+    const ambiguousItem = {
+      title: "Board",
+      quantity: 1,
+      tags: ["board", "rush"],
+    };
+    await agent.seedOrders({
+      ...seedMember,
+      orders: [{ n: 1, lineItems: [ambiguousItem] }],
+    });
+    const unrouted = await agent.listRunsForOrder({ orderId: seedOrderId(1) });
+    strictEqual(unrouted.length, 0);
+    const [asking] = await ordersPage(agent);
+    strictEqual(
+      asking === undefined ? null : Domain.productionState(asking),
+      "multiple_workflows",
+    );
+
+    await agent.seedOrders({
+      ...seedMember,
+      orders: [
+        { n: 1, lineItems: [{ ...ambiguousItem, workflowId: boardId }] },
+      ],
+    });
+    const runs = await agent.listRunsForOrder({ orderId: seedOrderId(1) });
+    expect(runs.map(({ run }) => [run.workflowName, run.source])).toEqual([
+      ["Board", "manual"],
+    ]);
+    const [chosen] = await ordersPage(agent);
+    strictEqual(
+      chosen === undefined ? null : Domain.productionState(chosen),
+      "in_production",
+    );
+  });
+
+  it("seedOrders applies `after` once the work has started, so the run carries the flag", async () => {
+    const shop = "seed-after.myshopify.com";
+    const team = await seedTeam(shop, "Bench");
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    await agent.seedWorkflows({
+      workflows: [twoStep("Board", "board", team.id)],
+    });
+    await agent.seedOrders({
+      ...seedMember,
+      orders: [
+        {
+          n: 1,
+          advance: 1,
+          after: { cancelled: true },
+          lineItems: [{ title: "Board", quantity: 1, tags: ["board"] }],
+        },
+        {
+          n: 2,
+          advance: 1,
+          after: { lineItems: [{ position: 1, unfulfilledQuantity: 1 }] },
+          lineItems: [{ title: "Board", quantity: 2, tags: ["board"] }],
+        },
+      ],
+    });
+    const flagOf = async (n: number) => {
+      const runs = await agent.listRunsForOrder({ orderId: seedOrderId(n) });
+      return runs[0]?.run.flag;
+    };
+    strictEqual(await flagOf(1), "order_cancelled");
+    strictEqual(await flagOf(2), "quantity_changed");
+  });
+
+  it("seedOrders leaves the usage counter at one seed's worth however often it is reseeded", async () => {
+    const shop = "seed-usage.myshopify.com";
+    await seedTeam(shop, "Bench");
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const orders = [
+      { n: 1, lineItems: [{ title: "Board", quantity: 1, tags: ["board"] }] },
+      { n: 2, lineItems: [{ title: "Board", quantity: 1, tags: ["board"] }] },
+      {
+        n: 3,
+        unpaid: true,
+        lineItems: [{ title: "Board", quantity: 1, tags: ["board"] }],
+      },
+    ];
+    const countedOrders = async () => {
+      const usage = await agent.getUsage();
+      return usage.ordersThisMonth;
+    };
+    await agent.seedOrders({ ...seedMember, orders });
+    strictEqual(await countedOrders(), 2);
+    // Five orders the seed does not own, counted the way a sync would count
+    // them: a reseed gives back only its own share, never theirs.
+    await runInDurableObject(env.SHOP_AGENT.getByName(shop), (instance) => {
+      (instance as unknown as { ctx: DurableObjectState }).ctx.storage.sql.exec(
+        "update ShopUsage set ordersThisMonth = ordersThisMonth + 5 where id = 1",
+      );
+    });
+    await agent.seedOrders({ ...seedMember, orders });
+    await agent.seedOrders({ ...seedMember, orders });
+    strictEqual(await countedOrders(), 7);
+  });
+
+  it("a reseed re-matches the orders it did not replace", async () => {
+    const shop = "seed-reconcile.myshopify.com";
+    const team = await seedTeam(shop, "Bench");
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    // A synced order, written past the seed so the reseed below has something
+    // it does not own: this is the row the fixture leaves alone, carrying a
+    // match against a workflow the reseed is about to delete.
+    await runInDurableObject(env.SHOP_AGENT.getByName(shop), (instance) => {
+      const { sql } = (instance as unknown as { ctx: DurableObjectState }).ctx
+        .storage;
+      sql.exec(
+        `insert or replace into ShopOrder
+           (id, legacyId, name, processedAt, updatedAt, cancelledAt, closedAt,
+            financialStatus, fulfillmentStatus, fullyPaid, tags, note,
+            customAttributes, lineItemsComplete, lineItemsTruncated, syncedAt, syncSource)
+         values ('gid://shopify/Order/synced-1', 'synced-1', '#5001', 1, 1, null, null,
+                 'PAID', 'UNFULFILLED', 1, '[]', null, '[]', 1, 0, 1, 'webhook')`,
+      );
+      sql.exec(
+        `insert or replace into OrderLineItem
+           (id, orderId, productId, variantId, title, variantTitle, sku, quantity,
+            currentQuantity, unfulfilledQuantity, nonFulfillableQuantity, productTags,
+            matchedWorkflowIds, customAttributes, requiresShipping)
+         values ('gid://shopify/Order/synced-1/line-1', 'gid://shopify/Order/synced-1',
+                 null, null, 'Board', null, null, 1, 1, 1, 0, '["board"]',
+                 '["a-workflow-this-seed-deletes"]', '[]', 1)`,
+      );
+    });
+
+    // A fixture that says nothing about orders still replaces every workflow,
+    // and `seedOrders` runs whatever the caller sent — here, nothing.
+    await agent.seedWorkflows({
+      workflows: [twoStep("Board", "board", team.id)],
+    });
+    await agent.seedOrders({ ...seedMember, orders: [] });
+
+    const detail = await agent.getOrderDetail({ legacyId: "synced-1" });
+    // Recomputed, not left behind: empty because the replacement was switched
+    // on after this order was placed, which is the date rule the reconcile
+    // re-applies.
+    expect(detail?.lineItems.map((item) => item.matchedWorkflowIds)).toEqual([
+      [],
+    ]);
+  });
+});

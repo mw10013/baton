@@ -192,7 +192,10 @@ export class WorkflowRepository extends Context.Service<
      */
     readonly replaceWorkflows: (
       input: Domain.SeedWorkflowsInput,
-    ) => Effect.Effect<void, SqlError.SqlError | WorkflowRepositoryError>;
+    ) => Effect.Effect<
+      readonly { readonly name: Domain.WorkflowName; readonly id: string }[],
+      SqlError.SqlError | WorkflowRepositoryError
+    >;
     /**
      * Inserts the workflow: off, no steps, carrying its tag, and **no draft**.
      * The draft is the editor's record of unsaved changes and is created by
@@ -1010,6 +1013,10 @@ export class WorkflowRepository extends Context.Service<
          * no `draft` has no draft either, the state `createWorkflow` leaves a
          * fresh workflow in. `draft` seeds a pending draft beside the
          * workflow.
+         *
+         * Returns each workflow's minted id beside its name: this is the only
+         * write path that creates workflows without the caller naming them one
+         * at a time, and the seed's line items have to be able to point at one.
          */
         replaceWorkflows: Effect.fn("WorkflowRepository.replaceWorkflows")(
           function* ({ workflows }: Domain.SeedWorkflowsInput) {
@@ -1061,7 +1068,7 @@ export class WorkflowRepository extends Context.Service<
                 message: `replaceWorkflows: workflow=${invalid.name}: stages must be dense from 1 and non-decreasing`,
                 cause: invalid.steps.map((step) => step.stage),
               });
-            // The invariant the ordinary write path enforces that a fixture
+            // The invariants the ordinary write path enforces that a fixture
             // could otherwise silently break.
             const badActive = staged.find(
               (workflow) => workflow.active && workflow.steps.length === 0,
@@ -1070,6 +1077,34 @@ export class WorkflowRepository extends Context.Service<
               return yield* new WorkflowRepositoryError({
                 message: `replaceWorkflows: workflow=${badActive.name}: an active workflow needs steps`,
                 cause: badActive.name,
+              });
+            // Mirrors `ActivateResult.StepUnassigned`: on with a step nobody
+            // owns is a workflow the list shows as Active that starts nothing.
+            const unassignedActive = staged.find(
+              (workflow) =>
+                workflow.active &&
+                workflow.steps.some((step) => step.teamId === null),
+            );
+            if (unassignedActive !== undefined)
+              return yield* new WorkflowRepositoryError({
+                message: `replaceWorkflows: workflow=${unassignedActive.name}: an active workflow needs every step assigned`,
+                cause: unassignedActive.name,
+              });
+            if (staged.length > Domain.WorkflowLimits.maxWorkflows)
+              return yield* new WorkflowRepositoryError({
+                message: `replaceWorkflows: workflows=${String(staged.length)}: at most ${String(Domain.WorkflowLimits.maxWorkflows)} workflows`,
+                cause: staged.length,
+              });
+            const overSteps = staged.find(
+              (workflow) =>
+                workflow.steps.length > Domain.WorkflowLimits.maxSteps ||
+                (workflow.draft?.steps.length ?? 0) >
+                  Domain.WorkflowLimits.maxSteps,
+            );
+            if (overSteps !== undefined)
+              return yield* new WorkflowRepositoryError({
+                message: `replaceWorkflows: workflow=${overSteps.name}: at most ${String(Domain.WorkflowLimits.maxSteps)} steps`,
+                cause: overSteps.name,
               });
             // `Workflow.tag` is unique, so a fixture repeating a tag would
             // fail as a bare constraint error naming no workflow. Seeds are
@@ -1103,8 +1138,10 @@ export class WorkflowRepository extends Context.Service<
               Effect.gen(function* () {
                 yield* sql`delete from WorkflowRun`;
                 yield* sql`delete from Workflow`;
+                const seeded: { name: Domain.WorkflowName; id: string }[] = [];
                 for (const workflow of staged) {
                   const workflowId = crypto.randomUUID();
+                  seeded.push({ name: workflow.name, id: workflowId });
                   yield* sql`
                     insert into Workflow
                       (id, name, tag, activatedAt, createdAt, updatedAt)
@@ -1125,6 +1162,7 @@ export class WorkflowRepository extends Context.Service<
                     );
                   }
                 }
+                return seeded;
               }),
             );
           },

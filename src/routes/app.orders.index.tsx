@@ -673,10 +673,8 @@ function RouteComponent() {
               {/* No placeholder for an empty cell. Empty means every ready
                   step is unassigned or on a deleted team (an unstaffed team
                   still shows, so the merchant knows whom to staff), and the
-                  critical badge beside it already says so; the one other way to get here is
-                  an order run whose item runs were all cancelled, which
-                  carries a flag badge. A dash would flatten both into
-                  "nothing to see". */}
+                  critical badge beside it already says so. A dash would
+                  flatten that into "nothing to see". */}
               <s-table-cell>{waitingOnBadges(row.waitingOn)}</s-table-cell>
               <s-table-cell>{formatNumber(row.itemUnits)}</s-table-cell>
               <s-table-cell>{tagBadges(row.order.tags)}</s-table-cell>

@@ -473,11 +473,82 @@ describe("WorkflowRepository", () => {
           ]))._tag,
           "WorkflowRepositoryError",
         );
+        // On with a step nobody owns: what `setWorkflowActive` answers
+        // `StepUnassigned` to, and a fixture must not be able to write it.
+        strictEqual(
+          (yield* refused([
+            {
+              name: name("Active but unassigned"),
+              active: true,
+              tag: tag("y"),
+              steps: [{ name: stepName("a"), teamId: null }],
+            },
+          ]))._tag,
+          "WorkflowRepositoryError",
+        );
+        // The ordinary path's ceilings, which the seed used to skip.
+        strictEqual(
+          (yield* refused([
+            {
+              name: name("Too many steps"),
+              tag: tag("z"),
+              steps: Array.from(
+                { length: Domain.WorkflowLimits.maxSteps + 1 },
+                (_, index) => ({
+                  name: stepName(`s${String(index)}`),
+                  teamId: teamId("t1"),
+                }),
+              ),
+            },
+          ]))._tag,
+          "WorkflowRepositoryError",
+        );
+        strictEqual(
+          (yield* refused(
+            Array.from(
+              { length: Domain.WorkflowLimits.maxWorkflows + 1 },
+              (_, index) => ({
+                name: name(`W${String(index)}`),
+                tag: tag(`w${String(index)}`),
+                steps: [],
+              }),
+            ),
+          ))._tag,
+          "WorkflowRepositoryError",
+        );
         // Refusals happen before the transaction: the previous seed survives.
         strictEqual(all.length, 2);
         strictEqual(
           (yield* repo.listWorkflows({ teams: ALL_TEAMS })).length,
           2,
+        );
+      }),
+    ));
+
+  it("replaceWorkflows returns the id it minted for each workflow", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const repo = yield* WorkflowRepository;
+        // The seed's line items point at a workflow by id, and nothing else
+        // in this write path hands one back.
+        const seeded = yield* repo.replaceWorkflows({
+          workflows: [
+            {
+              name: name("Board"),
+              tag: tag("board"),
+              steps: [{ name: stepName("Cut"), teamId: teamId("t1") }],
+            },
+            { name: name("Sample"), tag: tag("sample"), steps: [] },
+          ],
+        });
+        deepStrictEqual(
+          seeded.map(({ name: workflowName }) => workflowName),
+          ["Board", "Sample"],
+        );
+        const stored = yield* repo.listWorkflows({ teams: ALL_TEAMS });
+        deepStrictEqual(
+          seeded.map(({ id }) => id).toSorted(),
+          stored.map(({ id }) => id).toSorted(),
         );
       }),
     ));

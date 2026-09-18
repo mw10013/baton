@@ -3694,11 +3694,22 @@ export class ShopAgent extends Agent {
    * ordinary failure rather than `Effect.die` — `runEffect` collapses failures
    * and defects into the same thrown `Error` at the RPC seam, so a defect buys
    * nothing here.
+   *
+   * Leaves every stored order un-matched on purpose: `replaceWorkflows` drops
+   * every run and every definition, so the orders that survive it are carrying
+   * the previous fixture's `matchedWorkflowIds`. {@link seedOrders} is what
+   * puts them right, at its end, once the fixture's own orders have been
+   * replaced — reconciling here would start runs on rows that call is about to
+   * delete, and a run outlives the order it names. `api.dev.seed.ts` always
+   * calls both, in that order.
+   *
+   * Returns each workflow's minted id so the caller can point a line item at
+   * one; the fixture speaks names, `api.dev.seed.ts` does the mapping.
    */
   @callable()
   seedWorkflows(
     input: typeof Domain.SeedWorkflowsInput.Encoded,
-  ): Promise<void> {
+  ): Promise<readonly { readonly name: string; readonly id: string }[]> {
     const environment = this.env.ENVIRONMENT;
     return this.runEffect(
       callableEffect("ShopAgent.seedWorkflows", Domain.SeedWorkflowsInput, {
@@ -3729,12 +3740,22 @@ export class ShopAgent extends Agent {
    * "step 2 of 3, in progress, blocked" card is indistinguishable from one a
    * worker produced. Only rows under `SEED_ORDER_ID_PREFIX` are replaced;
    * synced orders are left alone.
+   *
+   * Four phases per order, in this order (`Domain.SeedOrdersInput` says what
+   * each key means): upsert and reconcile; each item's `workflowId` through
+   * `setRun`, the merchant's own Choose; progress, dispatched per run so one
+   * order's items can be in different states; then the order's `after` state
+   * through a second upsert, which is the only way to reach the flags that
+   * need the change to land *after* a run exists.
    */
   @callable()
   seedOrders(input: typeof Domain.SeedOrdersInput.Encoded): Promise<void> {
     const environment = this.env.ENVIRONMENT;
+    const shop = this.name;
     const publish = () => this.publish("all");
     const reconciler = () => this.reconciler("manual");
+    const reconcileAll = () => this.reconcileAllNow("seedOrders", "seed");
+    const teams = () => this.teams();
     return this.runEffect(
       callableEffect("ShopAgent.seedOrders", Domain.SeedOrdersInput, {
         role: "merchant",
@@ -3748,20 +3769,18 @@ export class ShopAgent extends Agent {
                 cause: environment,
               }),
             );
-          const sql = yield* SqlClient.SqlClient;
           const orderRepository = yield* OrderRepository;
+          const workflowRepository = yield* WorkflowRepository;
           const runs = yield* WorkflowRunRepository;
           const reconcile = yield* reconciler();
+          const roster = yield* teams();
           const now = yield* Clock.currentTimeMillis;
           const listOpenRuns = (orderId: string) =>
             runs
               .listRunsForOrder({ orderId })
               .pipe(
                 Effect.map((details) =>
-                  details.filter(
-                    ({ run }) =>
-                      run.status === "pending" || run.status === "active",
-                  ),
+                  details.filter(({ run }) => isOpen(run)),
                 ),
               );
           const memberActor = {
@@ -3778,82 +3797,151 @@ export class ShopAgent extends Agent {
             step: Domain.WorkflowRunStep,
             merchant: boolean,
           ) => (merchant ? merchantStepCommand(step) : actor(step));
-          const completeOpenRuns = (orderId: string, merchant: boolean) =>
-            Effect.gen(function* () {
-              for (const { run, steps } of yield* listOpenRuns(orderId)) {
-                yield* Effect.forEach(
-                  steps,
-                  (step) => runs.completeStep(stepCommand(step, merchant)),
-                  { discard: true },
-                );
-                yield* Effect.logInfo(
-                  `ShopAgent.seedOrders: orderId=${orderId} runId=${run.id}: completed`,
-                ).pipe(Effect.annotateLogs({ orderId, runId: run.id }));
-              }
-            });
-          /** One round: every step ready at the start of the round gets completed; what that makes ready waits for the next. */
-          const advanceRound = (orderId: string, merchant: boolean) =>
+          // Reloaded before every phase rather than carried: each phase
+          // completes steps, which changes what the next one may touch.
+          const openRun = (runId: string) =>
             runs
-              .listRunsForOrder({ orderId })
+              .getRun({ runId })
               .pipe(
-                Effect.flatMap((details) =>
-                  Effect.forEach(
-                    seedReadySteps(details),
-                    (step) => runs.completeStep(stepCommand(step, merchant)),
-                    { discard: true },
-                  ),
+                Effect.map((found) =>
+                  Option.isSome(found) && isOpen(found.value.run)
+                    ? found.value
+                    : null,
                 ),
               );
-          const startReadySteps = (orderId: string) =>
+          const completeRun = (runId: string, merchant: boolean) =>
             Effect.gen(function* () {
-              for (const { steps } of yield* listOpenRuns(orderId))
-                yield* Effect.forEach(
-                  steps.filter((step) => step.completedAt === null),
-                  (step) =>
-                    runs
-                      .startStep(actor(step))
-                      .pipe(
-                        Effect.catchTag("StepNotReadyError", () => Effect.void),
-                      ),
-                  { discard: true },
-                );
+              const detail = yield* openRun(runId);
+              if (detail === null) return;
+              yield* Effect.forEach(
+                detail.steps,
+                (step) => runs.completeStep(stepCommand(step, merchant)),
+                { discard: true },
+              );
+              yield* Effect.logInfo(
+                `ShopAgent.seedOrders: orderId=${detail.run.orderId} runId=${runId}: completed`,
+              ).pipe(
+                Effect.annotateLogs({ orderId: detail.run.orderId, runId }),
+              );
             });
-          const blockOpenRuns = (
-            orderId: string,
+          /** One round: every step ready at the start of the round gets completed; what that makes ready waits for the next. */
+          const advanceRun = (runId: string, merchant: boolean) =>
+            Effect.gen(function* () {
+              const detail = yield* openRun(runId);
+              if (detail === null) return;
+              yield* Effect.forEach(
+                seedReadySteps([detail]),
+                (step) => runs.completeStep(stepCommand(step, merchant)),
+                { discard: true },
+              );
+            });
+          const startRun = (runId: string) =>
+            Effect.gen(function* () {
+              const detail = yield* openRun(runId);
+              if (detail === null) return;
+              yield* Effect.forEach(
+                detail.steps.filter((step) => step.completedAt === null),
+                (step) =>
+                  runs
+                    .startStep(actor(step))
+                    .pipe(
+                      Effect.catchTag("StepNotReadyError", () => Effect.void),
+                    ),
+                { discard: true },
+              );
+            });
+          const blockOneRun = (
+            runId: string,
             reason: Domain.StepNote,
             merchant: boolean,
           ) =>
             Effect.gen(function* () {
-              for (const { run, steps } of yield* listOpenRuns(orderId))
-                yield* runs
-                  .blockRun({
-                    runId: run.id,
-                    ...(merchant
-                      ? { actor: { role: "merchant" as const } }
-                      : {
-                          actor: memberActor,
-                          teamIds: steps.flatMap((step) =>
-                            step.teamId === null ? [] : [step.teamId],
-                          ),
-                        }),
-                    reason,
-                  })
-                  .pipe(
-                    Effect.catchTag("RunNotAllowedError", () => Effect.void),
-                  );
+              const detail = yield* openRun(runId);
+              if (detail === null) return;
+              yield* runs
+                .blockRun({
+                  runId,
+                  ...(merchant
+                    ? { actor: { role: "merchant" as const } }
+                    : {
+                        actor: memberActor,
+                        teamIds: detail.steps.flatMap((step) =>
+                          step.teamId === null ? [] : [step.teamId],
+                        ),
+                      }),
+                  reason,
+                })
+                .pipe(Effect.catchTag("RunNotAllowedError", () => Effect.void));
             });
-          const seeded = yield* sql`
-            select id from ShopOrder where id like ${`${Domain.SEED_ORDER_ID_PREFIX}%`}
-          `.values;
-          for (const [id] of seeded)
-            yield* orderRepository.deleteOrder(String(id));
+          const applyProgress = (
+            runId: string,
+            progress: Domain.SeedProgress,
+          ) =>
+            Effect.gen(function* () {
+              const merchant = progress.byMerchant === true;
+              if (progress.done === true) yield* completeRun(runId, merchant);
+              for (let round = 0; round < (progress.advance ?? 0); round += 1)
+                yield* advanceRun(runId, merchant);
+              if (progress.started === true) yield* startRun(runId);
+              if (progress.blocked !== undefined)
+                yield* blockOneRun(runId, progress.blocked, merchant);
+            });
+          /**
+           * The merchant's own Choose, on a line item the seed wrote moments
+           * ago: the same `setRun` the attach callable makes, so the run it
+           * leaves carries `manual` and is indistinguishable from a chosen one.
+           * A fixture naming a workflow that cannot start the item is a
+           * fixture bug — failing here is louder than leaving the row reading
+           * as whatever its tags happened to match.
+           */
+          const setChosenWorkflow = (
+            orderId: string,
+            position: number,
+            workflowId: string,
+          ) =>
+            Effect.gen(function* () {
+              const lineItemId = `${orderId}/line-${String(position)}`;
+              const target = yield* orderRepository.getLineItem(lineItemId);
+              const found = yield* workflowRepository.getWorkflow({
+                workflowId,
+              });
+              const detail: Domain.WorkflowDetail | null = Option.isSome(found)
+                ? { workflow: found.value.workflow, steps: found.value.steps }
+                : null;
+              yield* Option.isNone(target) ||
+              detail === null ||
+              !canStart(detail, roster)
+                ? Effect.fail(
+                    new WorkflowRepositoryError({
+                      message: `ShopAgent.seedOrders: lineItemId=${lineItemId} workflowId=${workflowId}: no such line item, or a workflow that cannot start`,
+                      cause: workflowId,
+                    }),
+                  )
+                : runs.setRun({
+                    workflow: detail,
+                    teams: roster,
+                    order: target.value.order,
+                    lineItem: target.value.lineItem,
+                    source: "manual",
+                  });
+            });
+          // Orders, line items, runs and the usage they counted, together;
+          // the upserts below then count each fresh paid order the ordinary
+          // way, so a reseed lands on the number one seed would have produced.
+          yield* orderRepository.deleteSeedOrders();
+          let runCount = 0;
           for (const [index, seed] of orders.entries()) {
             const id = `${Domain.SEED_ORDER_ID_PREFIX}${String(seed.n)}`;
             // At or after `now`, never before: the workflows this fixture
             // starts were turned on moments ago and the date rule skips an
-            // order placed before its workflow. Spaced a second apart so
-            // the index's keyset order matches `orders` order, newest last.
-            const processedAt = now + index * 1000;
+            // order placed before its workflow. Spaced a millisecond apart
+            // so the index's keyset order matches `orders` order, newest
+            // last, while the tail of the fixture stays within a blink of
+            // `now`: a wider gap dates the last rows into the future, and
+            // anything that compares `processedAt` against `now` — a
+            // reconcile after a workflow is activated, for one — would then
+            // read a shop that cannot exist.
+            const processedAt = now + index;
             const order: Domain.ShopOrder = {
               id,
               legacyId: `seed-${String(seed.n)}`,
@@ -3873,10 +3961,18 @@ export class ShopAgent extends Agent {
               syncedAt: now,
               syncSource: "manual",
             };
-            yield* orderRepository.upsertOrder({
-              order,
-              lineItems: seed.lineItems.map((item, position) => {
-                const currentQuantity = item.currentQuantity ?? item.quantity;
+            /** `changed` is the `after` block's quantities, by 1-based position; without it this is the order as placed. */
+            const lineItemsOf = (
+              changed: Domain.SeedOrderChange["lineItems"] = [],
+            ) =>
+              seed.lineItems.map((item, position) => {
+                const override = changed.find(
+                  (entry) => entry.position === position + 1,
+                );
+                const currentQuantity =
+                  override?.currentQuantity ??
+                  item.currentQuantity ??
+                  item.quantity;
                 return {
                   id: `${id}/line-${String(position + 1)}`,
                   orderId: id,
@@ -3888,24 +3984,67 @@ export class ShopAgent extends Agent {
                   quantity: item.quantity,
                   currentQuantity,
                   unfulfilledQuantity:
-                    item.unfulfilledQuantity ?? currentQuantity,
+                    override?.unfulfilledQuantity ??
+                    item.unfulfilledQuantity ??
+                    currentQuantity,
                   nonFulfillableQuantity: 0,
                   productTags: item.tags,
                   matchedWorkflowIds: [],
                   customAttributes: item.customAttributes ?? [],
                   requiresShipping: true,
                 } satisfies Domain.OrderLineItem;
-              }),
+              });
+            yield* orderRepository.upsertOrder({
+              order,
+              lineItems: lineItemsOf(),
               afterWrite: reconcile(order),
             });
-            const merchant = seed.byMerchant === true;
-            if (seed.done === true) yield* completeOpenRuns(id, merchant);
-            for (let round = 0; round < (seed.advance ?? 0); round += 1)
-              yield* advanceRound(id, merchant);
-            if (seed.started === true) yield* startReadySteps(id);
-            if (seed.blocked !== undefined)
-              yield* blockOpenRuns(id, seed.blocked, merchant);
+            for (const [position, item] of seed.lineItems.entries())
+              if (item.workflowId !== undefined)
+                yield* setChosenWorkflow(id, position + 1, item.workflowId);
+            const open = yield* listOpenRuns(id);
+            runCount += open.length;
+            for (const { run } of open) {
+              // `${id}/line-<position>` is this seed's own id scheme, so the
+              // position is readable back off the run without a join.
+              const position = Number(
+                run.lineItemId.slice(`${id}/line-`.length),
+              );
+              yield* applyProgress(
+                run.id,
+                seed.lineItems[position - 1]?.progress ?? seed,
+              );
+            }
+            if (seed.after !== undefined) {
+              const changed: Domain.ShopOrder = {
+                ...order,
+                cancelledAt: seed.after.cancelled === true ? now : null,
+                fulfillmentStatus:
+                  seed.after.fulfillmentStatus ?? order.fulfillmentStatus,
+                updatedAt: now,
+              };
+              yield* orderRepository.upsertOrder({
+                order: changed,
+                lineItems: lineItemsOf(seed.after.lineItems),
+                afterWrite: reconcile(changed),
+              });
+            }
           }
+          // The orders this seed did not write: synced rows a fixture leaves
+          // alone, whose runs `seedWorkflows` deleted along with the
+          // definitions those runs named. Nothing above touches them, and a
+          // stored order still matched against a workflow that no longer
+          // exists is a state the ordinary path never produces.
+          yield* reconcileAll();
+          yield* Effect.logInfo(
+            `ShopAgent.seedOrders: shop=${shop} orders=${String(orders.length)} runs=${String(runCount)}`,
+          ).pipe(
+            Effect.annotateLogs({
+              shop,
+              orders: orders.length,
+              runs: runCount,
+            }),
+          );
           yield* publish();
         }),
       )(input),

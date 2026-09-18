@@ -9,7 +9,8 @@ Read `CLAUDE.md` first. In particular: JSDoc for anything subtle, never referenc
 JSDoc, Effect idioms throughout, `pnpm fmt` after every change and keep every file it touches,
 no commits unless told, `pnpm typecheck` and `pnpm lint` before declaring a step done.
 
-Record every departure from this plan in §10 as you go, not at the end.
+Record every departure from this plan in §10 as you go, not at the end, and anything the work
+is left standing around — a sharp edge kept, a number still open — in §11.
 
 ## 1. Outcome
 
@@ -320,4 +321,106 @@ and what was done about it. One entry per item, dated, with file references. Inc
 reseed time and the final counts (members, teams, workflows, orders, runs). Leave the section
 in the file when done; it is the record the next reader needs.
 
-- (none yet)
+**2026-09-18 — `then` is called `after`.** `oxlint`'s `unicorn(no-thenable)` is an error, not a
+warning, and it fires on any object literal with a `then` key — `Domain.SeedOrdersInput`, the
+route's schema, `e2e/seed.ts`, and every fixture row that used one. Renamed to `after`
+everywhere; the phase and its reasoning are unchanged (`Domain.SeedOrderChange`).
+
+**2026-09-18 — the reconcile moved from `seedWorkflows` to the end of `seedOrders`** (§5.1).
+As specified it broke `e2e/member-queue.member.spec.ts:425` in the full suite, deterministically
+and only there. Cause: `seedWorkflows` runs before the previous fixture's orders are deleted, and
+a seeded order's `processedAt` is `now + index * 1000`, so the tail of a 13-order fixture is dated
+up to twelve seconds in the future — past the _new_ workflows' `activatedAt`. The reconcile
+therefore started runs on orders `seedOrders` was about to delete, and `deleteOrder` leaves runs
+alone by design (`orders/delete` flags them instead), so those runs survived as queue cards
+carrying their own snapshot of an order that no longer existed. Nothing could clear them and the
+next spec's first card was one of them.
+
+The reconcile now runs at the end of `seedOrders`, after the fixture's own orders are written, so
+it only reaches the rows a seed does not own — synced orders, which is the case §5.1 was for.
+`seedOrders` also deletes the runs of the seed orders it deletes (`ShopAgent.seedOrders`), which
+is right on its own: a fixture row being replaced has no trail worth keeping. Full e2e suite
+passes (39). `api.dev.seed.ts` calls both callables in order, so no caller loses the reconcile;
+`seedWorkflows`'s JSDoc says so.
+
+**2026-09-18 — the seed tests live in `test/integration/shop-agent-workflows.test.ts`**, not
+`shop-agent-callables.test.ts` (§8). That file only enumerates the callable role gate; it has no
+D1 or agent fixtures, while the workflows file already has `seedTeam` and the agent helpers. The
+`done` + `advance` schema rule is covered in `domain.test.ts` instead, where a decode failure is a
+value rather than an RPC rejection that vitest reports as an unhandled error. The re-match test
+writes a synced order straight into the object's SQLite: a seeded order cannot play that part,
+since `seedOrders` deletes every seeded row before it writes.
+
+**2026-09-18 — `#1026`'s long strings are sliced, not spelled out.** `LONG_TITLE` and
+`LONG_BLOCK_REASON` in `e2e/fixture.ts` are a sentence repeated and cut to exactly 200 and 1000
+characters; a 1000-character literal in the fixture would bury the row it belongs to.
+
+**2026-09-18 — review follow-ups.** Three changes after review of the work above:
+`processedAt` is now `now + index`, a millisecond apart rather than a second, so the tail of the
+fixture is never dated more than a blink into the future and the reconcile bug in the entry above
+is unreachable rather than merely avoided. The usage counter is decremented by the paid seeded
+orders being deleted rather than zeroed, so synced orders keep their share. Both the delete and
+the decrement live in `OrderRepository.deleteSeedOrders` rather than as raw SQL in the agent;
+`setUsageOrdersThisMonth` is gone.
+
+**2026-09-18 — measured.** `pnpm seed` against a running `pnpm app:dev`: **471–519 ms** in the
+object (`ShopAgent.seedOrders`), under 1.2 s wall including node start. Final counts: **10
+members, 8 teams, 11 workflows, 69 orders, 119 runs**, 2 ambiguous items.
+
+That is fewer runs than §1's "a few hundred cards": `lead@m.com`'s queue reads **All · 99**
+(Engraving 32, Woodshop 31, Leather 22, Textiles 13, Finishing 12, Jewelry 12, Rush 1) with
+Blocked · 7 and the **Show all** button, and the orders index pages at 25 with 69 orders. The
+scale set is the §6.3 table as written (40 orders, one or two items each); raising it is
+`scaleOrders(2002, N)` in `e2e/fixture.ts` and costs about 4 ms per order.
+
+**2026-09-18 — checked by eye** through the embedded app and the member area (temporary specs,
+deleted after):
+
+- orders index stage filters: No workflow · 8, **Choose a workflow · 2**, In production · 51,
+  Ready to ship · 11, Needs attention · 1; **Waiting on** lists Rush and Retired team (empty);
+  page one holds 25 rows, so there is a second page.
+- `#1015` summary line: `4 items · 1 blocked · 1 made · waiting on Engraving, Leather, Textiles`,
+  with the four items reading Done, Blocked, In progress, Not started.
+- `#1013` carries one run on Engraved cutting board and no warning, so the chosen workflow
+  resolved the ambiguity; `#1011` and `#1012` are the two left asking.
+- `#1024` reads `Step 2 of 2 · Attach ring · Retired team (empty)` with the no-members banner.
+- `#2001` is 25 items, and the Gift box rows read `Step 1 of 8`.
+- `lead@m.com`'s queue shows the `after` rows as flags: `#1019` cancelled, `#1020` "Fulfilled in
+  Shopify.", `#1021` "From 2 to 1."; `#1023` reads "Merchant"; `m9@m.com` sees the Rush queue.
+
+## 11. Left standing
+
+Not deviations: things the work is done around, and what a reader should know before changing
+them. Each names the decision it is waiting on, so nothing here lives only in a chat log.
+
+**`deleteOrder` leaves `WorkflowRun` rows behind, and a run carries its own copy of the order name
+and item title, so an orphan is a queue card nothing can clear.** That is correct for the webhook
+path — `orders/delete` flags the runs rather than erasing the trail. The seed does not use
+`deleteOrder`: `OrderRepository.deleteSeedOrders` removes seed orders, their line items, their runs
+and their share of the usage counter in one transaction. The retention sweep deletes runs in its own
+statement. It stays a sharp edge for any future third caller of `deleteOrder`.
+
+**`seedWorkflows` on its own leaves stored orders matched against workflows it just deleted.** The
+reconcile that repairs that is at the end of `seedOrders`, and `api.dev.seed.ts` always calls
+both, in that order. A future caller reaching the Durable Object directly — an integration test,
+a script — has to call both too, or reconcile itself. Said in the JSDoc on both callables; there
+is no guard.
+
+**The fixture now has exactly `MAX_ENTITLEMENTS.maxMembers` (10) members.** An eleventh persona
+needs that constant raised (`Domain.ts`), which §6.1 already allows for; the point is that there
+is no headroom left, so the next fixture row that wants a login hits it.
+
+**The scale set is short of §1's "a few hundred cards".** Measured above: 99 ready cards for the
+lead, 119 runs. It is enough to see the Up next cap, the team chips and a second index page, and
+not enough to judge whether the queue's uncapped tiers hold. `scaleOrders(2002, N)` in
+`e2e/fixture.ts` is the one number to change (about 4 ms per order); raising it past `#2041` also
+moves the numbering the §6.3 table fixes, so it is a decision rather than a tweak.
+
+**The generated rows' personalization key is `Personalization`, not `Engraving`.** The §6.3 table
+said `Engraving: "Order 2007"`, which reads wrong on a blanket or a clock once the six products
+are cycled. Hand-written rows keep the product's own key (`Engraving`, `Initials`, `Size`).
+
+**`#1025` (a run on a deleted team) is still absent**, for the reason research §3.3 gives: the
+seed resolves steps by team name and cannot delete a team mid-fixture. The state stays covered by
+e2e specs only. A seed-only "delete this team after seeding" key would reach it; nobody has asked
+for one.

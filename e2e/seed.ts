@@ -47,6 +47,23 @@ export interface SeedWorkflowStep {
   readonly instructions?: string;
 }
 
+/**
+ * Progress for one seeded run. `done` completes every step; `advance`
+ * completes that many rounds of ready steps instead (`done` and `advance`
+ * together are refused); `started` then Starts whatever is ready; `blocked`
+ * flags the run with that reason. `byMerchant` records the completions and the
+ * block as the merchant instead of the seed member, which is the fixture for
+ * what a worker sees after an intervention; `started` stays the member's
+ * either way.
+ */
+export interface SeedProgress {
+  readonly done?: boolean;
+  readonly advance?: number;
+  readonly started?: boolean;
+  readonly blocked?: string;
+  readonly byMerchant?: boolean;
+}
+
 /** A line item of a seeded order; `tags` are the product tags a workflow matches on. Quantities default down the chain `quantity` → `currentQuantity` → `unfulfilledQuantity`. */
 export interface SeedLineItem {
   readonly title: string;
@@ -58,28 +75,46 @@ export interface SeedLineItem {
     readonly key: string;
     readonly value: string | null;
   }[];
+  /** This item's run alone; the order's own progress keys are ignored for it. */
+  readonly progress?: SeedProgress;
+  /**
+   * One of the seeded `workflows`, by name, set on the item as the merchant's
+   * Choose / Change does: it resolves an item two workflows claim, or attaches
+   * one where no tag matched. Applied before progress, so the run it creates
+   * is one the rounds below then advance.
+   */
+  readonly workflow?: string;
 }
 
 /**
- * An order to seed; `n` becomes `#n`. `done` completes every run it routes
- * to. `advance` completes that many rounds of ready steps instead (item runs
- * first; the order run only once every item is made), `started` then Starts
- * whatever is ready, and `blocked` flags every open run with that reason.
- * `byMerchant` records the completions and the block as the merchant instead
- * of the seed member, which is the fixture for what a worker sees after an
- * intervention; `started` stays the member's either way.
+ * A second state for the order, written after progress, so its runs come to
+ * carry the flags only a change that lands *after* work started can produce:
+ * `order_cancelled`, `order_fulfilled`, `quantity_changed`, `item_removed`.
+ * `lineItems` are addressed by 1-based position in the order's own
+ * `lineItems`, and a quantity left out keeps what the first write gave it.
  */
-export interface SeedOrder {
+export interface SeedOrderChange {
+  readonly cancelled?: boolean;
+  readonly fulfillmentStatus?: string;
+  readonly lineItems?: readonly {
+    readonly position: number;
+    readonly currentQuantity?: number;
+    readonly unfulfilledQuantity?: number;
+  }[];
+}
+
+/**
+ * An order to seed; `n` becomes `#n`. The order's own progress keys apply to
+ * every run on it that its line item does not override with a `progress` of
+ * its own, which is how one order's items end up in different states.
+ */
+export interface SeedOrder extends SeedProgress {
   readonly n: number;
   readonly fulfillmentStatus?: string;
   readonly unpaid?: boolean;
-  readonly done?: boolean;
-  readonly advance?: number;
-  readonly started?: boolean;
-  readonly blocked?: string;
-  readonly byMerchant?: boolean;
   readonly note?: string;
   readonly lineItems: readonly SeedLineItem[];
+  readonly after?: SeedOrderChange;
 }
 
 /** A workflow definition to create, steps inline and in order. */

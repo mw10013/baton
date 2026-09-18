@@ -1318,12 +1318,85 @@ export type OrderDetail = typeof OrderDetail.Type;
 export const SEED_ORDER_ID_PREFIX = "gid://shopify/Order/seed-";
 
 /**
+ * Progress for one seeded run: `done` completes every step; `advance`
+ * completes that many rounds of ready steps; `started` then Starts what is
+ * ready; `blocked` flags the run.
+ */
+const SeedProgressFields = {
+  done: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Rounds of progress before the run is left alone: each round completes
+   * every step that was *ready* when the round began, and what that makes
+   * ready waits for the next. `advance: 1` on a three-step item is "step 1
+   * done, step 2 up next". `done` is the limit of this.
+   */
+  advance: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
+  /** After `advance`, Start what is ready so the queue shows "In progress since … by <seed member>". */
+  started: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Record the `done` / `advance` / `blocked` progress as the **merchant**
+   * rather than the seed member, for a fixture of a merchant intervention
+   * ("Done by Merchant", "Blocked by Merchant"). `started` stays the
+   * member's whatever this says: there is no merchant Start — the merchant
+   * records work, they do not claim it.
+   */
+  byMerchant: Schema.optionalKey(Schema.Boolean),
+  /** After `advance`, flag the run `blocked` with this reason, the state a worker's Block leaves. */
+  blocked: Schema.optionalKey(StepNote),
+} as const;
+
+/**
+ * `done` and `advance` are exclusive rather than merely undocumented
+ * together: the seed runs `done` first, which leaves nothing ready, so
+ * `advance` beside it is a silent no-op and the fixture row would read as
+ * something it is not.
+ */
+const doneAndAdvanceExclusive = Schema.makeFilter(
+  (progress: {
+    readonly done?: boolean | undefined;
+    readonly advance?: number | undefined;
+  }) =>
+    progress.done !== true ||
+    progress.advance === undefined ||
+    "done and advance are exclusive",
+);
+
+export const SeedProgress = Schema.Struct(SeedProgressFields).check(
+  doneAndAdvanceExclusive,
+);
+export type SeedProgress = typeof SeedProgress.Type;
+
+/**
+ * A second state for an order, applied by the seed after progress: see `after`
+ * on {@link SeedOrdersInput} for why it is a phase of its own.
+ */
+export const SeedOrderChange = Schema.Struct({
+  cancelled: Schema.optionalKey(Schema.Boolean),
+  fulfillmentStatus: Schema.optionalKey(Schema.String),
+  /** By 1-based position in `lineItems`; a quantity left out keeps what the first write gave it. */
+  lineItems: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        position: Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0)),
+        currentQuantity: Schema.optionalKey(Schema.Number),
+        unfulfilledQuantity: Schema.optionalKey(Schema.Number),
+      }),
+    ),
+  ),
+});
+export type SeedOrderChange = typeof SeedOrderChange.Type;
+
+/**
  * Local-only order fixture, written through the ordinary upsert-and-reconcile
  * path so runs start exactly as they would for a webhook. `unfulfilledQuantity`
  * defaults to `currentQuantity`, which defaults to `quantity`; lowering one
- * seeds a refund or a partial shipment. `done` completes every step of every
- * run started on the order, so a "Ready to ship" row exists without a person
- * clicking through the queue.
+ * seeds a refund or a partial shipment.
+ *
+ * Each order is written in four phases, in this order, and the order is what
+ * makes the interesting states reachable: upsert + reconcile, then each item's
+ * `workflowId`, then progress, then `after`. Progress is per run — an item with
+ * its own `progress` uses that, every other run of the order uses the order's
+ * own keys — which is what puts one order's items in different states.
  */
 export const SeedOrdersInput = Schema.Struct({
   memberId: MemberId,
@@ -1335,26 +1408,8 @@ export const SeedOrdersInput = Schema.Struct({
       fulfillmentStatus: Schema.optionalKey(Schema.String),
       /** `PENDING`, `fullyPaid: false`: no runs are created, and the row reads as unpaid rather than "No workflow". */
       unpaid: Schema.optionalKey(Schema.Boolean),
-      done: Schema.optionalKey(Schema.Boolean),
-      /**
-       * Rounds of progress before the order is left alone: each round
-       * completes every *ready* step of every open run on the order.
-       * `advance: 1` on a three-step item is "step 1 done, step 2
-       * up next". `done` is the limit of this; the two are not combined.
-       */
-      advance: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
-      /** After `advance`, Start every ready step so the queue shows "In progress since … by <seed member>". */
-      started: Schema.optionalKey(Schema.Boolean),
-      /**
-       * Record this order's `done` / `advance` / `blocked` progress as the
-       * **merchant** rather than the seed member, for a fixture of a merchant
-       * intervention ("Done by Merchant", "Blocked by Merchant"). `started`
-       * stays the member's whatever this says: there is no merchant Start —
-       * the merchant records work, they do not claim it.
-       */
-      byMerchant: Schema.optionalKey(Schema.Boolean),
-      /** After `advance`, flag every open run `blocked` with this reason, the state a worker's Block leaves. */
-      blocked: Schema.optionalKey(StepNote),
+      /** The progress every run of this order takes unless its own item overrides it. */
+      ...SeedProgressFields,
       note: Schema.optionalKey(Schema.String),
       lineItems: Schema.Array(
         Schema.Struct({
@@ -1364,9 +1419,31 @@ export const SeedOrdersInput = Schema.Struct({
           unfulfilledQuantity: Schema.optionalKey(Schema.Number),
           tags: Schema.Array(Schema.String),
           customAttributes: Schema.optionalKey(Schema.Array(OrderAttribute)),
+          /** This item's run alone; the order's own progress keys are ignored for it. */
+          progress: Schema.optionalKey(SeedProgress),
+          /**
+           * A workflow to set on this item after reconcile, exactly as the
+           * merchant's Choose / Change does (`setRun`, source `manual`):
+           * resolves an ambiguous item, or attaches where no tag matched.
+           * Applied before progress so the run it creates is one the rounds
+           * below then advance. Callers above this schema name the workflow
+           * instead — ids are minted by the seed moments earlier — and
+           * `api.dev.seed.ts` maps the name to the id.
+           */
+          workflowId: Schema.optionalKey(Schema.String),
         }),
       ),
-    }),
+      /**
+       * A second state for the order, written after progress as another
+       * `upsertOrder` with `afterWrite: reconcile`, so its runs come to carry
+       * the flags a webhook would produce: `order_cancelled`,
+       * `order_fulfilled`, `quantity_changed`, `item_removed`. Second on
+       * purpose — reconcile on an already-cancelled or already-fulfilled
+       * order returns before creating anything, so the first write has to be
+       * the order as it stood when the work started.
+       */
+      after: Schema.optionalKey(SeedOrderChange),
+    }).check(doneAndAdvanceExclusive),
   ),
 });
 export type SeedOrdersInput = typeof SeedOrdersInput.Type;

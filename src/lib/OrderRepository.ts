@@ -278,6 +278,23 @@ export class OrderRepository extends Context.Service<
       SqlError.SqlError | OrderRepositoryError
     >;
     /**
+     * Seed only: delete every order under `SEED_ORDER_ID_PREFIX`, its line
+     * items, its runs, and its share of `ordersThisMonth`. Each departs from
+     * `deleteOrder` on purpose. Runs: an `orders/delete` webhook flags them
+     * rather than dropping the trail of work, but a fixture row being replaced
+     * has no trail worth keeping, and a run outliving its order carries its
+     * own snapshot of the order name and item, so it would sit on a queue as a
+     * card nothing can clear. Usage: the quota counts orders carried, not
+     * orders still stored, so `deleteOrder` never gives the count back; a
+     * reseed would then climb by a fixture's worth every time until the quota
+     * banner appeared over a shop holding one seed's orders. Only the seed
+     * knows the whole set is being replaced, so only it may subtract — and it
+     * subtracts rather than zeroes so synced orders keep their share. Every
+     * paid seeded order counted when it was written (a later `after` cancel
+     * is not a fresh write), which is why `cancelledAt` is not consulted.
+     */
+    readonly deleteSeedOrders: () => Effect.Effect<void, SqlError.SqlError>;
+    /**
      * One retention pass: at most `ShopLimits.sweepBatch` closed orders past
      * `ShopLimits.orderRetentionDays`, with their runs, plus a batch of runs
      * orphaned by an `orders/delete`. Deliberately batched and deliberately
@@ -1053,6 +1070,29 @@ export class OrderRepository extends Context.Service<
         }),
 
         getUsage: readUsage,
+
+        deleteSeedOrders: Effect.fn("OrderRepository.deleteSeedOrders")(
+          function* () {
+            const seedPrefix = `${Domain.SEED_ORDER_ID_PREFIX}%`;
+            yield* sql.withTransaction(
+              Effect.gen(function* () {
+                const [row] = yield* sql`
+                  select count(*) as paid from ShopOrder
+                  where id like ${seedPrefix} and fullyPaid = 1
+                `.values;
+                const paid = Number(row?.[0] ?? 0);
+                yield* sql`
+                  update ShopUsage
+                  set ordersThisMonth = max(0, ordersThisMonth - ${paid})
+                  where id = 1
+                `;
+                yield* sql`delete from WorkflowRun where orderId like ${seedPrefix}`;
+                yield* sql`delete from OrderLineItem where orderId like ${seedPrefix}`;
+                yield* sql`delete from ShopOrder where id like ${seedPrefix}`;
+              }),
+            );
+          },
+        ),
 
         sweepExpiredOrders: Effect.fn("OrderRepository.sweepExpiredOrders")(
           function* ({ now }: { readonly now: number }) {

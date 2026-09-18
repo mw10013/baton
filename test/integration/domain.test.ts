@@ -455,3 +455,40 @@ describe("Domain.OrderSearch", () => {
     strictEqual(decode("#1")._tag, "Some");
   });
 });
+
+/** One seeded order, with the keys under test spread over the minimum a row needs. */
+const seedOrdersInput = (order: Record<string, unknown>) => ({
+  memberId: "m1",
+  memberEmail: "lead@m.com",
+  orders: [{ n: 1, lineItems: [], ...order }],
+});
+
+describe("Domain.SeedOrdersInput", () => {
+  const decode = Schema.decodeUnknownOption(Domain.SeedOrdersInput);
+  it("refuses `done` beside `advance`, on the order and on one item", () => {
+    strictEqual(
+      decode(seedOrdersInput({ done: true, advance: 1 }))._tag,
+      "None",
+    );
+    strictEqual(
+      decode(
+        seedOrdersInput({
+          lineItems: [
+            {
+              title: "Board",
+              quantity: 1,
+              tags: [],
+              progress: { done: true, advance: 1 },
+            },
+          ],
+        }),
+      )._tag,
+      "None",
+    );
+    strictEqual(decode(seedOrdersInput({ done: true }))._tag, "Some");
+    strictEqual(
+      decode(seedOrdersInput({ advance: 2, started: true }))._tag,
+      "Some",
+    );
+  });
+});
