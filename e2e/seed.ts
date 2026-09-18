@@ -116,10 +116,9 @@ export interface SeedWorkflow {
  * page under test reacts to the new fixture instead of acting on the old one.
  *
  * `keepIdentities` keeps the better-auth session of each listed email alive
- * across the re-seed. A member spec that re-seeds per test needs it: every
- * sign-in spends one of the 5 magic-link sends `LOGIN_LIMITER` allows per 60
- * seconds for the whole run, so such a spec signs in once and re-seeds with
- * this on. Leave it off wherever a test wants a first-time user.
+ * across the re-seed, so a spec that re-seeds per test can sign in once and
+ * replay the cookie jar instead of paying a magic-link round trip each time.
+ * Leave it off wherever a test wants a first-time user.
  */
 export const seedMembers = async (
   config: SeedConfig,

@@ -59,13 +59,11 @@ const DevSeedInput = Schema.Struct({
    * is already signed in stays signed in across the re-seed. Off by default:
    * a run normally wants a first-time user.
    *
-   * Exists for Playwright's member project, where a sign-in costs one of the
-   * 5 magic-link sends `LOGIN_LIMITER` allows per 60 seconds across the whole
-   * run (`wrangler.jsonc`). A spec that re-seeds between tests — which is how
-   * every member spec gets a pristine fixture — cannot afford a fresh sign-in
-   * each time, so it signs in once and re-seeds with this on. Membership,
-   * teams, workflows and orders are still replaced wholesale; only the
-   * identity survives.
+   * Exists for Playwright's member project, where a spec that re-seeds
+   * between tests — which is how every member spec gets a pristine fixture —
+   * signs in once and re-seeds with this on rather than paying a magic-link
+   * round trip per test. Membership, teams, workflows and orders are still
+   * replaced wholesale; only the identity survives.
    */
   keepIdentities: Schema.optionalKey(Schema.Boolean),
 });

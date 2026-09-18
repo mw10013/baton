@@ -46,47 +46,12 @@ export const requestMagicLink = async (
   await page.getByRole("button", { name: "Send magic link" }).click();
 };
 
-/** The limiter's answer, rendered as the login form's error banner (`src/routes/login.tsx`). */
-const RATE_LIMITED = "Too many attempts. Try again later.";
-
-/**
- * How long to wait before asking again after the limiter refused. `waitForTimeout`
- * rather than a poll because there is nothing to poll: the window is time, and
- * a resend before it rolls over spends nothing and answers the same.
- */
-const RETRY_MS = 15_000;
-
-/** Attempts, so a jammed limiter fails the spec instead of hanging until the test timeout. */
-const RETRY_LIMIT = 5;
-
-/**
- * Sign a member in end to end — request the link, follow it, land on `/shop`.
- *
- * Waits out `LOGIN_LIMITER` (`wrangler.jsonc`: 5 sends per 60s, keyed by IP,
- * and every local request shares the `unknown` key) rather than failing on it.
- * The member project's specs share that one budget, so whether a send is
- * refused depends on what ran in the previous file and how fast — a fact about
- * scheduling, not about the code under test, and not something a spec should
- * fail on. Callers still keep their own send count low (sign in once per file
- * and reuse the storage state); this is the backstop for the overlap between
- * files.
- *
- * The wait costs real wall time, so a caller doing this in a `beforeAll` must
- * raise the hook's timeout (`test.setTimeout`) past `RETRY_LIMIT * RETRY_MS`.
- */
+/** Sign in end to end — request the link, follow it, land where the role says. */
 export const signIn = async (page: Page, email: string): Promise<void> => {
-  for (let attempt = 0; ; attempt += 1) {
-    await requestMagicLink(page, email);
-    const sent = page.locator('s-section[heading="Check your email"]');
-    const limited = page.getByText(RATE_LIMITED);
-    await expect(sent.or(limited)).toBeVisible();
-    if (!(await limited.isVisible())) break;
-    if (attempt + 1 >= RETRY_LIMIT)
-      throw new Error(
-        `magic link for ${email} rate limited ${String(RETRY_LIMIT)} times`,
-      );
-    await page.waitForTimeout(RETRY_MS);
-  }
+  await requestMagicLink(page, email);
+  await expect(
+    page.locator('s-section[heading="Check your email"]'),
+  ).toBeVisible();
   await followMagicLink(page);
 };
 

@@ -96,9 +96,17 @@
       // Magic-link sends (members and admins alike). Account-wide ID; reuse
       // shares counters across Workers and environments, so pick unused ids
       // before deploying anywhere real.
+      //
+      // Local only (staging and production redeclare 5/60 below). Every local
+      // request lands on one key because nothing sets `cf-connecting-ip`, so
+      // the Playwright suite's sign-ins, an interactive sign-in, and the
+      // integration tests all share a single counter; at 5 the E2E projects
+      // had to budget sends across files and could still trip over each
+      // other. High enough never to matter, low enough that a runaway loop
+      // still stops.
       "name": "LOGIN_LIMITER",
       "namespace_id": "1002",
-      "simple": { "limit": 5, "period": 60 }
+      "simple": { "limit": 1000, "period": 60 }
     }
   ],
   // Skeleton deploy targets. Wrangler does NOT inherit bindings or `vars` into

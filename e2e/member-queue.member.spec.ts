@@ -15,18 +15,14 @@ import { seedConfig, seedMembers } from "./seed";
  * buttons drive the socket rather than a form post, and that a push or a
  * revocation changes the page with no navigation.
  *
- * Sign-ins are the scarce resource. `LOGIN_LIMITER` allows 5 magic-link sends
- * per 60s across every local request (`wrangler.jsonc`), and
- * `member-area.member.spec.ts` already spends 4 in the same project run. So
- * this file signs in exactly twice — once per member, in `beforeAll` — and
- * every test re-creates its contexts from the storage state that produced.
- * That is what `keepIdentities` on the seed is for: a seed normally drops the
+ * This file signs in exactly twice — once per member, in `beforeAll` — and
+ * every test re-creates its contexts from the storage state that produced,
+ * because a magic-link round trip is the slowest step in the file. That is
+ * what `keepIdentities` on the seed is for: a seed normally drops the
  * better-auth `User` of every email it touches, which would sign both members
- * out on the first re-seed and put four more sends on the budget. With it on,
- * each test still gets a pristine fixture (members, teams, workflows and
- * orders are replaced wholesale) while the two sessions survive. `signIn`
- * waits the limiter out if the previous file's sends are still inside the
- * window.
+ * out on the first re-seed. With it on, each test still gets a pristine
+ * fixture (members, teams, workflows and orders are replaced wholesale) while
+ * the two sessions survive.
  *
  * Two teams, so team scoping is observable from both sides: the maker is on
  * `CUT_TEAM` only and the mate is on both, so the mate's queue holds a card
@@ -223,12 +219,11 @@ const card = (page: Page, orderName: string) =>
 test.describe.configure({ mode: "serial" });
 
 /**
- * The only two sends this file makes. Seeded destructively first (no
- * `keepIdentities`) so both members sign in as first-time users against a
- * fixture with no leftovers, exactly as a standalone member spec would.
+ * Seeded destructively first (no `keepIdentities`) so both members sign in as
+ * first-time users against a fixture with no leftovers, exactly as a
+ * standalone member spec would.
  */
 test.beforeAll(async ({ browser }) => {
-  test.setTimeout(180_000);
   const config = seedConfig();
   await seedQueue(config, {
     cutMembers: [MAKER, MATE],

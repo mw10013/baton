@@ -124,7 +124,7 @@ Effect.logError(`ShopAgent.getShopInfo: shop=${this.name}: ${message}`).pipe(
 
 ## Playwright CLI
 
-Routine E2E test execution is headless: use `npm run test:e2e --`. Use `npm run test:e2e:headed --` when a visible test browser is needed for debugging. Both commands run the embedded and member projects against local development.
+Routine E2E test execution is headless: use `npm run test:e2e --`. Use `npm run test:e2e:headed --` when a visible test browser is needed for debugging. Both commands run the embedded, admin, and member projects against local development.
 
 For interactive browser exploration with `playwright-cli`, default to headless mode (omit `--headed`). Use `--headed` when the user requests a visible browser or manual interaction is needed, such as signing in.
 

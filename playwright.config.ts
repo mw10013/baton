@@ -45,7 +45,11 @@ export default defineConfig({
     {
       name: "e2e",
       testMatch: ["**/*.spec.ts"],
-      testIgnore: ["**/*.member.spec.ts", "**/*.billing.spec.ts"],
+      testIgnore: [
+        "**/*.admin.spec.ts",
+        "**/*.member.spec.ts",
+        "**/*.billing.spec.ts",
+      ],
       dependencies: ["setup"],
       use: {
         channel: "chrome",
@@ -65,6 +69,21 @@ export default defineConfig({
     {
       name: "member",
       testMatch: ["**/*.member.spec.ts"],
+      use: {
+        channel: "chrome",
+        baseURL: `http://localhost:${process.env.PORT ?? "3000"}`,
+        storageState: { cookies: [], origins: [] },
+      },
+    },
+    /**
+     * The operator console (`/admin/*`) is served straight off
+     * `http://localhost:$PORT` like the member area below, and signs in through
+     * the same magic-link flow, so it gets the member project's shape: no
+     * `setup` dependency and empty storage state.
+     */
+    {
+      name: "admin",
+      testMatch: ["**/*.admin.spec.ts"],
       use: {
         channel: "chrome",
         baseURL: `http://localhost:${process.env.PORT ?? "3000"}`,

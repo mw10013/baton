@@ -11,11 +11,6 @@ import { seedConfig, seedMembers } from "./seed";
  *
  * Every test seeds first, which also clears `Verification` — a magic link is
  * single-use, so without that reset a retry would re-follow a spent URL.
- *
- * `LOGIN_LIMITER` is 5 sends per 60s and every local request shares the
- * `unknown` IP key. The file spends 4 of those per run, so even a single full
- * retry inside the same minute starts seeing the rate-limit banner in place of
- * the expected copy — keep the send count under the limit when adding tests.
  */
 
 const MEMBER_EMAIL = "e2e.member@example.com";
