@@ -1,0 +1,1110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="plannotator-theme" content="host" />
+    <title>Baton Architecture Snapshot</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%231b2430'/%3E%3Cpath d='M15 33h34M22 20l-7 13 7 13M42 20l7 13-7 13' fill='none' stroke='%23d9a441' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --background: oklch(0.97 0.005 260);
+        --foreground: oklch(0.18 0.02 260);
+        --card: oklch(1 0 0);
+        --card-foreground: oklch(0.18 0.02 260);
+        --muted: oklch(0.92 0.01 260);
+        --muted-foreground: oklch(0.4 0.02 260);
+        --primary: oklch(0.5 0.25 280);
+        --primary-foreground: oklch(1 0 0);
+        --secondary: oklch(0.5 0.18 180);
+        --accent: oklch(0.6 0.22 50);
+        --accent-foreground: oklch(0.18 0.02 260);
+        --destructive: oklch(0.5 0.25 25);
+        --success: oklch(0.45 0.2 150);
+        --warning: oklch(0.55 0.18 85);
+        --border: oklch(0.88 0.01 260);
+        --code-bg: oklch(0.92 0.01 260);
+        --ring: oklch(0.5 0.25 280);
+        --radius: 0.625rem;
+        --font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
+        --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        --font-display: ui-serif, Georgia, "Times New Roman", serif;
+        --line: color-mix(in oklab, var(--muted-foreground) 62%, transparent);
+        --primary-soft: color-mix(in oklab, var(--primary) 12%, transparent);
+        --secondary-soft: color-mix(in oklab, var(--secondary) 12%, transparent);
+        --accent-soft: color-mix(in oklab, var(--accent) 12%, transparent);
+        --success-soft: color-mix(in oklab, var(--success) 12%, transparent);
+        --warning-soft: color-mix(in oklab, var(--warning) 12%, transparent);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color-scheme: dark;
+          --background: oklch(0.15 0.02 260);
+          --foreground: oklch(0.9 0.01 260);
+          --card: oklch(0.22 0.02 260);
+          --card-foreground: oklch(0.9 0.01 260);
+          --muted: oklch(0.26 0.02 260);
+          --muted-foreground: oklch(0.72 0.02 260);
+          --primary: oklch(0.75 0.18 280);
+          --primary-foreground: oklch(0.15 0.02 260);
+          --secondary: oklch(0.72 0.16 180);
+          --accent: oklch(0.7 0.2 60);
+          --accent-foreground: oklch(0.15 0.02 260);
+          --border: oklch(0.35 0.02 260);
+          --code-bg: oklch(0.26 0.02 260);
+          --destructive: oklch(0.65 0.2 25);
+          --success: oklch(0.72 0.17 150);
+          --warning: oklch(0.75 0.15 85);
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+        font-size: 16px;
+      }
+
+      body {
+        margin: 0;
+        background-color: var(--background);
+        background-image:
+          linear-gradient(var(--primary-soft) 1px, transparent 1px),
+          linear-gradient(90deg, var(--primary-soft) 1px, transparent 1px);
+        background-size: 28px 28px;
+        color: var(--foreground);
+        font-family: var(--font-sans);
+        line-height: 1.6;
+      }
+
+      button,
+      a {
+        font: inherit;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      :focus-visible {
+        outline: 3px solid var(--ring);
+        outline-offset: 3px;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 14rem minmax(0, 1fr);
+        min-height: 100vh;
+      }
+
+      nav {
+        position: sticky;
+        top: 0;
+        align-self: start;
+        height: 100vh;
+        padding: 2rem 1.25rem;
+        border-right: 1px solid var(--border);
+        background: color-mix(in oklab, var(--background) 92%, transparent);
+        backdrop-filter: blur(12px);
+      }
+
+      .nav-mark {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 2rem;
+        font-family: var(--font-mono);
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .nav-mark::before {
+        content: "";
+        width: 1.5rem;
+        height: 0.35rem;
+        border-radius: 99px;
+        background: var(--accent);
+      }
+
+      nav a {
+        display: block;
+        padding: 0.55rem 0.7rem;
+        border-radius: 0.4rem;
+        color: var(--muted-foreground);
+        font-size: 0.82rem;
+        text-decoration: none;
+      }
+
+      nav a:hover {
+        background: var(--muted);
+        color: var(--foreground);
+      }
+
+      main {
+        width: min(100%, 82rem);
+        padding: 4rem clamp(1.5rem, 5vw, 5rem) 7rem;
+      }
+
+      section {
+        scroll-margin-top: 2rem;
+        margin-top: 5rem;
+      }
+
+      .hero {
+        margin-top: 0;
+        padding: clamp(2rem, 5vw, 4.5rem);
+        border: 1px solid var(--border);
+        border-top: 5px solid var(--accent);
+        background: color-mix(in oklab, var(--card) 94%, var(--accent-soft));
+        box-shadow: 0 24px 70px color-mix(in oklab, var(--foreground) 8%, transparent);
+      }
+
+      .eyebrow,
+      .section-kicker,
+      .chip,
+      code,
+      .path,
+      .zoom-label {
+        font-family: var(--font-mono);
+      }
+
+      .eyebrow,
+      .section-kicker {
+        color: var(--accent);
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2 {
+        font-family: var(--font-display);
+        line-height: 1.05;
+        text-wrap: balance;
+      }
+
+      h1 {
+        max-width: 12ch;
+        margin: 0.7rem 0 1.2rem;
+        font-size: clamp(3rem, 7vw, 6.4rem);
+        font-weight: 600;
+        letter-spacing: -0.055em;
+      }
+
+      h2 {
+        margin: 0.5rem 0 0.8rem;
+        font-size: clamp(2rem, 4vw, 3.3rem);
+        font-weight: 600;
+        letter-spacing: -0.035em;
+      }
+
+      h3 {
+        margin: 0 0 0.55rem;
+        font-size: 1rem;
+      }
+
+      .lede,
+      .section-intro {
+        max-width: 65ch;
+        color: var(--muted-foreground);
+      }
+
+      .lede {
+        font-size: 1.08rem;
+      }
+
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 1px;
+        margin-top: 2.5rem;
+        border: 1px solid var(--border);
+        background: var(--border);
+      }
+
+      .summary-item {
+        min-width: 0;
+        padding: 1rem;
+        background: var(--card);
+      }
+
+      .summary-item strong {
+        display: block;
+        font-family: var(--font-display);
+        font-size: 2rem;
+        line-height: 1;
+      }
+
+      .summary-item span {
+        color: var(--muted-foreground);
+        font-size: 0.75rem;
+      }
+
+      .section-heading {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(15rem, 0.5fr);
+        gap: 2rem;
+        align-items: end;
+        margin-bottom: 1.6rem;
+      }
+
+      .section-intro {
+        margin: 0;
+        font-size: 0.95rem;
+      }
+
+      .diagram-shell {
+        overflow: hidden;
+        margin: 1.5rem 0;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: var(--card);
+      }
+
+      .mermaid-wrap {
+        position: relative;
+      }
+
+      .mermaid-viewport {
+        position: relative;
+        height: 460px;
+        overflow: hidden;
+        cursor: grab;
+        touch-action: none;
+        background:
+          radial-gradient(circle at 20% 20%, var(--primary-soft), transparent 35%),
+          var(--card);
+      }
+
+      .mermaid-viewport.is-panning {
+        cursor: grabbing;
+      }
+
+      .mermaid-canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        transform-origin: 0 0;
+        will-change: transform;
+      }
+
+      .mermaid-canvas svg {
+        display: block;
+        max-width: none;
+      }
+
+      .zoom-controls {
+        position: absolute;
+        z-index: 5;
+        top: 10px;
+        right: 10px;
+        display: flex;
+        gap: 0.35rem;
+        padding: 0.3rem;
+        border: 1px solid var(--border);
+        border-radius: 0.5rem;
+        background: color-mix(in oklab, var(--card) 92%, transparent);
+        backdrop-filter: blur(10px);
+      }
+
+      .zoom-controls button {
+        min-width: 2rem;
+        height: 2rem;
+        padding: 0 0.55rem;
+        border: 0;
+        border-radius: 0.35rem;
+        background: transparent;
+        color: var(--muted-foreground);
+        cursor: pointer;
+        font-size: 0.75rem;
+      }
+
+      .zoom-controls button:hover {
+        background: var(--muted);
+        color: var(--foreground);
+      }
+
+      .zoom-label {
+        position: absolute;
+        z-index: 5;
+        bottom: 10px;
+        left: 12px;
+        padding: 0.2rem 0.45rem;
+        border-radius: 0.3rem;
+        background: color-mix(in oklab, var(--card) 90%, transparent);
+        color: var(--muted-foreground);
+        font-size: 0.7rem;
+      }
+
+      figcaption {
+        padding: 0.9rem 1.2rem;
+        border-top: 1px solid var(--border);
+        color: var(--muted-foreground);
+        font-size: 0.82rem;
+      }
+
+      figcaption b {
+        color: var(--foreground);
+      }
+
+      .diagram-source {
+        display: none;
+      }
+
+      .mermaid-canvas .nodeLabel,
+      .mermaid-canvas .label {
+        color: var(--foreground) !important;
+        font-family: var(--font-sans) !important;
+        font-size: 14px !important;
+      }
+
+      .mermaid-canvas .edgeLabel {
+        color: var(--muted-foreground) !important;
+        font-family: var(--font-mono) !important;
+        font-size: 11px !important;
+      }
+
+      .mermaid-canvas .edgeLabel rect,
+      .mermaid-canvas .labelBkg {
+        fill: var(--card) !important;
+      }
+
+      .card-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1rem;
+      }
+
+      .ve-card {
+        min-width: 0;
+        padding: 1.2rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--card);
+      }
+
+      .ve-card--hero {
+        border-color: var(--primary);
+        background: color-mix(in oklab, var(--primary) 5%, var(--card));
+        box-shadow: 0 4px 24px color-mix(in oklab, var(--primary) 10%, transparent);
+      }
+
+      .ve-card--recessed {
+        border-color: transparent;
+        background: var(--muted);
+      }
+
+      .chip {
+        display: inline-block;
+        margin-bottom: 0.75rem;
+        padding: 0.18rem 0.45rem;
+        border-radius: 99px;
+        background: var(--primary-soft);
+        color: var(--primary);
+        font-size: 0.66rem;
+        font-weight: 700;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+      }
+
+      .chip.secondary {
+        background: var(--secondary-soft);
+        color: var(--secondary);
+      }
+
+      .chip.success {
+        background: var(--success-soft);
+        color: var(--success);
+      }
+
+      .ve-card p,
+      .ve-card li {
+        color: var(--muted-foreground);
+        font-size: 0.86rem;
+      }
+
+      .ve-card ul {
+        margin: 0.6rem 0 0;
+        padding-left: 1.1rem;
+      }
+
+      .path {
+        display: block;
+        margin-top: 0.8rem;
+        color: var(--foreground);
+        font-size: 0.72rem;
+        overflow-wrap: anywhere;
+      }
+
+      .storage-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+      }
+
+      .storage-card {
+        position: relative;
+        overflow: hidden;
+        padding: 1.5rem;
+        border: 1px solid var(--border);
+        background: var(--card);
+      }
+
+      .storage-card::after {
+        content: attr(data-index);
+        position: absolute;
+        right: -0.2rem;
+        bottom: -2.4rem;
+        color: var(--primary-soft);
+        font-family: var(--font-display);
+        font-size: 9rem;
+        line-height: 1;
+      }
+
+      .storage-card > * {
+        position: relative;
+        z-index: 1;
+      }
+
+      .storage-card li {
+        margin: 0.35rem 0;
+      }
+
+      .rules {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0;
+        border: 1px solid var(--border);
+        background: var(--border);
+      }
+
+      .rule {
+        display: grid;
+        grid-template-columns: 2.5rem minmax(0, 1fr);
+        gap: 0.75rem;
+        padding: 1rem;
+        background: var(--card);
+      }
+
+      .rule-num {
+        color: var(--accent);
+        font-family: var(--font-display);
+        font-size: 1.8rem;
+        line-height: 1;
+      }
+
+      .rule strong,
+      .rule span {
+        display: block;
+      }
+
+      .rule span {
+        margin-top: 0.2rem;
+        color: var(--muted-foreground);
+        font-size: 0.78rem;
+      }
+
+      .uncertainty {
+        padding: 1.3rem 1.5rem;
+        border-left: 4px solid var(--warning);
+        background: var(--warning-soft);
+      }
+
+      .uncertainty li {
+        margin: 0.45rem 0;
+      }
+
+      .source-strip {
+        margin-top: 4rem;
+        padding-top: 1.5rem;
+        border-top: 1px solid var(--border);
+        color: var(--muted-foreground);
+        font-size: 0.75rem;
+      }
+
+      @media (max-width: 960px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        nav {
+          position: sticky;
+          z-index: 20;
+          display: flex;
+          gap: 0.25rem;
+          width: 100%;
+          height: auto;
+          overflow-x: auto;
+          padding: 0.7rem 1rem;
+          border-right: 0;
+          border-bottom: 1px solid var(--border);
+        }
+
+        .nav-mark {
+          margin: 0 1rem 0 0;
+          white-space: nowrap;
+        }
+
+        nav a {
+          flex: 0 0 auto;
+        }
+
+        main {
+          padding-top: 2rem;
+        }
+      }
+
+      @media (max-width: 720px) {
+        .summary-grid,
+        .card-grid,
+        .storage-grid,
+        .rules,
+        .section-heading {
+          grid-template-columns: 1fr;
+        }
+
+        .mermaid-viewport {
+          height: 390px;
+        }
+
+        nav a {
+          font-size: 0.75rem;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <nav aria-label="Architecture sections">
+        <span class="nav-mark">Baton</span>
+        <a href="#overview">System</a>
+        <a href="#live">Live state</a>
+        <a href="#orders">Orders</a>
+        <a href="#storage">Storage</a>
+        <a href="#rules">Invariants</a>
+      </nav>
+
+      <main>
+        <section class="hero" id="overview">
+          <span class="eyebrow">Repository architecture · observed from source</span>
+          <h1>Baton is a shop-scoped production system.</h1>
+          <p class="lede">
+            A TanStack Start Worker authenticates people and routes requests. One durable
+            <code>ShopAgent</code> per Shopify shop owns operational state, live subscriptions,
+            and workflow execution. D1 remains the shared identity and installation store.
+          </p>
+          <div class="summary-grid" aria-label="Architecture summary">
+            <div class="summary-item"><strong>3</strong><span>runtime boundaries</span></div>
+            <div class="summary-item"><strong>1/shop</strong><span>Durable Object tenancy</span></div>
+            <div class="summary-item"><strong>2</strong><span>independent SQL domains</span></div>
+            <div class="summary-item"><strong>1</strong><span>shared socket per shop subtree</span></div>
+          </div>
+        </section>
+
+        <section aria-labelledby="system-title">
+          <div class="section-heading">
+            <div>
+              <span class="section-kicker">01 · Runtime map</span>
+              <h2 id="system-title">The Worker gates access; ShopAgent owns the work.</h2>
+            </div>
+            <p class="section-intro">
+              Solid relationships are directly implemented in bindings, routes, and service
+              layers. The only inferred boundary is the conceptual grouping of browser surfaces.
+            </p>
+          </div>
+
+          <figure class="diagram-shell">
+            <div
+              class="mermaid-wrap"
+              role="img"
+              aria-label="Baton system architecture from browser surfaces through the Cloudflare Worker to shared D1 and per-shop Durable Objects"
+            >
+              <div class="zoom-controls">
+                <button type="button" data-z="out" aria-label="Zoom out">−</button>
+                <button type="button" data-z="in" aria-label="Zoom in">+</button>
+                <button type="button" data-z="reset" aria-label="Reset zoom">Reset</button>
+                <button type="button" data-z="expand" aria-label="Toggle expanded height">Expand</button>
+              </div>
+              <div class="mermaid-viewport">
+                <div class="mermaid-canvas">
+                  <pre class="diagram-source">flowchart TD
+  subgraph Browser["Browser surfaces"]
+    Merchant["Shopify merchant<br/>/app"]
+    Member["Production member<br/>/shop"]
+    Operator["Baton operator<br/>/admin"]
+  end
+  Worker["Cloudflare Worker<br/>TanStack Start + Effect"]
+  D1[("D1<br/>identity + installation")]
+  Agent["ShopAgent Durable Object<br/>one per shop"]
+  SQLite[("Private SQLite<br/>orders + workflows + runs")]
+  Sync["OrdersSyncWorkflow<br/>durable bulk import"]
+  Shopify["Shopify Admin API<br/>auth + orders"]
+  Partner["Shopify Partner API<br/>active plan"]
+
+  Merchant -->|App Bridge token + HTTP| Worker
+  Member -->|better-auth cookie| Worker
+  Operator -->|better-auth admin session| Worker
+  Worker -->|shared identity reads + writes| D1
+  Worker -->|authorized RPC + WebSocket| Agent
+  Worker -->|resolve subscription| Partner
+  Worker -->|OAuth + webhooks| Shopify
+  Agent -->|operational reads + writes| SQLite
+  Agent -->|launch bulk reconciliation| Sync
+  Sync -->|bulk GraphQL + poll| Shopify
+  Sync -->|stream callback| Agent</pre>
+                </div>
+              </div>
+              <span class="zoom-label">Loading</span>
+            </div>
+            <figcaption>
+              <b>Figure 1 — Tenant boundary.</b> HTTP identity is resolved in the Worker; the
+              shop-named Durable Object is the isolation and coordination boundary for production
+              state.
+            </figcaption>
+          </figure>
+
+          <div class="card-grid">
+            <article class="ve-card">
+              <span class="chip">HTTP boundary</span>
+              <h3>Worker + TanStack Start</h3>
+              <p>Creates one Effect runtime and one D1 session per request, serves routes, and authenticates socket upgrades before dispatch.</p>
+              <span class="path">src/worker.ts · src/routes/* · src/start.ts</span>
+            </article>
+            <article class="ve-card ve-card--hero">
+              <span class="chip secondary">Tenant core</span>
+              <h3>ShopAgent</h3>
+              <p>Coordinates orders, workflow definitions, production runs, role-checked RPC, subscriptions, and private SQLite.</p>
+              <span class="path">src/lib/ShopAgent.ts · src/lib/ShopAgentClient.ts</span>
+            </article>
+            <article class="ve-card">
+              <span class="chip success">Durable background</span>
+              <h3>Orders sync workflow</h3>
+              <p>Refreshes the offline session, submits and polls Shopify bulk operations, then streams results back through ShopAgent.</p>
+              <span class="path">src/lib/OrdersSyncWorkflow.ts · src/lib/ShopAgentOrdersStream.ts</span>
+            </article>
+          </div>
+        </section>
+
+        <section id="live" aria-labelledby="live-title">
+          <div class="section-heading">
+            <div>
+              <span class="section-kicker">02 · Read and update path</span>
+              <h2 id="live-title">SSR paints first; the socket only signals staleness.</h2>
+            </div>
+            <p class="section-intro">
+              Live frames never become a second state store. They say “invalidated,” and React
+              Query fetches authoritative data again from ShopAgent SQLite.
+            </p>
+          </div>
+
+          <figure class="diagram-shell">
+            <div
+              class="mermaid-wrap"
+              role="img"
+              aria-label="Sequence showing loader-first rendering followed by WebSocket invalidation and authoritative refetch"
+            >
+              <div class="zoom-controls">
+                <button type="button" data-z="out" aria-label="Zoom out">−</button>
+                <button type="button" data-z="in" aria-label="Zoom in">+</button>
+                <button type="button" data-z="reset" aria-label="Reset zoom">Reset</button>
+                <button type="button" data-z="expand" aria-label="Toggle expanded height">Expand</button>
+              </div>
+              <div class="mermaid-viewport">
+                <div class="mermaid-canvas">
+                  <pre class="diagram-source">sequenceDiagram
+  participant B as Browser route
+  participant W as Worker server function
+  participant A as ShopAgent
+  participant S as Private SQLite
+
+  B->>W: Load route
+  W->>A: Typed loader RPC
+  A->>S: Read authoritative view
+  S-->>A: Orders, queue, or run
+  A-->>W: Schema-validated result
+  W-->>B: SSR loader data
+  B->>W: Open authorized WebSocket
+  W->>A: Forward identity headers
+  B->>A: Subscribe to scope
+  A->>S: Read and register subscription
+  S-->>A: Current view
+  A-->>B: Subscription result
+  Note over A,S: Webhook, sync, or user mutation writes
+  A-->>B: invalidated
+  B->>A: Refetch subscription query
+  A->>S: Read authoritative view
+  S-->>B: Fresh state</pre>
+                </div>
+              </div>
+              <span class="zoom-label">Loading</span>
+            </div>
+            <figcaption>
+              <b>Figure 2 — Live state is invalidate-and-refetch.</b> Loader RPC supports SSR;
+              <code>useSubscribedQuery</code> keeps operational views fresh after hydration.
+            </figcaption>
+          </figure>
+
+          <div class="card-grid">
+            <article class="ve-card ve-card--recessed">
+              <h3>Merchant socket</h3>
+              <p>App Bridge mints a short-lived token. The Worker verifies its signed shop destination and subscription before forwarding role <code>merchant</code>.</p>
+              <span class="path">src/routes/app.tsx · src/worker.ts</span>
+            </article>
+            <article class="ve-card ve-card--recessed">
+              <h3>Member socket</h3>
+              <p>The same-origin better-auth cookie resolves member and team IDs from D1. Those server-resolved IDs become connection state.</p>
+              <span class="path">src/lib/MemberAccess.ts · src/worker.ts</span>
+            </article>
+            <article class="ve-card ve-card--recessed">
+              <h3>Role enforcement</h3>
+              <p>Every browser-callable method declares <code>merchant</code>, <code>member</code>, <code>any</code>, or Worker-only <code>rpc</code> before decoding input.</p>
+              <span class="path">src/lib/ShopAgent.ts · callableEffect</span>
+            </article>
+          </div>
+        </section>
+
+        <section id="orders" aria-labelledby="orders-title">
+          <div class="section-heading">
+            <div>
+              <span class="section-kicker">03 · Critical data flow</span>
+              <h2 id="orders-title">Two ingestion paths converge on one transaction.</h2>
+            </div>
+            <p class="section-intro">
+              Real-time webhooks and manual bulk reconciliation both end in
+              <code>OrderRepository.upsertOrder</code>, which updates order state and reconciles
+              production runs atomically.
+            </p>
+          </div>
+
+          <figure class="diagram-shell">
+            <div
+              class="mermaid-wrap"
+              role="img"
+              aria-label="Order ingestion paths from Shopify webhooks and bulk sync into order storage, workflow reconciliation, and browser invalidation"
+            >
+              <div class="zoom-controls">
+                <button type="button" data-z="out" aria-label="Zoom out">−</button>
+                <button type="button" data-z="in" aria-label="Zoom in">+</button>
+                <button type="button" data-z="reset" aria-label="Reset zoom">Reset</button>
+                <button type="button" data-z="expand" aria-label="Toggle expanded height">Expand</button>
+              </div>
+              <div class="mermaid-viewport">
+                <div class="mermaid-canvas">
+                  <pre class="diagram-source">flowchart TD
+  Hook["Shopify order webhook"]
+  Manual["Merchant starts sync"]
+  Validate["Validate HMAC<br/>dedupe + stale guard"]
+  Fetch["Fetch authoritative order<br/>Admin GraphQL"]
+  Workflow["OrdersSyncWorkflow<br/>submit + poll bulk query"]
+  Stream["Stream Shopify JSONL"]
+  Upsert["OrderRepository.upsertOrder<br/>single SQLite transaction"]
+  Reconcile["WorkflowRunRepository<br/>reconcile matching runs"]
+  Publish["Publish invalidated<br/>order or team scope"]
+  Browser["Open merchant + member tabs<br/>refetch authoritative views"]
+
+  Hook -->|orders create or update| Validate
+  Validate -->|current delivery| Fetch
+  Manual -->|reserve SyncState| Workflow
+  Workflow -->|completed result URL| Stream
+  Fetch -->|mapped order + line items| Upsert
+  Stream -->|mapped order + line items| Upsert
+  Upsert -->|afterWrite in same transaction| Reconcile
+  Reconcile -->|commit succeeded| Publish
+  Publish -->|small WebSocket hint| Browser</pre>
+                </div>
+              </div>
+              <span class="zoom-label">Loading</span>
+            </div>
+            <figcaption>
+              <b>Figure 3 — One write seam protects concurrent ingestion.</b> Webhook ID,
+              payload timestamp, and SQL <code>updatedAt</code> guards prevent duplicate or stale
+              updates before live clients are invalidated.
+            </figcaption>
+          </figure>
+        </section>
+
+        <section id="storage" aria-labelledby="storage-title">
+          <div class="section-heading">
+            <div>
+              <span class="section-kicker">04 · Data ownership</span>
+              <h2 id="storage-title">Identity is shared; production state is isolated.</h2>
+            </div>
+            <p class="section-intro">
+              The split is intentional. D1 can relate users across shops and sessions; private
+              Durable Object SQLite serializes the operational work for one shop.
+            </p>
+          </div>
+
+          <div class="storage-grid">
+            <article class="storage-card" data-index="1">
+              <span class="chip">Shared D1</span>
+              <h3>Who can enter, and which shop exists?</h3>
+              <ul>
+                <li>Shopify offline sessions and plan cache</li>
+                <li>Members, teams, and team membership</li>
+                <li>Better Auth users, sessions, accounts, verification</li>
+                <li>D1 bookmark propagation for sequential consistency</li>
+              </ul>
+              <span class="path">migrations/0001_init.sql · src/lib/Repository.ts · src/lib/D1Session.ts</span>
+            </article>
+            <article class="storage-card" data-index="2">
+              <span class="chip secondary">Per-shop SQLite</span>
+              <h3>What work exists, and what happens next?</h3>
+              <ul>
+                <li>Orders and line items</li>
+                <li>Workflow definitions and drafts</li>
+                <li>Runs, steps, notes, flags, and actor snapshots</li>
+                <li>Webhook dedupe, bulk sync state, and usage meters</li>
+              </ul>
+              <span class="path">src/lib/ShopAgent.ts · OrderRepository.ts · WorkflowRepository.ts · WorkflowRunRepository.ts</span>
+            </article>
+          </div>
+        </section>
+
+        <section id="rules" aria-labelledby="rules-title">
+          <div class="section-heading">
+            <div>
+              <span class="section-kicker">05 · Architectural invariants</span>
+              <h2 id="rules-title">The rules that keep the boundaries honest.</h2>
+            </div>
+            <p class="section-intro">These statements are directly supported by guards, schemas, bindings, and transaction boundaries in the source.</p>
+          </div>
+
+          <div class="rules">
+            <div class="rule"><span class="rule-num">01</span><div><strong>One ShopAgent per shop domain</strong><span><code>SHOP_AGENT.getByName(shop)</code> is the tenancy key.</span></div></div>
+            <div class="rule"><span class="rule-num">02</span><div><strong>The browser cannot claim an identity</strong><span>The Worker rebuilds handshake headers after validating Shopify or member credentials.</span></div></div>
+            <div class="rule"><span class="rule-num">03</span><div><strong>Live messages are hints</strong><span>Clients refetch from SQLite instead of treating pushed frames as canonical state.</span></div></div>
+            <div class="rule"><span class="rule-num">04</span><div><strong>Runs snapshot history</strong><span>Definition, team, order, and actor names survive later edits and deletions.</span></div></div>
+            <div class="rule"><span class="rule-num">05</span><div><strong>D1 and SQLite coordinate in application code</strong><span>Cross-store team IDs are opaque; no foreign key can cross the databases.</span></div></div>
+            <div class="rule"><span class="rule-num">06</span><div><strong>Webhooks fetch authoritative state</strong><span>The webhook payload is a signal; current order data comes from Shopify GraphQL.</span></div></div>
+          </div>
+
+          <div class="uncertainty">
+            <h3>Uncertainties and runtime-only questions</h3>
+            <ul>
+              <li>This explainer is based on static source inspection; Shopify auth, billing, WebSockets, D1 replicas, and workflow retries were not exercised.</li>
+              <li>Subscription lapse is discovered on plan revalidation, not by an independent scheduled poll found in the repository.</li>
+              <li>The order-delete webhook path appears idempotent through repeated mark/delete behavior, but it does not use the explicit webhook-ID dedupe path used by create/update topics.</li>
+              <li>Cloudflare hibernation and workflow retry timing depend on platform behavior outside this repository.</li>
+            </ul>
+          </div>
+        </section>
+
+        <footer class="source-strip">
+          Generated from the Baton source tree on 2026-09-18. Primary evidence: <code>src/worker.ts</code>,
+          <code>src/lib/ShopAgent.ts</code>, <code>src/lib/ShopAgentClient.ts</code>,
+          <code>src/lib/OrdersSyncWorkflow.ts</code>, <code>src/routes/app.tsx</code>,
+          <code>migrations/0001_init.sql</code>, and <code>wrangler.jsonc</code>.
+        </footer>
+      </main>
+    </div>
+
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@12.0.0/dist/mermaid.esm.min.mjs";
+
+      const colorScheme = getComputedStyle(document.documentElement).colorScheme;
+      const isDark =
+        colorScheme === "dark" ||
+        (colorScheme === "normal" && matchMedia("(prefers-color-scheme: dark)").matches);
+
+      const palette = isDark
+        ? {
+            darkMode: true,
+            primaryColor: "#2b3442",
+            primaryTextColor: "#e7eaf0",
+            primaryBorderColor: "#9a9dff",
+            secondaryColor: "#173f42",
+            secondaryTextColor: "#e7eaf0",
+            secondaryBorderColor: "#5cc8bd",
+            tertiaryColor: "#41331c",
+            tertiaryTextColor: "#e7eaf0",
+            tertiaryBorderColor: "#e1ab4d",
+            lineColor: "#a7afbb",
+            background: "#151b24",
+            mainBkg: "#2b3442",
+            clusterBkg: "#202834",
+            clusterBorder: "#4d5867",
+            edgeLabelBackground: "#202834",
+          }
+        : {
+            darkMode: false,
+            primaryColor: "#eef0ff",
+            primaryTextColor: "#222832",
+            primaryBorderColor: "#5537eb",
+            secondaryColor: "#e3f4f1",
+            secondaryTextColor: "#222832",
+            secondaryBorderColor: "#167f79",
+            tertiaryColor: "#fff3d9",
+            tertiaryTextColor: "#222832",
+            tertiaryBorderColor: "#a66b09",
+            lineColor: "#59616d",
+            background: "#f7f8fa",
+            mainBkg: "#ffffff",
+            clusterBkg: "#f0f2f5",
+            clusterBorder: "#c8cdd5",
+            edgeLabelBackground: "#ffffff",
+          };
+
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        theme: "base",
+        look: "classic",
+        flowchart: { curve: "basis", htmlLabels: true, nodeSpacing: 34, rankSpacing: 42 },
+        sequence: { diagramMarginX: 32, diagramMarginY: 20, actorMargin: 60 },
+        themeVariables: {
+          ...palette,
+          fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+          fontSize: "14px",
+        },
+      });
+
+      const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+      async function initializeDiagram(shell, index) {
+        const viewport = shell.querySelector(".mermaid-viewport");
+        const canvas = shell.querySelector(".mermaid-canvas");
+        const source = shell.querySelector(".diagram-source");
+        const label = shell.querySelector(".zoom-label");
+        const expand = shell.querySelector('[data-z="expand"]');
+        const rendered = await mermaid.render(`baton-diagram-${index}`, source.textContent.trim());
+        canvas.innerHTML = rendered.svg;
+        rendered.bindFunctions?.(canvas);
+
+        const svg = canvas.querySelector("svg");
+        const viewBox = svg.viewBox.baseVal;
+        const svgWidth = viewBox.width || Number.parseFloat(svg.getAttribute("width")) || 800;
+        const svgHeight = viewBox.height || Number.parseFloat(svg.getAttribute("height")) || 500;
+        const baseHeight = clamp(
+          svgHeight * ((viewport.clientWidth - 64) / svgWidth) + 64,
+          520,
+          920,
+        );
+        const expandedHeight = clamp(baseHeight * 1.3, baseHeight, 1200);
+        viewport.style.height = `${baseHeight}px`;
+        let zoom = 1;
+        let panX = 0;
+        let panY = 0;
+        let mode = "contain";
+        let dragging = null;
+
+        function constrain() {
+          const padding = 24;
+          const width = svgWidth * zoom;
+          const height = svgHeight * zoom;
+          panX =
+            width + padding * 2 <= viewport.clientWidth
+              ? (viewport.clientWidth - width) / 2
+              : clamp(panX, viewport.clientWidth - width - padding, padding);
+          panY =
+            height + padding * 2 <= viewport.clientHeight
+              ? (viewport.clientHeight - height) / 2
+              : clamp(panY, viewport.clientHeight - height - padding, padding);
+        }
+
+        function apply() {
+          constrain();
+          svg.style.width = `${svgWidth * zoom}px`;
+          svg.style.height = `${svgHeight * zoom}px`;
+          canvas.style.transform = `translate(${panX}px, ${panY}px)`;
+          label.textContent = `${Math.round(zoom * 100)}% — ${mode}`;
+        }
+
+        function fit() {
+          const padding = 32;
+          const widthFit = (viewport.clientWidth - padding * 2) / svgWidth;
+          const heightFit = (viewport.clientHeight - padding * 2) / svgHeight;
+          zoom = clamp(Math.min(widthFit, heightFit), 0.12, 2);
+          mode = "contain";
+          panX = (viewport.clientWidth - svgWidth * zoom) / 2;
+          panY = (viewport.clientHeight - svgHeight * zoom) / 2;
+          apply();
+        }
+
+        function zoomAround(factor, clientX, clientY) {
+          const rect = viewport.getBoundingClientRect();
+          const x = clientX - rect.left;
+          const y = clientY - rect.top;
+          const oldZoom = zoom;
+          zoom = clamp(zoom * factor, 0.12, 6);
+          panX = x - ((x - panX) / oldZoom) * zoom;
+          panY = y - ((y - panY) / oldZoom) * zoom;
+          mode = "custom";
+          apply();
+        }
+
+        shell.querySelector('[data-z="in"]').addEventListener("click", () => {
+          const rect = viewport.getBoundingClientRect();
+          zoomAround(1.2, rect.left + rect.width / 2, rect.top + rect.height / 2);
+        });
+        shell.querySelector('[data-z="out"]').addEventListener("click", () => {
+          const rect = viewport.getBoundingClientRect();
+          zoomAround(1 / 1.2, rect.left + rect.width / 2, rect.top + rect.height / 2);
+        });
+        shell.querySelector('[data-z="reset"]').addEventListener("click", fit);
+        expand.addEventListener("click", () => {
+          const expanded = viewport.dataset.expanded === "true";
+          viewport.dataset.expanded = String(!expanded);
+          viewport.style.height = `${expanded ? baseHeight : expandedHeight}px`;
+          expand.textContent = expanded ? "Expand" : "Collapse";
+          requestAnimationFrame(fit);
+        });
+        viewport.addEventListener(
+          "wheel",
+          (event) => {
+            if (!(event.ctrlKey || event.metaKey)) return;
+            event.preventDefault();
+            zoomAround(event.deltaY < 0 ? 1.12 : 1 / 1.12, event.clientX, event.clientY);
+          },
+          { passive: false },
+        );
+        viewport.addEventListener("pointerdown", (event) => {
+          dragging = { x: event.clientX, y: event.clientY, panX, panY };
+          viewport.setPointerCapture(event.pointerId);
+          viewport.classList.add("is-panning");
+        });
+        viewport.addEventListener("pointermove", (event) => {
+          if (!dragging) return;
+          panX = dragging.panX + event.clientX - dragging.x;
+          panY = dragging.panY + event.clientY - dragging.y;
+          mode = "custom";
+          apply();
+        });
+        const endDrag = () => {
+          dragging = null;
+          viewport.classList.remove("is-panning");
+        };
+        viewport.addEventListener("pointerup", endDrag);
+        viewport.addEventListener("pointercancel", endDrag);
+        new ResizeObserver(fit).observe(viewport);
+        fit();
+      }
+
+      try {
+        await Promise.all(
+          [...document.querySelectorAll(".diagram-shell")].map(initializeDiagram),
+        );
+        document.documentElement.dataset.diagramsReady = "true";
+      } catch (error) {
+        document.documentElement.dataset.diagramsReady = "error";
+        console.error(error);
+      }
+    </script>
+  </body>
+</html>
