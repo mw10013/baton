@@ -193,6 +193,16 @@ function RouteComponent() {
   const open =
     view !== null &&
     (view.run.status === "pending" || view.run.status === "active");
+  /**
+   * Undo outlives `open`. A `done` run is only the last step's Done, and
+   * `WorkflowRunRepository.uncompleteStep` accepts it — undoing that step is
+   * the point — refusing only `cancelled`, which someone chose. The queue's
+   * Done tier and the merchant's Reopen already follow the write's rule; the
+   * work page must too, or a step is undoable from the queue and not from
+   * the page the queue links to. Start, Done, notes and Block stay on
+   * `open`: the repository treats `done` as terminal for all of them.
+   */
+  const undoable = view !== null && view.run.status !== "cancelled";
 
   const renderStep = (step: Domain.RunStepView) => {
     if (view === null) return null;
@@ -208,7 +218,11 @@ function RouteComponent() {
      */
     const acting = canAct && view.run.flag === null;
     const ready = acting && step.ready && step.completedAt === null;
-    const finished = acting && step.completedAt !== null;
+    const finished =
+      mine(step) &&
+      undoable &&
+      view.run.flag === null &&
+      step.completedAt !== null;
     return (
       <s-box
         key={step.id}
@@ -283,7 +297,7 @@ function RouteComponent() {
               </s-stack>
             </s-stack>
           )}
-          {canAct && (
+          {(canAct || finished) && (
             <s-stack direction="inline" gap="base" alignItems="center">
               {ready && step.startedAt === null && (
                 <s-button
@@ -323,7 +337,7 @@ function RouteComponent() {
                     {`${step.undoBlockedBy.teamName} started ${step.undoBlockedBy.stepName} · ask them`}
                   </s-text>
                 ))}
-              {!editingNote && (
+              {canAct && !editingNote && (
                 <s-button
                   variant="secondary"
                   disabled={actions.pending}
