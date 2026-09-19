@@ -31,27 +31,38 @@ Baton bills through Shopify App Pricing. Plans are configured in the Partner Das
 in code; the app reads the merchant's plan handle through the Partner API
 (`src/lib/ShopifyPartner.ts`) and caches it on the D1 session row (`src/lib/SubscriptionPlan.ts`).
 
-### Plans to create
+### Plans
 
-Two public plans, one per tier. Handles must match `Domain.PlanHandle` exactly (case-sensitive);
-limits must match `ENTITLEMENTS` in `src/lib/Domain.ts`. All numbers are provisional.
+Two public plans, one per tier, each with one usage meter. Handles must match
+`Domain.PlanHandle` and `Domain.USAGE_METER_ORDER` exactly (case-sensitive); tier 1 sizes and
+seats must match `ENTITLEMENTS` in `src/lib/Domain.ts`. All numbers are provisional.
 
-| Field          | Basic                                                                    | Pro                                                                         |
-| -------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
-| Handle         | `baton-basic`                                                            | `baton-pro`                                                                 |
-| Display name   | Basic                                                                    | Pro                                                                         |
-| Billing period | Monthly                                                                  | Monthly                                                                     |
-| Monthly charge | $29                                                                      | $79                                                                         |
-| Free trial     | 14 days                                                                  | none                                                                        |
-| Usage meters   | none                                                                     | none                                                                        |
-| Welcome link   | `/app`                                                                   | `/app`                                                                      |
-| Top features   | Up to 250 orders a month. 3 team members. Unlimited workflows and teams. | Up to 1,000 orders a month. 10 team members. Unlimited workflows and teams. |
+| Field               | Basic                                                                                                      | Pro                                                                                                           |
+| ------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Handle              | `baton-basic`                                                                                              | `baton-pro`                                                                                                   |
+| Display name        | Basic                                                                                                      | Pro                                                                                                           |
+| Billing period      | Monthly                                                                                                    | Monthly                                                                                                       |
+| Monthly charge      | $29                                                                                                        | $79                                                                                                           |
+| Free trial          | 14 days                                                                                                    | none                                                                                                          |
+| Welcome link        | `/app`                                                                                                     | `/app`                                                                                                        |
+| Top features        | 250 orders a billing period included, then $0.15 per order. 3 team members. Unlimited workflows and teams. | 1,000 orders a billing period included, then $0.10 per order. 10 team members. Unlimited workflows and teams. |
+| Usage meter: name   | Orders synced                                                                                              | Orders synced                                                                                                 |
+| Usage meter: handle | `orders-synced`                                                                                            | `orders-synced`                                                                                               |
+| Pricing model       | Tiered, graduated                                                                                          | Tiered, graduated                                                                                             |
+| Charge as           | Cost per unit                                                                                              | Cost per unit                                                                                                 |
+| Tier 1              | Units 1 to 250 at $0.00                                                                                    | Units 1 to 1,000 at $0.00                                                                                     |
+| Tier 2              | Units 251 and up at $0.15                                                                                  | Units 1,001 and up at $0.10                                                                                   |
 
-- No free plan. No yearly option: usage-based charges, if added later, require monthly billing.
+- The meter counts orders synced into Baton. The app posts one event per counted order to the
+  App Events API under the meter handle, and a reversal for an order cancelled inside the same
+  billing period. The $0.00 first tier is the included allowance: Flat rate has no included
+  units field, and graduated tiers price each unit by the tier it falls in, so the 251st order
+  is the first one billed. Tier 1's size must equal `ordersPerCycle` in `ENTITLEMENTS`.
+- No free plan. No yearly option: usage meters require monthly billing.
 - The welcome link is a relative App Home path. Shopify appends `?plan_handle=<handle>` to it,
   and `src/routes/app.tsx` treats any `plan_handle` in the search string as the billing redirect
   that forces a fresh Partner API read.
-- Plans belong to an app, so create them once per app: `baton-local` (`shopify.app.toml`) now,
+- Plans belong to an app, so they exist once per app: `baton-local` (`shopify.app.toml`) now,
   `baton-staging` and the production app when those exist.
 - Test handles: none. Development stores in the same Partner organization get every public
   plan at $0, so `Domain.PlanHandle` carries only the two public handles.
@@ -61,8 +72,9 @@ limits must match `ENTITLEMENTS` in `src/lib/Domain.ts`. All numbers are provisi
   stores getting the public plans free. Test against `baton-basic` and `baton-pro` directly.
 
 Where: Partner Dashboard > App distribution > All apps > the app > Distribution > Manage
-listing > the locale > Pricing content > Manage > Public plans > Add. Each plan needs a display
-name and top features for every published language or it does not show.
+listing > the locale > Pricing content > Manage > Public plans. Each plan needs a display name
+and top features for every published language or it does not show; the usage meter is added
+inside the plan editor.
 
 ### Credentials
 
@@ -74,6 +86,9 @@ name and top features for every published language or it does not show.
   Dashboard URL. Filled for local; empty for staging and production until those apps exist.
 - `SHOPIFY_APP_HANDLE` (`wrangler.jsonc`): the app handle, used to build the plan selection URL
   `https://admin.shopify.com/store/<store>/charges/<handle>/pricing_plans`.
+- App Events API (usage events): no separate credential. The app exchanges its Client ID and
+  Secret (`SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`) for a one-hour bearer token at
+  `https://api.shopify.com/auth/access_token` with `grant_type: client_credentials`.
 
 ### Enabling an environment
 

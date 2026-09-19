@@ -21,7 +21,9 @@ enforcement is inferred from copy only).
 decisions taken are in §9. Baton has two paid plans and no free tier, and will not add one;
 nothing below assumes a free plan.
 
-Split out as its own hand-off: `docs/remove-billing-flag-plan.md`.
+`BILLING_ENABLED` was removed in commit `e557111` from the hand-off in
+`docs/remove-billing-flag-plan.md`; §7 is kept as the record. The implementation plan for
+everything else is `docs/plan-limits-and-downgrade-plan.md`.
 
 ## Verdict
 
@@ -54,8 +56,8 @@ Split out as its own hand-off: `docs/remove-billing-flag-plan.md`.
    seats. Overage is the only enforcement that keeps the floor running and charges for growth.
    It is dashboard configuration plus one event per counted order, and Shopify already exposes
    the reconciliation figure. Move the counter to the billing cycle first. §6.
-7. **Remove `BILLING_ENABLED` now, as its own change.** Plan in
-   `docs/remove-billing-flag-plan.md`. §7.
+7. **`BILLING_ENABLED` is gone** (commit `e557111`). Every shop resolves its plan through the
+   Partner API cache in every environment. §7.
 
 ## 1. Where the tree stands
 
@@ -72,7 +74,6 @@ Already implemented and verified on a dev store (`docs/limits-and-plans-plan.md`
 | Member gate            | `src/lib/MemberAccess.ts` `requireMember`                                            | Membership first, then plan; an unsubscribed shop sends members to the lapsed page and the socket gate answers `402` |
 | Lapse revocation       | `SubscriptionPlan.revalidate`                                                        | Closes every socket when a cached handle becomes none                                                                |
 | Manage plan            | `src/routes/app.index.tsx`                                                           | Button opens the Shopify-hosted pricing page in `_top`; home shows "n of m" for orders and members                   |
-| `BILLING_ENABLED`      | `wrangler.jsonc` (all three envs `"true"`), `SubscriptionPlan.layerNoDeps`           | `false` grants every shop `baton-pro` without a Partner API call                                                     |
 
 Two things the tree does not do: nothing happens to a shop that is over `maxMembers` (the
 fourth member keeps signing in forever), and nothing shows a scheduled downgrade.
@@ -359,7 +360,7 @@ What it costs, from `setup-usage-charges.md` and `build-billing-event.md`:
 
 | Piece                   | Detail                                                                                                                                                                                                                                                                                                     |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Dashboard               | One meter per plan, same handle on both (say `order_synced`), fixed pricing, included units 250 and 1,000, unit price per plan. Cheaper per order on Pro, which is the upgrade nudge.                                                                                                                      |
+| Dashboard               | One meter per plan, same handle on both (say `orders-synced`), fixed pricing, included units 250 and 1,000, unit price per plan. Cheaper per order on Pro, which is the upgrade nudge.                                                                                                                     |
 | Credential              | An API key from the Dev Dashboard with the `write_global_api_app_events` scope. A second secret beside the Partner token, held in the Worker.                                                                                                                                                              |
 | Event per counted order | `POST https://api.shopify.com/app/2026-07/events` with `shop_id` (the shop GID already on `ShopSession`), `event_handle`, `timestamp`, a permanent `idempotency_key`, `attributes.value: 1`. Every counted order, not only overage; Shopify applies the included units.                                    |
 | Where it fires          | The same place `ShopUsage.ordersThisMonth` is incremented, on first insert of a paid in-cycle order. The count and the event share one rule, so they cannot disagree about what an order is.                                                                                                               |
@@ -466,12 +467,12 @@ the Durable Object on the calls that count. The home page copy changes from "thi
 "this billing period" with the period's end date. Nothing else depends on the key, so this is
 the moment to change it.
 
-## 7. Remove `BILLING_ENABLED`
+## 7. `BILLING_ENABLED` removed
 
-Decided in review: now, as its own change, before the rest of this document. The hand-off is
-`docs/remove-billing-flag-plan.md`; it inventories every site and needs no further research.
-The one fact worth keeping here: the integration tests already run with the flag on and seed
-the plan cache, so removal changes no test behaviour.
+Done in commit `e557111`, from `docs/remove-billing-flag-plan.md`. `SubscriptionPlan.layerNoDeps`
+no longer reads a config flag, `Domain.DEFAULT_PLAN_HANDLE` is gone, the three `wrangler.jsonc`
+blocks carry no flag, and the integration tests seed the plan cache with a fixture handle.
+`MAX_ENTITLEMENTS` remains as the ceiling for fixtures with no shop.
 
 ## 8. Home page
 
@@ -499,7 +500,7 @@ reconcile-on-click that Bang has for memory is not needed: on E there is nothing
    - **Cancelled orders are reversed inside the cycle they were counted in.** §6.4.
    - **An enterprise ceiling on orders per cycle**, plan-independent, provisional 10,000 and
      expected to be tuned. §6.5.
-7. **Remove `BILLING_ENABLED` now, as its own change**, per `docs/remove-billing-flag-plan.md`.
+7. **`BILLING_ENABLED` removed**, commit `e557111`.
 8. **Home page carries Bang's treatment**: over-capacity distinct from at-capacity, the
    scheduled-change line, meters. §8.
 9. **The Partner API limit is soft for `activeSubscription`**: flow control, not refusal.
