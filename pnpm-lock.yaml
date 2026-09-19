@@ -18,8 +18,8 @@ importers:
         specifier: 4.2.13
         version: 4.2.13(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@shopify/shopify-api':
-        specifier: 14.0.1
-        version: 14.0.1
+        specifier: 15.0.0
+        version: 15.0.0
       '@tanstack/react-form':
         specifier: 1.33.5
         version: 1.33.5(@tanstack/react-start@1.168.50(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(vite@7.3.0(@types/node@25.0.3)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.0)))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -2519,8 +2519,8 @@ packages:
     resolution: {integrity: sha512-e4OKlNHkDNHe9RCOnNgUuAkeTEH028YxS2pGEWhO/f1cHQyekhLVdY8AWznqfvgMlobwwvfgIaF+rc1jtNbYnw==}
     engines: {node: '>=22.18.0', pnpm: '>=10.2.0'}
 
-  '@shopify/shopify-api@14.0.1':
-    resolution: {integrity: sha512-wWSd6rSaNlUUmj0ECz2s2wQ+B6gTuzcPrbeOhwGlw1I35gHt2q88muCMZn5gS1Hq6pG/1ybOKiDf5bvhao+ypw==}
+  '@shopify/shopify-api@15.0.0':
+    resolution: {integrity: sha512-u6PWWulYVJ1/bxDiKWg5g/GqcfunDm2Wcn37E1oZEs10bkkZ1nxV6T9jX6jGFCdLOBSw685+e6fxyeyjWEvUYA==}
     engines: {node: '>=22.0.0'}
 
   '@shopify/storefront-api-client@2.0.0':
@@ -7522,7 +7522,7 @@ snapshots:
 
   '@shopify/polaris-types@1.0.7': {}
 
-  '@shopify/shopify-api@14.0.1':
+  '@shopify/shopify-api@15.0.0':
     dependencies:
       '@shopify/admin-api-client': 2.0.0
       '@shopify/graphql-client': 2.0.0
