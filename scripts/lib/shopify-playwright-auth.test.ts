@@ -15,8 +15,10 @@ import path from "node:path";
 import { test, type TestContext } from "node:test";
 
 import {
+  adminSessionFresh,
   copyCookieDatabase,
   readSafeStoragePassword,
+  SESSION_MAX_AGE_MS,
   writeStorageState,
 } from "./shopify-playwright-auth.ts";
 
@@ -44,7 +46,9 @@ await test("atomic export replaces the state with owner-only permissions and rem
   const output = path.join(directory, "state.json");
   await writeFile(output, "previous state", { mode: 0o644 });
   await Effect.runPromise(
-    writeStorageState(output, cookies).pipe(Effect.provide(NodeServices.layer)),
+    writeStorageState(output, cookies, Date.now()).pipe(
+      Effect.provide(NodeServices.layer),
+    ),
   );
   assert.deepEqual(JSON.parse(await readFile(output, "utf8")), {
     cookies,
@@ -64,6 +68,7 @@ await test("an expired export preserves the previous state", async (t) => {
       writeStorageState(
         output,
         cookies.map((cookie) => ({ ...cookie, expires: 1 })),
+        Date.now(),
       ).pipe(Effect.provide(NodeServices.layer)),
     ),
     /expired or missing/u,
@@ -72,13 +77,37 @@ await test("an expired export preserves the previous state", async (t) => {
   assert.deepEqual(await readdir(directory), ["state.json"]);
 });
 
+const merchantEssential = [
+  {
+    name: "_merchant_essential",
+    value: "synthetic-test-session",
+    domain: ".shopify.com",
+    path: "/",
+    secure: true,
+    httpOnly: true,
+    sameSite: "Lax",
+    expires: Date.now() / 1000 + 365 * 24 * 3600,
+  },
+];
+
+await test("the merchant session cookie is fresh by age, not by its year-long expiry", () => {
+  assert.equal(
+    adminSessionFresh(merchantEssential, Date.now() - 3_600_000),
+    true,
+  );
+  assert.equal(
+    adminSessionFresh(merchantEssential, Date.now() - SESSION_MAX_AGE_MS - 1),
+    false,
+  );
+});
+
 await test("a failed staged write preserves the previous state and removes partial files", async (t) => {
   const directory = await temporaryDirectory(t);
   const output = path.join(directory, "state.json");
   await writeFile(output, "previous state");
   const failedWrite = Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    return yield* writeStorageState(output, cookies).pipe(
+    return yield* writeStorageState(output, cookies, Date.now()).pipe(
       Effect.provideService(FileSystem.FileSystem, {
         ...fs,
         writeFileString: (file, _data, options) =>

@@ -99,23 +99,6 @@ export class StepFinishedError extends Schema.TaggedError<StepFinishedError>()(
   { runStepId: Schema.String },
 ) {}
 
-/**
- * What `listQueue` returns: every ready step of the run the caller may act
- * on, with the run's last stage and each step's same-stage siblings owned by
- * other teams. Actor emails are on the row already.
- */
-export interface QueueRow {
-  readonly run: Domain.WorkflowRun;
-  readonly steps: readonly (Domain.WorkflowRunStep & {
-    readonly siblings: readonly {
-      readonly name: Domain.StepName;
-      readonly teamName: Domain.TeamName;
-    }[];
-  })[];
-  readonly stageCount: number;
-  readonly note: string | null;
-}
-
 export interface ReconcileCounts {
   /** Runs created by this pass. */
   readonly created: number;
@@ -359,11 +342,25 @@ export class WorkflowRunRepository extends Context.Service<
       | RunTerminalError
       | RunItemBusyError
     >;
-    /** One row per run with at least one ready step owned by `teamIds`; flagged runs first, then oldest. */
+    /**
+     * The member queue, tiered and capped here rather than on the page: every
+     * run with at least one ready step owned by `teamIds`, grouped by
+     * {@link Domain.tierOf} against `memberEmail`, oldest order first, cut to
+     * `query.limits` per tier. Every tier's `total` is the count before the
+     * cut, and `teamCounts` / `total` are over all of `teamIds` whatever
+     * `query.team` narrows to, so the chips do not move under the chip just
+     * pressed.
+     *
+     * Both statements still read every row of `teamIds`: the rows are not the
+     * cost, the bytes leaving the Durable Object are, so the bound is on what
+     * is returned rather than on what is read.
+     */
     readonly listQueue: (input: {
-      readonly teamIds: readonly string[];
+      readonly teamIds: readonly Domain.TeamId[];
+      readonly memberEmail: Domain.Email;
+      readonly query: Domain.QueueQuery;
     }) => Effect.Effect<
-      readonly QueueRow[],
+      Omit<Domain.QueueView, "done">,
       SqlError.SqlError | WorkflowRunRepositoryError
     >;
     /**
@@ -371,13 +368,17 @@ export class WorkflowRunRepository extends Context.Service<
      * each with its run and the undo verdict ({@link undoBlockedBy}). The
      * team's, not the caller's: a colleague notices a mistake as readily as
      * its author. Cancelled runs are excluded — nothing there is undoable.
+     *
+     * `total` is always the count inside the window, because the heading says
+     * it even while the tier is collapsed; `limit: 0` is that collapsed state
+     * and returns the count alone, reading no rows.
      */
     readonly listDone: (input: {
       readonly teamIds: readonly string[];
       readonly since: number;
       readonly limit: number;
     }) => Effect.Effect<
-      readonly Domain.DoneItem[],
+      { readonly items: readonly Domain.DoneItem[]; readonly total: number },
       SqlError.SqlError | WorkflowRunRepositoryError
     >;
     /**
@@ -488,7 +489,10 @@ export class WorkflowRunRepository extends Context.Service<
      * queue; the order boundary is the smallest scope where neither happens.
      */
     readonly listOrderTeamIds: (
-      input: { readonly runStepId: string } | { readonly runId: string },
+      input:
+        | { readonly runStepId: string }
+        | { readonly runId: string }
+        | { readonly orderId: string },
     ) => Effect.Effect<readonly string[], SqlError.SqlError>;
     /**
      * Rewrites `flagDetail.reason` on a run that is already `blocked`;
@@ -713,6 +717,78 @@ export class WorkflowRunRepository extends Context.Service<
               where runId in (select value from json_each(${json(runIds)}))
               order by runId, position
             `.pipe(Effect.flatMap(decodeSteps));
+
+      /**
+       * Every queue row the teams own, unsorted and uncapped: one
+       * {@link Domain.QueueItem} per run with at least one ready step of
+       * `teamIds`, carrying that run's last stage, the order's live note, and
+       * each step's same-stage siblings owned by *other* teams so a worker can
+       * see who they are working alongside. Actor emails are on the row
+       * already, so no roster join and no D1 read.
+       *
+       * Separate from `listQueue` because tiering, narrowing, and capping are
+       * decisions about the rows rather than about the query: keeping them
+       * apart means the two statements below are read once, in one place.
+       */
+      const queueItems = Effect.fn("WorkflowRunRepository.queueItems")(
+        function* (teamIds: readonly Domain.TeamId[]) {
+          if (teamIds.length === 0) return [];
+          const ready = yield* decodeSteps(
+            yield* sql`
+              select s.* from WorkflowRunStep s
+              join WorkflowRun r on r.id = s.runId
+              where r.status in ('pending', 'active')
+                and ${readyWhere("s")}
+                and exists (
+                  select 1 from WorkflowRunStep m
+                  where m.runId = s.runId
+                    and m.teamId in (select value from json_each(${json(teamIds)}))
+                    and ${readyWhere("m")}
+                )
+              order by s.runId, s.position
+            `,
+          );
+          if (ready.length === 0) return [];
+          const runIds = [...new Set(ready.map((step) => step.runId))];
+          const runs = yield* decodeQueueRuns(
+            yield* sql`
+              select r.*, o.note,
+                (select max(stage) from WorkflowRunStep c where c.runId = r.id) as stageCount
+              from WorkflowRun r
+              left join ShopOrder o on o.id = r.orderId
+              where r.id in (select value from json_each(${json(runIds)}))
+              order by r.orderProcessedAt, r.lineItemId, r.id
+            `,
+          );
+          return runs.flatMap(
+            ({ note, stageCount, ...run }): Domain.QueueItem[] => {
+              const ofRun = ready.filter((step) => step.runId === run.id);
+              const [first, ...rest] = ofRun
+                .filter(
+                  (step) =>
+                    step.teamId !== null && teamIds.includes(step.teamId),
+                )
+                .map((step) => ({
+                  ...step,
+                  siblings: ofRun
+                    .filter(
+                      (other) =>
+                        other.stage === step.stage &&
+                        (other.teamId === null ||
+                          !teamIds.includes(other.teamId)),
+                    )
+                    .map((other) => ({
+                      name: other.name,
+                      teamName: other.teamName,
+                    })),
+                }));
+              return first === undefined
+                ? []
+                : [{ run, steps: [first, ...rest], stageCount, note }];
+            },
+          );
+        },
+      );
 
       const withSteps = (runs: readonly Domain.WorkflowRun[]) =>
         Effect.gen(function* () {
@@ -1425,72 +1501,71 @@ export class WorkflowRunRepository extends Context.Service<
         }),
 
         /**
-         * Two statements: every ready step of every run that has at least one
-         * ready step for the caller's teams (so siblings owned by other teams
-         * are in hand), then those runs with their last stage and the order's
-         * live note. Grouping happens here in TypeScript; `json_each` keeps the
+         * Two statements, then the grouping in TypeScript: every ready step of
+         * every run that has at least one ready step for the caller's teams (so
+         * siblings owned by other teams are in hand), then those runs with
+         * their last stage and the order's live note. `json_each` keeps the
          * team list a single bound parameter.
+         *
+         * The statements ignore `query.team` and read all of `teamIds`: the
+         * counts the chips show are over every team, and narrowing the SQL
+         * would make each chip press a different read whose totals disagreed
+         * with the one beside it.
          */
         listQueue: Effect.fn("WorkflowRunRepository.listQueue")(function* ({
           teamIds,
+          memberEmail,
+          query,
         }: {
-          readonly teamIds: readonly string[];
+          readonly teamIds: readonly Domain.TeamId[];
+          readonly memberEmail: Domain.Email;
+          readonly query: Domain.QueueQuery;
         }) {
-          if (teamIds.length === 0) return [];
-          const ready = yield* decodeSteps(
-            yield* sql`
-              select s.* from WorkflowRunStep s
-              join WorkflowRun r on r.id = s.runId
-              where r.status in ('pending', 'active')
-                and ${readyWhere("s")}
-                and exists (
-                  select 1 from WorkflowRunStep m
-                  where m.runId = s.runId
-                    and m.teamId in (select value from json_each(${json(teamIds)}))
-                    and ${readyWhere("m")}
-                )
-              order by s.runId, s.position
-            `,
-          );
-          if (ready.length === 0) return [];
-          const runIds = [...new Set(ready.map((step) => step.runId))];
-          const runs = yield* decodeQueueRuns(
-            yield* sql`
-              select r.*, o.note,
-                (select max(stage) from WorkflowRunStep c where c.runId = r.id) as stageCount
-              from WorkflowRun r
-              left join ShopOrder o on o.id = r.orderId
-              where r.id in (select value from json_each(${json(runIds)}))
-              order by r.flag is null, r.createdAt, r.orderName, r.lineItemId
-            `,
-          );
-          return runs.flatMap(({ note, stageCount, ...run }): QueueRow[] => {
-            const ofRun = ready.filter((step) => step.runId === run.id);
-            const mine = ofRun.filter(
-              (step) => step.teamId !== null && teamIds.includes(step.teamId),
-            );
-            if (mine.length === 0) return [];
-            return [
-              {
-                run,
-                stageCount,
-                note,
-                steps: mine.map((step) => ({
-                  ...step,
-                  siblings: ofRun
-                    .filter(
-                      (other) =>
-                        other.stage === step.stage &&
-                        !mine.some((m) => m.id === other.id),
-                    )
-                    .map((other) => ({
-                      name: other.name,
-                      teamName: other.teamName,
-                    })),
-                })),
-              },
-            ];
-          });
+          const items = yield* queueItems(teamIds);
+          const teamCounts = teamIds.map((teamId) => ({
+            teamId,
+            count: items.filter((item) =>
+              item.steps.some((step) => step.teamId === teamId),
+            ).length,
+          }));
+          // A team the member is not on narrows to nothing rather than
+          // failing: `items` only ever holds their own teams' steps, so the
+          // filter empties itself and the counts beside it still stand.
+          const narrowed =
+            query.team === null
+              ? items
+              : items.flatMap((item): Domain.QueueItem[] => {
+                  const [first, ...rest] = item.steps.filter(
+                    (step) => step.teamId === query.team,
+                  );
+                  return first === undefined
+                    ? []
+                    : [{ ...item, steps: [first, ...rest] }];
+                });
+          const tiered = narrowed.map((item) => ({
+            item,
+            tier: Domain.tierOf(item, memberEmail),
+          }));
+          const tier = (wanted: Domain.QueueTier) => {
+            const all = tiered
+              .filter((row) => row.tier === wanted)
+              .map((row) => row.item)
+              .toSorted(Domain.byAge);
+            return {
+              items: all.slice(0, query.limits[wanted]),
+              total: all.length,
+            };
+          };
+          return {
+            tiers: {
+              attention: tier("attention"),
+              mine: tier("mine"),
+              inProgress: tier("inProgress"),
+              upNext: tier("upNext"),
+            },
+            teamCounts,
+            total: items.length,
+          };
         }),
 
         listDone: Effect.fn("WorkflowRunRepository.listDone")(function* ({
@@ -1502,7 +1577,23 @@ export class WorkflowRunRepository extends Context.Service<
           readonly since: number;
           readonly limit: number;
         }) {
-          if (teamIds.length === 0) return [];
+          if (teamIds.length === 0) return { items: [], total: 0 };
+          /**
+           * Served by `WorkflowRunStep_teamId_idx (teamId, completedAt)` and
+           * bounded by the caller's window, so it counts a day of one team's
+           * finished steps rather than scanning the table.
+           */
+          const counted = yield* sql`
+            select count(*) from WorkflowRunStep s
+            join WorkflowRun r on r.id = s.runId
+            where s.completedAt >= ${since}
+              and s.teamId in (select value from json_each(${json(teamIds)}))
+              and r.status <> 'cancelled'
+          `.values;
+          const total = Number(counted[0]?.[0] ?? 0);
+          // The collapsed tier: the heading still counts the day, so the count
+          // is read and the rows are not.
+          if (limit === 0) return { items: [], total };
           const done = yield* decodeSteps(
             yield* sql`
               select s.* from WorkflowRunStep s
@@ -1514,7 +1605,7 @@ export class WorkflowRunRepository extends Context.Service<
               limit ${limit}
             `,
           );
-          if (done.length === 0) return [];
+          if (done.length === 0) return { items: [], total };
           const runIds = [...new Set(done.map((step) => step.runId))];
           const runs = yield* decodeRuns(
             yield* sql`
@@ -1523,7 +1614,7 @@ export class WorkflowRunRepository extends Context.Service<
             `,
           );
           const steps = yield* stepsForRuns(runIds);
-          return done.flatMap((step): Domain.DoneItem[] => {
+          const items = done.flatMap((step): Domain.DoneItem[] => {
             const run = runs.find((candidate) => candidate.id === step.runId);
             return run === undefined
               ? []
@@ -1538,6 +1629,7 @@ export class WorkflowRunRepository extends Context.Service<
                   },
                 ];
           });
+          return { items, total };
         }),
 
         uncompleteStep: Effect.fn("WorkflowRunRepository.uncompleteStep")(
@@ -1743,16 +1835,25 @@ export class WorkflowRunRepository extends Context.Service<
 
         listOrderTeamIds: Effect.fn("WorkflowRunRepository.listOrderTeamIds")(
           function* (
-            input: { readonly runStepId: string } | { readonly runId: string },
+            input:
+              | { readonly runStepId: string }
+              | { readonly runId: string }
+              | { readonly orderId: string },
           ) {
-            const order =
-              "runStepId" in input
-                ? sql`
-                    select r0.orderId from WorkflowRun r0
-                    join WorkflowRunStep s0 on s0.runId = r0.id
-                    where s0.id = ${input.runStepId}
-                  `
-                : sql`select r0.orderId from WorkflowRun r0 where r0.id = ${input.runId}`;
+            // The caller that already holds the order — the webhook path —
+            // names it and skips the run lookup entirely; the two run-shaped
+            // callers resolve to the same order first.
+            const orderOf = () => {
+              if ("orderId" in input) return sql`select ${input.orderId}`;
+              if ("runStepId" in input)
+                return sql`
+                  select r0.orderId from WorkflowRun r0
+                  join WorkflowRunStep s0 on s0.runId = r0.id
+                  where s0.id = ${input.runStepId}
+                `;
+              return sql`select r0.orderId from WorkflowRun r0 where r0.id = ${input.runId}`;
+            };
+            const order = orderOf();
             const rows = yield* sql`
               select distinct rs.teamId as teamId
               from WorkflowRunStep rs

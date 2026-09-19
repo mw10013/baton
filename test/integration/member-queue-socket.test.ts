@@ -180,10 +180,24 @@ const seedShopWithWork = async (shopName: string) => {
   return { shop, runStepId, ...seeded };
 };
 
-const subscribe = (socket: AgentSocket, subscriberId: string) =>
-  socket
-    .call<Domain.QueueView>("subscribeQueue", { subscriberId })
-    .then((view) => view.items);
+const subscribeView = (
+  socket: AgentSocket,
+  subscriberId: string,
+  query: Domain.QueueQuery = Domain.DEFAULT_QUEUE_QUERY,
+) => socket.call<Domain.QueueView>("subscribeQueue", { subscriberId, query });
+
+/** The ready rows in tier order; every test here seeds one team's single step. */
+const subscribe = (
+  socket: AgentSocket,
+  subscriberId: string,
+  query?: Domain.QueueQuery,
+) =>
+  subscribeView(socket, subscriberId, query).then((view) => [
+    ...view.tiers.attention.items,
+    ...view.tiers.mine.items,
+    ...view.tiers.inProgress.items,
+    ...view.tiers.upNext.items,
+  ]);
 
 afterEach(async () => {
   await resetMemberTables();
@@ -213,6 +227,37 @@ describe("member queue socket", () => {
     });
     expect(await subscribe(idler.socket, "sub-carol")).toHaveLength(0);
     idler.close();
+  });
+
+  /**
+   * The limits are the browser's to choose and the object's to honour: the
+   * same connection, re-subscribing with a deeper Up next, reads the row the
+   * first subscribe left out while both reads agree on the total.
+   */
+  it("re-subscribing with different limits changes what the read returns", async () => {
+    const { shop, working, alice } = await seedShopWithWork(
+      "queue-limits.myshopify.com",
+    );
+    const worker = await openMemberSocket(shop, {
+      memberId: alice,
+      memberEmail: "alice@example.com",
+      teamIds: [working.id],
+    });
+    const collapsed = await subscribeView(worker.socket, "sub-alice", {
+      ...Domain.DEFAULT_QUEUE_QUERY,
+      limits: { ...Domain.DEFAULT_QUEUE_LIMITS, upNext: 0 },
+    });
+    expect(collapsed.tiers.upNext.items).toHaveLength(0);
+    expect(collapsed.tiers.upNext.total).toBe(1);
+    expect(collapsed.total).toBe(1);
+
+    const expanded = await subscribeView(worker.socket, "sub-alice", {
+      ...Domain.DEFAULT_QUEUE_QUERY,
+      limits: { ...Domain.DEFAULT_QUEUE_LIMITS, upNext: 20 },
+    });
+    expect(expanded.tiers.upNext.items).toHaveLength(1);
+    expect(expanded.tiers.upNext.total).toBe(1);
+    worker.close();
   });
 
   it("pushes a completed step to the team, and not to a team with no work on that order", async () => {

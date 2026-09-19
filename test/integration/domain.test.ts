@@ -4,7 +4,6 @@ import { describe, it } from "vitest";
 
 import { flagBody, flagHeading, flagTone } from "@/components/MemberRun";
 import * as Domain from "@/lib/Domain";
-import { tierQueue } from "@/lib/queueTiers";
 import { groupUsedBy } from "@/lib/usedBy";
 
 const order = (
@@ -403,22 +402,24 @@ const runIds = (items: readonly Domain.QueueItem[]) =>
 
 const ME = Schema.decodeUnknownSync(Domain.Email)("me@example.com");
 
-describe("tierQueue", () => {
-  it("flag first, then mine, then a teammate's, then untouched; oldest order first within a tier", () => {
-    const tiers = tierQueue(
-      [
-        queueItem("late-next", 30),
-        queueItem("mine", 20, { startedBy: "me" }),
-        queueItem("early-next", 10),
-        queueItem("theirs", 5, { startedBy: "them" }),
+describe("Domain.tierOf", () => {
+  it("a flag first, then mine, then a teammate's, then untouched", () => {
+    strictEqual(
+      Domain.tierOf(
         queueItem("flagged-mine", 40, { flag: "blocked", startedBy: "me" }),
-      ],
-      ME,
+        ME,
+      ),
+      "attention",
     );
-    strictEqual(runIds(tiers.attention), "flagged-mine");
-    strictEqual(runIds(tiers.mine), "mine");
-    strictEqual(runIds(tiers.inProgress), "theirs");
-    strictEqual(runIds(tiers.upNext), "early-next,late-next");
+    strictEqual(
+      Domain.tierOf(queueItem("mine", 20, { startedBy: "me" }), ME),
+      "mine",
+    );
+    strictEqual(
+      Domain.tierOf(queueItem("theirs", 5, { startedBy: "them" }), ME),
+      "inProgress",
+    );
+    strictEqual(Domain.tierOf(queueItem("early-next", 10), ME), "upNext");
   });
 
   /**
@@ -428,18 +429,41 @@ describe("tierQueue", () => {
    * theirs.
    */
   it("keeps a step under Mine when the id changed but the email did not", () => {
-    const tiers = tierQueue(
-      [
+    strictEqual(
+      Domain.tierOf(
         queueItem("re-added", 20, {
           startedBy: "old-id",
           startedByEmail: "me@example.com",
         }),
-        queueItem("someone-else", 10, { startedBy: "them" }),
-      ],
-      ME,
+        ME,
+      ),
+      "mine",
     );
-    strictEqual(runIds(tiers.mine), "re-added");
-    strictEqual(runIds(tiers.inProgress), "someone-else");
+    strictEqual(
+      Domain.tierOf(queueItem("someone-else", 10, { startedBy: "them" }), ME),
+      "inProgress",
+    );
+  });
+});
+
+const withLine = (item: Domain.QueueItem, lineItemId: string) => ({
+  ...item,
+  run: { ...item.run, lineItemId },
+});
+
+describe("Domain.byAge", () => {
+  it("oldest order first, then line item, then run id", () => {
+    strictEqual(
+      runIds(
+        [
+          queueItem("late-next", 30),
+          withLine(queueItem("b-same-age", 10), "line-2"),
+          withLine(queueItem("z-first-line", 10), "line-1"),
+          withLine(queueItem("a-same-age", 10), "line-2"),
+        ].toSorted(Domain.byAge),
+      ),
+      "z-first-line,a-same-age,b-same-age,late-next",
+    );
   });
 });
 

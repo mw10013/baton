@@ -2018,11 +2018,13 @@ export interface TeamLoaderData extends TeamDetail {
 
 /**
  * `/shop/$shop` (`shop.$shop.index`): the queue, which is the member area's
- * landing page. `memberId` / `memberEmail` let the page compute its "Mine"
- * tier (`queueTiers.ts`) from rows it already holds; both come out of the
- * same `requireMember` that resolved `teams`. `shop` is the `myshopify.com`
- * domain — the Admin API's display name is not stored anywhere in Baton, and
- * the domain is what the URL and every membership row key on.
+ * landing page. `view` is the read of {@link DEFAULT_QUEUE_QUERY}, already
+ * tiered by the object, which is why `memberEmail` is here to be *sent* on
+ * the socket's later reads rather than to group rows the page holds; it and
+ * `memberId` come out of the same `requireMember` that resolved `teams`.
+ * `shop` is the `myshopify.com` domain — the Admin API's display name is not
+ * stored anywhere in Baton, and the domain is what the URL and every
+ * membership row key on.
  */
 export interface QueueLoaderData {
   readonly shop: Shop;
@@ -2216,15 +2218,6 @@ export const SubscriberIdInput = Schema.Struct({
   subscriberId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
 });
 export type SubscriberIdInput = typeof SubscriberIdInput.Type;
-
-/**
- * The socket half of the member queue's read: the same rows `listQueue`
- * returns, plus a subscription registered on the connection in the same round
- * trip. `teamIds` is absent on purpose — the queue is scoped by the teams on
- * the connection, which the member cannot name for themselves.
- */
-export const SubscribeQueueInput = SubscriberIdInput;
-export type SubscribeQueueInput = typeof SubscribeQueueInput.Type;
 
 /**
  * The one server push: "your loader data is stale, refetch". Deliberately not
@@ -2524,6 +2517,60 @@ export const QueueItem = Schema.Struct({
 export type QueueItem = typeof QueueItem.Type;
 
 /**
+ * The queue's four tiers, in the order they are presented. The labels the
+ * member reads are the route's (`queueTiers.ts`); the object only needs the
+ * keys, because it is the side that groups, sorts, and caps.
+ */
+export const QueueTier = Schema.Literals([
+  "attention",
+  "mine",
+  "inProgress",
+  "upNext",
+]);
+export type QueueTier = typeof QueueTier.Type;
+
+/**
+ * Which tier a queue row belongs in: a flag wins; else a step the viewer
+ * started; else any started step; else up next.
+ *
+ * "Mine" is by `startedByEmail`, not by the `startedBy` member id. Removing a
+ * member and re-adding the same address mints a **new** `Member.id`
+ * (`migrations/0001_init.sql`), so the id on a row taken before that stops
+ * matching the person still standing at the bench, while the email — the
+ * snapshot the migration calls the durable one — keeps matching. A merchant's
+ * step has no email at all and so is nobody's, which is right: `Merchant` is
+ * not a member of this queue.
+ *
+ * Here rather than beside the route's labels because the object tiers the
+ * rows now: the read is capped per tier, so the grouping has to happen on the
+ * side that decides what leaves.
+ */
+export const tierOf = (
+  { run, steps }: QueueItem,
+  memberEmail: Email,
+): QueueTier => {
+  if (run.flag !== null) return "attention";
+  if (steps.some((step) => step.startedByEmail === memberEmail)) return "mine";
+  if (steps.some((step) => step.startedAt !== null)) return "inProgress";
+  return "upNext";
+};
+
+/**
+ * Within a tier, oldest order first by `run.orderProcessedAt` (the snapshot
+ * on the run, so no join), then by line item, then by run id. Two runs of one
+ * order share the first key, and `createdAt` would not split them either (one
+ * reconcile inserts them in the same millisecond), so the line item id is the
+ * tiebreak: Shopify mints them in the order the customer added the lines, and
+ * it is the order `listRunsForOrder` already uses. The run id only separates
+ * two workflows on one line. The triple is a key an index can serve and a
+ * cursor could later resume from — which the order name would not be.
+ */
+export const byAge = (a: QueueItem, b: QueueItem) =>
+  a.run.orderProcessedAt - b.run.orderProcessedAt ||
+  a.run.lineItemId.localeCompare(b.run.lineItemId) ||
+  a.run.id.localeCompare(b.run.id);
+
+/**
  * What stands between a finished step and Undo: the first later step someone
  * has already started (or finished), in a later stage of the same run. Once
  * downstream has moved the fix is a conversation, so the page names who to
@@ -2580,15 +2627,107 @@ export const DoneItem = Schema.Struct({
 export type DoneItem = typeof DoneItem.Type;
 
 /**
- * The member queue in one read: the ready work (`items`) and what the team
- * finished recently (`done`). One value rather than two reads so the socket's
- * `subscribeQueue` and the loader's `listQueue` paint the same page from the
- * same snapshot, and a teammate's Undo moves a card between the two halves
- * under one push.
+ * Provisional. How many rows of a bounded tier (Blocked, Mine, In progress)
+ * the queue read returns before the heading says "showing N" and offers
+ * more. A proposal, not a tuned figure: no shop has run against it.
+ */
+export const QUEUE_TIER_CAP = 25;
+/** Provisional: the page size for Up next, Done today, and every "Show 10 more". */
+export const QUEUE_PAGE = 10;
+/** Provisional: the most rows one tier may be expanded to in a single read. */
+export const QUEUE_LIMIT_MAX = 100;
+
+const QueueLimit = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isBetween({ minimum: 0, maximum: QUEUE_LIMIT_MAX }),
+);
+
+/**
+ * How many rows of each tier the caller wants. The object always computes
+ * every tier's total; the limit only bounds what is returned. `done: 0` skips
+ * the Done today read entirely, which is the collapsed state.
+ */
+export const QueueLimits = Schema.Struct({
+  attention: QueueLimit,
+  mine: QueueLimit,
+  inProgress: QueueLimit,
+  upNext: QueueLimit,
+  done: QueueLimit,
+});
+export type QueueLimits = typeof QueueLimits.Type;
+
+export const DEFAULT_QUEUE_LIMITS: QueueLimits = {
+  attention: QUEUE_TIER_CAP,
+  mine: QUEUE_TIER_CAP,
+  inProgress: QUEUE_TIER_CAP,
+  upNext: QUEUE_PAGE,
+  done: 0,
+};
+
+/**
+ * What the browser may choose about its queue: one of its own teams to narrow
+ * to (`null` is every team on the connection), and how deep each tier goes.
+ * `team` is validated against the connection's `teamIds` by the object; a
+ * team the member is not on reads as an empty queue, never as an error.
+ */
+export const QueueQuery = Schema.Struct({
+  team: Schema.NullOr(TeamId),
+  limits: QueueLimits,
+});
+export type QueueQuery = typeof QueueQuery.Type;
+
+export const DEFAULT_QUEUE_QUERY: QueueQuery = {
+  team: null,
+  limits: DEFAULT_QUEUE_LIMITS,
+};
+
+/**
+ * Whether a query is the one the loader already read, which is what lets the
+ * page hand its SSR rows to the socket query as `initialData`. Structural
+ * rather than referential: the route rebuilds the value on every chip press,
+ * and pressing back to the default has to count as the default.
+ */
+export const isDefaultQuery = (query: QueueQuery) =>
+  query.team === DEFAULT_QUEUE_QUERY.team &&
+  (Object.keys(DEFAULT_QUEUE_LIMITS) as (keyof QueueLimits)[]).every(
+    (tier) => query.limits[tier] === DEFAULT_QUEUE_LIMITS[tier],
+  );
+
+export const QueueTierView = Schema.Struct({
+  items: Schema.Array(QueueItem),
+  /** Rows in the tier before the limit; the number the heading shows. */
+  total: Schema.Number,
+});
+export type QueueTierView = typeof QueueTierView.Type;
+
+export const QueueTeamCount = Schema.Struct({
+  teamId: TeamId,
+  count: Schema.Number,
+});
+export type QueueTeamCount = typeof QueueTeamCount.Type;
+
+/**
+ * The member queue in one read, already tiered and capped by the object, and
+ * what the team finished recently. One value rather than several reads so the
+ * socket's `subscribeQueue` and the loader's `listQueue` paint the same page
+ * from the same snapshot, and a teammate's Undo moves a row between the tiers
+ * and Done under one push.
+ *
+ * `teamCounts` and `total` are over every team on the connection regardless
+ * of `query.team`, so the chips do not move under the chip just pressed.
+ * `done.items` is empty when `limits.done` is 0; `done.total` is always the
+ * count inside {@link DONE_WINDOW_MS}.
  */
 export const QueueView = Schema.Struct({
-  items: Schema.Array(QueueItem),
-  done: Schema.Array(DoneItem),
+  tiers: Schema.Struct({
+    attention: QueueTierView,
+    mine: QueueTierView,
+    inProgress: QueueTierView,
+    upNext: QueueTierView,
+  }),
+  teamCounts: Schema.Array(QueueTeamCount),
+  total: Schema.Number,
+  done: Schema.Struct({ items: Schema.Array(DoneItem), total: Schema.Number }),
 });
 export type QueueView = typeof QueueView.Type;
 
@@ -2599,8 +2738,6 @@ export type QueueView = typeof QueueView.Type;
  * merchant's order page already is.
  */
 export const DONE_WINDOW_MS = 24 * 60 * 60 * 1000;
-/** Cap on the tier so a busy shop's queue read stays one screen of rows. */
-export const DONE_LIMIT = 100;
 
 /**
  * A run step on the work page, decorated with what the page needs to offer
@@ -2664,9 +2801,25 @@ export type OrderDetailView = typeof OrderDetailView.Type;
  * while the mutations below moved onto the socket.
  */
 export const ListQueueInput = Schema.Struct({
-  teamIds: Schema.Array(BoundedId),
+  teamIds: Schema.Array(TeamId),
+  memberEmail: Email,
+  query: QueueQuery,
 });
 export type ListQueueInput = typeof ListQueueInput.Type;
+
+/**
+ * The socket half of the member queue's read: the same rows `listQueue`
+ * returns, plus a subscription registered on the connection in the same round
+ * trip. `teamIds` and `memberEmail` are absent on purpose — the queue is
+ * scoped by the membership on the connection, which the member cannot name
+ * for themselves. `query` is theirs to name: it chooses among their own teams
+ * and how far each tier is expanded, and the object bounds both.
+ */
+export const SubscribeQueueInput = Schema.Struct({
+  ...SubscriberIdInput.fields,
+  query: QueueQuery,
+});
+export type SubscribeQueueInput = typeof SubscribeQueueInput.Type;
 
 /**
  * The work page's loader read, Worker-resolved for the same reason as

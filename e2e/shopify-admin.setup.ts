@@ -11,9 +11,10 @@ import {
 } from "../scripts/lib/shopify-playwright-auth.ts";
 
 /**
- * Check the exported admin cookie's actual expiry rather than assuming a fixed
- * session lifetime. Fresh exports avoid Keychain access. This does not validate
- * server-side revocation; the embedded tests still exercise the real session.
+ * Whether the export on disk is still worth using, judged by the cookie it
+ * holds and by the file's own age (`adminSessionFresh`): a fresh export avoids
+ * a Keychain prompt. This does not validate server-side revocation; the
+ * embedded tests still exercise the real session.
  */
 const adminSessionValid = (): boolean => {
   try {
@@ -26,7 +27,7 @@ const adminSessionValid = (): boolean => {
         expires: number;
       }[];
     };
-    return adminSessionFresh(cookies);
+    return adminSessionFresh(cookies, fs.statSync(storageStatePath).mtimeMs);
   } catch {
     return false;
   }

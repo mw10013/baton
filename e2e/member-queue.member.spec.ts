@@ -51,7 +51,7 @@ const ORDER_LINK = /^#94\d\d$/u;
 /**
  * Ten filler Cut orders, numbered clear of the three named ones. Ten and not
  * eleven: the ring order is a Cut order too, so the mate's Up next comes to
- * twelve and the maker's to eleven — both over `UP_NEXT_CAP` (10), and the
+ * twelve and the maker's to eleven — both over `Domain.QUEUE_PAGE` (10), and the
  * two counts differ, so an assertion cannot pass by reading the wrong page.
  */
 const BULK_COUNT = 10;
@@ -78,9 +78,9 @@ const seedQueue = (
      */
     readonly bandDoneByMerchant?: boolean;
     /**
-     * Ten more Cut orders, which is the only way past `UP_NEXT_CAP`. They
+     * Ten more Cut orders, which is the only way past `Domain.QUEUE_PAGE`. They
      * carry nothing a test reads but their names: the cap is about how many
-     * cards render, not what is on them.
+     * rows the read returns, not what is on them.
      */
     readonly withBulk?: boolean;
   },
@@ -209,12 +209,25 @@ const openQueue = async (
   return page;
 };
 
-/** The queue card for one order: the `s-box` whose heading link is the order name. */
+/**
+ * The queue row for one order: the innermost `s-box` holding that order's
+ * link. `.last()`, not `.first()`: the tier's list container is an `s-box`
+ * around every row and so matches the same filter, and it is the ancestor, so
+ * document order puts it first.
+ */
 const card = (page: Page, orderName: string) =>
   page
     .locator("s-box")
     .filter({ has: page.getByRole("link", { name: orderName, exact: true }) })
-    .first();
+    .last();
+
+/**
+ * Opens a row's detail. The row is three columns and only the middle one
+ * toggles — an `s-clickable` around a button would be a button inside a
+ * button — so the target is that clickable, by the label it announces.
+ */
+const expandRow = (page: Page, orderName: string) =>
+  page.locator(`s-clickable[accessibilityLabel="Expand ${orderName}"]`).click();
 
 test.describe.configure({ mode: "serial" });
 
@@ -275,7 +288,9 @@ test("a member starts and completes their team's ready step over the socket", as
      following the object's — proof the answer was applied, not just accepted. */
   await expect(page.getByRole("button", { name: "Start" })).toBeHidden();
 
-  await clickWhenEnabled(page.getByRole("button", { name: "Done" }));
+  /* Start expands the row, so the step's own Done is on the page beside the
+     row's. Either finishes the same step; the row's is the one a thumb hits. */
+  await clickWhenEnabled(page.getByRole("button", { name: "Done" }).first());
   await expect(page.getByText(RING_ORDER, { exact: true })).toBeHidden();
   await expect(page.getByText(EMPTY)).toBeVisible();
   await expectSameDocument(page);
@@ -313,9 +328,13 @@ test("a completed step lands on another member's queue without a reload", async 
   await expect(maker.getByText("Pack")).toBeHidden();
 
   await clickWhenEnabled(maker.getByRole("button", { name: "Start" }));
+  /* The mate's row says who has it without being opened; the start time is
+     inside the detail, which only its own reader opens. */
+  await expect(mate.getByText(`In progress · ${MAKER}`)).toBeVisible();
+  await expandRow(mate, RING_ORDER);
   await expect(mate.getByText(STARTED)).toBeVisible();
 
-  await clickWhenEnabled(maker.getByRole("button", { name: "Done" }));
+  await clickWhenEnabled(maker.getByRole("button", { name: "Done" }).first());
   await expect(mate.getByText(RING_ORDER, { exact: true })).toBeHidden();
   /* The mate's other team is untouched by the ring order's fan-out, so the
      refetch must not have emptied the page wholesale. */
@@ -381,19 +400,20 @@ test("a started card moves to Mine for the starter and In progress for a teammat
 
   await expect(mate.getByText("In progress · 1")).toBeVisible();
   await expect(mate.getByText("Up next · 1")).toBeVisible();
-  await expect(mate.getByText(`by ${MAKER}`)).toBeVisible();
+  await expect(mate.getByText(`In progress · ${MAKER}`)).toBeVisible();
 });
 
 /**
  * The one place in the member area where the number in a heading is not the
- * number of cards under it. Up next is capped at ten and its heading still
+ * number of rows under it. Up next is capped at ten and its heading still
  * counts the tier, which is the promise being tested: a member who reads
- * "Up next · 12" above ten cards must be able to reach the other two, and a
- * member who then narrows to one team must not be shown a stale expansion
- * from the wider list. The teammate drives it because the team chips only
- * render for someone on more than one team.
+ * "Up next · 12" above ten rows must be able to reach the other two — and the
+ * button that does it asks the object for a deeper read rather than revealing
+ * rows the page was already holding. A member who then narrows to one team
+ * must not be shown a stale expansion from the wider list. The teammate drives
+ * it because the team chips only render for someone on more than one team.
  */
-test("Up next caps at ten, expands on Show all, and re-caps when the team changes", async ({
+test("Up next caps at ten, pages on Show more, and re-caps when the team changes", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -405,16 +425,21 @@ test("Up next caps at ten, expands on Show all, and re-caps when the team change
   const page = await openQueue(browser, config, mateState);
 
   await expect(page.getByText("Up next · 12")).toBeVisible();
+  await expect(page.getByText("showing 10")).toBeVisible();
   await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(10);
 
-  await page.getByRole("button", { name: "Show all 12" }).click();
+  await page.getByRole("button", { name: "Show 10 more of 2" }).click();
   await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(12);
-  await expect(page.getByRole("button", { name: /^Show all/u })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: /^Show 10 more/u }),
+  ).toHaveCount(0);
 
   await page.getByRole("button", { name: `${CUT_TEAM} · 11` }).click();
   await expect(page.getByText("Up next · 11")).toBeVisible();
   await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(10);
-  await expect(page.getByRole("button", { name: "Show all 11" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Show 10 more of 1" }),
+  ).toBeVisible();
 });
 
 /**
@@ -429,15 +454,20 @@ test("undo puts a finished step back in progress", async ({ browser }) => {
   await expect(page.getByText("Done today")).toBeHidden();
 
   await clickWhenEnabled(page.getByRole("button", { name: "Start" }));
-  await clickWhenEnabled(page.getByRole("button", { name: "Done" }));
+  await clickWhenEnabled(page.getByRole("button", { name: "Done" }).first());
   await expect(page.getByText(EMPTY)).toBeVisible();
   await expect(page.getByText("Done today · 1")).toBeVisible();
+  /* Collapsed, the tier is a count and nothing else: Show is what fetches the
+     rows, so the Undo below is only reachable once they arrive. */
   await page.getByRole("button", { name: "Show" }).click();
   await expect(page.getByText(`by ${MAKER} at`)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
 
   await clickWhenEnabled(page.getByRole("button", { name: "Undo" }));
   await expect(page.getByText("Mine · 1")).toBeVisible();
-  await expect(page.getByText(STARTED)).toBeVisible();
+  /* Back under Mine, and the row says it is the reader's own without being
+     opened; a row that arrives after the first paint stays collapsed. */
+  await expect(page.getByText("In progress · you")).toBeVisible();
   await expect(page.getByText("Done today")).toBeHidden();
 });
 
@@ -454,6 +484,9 @@ test("undo is refused once downstream started", async ({ browser }) => {
     withBand: true,
   });
   const maker = await openQueue(browser, config, makerState);
+  /* A step nobody has started offers Start on the row; Done for it is in the
+     detail, which is what the row opens. */
+  await expandRow(maker, BAND_ORDER);
   await clickWhenEnabled(
     card(maker, BAND_ORDER).getByRole("button", { name: "Done" }),
   );

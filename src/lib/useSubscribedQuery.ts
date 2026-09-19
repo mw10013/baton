@@ -4,7 +4,12 @@ import type { ShopAgentSocket } from "@/lib/ShopAgentContext";
 
 import * as React from "react";
 
-import { hashKey, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  hashKey,
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { Option, Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
@@ -60,6 +65,18 @@ const connecting = () =>
  * identify invalidation then performs the first subscribing read. Without it
  * the page shows its own connecting state until `identified`.
  *
+ * It may be `undefined`, because a key can outrun the loader: the member queue
+ * puts its `Domain.QueueQuery` in the key, and a chip press or a Show more
+ * asks for rows the SSR read never fetched. Claiming the loader's rows for
+ * that key would paint the wrong queue as if it were fresh, so that caller
+ * passes `initialData` only while its query still matches the one the loader
+ * read. It stays a *required* argument, and `Initial` is inferred from what is
+ * passed: a caller that always has loader data keeps `data: A`, one that may
+ * not gets `A | undefined` and has to say what it renders meanwhile.
+ * `placeholderData: keepPreviousData` keeps the previous key's rows on screen
+ * until the new key's read returns, so a chip press re-renders the queue
+ * rather than the page's connecting state.
+ *
  * `unsubscribe` is deferred by one task and cancelled if the effect sets up
  * again, so React Strict Mode's setup → cleanup → setup probe cannot drop
  * the subscription the first read just created. Best-effort and outside
@@ -72,7 +89,7 @@ const connecting = () =>
  * query is disabled and the effects no-op until the identify flip re-renders
  * with the published socket.
  */
-export const useSubscribedQuery = <A>({
+export const useSubscribedQuery = <A, Initial extends A | undefined>({
   queryKey,
   subscribe,
   initialData,
@@ -82,7 +99,7 @@ export const useSubscribedQuery = <A>({
     stub: ShopAgentSocket["stub"],
     subscriberId: string,
   ) => Promise<A>;
-  readonly initialData: A;
+  readonly initialData: Initial;
 }) => {
   const queryClient = useQueryClient();
   const { agent, identified } = useShopAgent();
@@ -106,6 +123,7 @@ export const useSubscribedQuery = <A>({
         : connecting(),
     enabled: identified,
     initialData,
+    placeholderData: keepPreviousData,
   });
 
   const invalidate = React.useCallback(
@@ -163,11 +181,13 @@ export const useSubscribedQuery = <A>({
   }, [subscriberId]);
 
   /**
-   * `initialData` guarantees data from the first render, but the generic
+   * With `initialData` there is data from the first render, but the generic
    * overload of `useQuery` cannot see that (`NonUndefinedGuard<A>` stays a
    * deferred conditional on a type parameter), so `query.data` is typed with
-   * `undefined`. The check, not `??`: `null` is a real value for a detail
-   * page whose order was deleted, and must not fall back to the loader's.
+   * `undefined` either way. The check, not `??`: `null` is a real value for a
+   * detail page whose order was deleted, and must not fall back to the
+   * loader's. Without `initialData` the fallback is `undefined` too, which is
+   * the caller's cue that this key has never been read.
    */
   // oxlint-disable-next-line typescript/prefer-nullish-coalescing -- `??` would swallow a real `null`; see above
   const data = query.data === undefined ? initialData : query.data;

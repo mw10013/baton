@@ -101,13 +101,27 @@ afterEach(async () => {
  * Every shop name is unique per test: a Durable Object keeps its SQLite across
  * tests in the same worker, so sharing a shop would leak workflows between cases.
  */
-/** The ready half of the queue view; the Done tier is covered by the repository tests. */
+/**
+ * The ready half of the queue view, flattened back into one list in tier
+ * order; the Done tier and the tiering itself are covered by the repository
+ * tests. The email is nobody these tests started work as, so every started
+ * step reads as a teammate's.
+ */
 const queueItems = async (
   agent: Awaited<ReturnType<typeof getAgentByName<Cloudflare.Env, ShopAgent>>>,
   teamIds: readonly string[],
 ) => {
-  const view = await agent.listQueue({ teamIds });
-  return view.items;
+  const view = await agent.listQueue({
+    teamIds,
+    memberEmail: "viewer@example.com",
+    query: Domain.DEFAULT_QUEUE_QUERY,
+  });
+  return [
+    ...view.tiers.attention.items,
+    ...view.tiers.mine.items,
+    ...view.tiers.inProgress.items,
+    ...view.tiers.upNext.items,
+  ];
 };
 
 describe("ShopAgent workflow callables", () => {

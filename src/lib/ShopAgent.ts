@@ -549,6 +549,8 @@ const initializeSchema = Effect.gen(function* () {
       on WorkflowRun (lineItemId) where status <> 'cancelled';
     create index if not exists WorkflowRun_orderId_idx on WorkflowRun (orderId);
     create index if not exists WorkflowRun_status_idx on WorkflowRun (status);
+    create index if not exists WorkflowRun_open_age_idx
+      on WorkflowRun (orderProcessedAt, lineItemId, id) where status in ('pending', 'active');
     create table if not exists WorkflowRunStep (
       id text primary key,
       runId text not null references WorkflowRun (id) on delete cascade,
@@ -1055,6 +1057,32 @@ type PublishScope = "all" | readonly string[];
  * cannot name the teams a change touched.
  */
 type PublishTeams = "all" | readonly string[];
+
+/**
+ * The teams whose queues a write to this order could have changed, as a value
+ * a caller can read on both sides of the write. A failed read answers `"all"`,
+ * never `[]`: an over-broad publish costs each member one refetch, while an
+ * under-broad one leaves a queue that silently stops updating until the tab's
+ * next subscribe, and the read failing is no reason to guess narrow. The write
+ * that triggered it is never failed by it.
+ */
+const orderTeamIds = (
+  target:
+    | { readonly runStepId: string }
+    | { readonly runId: string }
+    | { readonly orderId: string },
+) =>
+  WorkflowRunRepository.pipe(
+    Effect.flatMap(
+      (repository): Effect.Effect<PublishTeams, SqlError.SqlError> =>
+        repository.listOrderTeamIds(target),
+    ),
+    Effect.orElseSucceed((): PublishTeams => "all"),
+  );
+
+/** The union of two team scopes; `"all"` on either side is `"all"`. */
+const unionTeams = (a: PublishTeams, b: PublishTeams): PublishTeams =>
+  a === "all" || b === "all" ? "all" : [...new Set([...a, ...b])];
 
 const isOpen = (run: Domain.WorkflowRun) =>
   run.status === "pending" || run.status === "active";
@@ -1785,7 +1813,18 @@ export class ShopAgent extends Agent {
    */
   syncOrder(input: OrderWebhookInput): Promise<void> {
     const shop = this.name;
-    const publish = (touched: PublishScope) => this.publish(touched);
+    /**
+     * Scoped by team as well as by order: the union of the teams with an open
+     * step on the order before and after the reconcile, because a reconcile
+     * can take a team's last step away (a cancelled line, a dropped quantity)
+     * as readily as give one, and the team losing it is only nameable before.
+     * An order no team owns a step on either side publishes to *no* member —
+     * the empty list is the intended answer, not a missing one — while the
+     * merchant's pages still see their order's id.
+     */
+    const teamsOf = (orderId: string) => orderTeamIds({ orderId });
+    const publish = (orderId: string, teams: PublishTeams) =>
+      this.publish([orderId], teams);
     const fetchAndUpsert = (orderId: string) =>
       this.fetchAndUpsertOrder(orderId, "webhook");
     return this.runEffect(
@@ -1826,6 +1865,7 @@ export class ShopAgent extends Agent {
               );
               return;
             }
+            const before = yield* teamsOf(orderId);
             yield* fetchAndUpsert(orderId);
             /**
              * The second retention carrier, rate-limited by `lastSweepAt`
@@ -1852,7 +1892,10 @@ export class ShopAgent extends Agent {
                   }),
                 );
             }
-            yield* publish([orderId]);
+            yield* publish(
+              orderId,
+              unionTeams(before, yield* teamsOf(orderId)),
+            );
           }),
       )(input),
     );
@@ -2781,7 +2824,7 @@ export class ShopAgent extends Agent {
     input: typeof Domain.RunIdInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
-    const publish = () => this.publish("all");
+    const publish = (runId: string) => this.publishToTeams({ runId });
     return this.runEffect(
       callableEffect("ShopAgent.cancelRun", Domain.RunIdInput, {
         role: "merchant",
@@ -2796,7 +2839,7 @@ export class ShopAgent extends Agent {
               ).pipe(Effect.annotateLogs({ shop, runId })),
             ),
           ),
-        ).pipe(Effect.tap(publish)),
+        ).pipe(Effect.tap(() => publish(runId))),
       )(input),
     );
   }
@@ -2805,7 +2848,7 @@ export class ShopAgent extends Agent {
   uncancelRun(
     input: typeof Domain.RunIdInput.Encoded,
   ): Promise<Domain.RunResult> {
-    const publish = () => this.publish("all");
+    const publish = (runId: string) => this.publishToTeams({ runId });
     return this.runEffect(
       callableEffect("ShopAgent.uncancelRun", Domain.RunIdInput, {
         role: "merchant",
@@ -2815,7 +2858,7 @@ export class ShopAgent extends Agent {
           WorkflowRunRepository.pipe(
             Effect.flatMap((repository) => repository.uncancelRun({ runId })),
           ),
-        ).pipe(Effect.tap(publish)),
+        ).pipe(Effect.tap(() => publish(runId))),
       )(input),
     );
   }
@@ -3030,58 +3073,92 @@ export class ShopAgent extends Agent {
    * became ready for another team is included.
    */
   private publishToTeams(
-    target: { readonly runStepId: string } | { readonly runId: string },
+    target:
+      | { readonly runStepId: string }
+      | { readonly runId: string }
+      | { readonly orderId: string },
+    touched: PublishScope = "all",
   ) {
-    return WorkflowRunRepository.pipe(
-      Effect.flatMap((repository) => repository.listOrderTeamIds(target)),
-      Effect.flatMap((teams) => this.publish("all", teams)),
-      Effect.ignore({
-        log: "Debug",
-        message: `ShopAgent.publishToTeams: shop=${this.name}`,
-      }),
+    return orderTeamIds(target).pipe(
+      Effect.flatMap((teams) => this.publish(touched, teams)),
     );
   }
 
   /**
    * No D1 read: `startedByEmail` is a snapshot on the row, so the queue reads
-   * the same after the member is deleted. Both halves of `Domain.QueueView`
-   * come from one call so the loader and the socket paint one snapshot.
+   * the same after the member is deleted. Every half of `Domain.QueueView`
+   * comes from one call so the loader and the socket paint one snapshot, and
+   * the tiers and the Done count agree with each other.
+   *
+   * `query.team` narrows Done the same way it narrows the tiers, and a team
+   * the member is not on narrows it to nothing — the same answer the
+   * repository gives for the tiers, reached here because `listDone` takes the
+   * team list already narrowed.
    */
-  private readQueue(teamIds: readonly string[]) {
+  private readQueue(
+    teamIds: readonly Domain.TeamId[],
+    memberEmail: Domain.Email,
+    query: Domain.QueueQuery,
+  ) {
+    const shop = this.name;
     return Effect.gen(function* () {
       const repository = yield* WorkflowRunRepository;
-      const rows = yield* repository.listQueue({ teamIds });
-      const now = yield* Clock.currentTimeMillis;
-      const done = yield* repository.listDone({
+      const started = yield* Clock.currentTimeMillis;
+      const tiers = yield* repository.listQueue({
         teamIds,
-        since: now - Domain.DONE_WINDOW_MS,
-        limit: Domain.DONE_LIMIT,
+        memberEmail,
+        query,
       });
-      const items = rows.flatMap((row): Domain.QueueItem[] => {
-        const [first, ...rest] = row.steps;
-        return first === undefined
-          ? []
-          : [
-              {
-                run: row.run,
-                steps: [first, ...rest],
-                stageCount: row.stageCount,
-                note: row.note,
-              },
-            ];
+      const doneTeamIds =
+        query.team === null
+          ? teamIds
+          : teamIds.filter((teamId) => teamId === query.team);
+      const done = yield* repository.listDone({
+        teamIds: doneTeamIds,
+        since: started - Domain.DONE_WINDOW_MS,
+        limit: query.limits.done,
       });
-      return { items, done } satisfies Domain.QueueView;
+      /**
+       * The fan-out this read was capped to bound, measured on real shops:
+       * `items` is what left the object, and it must stay at or under the sum
+       * of `query.limits`.
+       */
+      const items = Object.values(tiers.tiers).reduce(
+        (sum, tier) => sum + tier.items.length,
+        0,
+      );
+      const team = query.team ?? "all";
+      const ms = (yield* Clock.currentTimeMillis) - started;
+      yield* Effect.logInfo(
+        `ShopAgent.readQueue: shop=${shop} teams=${String(teamIds.length)} team=${team} items=${String(items)} done=${String(done.items.length)} ms=${String(ms)}`,
+      ).pipe(
+        Effect.annotateLogs({
+          shop,
+          teams: teamIds.length,
+          team,
+          items,
+          done: done.items.length,
+          ms,
+        }),
+      );
+      return { ...tiers, done } satisfies Domain.QueueView;
     });
   }
 
   listQueue(
     input: typeof Domain.ListQueueInput.Encoded,
   ): Promise<Domain.QueueView> {
-    const readQueue = (teamIds: readonly string[]) => this.readQueue(teamIds);
+    const readQueue = (
+      teamIds: readonly Domain.TeamId[],
+      memberEmail: Domain.Email,
+      query: Domain.QueueQuery,
+    ) => this.readQueue(teamIds, memberEmail, query);
     return this.runEffect(
       callableEffect("ShopAgent.listQueue", Domain.ListQueueInput, {
         role: "rpc",
-      })(({ teamIds }) => readQueue(teamIds))(input),
+      })(({ teamIds, memberEmail, query }) =>
+        readQueue(teamIds, memberEmail, query),
+      )(input),
     );
   }
 
@@ -3102,18 +3179,22 @@ export class ShopAgent extends Agent {
   subscribeQueue(
     input: typeof Domain.SubscribeQueueInput.Encoded,
   ): Promise<Domain.QueueView> {
-    const readQueue = (teamIds: readonly string[]) => this.readQueue(teamIds);
+    const readQueue = (
+      teamIds: readonly Domain.TeamId[],
+      memberEmail: Domain.Email,
+      query: Domain.QueueQuery,
+    ) => this.readQueue(teamIds, memberEmail, query);
     return this.runEffect(
       memberCallableEffect(
         "ShopAgent.subscribeQueue",
         Domain.SubscribeQueueInput,
         { onExcessProperty: "error" },
-      )(({ subscriberId }, { teamIds }) =>
+      )(({ subscriberId, query }, { teamIds, memberEmail }) =>
         Effect.gen(function* () {
           const { connection } = getCurrentAgent<ShopAgent>();
           if (connection)
             setSubscription(connection, { subscriberId, orderId: null });
-          return yield* readQueue(teamIds);
+          return yield* readQueue(teamIds, memberEmail, query);
         }),
       )(input),
     );
@@ -3641,7 +3722,7 @@ export class ShopAgent extends Agent {
     input: typeof Domain.AssignRunStepTeamInput.Encoded,
   ): Promise<Domain.AssignRunStepTeamResult> {
     const shop = this.name;
-    const publish = () => this.publish("all");
+    const publish = (teams: PublishTeams) => this.publish("all", teams);
     const teamExists = (teamId: string) => this.teamExists(teamId);
     return this.runEffect(
       callableEffect(
@@ -3655,6 +3736,12 @@ export class ShopAgent extends Agent {
             return {
               _tag: "TeamNotFound",
             } satisfies Domain.AssignRunStepTeamResult;
+          /**
+           * Both sides of the move: the team losing the step is only nameable
+           * before the write, and the team gaining it only after, so the
+           * queues that change are the union of the two reads.
+           */
+          const before = yield* orderTeamIds({ runStepId });
           yield* (yield* WorkflowRunRepository).assignRunStepTeam({
             runStepId,
             team: { id: team.id, name: team.name },
@@ -3662,7 +3749,9 @@ export class ShopAgent extends Agent {
           yield* Effect.logInfo(
             `ShopAgent.assignRunStepTeam: shop=${shop} step=${runStepId} teamId=${teamId}`,
           ).pipe(Effect.annotateLogs({ shop, step: runStepId, teamId }));
-          yield* publish();
+          yield* publish(
+            unionTeams(before, yield* orderTeamIds({ runStepId })),
+          );
           return { _tag: "Assigned" } satisfies Domain.AssignRunStepTeamResult;
         }).pipe(
           Effect.catchTags({

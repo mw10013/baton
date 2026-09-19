@@ -91,6 +91,17 @@ describe("OrdersSyncWorkflow shape", () => {
     await expect(instance.waitForStatus("complete")).resolves.not.toThrow();
   });
 
+  /**
+   * This test prints two "uncaught exception; source = Uncaught (in promise)"
+   * lines (`Error: bulk submit failed`, then `OrdersSyncWorkflowError: Step
+   * failed: run-bulk-orders-query`). They are not a failure: miniflare's
+   * Workflows engine catches the run's rejection and marks the instance
+   * errored, which the assertions below prove, but workerd still logs the
+   * rejection as it crosses the RPC boundary between the engine and the user
+   * worker. Present on wrangler 4.135 too, so an upstream miniflare matter;
+   * the test stays because it is the only proof the error sink records the
+   * failure.
+   */
   it("errors through the on-orders-sync-error sink when a step exhausts its retries", async () => {
     const shop = "orders-error.myshopify.com";
     await using introspector = await introspectWorkflow(

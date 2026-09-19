@@ -35,6 +35,7 @@ interface CookieRow {
   samesite: bigint;
   expires_utc: bigint;
   has_expires: bigint;
+  creation_utc: bigint;
 }
 
 const ensureMacOS =
@@ -90,20 +91,43 @@ export const readSafeStoragePassword = Effect.gen(function* () {
 export const chromeProfile = () =>
   process.env.SHOPIFY_CHROME_PROFILE ?? "Default";
 
-/** Expiry is a local freshness check, not proof that Shopify accepts a session. */
+/**
+ * How long an exported admin session is trusted before the setup re-reads
+ * Chrome. `_merchant_essential` is issued with a one-year expiry and replaced
+ * on every admin load, so its expiry says nothing about whether the session
+ * behind it is still accepted; its age does. A day matches the lifetime the
+ * old `koa.sid` carried, which is the only figure Shopify has ever shown.
+ */
+export const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * A local freshness check, not proof that Shopify accepts a session.
+ *
+ * Two cookies count, because Shopify changed which one carries the admin
+ * session. Until September 2026 it was `koa.sid` on `admin.shopify.com`, a
+ * 24-hour cookie whose expiry was the check. Since then an admin load sets no
+ * cookie on that host at all and re-issues `_merchant_essential` on
+ * `.shopify.com` instead, so that cookie is the signal now, judged by
+ * `issuedAt` — when Chrome created it, or when the export was written — rather
+ * than by its expiry.
+ */
 export const adminSessionFresh = (
   cookies: readonly {
     readonly name: string;
     readonly domain: string;
     readonly expires: number;
   }[],
+  issuedAt: number,
 ) =>
   cookies.some(
     (cookie) =>
-      cookie.name === "koa.sid" &&
-      cookie.domain === "admin.shopify.com" &&
-      (cookie.expires === -1 ||
-        cookie.expires * 1000 > Date.now() + 5 * 60_000),
+      (cookie.name === "koa.sid" &&
+        cookie.domain === "admin.shopify.com" &&
+        (cookie.expires === -1 ||
+          cookie.expires * 1000 > Date.now() + 5 * 60_000)) ||
+      (cookie.name === "_merchant_essential" &&
+        cookie.domain === ".shopify.com" &&
+        issuedAt > Date.now() - SESSION_MAX_AGE_MS),
   );
 
 const makeDecrypt = (key: Buffer) => {
@@ -159,13 +183,26 @@ const readShopifyCookies = (
       const db = new DatabaseSync(dbPath);
       try {
         const stmt = db.prepare(
-          `select name, value, encrypted_value, host_key, path, is_secure, is_httponly, samesite, expires_utc, has_expires
+          `select name, value, encrypted_value, host_key, path, is_secure, is_httponly, samesite, expires_utc, has_expires, creation_utc
          from cookies
          where host_key in (${SHOPIFY_HOSTS.map(() => "?").join(", ")})`,
         );
         stmt.setReadBigInts(true);
         const rows = stmt.all(...SHOPIFY_HOSTS) as unknown as CookieRow[];
-        return rows.map(
+        // When Chrome last created the session cookie: the admin re-issues it
+        // on every load, so this is when the admin was last open in Chrome.
+        const issuedAt = rows
+          .filter((row) => row.name === "_merchant_essential")
+          .reduce(
+            (latest, row) =>
+              Math.max(
+                latest,
+                Number(row.creation_utc / 1000n) -
+                  Number(chromeEpochOffset) * 1000,
+              ),
+            0,
+          );
+        const cookies = rows.map(
           ({
             name,
             value,
@@ -192,6 +229,7 @@ const readShopifyCookies = (
                 : -1,
           }),
         );
+        return { cookies, issuedAt };
       } finally {
         db.close();
       }
@@ -210,13 +248,14 @@ const readShopifyCookies = (
  */
 export const writeStorageState = (
   output: string,
-  cookies: Effect.Success<ReturnType<typeof readShopifyCookies>>,
+  cookies: Effect.Success<ReturnType<typeof readShopifyCookies>>["cookies"],
+  issuedAt: number,
 ) =>
   Effect.gen(function* () {
-    if (!adminSessionFresh(cookies))
+    if (!adminSessionFresh(cookies, issuedAt))
       yield* new AuthRefreshError({
         message:
-          "Chrome's Shopify admin session is expired or missing. Log into admin.shopify.com in the selected Chrome profile, then retry. The previous export was kept.",
+          "Chrome's Shopify admin session is expired or missing. Open the store's admin at https://admin.shopify.com in a normal window of the selected Chrome profile, wait for the dashboard to load, then retry. The previous export was kept.",
       });
     const fs = yield* FileSystem.FileSystem;
     const parent = path.dirname(output);
@@ -270,11 +309,11 @@ export const refreshShopifyAuth = ({
     const decrypt = makeDecrypt(
       pbkdf2Sync(yield* readSafeStoragePassword, "saltysalt", 1003, 16, "sha1"),
     );
-    const cookies = yield* readShopifyCookies(
+    const { cookies, issuedAt } = yield* readShopifyCookies(
       yield* copyCookieDatabase(cookiesPath),
       decrypt,
     );
-    if (!dryRun) yield* writeStorageState(output, cookies);
+    if (!dryRun) yield* writeStorageState(output, cookies, issuedAt);
     return cookies.length;
   }).pipe(
     Effect.scoped,
