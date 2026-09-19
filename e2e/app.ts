@@ -121,7 +121,7 @@ export async function gotoApp(page: Page): Promise<FrameLocator> {
  * the substring match and the no-op when nothing matches — a console that
  * renamed or vanished must not fail a suite that does not depend on it.
  */
-const closeDevConsole = async (page: Page): Promise<void> => {
+export const closeDevConsole = async (page: Page): Promise<void> => {
   const panel = page.locator('[class*="ExtensionsTable"]').first();
   if ((await panel.count()) === 0) return;
   /** Expanded means the panel's own rows are on screen, not just its pill. */

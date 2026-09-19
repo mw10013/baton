@@ -125,3 +125,41 @@ test("adding a member past the plan's cap is refused with the plan's ceiling", a
   ).toBeVisible();
   await expect(frame.getByText(MEMBER_EMAIL, { exact: true })).toHaveCount(0);
 });
+
+/**
+ * Derived seats at the surface. The seed writes two more members than the
+ * widest tier grants, so the shop is over its seats whichever plan the store
+ * holds, and the seat count is read back out of the banner rather than assumed:
+ * `Domain.memberHasSeat` is derived from the plan in force, and a test that
+ * hard-coded a tier would pass or fail on which plan the dev store happens to
+ * be subscribed to.
+ */
+test("a shop over its seats badges the members without one and says how to fix it", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const seeded = Array.from(
+    { length: Domain.MAX_ENTITLEMENTS.maxMembers + 2 },
+    (_, index) => `e2e.seat${String(index).padStart(2, "0")}@example.com`,
+  );
+  await seedMembers(seedConfig(), seeded, []);
+
+  const frame = await gotoApp(page);
+  await clickHoisted(page.getByRole("link", { name: "Members", exact: true }));
+  await expect(frame.locator('s-page[heading="Members"]')).toBeVisible();
+
+  const banner = frame.getByText(
+    /Your plan includes [\d,]+ members\. Only the [\d,]+ oldest can sign in until you remove members or upgrade\./u,
+  );
+  await expect(banner).toBeVisible();
+  const seats = Number(
+    /includes (?<seats>[\d,]+) members/u
+      .exec((await banner.textContent()) ?? "")
+      ?.groups?.seats.replaceAll(",", "") ?? "",
+  );
+  expect(seats).toBeGreaterThan(0);
+  /* The badge is on the newest rows, so the count is the overflow exactly. */
+  await expect(frame.getByText("No seat", { exact: true })).toHaveCount(
+    seeded.length - seats,
+  );
+});

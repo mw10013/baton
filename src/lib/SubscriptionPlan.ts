@@ -68,6 +68,21 @@ const PLAN_HANDLE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const PLAN_HANDLE_BOUNDARY_SKEW_MS = 5 * 60 * 1000;
 
 /**
+ * How long the cache stays fresh after the merchant opens the plan selection
+ * page.
+ *
+ * The billing redirect back into `/app` carries `plan_handle` and forces a
+ * revalidation, so in the happy path this window is never used. It exists for
+ * the redirect that is lost — the merchant closes the tab, the navigation dies,
+ * the admin swallows it — where the only other signal is
+ * {@link PLAN_HANDLE_MAX_AGE_MS}, and a merchant who has just paid for an
+ * upgrade should not spend a day on the old tier. It bounds that to minutes and
+ * costs one Partner call per Manage plan click, which is a click a merchant
+ * makes a handful of times in the life of a shop.
+ */
+const PLAN_HANDLE_MANAGE_WINDOW_MS = 15 * 60 * 1000;
+
+/**
  * The freshness deadline for a revalidation performed at `now`.
  *
  * The boundary clamp is applied unconditionally rather than only when Shopify
@@ -93,14 +108,30 @@ const Unsubscribed = {
   _tag: "Unsubscribed",
 } as const satisfies Domain.PlanStatus;
 
-const subscribed = (handle: Domain.PlanHandle) =>
+const decodePlanHandle = Schema.decodeUnknownOption(Domain.PlanHandle);
+
+/**
+ * The one place a `Subscribed` status is built, so the cached path and the
+ * revalidated path cannot drift about what a scheduled change means. Both feed
+ * it the same three raw facts; a `pendingHandle` outside the allowlist is no
+ * scheduled change, exactly as an unrecognized `planHandle` is no cache entry.
+ */
+const subscribed = (input: {
+  readonly handle: Domain.PlanHandle;
+  readonly pendingHandle: string | null;
+  readonly boundaryAt: number | null;
+  readonly cancelAtEndOfCycle: boolean;
+}) =>
   ({
     _tag: "Subscribed",
-    handle,
-    plan: Domain.planOfHandle(handle),
+    handle: input.handle,
+    plan: Domain.planOfHandle(input.handle),
+    pendingPlan: Option.getOrNull(
+      Option.map(decodePlanHandle(input.pendingHandle), Domain.planOfHandle),
+    ),
+    boundaryAt: input.boundaryAt,
+    cancelAtEndOfCycle: input.cancelAtEndOfCycle,
   }) as const satisfies Domain.PlanStatus;
-
-const decodePlanHandle = Schema.decodeUnknownOption(Domain.PlanHandle);
 
 /**
  * Reads the cached entry, or `Option.none()` when it cannot be trusted.
@@ -123,7 +154,14 @@ const cachedStatus = (
     return Option.none();
   return shopSession.planHandle === null
     ? Option.some(Unsubscribed)
-    : Option.map(decodePlanHandle(shopSession.planHandle), subscribed);
+    : Option.map(decodePlanHandle(shopSession.planHandle), (handle) =>
+        subscribed({
+          handle,
+          pendingHandle: shopSession.pendingPlanHandle,
+          boundaryAt: shopSession.planBoundaryAt,
+          cancelAtEndOfCycle: shopSession.planCancelAtEndOfCycle,
+        }),
+      );
 };
 
 export class SubscriptionPlan extends Context.Service<
@@ -152,6 +190,19 @@ export class SubscriptionPlan extends Context.Service<
     readonly refresh: (
       shop: Domain.Shop,
     ) => Effect.Effect<Domain.PlanStatus, SubscriptionPlanError>;
+    /**
+     * Announces that the merchant is about to change their plan, by pulling the
+     * cache deadline forward to {@link PLAN_HANDLE_MANAGE_WINDOW_MS}.
+     *
+     * Called as the Manage plan button is clicked, not after: the merchant
+     * leaves the iframe for `admin.shopify.com` and may never come back through
+     * the redirect that would otherwise force the revalidation. Never extends a
+     * deadline and never writes a never-fetched row, so calling it on a shop
+     * that then changes nothing costs one Partner call at worst.
+     */
+    readonly expectChange: (
+      shop: Domain.Shop,
+    ) => Effect.Effect<void, SubscriptionPlanError>;
   }
 >()("SubscriptionPlan") {
   /**
@@ -183,21 +234,20 @@ export class SubscriptionPlan extends Context.Service<
             ),
           );
         const now = yield* Clock.currentTimeMillis;
-        const handle = Option.match(active, {
-          onNone: () => null,
-          onSome: ({ handle }) => handle,
-        });
+        const contract = Option.getOrNull(active);
+        const handle = contract?.handle ?? null;
         yield* repository
           .updateShopSessionPlan({
             shop: shopSession.shop,
             planHandle: handle,
             planHandleExpiresAt: planHandleExpiresAt(
               now,
-              Option.match(active, {
-                onNone: () => null,
-                onSome: ({ boundaryAt }) => boundaryAt,
-              }),
+              contract?.boundaryAt ?? null,
             ),
+            pendingPlanHandle: contract?.pendingHandle ?? null,
+            planBoundaryAt: contract?.boundaryAt ?? null,
+            planCycleStartAt: contract?.cycleStartAt ?? null,
+            planCancelAtEndOfCycle: contract?.cancelAtEndOfCycle ?? false,
           })
           .pipe(
             Effect.mapError(
@@ -207,25 +257,64 @@ export class SubscriptionPlan extends Context.Service<
         yield* Effect.logDebug(
           `SubscriptionPlan.revalidate: shop=${shopSession.shop} handle=${handle ?? "none"}`,
         ).pipe(Effect.annotateLogs({ shop: shopSession.shop, handle }));
-        // Revoke on flip. Every socket gate checks the plan at connect only,
-        // and the keepalive keeps a socket open indefinitely, so a lapse that
-        // the cache has just learned about would otherwise never reach an
-        // open tab. Closing the shop's connections makes each reconnect ask
-        // the gate again, which now answers `402`. Only on the transition
-        // (a handle was cached and there is none now): a shop already known
-        // to be unsubscribed has no connections the gate let through, and a
-        // never-cached row has nothing to compare. Failure is logged, not
-        // raised — the plan answer is correct regardless.
-        if (handle === null && shopSession.planHandle !== null)
+        // Revoke on any change of handle, not only on a lapse. Every socket
+        // gate checks the plan at connect only, and the keepalive keeps a
+        // socket open indefinitely, so a change the cache has just learned
+        // about would otherwise never reach an open tab. Closing the shop's
+        // connections makes each reconnect ask the gate again, which now
+        // answers with the new plan: a lapse becomes `402`, and a downgrade
+        // that leaves a member outside `Domain.memberHasSeat` becomes `402`
+        // for that member while every seated member reconnects and passes.
+        //
+        // A never-cached row is excluded explicitly: without that, the very
+        // first resolve of every shop would look like a change and revoke the
+        // connections of a merchant whose plan did not move. Failure is
+        // logged, not raised — the plan answer is correct regardless.
+        const firstFetch =
+          shopSession.planHandle === null &&
+          shopSession.planHandleExpiresAt === null;
+        if (!firstFetch && handle !== shopSession.planHandle)
           yield* shopAgentClient.revokeAllConnections(shopSession.shop).pipe(
             Effect.ignore({
               log: "Warn",
-              message: `SubscriptionPlan.revalidate: shop=${shopSession.shop}: revoke on lapse failed`,
+              message: `SubscriptionPlan.revalidate: shop=${shopSession.shop}: revoke on plan change failed`,
             }),
           );
-        return Option.match(active, {
-          onNone: () => Unsubscribed,
-          onSome: ({ handle }) => subscribed(handle),
+        if (contract === null) return Unsubscribed;
+        // The object counts orders against the cycle and meters them, so it
+        // needs the period; it still learns nothing about the plan itself.
+        // Both pushes are best-effort for the same reason the revoke is: the
+        // plan answer this function exists to give is correct regardless, and
+        // the next revalidation retries.
+        if (contract.cycleStartAt !== null)
+          yield* shopAgentClient
+            .setBillingCycle(shopSession.shop, {
+              shopGid: shopSession.shopGid,
+              cycleStartAt: contract.cycleStartAt,
+              cycleEndAt: contract.boundaryAt,
+            })
+            .pipe(
+              Effect.ignore({
+                log: "Warn",
+                message: `SubscriptionPlan.revalidate: shop=${shopSession.shop}: billing cycle push failed`,
+              }),
+            );
+        if (contract.usageQuantity !== null)
+          yield* shopAgentClient
+            .reconcileUsage(shopSession.shop, {
+              quantity: contract.usageQuantity,
+            })
+            .pipe(
+              Effect.ignore({
+                log: "Warn",
+                message: `SubscriptionPlan.revalidate: shop=${shopSession.shop}: usage reconciliation failed`,
+              }),
+            );
+        return subscribed({
+          handle: contract.handle,
+          pendingHandle: contract.pendingHandle,
+          boundaryAt: contract.boundaryAt,
+          cancelAtEndOfCycle: contract.cancelAtEndOfCycle,
         });
       });
 
@@ -259,7 +348,23 @@ export class SubscriptionPlan extends Context.Service<
           : yield* revalidate(shopSession.value);
       });
 
-      return SubscriptionPlan.of({ resolve, refresh });
+      const expectChange = Effect.fn("SubscriptionPlan.expectChange")(
+        function* (shop: Domain.Shop) {
+          yield* repository
+            .shortenShopSessionPlanExpiry({
+              shop,
+              notAfter:
+                (yield* Clock.currentTimeMillis) + PLAN_HANDLE_MANAGE_WINDOW_MS,
+            })
+            .pipe(
+              Effect.mapError(
+                planError(`Plan cache deadline write failed for ${shop}`),
+              ),
+            );
+        },
+      );
+
+      return SubscriptionPlan.of({ resolve, refresh, expectChange });
     }),
   );
 }
@@ -281,29 +386,44 @@ export class SubscriptionPlan extends Context.Service<
  * enforcement path later.
  *
  * The cost is one extra cached D1 read per page view — `authenticateAppRoute`
- * resolves in `beforeLoad` and this resolves again. If a third UI path ever
- * needs it, memoize per request; do not thread the value through the client.
+ * resolves in `beforeLoad` and this resolves again. A loader that needs more
+ * than the entitlements off the status resolves once and calls
+ * {@link entitlementsOfStatus} rather than paying a third read.
  */
 export const resolveEntitlements = Effect.fn("resolveEntitlements")(function* (
   shop: Domain.Shop,
 ) {
-  return yield* Match.value(
+  return yield* entitlementsOfStatus(
+    shop,
     yield* (yield* SubscriptionPlan).resolve(shop),
-  ).pipe(
-    Match.tagsExhaustive({
-      Subscribed: ({ plan }) => Effect.succeed(Domain.entitlementsOfPlan(plan)),
-      Unsubscribed: () =>
-        Effect.gen(function* () {
-          const shopifyPartner = yield* ShopifyPartner;
-          return yield* Effect.fail(
-            redirect({
-              href: planSelectionExitIframeHref(
-                shopifyPartner.planSelectionUrl(shop),
-                shop,
-              ),
-            }),
-          );
-        }),
-    }),
   );
 });
+
+/**
+ * The `Unsubscribed` arm of {@link resolveEntitlements}, split out so a loader
+ * that already holds the resolved status for another reason (the home page
+ * reads the scheduled change off it) can take the entitlements from the same
+ * read instead of resolving twice. The redirect lives here once.
+ */
+export const entitlementsOfStatus = Effect.fn("entitlementsOfStatus")(
+  function* (shop: Domain.Shop, status: Domain.PlanStatus) {
+    return yield* Match.value(status).pipe(
+      Match.tagsExhaustive({
+        Subscribed: ({ plan }) =>
+          Effect.succeed(Domain.entitlementsOfPlan(plan)),
+        Unsubscribed: () =>
+          Effect.gen(function* () {
+            const shopifyPartner = yield* ShopifyPartner;
+            return yield* Effect.fail(
+              redirect({
+                href: planSelectionExitIframeHref(
+                  shopifyPartner.planSelectionUrl(shop),
+                  shop,
+                ),
+              }),
+            );
+          }),
+      }),
+    );
+  },
+);

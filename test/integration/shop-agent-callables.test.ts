@@ -126,6 +126,29 @@ describe("ShopAgent callable role gate", () => {
     socket.close();
   });
 
+  /**
+   * The Worker-only RPCs stay off the socket. Each carries an input a browser
+   * must never supply — a billing period, Shopify's meter reading, a revoke —
+   * and the first test would catch a stray decorator by set equality, but
+   * naming them here is what says the omission is deliberate.
+   */
+  it("keeps the Worker's plain RPCs out of the callable surface", async () => {
+    const shop = "callables-rpc.myshopify.com";
+    const socket = await openAgentSocket(shop, merchantHeaders());
+    await socket.waitForMessage((data) => data.includes("cf_agent_identity"));
+    const callables = await decoratedCallables(shop);
+    for (const name of [
+      "setBillingCycle",
+      "reconcileUsage",
+      "flushUsageEvents",
+      "revokeAllConnections",
+      "deleteOrder",
+      "onOrdersStream",
+    ])
+      expect(callables, `${name} must not be @callable()`).not.toContain(name);
+    socket.close();
+  });
+
   it("refuses every merchant callable on a member connection", async () => {
     const shop = "callables-member.myshopify.com";
     const socket = await memberSocket(shop);

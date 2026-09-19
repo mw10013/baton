@@ -37,27 +37,50 @@ Two public plans, one per tier, each with one usage meter. Handles must match
 `Domain.PlanHandle` and `Domain.USAGE_METER_ORDER` exactly (case-sensitive); tier 1 sizes and
 seats must match `ENTITLEMENTS` in `src/lib/Domain.ts`. All numbers are provisional.
 
-| Field               | Basic                                                                                                      | Pro                                                                                                           |
-| ------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Handle              | `baton-basic`                                                                                              | `baton-pro`                                                                                                   |
-| Display name        | Basic                                                                                                      | Pro                                                                                                           |
-| Billing period      | Monthly                                                                                                    | Monthly                                                                                                       |
-| Monthly charge      | $29                                                                                                        | $79                                                                                                           |
-| Free trial          | 14 days                                                                                                    | none                                                                                                          |
-| Welcome link        | `/app`                                                                                                     | `/app`                                                                                                        |
-| Top features        | 250 orders a billing period included, then $0.15 per order. 3 team members. Unlimited workflows and teams. | 1,000 orders a billing period included, then $0.10 per order. 10 team members. Unlimited workflows and teams. |
-| Usage meter: name   | Orders synced                                                                                              | Orders synced                                                                                                 |
-| Usage meter: handle | `orders-synced`                                                                                            | `orders-synced`                                                                                               |
-| Pricing model       | Tiered, graduated                                                                                          | Tiered, graduated                                                                                             |
-| Charge as           | Cost per unit                                                                                              | Cost per unit                                                                                                 |
-| Tier 1              | Units 1 to 250 at $0.00                                                                                    | Units 1 to 1,000 at $0.00                                                                                     |
-| Tier 2              | Units 251 and up at $0.15                                                                                  | Units 1,001 and up at $0.10                                                                                   |
+| Field               | Basic                                                | Pro                                                  |
+| ------------------- | ---------------------------------------------------- | ---------------------------------------------------- |
+| Handle              | `baton-basic`                                        | `baton-pro`                                          |
+| Display name        | Basic                                                | Pro                                                  |
+| Billing period      | Monthly                                              | Monthly                                              |
+| Monthly charge      | $29                                                  | $79                                                  |
+| Free trial          | 14 days                                              | none                                                 |
+| Welcome link        | `/app`                                               | `/app`                                               |
+| Top features        | See below — one line per feature, 40 characters each | See below — one line per feature, 40 characters each |
+| Usage meter: name   | Orders synced                                        | Orders synced                                        |
+| Usage meter: handle | `orders-synced`                                      | `orders-synced`                                      |
+| Pricing model       | Tiered, graduated                                    | Tiered, graduated                                    |
+| Charge as           | Cost per unit                                        | Cost per unit                                        |
+| Tier 1              | Units 1 to 250 at $0.00                              | Units 1 to 1,000 at $0.00                            |
+| Tier 2              | Units 251 and up at $0.15                            | Units 1,001 and up at $0.10                          |
+
+**Top features** is not one sentence: each feature is its own field, capped at **40 characters**,
+up to eight per plan. Copy that does not fit is copy the dashboard silently truncates, so the
+lines are written to the limit. Enter them in this order:
+
+| #   | Basic                                  | Pro                                      |
+| --- | -------------------------------------- | ---------------------------------------- |
+| 1   | `250 orders included, then $0.15 each` | `1,000 orders included, then $0.10 each` |
+| 2   | `3 team members`                       | `10 team members`                        |
+| 3   | `Unlimited workflows and teams`        | `Unlimited workflows and teams`          |
+| 4   | `Cancel in the same period, no charge` | `Cancel in the same period, no charge`   |
+
+Line 1 must agree with `ordersPerCycle` in `ENTITLEMENTS` and with the meter's tier 2 price;
+line 2 with `maxMembers`. Line 4 states the reversal rule (`OrderRepository.countOrder`): an
+order cancelled inside the period it was counted in gives its charge back, and one cancelled
+later does not. Avoid "up to N orders" — it reads as a hard cap, and orders past the included
+allowance keep syncing and bill at the plan's rate. Avoid "a month" — the period is the billing
+cycle, which is what every other surface now says.
 
 - The meter counts orders synced into Baton. The app posts one event per counted order to the
   App Events API under the meter handle, and a reversal for an order cancelled inside the same
   billing period. The $0.00 first tier is the included allowance: Flat rate has no included
   units field, and graduated tiers price each unit by the tier it falls in, so the 251st order
   is the first one billed. Tier 1's size must equal `ordersPerCycle` in `ENTITLEMENTS`.
+- **Do not add or re-handle a meter on a live plan without a migration.** An App Pricing
+  contract carries the item set it was created with, so existing subscribers keep a contract
+  with no meter item: their events are accepted but the contract never reports a usage quantity,
+  and reconciliation is blind for them until a plan switch replaces the contract. Measured
+  2026-09-19 on the dev store.
 - No free plan. No yearly option: usage meters require monthly billing.
 - The welcome link is a relative App Home path. Shopify appends `?plan_handle=<handle>` to it,
   and `src/routes/app.tsx` treats any `plan_handle` in the search string as the billing redirect
@@ -89,6 +112,20 @@ inside the plan editor.
 - App Events API (usage events): no separate credential. The app exchanges its Client ID and
   Secret (`SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`) for a one-hour bearer token at
   `https://api.shopify.com/auth/access_token` with `grant_type: client_credentials`.
+- `SHOPIFY_APP_EVENTS_API_VERSION` (`wrangler.jsonc`): the App Events API version in the event
+  URL (`https://api.shopify.com/app/<version>/events`). Versioned quarterly like the other
+  Shopify APIs; a version the API does not serve fails every usage event, which shows up as a
+  rising "Usage events pending" on `/admin/shop/<shop>`.
+- Two things about this API differ from Shopify's documentation, both verified against the live
+  endpoint on 2026-09-19 and both handled in `src/lib/ShopifyAppEvents.ts`. It **requires a
+  `User-Agent`**: Cloudflare Workers' `fetch` sends none, and `api.shopify.com` then answers
+  `403` with an HTML body from its edge, before the credentials are read. And the token response
+  is `{ access_token, token_type }`, not the documented `{ access_token, scope, expires_in }`.
+- Verifying usage end to end needs a **paid order placed inside the current billing cycle**;
+  orders placed before the cycle started are exempt by design. Confirm in the Dev Dashboard
+  under Logs with type **App event**: a working event is logged `App billing event` /
+  `orders-synced` / `OK`. An event that reaches Shopify but matches no meter is logged
+  non-billable, and the API answers `202` either way.
 
 ### Enabling an environment
 

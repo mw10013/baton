@@ -6,6 +6,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Option, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
+import { ManagePlanButton } from "@/components/ManagePlanButton";
 import { QuotaBanners } from "@/components/QuotaBanners";
 import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
@@ -297,7 +298,7 @@ const getLoaderData = createServerFn({ method: "GET" })
               team,
             }),
             usage: yield* client.getUsage(session.shop),
-            ordersPerMonth: (yield* resolveEntitlements(shop)).ordersPerMonth,
+            ordersPerCycle: (yield* resolveEntitlements(shop)).ordersPerCycle,
           } satisfies Domain.OrdersIndexLoaderData;
         }),
       ),
@@ -329,7 +330,7 @@ export const Route = createFileRoute("/app/orders/")({
  * underneath it.
  */
 function RouteComponent() {
-  const { shop } = Route.useRouteContext();
+  const { shop, managePlanUrl } = Route.useRouteContext();
   const {
     q = null,
     state = null,
@@ -340,7 +341,7 @@ function RouteComponent() {
   const navigate = useNavigate({ from: Route.fullPath });
   const shopify = useAppBridge();
   const resourceLinkTarget = useResourceLinkTarget();
-  const { view: initialView, usage, ordersPerMonth } = Route.useLoaderData();
+  const { view: initialView, usage, ordersPerCycle } = Route.useLoaderData();
   /**
    * The repository pages forward only (keyset on `processedAt, id`), so
    * "previous" is a stack of the cursors already visited: the top is the
@@ -760,7 +761,11 @@ function RouteComponent() {
       <SocketBanner />
       {/* Above the sync button on purpose: the merchant who notices an order
           missing here is the one these two banners are for. */}
-      <QuotaBanners usage={usage} ordersPerMonth={ordersPerMonth} />
+      <QuotaBanners
+        usage={usage}
+        ordersPerCycle={ordersPerCycle}
+        action={<ManagePlanButton url={managePlanUrl} />}
+      />
       {/* Unconditional, empty list included: the resource-index template keeps
           the title-bar primary action and lets the empty state carry a second
           copy, so "sync is top right" holds on the visit where it matters most

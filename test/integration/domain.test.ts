@@ -758,3 +758,81 @@ describe("Domain.readySteps", () => {
     );
   });
 });
+
+describe("Domain.memberHasSeat", () => {
+  it("a member holds a seat when fewer than maxMembers members were added before them", () => {
+    strictEqual(Domain.memberHasSeat(0, 3), true);
+    strictEqual(Domain.memberHasSeat(2, 3), true);
+    strictEqual(Domain.memberHasSeat(3, 3), false);
+  });
+
+  /**
+   * The downgrade case, which is the whole reason the rule is derived: the same
+   * rank answers differently under a smaller plan, with nothing written.
+   */
+  it("the same rank loses its seat when the plan in force grants fewer", () => {
+    const rank = Domain.MAX_ENTITLEMENTS.maxMembers - 1;
+    strictEqual(
+      Domain.memberHasSeat(rank, Domain.entitlementsOfPlan("pro").maxMembers),
+      true,
+    );
+    strictEqual(
+      Domain.memberHasSeat(rank, Domain.entitlementsOfPlan("basic").maxMembers),
+      false,
+    );
+  });
+});
+
+describe("Domain.orderCountsTowardCycle", () => {
+  const CYCLE = 1000;
+  const countable = { fullyPaid: true, cancelledAt: null, processedAt: CYCLE };
+
+  it("an order counts toward the cycle when it is paid, not cancelled, and placed no earlier than the cycle it was first stored in", () => {
+    strictEqual(Domain.orderCountsTowardCycle(countable, CYCLE), true);
+    strictEqual(
+      Domain.orderCountsTowardCycle({ ...countable, fullyPaid: false }, CYCLE),
+      false,
+    );
+    strictEqual(
+      Domain.orderCountsTowardCycle(
+        { ...countable, cancelledAt: CYCLE },
+        CYCLE,
+      ),
+      false,
+    );
+    strictEqual(
+      Domain.orderCountsTowardCycle(
+        { ...countable, processedAt: CYCLE - 1 },
+        CYCLE,
+      ),
+      false,
+    );
+  });
+});
+
+describe("Domain.usageEventIsDead", () => {
+  it("a queued event is dead once the cycle that dated it has ended", () => {
+    strictEqual(Domain.usageEventIsDead(999, 1000), true);
+    strictEqual(Domain.usageEventIsDead(1000, 1000), false);
+    strictEqual(Domain.usageEventIsDead(1001, 1000), false);
+  });
+});
+
+describe("Domain.cycleAtOrderCeiling", () => {
+  it("the cycle is at its ceiling when the count has reached maxOrdersPerCycle", () => {
+    const { maxOrdersPerCycle } = Domain.ShopLimits;
+    strictEqual(Domain.cycleAtOrderCeiling(maxOrdersPerCycle - 1), false);
+    strictEqual(Domain.cycleAtOrderCeiling(maxOrdersPerCycle), true);
+    strictEqual(Domain.cycleAtOrderCeiling(maxOrdersPerCycle + 1), true);
+  });
+});
+
+describe("Domain.orderIsSeeded", () => {
+  it("a seeded order is one whose id carries the fixture prefix", () => {
+    strictEqual(
+      Domain.orderIsSeeded(`${Domain.SEED_ORDER_ID_PREFIX}1001`),
+      true,
+    );
+    strictEqual(Domain.orderIsSeeded("gid://shopify/Order/1001"), false);
+  });
+});

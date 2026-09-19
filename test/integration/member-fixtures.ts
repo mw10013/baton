@@ -90,6 +90,10 @@ export const seedShop = (shop: Domain.Shop) =>
       shop,
       planHandle: SEEDED_PLAN_HANDLE,
       planHandleExpiresAt: Date.now() + 60 * 60 * 1000,
+      pendingPlanHandle: null,
+      planBoundaryAt: null,
+      planCycleStartAt: null,
+      planCancelAtEndOfCycle: false,
     });
   });
 

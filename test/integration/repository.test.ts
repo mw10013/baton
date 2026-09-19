@@ -1,5 +1,5 @@
 import { describe, it } from "@effect/vitest";
-import { assertTrue, strictEqual } from "@effect/vitest/utils";
+import { assertTrue, deepStrictEqual, strictEqual } from "@effect/vitest/utils";
 import { env } from "cloudflare:workers";
 import { Effect, Layer, Option, Schema } from "effect";
 import { afterEach } from "vitest";
@@ -47,6 +47,10 @@ const makeShopSession = (
   refreshTokenExpiresAt: 2000,
   planHandle: null,
   planHandleExpiresAt: null,
+  pendingPlanHandle: null,
+  planBoundaryAt: null,
+  planCycleStartAt: null,
+  planCancelAtEndOfCycle: false,
   ...overrides,
 });
 
@@ -151,6 +155,40 @@ describe("Repository SQL (D1 ShopSession)", () => {
     ),
   );
 
+  it.effect(
+    "shortens the plan deadline but never extends it or writes a never-fetched row",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const repo = yield* Repository;
+          const shop = shopOf("expiry.myshopify.com");
+          yield* repo.upsertShopSession(makeShopSession({ shop }));
+          const deadline = () =>
+            Effect.gen(function* () {
+              const session = yield* repo.findShopSession(shop);
+              return Option.getOrThrow(session).planHandleExpiresAt;
+            });
+          // Never fetched: stays never fetched, or an absent handle would
+          // start reading as a verified absence of any contract.
+          yield* repo.shortenShopSessionPlanExpiry({ shop, notAfter: 500 });
+          strictEqual(yield* deadline(), null);
+          yield* repo.updateShopSessionPlan({
+            shop,
+            planHandle: "baton-pro",
+            planHandleExpiresAt: 3000,
+            pendingPlanHandle: null,
+            planBoundaryAt: null,
+            planCycleStartAt: null,
+            planCancelAtEndOfCycle: false,
+          });
+          yield* repo.shortenShopSessionPlanExpiry({ shop, notAfter: 4000 });
+          strictEqual(yield* deadline(), 3000);
+          yield* repo.shortenShopSessionPlanExpiry({ shop, notAfter: 2000 });
+          strictEqual(yield* deadline(), 2000);
+        }),
+      ),
+  );
+
   it.effect("updateShopSessionPlan rewrites only the plan cache fields", () =>
     run(
       Effect.gen(function* () {
@@ -161,6 +199,10 @@ describe("Repository SQL (D1 ShopSession)", () => {
           shop,
           planHandle: "baton-pro",
           planHandleExpiresAt: 3000,
+          pendingPlanHandle: null,
+          planBoundaryAt: null,
+          planCycleStartAt: null,
+          planCancelAtEndOfCycle: false,
         });
         const shopSession = Option.getOrThrow(
           yield* repo.findShopSession(shop),
@@ -1080,6 +1122,45 @@ describe("Repository SQL (D1 ShopSession)", () => {
           assertTrue(
             Option.isNone(yield* repo.findMemberAccess({ shop, email })),
           );
+        }),
+      ),
+    );
+
+    it.effect("seat rank orders by createdAt then email", () =>
+      run(
+        Effect.gen(function* () {
+          const repo = yield* Repository;
+          const shop = shopOf("t.myshopify.com");
+          yield* seed(repo, [shop]);
+          // Added in one burst, so `createdAt` ties and `email` decides: a rank
+          // that flipped between requests would seat a different member on
+          // every page load.
+          const emails = ["c@example.com", "a@example.com", "b@example.com"];
+          for (const email of emails)
+            yield* repo.addMember({
+              shop,
+              email: emailOf(email),
+              limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+            });
+          const rankOf = (email: string) =>
+            Effect.gen(function* () {
+              const access = yield* repo.findMemberAccess({
+                shop,
+                email: emailOf(email),
+              });
+              return Option.getOrThrow(access).seatRank;
+            });
+          const ranks: number[] = [];
+          for (const email of emails) ranks.push(yield* rankOf(email));
+          // `listMembers` orders by the same rule, so the two must agree.
+          deepStrictEqual(
+            (yield* repo.listMembers(shop)).map((member) => member.email),
+            ["a@example.com", "b@example.com", "c@example.com"],
+          );
+          deepStrictEqual(ranks, [2, 0, 1]);
+          // Removing an earlier member seats the next.
+          yield* repo.deleteMember({ shop, email: emailOf("a@example.com") });
+          strictEqual(yield* rankOf("c@example.com"), 1);
         }),
       ),
     );

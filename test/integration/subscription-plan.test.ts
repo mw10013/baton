@@ -30,13 +30,15 @@ const shopGid = Schema.decodeUnknownSync(Domain.ShopGid)(
   "gid://shopify/Shop/1",
 );
 
-const shopSession = (
-  planHandle: string | null,
-  planHandleExpiresAt: number | null,
-): Omit<Domain.ShopSession, "planHandle" | "planHandleExpiresAt"> & {
-  readonly planHandle?: string | null;
-  readonly planHandleExpiresAt?: number | null;
-} => ({
+const shopSession = (): Omit<
+  Domain.ShopSession,
+  | "planHandle"
+  | "planHandleExpiresAt"
+  | "pendingPlanHandle"
+  | "planBoundaryAt"
+  | "planCycleStartAt"
+  | "planCancelAtEndOfCycle"
+> => ({
   shop,
   shopGid,
   shopAgentId: Schema.decodeUnknownSync(Domain.ShopAgentId)("plan-agent"),
@@ -45,32 +47,87 @@ const shopSession = (
   accessToken: "shpat_x",
   refreshToken: "shprt_x",
   refreshTokenExpiresAt: 2000,
-  planHandle,
-  planHandleExpiresAt,
 });
 
-const seedShopSession = (planHandle: string | null, expiresAt: number | null) =>
+const seedShopSession = (
+  planHandle: string | null,
+  expiresAt: number | null,
+  scheduled: {
+    readonly pendingPlanHandle?: string | null;
+    readonly planBoundaryAt?: number | null;
+    readonly planCycleStartAt?: number | null;
+    readonly planCancelAtEndOfCycle?: boolean;
+  } = {},
+) =>
   Effect.gen(function* () {
     const repository = yield* Repository;
-    yield* repository.upsertShopSession(shopSession(planHandle, expiresAt));
+    yield* repository.upsertShopSession(shopSession());
     yield* repository.updateShopSessionPlan({
       shop,
       planHandle,
       planHandleExpiresAt: expiresAt,
+      pendingPlanHandle: scheduled.pendingPlanHandle ?? null,
+      planBoundaryAt: scheduled.planBoundaryAt ?? null,
+      planCycleStartAt: scheduled.planCycleStartAt ?? null,
+      planCancelAtEndOfCycle: scheduled.planCancelAtEndOfCycle ?? false,
     });
   });
 
+/** A contract with nothing scheduled and no meter, which is what most cases are about. */
+const contract = (
+  overrides: Partial<Domain.ActiveSubscription> & {
+    readonly handle: Domain.PlanHandle;
+  },
+): Domain.ActiveSubscription => ({
+  boundaryAt: null,
+  cycleStartAt: null,
+  pendingHandle: null,
+  cancelAtEndOfCycle: false,
+  usageQuantity: null,
+  ...overrides,
+});
+
+/** The `Subscribed` status a contract with nothing scheduled resolves to. */
+const subscribedTo = (
+  handle: Domain.PlanHandle,
+  overrides: Partial<Extract<Domain.PlanStatus, { _tag: "Subscribed" }>> = {},
+) => ({
+  _tag: "Subscribed" as const,
+  handle,
+  plan: Domain.planOfHandle(handle),
+  pendingPlan: null,
+  boundaryAt: null,
+  cancelAtEndOfCycle: false,
+  ...overrides,
+});
+
+/** What the object was told, so a case can assert the pushes without a Durable Object. */
+interface Pushes {
+  readonly revoked: Ref.Ref<readonly string[]>;
+  readonly cycles: Ref.Ref<readonly Domain.BillingCycleInput[]>;
+  readonly reconciled: Ref.Ref<readonly number[]>;
+}
+
+const makePushes = Effect.gen(function* () {
+  return {
+    revoked: yield* Ref.make<readonly string[]>([]),
+    cycles: yield* Ref.make<readonly Domain.BillingCycleInput[]>([]),
+    reconciled: yield* Ref.make<readonly number[]>([]),
+  } satisfies Pushes;
+});
+
 /**
- * The revoke-on-lapse hook is observed through a recording stub rather than a
- * socket: what this file owns is *when* `SubscriptionPlan` decides to revoke,
- * and `shop-agent-connections.test.ts` owns what `revokeAllConnections` does
- * to a live connection.
+ * The object-facing hooks are observed through a recording stub rather than a
+ * socket or a real Durable Object: what this file owns is *when*
+ * `SubscriptionPlan` decides to revoke, push a cycle, or reconcile, and
+ * `shop-agent-connections.test.ts` owns what `revokeAllConnections` does to a
+ * live connection.
  */
 const run = <A, E>(
   activeSubscription: ShopifyPartner["Service"]["activeSubscription"],
   effect: Effect.Effect<A, E, Repository | SubscriptionPlan>,
   options: {
-    readonly revoked?: Ref.Ref<readonly string[]>;
+    readonly pushes?: Pushes;
     readonly revokeFails?: boolean;
   } = {},
 ) =>
@@ -89,24 +146,41 @@ const run = <A, E>(
         ShopAgentClient,
         new Proxy({} as ShopAgentClient["Service"], {
           get: (_target, name) => {
-            if (name !== "revokeAllConnections")
-              return () =>
-                Effect.die(`ShopAgentClient.${String(name)} not stubbed`);
-            if (options.revokeFails)
-              return () =>
-                Effect.fail(
-                  new ShopAgentClientError({
-                    message: "object unreachable",
-                    retryable: false,
-                    overloaded: false,
-                    cause: new Error("unreachable"),
-                  }),
-                );
-            const { revoked } = options;
-            return (revokedShop: string) =>
-              revoked === undefined
-                ? Effect.void
-                : Ref.update(revoked, (shops) => [...shops, revokedShop]);
+            const { pushes } = options;
+            if (name === "revokeAllConnections") {
+              if (options.revokeFails)
+                return () =>
+                  Effect.fail(
+                    new ShopAgentClientError({
+                      message: "object unreachable",
+                      retryable: false,
+                      overloaded: false,
+                      cause: new Error("unreachable"),
+                    }),
+                  );
+              return (revokedShop: string) =>
+                pushes === undefined
+                  ? Effect.void
+                  : Ref.update(pushes.revoked, (shops) => [
+                      ...shops,
+                      revokedShop,
+                    ]);
+            }
+            if (name === "setBillingCycle")
+              return (_shop: string, input: Domain.BillingCycleInput) =>
+                pushes === undefined
+                  ? Effect.void
+                  : Ref.update(pushes.cycles, (cycles) => [...cycles, input]);
+            if (name === "reconcileUsage")
+              return (_shop: string, input: Domain.ReconcileUsageInput) =>
+                pushes === undefined
+                  ? Effect.void
+                  : Ref.update(pushes.reconciled, (seen) => [
+                      ...seen,
+                      input.quantity,
+                    ]);
+            return () =>
+              Effect.die(`ShopAgentClient.${String(name)} not stubbed`);
           },
         }),
       ),
@@ -115,18 +189,12 @@ const run = <A, E>(
 
 const activeProAtFutureBoundary = () =>
   Effect.succeed(
-    Option.some<Domain.ActiveSubscription>({
-      handle: "baton-pro",
-      boundaryAt: 601_000,
-    }),
+    Option.some(contract({ handle: "baton-pro", boundaryAt: 601_000 })),
   );
 
 const activeProAtPastBoundary = () =>
   Effect.succeed(
-    Option.some<Domain.ActiveSubscription>({
-      handle: "baton-pro",
-      boundaryAt: 600_000,
-    }),
+    Option.some(contract({ handle: "baton-pro", boundaryAt: 600_000 })),
   );
 
 const failedActiveSubscription = () =>
@@ -156,11 +224,10 @@ describe("SubscriptionPlan", () => {
           Effect.gen(function* () {
             const plan = yield* SubscriptionPlan;
             yield* seedShopSession("baton-pro", 2000);
-            assert.deepStrictEqual(yield* plan.resolve(shop), {
-              _tag: "Subscribed",
-              handle: "baton-pro",
-              plan: "pro",
-            });
+            assert.deepStrictEqual(
+              yield* plan.resolve(shop),
+              subscribedTo("baton-pro"),
+            );
             yield* seedShopSession(null, 2000);
             assert.deepStrictEqual(yield* plan.resolve(shop), {
               _tag: "Unsubscribed",
@@ -202,12 +269,7 @@ describe("SubscriptionPlan", () => {
         const calls = yield* Ref.make(0);
         const activeSubscription = () =>
           Ref.update(calls, (count) => count + 1).pipe(
-            Effect.as(
-              Option.some<Domain.ActiveSubscription>({
-                handle: "baton-basic",
-                boundaryAt: null,
-              }),
-            ),
+            Effect.as(Option.some(contract({ handle: "baton-basic" }))),
           );
         yield* run(
           activeSubscription,
@@ -219,11 +281,10 @@ describe("SubscriptionPlan", () => {
               ["retired-plan", 2000],
             ] as const) {
               yield* seedShopSession(handle, expiresAt);
-              assert.deepStrictEqual(yield* plan.resolve(shop), {
-                _tag: "Subscribed",
-                handle: "baton-basic",
-                plan: "basic",
-              });
+              assert.deepStrictEqual(
+                yield* plan.resolve(shop),
+                subscribedTo("baton-basic"),
+              );
             }
             const stored = Option.getOrThrow(
               yield* (yield* Repository).findShopSession(shop),
@@ -263,10 +324,134 @@ describe("SubscriptionPlan", () => {
     }),
   );
 
+  it.effect("caches the scheduled plan change and the boundary", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1000);
+      const pushes = yield* makePushes;
+      yield* run(
+        () =>
+          Effect.succeed(
+            Option.some(
+              contract({
+                handle: "baton-pro",
+                boundaryAt: 601_000,
+                cycleStartAt: 500,
+                pendingHandle: "baton-basic",
+                cancelAtEndOfCycle: true,
+              }),
+            ),
+          ),
+        Effect.gen(function* () {
+          yield* seedShopSession("baton-pro", 500);
+          assert.deepStrictEqual(
+            yield* (yield* SubscriptionPlan).resolve(shop),
+            subscribedTo("baton-pro", {
+              pendingPlan: "basic",
+              boundaryAt: 601_000,
+              cancelAtEndOfCycle: true,
+            }),
+          );
+          const stored = Option.getOrThrow(
+            yield* (yield* Repository).findShopSession(shop),
+          );
+          assert.strictEqual(stored.pendingPlanHandle, "baton-basic");
+          assert.strictEqual(stored.planBoundaryAt, 601_000);
+          assert.strictEqual(stored.planCycleStartAt, 500);
+          assert.strictEqual(stored.planCancelAtEndOfCycle, true);
+        }),
+        { pushes },
+      );
+    }),
+  );
+
+  it.effect(
+    "serves the scheduled change from the cache without revalidating",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(1000);
+        const calls = yield* Ref.make(0);
+        yield* run(
+          () =>
+            Ref.update(calls, (count) => count + 1).pipe(
+              Effect.as(Option.none<Domain.ActiveSubscription>()),
+            ),
+          Effect.gen(function* () {
+            yield* seedShopSession("baton-pro", 2000, {
+              pendingPlanHandle: "baton-basic",
+              planBoundaryAt: 601_000,
+              planCancelAtEndOfCycle: true,
+            });
+            assert.deepStrictEqual(
+              yield* (yield* SubscriptionPlan).resolve(shop),
+              subscribedTo("baton-pro", {
+                pendingPlan: "basic",
+                boundaryAt: 601_000,
+                cancelAtEndOfCycle: true,
+              }),
+            );
+          }),
+        );
+        assert.strictEqual(yield* Ref.get(calls), 0);
+      }),
+  );
+
+  it.effect("a pending handle outside the allowlist is cached as none", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1000);
+      yield* run(
+        () =>
+          Effect.succeed(
+            Option.some(
+              contract({
+                handle: "baton-pro",
+                // Shopify may well report a handle this build does not know;
+                // the current plan must survive it.
+                pendingHandle: "baton-retired" as Domain.PlanHandle,
+              }),
+            ),
+          ),
+        Effect.gen(function* () {
+          yield* seedShopSession("baton-pro", 500);
+          assert.deepStrictEqual(
+            yield* (yield* SubscriptionPlan).resolve(shop),
+            subscribedTo("baton-pro"),
+          );
+          const stored = Option.getOrThrow(
+            yield* (yield* Repository).findShopSession(shop),
+          );
+          assert.strictEqual(stored.planHandle, "baton-pro");
+          assert.strictEqual(stored.pendingPlanHandle, "baton-retired");
+        }),
+      );
+    }),
+  );
+
+  it.effect(
+    "revokes the shop's connections when the cached plan changes tier",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(1000);
+        const pushes = yield* makePushes;
+        yield* run(
+          () =>
+            Effect.succeed(Option.some(contract({ handle: "baton-basic" }))),
+          Effect.gen(function* () {
+            yield* seedShopSession("baton-pro", 500);
+            assert.deepStrictEqual(
+              yield* (yield* SubscriptionPlan).resolve(shop),
+              subscribedTo("baton-basic"),
+            );
+          }),
+          { pushes },
+        );
+        assert.deepStrictEqual(yield* Ref.get(pushes.revoked), [shop]);
+      }),
+  );
+
   it.effect("revokes the shop's connections when a cached plan lapses", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(1000);
-      const revoked = yield* Ref.make<readonly string[]>([]);
+      const pushes = yield* makePushes;
       yield* run(
         () => Effect.succeed(Option.none<Domain.ActiveSubscription>()),
         Effect.gen(function* () {
@@ -276,16 +461,32 @@ describe("SubscriptionPlan", () => {
             _tag: "Unsubscribed",
           });
         }),
-        { revoked },
+        { pushes },
       );
-      assert.deepStrictEqual(yield* Ref.get(revoked), [shop]);
+      assert.deepStrictEqual(yield* Ref.get(pushes.revoked), [shop]);
+    }),
+  );
+
+  it.effect("does not revoke on first fetch", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1000);
+      const pushes = yield* makePushes;
+      yield* run(
+        () => Effect.succeed(Option.some(contract({ handle: "baton-pro" }))),
+        Effect.gen(function* () {
+          yield* seedShopSession(null, null);
+          yield* (yield* SubscriptionPlan).resolve(shop);
+        }),
+        { pushes },
+      );
+      assert.deepStrictEqual(yield* Ref.get(pushes.revoked), []);
     }),
   );
 
   it.effect("does not revoke when the shop was already unsubscribed", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(1000);
-      const revoked = yield* Ref.make<readonly string[]>([]);
+      const pushes = yield* makePushes;
       yield* run(
         () => Effect.succeed(Option.none<Domain.ActiveSubscription>()),
         Effect.gen(function* () {
@@ -293,29 +494,29 @@ describe("SubscriptionPlan", () => {
           // Expired verified absence: revalidates, lands on null again.
           yield* seedShopSession(null, 500);
           yield* plan.resolve(shop);
-          // Never cached: nothing to flip from.
+          // Never cached: nothing to compare.
           yield* seedShopSession(null, null);
           yield* plan.resolve(shop);
         }),
-        { revoked },
+        { pushes },
       );
-      assert.deepStrictEqual(yield* Ref.get(revoked), []);
+      assert.deepStrictEqual(yield* Ref.get(pushes.revoked), []);
     }),
   );
 
   it.effect("does not revoke when the plan is still active", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(1000);
-      const revoked = yield* Ref.make<readonly string[]>([]);
+      const pushes = yield* makePushes;
       yield* run(
         activeProAtFutureBoundary,
         Effect.gen(function* () {
           yield* seedShopSession("baton-pro", 500);
           yield* (yield* SubscriptionPlan).resolve(shop);
         }),
-        { revoked },
+        { pushes },
       );
-      assert.deepStrictEqual(yield* Ref.get(revoked), []);
+      assert.deepStrictEqual(yield* Ref.get(pushes.revoked), []);
     }),
   );
 
@@ -333,6 +534,96 @@ describe("SubscriptionPlan", () => {
         }),
         { revokeFails: true },
       );
+    }),
+  );
+
+  it.effect("pushes the billing cycle to the object on revalidation", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1000);
+      const pushes = yield* makePushes;
+      yield* run(
+        () =>
+          Effect.succeed(
+            Option.some(
+              contract({
+                handle: "baton-pro",
+                boundaryAt: 601_000,
+                cycleStartAt: 500,
+              }),
+            ),
+          ),
+        Effect.gen(function* () {
+          yield* seedShopSession("baton-pro", 500);
+          yield* (yield* SubscriptionPlan).resolve(shop);
+        }),
+        { pushes },
+      );
+      assert.deepStrictEqual(yield* Ref.get(pushes.cycles), [
+        { shopGid, cycleStartAt: 500, cycleEndAt: 601_000 },
+      ]);
+    }),
+  );
+
+  it.effect("pushes no billing cycle during a trial, which has none", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1000);
+      const pushes = yield* makePushes;
+      yield* run(
+        () =>
+          Effect.succeed(
+            Option.some(contract({ handle: "baton-pro", boundaryAt: 601_000 })),
+          ),
+        Effect.gen(function* () {
+          yield* seedShopSession("baton-pro", 500);
+          yield* (yield* SubscriptionPlan).resolve(shop);
+        }),
+        { pushes },
+      );
+      assert.deepStrictEqual(yield* Ref.get(pushes.cycles), []);
+    }),
+  );
+
+  it.effect("reconciles the usage figure on revalidation", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1000);
+      const pushes = yield* makePushes;
+      yield* run(
+        () =>
+          Effect.succeed(
+            Option.some(
+              contract({
+                handle: "baton-pro",
+                cycleStartAt: 500,
+                usageQuantity: 42,
+              }),
+            ),
+          ),
+        Effect.gen(function* () {
+          yield* seedShopSession("baton-pro", 500);
+          yield* (yield* SubscriptionPlan).resolve(shop);
+        }),
+        { pushes },
+      );
+      assert.deepStrictEqual(yield* Ref.get(pushes.reconciled), [42]);
+    }),
+  );
+
+  it.effect("reconciles nothing when the contract carries no meter", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1000);
+      const pushes = yield* makePushes;
+      yield* run(
+        () =>
+          Effect.succeed(
+            Option.some(contract({ handle: "baton-pro", cycleStartAt: 500 })),
+          ),
+        Effect.gen(function* () {
+          yield* seedShopSession("baton-pro", 500);
+          yield* (yield* SubscriptionPlan).resolve(shop);
+        }),
+        { pushes },
+      );
+      assert.deepStrictEqual(yield* Ref.get(pushes.reconciled), []);
     }),
   );
 
@@ -368,6 +659,38 @@ describe("SubscriptionPlan", () => {
         }),
       );
     }),
+  );
+
+  it.effect(
+    "expectChange shortens the deadline but never extends it or writes a never-fetched row",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(1000);
+        yield* run(
+          () => Effect.succeed(Option.none<Domain.ActiveSubscription>()),
+          Effect.gen(function* () {
+            const repository = yield* Repository;
+            const plan = yield* SubscriptionPlan;
+            const deadline = () =>
+              Effect.map(
+                repository.findShopSession(shop),
+                (session) => Option.getOrThrow(session).planHandleExpiresAt,
+              );
+            // Far future: pulled forward to now + the manage window.
+            yield* seedShopSession("baton-pro", 86_401_000);
+            yield* plan.expectChange(shop);
+            assert.strictEqual(yield* deadline(), 901_000);
+            // Already sooner: left alone.
+            yield* seedShopSession("baton-pro", 2000);
+            yield* plan.expectChange(shop);
+            assert.strictEqual(yield* deadline(), 2000);
+            // Never fetched: stays never fetched.
+            yield* seedShopSession(null, null);
+            yield* plan.expectChange(shop);
+            assert.strictEqual(yield* deadline(), null);
+          }),
+        );
+      }),
   );
 
   it.effect(

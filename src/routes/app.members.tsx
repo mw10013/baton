@@ -8,6 +8,7 @@ import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Effect, Option, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
+import { ManagePlanButton } from "@/components/ManagePlanButton";
 import { MemberTeamsFields } from "@/components/MemberTeamsFields";
 import * as Domain from "@/lib/Domain";
 import { fieldError, mutationErrorMessage } from "@/lib/form";
@@ -61,6 +62,7 @@ const getLoaderData = createServerFn({ method: "GET" })
               ({ id, name, memberCount }) satisfies Domain.TeamRoster,
           ),
           memberTeams: yield* repository.listMemberTeams(shop),
+          maxMembers: (yield* resolveEntitlements(shop)).maxMembers,
         } satisfies Domain.MembersLoaderData;
       }),
     ),
@@ -182,7 +184,8 @@ const MAX_CHIPS = 4;
  * paragraph. Edit teams and Add member share one checklist component.
  */
 function RouteComponent() {
-  const { members, teams, memberTeams } = Route.useLoaderData();
+  const { members, teams, memberTeams, maxMembers } = Route.useLoaderData();
+  const { managePlanUrl } = Route.useRouteContext();
   const router = useRouter();
   const shopify = useAppBridge();
   const addMember = useServerFn(addMemberFn);
@@ -199,6 +202,18 @@ function RouteComponent() {
 
   const teamsOf = (member: Domain.Member) =>
     memberTeams.filter((row) => row.memberId === member.id);
+
+  /**
+   * Who holds no seat, by `Domain.memberHasSeat`. `members` arrives ordered
+   * `createdAt, email` — the order that rule ranks by — so the cutoff is the
+   * row index and no per-row flag has to cross the wire. Computed against the
+   * unfiltered list, because the search box must not change who has a seat.
+   */
+  const seatless = new Set(
+    members
+      .filter((_, index) => !Domain.memberHasSeat(index, maxMembers))
+      .map((member) => member.id),
+  );
 
   const addMutation = useMutation({
     mutationFn: (data: AddMemberInput) => addMember({ data }),
@@ -340,7 +355,12 @@ function RouteComponent() {
           {rows.map((member) => (
             <s-table-row key={member.id} id={member.id}>
               <s-table-cell>
-                <s-text>{member.email}</s-text>
+                <s-stack direction="inline" gap="small-300" alignItems="center">
+                  <s-text>{member.email}</s-text>
+                  {seatless.has(member.id) && (
+                    <s-badge tone="critical">No seat</s-badge>
+                  )}
+                </s-stack>
               </s-table-cell>
               <s-table-cell>{teamsCell(member)}</s-table-cell>
               <s-table-cell>
@@ -392,6 +412,17 @@ function RouteComponent() {
       {addButton(true)}
 
       {mutationError && <s-banner tone="critical">{mutationError}</s-banner>}
+
+      {/* The seat rule, stated where the merchant can act on it: Remove is on
+          every row, and Manage plan is the other way out. Nothing was taken
+          away from anybody — the seats simply belong to the oldest members
+          while the plan says so. */}
+      {seatless.size > 0 && (
+        <s-banner tone="critical">
+          {`Your plan includes ${formatNumber(maxMembers)} members. Only the ${formatNumber(maxMembers)} oldest can sign in until you remove members or upgrade.`}
+          <ManagePlanButton url={managePlanUrl} />
+        </s-banner>
+      )}
 
       {/* `padding="none"` so the table runs edge to edge; the description
           goes inside a padded intro box instead of a slotted heading. */}

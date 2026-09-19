@@ -59,6 +59,8 @@ export interface OrdersStreamCounts {
   readonly ordersTruncated: number;
   /** Orders this write created rather than updated, for the usage counter's log line. */
   readonly ordersInserted: number;
+  /** New orders refused at `Domain.ShopLimits.maxOrdersPerCycle`; the caller logs the total once. */
+  readonly ordersRefused: number;
 }
 
 /**
@@ -189,6 +191,7 @@ export const runShopAgentOrdersStream = <E = never>({
           lineItemsUpserted: 0,
           ordersTruncated: 0,
           ordersInserted: 0,
+          ordersRefused: 0,
         }),
         (counts, { order, lineItems, truncated }) =>
           Effect.gen(function* () {
@@ -210,7 +213,7 @@ export const runShopAgentOrdersStream = <E = never>({
                   limit: Domain.ShopLimits.maxLineItemsPerOrder,
                 }),
               );
-            const { written, fresh } = yield* repository.upsertOrder({
+            const { written, fresh, refused } = yield* repository.upsertOrder({
               order: shopOrder,
               lineItems: lineItems.map((item) =>
                 toOrderLineItem(order.id, item),
@@ -224,6 +227,7 @@ export const runShopAgentOrdersStream = <E = never>({
                 counts.lineItemsUpserted + (written ? lineItems.length : 0),
               ordersTruncated: counts.ordersTruncated + (truncated ? 1 : 0),
               ordersInserted: counts.ordersInserted + (fresh ? 1 : 0),
+              ordersRefused: counts.ordersRefused + (refused ? 1 : 0),
             };
           }),
       ),

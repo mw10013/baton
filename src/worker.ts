@@ -346,8 +346,8 @@ const rebuildRequest = (
  * by invariant never a member, so it gets no connection role at all); not a
  * member of this shop → `404`, the same "no such shop" the page returns, so a
  * stranger cannot distinguish a shop they lack access to from one that does
- * not exist; a member of a shop whose subscription lapsed → `402`, the same
- * answer the merchant gate gives.
+ * not exist; a member of a shop whose subscription lapsed, or one the plan has
+ * no seat for → `402`, the same answer the merchant gate gives.
  *
  * A failure that is not an authorization answer — D1 unreachable — is `503`
  * rather than `404`: the browser retries a socket, and reporting "not yours"
@@ -382,8 +382,11 @@ const authorizeShopAgentMember = Effect.fn("authorizeShopAgentMember")(
         const squashed = Cause.squash(cause);
         if (isNotFound(squashed))
           return Effect.succeed(new Response("Not Found", { status: 404 }));
-        // `requireMember` answers a lapsed subscription with a redirect to
-        // the member lapsed page; on a socket that is the merchant gate's 402.
+        // `requireMember` answers both of its refusals — a lapsed subscription
+        // and a member outside the plan's seats — with a redirect to the
+        // member lapsed page; on a socket both are the merchant gate's 402.
+        // The gate does not distinguish them, and should not: the reason is
+        // the shop's business, and the client's answer is the same either way.
         if (isRedirect(squashed))
           return Effect.succeed(
             new Response("Payment Required", { status: 402 }),

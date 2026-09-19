@@ -215,6 +215,19 @@ const shopContent = ({
     }),
   );
 
+/**
+ * What the cache says is coming at the boundary, as one line. A cancellation
+ * outranks a pending handle because it is what actually ends: Shopify can
+ * report both, and a merchant who has cancelled is not switching tiers.
+ */
+const scheduledChange = ({
+  pendingPlanHandle,
+  planCancelAtEndOfCycle,
+}: Domain.ShopSessionRedacted) => {
+  if (planCancelAtEndOfCycle) return "cancels at period end";
+  return pendingPlanHandle;
+};
+
 function FoundShop({
   data: {
     shopSession,
@@ -257,12 +270,68 @@ function FoundShop({
               }
             />
             <Field
-              label="Orders this month"
-              value={`${formatNumber(usage.ordersThisMonth)} of ${
+              label="Orders this billing period"
+              value={`${formatNumber(usage.ordersThisCycle)} of ${
                 entitlements === null
                   ? "—"
-                  : formatNumber(entitlements.ordersPerMonth)
+                  : formatNumber(entitlements.ordersPerCycle)
               }`}
+            />
+            <Field
+              label="Billing period"
+              value={
+                usage.cycleStartAt === null ? null : (
+                  <>
+                    <LocalDateTime value={usage.cycleStartAt} />
+                    {" – "}
+                    {usage.cycleEndAt === null ? (
+                      "open"
+                    ) : (
+                      <LocalDateTime value={usage.cycleEndAt} />
+                    )}
+                  </>
+                )
+              }
+            />
+            <Field
+              label="Scheduled change"
+              value={scheduledChange(shopSession)}
+            />
+            <Field
+              label="Plan boundary"
+              value={
+                shopSession.planBoundaryAt === null ? null : (
+                  <LocalDateTime value={shopSession.planBoundaryAt} />
+                )
+              }
+            />
+            {/* The two halves of the usage meter's only observable: what this
+                object counted, and what Shopify says it was told. A gap wider
+                than the outbox is a billing bug, and nothing else surfaces
+                it — the App Events API answers 202 to events it refuses. */}
+            <Field
+              label="Usage events pending"
+              value={formatNumber(usage.pendingUsageEvents)}
+            />
+            <Field
+              label="Usage events dead"
+              value={formatNumber(usage.deadUsageEvents)}
+            />
+            <Field
+              label="Shopify metered quantity"
+              value={
+                usage.lastReconciledQuantity === null
+                  ? null
+                  : formatNumber(usage.lastReconciledQuantity)
+              }
+            />
+            <Field
+              label="Orders limited"
+              value={
+                usage.ordersLimitedAt === null ? null : (
+                  <LocalDateTime value={usage.ordersLimitedAt} />
+                )
+              }
             />
             <Field
               label="Members"

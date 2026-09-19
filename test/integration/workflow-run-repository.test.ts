@@ -1536,7 +1536,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         yield* complete(doneRun, 2, [TEAM_B.id]);
 
         yield* runs.markOrderDeleted({ orderId: ORDER_ID });
-        yield* orders.deleteOrder(ORDER_ID);
+        yield* orders.deleteOrder({ orderId: ORDER_ID, now: 0 });
         strictEqual(Option.isNone(yield* orders.getOrder(ORDER_ID)), true);
 
         const after = yield* runsForOrder();

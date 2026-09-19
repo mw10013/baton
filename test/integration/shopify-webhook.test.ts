@@ -386,7 +386,7 @@ const seedOrder = (updatedAt: number) =>
     inShopAgent(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
-        yield* repository.deleteOrder(ORDER_ID);
+        yield* repository.deleteOrder({ orderId: ORDER_ID, now: 0 });
         yield* repository.upsertOrder({
           order: storedOrder(updatedAt),
           lineItems: [],

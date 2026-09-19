@@ -76,6 +76,20 @@ const decodeRepository =
       Effect.mapError((cause) => new RepositoryError({ message, cause })),
     );
 
+/**
+ * The plan cache columns, named once because two signatures have to agree about
+ * them: `updateShopSessionPlan` owns them, and `upsertShopSession` must not
+ * accept them (see its JSDoc — re-authentication must not disturb a cached
+ * plan, and D1 bills every column in a `SET` list on the hot auth path).
+ */
+type PlanCacheColumn =
+  | "planHandle"
+  | "planHandleExpiresAt"
+  | "pendingPlanHandle"
+  | "planBoundaryAt"
+  | "planCycleStartAt"
+  | "planCancelAtEndOfCycle";
+
 export class Repository extends Context.Service<
   Repository,
   {
@@ -86,10 +100,7 @@ export class Repository extends Context.Service<
       SqlError.SqlError | RepositoryError
     >;
     readonly upsertShopSession: (
-      shopSession: Omit<
-        Domain.ShopSession,
-        "planHandle" | "planHandleExpiresAt"
-      >,
+      shopSession: Domain.ShopSessionUpsert,
     ) => Effect.Effect<void, SqlError.SqlError>;
     readonly clearShopSessionAccessToken: (
       shop: Domain.ShopSession["shop"],
@@ -115,11 +126,22 @@ export class Repository extends Context.Service<
      * for its own narrow update instead of taxing the path that does not.
      */
     readonly updateShopSessionPlan: (
-      shopSession: Pick<
-        Domain.ShopSession,
-        "shop" | "planHandle" | "planHandleExpiresAt"
-      >,
+      shopSession: Pick<Domain.ShopSession, "shop" | PlanCacheColumn>,
     ) => Effect.Effect<void, SqlError.SqlError>;
+    /**
+     * Pulls the plan cache deadline forward to at most `notAfter`, never
+     * backward, and never on a never-fetched row.
+     *
+     * The `min` is what makes it safe to call speculatively: a shop whose
+     * contract boundary already falls sooner keeps that tighter deadline, and a
+     * row that has never been fetched stays "never fetched" rather than
+     * acquiring a deadline that would make an absent handle look like a
+     * verified absence of any contract.
+     */
+    readonly shortenShopSessionPlanExpiry: (input: {
+      readonly shop: Domain.Shop;
+      readonly notAfter: number;
+    }) => Effect.Effect<void, SqlError.SqlError>;
     readonly deleteShopSession: (
       shop: Domain.ShopSession["shop"],
     ) => Effect.Effect<void, SqlError.SqlError>;
@@ -346,12 +368,7 @@ export class Repository extends Context.Service<
        * fetched. `updateShopSessionPlan` owns those columns.
        */
       const upsertShopSession = Effect.fn("Repository.upsertShopSession")(
-        function* (
-          shopSession: Omit<
-            Domain.ShopSession,
-            "planHandle" | "planHandleExpiresAt"
-          >,
-        ) {
+        function* (shopSession: Omit<Domain.ShopSession, PlanCacheColumn>) {
           yield* sql`
           insert into ShopSession (shop, shopGid, shopAgentId, scope, accessTokenExpiresAt, accessToken, refreshToken, refreshTokenExpiresAt)
           values (${shopSession.shop}, ${shopSession.shopGid}, ${shopSession.shopAgentId}, ${shopSession.scope}, ${shopSession.accessTokenExpiresAt}, ${shopSession.accessToken}, ${shopSession.refreshToken}, ${shopSession.refreshTokenExpiresAt})
@@ -397,16 +414,30 @@ export class Repository extends Context.Service<
       const updateShopSessionPlan = Effect.fn(
         "Repository.updateShopSessionPlan",
       )(function* (
-        shopSession: Pick<
-          Domain.ShopSession,
-          "shop" | "planHandle" | "planHandleExpiresAt"
-        >,
+        shopSession: Pick<Domain.ShopSession, "shop" | PlanCacheColumn>,
       ) {
         yield* sql`
             update ShopSession set
               planHandle = ${shopSession.planHandle},
-              planHandleExpiresAt = ${shopSession.planHandleExpiresAt}
+              planHandleExpiresAt = ${shopSession.planHandleExpiresAt},
+              pendingPlanHandle = ${shopSession.pendingPlanHandle},
+              planBoundaryAt = ${shopSession.planBoundaryAt},
+              planCycleStartAt = ${shopSession.planCycleStartAt},
+              planCancelAtEndOfCycle = ${shopSession.planCancelAtEndOfCycle ? 1 : 0}
             where shop = ${shopSession.shop}
+          `;
+      });
+
+      const shortenShopSessionPlanExpiry = Effect.fn(
+        "Repository.shortenShopSessionPlanExpiry",
+      )(function* (input: {
+        readonly shop: Domain.Shop;
+        readonly notAfter: number;
+      }) {
+        yield* sql`
+            update ShopSession
+            set planHandleExpiresAt = min(planHandleExpiresAt, ${input.notAfter})
+            where shop = ${input.shop} and planHandleExpiresAt is not null
           `;
       });
 
@@ -430,7 +461,8 @@ export class Repository extends Context.Service<
       )(function* (shop: Domain.ShopSession["shop"]) {
         const rows = yield* sql`
           select shop, shopGid, shopAgentId, scope, accessTokenExpiresAt, refreshTokenExpiresAt,
-            planHandle, planHandleExpiresAt,
+            planHandle, planHandleExpiresAt, pendingPlanHandle, planBoundaryAt, planCycleStartAt,
+            planCancelAtEndOfCycle,
             (accessToken is not null) as hasAccessToken,
             (refreshToken is not null) as hasRefreshToken
           from ShopSession
@@ -472,7 +504,8 @@ export class Repository extends Context.Service<
         ];
         const rows = yield* sql`
           select shop, shopGid, shopAgentId, scope, accessTokenExpiresAt, refreshTokenExpiresAt,
-            planHandle, planHandleExpiresAt,
+            planHandle, planHandleExpiresAt, pendingPlanHandle, planBoundaryAt, planCycleStartAt,
+            planCancelAtEndOfCycle,
             (accessToken is not null) as hasAccessToken,
             (refreshToken is not null) as hasRefreshToken
           from ShopSession
@@ -964,11 +997,22 @@ export class Repository extends Context.Service<
        * `Option.none()` — no team is a normal state for a member, not a
        * revoked grant. A deleted member has no row and is `Option.none()`:
        * the guard then 404s exactly as it would for a stranger.
+       *
+       * The seat rank is a correlated subquery in the same round trip rather
+       * than a second call, because `Domain.memberHasSeat` is checked on every
+       * one of those requests and a second D1 hop on the guard's path would be
+       * paid by every member page load and socket reconnect. `Member_shop_createdAt_idx`
+       * is what keeps it a short index range rather than a scan of the shop's
+       * roster.
        */
       const findMemberAccess = Effect.fn("Repository.findMemberAccess")(
         function* (member: Pick<Domain.Member, "shop" | "email">) {
           const rows = yield* sql`
-            select m.id as memberId, t.id as teamId, t.name as teamName
+            select m.id as memberId, t.id as teamId, t.name as teamName,
+              (select count(*) from Member p
+               where p.shop = m.shop
+                 and (p.createdAt < m.createdAt
+                      or (p.createdAt = m.createdAt and p.email < m.email))) as seatRank
             from Member m
             left join TeamMember tm on tm.memberId = m.id
             left join Team t on t.id = tm.teamId
@@ -982,6 +1026,7 @@ export class Repository extends Context.Service<
                 memberId: Domain.MemberId,
                 teamId: Schema.NullOr(Domain.TeamId),
                 teamName: Schema.NullOr(Domain.TeamName),
+                seatRank: Schema.Number,
               }),
             ),
             "Invalid MemberAccess rows",
@@ -994,6 +1039,7 @@ export class Repository extends Context.Service<
                 ? []
                 : [{ id: row.teamId, name: row.teamName }],
             ),
+            seatRank: decoded[0].seatRank,
           } satisfies Domain.MemberAccess);
         },
       );
@@ -1024,6 +1070,7 @@ export class Repository extends Context.Service<
         clearShopSessionAccessToken,
         updateShopSessionTokens,
         updateShopSessionPlan,
+        shortenShopSessionPlanExpiry,
         deleteShopSession,
         updateShopSessionScope,
         findShopSessionRedacted,

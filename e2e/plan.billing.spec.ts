@@ -2,8 +2,10 @@ import { expect, test, type FrameLocator, type Page } from "@playwright/test";
 
 import * as Domain from "@/lib/Domain";
 
-import { appFrame, gotoApp } from "./app";
+import { appFrame, closeDevConsole, gotoApp } from "./app";
 import { awaitHydration } from "./hydration";
+import { signIn } from "./member";
+import { seedConfig } from "./seed";
 
 /**
  * The one end-to-end test that leaves the app: `/app` → Manage plan →
@@ -27,30 +29,45 @@ import { awaitHydration } from "./hydration";
  * it. It still moves the shared store's real subscription, so whatever plan
  * the store started on is restored in `finally`.
  *
- * The tier is read from the Plan card's "Orders this month: n of m" line, the
- * one number that differs between tiers on that page and that comes straight
- * from `Domain.entitlementsOfPlan`; the plan heading is not used because
- * `<s-heading>` renders its text behind a Polaris shadow slot.
+ * The tier is read from the Plan card's "Orders this billing period: n of m"
+ * line, the one number that differs between tiers on that page and that comes
+ * straight from `Domain.entitlementsOfPlan`; the plan heading is not used
+ * because `<s-heading>` renders its text behind a Polaris shadow slot.
+ *
+ * The second test is a *recording*, not an assertion. Whether Shopify defers a
+ * paid-to-paid downgrade to the next cycle or applies it at once is Shopify's
+ * behaviour, not Baton's, and the only way to learn it is to do it on a real
+ * contract and read what the Partner API then reports. It reads the operator
+ * console's cache fields into the Playwright report so the answer can be
+ * transcribed rather than guessed, and asserts only what Baton owns: that the
+ * fields are rendered and the usage outbox drains.
  */
+
+/** Must be listed in `ADMIN_EMAILS` before its first sign-in; same identity `admin.admin.spec.ts` uses. */
+const ADMIN_EMAIL = "e2e.admin@example.com";
 
 /** Display names from the Partner Dashboard listing (README, "Billing"). UI labels, not entitlements. */
 const PLAN_CARD_NAME = { basic: "Basic", pro: "Pro" } as const;
 
+/* The line carries a "— resets <date>" suffix once a billing cycle is known,
+   and the date is rendered only after hydration, so the tail is optional. */
 const ordersLine = (frame: FrameLocator) =>
-  frame.getByText(/^Orders this month: [\d,]+ of [\d,]+$/u);
+  frame.getByText(
+    /^Orders this billing period: [\d,]+ of [\d,]+(?: — resets .*)?$/u,
+  );
 
 const readPlan = async (frame: FrameLocator): Promise<Domain.Plan> => {
   await expect(ordersLine(frame)).toBeVisible({ timeout: 30_000 });
   const text = (await ordersLine(frame).textContent()) ?? "";
   const ceiling = Number(
-    (/of (?<ceiling>[\d,]+)$/u.exec(text)?.groups?.ceiling ?? "").replaceAll(
+    (/of (?<ceiling>[\d,]+)/u.exec(text)?.groups?.ceiling ?? "").replaceAll(
       ",",
       "",
     ),
   );
   const plan = Domain.Plan.literals.find(
     (candidate) =>
-      Domain.entitlementsOfPlan(candidate).ordersPerMonth === ceiling,
+      Domain.entitlementsOfPlan(candidate).ordersPerCycle === ceiling,
   );
   if (plan === undefined)
     throw new Error(`Plan card ceiling not recognized: ${text}`);
@@ -98,8 +115,12 @@ const switchPlan = async (
   await page.waitForURL(/\/apps\/[^/]+\/app/u, { timeout: 60_000 });
   const frame = appFrame(page);
   await awaitHydration(frame, 60_000);
+  /* The welcome redirect is a full admin load, and the CLI's Dev Console
+     comes back expanded with it; left open it outranks the iframe in the hit
+     test and swallows the next Manage plan click (`closeDevConsole`). */
+  await closeDevConsole(page);
   await expect(ordersLine(frame)).toContainText(
-    `of ${Domain.entitlementsOfPlan(target).ordersPerMonth.toLocaleString("en-US")}`,
+    `of ${Domain.entitlementsOfPlan(target).ordersPerCycle.toLocaleString("en-US")}`,
     { timeout: 60_000 },
   );
   return frame;
@@ -109,8 +130,8 @@ test("switching plans on Shopify's pricing page moves the ceiling on the Plan ca
   page,
 }) => {
   test.setTimeout(360_000);
-  expect(Domain.entitlementsOfPlan("basic").ordersPerMonth).not.toBe(
-    Domain.entitlementsOfPlan("pro").ordersPerMonth,
+  expect(Domain.entitlementsOfPlan("basic").ordersPerCycle).not.toBe(
+    Domain.entitlementsOfPlan("pro").ordersPerCycle,
   );
 
   const start = await readPlan(await gotoApp(page));
@@ -119,6 +140,76 @@ test("switching plans on Shopify's pricing page moves the ceiling on the Plan ca
     const frame = await switchPlan(page, other);
     expect(await readPlan(frame)).toBe(other);
     expect(await readPlan(await switchPlan(page, start))).toBe(start);
+  } finally {
+    if ((await readPlan(await gotoApp(page))) !== start)
+      await switchPlan(page, start);
+  }
+});
+
+/**
+ * The operator console's cache fields for one shop, read as `label: value`
+ * pairs. Each `Field` renders a `div.admin-field` holding its label and its
+ * value, so the pairs come off the DOM without a bespoke test id per row.
+ */
+const readAdminFields = async (page: Page, labels: readonly string[]) => {
+  const rows: Record<string, string> = {};
+  for (const label of labels) {
+    const field = page
+      .locator("div.admin-field")
+      .filter({ hasText: label })
+      .first();
+    await expect(field).toBeVisible({ timeout: 30_000 });
+    rows[label] = ((await field.textContent()) ?? "").replace(label, "").trim();
+  }
+  return rows;
+};
+
+const ADMIN_FIELDS = [
+  "Cached plan",
+  "Scheduled change",
+  "Plan boundary",
+  "Billing period",
+  "Orders this billing period",
+  "Usage events pending",
+  "Shopify metered quantity",
+] as const;
+
+test("records what a paid-to-paid downgrade schedules, and that the usage outbox drains", async ({
+  browser,
+  page,
+}, testInfo) => {
+  test.setTimeout(360_000);
+  const start = await readPlan(await gotoApp(page));
+  try {
+    /* Pro to Basic specifically: an upgrade is immediate by construction (the
+       merchant is paying more from now), so a downgrade is the only direction
+       whose timing is in question. */
+    if (start !== "pro") await switchPlan(page, "pro");
+    await switchPlan(page, "basic");
+
+    const context = await browser.newContext({
+      baseURL: seedConfig().appUrl,
+      storageState: { cookies: [], origins: [] },
+    });
+    try {
+      const admin = await context.newPage();
+      await signIn(admin, ADMIN_EMAIL);
+      await admin.goto(`/admin/shop/${seedConfig().shop}`);
+      /* Refresh plan, not the cached row: the switch just happened, and what
+         this records is what the Partner API reports about it right now. */
+      await admin.getByRole("button", { name: "Refresh plan" }).click();
+      const fields = await readAdminFields(admin, ADMIN_FIELDS);
+      await testInfo.attach("plan cache after Pro to Basic", {
+        body: JSON.stringify(fields, null, 2),
+        contentType: "application/json",
+      });
+      /* The only assertions this test owns: Baton rendered the fields and the
+         outbox is empty. What Shopify scheduled is the recording. */
+      expect(fields["Usage events pending"]).toBe("0");
+      expect(fields["Cached plan"]).not.toBe("");
+    } finally {
+      await context.close();
+    }
   } finally {
     if ((await readPlan(await gotoApp(page))) !== start)
       await switchPlan(page, start);

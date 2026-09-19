@@ -41,29 +41,57 @@ const PARTNER_API_VERSION = "2026-07";
 
 const activeSubscriptionQuery = `query ActiveSubscription($appId: ID!, $shopId: ID!) {
   activeSubscription(appId: $appId, shopId: $shopId) {
-    items { handle }
-    currentBillingCycle { endTime }
+    items {
+      handle
+      usage { quantity }
+    }
+    currentBillingCycle {
+      startTime
+      endTime
+    }
     trialEndsAt
+    cancelAtEndOfCycle
+    pendingUpdate {
+      items { handle }
+    }
   }
 }`;
 
 const partnerError = (message: string) => (cause: unknown) =>
   new ShopifyPartnerError({ message, cause });
 
+/**
+ * Every field past `items.handle` is `optional` or `NullOr`, so a response that
+ * omits one still decodes into a usable answer. The plan gate runs off this
+ * decode, and losing a shop's access because Shopify stopped returning a
+ * display-only field would be the worst possible trade.
+ */
+const SubscriptionItem = Schema.Struct({
+  handle: Schema.NullOr(Schema.String),
+  usage: Schema.optional(
+    Schema.NullOr(Schema.Struct({ quantity: Schema.NullOr(Schema.Number) })),
+  ),
+});
+
 const ActiveSubscriptionResponse = Schema.Struct({
   data: Schema.optional(
     Schema.Struct({
       activeSubscription: Schema.NullOr(
         Schema.Struct({
-          items: Schema.Array(
+          items: Schema.Array(SubscriptionItem),
+          currentBillingCycle: Schema.NullOr(
             Schema.Struct({
-              handle: Schema.NullOr(Schema.String),
+              startTime: Schema.optional(Schema.NullOr(Schema.String)),
+              endTime: Schema.NullOr(Schema.String),
             }),
           ),
-          currentBillingCycle: Schema.NullOr(
-            Schema.Struct({ endTime: Schema.NullOr(Schema.String) }),
-          ),
           trialEndsAt: Schema.NullOr(Schema.String),
+          cancelAtEndOfCycle: Schema.optional(Schema.NullOr(Schema.Boolean)),
+          pendingUpdate: Schema.optional(
+            Schema.NullOr(
+              Schema.Struct({ items: Schema.Array(SubscriptionItem) }),
+            ),
+          ),
         }),
       ),
     }),
@@ -75,10 +103,63 @@ const ActiveSubscriptionResponse = Schema.Struct({
 
 const decodePlanHandle = Schema.decodeUnknownOption(Domain.PlanHandle);
 
-const parseBoundary = (value: string | null): number | null => {
-  const parsed = value === null ? Number.NaN : Date.parse(value);
+const parseBoundary = (value: string | null | undefined): number | null => {
+  const parsed =
+    value === null || value === undefined ? Number.NaN : Date.parse(value);
   return Number.isNaN(parsed) ? null : parsed;
 };
+
+/**
+ * The one allowlisted plan handle in a list of subscription items, or
+ * `Option.none()`.
+ *
+ * Matching, never position: the usage meter is its own item in the same array,
+ * and so is anything else Shopify decides to itemize. Zero matches (a catalog
+ * change) and more than one (a contract shape this app does not model) are both
+ * `Option.none()` rather than a guess, and both log — allowlist drift is
+ * operationally interesting even where the response to it is simply no answer.
+ * `where` names which array was being read so a warning says whether the
+ * current contract or a scheduled change drifted.
+ */
+const matchPlanHandle = Effect.fn("ShopifyPartner.matchPlanHandle")(function* (
+  shopGid: Domain.ShopGid,
+  where: "items" | "pendingUpdate",
+  items: readonly { readonly handle: string | null }[],
+) {
+  const handles = items.flatMap((item) =>
+    Option.toArray(decodePlanHandle(item.handle)),
+  );
+  const [handle] = handles;
+  if (handle === undefined || handles.length > 1) {
+    yield* Effect.logWarning(
+      `ShopifyPartner.activeSubscription: shopGid=${shopGid} where=${where} matches=${String(handles.length)}: contract carries no single known plan handle`,
+    ).pipe(
+      Effect.annotateLogs({
+        shopGid,
+        where,
+        handles: items.map((item) => item.handle),
+      }),
+    );
+    return Option.none<Domain.PlanHandle>();
+  }
+  return Option.some(handle);
+});
+
+/**
+ * Shopify's own count for {@link Domain.USAGE_METER_ORDER} this cycle, read off
+ * the meter's item. `null` when the contract carries no such item, which is not
+ * an error: a plan with no meter configured yet reads as "nothing to reconcile
+ * against" rather than as zero usage, and zero would look like a divergence
+ * from every local count.
+ */
+const meterQuantity = (
+  items: readonly {
+    readonly handle: string | null;
+    readonly usage?: { readonly quantity: number | null } | null;
+  }[],
+): number | null =>
+  items.find((item) => item.handle === Domain.USAGE_METER_ORDER)?.usage
+    ?.quantity ?? null;
 
 export class ShopifyPartner extends Context.Service<
   ShopifyPartner,
@@ -91,12 +172,11 @@ export class ShopifyPartner extends Context.Service<
      * answer stays in the error channel, because callers gate access on this
      * value and must not confuse "could not check" with "not subscribed".
      *
-     * The plan is identified by matching `items` against the handle allowlist,
-     * never by position: usage and event-meter items share that array with the
-     * plan item. Zero matches (a catalog change) and more than one (a contract
-     * shape we do not model) both resolve to `Option.none()` rather than a
-     * guess, and log a warning — allowlist drift is operationally interesting
-     * even though the response to it is simply no access.
+     * The plan is identified by {@link matchPlanHandle}, never by position.
+     * Everything else on the returned value — the scheduled change, the cycle,
+     * the metered quantity — is display or bookkeeping and never gates access:
+     * a contract with a plan handle grants that plan's entitlements even if
+     * every other field is missing.
      *
      * Contract presence is the whole signal. `activeSubscription` exposes no
      * status field, and App Pricing sends no webhooks, so nothing distinguishes
@@ -164,27 +244,34 @@ export class ShopifyPartner extends Context.Service<
           }
           const subscription = data?.activeSubscription;
           if (!subscription) return Option.none();
-          const handles = subscription.items.flatMap((item) =>
-            Option.toArray(decodePlanHandle(item.handle)),
+          const handle = yield* matchPlanHandle(
+            shopGid,
+            "items",
+            subscription.items,
           );
-          const [handle] = handles;
-          if (handle === undefined || handles.length > 1) {
-            yield* Effect.logWarning(
-              `ShopifyPartner.activeSubscription: shopGid=${shopGid} matches=${String(handles.length)}: contract carries no single known plan handle`,
-            ).pipe(
-              Effect.annotateLogs({
+          if (Option.isNone(handle)) return Option.none();
+          // The scheduled change is display-only, so allowlist drift inside
+          // `pendingUpdate` degrades to "nothing scheduled" — it must never
+          // cost the merchant the plan they are currently paying for.
+          const pendingHandle = subscription.pendingUpdate
+            ? yield* matchPlanHandle(
                 shopGid,
-                handles: subscription.items.map((item) => item.handle),
-              }),
-            );
-            return Option.none();
-          }
+                "pendingUpdate",
+                subscription.pendingUpdate.items,
+              )
+            : Option.none();
           return Option.some({
-            handle,
+            handle: handle.value,
             boundaryAt: parseBoundary(
               subscription.currentBillingCycle?.endTime ??
                 subscription.trialEndsAt,
             ),
+            cycleStartAt: parseBoundary(
+              subscription.currentBillingCycle?.startTime ?? null,
+            ),
+            pendingHandle: Option.getOrNull(pendingHandle),
+            cancelAtEndOfCycle: subscription.cancelAtEndOfCycle ?? false,
+            usageQuantity: meterQuantity(subscription.items),
           } satisfies Domain.ActiveSubscription);
         },
       );

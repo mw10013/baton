@@ -54,6 +54,7 @@ import {
 } from "@/lib/ShopAgentOrdersStream";
 import { Shopify } from "@/lib/Shopify";
 import { ShopifyAdmin } from "@/lib/ShopifyAdmin";
+import { ShopifyAppEvents } from "@/lib/ShopifyAppEvents";
 import {
   type NoDraftError,
   type NoStepsError,
@@ -320,10 +321,24 @@ const memberCallableEffect =
  *
  * `ShopUsage` is the same one-row shape and holds everything the Worker needs
  * to compare this shop against its plan without the object knowing what the
- * plan is: the calendar month's counted orders, when the open-run ceiling last
- * refused an auto-start, and when retention last swept. `monthKey` is seeded
- * empty so the first counted order of any month rolls it over, which is the
- * only moment a rollover can matter.
+ * plan is: the billing cycle's counted orders, when the order and open-run
+ * ceilings last refused something, when retention last swept, and Shopify's own
+ * meter reading at the last revalidation. The cycle columns are seeded null —
+ * the Worker pushes the real period (`setBillingCycle`), and until it has, the
+ * object opens a cycle at its first counted order and rolls it forward on its
+ * own, so a shop meters from its first webhook rather than from its first plan
+ * revalidation. `shopGid` is here rather than derived because addressing a
+ * usage event at Shopify needs it and the object has no other source.
+ *
+ * `UsageEvent` is the App Events outbox. The API answers `202` to everything,
+ * including events it will later refuse, so an event that is merely *sent*
+ * proves nothing; the row is deleted only once Shopify has accepted the request,
+ * and a refusal leaves the row with its `attempts` and `lastError` for an
+ * operator to read. `idempotencyKey` is the primary key because Shopify enforces
+ * billing idempotency keys permanently — a replayed flush must not bill twice,
+ * and re-queuing a key already stored is a no-op by construction.
+ * `ShopOrder.countedAt` is its per-order counterpart: null means never counted,
+ * which is what makes a cancellation reverse exactly once.
  *
  * `ShopOrder_closed_idx` is the negation of `ShopOrder_open_idx`, ordered by
  * `updatedAt`: the retention sweep's one access path, so ageing out closed
@@ -433,7 +448,9 @@ const initializeSchema = Effect.gen(function* () {
       lineItemsComplete integer not null,
       lineItemsTruncated integer not null default 0,
       syncedAt integer not null,
-      syncSource text not null
+      syncSource text not null,
+      countedAt integer,
+      firstCycleStartAt integer not null
     );
     create index if not exists ShopOrder_processedAt
       on ShopOrder (processedAt desc, id desc);
@@ -482,12 +499,24 @@ const initializeSchema = Effect.gen(function* () {
     insert or ignore into SyncState (id) values (1);
     create table if not exists ShopUsage (
       id integer primary key check (id = 1),
-      monthKey text not null,
-      ordersThisMonth integer not null default 0,
+      shopGid text,
+      cycleStartAt integer,
+      cycleEndAt integer,
+      ordersThisCycle integer not null default 0,
+      ordersLimitedAt integer,
       openRunsLimitedAt integer,
-      lastSweepAt integer
+      lastSweepAt integer,
+      lastReconciledQuantity integer
     );
-    insert or ignore into ShopUsage (id, monthKey) values (1, '');
+    insert or ignore into ShopUsage (id) values (1);
+    create table if not exists UsageEvent (
+      idempotencyKey text primary key,
+      orderId text not null,
+      value integer not null,
+      occurredAt integer not null,
+      attempts integer not null default 0,
+      lastError text
+    );
     create table if not exists Workflow (
       id text primary key,
       name text not null check (name = trim(name) and length(name) > 0),
@@ -627,6 +656,11 @@ const makeRunEffect = (env: Env, storage: DurableObjectStorage) => {
     repositoryLayer,
     shopifyLayer,
     durableRepositoryLayer,
+    // The usage-event client lives here rather than in the Worker because the
+    // outbox it drains is this object's table. It holds a bearer token in a
+    // `Ref`, which is the other reason it belongs to the runtime: one token per
+    // object instance, minted on first use and reused for the hour.
+    Layer.provide(ShopifyAppEvents.layerNoDeps, FetchHttpClient.layer),
     FetchHttpClient.layer,
   );
   const runtime = ManagedRuntime.make(layer);
@@ -654,6 +688,52 @@ const shopifyAdminLayer = (session: ShopifyApi.Session) =>
     ShopifyAdmin.layerNoDeps,
     Layer.succeed(CurrentShopifySession, session),
   );
+
+/**
+ * One pass over the usage-event outbox, logged and never raised.
+ *
+ * Every caller is a request whose real work has already succeeded — a webhook
+ * that stored an order, a bulk import that finished its stream, an uninstall
+ * that is about to delete everything — and none of them may fail because a
+ * billing event could not go out. The rows survive a failure, so the next
+ * order's flush retries them, and `ShopUsage.pendingUsageEvents` is what makes
+ * a queue that never drains visible on the admin page.
+ */
+const flushUsageEvents = Effect.fn("ShopAgent.flushUsageEvents")(function* (
+  shop: string,
+) {
+  const repository = yield* OrderRepository;
+  const flush = yield* repository.flushUsageEvents(shop).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning(
+        `ShopAgent.flushUsageEvents: shop=${shop}: ${causeToErrorMessage(cause)}`,
+      ).pipe(
+        Effect.annotateLogs({ shop, cause: causeToErrorMessage(cause) }),
+        // The real queue, not zero: the uninstall path reports this number
+        // as what Shopify was never told, and a flush that failed outright
+        // is the case where that number matters most.
+        Effect.andThen(
+          repository
+            .getUsage()
+            .pipe(Effect.map((usage) => usage.pendingUsageEvents)),
+        ),
+        Effect.map((remaining) => ({ sent: 0, remaining })),
+        Effect.catchCause(() => Effect.succeed({ sent: 0, remaining: 0 })),
+      ),
+    ),
+  );
+  if (flush.sent > 0 || flush.remaining > 0)
+    yield* Effect.logInfo(
+      `ShopAgent.flushUsageEvents: shop=${shop} sent=${String(flush.sent)} pending=${String(flush.remaining)}`,
+    ).pipe(
+      Effect.annotateLogs({
+        shop,
+        sent: flush.sent,
+        pending: flush.remaining,
+      }),
+    );
+  return flush;
+});
 
 /**
  * Maps the repository's expected failures onto the tagged result union the
@@ -1576,6 +1656,31 @@ export class ShopAgent extends Agent {
           yield* publish();
           return state;
         }
+        /**
+         * The order ceiling, beside the storage guard: a bulk import that
+         * would be refused order by order should be refused once, visibly,
+         * before it starts. A stream that crosses the ceiling mid-file is
+         * stopped per order by `upsertOrder` instead, and the webhook path
+         * carries the same test for single orders.
+         */
+        const usage = yield* repository.getUsage();
+        if (Domain.cycleAtOrderCeiling(usage.ordersThisCycle)) {
+          yield* Effect.logError(
+            `ShopAgent.syncOrders: shop=${shop} status=order-ceiling ordersThisCycle=${String(usage.ordersThisCycle)}`,
+          ).pipe(
+            Effect.annotateLogs({
+              shop,
+              status: "order-ceiling",
+              ordersThisCycle: usage.ordersThisCycle,
+            }),
+          );
+          const state = yield* repository.setSyncError({
+            error: `Baton is built for shops under ${Domain.ShopLimits.maxOrdersPerCycle.toLocaleString("en-US")} orders a billing period; syncing resumes when the period ends.`,
+          });
+          yield* repository.markOrdersLimited(now);
+          yield* publish();
+          return state;
+        }
         const { field, windowStart } = orderSyncWindow(
           now,
           current.lastFullSyncAt,
@@ -1652,10 +1757,27 @@ export class ShopAgent extends Agent {
         role: "rpc",
       })(({ url }) =>
         Effect.gen(function* () {
+          // After the stream, never per order: a bulk import can queue
+          // thousands of events, and the API takes one request each at 500 a
+          // second, so the drain is batched (`ShopLimits.sweepBatch`) and the
+          // remainder rides the next webhook. `ensuring`, because a stream
+          // that fails halfway has already counted and queued every order it
+          // stored, and those events are owed whatever became of the rest.
           const counts = yield* runShopAgentOrdersStream({
             url,
             afterWrite: yield* reconciler(),
-          });
+          }).pipe(Effect.ensuring(flushUsageEvents(shop)));
+          if (counts.ordersRefused > 0)
+            yield* Effect.logError(
+              `ShopAgent.onOrdersStream: shop=${shop} status=order-ceiling ordersRefused=${String(counts.ordersRefused)} limit=${String(Domain.ShopLimits.maxOrdersPerCycle)}`,
+            ).pipe(
+              Effect.annotateLogs({
+                shop,
+                status: "order-ceiling",
+                ordersRefused: counts.ordersRefused,
+                limit: Domain.ShopLimits.maxOrdersPerCycle,
+              }),
+            );
           /**
            * The retention pass rides the import: it is merchant-triggered,
            * already the heaviest thing this object does, and the one moment
@@ -1667,7 +1789,7 @@ export class ShopAgent extends Agent {
           });
           const size = databaseSize();
           yield* Effect.logInfo(
-            `ShopAgent.onOrdersStream: shop=${shop} ordersSeen=${String(counts.ordersSeen)} ordersUpserted=${String(counts.ordersUpserted)} ordersInserted=${String(counts.ordersInserted)} lineItemsUpserted=${String(counts.lineItemsUpserted)} ordersTruncated=${String(counts.ordersTruncated)} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)} databaseSize=${String(size)}`,
+            `ShopAgent.onOrdersStream: shop=${shop} ordersSeen=${String(counts.ordersSeen)} ordersUpserted=${String(counts.ordersUpserted)} ordersInserted=${String(counts.ordersInserted)} ordersRefused=${String(counts.ordersRefused)} lineItemsUpserted=${String(counts.lineItemsUpserted)} ordersTruncated=${String(counts.ordersTruncated)} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)} databaseSize=${String(size)}`,
           ).pipe(
             Effect.annotateLogs({
               shop,
@@ -1854,17 +1976,55 @@ export class ShopAgent extends Agent {
               );
               return;
             }
+            /**
+             * The enterprise ceiling, and the only hard stop on orders. It
+             * gates *new* orders only — `getOrderUpdatedAt` answering none is
+             * what makes it one — so every order already on the production
+             * floor keeps receiving its updates. The webhook still returns
+             * 2xx: a retry cannot change the answer, and making Shopify replay
+             * a delivery for four hours to reach the same refusal helps nobody.
+             *
+             * The publish is a nudge, not the banner: the merchant's open
+             * orders page refetches its list, and the critical banner itself
+             * arrives with that page's next loader read, since usage is
+             * deliberately loader-only (`Domain.OrdersIndexLoaderData`).
+             */
+            // One read serves both the ceiling and the sweep below: the row
+            // is the same one, and this is the webhook path, where every
+            // avoidable read is paid per delivery.
+            const usage = yield* repository.getUsage();
+            if (
+              Option.isNone(stored) &&
+              Domain.cycleAtOrderCeiling(usage.ordersThisCycle)
+            ) {
+              yield* repository.markOrdersLimited(
+                yield* Clock.currentTimeMillis,
+              );
+              yield* Effect.logError(
+                `ShopAgent.syncOrder: shop=${shop} topic=${topic} status=order-ceiling limit=${String(Domain.ShopLimits.maxOrdersPerCycle)}`,
+              ).pipe(
+                Effect.annotateLogs({
+                  shop,
+                  topic,
+                  orderId,
+                  status: "order-ceiling",
+                  limit: Domain.ShopLimits.maxOrdersPerCycle,
+                }),
+              );
+              yield* publish(orderId, []);
+              return;
+            }
             const before = yield* teamsOf(orderId);
             yield* fetchAndUpsert(orderId);
             /**
              * The second retention carrier, rate-limited by `lastSweepAt`
              * rather than run on every delivery: a busy shop must not pay for
              * a batch of deletes per webhook, and a shop quiet enough never to
-             * sync still needs its closed orders to age out eventually. One
-             * extra row read per delivery buys that.
+             * sync still needs its closed orders to age out eventually. The
+             * `ShopUsage` row it reads is the one the ceiling already read
+             * above, so the rate limit costs nothing extra per delivery.
              */
             const now = yield* Clock.currentTimeMillis;
-            const usage = yield* repository.getUsage();
             if (
               usage.lastSweepAt === null ||
               now - usage.lastSweepAt >= Domain.ShopLimits.sweepIntervalMs
@@ -1885,6 +2045,12 @@ export class ShopAgent extends Agent {
               orderId,
               unionTeams(before, yield* teamsOf(orderId)),
             );
+            // Outside the upsert's transaction, because it does network I/O
+            // and Durable Object SQLite transactions must not await anything
+            // but storage. The webhook path is the outbox's ordinary carrier:
+            // an order that queued an event flushes it, and a shop still
+            // syncing drains whatever earlier events failed.
+            yield* flushUsageEvents(shop);
           }),
       )(input),
     );
@@ -1895,11 +2061,14 @@ export class ShopAgent extends Agent {
    * Worker owns the ceilings ({@link Domain.Entitlements}). `@callable()` so
    * the `/app` socket can read it, and on `ShopAgentClient` so loaders can.
    *
-   * `monthKey` is rolled forward in the *returned* value when the stored row
-   * lags the current month, without writing: a shop that has counted nothing
-   * this month has an `ordersThisMonth` belonging to an older month, and
-   * showing it would tell the merchant they had spent a quota they have not.
-   * The write happens on the first counted order (`OrderRepository`).
+   * The stored row is authoritative and nothing is rolled forward in the
+   * returned value: the cycle boundary is Shopify's, not a clock this object
+   * can read, and the counting path
+   * (`OrderRepository.upsertOrder`) is the one place that may move it. A shop
+   * whose cycle has ended but has synced nothing since shows the finished
+   * cycle's count until either an order or a plan revalidation arrives —
+   * which is the truth, because Shopify has not billed the next period yet
+   * either.
    */
   @callable()
   getUsage(): Promise<Domain.ShopUsage> {
@@ -1907,16 +2076,90 @@ export class ShopAgent extends Agent {
     return this.runEffect(
       Effect.gen(function* () {
         yield* connectionRoleGuard("merchant");
-        const usage = yield* (yield* OrderRepository).getUsage();
-        const monthKey = Domain.monthKeyOf(yield* Clock.currentTimeMillis);
         return {
-          ...usage,
-          monthKey,
-          ordersThisMonth:
-            usage.monthKey === monthKey ? usage.ordersThisMonth : 0,
+          ...(yield* (yield* OrderRepository).getUsage()),
           databaseSize: databaseSize(),
         } satisfies Domain.ShopUsage;
       }).pipe(Effect.withLogSpan("ShopAgent.getUsage")),
+    );
+  }
+
+  /**
+   * Records the shop's billing period. Plain RPC, not `@callable()`: the
+   * caller is `SubscriptionPlan`, which is the only thing that reads an App
+   * Pricing contract, and a browser naming its own billing period would be
+   * naming its own bill.
+   */
+  setBillingCycle(
+    input: typeof Domain.BillingCycleInput.Encoded,
+  ): Promise<void> {
+    return this.runEffect(
+      callableEffect("ShopAgent.setBillingCycle", Domain.BillingCycleInput, {
+        role: "rpc",
+      })((cycle) =>
+        Effect.gen(function* () {
+          yield* (yield* OrderRepository).setBillingCycle(cycle);
+        }),
+      )(input),
+    );
+  }
+
+  /**
+   * Stores Shopify's meter reading beside the local count and logs the two when
+   * they disagree by more than the outbox can explain. Plain RPC for the same
+   * reason as {@link setBillingCycle}.
+   *
+   * Nothing is corrected. The App Events API answers `202` to an event it will
+   * later refuse, so a divergence is the *only* evidence that a shop's orders
+   * are not being billed, and quietly moving the local number to match would
+   * erase it. Pending events are subtracted first because they are a divergence
+   * that resolves itself on the next flush; dead ones
+   * (`Domain.usageEventIsDead`) are not, because they never will, and a
+   * tolerance that grew with every lost event would hide exactly the loss it
+   * is here to show.
+   */
+  reconcileUsage(
+    input: typeof Domain.ReconcileUsageInput.Encoded,
+  ): Promise<void> {
+    const shop = this.name;
+    return this.runEffect(
+      callableEffect("ShopAgent.reconcileUsage", Domain.ReconcileUsageInput, {
+        role: "rpc",
+      })(({ quantity }) =>
+        Effect.gen(function* () {
+          const usage = yield* (yield* OrderRepository).reconcileUsage({
+            quantity,
+          });
+          const drift = Math.abs(usage.ordersThisCycle - quantity);
+          if (drift <= usage.pendingUsageEvents) return;
+          yield* Effect.logWarning(
+            `ShopAgent.reconcileUsage: shop=${shop} local=${String(usage.ordersThisCycle)} shopify=${String(quantity)} pending=${String(usage.pendingUsageEvents)}: metered usage diverges`,
+          ).pipe(
+            Effect.annotateLogs({
+              shop,
+              local: usage.ordersThisCycle,
+              shopify: quantity,
+              pending: usage.pendingUsageEvents,
+            }),
+          );
+        }),
+      )(input),
+    );
+  }
+
+  /**
+   * Drains the usage-event outbox and answers how many rows are left. Plain
+   * RPC: the caller is the uninstall webhook, which has 24 hours before Shopify
+   * closes the billing period and is about to destroy this object's storage.
+   */
+  flushUsageEvents(): Promise<number> {
+    const shop = this.name;
+    return this.runEffect(
+      Effect.gen(function* () {
+        yield* connectionRoleGuard("rpc");
+        const flush = yield* flushUsageEvents(shop);
+        return flush.remaining;
+      }).pipe(Effect.withLogSpan("ShopAgent.flushUsageEvents")),
     );
   }
 
@@ -1955,7 +2198,10 @@ export class ShopAgent extends Agent {
       })(({ orderId }) =>
         Effect.gen(function* () {
           yield* (yield* WorkflowRunRepository).markOrderDeleted({ orderId });
-          yield* (yield* OrderRepository).deleteOrder(orderId);
+          yield* (yield* OrderRepository).deleteOrder({
+            orderId,
+            now: yield* Clock.currentTimeMillis,
+          });
           yield* Effect.logInfo(
             `ShopAgent.deleteOrder: shop=${shop} orderId=${orderId}`,
           ).pipe(Effect.annotateLogs({ shop, orderId }));

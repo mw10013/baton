@@ -1,7 +1,34 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Effect } from "effect";
 
+import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { destroyShopAgent, handleWebhook, Shopify } from "@/lib/Shopify";
+
+/**
+ * Drains the shop's usage-event outbox before its storage goes.
+ *
+ * Shopify closes the billing period 24 hours after an uninstall and refuses
+ * events after that, and `destroyShopAgent` deletes the outbox outright — so
+ * this is the last moment an order the merchant was already billed for can be
+ * reported. Best-effort on purpose: a failed flush must not stop the destroy,
+ * because the storage is billed for as long as it exists and Shopify retries
+ * this webhook on a non-2xx, which would re-run the teardown rather than the
+ * flush alone. The remaining count is logged so an operator can see what was
+ * lost.
+ */
+const flushUsageEvents = (shop: string) =>
+  Effect.gen(function* () {
+    const remaining = yield* (yield* ShopAgentClient).flushUsageEvents(shop);
+    if (remaining === 0) return;
+    yield* Effect.logWarning(
+      `webhooks.app.uninstalled: shop=${shop} pending=${String(remaining)}: usage events unsent at uninstall`,
+    ).pipe(Effect.annotateLogs({ shop, pending: remaining }));
+  }).pipe(
+    Effect.ignore({
+      log: "Warn",
+      message: `webhooks.app.uninstalled: shop=${shop}: usage event flush failed`,
+    }),
+  );
 
 /**
  * Handles the app/uninstalled webhook from Shopify.
@@ -40,6 +67,7 @@ export const Route = createFileRoute("/webhooks/app/uninstalled")({
           handleWebhook((result) =>
             Effect.gen(function* () {
               const shopify = yield* Shopify;
+              yield* flushUsageEvents(result.shop);
               yield* shopify.deleteShopSession(result.shop);
               yield* destroyShopAgent(result.shop);
               return new Response();

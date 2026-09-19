@@ -246,7 +246,57 @@ describe("ShopAgent connect gate", () => {
           shop,
           planHandle: null,
           planHandleExpiresAt: Date.now() + 60 * 60 * 1000,
+          pendingPlanHandle: null,
+          planBoundaryAt: null,
+          planCycleStartAt: null,
+          planCancelAtEndOfCycle: false,
         });
+        yield* repository.addMember({
+          shop,
+          email: MEMBER,
+          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+        });
+        const cookie = yield* signInThroughWorker(MEMBER);
+        const response = yield* upgrade(
+          `http://localhost/agents/shop-agent/${shop}`,
+          { cookie },
+        );
+        strictEqual(response.status, 402);
+        expect(yield* connectionStatesOf(shop)).toEqual([]);
+      }),
+    ),
+  );
+
+  /**
+   * The seat half of the same check. `requireMember` answers a seatless member
+   * with the same redirect a lapse gets, and the gate must not distinguish
+   * them: the reason is the shop's business, and the client's answer is `402`
+   * either way.
+   */
+  it.effect("402s a member the plan has no seat for", () =>
+    run(
+      Effect.gen(function* () {
+        const shop = shopOf("gate-seatless.myshopify.com");
+        yield* seedSubscribedShop(shop);
+        const repository = yield* Repository;
+        yield* repository.updateShopSessionPlan({
+          shop,
+          planHandle: "baton-basic",
+          planHandleExpiresAt: Date.now() + 60 * 60 * 1000,
+          pendingPlanHandle: null,
+          planBoundaryAt: null,
+          planCycleStartAt: null,
+          planCancelAtEndOfCycle: false,
+        });
+        const seats = Domain.entitlementsOfPlan("basic").maxMembers;
+        // Sorted before MEMBER so the tiebreak on email is unambiguous when every
+        // add lands in the same millisecond.
+        for (let index = 0; index < seats; index += 1)
+          yield* repository.addMember({
+            shop,
+            email: emailOf(`aaa-seated-${String(index)}@example.com`),
+            limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+          });
         yield* repository.addMember({
           shop,
           email: MEMBER,

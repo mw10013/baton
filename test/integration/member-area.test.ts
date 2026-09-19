@@ -25,6 +25,20 @@ afterEach(async () => {
   await resetMemberTables();
 });
 
+/** Rewrites the cached plan handle, which is what a downgrade looks like from here. */
+const setPlan = (shop: Domain.Shop, planHandle: string | null) =>
+  Effect.gen(function* () {
+    yield* (yield* Repository).updateShopSessionPlan({
+      shop,
+      planHandle,
+      planHandleExpiresAt: Date.now() + 60 * 60 * 1000,
+      pendingPlanHandle: null,
+      planBoundaryAt: null,
+      planCycleStartAt: null,
+      planCancelAtEndOfCycle: false,
+    });
+  });
+
 describe("api.auth allowlist", () => {
   it.effect("serves the magic-link verify endpoint", () =>
     run(
@@ -216,6 +230,92 @@ describe("member queue", () => {
   );
 
   /**
+   * The seat rule end to end. `Domain.memberHasSeat` is derived on every
+   * request from the plan in force and the roster as it stands, so these three
+   * assertions are the whole policy: who is refused, what frees a seat, and
+   * what a downgrade does without anything being written.
+   */
+  it.effect(
+    "the fourth member of a three-seat shop is refused with the seat reason",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const repository = yield* Repository;
+          yield* seedShop(SHOP);
+          yield* setPlan(SHOP, "baton-basic");
+          const emails = ["a", "b", "c", "d"].map((name) =>
+            emailOf(`${name}@example.com`),
+          );
+          for (const email of emails)
+            yield* repository.addMember({
+              shop: SHOP,
+              email,
+              limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+            });
+          const seated = yield* signInThroughWorker(emails[2]);
+          const seatless = yield* signInThroughWorker(emails[3]);
+          strictEqual(
+            (yield* fetchWorker(`http://localhost/shop/${SHOP}`, {
+              headers: { cookie: seated },
+            })).status,
+            200,
+          );
+          const refused = yield* fetchWorker(`http://localhost/shop/${SHOP}`, {
+            headers: { cookie: seatless },
+          });
+          strictEqual(refused.status, 307);
+          strictEqual(
+            refused.headers.get("location"),
+            `/shop/${SHOP}/lapsed?reason=seat`,
+          );
+          // Removing an earlier member seats the next; nothing else changes.
+          yield* repository.deleteMember({ shop: SHOP, email: emails[0] });
+          strictEqual(
+            (yield* fetchWorker(`http://localhost/shop/${SHOP}`, {
+              headers: { cookie: seatless },
+            })).status,
+            200,
+          );
+        }),
+      ),
+  );
+
+  it.effect("a member's seat follows the plan in force at each request", () =>
+    run(
+      Effect.gen(function* () {
+        const repository = yield* Repository;
+        yield* seedShop(SHOP);
+        const emails = ["a", "b", "c", "d"].map((name) =>
+          emailOf(`${name}@example.com`),
+        );
+        for (const email of emails)
+          yield* repository.addMember({
+            shop: SHOP,
+            email,
+            limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+          });
+        const third = yield* signInThroughWorker(emails[2]);
+        const fourth = yield* signInThroughWorker(emails[3]);
+        const status = (cookie: string) =>
+          Effect.map(
+            fetchWorker(`http://localhost/shop/${SHOP}`, {
+              headers: { cookie },
+            }),
+            (response) => response.status,
+          );
+        // Pro: both are in.
+        strictEqual(yield* status(third), 200);
+        strictEqual(yield* status(fourth), 200);
+        // The downgrade lands in the cache and nothing else is written; the
+        // very next request answers differently.
+        yield* setPlan(SHOP, "baton-basic");
+        strictEqual(yield* status(third), 200);
+        strictEqual(yield* status(fourth), 307);
+      }),
+    ),
+  );
+
+  /**
    * A member of a shop whose subscription lapsed is sent to the lapsed page,
    * and only a member: the stranger still gets `404`, because `requireMember`
    * checks membership before the plan so a lapse is never disclosed to someone
@@ -231,6 +331,10 @@ describe("member queue", () => {
           shop: SHOP,
           planHandle: null,
           planHandleExpiresAt: Date.now() + 60 * 60 * 1000,
+          pendingPlanHandle: null,
+          planBoundaryAt: null,
+          planCycleStartAt: null,
+          planCancelAtEndOfCycle: false,
         });
         yield* repository.addMember({
           shop: SHOP,

@@ -146,6 +146,38 @@ export class ShopAgentClient extends Context.Service<
     readonly revokeAllConnections: (
       shop: string,
     ) => Effect.Effect<void, ShopAgentClientError>;
+    /**
+     * Pushes the shop's billing period into the object, which counts orders
+     * against it and dates the usage events it queues.
+     *
+     * The object cannot learn this on its own: the period lives on the App
+     * Pricing contract, which only the Worker's Partner client reads. It is the
+     * one plan-adjacent fact the object stores, and it is a period rather than
+     * an entitlement — the object still never learns what the plan grants.
+     */
+    readonly setBillingCycle: (
+      shop: string,
+      input: Domain.BillingCycleInput,
+    ) => Effect.Effect<void, ShopAgentClientError>;
+    /**
+     * Hands the object Shopify's own meter reading so the divergence from the
+     * local count is observable. Nothing is corrected from it: the App Events
+     * API answers `202` to an event it will later refuse, so this is the only
+     * signal that a shop's usage is not being billed, and a silent auto-correct
+     * would hide exactly the condition it exists to expose.
+     */
+    readonly reconcileUsage: (
+      shop: string,
+      input: Domain.ReconcileUsageInput,
+    ) => Effect.Effect<void, ShopAgentClientError>;
+    /**
+     * Drains the object's usage-event outbox now rather than on the next order.
+     * The uninstall path's call: Shopify closes the billing period 24 hours
+     * after an uninstall, and the object's storage is about to be destroyed.
+     */
+    readonly flushUsageEvents: (
+      shop: string,
+    ) => Effect.Effect<number, ShopAgentClientError>;
   }
 >()("ShopAgentClient") {
   static readonly layerNoDeps = Layer.effect(
@@ -277,6 +309,24 @@ export class ShopAgentClient extends Context.Service<
           (shop: string) =>
             call("revokeAllConnections", Schema.Void, shop, (stub) =>
               stub.revokeAllConnections(),
+            ),
+        ),
+        setBillingCycle: Effect.fn("ShopAgentClient.setBillingCycle")(
+          (shop: string, input: Domain.BillingCycleInput) =>
+            call("setBillingCycle", Schema.Void, shop, (stub) =>
+              stub.setBillingCycle(input),
+            ),
+        ),
+        reconcileUsage: Effect.fn("ShopAgentClient.reconcileUsage")(
+          (shop: string, input: Domain.ReconcileUsageInput) =>
+            call("reconcileUsage", Schema.Void, shop, (stub) =>
+              stub.reconcileUsage(input),
+            ),
+        ),
+        flushUsageEvents: Effect.fn("ShopAgentClient.flushUsageEvents")(
+          (shop: string) =>
+            call("flushUsageEvents", Schema.Number, shop, (stub) =>
+              stub.flushUsageEvents(),
             ),
         ),
       });

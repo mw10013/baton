@@ -38,6 +38,18 @@ import { SubscriptionPlan } from "@/lib/SubscriptionPlan";
  * so the page tells them to contact the shop owner and asks nothing of them.
  * The socket gate translates the same redirect into `402`, the status the
  * merchant gate already uses for the same condition.
+ *
+ * The seat check is third, and lands on the same page with a different reason
+ * for the same reason: `Domain.memberHasSeat` is derived from the plan in force
+ * and the roster as it stands, so a downgrade takes effect here, on the next
+ * request, with nothing written anywhere. A member outside the plan's seats can
+ * no more fix that than they can fix a lapsed subscription — the merchant
+ * removes a member or upgrades — so they get a page that says so rather than an
+ * error that suggests a retry.
+ *
+ * Plan before seats, membership before both: a stranger still gets `notFound`,
+ * and a member of a lapsed shop is told about the lapse rather than about a
+ * seat, which is the condition that actually has to clear first.
  */
 export const requireMember = (input: {
   readonly shop: string;
@@ -53,7 +65,19 @@ export const requireMember = (input: {
     const status = yield* (yield* SubscriptionPlan).resolve(shop);
     return yield* Match.value(status).pipe(
       Match.tagsExhaustive({
-        Subscribed: () => Effect.succeed(access.value),
+        Subscribed: ({ plan }) =>
+          Domain.memberHasSeat(
+            access.value.seatRank,
+            Domain.entitlementsOfPlan(plan).maxMembers,
+          )
+            ? Effect.succeed(access.value)
+            : Effect.fail(
+                redirect({
+                  to: "/shop/$shop/lapsed",
+                  params: { shop },
+                  search: { reason: "seat" as const },
+                }),
+              ),
         Unsubscribed: () =>
           Effect.fail(redirect({ to: "/shop/$shop/lapsed", params: { shop } })),
       }),

@@ -13,6 +13,8 @@
     "SHOPIFY_PARTNER_ORG_ID": "2798461",
     "SHOPIFY_PARTNER_APP_ID": "417214922753",
     "SHOPIFY_APP_HANDLE": "baton-local",
+    // App Events API version for usage events (src/lib/ShopifyAppEvents.ts).
+    "SHOPIFY_APP_EVENTS_API_VERSION": "2026-07",
     "EMAIL_FROM": "noreply@mail.mw10013.com"
   },
   "observability": {
@@ -123,6 +125,7 @@
         "SHOPIFY_PARTNER_ORG_ID": "2798461",
         "SHOPIFY_PARTNER_APP_ID": "",
         "SHOPIFY_APP_HANDLE": "baton-staging",
+        "SHOPIFY_APP_EVENTS_API_VERSION": "2026-07",
         "EMAIL_FROM": "noreply@mail.mw10013.com"
       },
       "d1_databases": [
@@ -189,6 +192,7 @@
         "SHOPIFY_PARTNER_ORG_ID": "2798461",
         "SHOPIFY_PARTNER_APP_ID": "",
         "SHOPIFY_APP_HANDLE": "baton-live",
+        "SHOPIFY_APP_EVENTS_API_VERSION": "2026-07",
         "EMAIL_FROM": "noreply@mail.mw10013.com"
       },
       "d1_databases": [

@@ -536,7 +536,7 @@ export class Shopify extends Context.Service<Shopify, ShopifyService>()(
           "Invalid refresh token expiry",
         );
         yield* decodeShopify(
-          Domain.ShopSession,
+          Domain.ShopSessionUpsert,
           "Invalid shop session payload",
         )({
           shop: session.shop,
@@ -547,8 +547,6 @@ export class Shopify extends Context.Service<Shopify, ShopifyService>()(
           accessToken: session.accessToken ?? null,
           refreshToken: session.refreshToken ?? null,
           refreshTokenExpiresAt,
-          planHandle: null,
-          planHandleExpiresAt: null,
         }).pipe(Effect.flatMap(repository.upsertShopSession));
       });
 

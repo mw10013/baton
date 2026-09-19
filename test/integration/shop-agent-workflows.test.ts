@@ -1293,7 +1293,7 @@ describe("ShopAgent seed callables", () => {
     ];
     const countedOrders = async () => {
       const usage = await agent.getUsage();
-      return usage.ordersThisMonth;
+      return usage.ordersThisCycle;
     };
     await agent.seedOrders({ ...seedMember, orders });
     strictEqual(await countedOrders(), 2);
@@ -1301,7 +1301,7 @@ describe("ShopAgent seed callables", () => {
     // them: a reseed gives back only its own share, never theirs.
     await runInDurableObject(env.SHOP_AGENT.getByName(shop), (instance) => {
       (instance as unknown as { ctx: DurableObjectState }).ctx.storage.sql.exec(
-        "update ShopUsage set ordersThisMonth = ordersThisMonth + 5 where id = 1",
+        "update ShopUsage set ordersThisCycle = ordersThisCycle + 5 where id = 1",
       );
     });
     await agent.seedOrders({ ...seedMember, orders });
@@ -1323,9 +1323,10 @@ describe("ShopAgent seed callables", () => {
         `insert or replace into ShopOrder
            (id, legacyId, name, processedAt, updatedAt, cancelledAt, closedAt,
             financialStatus, fulfillmentStatus, fullyPaid, tags, note,
-            customAttributes, lineItemsComplete, lineItemsTruncated, syncedAt, syncSource)
+            customAttributes, lineItemsComplete, lineItemsTruncated, syncedAt, syncSource,
+            firstCycleStartAt)
          values ('gid://shopify/Order/synced-1', 'synced-1', '#5001', 1, 1, null, null,
-                 'PAID', 'UNFULFILLED', 1, '[]', null, '[]', 1, 0, 1, 'webhook')`,
+                 'PAID', 'UNFULFILLED', 1, '[]', null, '[]', 1, 0, 1, 'webhook', 0)`,
       );
       sql.exec(
         `insert or replace into OrderLineItem

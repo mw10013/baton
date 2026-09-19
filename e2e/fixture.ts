@@ -31,12 +31,15 @@ import type {
  * - `lead@m.com` is on every team: one login that sees every queue. It is
  *   fixture data, not `ADMIN_EMAILS` — that env var grants the better-auth
  *   admin role and is deliberately not coupled to a reseed.
- * - `m1@m.com` … `m6@m.com` are makers, one per workflow team in the
- *   order the teams are listed. `m7@m.com` is on two maker teams, the one
- *   login whose queue is grouped by team. `m8@m.com` is on no team ("no
- *   teams" on the members page and "not on a team yet" after sign-in).
- * - `m9@m.com` is on Rush alone: the one persona whose queue is the
+ * - `m1@m.com` is on two maker teams, Engraving and Finishing: the one
+ *   login whose queue is grouped by team.
+ * - `m2@m.com` is on Rush alone: the one persona whose queue is the
  *   cross-cutting workflow rather than a product's.
+ *
+ * Three, which is Basic's `maxMembers`, so a seeded shop holds a seat for
+ * every login whichever plan it is on. The other maker teams carry only the
+ * lead; a persona that needs its own team is added by the spec that needs it
+ * (`seedMembers`), never by growing this list past the smallest plan.
  *
  * Every maker team owns steps in at least two workflows so no queue is
  * single-workflow, and every hand-off crosses a team boundary. Tags are the
@@ -78,7 +81,7 @@ import type {
 export const LEAD = "lead@m.com";
 const maker = (i: number) => `m${String(i)}@m.com`;
 
-// Maker teams, in `m1` … `m6` order.
+// Maker teams.
 const WOODSHOP = "Woodshop";
 const ENGRAVING = "Engraving";
 const LEATHER = "Leather";
@@ -89,22 +92,16 @@ const FINISHING = "Finishing";
 const RUSH = "Rush";
 export const RETIRED_TEAM_EMPTY = "Retired team (empty)";
 
-// Ten, which is `MAX_ENTITLEMENTS.maxMembers` exactly. That ceiling is a
-// provisional number rather than a tuned one: a row that needs an eleventh
-// persona raises it instead of trimming the fixture.
-export const members: readonly SeedMember[] = [
-  LEAD,
-  ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(maker),
-];
+export const members: readonly SeedMember[] = [LEAD, maker(1), maker(2)];
 
 export const teams: readonly SeedTeam[] = [
-  { name: WOODSHOP, members: [LEAD, maker(1)] },
-  { name: ENGRAVING, members: [LEAD, maker(2), maker(7)] },
-  { name: LEATHER, members: [LEAD, maker(3)] },
-  { name: JEWELRY, members: [LEAD, maker(4)] },
-  { name: TEXTILES, members: [LEAD, maker(5)] },
-  { name: FINISHING, members: [LEAD, maker(6), maker(7)] },
-  { name: RUSH, members: [LEAD, maker(9)] },
+  { name: WOODSHOP, members: [LEAD] },
+  { name: ENGRAVING, members: [LEAD, maker(1)] },
+  { name: LEATHER, members: [LEAD] },
+  { name: JEWELRY, members: [LEAD] },
+  { name: TEXTILES, members: [LEAD] },
+  { name: FINISHING, members: [LEAD, maker(1)] },
+  { name: RUSH, members: [LEAD, maker(2)] },
   // nobody on it: "No members" on the team page and on the steps it owns
   { name: RETIRED_TEAM_EMPTY, members: [] },
 ];
