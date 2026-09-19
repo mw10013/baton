@@ -48,6 +48,10 @@ const attachResultMessage = Match.typeTags<
     "That workflow cannot start: it is off, has no steps, or has an unassigned step.",
   RunLimit: ({ limit }) =>
     `Baton is already running ${formatNumber(limit)} workflows. Finish or cancel some before starting another.`,
+  /* The page offers no change on a done run (`changeable`); this is the
+     race where the run finished between the render and the click. */
+  ItemDone: ({ workflowName }) =>
+    `This item is finished on ${workflowName}. Reopen its last step to change it.`,
 });
 
 const assignResultMessage = Match.typeTags<
@@ -58,6 +62,7 @@ const assignResultMessage = Match.typeTags<
   NotFound: () => "That step no longer exists.",
   TeamNotFound: () => "That team no longer exists. Choose another.",
   StepFinished: () => "That step is already done and keeps its team.",
+  RunNotOpen: () => "That workflow run is finished or cancelled.",
 });
 
 const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
@@ -68,7 +73,17 @@ const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
      no surface); the tag is here because the union is one union. */
   NotBlocked: () => "That workflow run is no longer blocked.",
   NotReady: () => "A step in an earlier stage is still open.",
-  Terminal: () => "That workflow run is already finished.",
+  /* Every merchant control on a done run is a note or Reopen, and both are
+     allowed there (`Domain.RunStatus`); the page offers nothing on a
+     cancelled run but Undo cancel. So a Terminal here is a cancel that landed
+     between the render and the click. */
+  Terminal: () => "That workflow run was cancelled.",
+  /* Mark done is hidden while a run is flagged; a flag that landed after the
+     render is the only way here. */
+  Flagged: ({ flag }) =>
+    Domain.flagIsReconcile(flag)
+      ? "That workflow run was flagged just now. Dismiss the flag first."
+      : "That workflow run is blocked. Unblock it first.",
   // Reachable from Manage's Reopen: the row hides that button when the page's
   // own `Domain.undoBlockedBy` says so, and this is the race where a worker
   // started downstream between the render and the click.
@@ -200,7 +215,7 @@ const changeWarning = (
  */
 const flagLabel = (run: Domain.WorkflowRun) => {
   if (run.flag === null) return null;
-  if (run.flag !== "blocked" && run.flagDetail?.item !== undefined)
+  if (Domain.flagIsReconcile(run.flag) && run.flagDetail?.item !== undefined)
     return `${RUN_FLAG_LABEL[run.flag]}: ${run.flagDetail.item}`;
   return RUN_FLAG_LABEL[run.flag];
 };
@@ -220,12 +235,6 @@ const fact = (label: string, value: React.ReactNode) =>
       <s-text>{value}</s-text>
     </React.Fragment>
   );
-
-/** Whether two actor slots hold the same person, so a Done line can drop a repeated name. */
-const sameActor = (a: Domain.Actor, b: Domain.Actor) =>
-  a.role === "merchant"
-    ? b.role === "merchant"
-    : b.role === "member" && a.email === b.email;
 
 /**
  * A step's state line inside a Manage row, in the work page's order — done,
@@ -249,7 +258,7 @@ const manageStateLine = (
           : `Done by ${Domain.actorLabel(completedBy)} · `}
         <LocalDateTime value={step.completedAt} format="time" />
         {startedBy === null ||
-        (completedBy !== null && sameActor(startedBy, completedBy))
+        (completedBy !== null && Domain.sameActor(startedBy, completedBy))
           ? ""
           : ` · started by ${Domain.actorLabel(startedBy)}`}
       </>
@@ -282,35 +291,9 @@ const blockedLine = (run: Domain.WorkflowRun): React.ReactNode => {
   );
 };
 
-/** The lowest stage that still has an open step — the stage the run is at — or null once every step is done. */
-const lowestOpenStage = (steps: readonly Domain.WorkflowRunStep[]) =>
-  steps
-    .filter((step) => step.completedAt === null)
-    .reduce<number | null>(
-      (lowest, step) =>
-        lowest === null ? step.stage : Math.min(lowest, step.stage),
-      null,
-    );
-
 /** Stages, not steps: two steps that happen together read as one stop. */
 const stageCount = (steps: readonly Domain.WorkflowRunStep[]) =>
   steps.reduce((max, step) => Math.max(max, step.stage), 0);
-
-/**
- * The steps a run is at: open, and in its lowest open stage — the same rule the
- * Now line names and the queue claims. Several can be ready at once when a stage
- * is parallel, so this is a list and every caller must cope with more than one.
- */
-const readySteps = (
-  run: Domain.WorkflowRun,
-  steps: readonly Domain.WorkflowRunStep[],
-) => {
-  if (run.status === "cancelled" || run.status === "done") return [];
-  const lowest = lowestOpenStage(steps);
-  return steps.filter(
-    (step) => step.completedAt === null && step.stage === lowest,
-  );
-};
 
 /**
  * A run's blocked state as a wrapping block rather than a badge. The reason is
@@ -330,7 +313,7 @@ const blockedStrip = (
   { run, steps }: Domain.WorkflowRunDetail,
   unblock: React.ReactNode,
 ) => {
-  const stuck = readySteps(run, steps)
+  const stuck = Domain.readySteps(run, steps)
     .map((step) => step.name)
     .join(", ");
   const reason = run.flagDetail?.reason;
@@ -377,18 +360,18 @@ const blockedStrip = (
  * state. Keeping them apart is cheaper than a shared function with a mode flag.
  */
 const nowLine = ({ run, steps }: Domain.WorkflowRunDetail): React.ReactNode => {
-  if (run.status === "cancelled") return null;
+  if (!Domain.runIsLive(run)) return null;
   /* The strip above already names the stuck step; a Now line under it would
      name the same step a second time on one card. */
-  if (run.flag === "blocked") return null;
+  if (Domain.runIsBlocked(run)) return null;
   /* Counts stages, like the open form's `of M`: the number the merchant saw
      climb to `Step 2 of 2` must not become `3 steps` the day the run finishes. */
-  if (run.status === "done") {
+  if (!Domain.runIsOpen(run)) {
     const stages = stageCount(steps);
     return `Done \u00B7 ${formatNumber(stages)} step${stages === 1 ? "" : "s"}`;
   }
-  const ready = readySteps(run, steps);
-  const lowest = lowestOpenStage(steps);
+  const ready = Domain.readySteps(run, steps);
+  const lowest = Domain.lowestOpenStage(steps);
   /* Every remaining step unassigned, or an inconsistent run: the attention
      rows below are the answer, not a position. */
   if (ready.length === 0 || lowest === null) return null;
@@ -431,12 +414,10 @@ const attentionRows = (
   teams: readonly Domain.TeamRoster[],
   assign: (runStepId: string) => React.ReactNode,
 ) => {
-  const lowest = lowestOpenStage(steps);
+  const ready = Domain.readySteps(run, steps);
   const isReady = (step: Domain.WorkflowRunStep) =>
-    run.status !== "cancelled" &&
-    step.completedAt === null &&
-    step.stage === lowest;
-  const open = run.status === "pending" || run.status === "active";
+    ready.some((candidate) => candidate.id === step.id);
+  const open = Domain.runIsOpen(run);
   const unassigned = open
     ? steps.filter((step) => Domain.isRunStepUnassigned(step, teams))
     : [];
@@ -771,30 +752,30 @@ function RouteComponent() {
    * move it, and `<B> blocked` is its clause.
    */
   const orderSummary = (() => {
-    const flagged = runs.some(({ run }) => run.flag !== null);
+    const flagged = runs.some(({ run }) => Domain.runIsFlagged(run));
     const unassigned = runs.some(
       ({ run, steps }) =>
-        (run.status === "pending" || run.status === "active") &&
+        Domain.runIsOpen(run) &&
         steps.some((step) => Domain.isRunStepUnassigned(step, teams)),
     );
     if (lineItems.length <= 1 && !flagged && !unassigned) return null;
     const blocked = lineItems.filter((item) =>
       runs.some(
-        ({ run }) => run.lineItemId === item.id && run.flag === "blocked",
+        ({ run }) => run.lineItemId === item.id && Domain.runIsBlocked(run),
       ),
     ).length;
     const made = lineItems.filter((item) => {
       const live = runs.filter(
-        ({ run }) => run.lineItemId === item.id && run.status !== "cancelled",
+        ({ run }) => run.lineItemId === item.id && Domain.runIsLive(run),
       );
-      return live.length > 0 && live.every(({ run }) => run.status === "done");
+      return live.length > 0 && live.every(({ run }) => !Domain.runIsOpen(run));
     }).length;
     const waitingOn = [
       ...new Set(
         runs
-          .filter(({ run }) => run.flag !== "blocked")
+          .filter(({ run }) => !Domain.runIsBlocked(run))
           .flatMap(({ run, steps }) =>
-            readySteps(run, steps)
+            Domain.readySteps(run, steps)
               .filter((step) => !Domain.isRunStepUnassigned(step, teams))
               .map((step) => step.teamName),
           ),
@@ -989,8 +970,10 @@ function RouteComponent() {
       readonly picker: React.ReactNode;
     } | null,
   ) => {
-    const open = run.status === "pending" || run.status === "active";
-    const lowest = lowestOpenStage(steps);
+    const open = Domain.runIsOpen(run);
+    const readyIds = new Set(
+      Domain.readySteps(run, steps).map((step) => step.id),
+    );
     const reason = blockReason[run.id] ?? "";
     /* A subdued panel so the disclosure reads as a drawer the header's Manage
        button owns, not as more card. The step boxes inside invert the usual
@@ -999,8 +982,7 @@ function RouteComponent() {
       <s-box background="subdued" borderRadius="base" padding="base">
         <s-stack gap="small-300">
           {steps.map((step) => {
-            const ready =
-              open && step.completedAt === null && step.stage === lowest;
+            const ready = readyIds.has(step.id);
             const blocker =
               step.completedAt === null
                 ? null
@@ -1092,7 +1074,11 @@ function RouteComponent() {
                   {note}
                   {draft !== null && noteEditor(step, draft)}
                   <s-stack direction="inline" gap="base" alignItems="center">
-                    {ready && (
+                    {/* A flag means stop, for the merchant too: the write
+                        refuses Done on a flagged run (`Domain.runIsFlagged`),
+                        so the button goes with it and Unblock or Dismiss on
+                        the run row is the way on. */}
+                    {ready && !Domain.runIsFlagged(run) && (
                       <s-button
                         variant="secondary"
                         disabled={!identified || busy}
@@ -1138,10 +1124,10 @@ function RouteComponent() {
             Block, Unblock and Cancel act on the whole run, and mixed into the
             steps they read as a fourth button on the last one. A done run has
             no run action, so it gets no rule either. */}
-          {(open || run.flag === "blocked") && <s-divider />}
+          {(open || Domain.runIsBlocked(run)) && <s-divider />}
           {open && (
             <s-stack gap="small-300">
-              {run.flag !== "blocked" && (
+              {!Domain.runIsBlocked(run) && (
                 <s-text-field
                   label="Reason"
                   labelAccessibilityVisibility="exclusive"
@@ -1162,7 +1148,7 @@ function RouteComponent() {
                 merchant reaches for most; Cancel and Change are the rare,
                 destructive ones and sit after it. */}
               <s-stack direction="inline" gap="small-300">
-                {run.flag === "blocked" ? (
+                {Domain.runIsBlocked(run) ? (
                   unblockButton(run)
                 ) : (
                   <s-button
@@ -1230,7 +1216,7 @@ function RouteComponent() {
     change: Parameters<typeof manageRows>[1],
   ) => {
     const { run } = detail;
-    const cancelled = run.status === "cancelled";
+    const cancelled = !Domain.runIsLive(run);
     const now = nowLine(detail);
     const attention = attentionRows(detail, teams, assignTeam);
     return (
@@ -1240,7 +1226,7 @@ function RouteComponent() {
           <s-badge tone={RUN_STATUS_BADGE[run.status].tone}>
             {RUN_STATUS_BADGE[run.status].label}
           </s-badge>
-          {run.flag !== null && (
+          {Domain.runIsFlagged(run) && (
             <s-badge tone="warning">{flagLabel(run)}</s-badge>
           )}
           {cancelled && (
@@ -1259,7 +1245,7 @@ function RouteComponent() {
             </s-button>
           )}
         </s-stack>
-        {run.flag === "blocked" && blockedStrip(detail, unblockButton(run))}
+        {Domain.runIsBlocked(run) && blockedStrip(detail, unblockButton(run))}
         {now !== null && <s-text>{now}</s-text>}
         {attention}
         {!cancelled && managingRun(run) && manageRows(detail, change)}
@@ -1293,7 +1279,7 @@ function RouteComponent() {
     const removed = item.currentQuantity === 0;
     const toMake = Domain.unitsToMake(item);
     const itemRuns = runs.filter(({ run }) => run.lineItemId === item.id);
-    const live = itemRuns.find(({ run }) => run.status !== "cancelled");
+    const live = itemRuns.find(({ run }) => Domain.runIsLive(run));
     const matched = itemWorkflows.filter((workflow) =>
       item.matchedWorkflowIds.includes(workflow.id),
     );
@@ -1308,8 +1294,9 @@ function RouteComponent() {
       !removed;
     // A done run is finished work with a record; changing it would rewrite
     // that history to `cancelled` for a rework the run cards do not model.
-    // The server would allow it (done is live), so the page is the gate.
-    const changeable = live === undefined || live.run.status !== "done";
+    // The server would allow it (`setRun` replaces any `Domain.runIsLive`
+    // incumbent), so the page is the gate: change only while `runIsOpen`.
+    const changeable = live === undefined || Domain.runIsOpen(live.run);
     const options = (() => {
       if (ambiguous) return matched;
       if (live === undefined) return itemWorkflows;

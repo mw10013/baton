@@ -23,10 +23,37 @@ export class RunNotFoundError extends Schema.TaggedError<RunNotFoundError>()(
   { id: Schema.String },
 ) {}
 
-/** The run is `done` or `cancelled` — or, for un-cancel, is not cancelled. */
+/**
+ * The run's status refuses the action. For Start, Done, Block and Cancel that
+ * is `!Domain.runIsOpen`; for the note and Undo, `!Domain.runIsLive`; for
+ * un-cancel, the inverse, `Domain.runIsLive`. The table on
+ * {@link Domain.RunStatus} is the rule.
+ */
 export class RunTerminalError extends Schema.TaggedError<RunTerminalError>()(
   "RunTerminalError",
   { runId: Schema.String, status: Domain.RunStatus },
+) {}
+
+/**
+ * Start or Done refused because the run carries a flag: a flag means stop,
+ * whoever set it, until a person lifts it. Gate: `Domain.runIsFlagged`; see
+ * {@link Domain.RunFlag}. Undo and the note are not gated by it — Undo takes
+ * work back rather than doing more, and a held step is the one to write on.
+ */
+export class RunFlaggedError extends Schema.TaggedError<RunFlaggedError>()(
+  "RunFlaggedError",
+  { runId: Schema.String, flag: Domain.RunFlag },
+) {}
+
+/**
+ * Attach refused: the line item's live run is `done`. Finished work is a
+ * record, and replacing it would rewrite that record to `cancelled` for a
+ * rework the run cards do not model; the merchant reopens the last step and
+ * then changes it, or leaves it. Names the incumbent so the page can.
+ */
+export class RunFinishedError extends Schema.TaggedError<RunFinishedError>()(
+  "RunFinishedError",
+  { runId: Schema.String, workflowName: Domain.WorkflowName },
 ) {}
 
 /**
@@ -41,7 +68,7 @@ export class RunItemBusyError extends Schema.TaggedError<RunItemBusyError>()(
 ) {}
 
 /**
- * The shop already holds `Domain.ShopLimits.maxLiveRuns` runs in `pending` or
+ * The shop already holds `Domain.ShopLimits.maxOpenRuns` runs in `pending` or
  * `active`. A safety valve rather than a product limit: at the ceiling a shop
  * is far outside anything the app is designed for, and the alternative — a
  * Durable Object whose run table grows without bound — is worse than a refusal
@@ -198,9 +225,6 @@ const summarise = (
   ),
 });
 
-const isTerminal = (run: Domain.WorkflowRun) =>
-  run.status === "done" || run.status === "cancelled";
-
 /**
  * An {@link Domain.Actor} flattened into the three columns a step's actor slot
  * holds. The merchant has no `Member` row, so the id and email are null beside
@@ -281,7 +305,9 @@ export class WorkflowRunRepository extends Context.Service<
      *   caller reads it as "already there";
      * - a live run for a different workflow is cancelled first, so the
      *   partial index is free before the insert, and comes back as
-     *   `replaced`;
+     *   `replaced` — unless it is `done`, which is refused
+     *   ({@link RunFinishedError}): gate {@link Domain.runIsOpen} on the
+     *   incumbent;
      * - a *cancelled* run for `(lineItemId, workflowId)` is un-cancelled
      *   rather than replaced by a fresh one. That is the existing recovery
      *   semantics of the run key, and it is what the merchant means: the
@@ -301,7 +327,10 @@ export class WorkflowRunRepository extends Context.Service<
         /** The run cancelled to make room, or null when the item was free. */
         readonly replaced: Domain.WorkflowRun | null;
       }>,
-      SqlError.SqlError | WorkflowRunRepositoryError | WorkflowRunLimitError
+      | SqlError.SqlError
+      | WorkflowRunRepositoryError
+      | WorkflowRunLimitError
+      | RunFinishedError
     >;
     readonly markOrderDeleted: (input: {
       readonly orderId: string;
@@ -318,6 +347,7 @@ export class WorkflowRunRepository extends Context.Service<
       Option.Option<Domain.WorkflowRunDetail>,
       SqlError.SqlError | WorkflowRunRepositoryError
     >;
+    /** Gate: {@link Domain.runIsOpen}; see {@link Domain.RunStatus}. A `done` run is not cancelled, it is undone. */
     readonly cancelRun: (input: {
       readonly runId: string;
     }) => Effect.Effect<
@@ -328,7 +358,8 @@ export class WorkflowRunRepository extends Context.Service<
       | RunTerminalError
     >;
     /**
-     * Only from `cancelled`; status is recomputed from the steps. Refused with
+     * Gate: the inverse of {@link Domain.runIsLive}, only from `cancelled`;
+     * status is recomputed from the steps. Refused with
      * {@link RunItemBusyError} when another live run has taken the line item
      * in the meantime — one live run per item, so the occupant has to go first.
      */
@@ -396,9 +427,9 @@ export class WorkflowRunRepository extends Context.Service<
      * step is Ready for a worker to Start. `reopenedAt` /
      * `reopenedByRole` / `reopenedByEmail` record who sent it back. Allowed
      * for the step's team while nothing downstream has started
-     * (`StepUndoBlockedError` otherwise, naming the blocker). A `done` run
-     * is *not* terminal here — undoing its last step is the point — only a
-     * cancelled one is.
+     * (`StepUndoBlockedError` otherwise, naming the blocker). Gate:
+     * {@link Domain.runIsLive}, not `runIsOpen` — undoing a `done` run's last
+     * step is the point; see {@link Domain.RunStatus}.
      */
     readonly uncompleteStep: (
       input: Domain.UncompleteStepCommand,
@@ -430,6 +461,7 @@ export class WorkflowRunRepository extends Context.Service<
      * original `startedAt` / `startedBy` / `startedByEmail` — no takeover, no
      * error — so two people pressing it does not rewrite who began. The
      * email is snapshotted so history reads after the member is deleted.
+     * Gates: {@link Domain.runIsOpen}, and not {@link Domain.runIsFlagged}.
      */
     readonly startStep: (
       input: Domain.StartStepCommand,
@@ -441,12 +473,14 @@ export class WorkflowRunRepository extends Context.Service<
       | RunNotAllowedError
       | StepNotReadyError
       | RunTerminalError
+      | RunFlaggedError
     >;
     /**
      * Also backfills the started slot with the same actor when Done arrives
      * without a Start, so every finished step records who. Clears the
      * `reopened` slot: that slot says "sent back and not yet redone", and a
-     * Done is precisely the end of that. Nothing is created here.
+     * Done is precisely the end of that. Nothing is created here. Gates:
+     * {@link Domain.runIsOpen}, and not {@link Domain.runIsFlagged}.
      */
     readonly completeStep: (
       input: Domain.CompleteStepCommand,
@@ -458,8 +492,15 @@ export class WorkflowRunRepository extends Context.Service<
       | RunNotAllowedError
       | StepNotReadyError
       | RunTerminalError
+      | RunFlaggedError
     >;
-    /** No readiness requirement — a note on a done step is allowed — but the run must be non-terminal. `null` clears the note and its `noteByRole`. */
+    /**
+     * No readiness requirement — a note on a done step is allowed, and so is
+     * one on a done run: a note is a record, not work, and the thing noticed
+     * after the last Done is exactly what wants writing down. Gate:
+     * {@link Domain.runIsLive}; see {@link Domain.RunStatus}. `null` clears
+     * the note and its `noteByRole`.
+     */
     readonly setStepNote: (
       input: Domain.SetStepNoteCommand,
     ) => Effect.Effect<
@@ -470,7 +511,7 @@ export class WorkflowRunRepository extends Context.Service<
       | RunNotAllowedError
       | RunTerminalError
     >;
-    /** Sets `flag = 'blocked'` with an optional reason and the actor, overwriting any prior flag. Allowed when a ready step belongs to `teamIds`. */
+    /** Sets `flag = 'blocked'` with an optional reason and the actor, overwriting any prior flag. Allowed when a ready step belongs to `teamIds`. Gate: {@link Domain.runIsOpen}; see {@link Domain.RunStatus}. */
     readonly blockRun: (
       input: Domain.BlockRunCommand,
     ) => Effect.Effect<
@@ -542,7 +583,9 @@ export class WorkflowRunRepository extends Context.Service<
      * and the merchant's way to move work between teams. Only `teamId` /
      * `teamName` are written, so a started step keeps `startedBy` /
      * `startedByEmail` and history still names whoever began it. A finished
-     * step is refused (`StepFinishedError`).
+     * step is refused (`StepFinishedError`), and so is a step of a run that
+     * is not {@link Domain.runIsOpen} (`RunTerminalError`): a cancelled run's
+     * steps are in nobody's queue and moving them would say otherwise.
      */
     readonly assignRunStepTeam: (input: {
       readonly runStepId: string;
@@ -555,6 +598,7 @@ export class WorkflowRunRepository extends Context.Service<
       | SqlError.SqlError
       | WorkflowRunRepositoryError
       | RunNotFoundError
+      | RunTerminalError
       | StepFinishedError
     >;
   }
@@ -655,8 +699,10 @@ export class WorkflowRunRepository extends Context.Service<
         `.pipe(Effect.map((rows) => rows.length > 0));
 
       /**
-       * The guard every step action shares: step exists, run not terminal,
-       * step's team among the caller's.
+       * The guard every step action shares: step exists, the run passes
+       * `gate` ({@link Domain.runIsOpen} for Start, Done and Block;
+       * {@link Domain.runIsLive} for the note and Undo), step's team among
+       * the caller's.
        *
        * `teamIds` undefined means the merchant, and then the team clause is
        * skipped whole — including the refusal for an unassigned step
@@ -667,14 +713,16 @@ export class WorkflowRunRepository extends Context.Service<
       const requireActionable = ({
         runStepId,
         teamIds,
+        gate = Domain.runIsOpen,
       }: {
         readonly runStepId: string;
         readonly teamIds: readonly string[] | undefined;
+        readonly gate?: (run: Domain.WorkflowRun) => boolean;
       }) =>
         Effect.gen(function* () {
           const step = yield* requireStep(runStepId);
           const run = yield* requireRun(step.runId);
-          if (isTerminal(run))
+          if (!gate(run))
             yield* new RunTerminalError({ runId: run.id, status: run.status });
           // An unassigned step (`teamId` null) is in nobody's queue and
           // no *member* may act on it until a team is assigned.
@@ -905,9 +953,9 @@ export class WorkflowRunRepository extends Context.Service<
             updatedAt = ${now}
           where id = ${runId}
         `,
-          // The one transition that can free a live-run slot is a run going
+          // The one transition that can free an open-run slot is a run going
           // `done`, and it goes `done` here or nowhere.
-          releaseLiveRunLimit(),
+          releaseOpenRunLimit(),
         );
 
       /**
@@ -917,7 +965,7 @@ export class WorkflowRunRepository extends Context.Service<
        * to stay correct across cancel, un-cancel, reconcile and every step
        * write — one derived count beats four places that must agree.
        */
-      const liveRunCount = Effect.fn("WorkflowRunRepository.liveRunCount")(
+      const openRunCount = Effect.fn("WorkflowRunRepository.openRunCount")(
         function* () {
           const rows =
             yield* sql`select count(*) from WorkflowRun where status in ('pending', 'active')`
@@ -932,15 +980,15 @@ export class WorkflowRunRepository extends Context.Service<
        * count, which matters because this runs on transitions as ordinary as
        * completing a step.
        */
-      const releaseLiveRunLimit = Effect.fn(
-        "WorkflowRunRepository.releaseLiveRunLimit",
+      const releaseOpenRunLimit = Effect.fn(
+        "WorkflowRunRepository.releaseOpenRunLimit",
       )(function* () {
         const rows =
-          yield* sql`select liveRunsLimitedAt from ShopUsage where id = 1`
+          yield* sql`select openRunsLimitedAt from ShopUsage where id = 1`
             .values;
         if (rows[0]?.[0] === null || rows[0]?.[0] === undefined) return;
-        if ((yield* liveRunCount()) < Domain.ShopLimits.maxLiveRuns)
-          yield* sql`update ShopUsage set liveRunsLimitedAt = null where id = 1`;
+        if ((yield* openRunCount()) < Domain.ShopLimits.maxOpenRuns)
+          yield* sql`update ShopUsage set openRunsLimitedAt = null where id = 1`;
       });
 
       const cancelPending = (orderId: string, now: number) =>
@@ -950,7 +998,7 @@ export class WorkflowRunRepository extends Context.Service<
           where orderId = ${orderId} and status = 'pending'
           returning id
         `.pipe(
-          Effect.tap(() => releaseLiveRunLimit()),
+          Effect.tap(() => releaseOpenRunLimit()),
           Effect.map((rows) => rows.length),
         );
 
@@ -1184,7 +1232,7 @@ export class WorkflowRunRepository extends Context.Service<
            * webhook, Shopify would retry it for four hours, and no retry can
            * fix a condition that only finishing work clears — the order write
            * would be lost for nothing. The order is stored, shows on the index
-           * with no workflow, `ShopUsage.liveRunsLimitedAt` raises a persistent
+           * with no workflow, `ShopUsage.openRunsLimitedAt` raises a persistent
            * banner naming the cause, and the next `reconcileAll` starts it once
            * there is room, because that pass walks every open order.
            */
@@ -1192,22 +1240,22 @@ export class WorkflowRunRepository extends Context.Service<
             0,
             toStart.length === 0
               ? 0
-              : Domain.ShopLimits.maxLiveRuns - (yield* liveRunCount()),
+              : Domain.ShopLimits.maxOpenRuns - (yield* openRunCount()),
           );
           const declined = toStart.length - Math.min(capacity, toStart.length);
           if (declined > 0) {
             yield* sql`
               update ShopUsage
-              set liveRunsLimitedAt = coalesce(liveRunsLimitedAt, ${now})
+              set openRunsLimitedAt = coalesce(openRunsLimitedAt, ${now})
               where id = 1
             `;
             yield* Effect.logError(
-              `WorkflowRunRepository.reconcileOrder: orderId=${orderId} declined=${String(declined)} limit=${String(Domain.ShopLimits.maxLiveRuns)}: live-run ceiling reached, runs not started`,
+              `WorkflowRunRepository.reconcileOrder: orderId=${orderId} declined=${String(declined)} limit=${String(Domain.ShopLimits.maxOpenRuns)}: open-run ceiling reached, runs not started`,
             ).pipe(
               Effect.annotateLogs({
                 orderId,
                 declined,
-                limit: Domain.ShopLimits.maxLiveRuns,
+                limit: Domain.ShopLimits.maxOpenRuns,
               }),
             );
           }
@@ -1227,7 +1275,7 @@ export class WorkflowRunRepository extends Context.Service<
               ),
           ).pipe(Effect.map((results) => results.filter(Option.isSome)));
           const created = inserted.length;
-          const openRuns = runs.filter((run) => !isTerminal(run));
+          const openRuns = runs.filter(Domain.runIsOpen);
           /**
            * Tracks `Domain.unitsToMake`, so a refund that zeroes or lowers
            * `unfulfilledQuantity` reads exactly like a removal or an edit.
@@ -1237,7 +1285,7 @@ export class WorkflowRunRepository extends Context.Service<
               (item) => item.id === run.lineItemId,
             );
             if (lineItem === undefined || Domain.unitsToMake(lineItem) === 0)
-              return run.status === "pending"
+              return Domain.runIsUnstarted(run)
                 ? sql`
                       update WorkflowRun
                       set status = 'cancelled', cancelledAt = ${now}, updatedAt = ${now}
@@ -1255,7 +1303,7 @@ export class WorkflowRunRepository extends Context.Service<
                 where id = ${run.id}
               `.pipe(
               Effect.andThen(
-                run.status === "pending"
+                Domain.runIsUnstarted(run)
                   ? Effect.succeed(0)
                   : flagActive(
                       sql`id = ${run.id}`,
@@ -1371,9 +1419,14 @@ export class WorkflowRunRepository extends Context.Service<
                     where lineItemId = ${input.lineItem.id}
                   `,
                 );
-                const live = existing.find((run) => run.status !== "cancelled");
+                const live = existing.find(Domain.runIsLive);
                 if (live?.workflowId === input.workflow.workflow.id)
                   return Option.none();
+                if (live !== undefined && !Domain.runIsOpen(live))
+                  return yield* new RunFinishedError({
+                    runId: live.id,
+                    workflowName: live.workflowName,
+                  });
                 const now = yield* Clock.currentTimeMillis;
                 // Cancel first: the partial index must be free before the
                 // insert or the un-cancel below touches the item.
@@ -1386,7 +1439,7 @@ export class WorkflowRunRepository extends Context.Service<
                 const replaced = live ?? null;
                 const cancelled = existing.find(
                   (run) =>
-                    run.status === "cancelled" &&
+                    !Domain.runIsLive(run) &&
                     run.workflowId === input.workflow.workflow.id,
                 );
                 if (cancelled !== undefined) {
@@ -1411,9 +1464,9 @@ export class WorkflowRunRepository extends Context.Service<
                 // as the attach having worked. Counted after the replace above
                 // cancelled any incumbent, so swapping one item's workflow at
                 // the ceiling still works.
-                if ((yield* liveRunCount()) >= Domain.ShopLimits.maxLiveRuns)
+                if ((yield* openRunCount()) >= Domain.ShopLimits.maxOpenRuns)
                   return yield* new WorkflowRunLimitError({
-                    limit: Domain.ShopLimits.maxLiveRuns,
+                    limit: Domain.ShopLimits.maxOpenRuns,
                   });
                 const inserted = yield* insertRun(input);
                 return Option.isNone(inserted)
@@ -1469,7 +1522,7 @@ export class WorkflowRunRepository extends Context.Service<
           yield* sql.withTransaction(
             Effect.gen(function* () {
               const run = yield* requireRun(runId);
-              if (run.status === "done" || run.status === "cancelled")
+              if (!Domain.runIsOpen(run))
                 yield* new RunTerminalError({ runId, status: run.status });
               const now = yield* Clock.currentTimeMillis;
               yield* sql`
@@ -1477,7 +1530,7 @@ export class WorkflowRunRepository extends Context.Service<
                 set status = 'cancelled', cancelledAt = ${now}, updatedAt = ${now}
                 where id = ${runId}
               `;
-              yield* releaseLiveRunLimit();
+              yield* releaseOpenRunLimit();
             }),
           );
         }),
@@ -1490,7 +1543,9 @@ export class WorkflowRunRepository extends Context.Service<
           yield* sql.withTransaction(
             Effect.gen(function* () {
               const run = yield* requireRun(runId);
-              if (run.status !== "cancelled")
+              // The inverse of `Domain.runIsLive`: only a cancelled run has
+              // a cancel to undo.
+              if (Domain.runIsLive(run))
                 yield* new RunTerminalError({ runId, status: run.status });
               // The item may have been routed elsewhere since the cancel.
               // Checked here rather than left to `WorkflowRun_live_item_uidx`,
@@ -1659,24 +1714,11 @@ export class WorkflowRunRepository extends Context.Service<
           }: Domain.UncompleteStepCommand) {
             yield* sql.withTransaction(
               Effect.gen(function* () {
-                const step = yield* requireStep(runStepId);
-                const run = yield* requireRun(step.runId);
-                if (run.status === "cancelled")
-                  yield* new RunTerminalError({
-                    runId: run.id,
-                    status: run.status,
-                  });
-                // The same team rule `requireActionable` applies, inline
-                // because undo's terminal rule differs (a `done` run is
-                // undoable): undefined `teamIds` is the merchant and skips it.
-                if (
-                  teamIds !== undefined &&
-                  (step.teamId === null || !teamIds.includes(step.teamId))
-                )
-                  yield* new RunNotAllowedError({
-                    runId: run.id,
-                    teamId: step.teamId ?? "",
-                  });
+                const { step, run } = yield* requireActionable({
+                  runStepId,
+                  teamIds,
+                  gate: Domain.runIsLive,
+                });
                 if (step.completedAt === null)
                   yield* new StepNotReadyError({ runStepId });
                 const blocker = Domain.undoBlockedBy(
@@ -1753,6 +1795,8 @@ export class WorkflowRunRepository extends Context.Service<
           yield* sql.withTransaction(
             Effect.gen(function* () {
               const { run } = yield* requireActionable({ runStepId, teamIds });
+              if (run.flag !== null)
+                yield* new RunFlaggedError({ runId: run.id, flag: run.flag });
               if (!(yield* isReady(runStepId)))
                 yield* new StepNotReadyError({ runStepId });
               const now = yield* Clock.currentTimeMillis;
@@ -1782,6 +1826,8 @@ export class WorkflowRunRepository extends Context.Service<
                   runStepId,
                   teamIds,
                 });
+                if (run.flag !== null)
+                  yield* new RunFlaggedError({ runId: run.id, flag: run.flag });
                 if (!(yield* isReady(runStepId)))
                   yield* new StepNotReadyError({ runStepId });
                 const now = yield* Clock.currentTimeMillis;
@@ -1813,7 +1859,11 @@ export class WorkflowRunRepository extends Context.Service<
         }: Domain.SetStepNoteCommand) {
           yield* sql.withTransaction(
             Effect.gen(function* () {
-              const { run } = yield* requireActionable({ runStepId, teamIds });
+              const { run } = yield* requireActionable({
+                runStepId,
+                teamIds,
+                gate: Domain.runIsLive,
+              });
               const now = yield* Clock.currentTimeMillis;
               // Clearing the note clears its attribution with it: `Note
               // (Merchant):` beside no note would be a label for nothing.
@@ -1837,7 +1887,7 @@ export class WorkflowRunRepository extends Context.Service<
           yield* sql.withTransaction(
             Effect.gen(function* () {
               const run = yield* requireRun(runId);
-              if (isTerminal(run))
+              if (!Domain.runIsOpen(run))
                 yield* new RunTerminalError({ runId, status: run.status });
               yield* requireReadyTeam(runId, teamIds);
               const now = yield* Clock.currentTimeMillis;
@@ -1893,7 +1943,7 @@ export class WorkflowRunRepository extends Context.Service<
             yield* sql.withTransaction(
               Effect.gen(function* () {
                 const run = yield* requireRun(runId);
-                if (run.flag !== "blocked")
+                if (!Domain.runIsBlocked(run))
                   yield* new RunNotBlockedError({ runId });
                 yield* requireReadyTeam(runId, teamIds);
                 const now = yield* Clock.currentTimeMillis;
@@ -1941,8 +1991,16 @@ export class WorkflowRunRepository extends Context.Service<
             yield* sql.withTransaction(
               Effect.gen(function* () {
                 const step = yield* requireStep(runStepId);
+                // The step first: on a done run every step is finished, and
+                // "keeps its team" is the truer refusal than "run not open".
                 if (step.completedAt !== null)
                   yield* new StepFinishedError({ runStepId });
+                const run = yield* requireRun(step.runId);
+                if (!Domain.runIsOpen(run))
+                  yield* new RunTerminalError({
+                    runId: run.id,
+                    status: run.status,
+                  });
                 const now = yield* Clock.currentTimeMillis;
                 yield* sql`
                   update WorkflowRunStep

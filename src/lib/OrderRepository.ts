@@ -39,7 +39,7 @@ export interface OrderUpsert<E = never> {
 export const ShopUsageRow = Schema.Struct({
   monthKey: Schema.String,
   ordersThisMonth: Schema.Number,
-  liveRunsLimitedAt: Schema.NullOr(Schema.Number),
+  openRunsLimitedAt: Schema.NullOr(Schema.Number),
   lastSweepAt: Schema.NullOr(Schema.Number),
 });
 export type ShopUsageRow = typeof ShopUsageRow.Type;
@@ -483,7 +483,7 @@ export class OrderRepository extends Context.Service<
       const readUsage = Effect.fn("OrderRepository.getUsage")(function* () {
         const [usage] = yield* decodeUsage(
           yield* sql`
-            select monthKey, ordersThisMonth, liveRunsLimitedAt, lastSweepAt
+            select monthKey, ordersThisMonth, openRunsLimitedAt, lastSweepAt
             from ShopUsage where id = 1
           `,
         );

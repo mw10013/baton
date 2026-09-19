@@ -359,7 +359,7 @@ const authorizeShopAgentMember = Effect.fn("authorizeShopAgentMember")(
     const sessionContext = yield* auth.getSession(request.headers);
     if (Option.isNone(sessionContext))
       return new Response("Unauthorized", { status: 401 });
-    if (sessionContext.value.user.role === "admin")
+    if (Domain.userIsAdmin(sessionContext.value.user))
       return new Response("Forbidden", { status: 403 });
     if (!urlShop) return new Response("Not Found", { status: 404 });
     const email = sessionContext.value.user.email;

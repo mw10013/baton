@@ -4,6 +4,7 @@ import { Effect, Option } from "effect";
 
 import { Auth } from "@/lib/Auth";
 import { CurrentRequest } from "@/lib/CurrentRequest";
+import * as Domain from "@/lib/Domain";
 import { tryPromisePassthrough } from "@/lib/LayerEx";
 
 /**
@@ -23,7 +24,7 @@ export const requireAdmin = Effect.gen(function* () {
   if (Option.isNone(sessionContext))
     return yield* Effect.fail(redirect({ to: "/login" }));
   const { user } = sessionContext.value;
-  if (user.role !== "admin")
+  if (!Domain.userIsAdmin(user))
     return yield* Effect.fail(redirect<AnyRouter>({ to: "/shop" }));
   return user;
 });

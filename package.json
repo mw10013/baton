@@ -38,7 +38,7 @@
     "clean:playwright-cli": "find .playwright-cli -type f -mtime +1 -delete 2>/dev/null || true",
     "playwright-cli": "node node_modules/playwright-core/lib/tools/cli-client/cli.js",
     "typecheck": "pnpm run cf-typegen && tsc -b . test",
-    "lint": "oxlint --format agent",
+    "lint": "oxlint --format agent && node scripts/rules-lint.ts",
     "fmt": "oxfmt . '!refs/**' '!dist/**'",
     "fmt:check": "oxfmt --check . '!refs/**' '!dist/**'",
     "port": "source .env && echo $PORT",

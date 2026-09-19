@@ -133,7 +133,7 @@ const bulkIsActive = ({ status }: Domain.BulkOperation) =>
  * those rows are as valid as any other under the `updatedAt` upsert guard.
  */
 export const completedBulkUrl = (operation: Domain.BulkOperation) =>
-  operation.status === "COMPLETED"
+  Domain.bulkOperationCompleted(operation)
     ? Effect.succeed(
         Option.fromNullOr(operation.url ?? operation.partialDataUrl),
       )

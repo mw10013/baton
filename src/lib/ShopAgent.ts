@@ -75,6 +75,7 @@ import {
   type RunNotBlockedError,
   type RunNotFoundError,
   type RunTerminalError,
+  type RunFlaggedError,
   type StepNotReadyError,
   type StepUndoBlockedError,
   WorkflowRunRepository,
@@ -319,7 +320,7 @@ const memberCallableEffect =
  *
  * `ShopUsage` is the same one-row shape and holds everything the Worker needs
  * to compare this shop against its plan without the object knowing what the
- * plan is: the calendar month's counted orders, when the live-run ceiling last
+ * plan is: the calendar month's counted orders, when the open-run ceiling last
  * refused an auto-start, and when retention last swept. `monthKey` is seeded
  * empty so the first counted order of any month rolls it over, which is the
  * only moment a rollover can matter.
@@ -483,7 +484,7 @@ const initializeSchema = Effect.gen(function* () {
       id integer primary key check (id = 1),
       monthKey text not null,
       ordersThisMonth integer not null default 0,
-      liveRunsLimitedAt integer,
+      openRunsLimitedAt integer,
       lastSweepAt integer
     );
     insert or ignore into ShopUsage (id, monthKey) values (1, '');
@@ -905,6 +906,7 @@ const runResult = <R>(
     void,
     | RunNotFoundError
     | RunTerminalError
+    | RunFlaggedError
     | RunItemBusyError
     | RunNotAllowedError
     | RunNotBlockedError
@@ -933,6 +935,8 @@ const runResult = <R>(
         Effect.succeed<Domain.RunResult>({ _tag: "NotFound" }),
       RunTerminalError: () =>
         Effect.succeed<Domain.RunResult>({ _tag: "Terminal" }),
+      RunFlaggedError: ({ flag }) =>
+        Effect.succeed<Domain.RunResult>({ _tag: "Flagged", flag }),
       RunNotAllowedError: () =>
         Effect.succeed<Domain.RunResult>({ _tag: "NotAllowed" }),
       RunNotBlockedError: () =>
@@ -1084,15 +1088,11 @@ const orderTeamIds = (
 const unionTeams = (a: PublishTeams, b: PublishTeams): PublishTeams =>
   a === "all" || b === "all" ? "all" : [...new Set([...a, ...b])];
 
-const isOpen = (run: Domain.WorkflowRun) =>
-  run.status === "pending" || run.status === "active";
-
 /**
  * Readiness decided on a snapshot taken before any step of the
  * round is completed: completing stage 1 makes stage 2 ready at
  * once, so asking `completeStep` as the loop goes would run the
- * whole order to done in one round. Same rule as the repository's
- * ready query: open, and nothing open in an earlier stage of the run.
+ * whole order to done in one round. The rule is `Domain.readySteps`.
  */
 /**
  * A seeded step write recorded as the merchant: no `teamIds`, which is the one
@@ -1107,18 +1107,7 @@ const merchantStepCommand = (step: Domain.WorkflowRunStep) => ({
 const seedReadySteps = (
   details: readonly Domain.WorkflowRunDetail[],
 ): Domain.WorkflowRunStep[] =>
-  details.flatMap(({ run, steps }) =>
-    isOpen(run)
-      ? steps.filter(
-          (step) =>
-            step.completedAt === null &&
-            !steps.some(
-              (earlier) =>
-                earlier.completedAt === null && earlier.stage < step.stage,
-            ),
-        )
-      : [],
-  );
+  details.flatMap(({ run, steps }) => Domain.readySteps(run, steps));
 
 export class ShopAgent extends Agent {
   declare private readonly runEffect: ReturnType<typeof makeRunEffect>;
@@ -2811,9 +2800,15 @@ export class ShopAgent extends Agent {
             replaced: set.value.replaced,
           } satisfies Domain.AttachResult;
         }).pipe(
-          Effect.catchTag("WorkflowRunLimitError", ({ limit }) =>
-            Effect.succeed<Domain.AttachResult>({ _tag: "RunLimit", limit }),
-          ),
+          Effect.catchTags({
+            WorkflowRunLimitError: ({ limit }) =>
+              Effect.succeed<Domain.AttachResult>({ _tag: "RunLimit", limit }),
+            RunFinishedError: ({ workflowName }) =>
+              Effect.succeed<Domain.AttachResult>({
+                _tag: "ItemDone",
+                workflowName,
+              }),
+          }),
         ),
       )(input),
     );
@@ -3768,6 +3763,10 @@ export class ShopAgent extends Agent {
               Effect.succeed<Domain.AssignRunStepTeamResult>({
                 _tag: "StepFinished",
               }),
+            RunTerminalError: () =>
+              Effect.succeed<Domain.AssignRunStepTeamResult>({
+                _tag: "RunNotOpen",
+              }),
           }),
         ),
       )(input),
@@ -3874,7 +3873,7 @@ export class ShopAgent extends Agent {
               .listRunsForOrder({ orderId })
               .pipe(
                 Effect.map((details) =>
-                  details.filter(({ run }) => isOpen(run)),
+                  details.filter(({ run }) => Domain.runIsOpen(run)),
                 ),
               );
           const memberActor = {
@@ -3898,7 +3897,7 @@ export class ShopAgent extends Agent {
               .getRun({ runId })
               .pipe(
                 Effect.map((found) =>
-                  Option.isSome(found) && isOpen(found.value.run)
+                  Option.isSome(found) && Domain.runIsOpen(found.value.run)
                     ? found.value
                     : null,
                 ),

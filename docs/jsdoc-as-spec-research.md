@@ -5,7 +5,7 @@
 The work page hid Undo on a `done` run. The rule it violated was already
 written down, in the JSDoc on `WorkflowRunRepository.uncompleteStep`:
 
-> A `done` run is *not* terminal here — undoing its last step is the point —
+> A `done` run is _not_ terminal here — undoing its last step is the point —
 > only a cancelled one is.
 
 The write enforced it. `Domain.undoBlockedBy` existed precisely so "the
@@ -53,7 +53,7 @@ are already this.
 
 **Readers do not restate the rule. They link to it.** A UI gate or a second
 write path carries `{@link Domain.undoBlockedBy}` or a one-line "follows the
-rule on `uncompleteStep`". A reader that needs a *different* rule says so and
+rule on `uncompleteStep`". A reader that needs a _different_ rule says so and
 says why, in its own JSDoc. That is the sentence that was missing on the
 work page's `open`: either "same rule as the write" or "stricter than the
 write because …". Either would have made the bug visible in review.
@@ -95,8 +95,8 @@ That is the whole "spec". Anything longer is either code or a research doc.
   editing `src/`. The rule has to be in the diff to be reviewed.
 - **Spec fully in JSDoc**: duplicates the code, goes stale in the same way,
   and buries the few real rules in narration.
-- **No spec, code only**: exactly the bug above. Code shows *what*, and two
-  sites can each show a different *what* with no signal that one is wrong.
+- **No spec, code only**: exactly the bug above. Code shows _what_, and two
+  sites can each show a different _what_ with no signal that one is wrong.
 - **Rules at the owner, linked, tested, with a short lifecycle table**: each
   rule is written once, has a symbol to grep for, a test to fail, and a place
   a reviewer will see it next to a change.
@@ -106,7 +106,7 @@ That is the whole "spec". Anything longer is either code or a research doc.
 Current wording: JSDoc is "for complex and subtle behavior the code cannot
 show". Keep that, and add:
 
-> JSDoc also carries *rules*: any behaviour more than one site must agree on
+> JSDoc also carries _rules_: any behaviour more than one site must agree on
 > is stated once, normatively, on the symbol that enforces it. Other sites
 > `{@link}` it rather than restate it, and a site that follows a different
 > rule says so and why. Status and readiness predicates are `Domain`
@@ -135,10 +135,10 @@ The evidence is already in the tree. The repository has a private
 (pending or active). Routes inline the same two comparisons about a dozen
 times, and every one of them is one of exactly two shapes:
 
-| shape | meaning | used by |
-| --- | --- | --- |
-| `pending \|\| active` | run is **open**: work can still be recorded | start, complete, note, block, assign team, ready-step gates, "open" counts |
-| `!== cancelled` | run is **live**: it still counts for its line item | undo, uncancel's inverse, "which run is this item's" lookups |
+| shape                 | meaning                                            | used by                                                                    |
+| --------------------- | -------------------------------------------------- | -------------------------------------------------------------------------- |
+| `pending \|\| active` | run is **open**: work can still be recorded        | start, complete, note, block, assign team, ready-step gates, "open" counts |
+| `!== cancelled`       | run is **live**: it still counts for its line item | undo, uncancel's inverse, "which run is this item's" lookups               |
 
 Every action in the system is gated by one of those two. Per-action
 predicates (`runAcceptsUndo`, `runAcceptsNote`, …) would be six names for two
@@ -182,9 +182,24 @@ export const stepActions = (
   const mine = step.teamId !== null && teamIds.includes(step.teamId);
   const calm = view.run.flag === null;
   return {
-    start: mine && calm && runIsOpen(view.run) && step.ready && step.startedAt === null,
-    done: mine && calm && runIsOpen(view.run) && step.ready && step.completedAt === null,
-    undo: mine && calm && runIsLive(view.run) && step.completedAt !== null && step.undoBlockedBy === null,
+    start:
+      mine &&
+      calm &&
+      runIsOpen(view.run) &&
+      step.ready &&
+      step.startedAt === null,
+    done:
+      mine &&
+      calm &&
+      runIsOpen(view.run) &&
+      step.ready &&
+      step.completedAt === null,
+    undo:
+      mine &&
+      calm &&
+      runIsLive(view.run) &&
+      step.completedAt !== null &&
+      step.undoBlockedBy === null,
     note: mine && runIsOpen(view.run),
   };
 };
@@ -273,7 +288,7 @@ each site but fewer rules: once `runIsOpen` and `runIsLive` exist, the
 table has four rows and every site names one of two functions. That is
 small enough to stay true.
 
-Where a table belongs: on the symbol that *is* the concept, usually a
+Where a table belongs: on the symbol that _is_ the concept, usually a
 `Schema.Literals` or a branded type, not on a function. Status, flag,
 readiness are the three candidates today. A table on a function is a sign
 the concept has no symbol yet.
@@ -303,12 +318,12 @@ well as `cancelled`, so cancel's gate is `runIsOpen`, matching the
 
 Inline `status` / `flag` comparisons outside `Domain` today:
 
-| file | count |
-| --- | --- |
-| `app.orders.$orderId.tsx` | 20 |
-| `WorkflowRunRepository.ts` | 9 |
-| `shop.$shop.work.$runId.tsx` | 7 |
-| `shop.$shop.index.tsx` | 2 |
+| file                                    | count  |
+| --------------------------------------- | ------ |
+| `app.orders.$orderId.tsx`               | 20     |
+| `WorkflowRunRepository.ts`              | 9      |
+| `shop.$shop.work.$runId.tsx`            | 7      |
+| `shop.$shop.index.tsx`                  | 2      |
 | `ShopAgent.ts`, `OrdersSyncWorkflow.ts` | 1 each |
 
 Concept symbols (`Schema.Literals`) in `Domain.ts`: 15. Of those, the ones

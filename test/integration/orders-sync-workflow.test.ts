@@ -161,7 +161,7 @@ describe("OrdersSyncWorkflow shape", () => {
 /**
  * The storage guard, with the ceiling lowered to zero for the duration — the
  * real one is two gigabytes and no test is going to write that. Same seam, and
- * same reasoning, as `withMaxLiveRuns` in `workflow-run-repository.test.ts`.
+ * same reasoning, as `withMaxOpenRuns` in `workflow-run-repository.test.ts`.
  */
 describe("syncOrders storage guard", () => {
   it("refuses the bulk import and leaves the reason on the sync state", async () => {

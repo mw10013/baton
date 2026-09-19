@@ -6,7 +6,13 @@ import { Effect, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { MemberBar } from "@/components/MemberBar";
-import { FlagBanner, OrderItems, Prose, RunItem } from "@/components/MemberRun";
+import {
+  FlagBanner,
+  liftFlagLabel,
+  OrderItems,
+  Prose,
+  RunItem,
+} from "@/components/MemberRun";
 import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
 import { requireMember } from "@/lib/MemberAccess";
@@ -188,21 +194,6 @@ function RouteComponent() {
     text: string;
   } | null>(null);
   const teamIds = teams.map((team) => team.id);
-  const mine = (step: Domain.RunStepView) =>
-    step.teamId !== null && teamIds.includes(step.teamId);
-  const open =
-    view !== null &&
-    (view.run.status === "pending" || view.run.status === "active");
-  /**
-   * Undo outlives `open`. A `done` run is only the last step's Done, and
-   * `WorkflowRunRepository.uncompleteStep` accepts it — undoing that step is
-   * the point — refusing only `cancelled`, which someone chose. The queue's
-   * Done tier and the merchant's Reopen already follow the write's rule; the
-   * work page must too, or a step is undoable from the queue and not from
-   * the page the queue links to. Start, Done, notes and Block stay on
-   * `open`: the repository treats `done` as terminal for all of them.
-   */
-  const undoable = view !== null && view.run.status !== "cancelled";
 
   const renderStep = (step: Domain.RunStepView) => {
     if (view === null) return null;
@@ -210,26 +201,16 @@ function RouteComponent() {
     /** Shown only while the slot is filled: the next Done clears it (`Domain.WorkflowRunStep`). */
     const reopenedBy = Domain.stepReopenedBy(step);
     const editingNote = noteDraft?.runStepId === step.id;
-    const canAct = mine(step) && open;
-    /**
-     * A flag stops the work, so Start, Done and Undo go with it; the note
-     * button stays, because a held step is exactly the one somebody needs to
-     * write on. The banner carries the only action the flag itself allows.
-     */
-    const acting = canAct && view.run.flag === null;
-    const ready = acting && step.ready && step.completedAt === null;
-    const finished =
-      mine(step) &&
-      undoable &&
-      view.run.flag === null &&
-      step.completedAt !== null;
+    /** The buttons follow {@link Domain.stepActions}; the banner carries the only action a flag allows. */
+    const can = Domain.stepActions(view.run, step, teamIds);
+    const anyAction = can.done || can.undo !== null || can.note;
     return (
       <s-box
         key={step.id}
         padding="small"
         borderWidth="base"
         borderRadius="base"
-        background={ready ? "subdued" : "base"}
+        background={can.done ? "subdued" : "base"}
       >
         <s-stack gap="small-300">
           <s-stack direction="inline" gap="small-300" alignItems="center">
@@ -297,9 +278,9 @@ function RouteComponent() {
               </s-stack>
             </s-stack>
           )}
-          {(canAct || finished) && (
+          {anyAction && (
             <s-stack direction="inline" gap="base" alignItems="center">
-              {ready && step.startedAt === null && (
+              {can.start && (
                 <s-button
                   variant="secondary"
                   disabled={actions.pending}
@@ -310,7 +291,7 @@ function RouteComponent() {
                   Start
                 </s-button>
               )}
-              {ready && (
+              {can.done && (
                 <s-button
                   variant="primary"
                   disabled={actions.pending}
@@ -321,8 +302,8 @@ function RouteComponent() {
                   Done
                 </s-button>
               )}
-              {finished &&
-                (step.undoBlockedBy === null ? (
+              {can.undo !== null &&
+                (can.undo.blockedBy === null ? (
                   <s-button
                     variant="secondary"
                     disabled={actions.pending}
@@ -334,10 +315,10 @@ function RouteComponent() {
                   </s-button>
                 ) : (
                   <s-text color="subdued">
-                    {`${step.undoBlockedBy.teamName} started ${step.undoBlockedBy.stepName} · ask them`}
+                    {`${can.undo.blockedBy.teamName} started ${can.undo.blockedBy.stepName} · ask them`}
                   </s-text>
                 ))}
-              {canAct && !editingNote && (
+              {can.note && !editingNote && (
                 <s-button
                   variant="secondary"
                   disabled={actions.pending}
@@ -379,7 +360,7 @@ function RouteComponent() {
    * one on screen belongs to a hold that has since been lifted, and is dead.
    */
   const editingReason =
-    run.flag === "blocked" && reasonDraft?.at === run.flagAt
+    Domain.runIsBlocked(run) && reasonDraft?.at === run.flagAt
       ? reasonDraft.text
       : null;
   /**
@@ -390,36 +371,35 @@ function RouteComponent() {
    * Edit reason is offered only while no editor is open; the editor's own
    * Save and Cancel are the buttons for that state.
    */
-  const flagActions =
-    run.flag === null ? null : (
-      <>
+  const flagActions = Domain.runIsFlagged(run) ? (
+    <>
+      <s-button
+        slot="secondary-actions"
+        variant="secondary"
+        disabled={actions.pending}
+        onClick={() => {
+          actions.dismiss.mutate(run.id);
+        }}
+      >
+        {liftFlagLabel(run)}
+      </s-button>
+      {Domain.runIsBlocked(run) && editingReason === null && (
         <s-button
           slot="secondary-actions"
           variant="secondary"
           disabled={actions.pending}
           onClick={() => {
-            actions.dismiss.mutate(run.id);
+            setReasonDraft({
+              at: run.flagAt,
+              text: run.flagDetail?.reason ?? "",
+            });
           }}
         >
-          {run.flag === "blocked" ? "Unblock" : "Dismiss"}
+          Edit reason
         </s-button>
-        {run.flag === "blocked" && editingReason === null && (
-          <s-button
-            slot="secondary-actions"
-            variant="secondary"
-            disabled={actions.pending}
-            onClick={() => {
-              setReasonDraft({
-                at: run.flagAt,
-                text: run.flagDetail?.reason ?? "",
-              });
-            }}
-          >
-            Edit reason
-          </s-button>
-        )}
-      </>
-    );
+      )}
+    </>
+  ) : null;
 
   const reasonEditor = (draft: string) => (
     <s-stack gap="small-300">
@@ -477,10 +457,12 @@ function RouteComponent() {
             <RunItem run={run} />
             <s-stack direction="inline" gap="small-300" alignItems="center">
               <s-badge>{run.workflowName}</s-badge>
-              {run.status === "done" && <s-badge tone="neutral">Done</s-badge>}
-              {run.status === "cancelled" && (
-                <s-badge tone="critical">Cancelled</s-badge>
-              )}
+              {!Domain.runIsOpen(run) &&
+                (Domain.runIsLive(run) ? (
+                  <s-badge tone="neutral">Done</s-badge>
+                ) : (
+                  <s-badge tone="critical">Cancelled</s-badge>
+                ))}
               <s-text color="subdued">
                 ordered{" "}
                 <LocalDateTime value={run.orderProcessedAt} format="relative" />
@@ -513,7 +495,7 @@ function RouteComponent() {
         {/* Only the *setting* of a block lives down here. Lifting it and
             rewriting it are in the banner at the top, because a state and the
             buttons that change it a screen apart read as two facts. */}
-        {open && run.flag === null && (
+        {Domain.runIsOpen(run) && !Domain.runIsFlagged(run) && (
           <s-section heading="Block this work" accessibilityLabel="Block">
             <div className="print-hide">
               <s-stack gap="small-300">

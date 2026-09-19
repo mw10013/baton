@@ -1,3 +1,25 @@
+/**
+ * The domain vocabulary, and the one place a behavioural rule is written
+ * down.
+ *
+ * - A rule is stated once, on the symbol that *is* the concept (a
+ *   `Schema.Literals` such as {@link RunStatus}) or the function that
+ *   enforces it ({@link undoBlockedBy}, {@link readySteps}). A concept with
+ *   more than one rule carries a table naming each rule's predicate.
+ * - Every other site calls the predicate ({@link runIsOpen},
+ *   {@link runIsFlagged}, {@link userIsAdmin}, ...) rather than comparing a
+ *   literal. `scripts/rules-lint.ts`, run by `pnpm lint`, refuses an inline
+ *   `.status`, `.flag` or admin `.role` comparison anywhere else under `src/`.
+ * - A site that follows a different rule from its siblings says so and why,
+ *   in its own JSDoc, and links the rule it departs from.
+ * - Each rule is pinned by a test whose title is the rule in plain words.
+ *
+ * Rules spelled out at every reader drifted: Undo was allowed by the write
+ * and hidden by one of three pages, and "live" meant not-cancelled to the
+ * line item index but pending-or-active to the shop ceiling, so a `done`
+ * run was refused where it should have been offered. {@link runIsLive} and
+ * {@link runIsOpen} are two names for two rules, one definition each.
+ */
 import { Match, Option, Schema, SchemaGetter, Struct } from "effect";
 
 const SqliteBoolean = Schema.Number.pipe(
@@ -192,6 +214,15 @@ export type UserId = typeof UserId.Type;
  */
 export const UserRole = Schema.Literals(["user", "admin"]);
 export type UserRole = typeof UserRole.Type;
+
+/**
+ * The one rule on {@link UserRole}: an admin is a site operator and lives
+ * under `/admin`; everyone else is a member and lives under `/shop`. The
+ * Worker gate, both server-fn middlewares and the sign-in callback all
+ * decide with this and nothing else; per-shop access is a `Member` row.
+ */
+export const userIsAdmin = (user: { readonly role?: string | null }) =>
+  user.role === "admin";
 
 /**
  * A `User` row: encoded side is the D1 row (ISO text dates, 0/1 booleans),
@@ -405,8 +436,8 @@ export const WorkflowLimits = {
 export const ShopLimits = {
   /** `Team` rows per shop. */
   maxTeams: 25,
-  /** `WorkflowRun` rows in `pending` or `active` per shop; a safety valve, not a product limit. */
-  maxLiveRuns: 5000,
+  /** `WorkflowRun` rows that are {@link runIsOpen} per shop; a safety valve, not a product limit. "Open", not "live": a `done` run is live for its line item but frees this slot. */
+  maxOpenRuns: 5000,
   /** Line items kept per order on the bulk path; the rest are dropped and the order flagged. */
   maxLineItemsPerOrder: 250,
   /** A closed order untouched for this long is deleted with its runs. */
@@ -435,8 +466,8 @@ export const ShopUsage = Schema.Struct({
   /** `YYYY-MM` in UTC; see {@link monthKeyOf}. */
   monthKey: Schema.String,
   ordersThisMonth: Schema.Number,
-  /** Set when reconcile declined to auto-start a run because of `ShopLimits.maxLiveRuns`; null once under the ceiling again. */
-  liveRunsLimitedAt: Schema.NullOr(Schema.Number),
+  /** Set when reconcile declined to auto-start a run because of `ShopLimits.maxOpenRuns`; null once under the ceiling again. */
+  openRunsLimitedAt: Schema.NullOr(Schema.Number),
   /** `ctx.storage.sql.databaseSize` at read time. */
   databaseSize: Schema.Number,
   lastSweepAt: Schema.NullOr(Schema.Number),
@@ -1143,6 +1174,8 @@ export const AssignRunStepTeamResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("TeamNotFound") }),
   Schema.Struct({ _tag: Schema.Literal("StepFinished") }),
+  /** The step's run is not {@link runIsOpen}; see the {@link RunStatus} table. */
+  Schema.Struct({ _tag: Schema.Literal("RunNotOpen") }),
 ]);
 export type AssignRunStepTeamResult = typeof AssignRunStepTeamResult.Type;
 
@@ -1477,6 +1510,12 @@ export type SyncState = typeof SyncState.Type;
  * which is what makes the packer's round trip automatic — fulfil in Shopify,
  * `orders/updated` stores `FULFILLED`, the next read says `shipped`, and the
  * order leaves the Ready-to-ship list without anyone touching Baton.
+ *
+ * The rule is a function, not a table: {@link productionState} is the one
+ * definition, its precedence is documented there, and the SQL filters in
+ * `OrderRepository.listOrders` restate its branches and must move with it.
+ * Readers (`app.orders.index.tsx`) switch on the value for labels and
+ * filters only; no site decides anything by comparing it inline.
  */
 export const ProductionState = Schema.Literals([
   "no_workflow",
@@ -1702,8 +1741,8 @@ export const productionState = ({
  * items and run list so both pages share one definition — the SQL in
  * `OrderRepository.listOrders` restates it and must move with it.
  *
- * "Live" is any status but `cancelled`: a `done` run means the item was
- * routed and finished, and a finished item does not get a second route.
+ * "Live" is {@link runIsLive}: a `done` run means the item was routed and
+ * finished, and a finished item does not get a second route.
  */
 export const ambiguousItems = (
   lineItems: readonly OrderLineItem[],
@@ -1713,16 +1752,14 @@ export const ambiguousItems = (
     (lineItem) =>
       lineItem.matchedWorkflowIds.length >= 2 &&
       unitsToMake(lineItem) > 0 &&
-      !runs.some(
-        (run) => run.lineItemId === lineItem.id && run.status !== "cancelled",
-      ),
+      !runs.some((run) => run.lineItemId === lineItem.id && runIsLive(run)),
   ).length;
 
 /** The index's per-order aggregate, recomputed from a detail page's run list so both pages share one definition. */
 export const runCounts = (runs: readonly WorkflowRun[]): RunCounts =>
   runs.reduce<RunCounts>(
     (counts, run) => {
-      const open = run.status === "pending" || run.status === "active";
+      const open = runIsOpen(run);
       return {
         open: counts.open + (open ? 1 : 0),
         done: counts.done + (run.status === "done" ? 1 : 0),
@@ -1787,6 +1824,11 @@ export type SubscribeOrderInput = typeof SubscribeOrderInput.Type;
  *
  * Crosses a `step.do` boundary, so every field must survive JSON.
  */
+/**
+ * Shopify's enum, stored as read. The one rule on it: only `COMPLETED` has
+ * a result to download ({@link bulkOperationCompleted}); every other value
+ * is a failure or still running, and `OrdersSyncWorkflow` fails the step.
+ */
 export const BulkOperationStatus = Schema.Literals([
   "CANCELED",
   "CANCELING",
@@ -1797,6 +1839,11 @@ export const BulkOperationStatus = Schema.Literals([
   "RUNNING",
 ]);
 export type BulkOperationStatus = typeof BulkOperationStatus.Type;
+
+/** See {@link BulkOperationStatus}. */
+export const bulkOperationCompleted = (operation: {
+  readonly status: BulkOperationStatus;
+}) => operation.status === "COMPLETED";
 
 export const BulkOperation = Schema.Struct({
   id: Schema.String,
@@ -2157,6 +2204,19 @@ export type ActorDisplay =
 export const actorLabel = (actor: ActorDisplay) =>
   actor.role === "merchant" ? "Merchant" : actor.email;
 
+/**
+ * Whether an actor slot is this member, by email: the durable identity, since
+ * a removed and re-added member mints a new id but keeps the address (the
+ * same reason {@link tierOf} matches Mine by email). The merchant has no email
+ * and is never "you" on a member page.
+ */
+export const actorIsMember = (actor: Actor, email: Email) =>
+  actor.role === "member" && actor.email === email;
+
+/** Whether two actor slots hold the same person: the merchant is one person, and members are the same by email. */
+export const sameActor = (a: Actor, b: Actor) =>
+  a.role === "merchant" ? b.role === "merchant" : actorIsMember(b, a.email);
+
 export const MerchantConnectionState = Schema.Struct({
   role: Schema.Literal("merchant"),
   subscription: Schema.NullOr(Subscription),
@@ -2269,6 +2329,29 @@ export type RunSource = typeof RunSource.Type;
  * cannot produce — reconcile sets it on a `pending` run whose work vanished,
  * a person sets it from anywhere but `done`, and un-cancel recomputes from
  * the steps again.
+ *
+ * What each status allows. The gate column is the rule; the enforcing write
+ * refuses with `RunTerminalError` when it fails, and every page that offers
+ * a button reads the same predicate rather than restating it.
+ *
+ * | action                          | gate                                  |
+ * | ------------------------------- | ------------------------------------- |
+ * | Start, Done                     | {@link runIsOpen}, and the step ready |
+ * | note on a step                  | {@link runIsLive}: a note is a record, not work |
+ * | Block                           | {@link runIsOpen}, and a ready step   |
+ * | assign a step's team            | {@link runIsOpen}, and the step open  |
+ * | Cancel                          | {@link runIsOpen}                     |
+ * | Undo (reopen a finished step)   | {@link runIsLive}, see {@link undoBlockedBy} |
+ * | Un-cancel                       | the inverse of {@link runIsLive}: only `cancelled` |
+ * | reconcile adjusts the run       | {@link runIsOpen}; silently if {@link runIsUnstarted}, flagged otherwise |
+ * | holds the line item's one slot  | {@link runIsLive}                     |
+ * | replaced by a manual attach     | {@link runIsOpen}: a `done` run is a record, `RunFinishedError` |
+ * | counts against the shop ceiling | {@link runIsOpen}                     |
+ *
+ * "Live" and "open" are two rules on purpose. A `done` run is live for its
+ * line item — a finished item is not rerouted — but not open: finished work
+ * does not count against `ShopLimits.maxOpenRuns`, and nothing on it can be
+ * started, so what is left is Undo and a note.
  */
 export const RunStatus = Schema.Literals([
   "pending",
@@ -2277,6 +2360,29 @@ export const RunStatus = Schema.Literals([
   "cancelled",
 ]);
 export type RunStatus = typeof RunStatus.Type;
+
+/**
+ * Nobody has touched it: no step started or finished. Reconcile treats such
+ * a run as free to cancel or resize silently when the order moves under it,
+ * where a started run is flagged instead, because "someone has started
+ * work" is exactly what should protect a run from a silent cancel.
+ */
+export const runIsUnstarted = (run: { readonly status: RunStatus }) =>
+  run.status === "pending";
+
+/** Work can still be recorded: Start, Done, notes, Block, team assignment, cancel. */
+export const runIsOpen = (run: { readonly status: RunStatus }) =>
+  run.status === "pending" || run.status === "active";
+
+/**
+ * The run still stands for its line item. Only `cancelled` is out, because
+ * only `cancelled` was chosen; `done` is the last step's Done and is undone
+ * the same way. Undo and every "which run is this item's" lookup use this,
+ * and `WorkflowRun_live_item_uidx` (partial over `status <> 'cancelled'`) is
+ * the same rule as a database constraint.
+ */
+export const runIsLive = (run: { readonly status: RunStatus }) =>
+  run.status !== "cancelled";
 
 /**
  * Attention markers reconcile leaves on an `active` run when the order under
@@ -2292,6 +2398,18 @@ export type RunStatus = typeof RunStatus.Type;
  * exactly `FULFILLED` while runs are open: active runs get it, pending runs
  * are cancelled instead. A partial fulfilment never sets it — the shipped
  * line's `unfulfilledQuantity` hits zero and reads as `item_removed`.
+ *
+ * What a flag changes. Every site reads a predicate, never the literal.
+ *
+ * | rule                                      | predicate / enforcer                        |
+ * | ----------------------------------------- | ------------------------------------------- |
+ * | Start and Done are refused; Undo and the note are not | {@link runIsFlagged}, `RunFlaggedError` |
+ * | the flag's one action is Unblock or Dismiss | {@link runIsBlocked} picks the word       |
+ * | the block reason is editable              | {@link runIsBlocked}, `setBlockReason`      |
+ * | a blocked run holds no team ("waiting on") and shows no Now line | {@link runIsBlocked} |
+ * | counted as `blocked` or `flagged`, open runs only | {@link runCounts}                   |
+ * | reconcile flags active runs, cancels pending, leaves done | `flagActive`, `cancelPending` |
+ * | a flag puts the queue row in Attention    | {@link tierOf}                              |
  */
 export const RunFlag = Schema.Literals([
   "item_removed",
@@ -2302,6 +2420,26 @@ export const RunFlag = Schema.Literals([
   "order_fulfilled",
 ]);
 export type RunFlag = typeof RunFlag.Type;
+
+/**
+ * A flag means stop: Start and Done are refused (`RunFlaggedError`) and the
+ * pages hide them. Undo and the note are not stopped — Undo takes work back
+ * rather than doing more, and a held step is the one somebody needs to write
+ * on. The one action a flag itself allows is lifting it: Unblock for
+ * {@link runIsBlocked}, Dismiss for a reconcile flag ({@link flagIsReconcile}).
+ */
+export const runIsFlagged = (run: { readonly flag: RunFlag | null }) =>
+  run.flag !== null;
+
+/** A person set the hold; the block reason is editable and the button reads Unblock. */
+export const runIsBlocked = (run: { readonly flag: RunFlag | null }) =>
+  run.flag === "blocked";
+
+/**
+ * Reconcile set it: Shopify moved under a live run. The remedy is to read it
+ * and Dismiss; there is no reason to edit and nobody to attribute it to.
+ */
+export const flagIsReconcile = (flag: RunFlag) => flag !== "blocked";
 
 export const RunFlagDetail = Schema.Struct({
   from: Schema.optionalKey(Schema.Number),
@@ -2628,6 +2766,40 @@ export const UndoBlocker = Schema.Struct({
 export type UndoBlocker = typeof UndoBlocker.Type;
 
 /**
+ * The lowest stage with an open step — where the run is — or `null` once
+ * every step is done.
+ */
+export const lowestOpenStage = (steps: readonly WorkflowRunStep[]) =>
+  steps
+    .filter((step) => step.completedAt === null)
+    .reduce<number | null>(
+      (lowest, step) =>
+        lowest === null ? step.stage : Math.min(lowest, step.stage),
+      null,
+    );
+
+/**
+ * The readiness rule on rows already in hand: a step is ready when its run
+ * is {@link runIsOpen}, it is open, and nothing in an earlier stage of the
+ * same run is still open. Several are ready at once on a parallel stage, so
+ * this is a list and every caller copes with more than one. `readyWhere.ts`
+ * is the same rule as SQL for the queue and the step guards; this is the one
+ * TypeScript copy, for the merchant's order page (which holds every step of
+ * the order) and the dev seeder (which walks runs a stage at a time), and the
+ * test on it pins that the two agree.
+ */
+export const readySteps = (
+  run: { readonly status: RunStatus },
+  steps: readonly WorkflowRunStep[],
+): WorkflowRunStep[] => {
+  if (!runIsOpen(run)) return [];
+  const lowest = lowestOpenStage(steps);
+  return steps.filter(
+    (step) => step.completedAt === null && step.stage === lowest,
+  );
+};
+
+/**
  * The undo rule, on rows already in hand: the first step in a later stage of
  * the same run that anyone has started. A `startedAt` test covers finished
  * steps too, because Done backfills `startedAt`.
@@ -2768,6 +2940,50 @@ export const RunStepView = Schema.Struct({
   undoBlockedBy: Schema.NullOr(UndoBlocker),
 });
 export type RunStepView = typeof RunStepView.Type;
+
+/**
+ * What a member may do to a step, in one place for the work page and the
+ * queue's Done tier so the buttons and the writes cannot disagree. Rules: the
+ * {@link RunStatus} table for status (Start and Done need {@link runIsOpen};
+ * Undo and the note need {@link runIsLive}); the step's team must be one of
+ * `teamIds`, as `WorkflowRunRepository.requireActionable` requires; a flag
+ * stops Start and Done but not Undo or the note ({@link runIsFlagged}); Undo
+ * is offered on a finished step and carries its downstream blocker
+ * ({@link undoBlockedBy}) when there is one, so the page can name who to ask
+ * instead of a button.
+ */
+export const stepActions = (
+  run: { readonly status: RunStatus; readonly flag: RunFlag | null },
+  step: Pick<
+    RunStepView,
+    "teamId" | "ready" | "startedAt" | "completedAt" | "undoBlockedBy"
+  >,
+  teamIds: readonly string[],
+): {
+  readonly start: boolean;
+  readonly done: boolean;
+  /** `null` when Undo is not offered; otherwise the blocker, `null` meaning the button. */
+  readonly undo: { readonly blockedBy: UndoBlocker | null } | null;
+  readonly note: boolean;
+} => {
+  const mine = step.teamId !== null && teamIds.includes(step.teamId);
+  const live = mine && runIsLive(run);
+  const ready =
+    live &&
+    runIsOpen(run) &&
+    !runIsFlagged(run) &&
+    step.ready &&
+    step.completedAt === null;
+  return {
+    start: ready && step.startedAt === null,
+    done: ready,
+    undo:
+      live && step.completedAt !== null
+        ? { blockedBy: step.undoBlockedBy }
+        : null,
+    note: live,
+  };
+};
 
 /**
  * Everything `/shop/$shop/work/$runId` renders. `items` is the order's live
@@ -2997,16 +3213,22 @@ export const AttachResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("AlreadyExists") }),
   Schema.Struct({ _tag: Schema.Literal("LineItemNotFound") }),
   Schema.Struct({ _tag: Schema.Literal("WorkflowCannotStart") }),
-  /** The shop is at `ShopLimits.maxLiveRuns`; the attach started nothing. */
+  /** The shop is at `ShopLimits.maxOpenRuns`; the attach started nothing. */
   Schema.Struct({ _tag: Schema.Literal("RunLimit"), limit: Schema.Number }),
+  /** The item's live run is `done`; finished work is not replaced. Names it. */
+  Schema.Struct({
+    _tag: Schema.Literal("ItemDone"),
+    workflowName: WorkflowName,
+  }),
 ]);
 export type AttachResult = typeof AttachResult.Type;
 
 /**
  * `NotAllowed` = the step's team is not among the caller's; `NotReady` = a
  * step in an earlier stage is still open (or this one is already done; for
- * undo, not yet done); `Terminal` = the run is `done` or `cancelled` (or,
- * for un-cancel, is not cancelled); `UndoBlocked` = someone downstream has
+ * undo, not yet done); `Terminal` = the run's status refuses the action,
+ * see the table on {@link RunStatus} (or, for un-cancel, the run is not
+ * cancelled); `UndoBlocked` = someone downstream has
  * started, and names them ({@link UndoBlocker}).
  *
  * `ItemHasRun` = un-cancel refused because another live run now occupies the
@@ -3025,6 +3247,8 @@ export const RunResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("NotBlocked") }),
   Schema.Struct({ _tag: Schema.Literal("NotReady") }),
   Schema.Struct({ _tag: Schema.Literal("Terminal") }),
+  /** Start or Done on a flagged run; the flag says which kind ({@link runIsFlagged}). */
+  Schema.Struct({ _tag: Schema.Literal("Flagged"), flag: RunFlag }),
   Schema.Struct({ _tag: Schema.Literal("UndoBlocked"), ...UndoBlocker.fields }),
   Schema.Struct({
     _tag: Schema.Literal("ItemHasRun"),

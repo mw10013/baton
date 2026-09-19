@@ -6,7 +6,8 @@ import * as React from "react";
  * App Bridge resolves the `shopify:` protocol to the right destination for
  * whichever surface the app is running on, so the link never hardcodes a store
  * handle and works embedded as well as in the mobile app.
- * `refs/shopify-docs/docs/api/app-home/latest/apis/user-interface-and-interactions/navigation-api.md:52`
+ * (`refs/shopify-docs/docs/api/app-home/latest/apis/user-interface-and-interactions/navigation-api.md`,
+ * the `shopify://admin/orders/456` example under "Specific resources").
  *
  * `legacyId` is `Order.legacyResourceId` — the REST id the admin routes on.
  * Stored as text because it exceeds the integers `SqlStorage.exec` round-trips

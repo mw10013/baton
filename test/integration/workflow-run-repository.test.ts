@@ -533,6 +533,34 @@ describe("WorkflowRunRepository one live run per item", () => {
       }),
     ));
 
+  it("setRun over a done run is refused, naming the finished workflow", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { a, b } = yield* seed;
+        const runs = yield* WorkflowRunRepository;
+        const items = [lineItem(1, ["a"])];
+        yield* upsertAndReconcile(order(), items);
+        const [detail] = yield* runsForOrder();
+        if (detail === undefined) throw new Error("no run");
+        strictEqual(detail.run.workflowId, a.id);
+        yield* complete(detail, 1, [TEAM_A.id]);
+        yield* complete(detail, 2, [TEAM_B.id]);
+        const refused = yield* runs
+          .setRun({
+            workflow: yield* savedDetail(b.id),
+            teams: TEAMS,
+            order: order(),
+            lineItem: items[0] ?? lineItem(1, ["a"]),
+            source: "manual",
+          })
+          .pipe(Effect.flip);
+        strictEqual(refused._tag, "RunFinishedError");
+        if (refused._tag === "RunFinishedError")
+          strictEqual(refused.workflowName, detail.run.workflowName);
+        strictEqual((yield* runsForOrder()).length, 1);
+      }),
+    ));
+
   it("setRun on a workflow whose earlier run was cancelled un-cancels it, steps and all", () =>
     runInRepository(
       Effect.gen(function* () {
@@ -2062,7 +2090,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
       }),
     ));
 
-  it("setStepNote writes, overwrites, clears; allowed on a done step; refused on a cancelled run", () =>
+  it("setStepNote writes, overwrites, clears; allowed on a done step and on a done run; refused on a cancelled run", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedStaged;
@@ -2092,9 +2120,72 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         strictEqual(yield* stepNote(), "after done");
         yield* set(null);
         strictEqual(yield* stepNote(), null);
+        // The whole run done: a note is a record, not work, so it still lands.
+        yield* complete(detail, 2, [TEAM_B.id]);
+        yield* complete(detail, 3, [TEAM_C.id]);
+        yield* complete(detail, 4, [TEAM_A.id]);
+        strictEqual(
+          Option.getOrThrow(yield* runs.getRun({ runId: detail.run.id })).run
+            .status,
+          "done",
+        );
+        yield* set(note("noticed after the last Done"));
+        strictEqual(yield* stepNote(), "noticed after the last Done");
+        // A done run is not cancelled from here; undo the last step first.
+        yield* runs.uncompleteStep({
+          runStepId: detail.steps[3]?.id ?? "",
+          actor: memberActor("m1"),
+          teamIds: [TEAM_A.id],
+        });
         yield* runs.cancelRun({ runId: detail.run.id });
         const terminal = yield* set(note("nope")).pipe(Effect.flip);
         strictEqual(terminal._tag, "RunTerminalError");
+      }),
+    ));
+
+  it("a flag refuses Start and Done but not Undo or the note, and dismissing it lets work resume", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seedStaged;
+        const runs = yield* WorkflowRunRepository;
+        const detail = yield* stagedRun();
+        const artwork = detail.steps[0]?.id ?? "";
+        const materials = detail.steps[1]?.id ?? "";
+        yield* complete(detail, 1, [TEAM_A.id]);
+        yield* runs.blockRun({
+          runId: detail.run.id,
+          actor: memberActor("m2"),
+          teamIds: [TEAM_B.id],
+          reason: null,
+        });
+        const start = yield* runs
+          .startStep({
+            runStepId: materials,
+            actor: memberActor("m2"),
+            teamIds: [TEAM_B.id],
+          })
+          .pipe(Effect.flip);
+        strictEqual(start._tag, "RunFlaggedError");
+        const done = yield* complete(detail, 2, [TEAM_B.id]).pipe(Effect.flip);
+        strictEqual(done._tag, "RunFlaggedError");
+        yield* runs.setStepNote({
+          runStepId: materials,
+          actor: memberActor("m2"),
+          teamIds: [TEAM_B.id],
+          note: note("waiting on stock"),
+        });
+        yield* runs.uncompleteStep({
+          runStepId: artwork,
+          actor: memberActor("m1"),
+          teamIds: [TEAM_A.id],
+        });
+        yield* runs.dismissFlag({ runId: detail.run.id, teamIds: [TEAM_B.id] });
+        yield* complete(detail, 2, [TEAM_B.id]);
+        const after = Option.getOrThrow(
+          yield* runs.getRun({ runId: detail.run.id }),
+        );
+        strictEqual(after.steps[0]?.completedAt, null);
+        strictEqual(after.steps[1]?.completedAt !== null, true);
       }),
     ));
 
@@ -2136,6 +2227,14 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         );
         strictEqual(cleared.run.flag, null);
 
+        // Started before the block, since a flag refuses Start: a started
+        // run is active, so reconcile's zeroed line item flags rather than
+        // cancels, and that reconcile flag overwrites the person's block.
+        yield* runs.startStep({
+          runStepId: detail.steps[0]?.id ?? "",
+          actor: memberActor("m1"),
+          teamIds: [TEAM_A.id],
+        });
         yield* runs.blockRun({
           runId: detail.run.id,
           actor: memberActor("m1"),
@@ -2147,13 +2246,6 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
             .flagDetail,
           { by: { role: "member", memberId: "m1", email: "m1@example.com" } },
         );
-        // Reconcile overwrites a person's block: a started run is active,
-        // so the zeroed line item flags rather than cancels.
-        yield* runs.startStep({
-          runStepId: detail.steps[0]?.id ?? "",
-          actor: memberActor("m1"),
-          teamIds: [TEAM_A.id],
-        });
         const counts = yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 1 }),
           [lineItem(1, ["s"], { currentQuantity: 0, unfulfilledQuantity: 0 })],
@@ -2840,6 +2932,14 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           [lineItem(1, ["a"]), lineItem(2, ["a"])],
         );
         strictEqual(none.created, 0);
+        // A step of a run that is not open keeps its pointer: cancelled here,
+        // then un-cancelled so the assign below is on an open run again.
+        yield* runs.cancelRun({ runId: run.run.id });
+        const notOpen = yield* runs
+          .assignRunStepTeam({ runStepId: finish.id, team: TEAM_C })
+          .pipe(Effect.flip);
+        strictEqual(notOpen._tag, "RunTerminalError");
+        yield* runs.uncancelRun({ runId: run.run.id });
         // Assign Team C: name snapshotted, step in C's queue, workable.
         yield* runs.assignRunStepTeam({ runStepId: finish.id, team: TEAM_C });
         const assigned = Option.getOrThrow(
@@ -2874,32 +2974,32 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
 });
 
 /**
- * The ceiling is 5,000 live runs, which no test can reach by creating runs, so
+ * The ceiling is 5,000 open runs, which no test can reach by creating runs, so
  * these lower the constant for the duration. It is a plain object behind a
  * `readonly` type, and the alternative — threading a limit through
  * `reconcileOrder` and `setRun` for nobody but this file — would put a test
  * seam in the production signature.
  */
-const withMaxLiveRuns = <A>(limit: number, body: () => Promise<A>) => {
-  const limits = Domain.ShopLimits as { maxLiveRuns: number };
-  const original = limits.maxLiveRuns;
-  limits.maxLiveRuns = limit;
+const withMaxOpenRuns = <A>(limit: number, body: () => Promise<A>) => {
+  const limits = Domain.ShopLimits as { maxOpenRuns: number };
+  const original = limits.maxOpenRuns;
+  limits.maxOpenRuns = limit;
   return body().finally(() => {
-    limits.maxLiveRuns = original;
+    limits.maxOpenRuns = original;
   });
 };
 
 const usageRow = () =>
   SqlClient.SqlClient.pipe(
     Effect.flatMap(
-      (sql) => sql`select liveRunsLimitedAt from ShopUsage where id = 1`.values,
+      (sql) => sql`select openRunsLimitedAt from ShopUsage where id = 1`.values,
     ),
     Effect.map((rows) => rows[0]?.[0] ?? null),
   );
 
-describe("WorkflowRunRepository live-run ceiling", () => {
+describe("WorkflowRunRepository open-run ceiling", () => {
   it("auto-start yields to the ceiling and records it; finishing the run clears the flag", () =>
-    withMaxLiveRuns(1, () =>
+    withMaxOpenRuns(1, () =>
       runInRepository(
         Effect.gen(function* () {
           yield* seed;
@@ -2927,7 +3027,7 @@ describe("WorkflowRunRepository live-run ceiling", () => {
     ));
 
   it("manual attach fails at the ceiling rather than silently doing nothing", () =>
-    withMaxLiveRuns(1, () =>
+    withMaxOpenRuns(1, () =>
       runInRepository(
         Effect.gen(function* () {
           const { a, b } = yield* seed;

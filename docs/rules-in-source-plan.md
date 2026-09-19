@@ -10,7 +10,7 @@ the work.
 Every behavioural rule the software enforces is:
 
 1. **Stated once**, normatively, in the JSDoc of the symbol that enforces it
-   or the symbol that *is* the concept (a `Schema.Literals`, a branded type).
+   or the symbol that _is_ the concept (a `Schema.Literals`, a branded type).
 2. **Pointed at**, not restated, from every other site that depends on it,
    with a `{@link}` or a one-line "follows the rule on X".
 3. **Enforced through a `Domain` function** wherever it is a predicate on
@@ -156,7 +156,7 @@ Keep the existing derivation paragraph above it. Every row's gate is a
 
 Shorten each write's JSDoc terminal sentence to a pointer: "Gate:
 {@link runIsOpen}; see {@link RunStatus}." Keep any sentence that says
-*why* this action differs (undo's does).
+_why_ this action differs (undo's does).
 
 ### 1.3 Lift the member gate
 
@@ -261,6 +261,22 @@ concept's table.
   > predicates are `Domain` functions, never inline comparisons in routes or
   > the object. Each rule has a test whose title is the rule. A JSDoc must
   > carry its reasoning inline and never reference `docs/`.
+
+## Progress (2026-09-19)
+
+- Phase 0 done: `docs/rules-inventory.md` holds the tables, Q-1 to Q-9 and D-0 to D-4.
+- Phase 1 done through 1.5: `runIsOpen`, `runIsLive`, `stepActions` and the
+  `RunStatus` table are in `Domain.ts`; the repository, `ShopAgent`, the work
+  page and the order page read them. Unit suite green. Census 59 -> 39.
+- Phase 1.6 done: e2e 40 passed, plus a new e2e test pinning Undo on a done run's work page (D-5).
+- Review 2026-09-19: every question and deviation carried a recommendation;
+  all accepted, Q-5 upgraded to "rename".
+- Phases 2, 3 and 4 done 2026-09-19. Nine questions answered and applied
+  (behaviour changes: notes on done runs, flag refuses Start and Done at the
+  write, attach refuses a done incumbent, team assign needs an open run,
+  Terminal wording, "live" to "open" rename, column renamed in the initial schema).
+  Census outside `Domain.ts` is 0 and `pnpm lint` holds it there.
+- e2e after Phase 4: 41 passed (2026-09-19).
 
 ## Questions log
 

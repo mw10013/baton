@@ -4,6 +4,7 @@ import { Effect, Option } from "effect";
 
 import { Auth } from "@/lib/Auth";
 import { CurrentRequest } from "@/lib/CurrentRequest";
+import * as Domain from "@/lib/Domain";
 import { Repository } from "@/lib/Repository";
 
 /**
@@ -28,7 +29,7 @@ const resolveLoginCallback = createServerFn({ method: "GET" }).handler(
         if (Option.isNone(sessionContext))
           return { error: "Magic link sign-in could not be completed." };
         const { user } = sessionContext.value;
-        if (user.role === "admin")
+        if (Domain.userIsAdmin(user))
           return yield* Effect.fail(redirect({ to: "/admin" }));
         const shops = yield* (yield* Repository).listMemberShops(user.email);
         const [only] = shops;

@@ -287,10 +287,10 @@ function FoundShop({
               }
             />
             <Field
-              label="Live runs limited"
+              label="Open runs limited"
               value={
-                usage.liveRunsLimitedAt === null ? null : (
-                  <LocalDateTime value={usage.liveRunsLimitedAt} />
+                usage.openRunsLimitedAt === null ? null : (
+                  <LocalDateTime value={usage.openRunsLimitedAt} />
                 )
               }
             />

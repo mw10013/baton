@@ -1,6 +1,8 @@
 /**
  * A step is ready when it is open and nothing in an earlier stage of
- * the same run is still open. Evaluated live, so a step whose earlier
+ * the same run is still open. `Domain.readySteps` is the same rule over
+ * rows in hand, for the pages and the seeder that cannot run SQL; a test
+ * holds the two together. Evaluated live, so a step whose earlier
  * stage is reopened leaves the queue again without a write. The
  * subquery is `exists` and stops at its first row. One definition,
  * interpolated as a literal with the outer alias, so the queue and

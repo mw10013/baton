@@ -15,7 +15,7 @@ import { formatNumber } from "@/lib/format";
  *
  * The quota banner is a *warning*, not a blocker — syncing continues past the
  * limit and the copy says so, because silently dropping a merchant's orders to
- * enforce a soft limit would be worse than the overage. The live-run banner is
+ * enforce a soft limit would be worse than the overage. The open-run banner is
  * `critical` because something has actually stopped: it only appears after
  * reconcile declined to start a run, and it names the action that clears it.
  */
@@ -30,7 +30,7 @@ export function QuotaBanners({
   readonly action?: ReactNode;
 }) {
   const over = usage.ordersThisMonth > ordersPerMonth;
-  if (!over && usage.liveRunsLimitedAt === null) return null;
+  if (!over && usage.openRunsLimitedAt === null) return null;
   return (
     <>
       {over && (
@@ -39,9 +39,9 @@ export function QuotaBanners({
           {action}
         </s-banner>
       )}
-      {usage.liveRunsLimitedAt !== null && (
+      {usage.openRunsLimitedAt !== null && (
         <s-banner tone="critical">
-          {`Baton stopped starting new runs because ${formatNumber(Domain.ShopLimits.maxLiveRuns)} are already in progress. Finish or cancel runs to resume.`}
+          {`Baton stopped starting new runs because ${formatNumber(Domain.ShopLimits.maxOpenRuns)} are already in progress. Finish or cancel runs to resume.`}
         </s-banner>
       )}
     </>

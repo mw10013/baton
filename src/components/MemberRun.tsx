@@ -251,3 +251,12 @@ export function FlagBanner({
     </s-banner>
   );
 }
+
+/**
+ * The one button a flag allows, by who set it: Unblock lifts a person's hold
+ * ({@link Domain.runIsBlocked}); Dismiss acknowledges a reconcile flag, which
+ * is not a hold anybody set. Both screens read it from here so the word
+ * cannot differ between the queue card and the work page.
+ */
+export const liftFlagLabel = (run: { readonly flag: Domain.RunFlag | null }) =>
+  Domain.runIsBlocked(run) ? "Unblock" : "Dismiss";

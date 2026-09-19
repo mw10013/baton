@@ -13,6 +13,7 @@ import {
   flagTone,
   Prose,
   RunItem,
+  liftFlagLabel,
 } from "@/components/MemberRun";
 import * as Domain from "@/lib/Domain";
 import { requireMember } from "@/lib/MemberAccess";
@@ -248,8 +249,7 @@ function RouteComponent() {
     /** The viewer's own name is noise on their own row; anyone else's is the point. */
     const startedBy = Domain.stepStartedBy(step);
     const startedBySomeoneElse =
-      startedBy === null ||
-      (startedBy.role === "member" && startedBy.email === memberEmail)
+      startedBy === null || Domain.actorIsMember(startedBy, memberEmail)
         ? null
         : startedBy;
     const reopenedBy = Domain.stepReopenedBy(step);
@@ -326,7 +326,7 @@ function RouteComponent() {
     first: boolean,
   ) => {
     const { run, steps } = item;
-    const flagged = run.flag !== null;
+    const flagged = Domain.runIsFlagged(run);
     const [step, ...rest] = steps;
     const started = step.startedAt !== null;
     const startedBy = Domain.stepStartedBy(step);
@@ -336,10 +336,9 @@ function RouteComponent() {
       if (flagged) return flagBody(run) ?? stepLine;
       if (!started) return stepLine;
       if (startedBy === null) return "In progress";
-      const who =
-        startedBy.role === "member" && startedBy.email === memberEmail
-          ? "you"
-          : Domain.actorLabel(startedBy);
+      const who = Domain.actorIsMember(startedBy, memberEmail)
+        ? "you"
+        : Domain.actorLabel(startedBy);
       return `In progress · ${who}`;
     };
     const action = () => {
@@ -352,7 +351,7 @@ function RouteComponent() {
               actions.dismiss.mutate(run.id);
             }}
           >
-            {run.flag === "blocked" ? "Unblock" : "Dismiss"}
+            {liftFlagLabel(run)}
           </s-button>
         );
       /**
@@ -498,7 +497,7 @@ function RouteComponent() {
                       actions.dismiss.mutate(run.id);
                     }}
                   >
-                    {run.flag === "blocked" ? "Unblock" : "Dismiss"}
+                    {liftFlagLabel(run)}
                   </s-button>
                 }
               />
@@ -515,6 +514,14 @@ function RouteComponent() {
       </s-box>
     );
   };
+
+  /** The same rule as the work page's Undo, {@link Domain.stepActions}, on the tier's own row. */
+  const doneUndo = (entry: Domain.DoneItem) =>
+    Domain.stepActions(
+      entry.run,
+      { ...entry.step, ready: false, undoBlockedBy: entry.undoBlockedBy },
+      teams.map((team) => team.id),
+    ).undo;
 
   const renderDone = (entry: Domain.DoneItem, first: boolean) => (
     <s-box
@@ -546,7 +553,7 @@ function RouteComponent() {
               : ` · ${Domain.stepNoteLine(entry.step)}`}
           </s-text>
         </s-stack>
-        {entry.undoBlockedBy === null ? (
+        {doneUndo(entry)?.blockedBy === null ? (
           <s-button
             variant="secondary"
             disabled={actions.pending}
@@ -557,9 +564,11 @@ function RouteComponent() {
             Undo
           </s-button>
         ) : (
-          <s-text color="subdued">
-            {`${entry.undoBlockedBy.teamName} started ${entry.undoBlockedBy.stepName} · ask them`}
-          </s-text>
+          entry.undoBlockedBy !== null && (
+            <s-text color="subdued">
+              {`${entry.undoBlockedBy.teamName} started ${entry.undoBlockedBy.stepName} · ask them`}
+            </s-text>
+          )
         )}
       </s-grid>
     </s-box>

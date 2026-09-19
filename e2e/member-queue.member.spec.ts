@@ -606,6 +606,41 @@ test("undo puts a finished step back in progress", async ({ browser }) => {
 });
 
 /**
+ * A `done` run is only its last step's Done, and the work page must offer
+ * Undo there just as the queue's Done tier does (`Domain.stepActions`: Undo's
+ * gate is `runIsLive`, not `runIsOpen`). The ring order has one step, so Done
+ * on it finishes the run, and the page it links to is the page under test.
+ */
+test("a done run's work page offers Undo on its last step", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedQueue(config, { cutMembers: [MAKER], keepIdentities: true });
+  const page = await openQueue(browser, config, makerState, "upNext");
+  await page.getByRole("link", { name: RING_ORDER, exact: true }).click();
+  await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
+
+  await clickWhenEnabled(
+    page.getByRole("button", { name: "Done", exact: true }),
+  );
+  await expect(page.getByText(`Done by ${MAKER}`)).toBeVisible();
+  /* The run's own badge says it is finished; the step still offers Undo. */
+  await expect(page.locator('s-badge:has-text("Done")').first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Done", exact: true }),
+  ).toHaveCount(0);
+
+  await clickWhenEnabled(page.getByRole("button", { name: "Undo" }));
+  await expect(page.getByText(`Reopened by ${MAKER}`)).toBeVisible();
+  await expect(page.getByText(STARTED)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Done", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Undo" })).toHaveCount(0);
+});
+
+/**
  * Once downstream has started the fix is a conversation: the mate (on the
  * Polish team) starts the next stage, and the maker's Done today entry loses
  * its Undo button for the "ask them" line naming that team and step.

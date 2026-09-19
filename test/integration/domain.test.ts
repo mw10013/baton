@@ -1,4 +1,4 @@
-import { strictEqual } from "@effect/vitest/utils";
+import { deepStrictEqual, strictEqual } from "@effect/vitest/utils";
 import { Schema } from "effect";
 import { describe, it } from "vitest";
 
@@ -536,6 +536,225 @@ describe("Domain.SeedOrdersInput", () => {
     strictEqual(
       decode(seedOrdersInput({ advance: 2, started: true }))._tag,
       "Some",
+    );
+  });
+});
+
+describe("Domain.runIsOpen / Domain.runIsLive", () => {
+  it("open is pending or active; live is anything but cancelled", () => {
+    const statuses: readonly Domain.RunStatus[] = [
+      "pending",
+      "active",
+      "done",
+      "cancelled",
+    ];
+    deepStrictEqual(
+      statuses.map((status) => Domain.runIsOpen(run(status, null))),
+      [true, true, false, false],
+    );
+    deepStrictEqual(
+      statuses.map((status) => Domain.runIsLive(run(status, null))),
+      [true, true, true, false],
+    );
+  });
+});
+
+const TEAM = Schema.decodeUnknownSync(Domain.TeamId)("t");
+const OTHER_TEAM = Schema.decodeUnknownSync(Domain.TeamId)("u");
+
+const stepView = (
+  overrides: Partial<
+    Pick<
+      Domain.RunStepView,
+      "teamId" | "ready" | "startedAt" | "completedAt" | "undoBlockedBy"
+    >
+  > = {},
+): Pick<
+  Domain.RunStepView,
+  "teamId" | "ready" | "startedAt" | "completedAt" | "undoBlockedBy"
+> => ({
+  teamId: TEAM,
+  ready: true,
+  startedAt: null,
+  completedAt: null,
+  undoBlockedBy: null,
+  ...overrides,
+});
+
+const NOTHING = { start: false, done: false, undo: null, note: false };
+
+describe("Domain.stepActions", () => {
+  it("a done run's last step is undoable while nothing downstream started, and still takes a note", () => {
+    deepStrictEqual(
+      Domain.stepActions(
+        run("done", null),
+        stepView({ ready: false, startedAt: 1, completedAt: 2 }),
+        [TEAM],
+      ),
+      { ...NOTHING, undo: { blockedBy: null }, note: true },
+    );
+  });
+
+  it("undo is refused once a later stage started, naming the blocker", () => {
+    const blocker: Domain.UndoBlocker = {
+      stepName: Schema.decodeUnknownSync(Domain.StepName)("Polish"),
+      teamName: Schema.decodeUnknownSync(Domain.TeamName)("Finishing"),
+    };
+    deepStrictEqual(
+      Domain.stepActions(
+        run("active", null),
+        stepView({
+          ready: false,
+          startedAt: 1,
+          completedAt: 2,
+          undoBlockedBy: blocker,
+        }),
+        [TEAM],
+      ),
+      { ...NOTHING, note: true, undo: { blockedBy: blocker } },
+    );
+  });
+
+  it("a cancelled run offers no actions", () => {
+    deepStrictEqual(
+      Domain.stepActions(run("cancelled", null), stepView(), [TEAM]),
+      NOTHING,
+    );
+    deepStrictEqual(
+      Domain.stepActions(
+        run("cancelled", null),
+        stepView({ ready: false, startedAt: 1, completedAt: 2 }),
+        [TEAM],
+      ),
+      NOTHING,
+    );
+  });
+
+  it("a flag hides Start and Done but not Undo or the note", () => {
+    deepStrictEqual(
+      Domain.stepActions(run("active", "blocked"), stepView(), [TEAM]),
+      { ...NOTHING, note: true },
+    );
+    deepStrictEqual(
+      Domain.stepActions(
+        run("active", "item_removed"),
+        stepView({ ready: false, startedAt: 1, completedAt: 2 }),
+        [TEAM],
+      ),
+      { ...NOTHING, note: true, undo: { blockedBy: null } },
+    );
+  });
+
+  it("a step on another team offers nothing", () => {
+    deepStrictEqual(
+      Domain.stepActions(run("active", null), stepView(), [OTHER_TEAM]),
+      NOTHING,
+    );
+    deepStrictEqual(
+      Domain.stepActions(run("active", null), stepView({ teamId: null }), [
+        TEAM,
+      ]),
+      NOTHING,
+    );
+  });
+
+  it("Start is offered only before the step is started; Done while it is ready", () => {
+    deepStrictEqual(
+      Domain.stepActions(run("pending", null), stepView(), [TEAM]),
+      {
+        start: true,
+        done: true,
+        undo: null,
+        note: true,
+      },
+    );
+    deepStrictEqual(
+      Domain.stepActions(run("active", null), stepView({ startedAt: 1 }), [
+        TEAM,
+      ]),
+      { start: false, done: true, undo: null, note: true },
+    );
+    deepStrictEqual(
+      Domain.stepActions(run("active", null), stepView({ ready: false }), [
+        TEAM,
+      ]),
+      { ...NOTHING, note: true },
+    );
+  });
+});
+
+describe("Domain.runIsFlagged / runIsBlocked / flagIsReconcile", () => {
+  it("blocked is the person's flag; every other flag is reconcile's; null is neither", () => {
+    strictEqual(Domain.runIsFlagged(run("active", null)), false);
+    strictEqual(Domain.runIsFlagged(run("active", "blocked")), true);
+    strictEqual(Domain.runIsFlagged(run("active", "item_removed")), true);
+    strictEqual(Domain.runIsBlocked(run("active", "blocked")), true);
+    strictEqual(Domain.runIsBlocked(run("active", "item_removed")), false);
+    strictEqual(Domain.flagIsReconcile("blocked"), false);
+    for (const flag of Domain.RunFlag.literals)
+      if (flag !== "blocked") strictEqual(Domain.flagIsReconcile(flag), true);
+  });
+});
+
+const runStep = (
+  position: number,
+  stage: number,
+  completed: boolean,
+): Domain.WorkflowRunStep => ({
+  id: Schema.decodeUnknownSync(Domain.WorkflowRunStepId)(
+    `s${String(position)}`,
+  ),
+  runId: Schema.decodeUnknownSync(Domain.WorkflowRunId)("r"),
+  position,
+  stage,
+  name: Schema.decodeUnknownSync(Domain.StepName)(`Step ${String(position)}`),
+  teamId: TEAM,
+  teamName: Schema.decodeUnknownSync(Domain.TeamName)("T"),
+  instructions: null,
+  startedAt: completed ? 1 : null,
+  startedBy: null,
+  startedByEmail: null,
+  startedByRole: null,
+  completedAt: completed ? 2 : null,
+  completedBy: null,
+  completedByEmail: null,
+  completedByRole: null,
+  reopenedAt: null,
+  reopenedByRole: null,
+  reopenedByEmail: null,
+  note: null,
+  noteByRole: null,
+});
+
+describe("Domain.readySteps", () => {
+  it("a step is ready when open and nothing in an earlier stage is open; a whole parallel stage is ready at once", () => {
+    const steps = [
+      runStep(1, 1, true),
+      runStep(2, 2, false),
+      runStep(3, 2, false),
+      runStep(4, 3, false),
+    ];
+    deepStrictEqual(
+      Domain.readySteps(run("active", null), steps).map(
+        (step) => step.position,
+      ),
+      [2, 3],
+    );
+    deepStrictEqual(
+      Domain.readySteps(run("active", null), [
+        runStep(1, 1, false),
+        runStep(2, 2, false),
+      ]).map((step) => step.position),
+      [1],
+    );
+  });
+
+  it("a run that is not open has no ready step", () => {
+    const steps = [runStep(1, 1, false)];
+    deepStrictEqual(Domain.readySteps(run("cancelled", null), steps), []);
+    deepStrictEqual(
+      Domain.readySteps(run("done", null), [runStep(1, 1, true)]),
+      [],
     );
   });
 });

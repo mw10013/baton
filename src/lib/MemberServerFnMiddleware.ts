@@ -4,6 +4,7 @@ import { Effect, Option } from "effect";
 
 import { Auth } from "@/lib/Auth";
 import { CurrentRequest } from "@/lib/CurrentRequest";
+import * as Domain from "@/lib/Domain";
 import { tryPromisePassthrough } from "@/lib/LayerEx";
 
 /**
@@ -32,7 +33,7 @@ export const memberServerFnMiddleware = createMiddleware({
       const sessionContext = yield* auth.getSession(request.headers);
       if (Option.isNone(sessionContext))
         return yield* Effect.fail(redirect({ to: "/login" }));
-      if (sessionContext.value.user.role === "admin")
+      if (Domain.userIsAdmin(sessionContext.value.user))
         return yield* Effect.fail(redirect<AnyRouter>({ to: "/admin" }));
       return yield* tryPromisePassthrough(() =>
         next({ context: { user: sessionContext.value.user } }),

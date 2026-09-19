@@ -1,4 +1,3 @@
-import type * as Domain from "@/lib/Domain";
 import type { ShopAgentSocket } from "@/lib/ShopAgentContext";
 
 import * as React from "react";
@@ -6,6 +5,7 @@ import * as React from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Match } from "effect";
 
+import * as Domain from "@/lib/Domain";
 import { withSocketRecovery } from "@/lib/ShopAgentContext";
 
 /** A blank text field on the wire is "cleared", which the object stores as `null`. */
@@ -27,6 +27,12 @@ export const runResultMessage = Match.typeTags<
   NotReady: () =>
     "Someone finished an earlier step just now, or this step is waiting on another team. Refresh.",
   Terminal: () => "This workflow is already finished or cancelled.",
+  /* The page hides Start and Done behind the flag; a flag that landed after
+     the render is the only way here. */
+  Flagged: ({ flag }) =>
+    Domain.flagIsReconcile(flag)
+      ? "This work was flagged just now. Read the flag and dismiss it first."
+      : "This work was blocked just now. Unblock it first.",
   UndoBlocked: ({ stepName, teamName }) =>
     `${teamName} already started ${stepName}. Ask them.`,
   /* Un-cancel is a merchant action and no member surface offers it; the
