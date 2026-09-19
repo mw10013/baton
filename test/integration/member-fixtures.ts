@@ -61,13 +61,15 @@ export const fetchWorker = (url: string, init?: RequestInit) =>
     ),
   );
 
+/** The tier a seeded shop holds. Pro so no fixture trips a member cap. */
+const SEEDED_PLAN_HANDLE: Domain.PlanHandle = "baton-pro";
+
 /**
  * A shop with a cached, unexpired plan entry. Every member surface runs
- * `requireMember`, which resolves the plan after membership, and the test
- * runner has `BILLING_ENABLED` on, so a bare `ShopSession` row would send
- * `SubscriptionPlan` to the Partner API. Seeding the cache keeps the check on
- * its real path and hermetic. A lapsed-shop test overwrites the handle with
- * `null` afterwards.
+ * `requireMember`, which resolves the plan after membership, and a bare
+ * `ShopSession` row has no cached plan, so it would send `SubscriptionPlan` to
+ * the Partner API. Seeding the cache keeps the check on its real path and
+ * hermetic. A lapsed-shop test overwrites the handle with `null` afterwards.
  */
 export const seedShop = (shop: Domain.Shop) =>
   Effect.gen(function* () {
@@ -86,7 +88,7 @@ export const seedShop = (shop: Domain.Shop) =>
     });
     yield* repository.updateShopSessionPlan({
       shop,
-      planHandle: Domain.DEFAULT_PLAN_HANDLE,
+      planHandle: SEEDED_PLAN_HANDLE,
       planHandleExpiresAt: Date.now() + 60 * 60 * 1000,
     });
   });

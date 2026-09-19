@@ -1,14 +1,5 @@
 import { redirect } from "@tanstack/react-router";
-import {
-  Clock,
-  Config,
-  Context,
-  Effect,
-  Layer,
-  Match,
-  Option,
-  Schema,
-} from "effect";
+import { Clock, Context, Effect, Layer, Match, Option, Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
 import { Repository } from "@/lib/Repository";
@@ -164,23 +155,12 @@ export class SubscriptionPlan extends Context.Service<
   }
 >()("SubscriptionPlan") {
   /**
-   * Billing is off until the app has real plans in Partners.
-   *
-   * `BILLING_ENABLED=false` short-circuits both methods to
-   * {@link Domain.DEFAULT_PLAN_HANDLE} without a Partner API call or a cache
-   * write, so every gate downstream — the `/app` boundary, the WebSocket
-   * connect check, `resolveEntitlements` — keeps running in its real shape and
-   * simply always passes. Nothing is stubbed out at the call sites, so turning
-   * billing on is one var, not a diff.
-   *
-   * The bypass is deliberately unconditional on environment: a var that grants
-   * access must be read the same way in production as locally, or the one place
-   * it matters is the place it was never exercised. Set it to `true` in
-   * `wrangler.jsonc` once the plans exist.
+   * Needs the repository for the cached plan row, the Partner client for
+   * revalidation, and the `ShopAgent` client for revoking sockets on lapse.
    */
   static readonly layerNoDeps: Layer.Layer<
     SubscriptionPlan,
-    Config.ConfigError,
+    never,
     Repository | ShopifyPartner | ShopAgentClient
   > = Layer.effect(
     SubscriptionPlan,
@@ -188,19 +168,6 @@ export class SubscriptionPlan extends Context.Service<
       const repository = yield* Repository;
       const shopifyPartner = yield* ShopifyPartner;
       const shopAgentClient = yield* ShopAgentClient;
-      const billingEnabled = yield* Config.boolean("BILLING_ENABLED").pipe(
-        Config.withDefault(false),
-      );
-      if (!billingEnabled) {
-        const granted = Effect.succeed(subscribed(Domain.DEFAULT_PLAN_HANDLE));
-        yield* Effect.logInfo(
-          "SubscriptionPlan: billing disabled, granting default plan",
-        ).pipe(Effect.annotateLogs({ handle: Domain.DEFAULT_PLAN_HANDLE }));
-        return SubscriptionPlan.of({
-          resolve: () => granted,
-          refresh: () => granted,
-        });
-      }
 
       const planError = (message: string) => (cause: unknown) =>
         new SubscriptionPlanError({ message, cause });

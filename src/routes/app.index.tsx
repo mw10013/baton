@@ -15,8 +15,8 @@ import { resolveEntitlements } from "@/lib/SubscriptionPlan";
  * actually used.
  *
  * Three sources, one request, and the split is the whole design. The
- * *entitlement* comes from D1's cached plan handle (granted unconditionally
- * while `BILLING_ENABLED` is off). The *order count* comes from the shop's
+ * *entitlement* comes from the plan resolved from the handle cached on the
+ * shop's D1 session row. The *order count* comes from the shop's
  * Durable Object, which meters usage and knows nothing about plans. The
  * *member count* comes from D1, where members live. Nothing compares them but
  * this page and the banner it renders.
@@ -72,10 +72,6 @@ function RouteComponent() {
       />
       <s-section heading="Plan" accessibilityLabel="Plan">
         <s-stack gap="base">
-          {/* No claim about whether billing is switched on: `BILLING_ENABLED`
-              is per environment, and a sentence asserting it goes stale the
-              moment the flag moves. Where the handle comes from is true either
-              way. */}
           <s-paragraph color="subdued">
             Resolved from the plan handle cached on the shop&apos;s session.
           </s-paragraph>

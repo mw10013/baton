@@ -54,20 +54,11 @@ export type SessionId = typeof SessionId.Type;
  * it means the catalog changed under us, which must resolve to no access rather
  * than a guess.
  *
- * No plan exists in Partners yet — `BILLING_ENABLED` is `false`, so
- * `SubscriptionPlan` short-circuits every shop to `DEFAULT_PLAN_HANDLE` and
- * these literals are never matched against a real contract. Rename them to the
- * real handles before flipping that var on.
+ * The literals are the plan handles configured in the Partner Dashboard for
+ * every environment's app, so renaming a plan there is a rename here.
  */
 export const PlanHandle = Schema.Literals(["baton-basic", "baton-pro"]);
 export type PlanHandle = typeof PlanHandle.Type;
-
-/**
- * The handle every shop is granted while `BILLING_ENABLED` is `false`. The
- * widest tier, so a disabled billing gate never doubles as a hidden
- * entitlement cut.
- */
-export const DEFAULT_PLAN_HANDLE: PlanHandle = "baton-pro";
 
 export const Plan = Schema.Literals(["basic", "pro"]);
 export type Plan = typeof Plan.Type;

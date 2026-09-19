@@ -31,11 +31,6 @@ Baton bills through Shopify App Pricing. Plans are configured in the Partner Das
 in code; the app reads the merchant's plan handle through the Partner API
 (`src/lib/ShopifyPartner.ts`) and caches it on the D1 session row (`src/lib/SubscriptionPlan.ts`).
 
-While `BILLING_ENABLED` is `"false"` in `wrangler.jsonc`, `SubscriptionPlan` short-circuits to
-`Domain.DEFAULT_PLAN_HANDLE` without a Partner API call, and every gate downstream (the `/app`
-route boundary, the WebSocket connect check, `resolveEntitlements`) keeps running in its real
-shape and always passes.
-
 ### Plans to create
 
 Two public plans, one per tier. Handles must match `Domain.PlanHandle` exactly (case-sensitive);
@@ -80,12 +75,11 @@ name and top features for every published language or it does not show.
 - `SHOPIFY_APP_HANDLE` (`wrangler.jsonc`): the app handle, used to build the plan selection URL
   `https://admin.shopify.com/store/<store>/charges/<handle>/pricing_plans`.
 
-### Turning billing on
+### Enabling an environment
 
 1. Create the plans above for the app.
 2. Confirm `SHOPIFY_PARTNER_APP_ID` and `SHOPIFY_APP_HANDLE` for the environment.
-3. Set `BILLING_ENABLED` to `"true"` for that environment only in `wrangler.jsonc`.
-4. On a development store: open the app, confirm it redirects to the plan selection page,
+3. On a development store: open the app, confirm it redirects to the plan selection page,
    pick a plan, confirm it returns to `/app`, and confirm `/admin/shop/<shop>` shows the handle.
    The plan cache is 24 hours (`PLAN_HANDLE_MAX_AGE_MS`); use the admin page's refresh button
    instead of waiting.

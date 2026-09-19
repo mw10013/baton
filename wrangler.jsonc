@@ -13,12 +13,6 @@
     "SHOPIFY_PARTNER_ORG_ID": "2798461",
     "SHOPIFY_PARTNER_APP_ID": "417214922753",
     "SHOPIFY_APP_HANDLE": "baton-local",
-    // App Pricing plans do not exist yet. While this is "false",
-    // `SubscriptionPlan` grants every shop `Domain.DEFAULT_PLAN_HANDLE` without
-    // calling the Partner API, so the `/app` gate and the WebSocket connect
-    // check keep running in their real shape and always pass. Set to "true"
-    // once the plans are created in Partners — nothing else changes.
-    "BILLING_ENABLED": "true",
     "EMAIL_FROM": "noreply@mail.mw10013.com"
   },
   "observability": {
@@ -129,7 +123,6 @@
         "SHOPIFY_PARTNER_ORG_ID": "2798461",
         "SHOPIFY_PARTNER_APP_ID": "",
         "SHOPIFY_APP_HANDLE": "baton-staging",
-        "BILLING_ENABLED": "true",
         "EMAIL_FROM": "noreply@mail.mw10013.com"
       },
       "d1_databases": [
@@ -196,7 +189,6 @@
         "SHOPIFY_PARTNER_ORG_ID": "2798461",
         "SHOPIFY_PARTNER_APP_ID": "",
         "SHOPIFY_APP_HANDLE": "baton-live",
-        "BILLING_ENABLED": "true",
         "EMAIL_FROM": "noreply@mail.mw10013.com"
       },
       "d1_databases": [

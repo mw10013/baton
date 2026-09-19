@@ -231,8 +231,7 @@ describe("ShopAgent connect gate", () => {
   );
 
   /**
-   * The member half of the subscription check, exercised now while
-   * `BILLING_ENABLED` is off in production: a cached `planHandle` of `null`
+   * The member half of the subscription check: a cached `planHandle` of `null`
    * inside its deadline is `SubscriptionPlan`'s "verified absence of a
    * contract", so `requireMember` redirects and the gate answers `402` — the
    * same status the merchant gate gives a lapsed shop.

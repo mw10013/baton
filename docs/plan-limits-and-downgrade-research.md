@@ -17,7 +17,11 @@ the Partner API object docs under `refs/shopify-docs/docs/api/partner/latest/`; 
 facts come from scraped listings under `refs/` (no competitor source exists, so their
 enforcement is inferred from copy only).
 
-**Status: research only. Nothing implemented.** Open questions for the project owner in §9.
+**Status: research only. Nothing implemented.** Reviewed with annotations on 2026-09-19; the
+decisions taken are in §9. Baton has two paid plans and no free tier, and will not add one;
+nothing below assumes a free plan.
+
+Split out as its own hand-off: `docs/remove-billing-flag-plan.md`.
 
 ## Verdict
 
@@ -35,20 +39,23 @@ enforcement is inferred from copy only).
    have to agree on, it needs bookkeeping on downgrade that has no reliable trigger, and the
    derived rule gives the merchant the same outcome with one verb instead of three. Keep it as
    the fallback if merchants ask to choose seats without removing anyone. §4.4.
-4. **Downgrades under App Pricing are deferred to the end of the billing cycle** for paid to
-   free, and `pendingUpdate` on `activeSubscription` is the only signal for a scheduled change.
-   This is good news for policy: the merchant has the rest of the cycle to get under the limit,
-   and Baton can say so on the home page. It is also why the redirect leg must never be the
-   place a downgrade is "handled": on a downgrade the redirect arrives while the old plan is
-   still active. §5.
+4. **Plan-change timing is Shopify's, not Baton's.** App Pricing exposes no setting for when
+   a change applies. The documented shape is upgrades immediate with proration and downgrades
+   deferred to the end of the cycle, surfaced through `pendingUpdate`. Design for that shape,
+   confirm it on the dev store during implementation, and note that policy E does not depend on
+   it. The redirect leg is therefore never the place a downgrade is "handled": on a deferred
+   downgrade the redirect arrives while the old plan is still active. §5.
 5. **Cache `pendingUpdate` beside `planHandle`** so the home page can warn ahead of a scheduled
-   downgrade. One extra column and one extra field in the existing query. §5.3.
-6. **Orders: keep the soft limit.** Overage billing through the App Events API is the likely
-   next step and changes nothing about upgrade or downgrade policy, but it forces the quota to
-   count per billing cycle rather than per calendar month. Decide that before overage, not
-   after. §6.
-7. **Remove `BILLING_ENABLED`.** It exists because Baton had no plans; it now has them in every
-   environment. Tests get a stub `SubscriptionPlan` layer instead of a production bypass. §7.
+   downgrade, and **shorten the cache when the merchant clicks Manage plan** so a lost redirect
+   costs minutes rather than a day. §5.3, §5.5.
+6. **Turn on usage overage for orders, strongly recommended.** Without it the order limit is
+   not a limit: a hard stop is out for a production tool, so a soft limit alone means a Basic
+   shop can run 1,000 orders a month for the Basic price and the two plans differ only by
+   seats. Overage is the only enforcement that keeps the floor running and charges for growth.
+   It is dashboard configuration plus one event per counted order, and Shopify already exposes
+   the reconciliation figure. Move the counter to the billing cycle first. §6.
+7. **Remove `BILLING_ENABLED` now, as its own change.** Plan in
+   `docs/remove-billing-flag-plan.md`. §7.
 
 ## 1. Where the tree stands
 
@@ -119,13 +126,16 @@ Shopify:
   (`shopify-app-pricing.md`, "Shopify App Pricing doesn't use webhooks"). The two signals are
   the `plan_handle` redirect, which the merchant's browser may never complete, and the Partner
   API, which Baton polls at most once per shop per day or at the contract boundary.
-- **A downgrade takes effect at the end of the cycle, not on the click.** Paid to free is
-  documented as deferred (`setup-subscription-charges.md`, "Plan downgrading"). Paid to paid is
-  documented only through `pendingUpdate`, which "contains the items that are active at the
-  start of the next billing cycle" (`active-subscription.md`). Route to Ship's copy says the
-  same: "Upgrades take effect immediately. Downgrades apply at the end of your current billing
-  period." Whether Pro to Basic is deferred or immediate with a prorated credit is the one
-  thing to verify on the dev store before building on it; see §9.
+- **When a change applies is Shopify's decision.** App Pricing "automates ... proration"
+  (`shopify-app-pricing.md`) and offers no per-plan or per-app setting for timing. The only
+  documented timing rule is for a case Baton does not have, paid to free, which is deferred
+  (`setup-subscription-charges.md`, "Plan downgrading"). For paid to paid the documentation is
+  `pendingUpdate`, which "contains the items that are active at the start of the next billing
+  cycle" (`active-subscription.md`), and the legacy proration page Shopify says it automates:
+  a price increase applies immediately with a prorated charge, a price decrease applies with a
+  prorated credit or is deferred. Route to Ship's copy, on the same platform, says "Upgrades
+  take effect immediately. Downgrades apply at the end of your current billing period." §5.4
+  takes this up.
 - **Detection can land anywhere.** `SubscriptionPlan.resolve` runs on every `/app` page load,
   every member page load, every socket connect, and any future Flow action path. The first
   request after the cache expires is the one that learns about the change, and it may be a
@@ -231,9 +241,10 @@ tolerates it, which §4 supplies.
 
 A webhook that finds the cache stale calls the Partner API, writes the new handle, and returns.
 On E nothing else needs to happen. The next member request computes a different rank, the next
-merchant page view shows the banner. The 4 requests per second Partner API limit is org-wide;
-one call per shop per day plus one per contract boundary is far under it even at thousands of
-shops.
+merchant page view shows the banner. The Partner API's published limit is 4 requests per second
+per client, but in practice `activeSubscription` is flow-controlled rather than hard-limited:
+bursts are delayed, not refused. One call per shop per day plus one per contract boundary is
+far under either reading.
 
 One caveat worth keeping: the Flow action path treats `SubscriptionPlanError` as a transient
 `429`, so a Partner API outage during a webhook does not become a terminal rejection. Keep that
@@ -250,7 +261,69 @@ This gives the home page "changes to Basic on 14 Oct" and the members page its e
 and it costs nothing at detection time. A cancellation scheduled for cycle end shows the same
 way ("Your subscription ends on 14 Oct").
 
-### 5.4 What not to build
+### 5.4 Downgrade timing: what Baton can and cannot choose
+
+The question raised in review: can Baton make downgrades apply at the end of the current
+billing period, so the merchant pays the month they committed to and cannot upgrade for a day
+and drop back, and is that the right policy?
+
+**Baton cannot choose.** There is no timing setting on an App Pricing plan and no mutation an
+app can call to schedule or defer a merchant's own plan change. Shopify applies its proration
+rules on the hosted page and the app learns the outcome from `items` and `pendingUpdate`. The
+only timing control an app has is on cancellation, through `appSubscriptionCancel`'s
+`deferCancellation` and `prorate` flags, and that mutation is for the app cancelling a merchant,
+not for a merchant changing plans.
+
+**What Shopify most likely does** is the shape Baton wants anyway: upgrades immediate with a
+prorated charge for the remaining days, downgrades deferred to the cycle boundary with
+`pendingUpdate` set. Two pieces of evidence: `pendingUpdate` exists and is described only in
+terms of "the next billing cycle", and Route to Ship advertises exactly that behaviour on the
+same platform. The alternative, an immediate downgrade with a prorated credit, is documented
+only on the legacy Billing API page.
+
+**Either way the gaming concern is small.** Under a deferred downgrade, upgrading for a day
+costs a full Pro month. Under an immediate downgrade with credit, upgrading for a day costs one
+day of the Pro price, which is a fair price for a day of Pro. Neither yields a Pro-shaped shop
+on a Basic price, because policy E computes seats from the plan in force at each request, and
+the order quota is a monthly count against the plan in force when the page is viewed.
+
+Recommendation: design for "upgrades immediate, downgrades deferred", and treat the dev-store
+switch as the first step of implementation rather than a separate probe. The billing E2E spec
+already switches a dev store between the two plans headed; adding `pendingUpdate` to the query
+(§5.3) and reading it on the admin shop page after a Pro to Basic switch answers the question
+in one run. If it turns out immediate, the only thing that changes is that the early-warning
+banner in §4.3 never has a date to show.
+
+### 5.5 A timely signal when the redirect is lost
+
+Upgrades are the case that hurts: a merchant pays for Pro, the welcome redirect fails, and the
+cache holds Basic for up to a day. Three ways to close that gap:
+
+| Option                                                      | Cost                                                               | Covers                                                                 |
+| ----------------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------- |
+| A. Shorten the cache to minutes, as Shopify's example does  | One Partner call per shop per few minutes of merchant activity     | Every path, including changes made from the Shopify admin billing card |
+| B. Shorten the cache on the Manage plan click               | One server function; sets `planHandleExpiresAt` to now plus 15 min | Every change that starts from Baton's own button                       |
+| C. Nothing; rely on the boundary clamp and the daily expiry | Zero                                                               | Deferred changes only; an upgrade waits up to a day                    |
+
+Checked against the schema, because review asked whether the row stores a recorded-at rather
+than a deadline. It stores the deadline: `ShopSession.planHandleExpiresAt integer` in
+`migrations/0001_init.sql`, written by `Repository.updateShopSessionPlan` as
+`update ShopSession set planHandle = ?, planHandleExpiresAt = ?`, and read by
+`SubscriptionPlan.cachedStatus` as `now >= planHandleExpiresAt` means miss. The boundary clamp
+depends on this shape: it pins the deadline to the cycle end at write time rather than storing
+the boundary and recomputing. So B is one statement on the existing column: keep `planHandle`,
+set `planHandleExpiresAt` to the lesser of its current value and now plus 15 minutes. No new
+column, no new concept, and the admin page's "fresh until" line shows the effect.
+
+Recommendation: B. The Manage plan button already goes through the server to build the pricing
+URL, so a server function that shortens the deadline before opening the page is a few lines and
+adds no steady-state traffic. It also covers cancellations started from the button. The path it
+misses, a merchant changing plans from the app's billing card inside Shopify admin without
+opening Baton, still gets the welcome redirect (the welcome link applies to any plan approval)
+and falls back to C, which is acceptable because downgrades and cancellations are deferred to
+the boundary the clamp already targets.
+
+### 5.6 What not to build
 
 - **A scheduled poll** (alarm or cron) that walks every shop. The lazy revalidation already
   bounds staleness to a day and a shop nobody is using does not need a fresh plan.
@@ -269,60 +342,136 @@ it is already a derived rule in the sense of §3: a downgrade mid-month with 600
 against a new 250 quota shows the over-quota banner on the next page view and nothing else
 changes. An upgrade clears it the same way. No policy work is needed for the soft limit.
 
-### 6.2 Overage billing, if and when
+### 6.2 Overage billing: recommendation and strength
 
-Facts that bear on the decision, from `setup-usage-charges.md` and `build-billing-event.md`:
+**Recommendation: turn on usage overage for orders. Strong.** The reasoning is short:
 
-- A plan carries a base fee plus up to 5 meters, each with included units and fixed, graduated,
-  or volume tiers. "Basic $29 with 250 included orders and $0.15 per extra order" is dashboard
-  configuration, and it is Route to Ship's ladder verbatim.
-- Baton reports usage by posting one event per counted order to the App Events API, with a
-  permanent idempotency key. Shopify applies the included units, so every counted order is
-  reported, not only the overage. Negative values reverse an order. The API always answers
-  `202`; failures show only in the Dev Dashboard log.
-- Usage bills monthly and **has no cap**. A merchant cannot set a spend ceiling and Shopify
-  sends no approaching-cap notice. Any ceiling is Baton's own code before it emits an event.
-- Usage is per **billing cycle**, anchored on subscription start. The current counter is per
-  **calendar month**. With overage, the counter has to move to the cycle or the home page and
-  the invoice disagree. `currentBillingCycle.startTime` is on `activeSubscription` and would be
-  cached with §5.3's columns.
-- Route to Ship is the only competitor that meters, and it sells it as "we never block your
-  production work" rather than as a penalty. That is the framing to match if Baton follows.
+1. A hard stop is out (§6.3). Orders past the quota must keep syncing.
+2. With no hard stop and no overage, the order limit is copy, not a limit. A Basic shop at
+   1,000 orders a month pays the Basic price and sees a banner. The plans then differ only by
+   seats, and seats alone do not track the value a shop gets from Baton.
+3. Overage is the only third option, and it is the one the market leader in this category
+   uses and sells as a feature: "we never block your production work".
+4. Under App Pricing it is configuration plus one event per counted order. Shopify does the
+   arithmetic, the included units, the invoice, and the proration on plan changes.
 
-Upgrade and downgrade interaction: Shopify prorates the base fee and applies each cycle's
-included units to that cycle's plan. Baton's only job is to keep emitting events with the
-right `shop_id`; which plan the events bill against is Shopify's. What is not documented is how
-included units behave when the plan changes mid-cycle. Verify on the dev store before turning a
-meter on.
+What it costs, from `setup-usage-charges.md` and `build-billing-event.md`:
 
-Recommendation: stay on the soft limit. Move the counter to the billing cycle now, while
-nothing depends on it, so that turning on a meter is "also post an event" and not a counter
-rewrite. Keep the calendar-month copy off the pricing page until that is decided (§9).
+| Piece                   | Detail                                                                                                                                                                                                                                                                                                     |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dashboard               | One meter per plan, same handle on both (say `order_synced`), fixed pricing, included units 250 and 1,000, unit price per plan. Cheaper per order on Pro, which is the upgrade nudge.                                                                                                                      |
+| Credential              | An API key from the Dev Dashboard with the `write_global_api_app_events` scope. A second secret beside the Partner token, held in the Worker.                                                                                                                                                              |
+| Event per counted order | `POST https://api.shopify.com/app/2026-07/events` with `shop_id` (the shop GID already on `ShopSession`), `event_handle`, `timestamp`, a permanent `idempotency_key`, `attributes.value: 1`. Every counted order, not only overage; Shopify applies the included units.                                    |
+| Where it fires          | The same place `ShopUsage.ordersThisMonth` is incremented, on first insert of a paid in-cycle order. The count and the event share one rule, so they cannot disagree about what an order is.                                                                                                               |
+| Reversal                | A negative-value event with a fresh idempotency key. The earlier decision not to decrement on cancellation should flip once money is attached: a cancelled order inside the cycle is reversed.                                                                                                             |
+| Delivery                | The API always answers `202`. Failures show only in the Dev Dashboard log (`NO_SUBSCRIPTION`, `PERIOD_CLOSED`, `IDEMPOTENCY_KEY_ERROR`, ...). Baton needs an outbox: a small table in the Durable Object with the pending events, flushed with retry, so a network failure does not lose a billable order. |
+| Reconciliation          | `activeSubscription.items[].usage { quantity }` reports what Shopify has counted this cycle. Compare it with the local counter on the daily revalidation and log a warning on divergence. This turns the silent `202` into an observable.                                                                  |
+| Uninstall               | 24 hours to flush after uninstall, then `PERIOD_CLOSED`. The uninstall webhook flushes the outbox before deleting the session row.                                                                                                                                                                         |
+| Constraints             | Monthly billing only (no yearly plan, already the case). No usage caps: a merchant cannot set a spend ceiling and there is no approaching-cap notice. If Baton ever wants a ceiling it is a local rule that stops emitting, not a Shopify feature.                                                         |
+| Testing                 | A same-org dev store holds a real contract at $0, so meters, events, and the usage figure all exercise without charges.                                                                                                                                                                                    |
+
+Trade-offs, honestly:
+
+- **Billing surprise.** No cap means a shop that triples in a month gets a bill it did not
+  approve line by line. Mitigation is the in-app meter ("620 of 250 orders, $55.50 in overage
+  so far") and the tier ladder that makes Pro cheaper past a known break-even. Route to Ship
+  lives with the same exposure.
+- **Silent failure.** The `202`-always API means a misconfigured handle bills nothing and says
+  nothing. Reconciliation against `usage.quantity` is not optional.
+- **Two counting rules become one.** The counter moves from calendar month to billing cycle
+  (§6.4) so the home page and the invoice agree. That is a one-line change to the month key
+  today and a rewrite under a live meter later.
+- **Cancellation semantics.** Reversal events are simple, but "cancelled" has to be defined once:
+  the order's `cancelledAt` set inside the cycle in which it was counted. A cancellation in a
+  later cycle is not reversed, matching Route to Ship's "refunded and cancelled orders don't
+  count" only approximately. Acceptable.
+
+Implementation size: a `ShopifyAppEvents` service beside `ShopifyPartner`, an outbox table and
+flush in `OrderRepository`, an `updateShopSessionUsage` or an extra field on the plan cache for
+the reconciled quantity, meter configuration in the dashboard, and the counter key change. On
+the order of the member-cap work, not the retention work.
 
 ### 6.3 Why not a hard stop
 
 Unchanged from the earlier research: a missed order in a made-to-order shop is a missed
 shipment. The App Store requirement 1.2.3 also wants upgrades and downgrades to work without
-contacting support, which a hard stop that strands orders would make awkward.
+contacting support, which a hard stop that strands orders would make awkward. This is the
+premise of §6.2: with the hard stop excluded, overage is what makes the limit real.
+
+### 6.4 Cancelled orders: reverse inside the cycle
+
+Recommendation: yes, reverse a cancellation, but only when the order was counted in the
+current cycle, and only for cancellation, not refund.
+
+- **Fairness and copy.** The pricing page will say what Route to Ship's says, "cancelled orders
+  don't count", because a merchant who never made the thing should not pay for it. A refunded
+  order was made and shipped; it counts.
+- **Cost is one negative event and one decrement.** The cancellation webhook already lands in
+  `upsertOrder` and sets `cancelledAt`; `countTowardQuota` already skips orders that arrive
+  cancelled. The new work is the transition: an order that was counted (`fullyPaid`, fresh,
+  in-cycle) and now has `cancelledAt` set for the first time emits `attributes.value: -1` under
+  a fresh idempotency key and decrements the counter. `deleteSeedOrders` already shows the
+  decrement pattern with `max(0, ordersThisMonth - n)`.
+- **Cross-cycle cancellations are not reversed.** Shopify closes the period, `PERIOD_CLOSED`
+  would reject the event, and the local counter has already reset. State this on the pricing
+  copy as "cancelled within the billing period".
+- **Gaming is negligible.** Cancelling a real order after fulfilment to avoid a $0.15 charge
+  wrecks the merchant's own Shopify reports.
+
+The order needs a per-order marker of "counted this cycle" so the reversal fires once and only
+for counted orders. A nullable `countedAt` on `ShopOrder`, set by `countTowardQuota`, is
+enough and doubles as the idempotency key input for both events.
+
+### 6.5 An enterprise ceiling on orders
+
+Review asked whether, with overage uncapped, Baton also needs a hard ceiling so a shop cannot
+grow the Durable Object without bound toward the 10 GB SQLite limit.
+
+**Where the storage cliff actually is.** The verification record in
+`docs/limits-and-plans-plan.md` §17 measured 122,880 bytes for 137 orders with 218 line items,
+about 900 bytes per order before runs. Call it 2 KB per order with its runs and steps. With
+90-day retention the working set is three months of orders, so:
+
+| Monthly orders | Retained rows | Approximate bytes | Against the 2 GB soft guard | Against 10 GB |
+| -------------- | ------------- | ----------------- | --------------------------- | ------------- |
+| 1,000          | 3,000         | 6 MB              | 0.3%                        | 0.06%         |
+| 10,000         | 30,000        | 60 MB             | 3%                          | 0.6%          |
+| 100,000        | 300,000       | 600 MB            | 30%                         | 6%            |
+| 300,000        | 900,000       | 1.8 GB            | 90%                         | 18%           |
+
+Storage is not what limits Baton at any volume a made-to-order shop reaches. Route to Ship's
+founding customer peaked at 1,651 orders a month. The constraints that bite first are
+elsewhere: one Durable Object per shop is single-threaded, so webhook throughput and the cost
+of `reconcileAll` walking every open order scale with the live working set, and the open-run
+ceiling of 5,000 already fences that.
+
+**So the ceiling is positioning, not protection, and it should still exist.** Every other
+growth dimension has a plan-independent constant (teams, workflows, open runs, storage), and
+"we don't support enterprise volume" is a product statement worth encoding rather than leaving
+to the storage guard, which fires late and only on the bulk path.
+
+Recommendation: add `ShopLimits.maxOrdersPerCycle`, provisional 10,000, ten times Pro's
+included units. Below it, overage bills. At it, Baton stops counting and stops syncing new
+orders for the rest of the cycle, shows a critical banner ("Baton is built for shops under
+10,000 orders a month; syncing resumes on <cycle end>"), and logs it. This is the one place a
+hard stop on orders is acceptable, because the shop is outside what Baton sells, and it is the
+storage guard's cousin: same shape, fires earlier, on a number the merchant can understand.
+Keep the storage guard as the second, independent fence.
+
+### 6.6 Move the counter to the billing cycle now
+
+Decided in review. `ShopUsage.monthKey` becomes a cycle key derived from
+`currentBillingCycle.startTime`, cached on `ShopSession` with the §5.3 columns and passed to
+the Durable Object on the calls that count. The home page copy changes from "this month" to
+"this billing period" with the period's end date. Nothing else depends on the key, so this is
+the moment to change it.
 
 ## 7. Remove `BILLING_ENABLED`
 
-The flag exists because Baton once had no plans. It now has them in local, and staging and
-production will get theirs when those apps are created. Keeping a production bypass that grants
-the widest tier is a standing risk with no remaining purpose.
-
-Removal touches: `SubscriptionPlan.layerNoDeps` (drop the `Config.boolean` branch and the
-`granted` short-circuit), `Domain.DEFAULT_PLAN_HANDLE` and its JSDoc, `Domain.PlanHandle`'s
-JSDoc paragraph about the flag, the JSDoc on `MemberAccess.requireMember`, the comment in
-`app.index.tsx`, all three `vars` blocks in `wrangler.jsonc`, `.env.example`, and the README
-"Billing" section. `wrangler.jsonc` and the README both still describe the flag as `"false"`
-while it is `"true"` in all three environments, which is drift the removal ends.
-
-What the tests need instead: anything that currently relies on the bypass gets a stub
-`SubscriptionPlan` layer returning a fixed `PlanStatus`. Candidates are
-`test/integration/subscription-plan.test.ts`, the member-area tests, and the seed route. The
-E2E suite runs against a same-org dev store that holds a real $0 contract, so it needs no stub.
-`MAX_ENTITLEMENTS` stays for fixtures that need a ceiling and no shop.
+Decided in review: now, as its own change, before the rest of this document. The hand-off is
+`docs/remove-billing-flag-plan.md`; it inventories every site and needs no further research.
+The one fact worth keeping here: the integration tests already run with the flag on and seed
+the plan cache, so removal changes no test behaviour.
 
 ## 8. Home page
 
@@ -336,19 +485,26 @@ Worth carrying over, in order: the over-capacity versus at-capacity distinction 
 members page and Manage plan), the scheduled-change line from §5.3, and the meters. The
 reconcile-on-click that Bang has for memory is not needed: on E there is nothing to reconcile.
 
-## 9. Questions for the project owner
+## 9. Decisions taken (annotation review, 2026-09-19)
 
-1. **Is Pro to Basic deferred to cycle end, or immediate with a prorated credit?** Shopify
-   documents deferral only for paid to free; Route to Ship's copy says all downgrades defer.
-   One switch on the dev store settles it, and the answer decides whether the early-warning
-   banner in §4.3 ever shows for a paid-to-paid downgrade. Policy E works either way.
-2. **Seat rule: oldest members keep seats (E), or add an explicit seat order (F) now?**
-   Recommendation E, with F held back until a merchant asks.
-3. **Count orders per billing cycle now, ahead of overage?** Recommendation yes, since the
-   counter is unobservable to merchants except through the home page copy, and moving it later
-   means moving it under a live meter.
-4. **Remove `BILLING_ENABLED` in this change or its own?** Recommendation its own, first, since
-   it is mechanical and every other item here assumes plans are always on.
-5. **Does the over-limit member page reuse the lapsed page, or get its own?** The messages
-   differ ("plan lapsed" versus "no seat for you") but the shape is identical. Recommendation:
-   one route with two messages.
+1. **Plan-tied limits stay orders and members.** Accepted as in §2.
+2. **Member policy is E**, derived seats by `createdAt`, no stored state. F is held back until
+   a merchant asks to choose seats without removing anyone. C is rejected.
+3. **The seatless-member page reuses the lapsed page** with a second message.
+4. **Plan-change timing:** design for upgrades immediate, downgrades deferred. Confirm on the
+   dev store as the first step of implementation, not as a separate probe. §5.4.
+5. **Shorten the plan cache on the Manage plan click.** §5.5, option B.
+6. **Orders: usage overage is on, from the start of the implementation plan.** The counter
+   moves to the billing cycle in the same plan. §6.2, §6.6.
+   - **Cancelled orders are reversed inside the cycle they were counted in.** §6.4.
+   - **An enterprise ceiling on orders per cycle**, plan-independent, provisional 10,000 and
+     expected to be tuned. §6.5.
+7. **Remove `BILLING_ENABLED` now, as its own change**, per `docs/remove-billing-flag-plan.md`.
+8. **Home page carries Bang's treatment**: over-capacity distinct from at-capacity, the
+   scheduled-change line, meters. §8.
+9. **The Partner API limit is soft for `activeSubscription`**: flow control, not refusal.
+
+## 10. Open
+
+Nothing. Every recommendation in this document has been accepted; the next document is the
+implementation plan.

@@ -25,13 +25,10 @@ export default defineConfig(async () => {
         },
         miniflare: {
           /**
-           * `wrangler.jsonc` holds placeholders for the Partner ids and keeps
-           * `BILLING_ENABLED` off, so the values that make the real code paths
-           * reachable are supplied here rather than in the deployed config.
-           * Billing is deliberately ON under test: `SubscriptionPlan`'s cache,
-           * revalidation, and boundary-clamp logic are what
-           * `subscription-plan.test.ts` covers, and the shipped `false` would
-           * short-circuit all of it.
+           * `wrangler.jsonc` holds placeholder Partner ids for the test
+           * environment, so the values that make `SubscriptionPlan`'s cache,
+           * revalidation, and boundary-clamp paths reachable are supplied here
+           * rather than in the deployed config.
            */
           bindings: {
             TEST_MIGRATIONS: migrations,
@@ -41,7 +38,6 @@ export default defineConfig(async () => {
             SHOPIFY_PARTNER_ORG_ID: "1",
             SHOPIFY_PARTNER_APP_ID: "1",
             SHOPIFY_PARTNER_API_TOKEN: "test_partner_token",
-            BILLING_ENABLED: "true",
             ADMIN_EMAILS: "admin@example.com",
             BETTER_AUTH_URL: "http://localhost",
             BETTER_AUTH_SECRET: "test_better_auth_secret",

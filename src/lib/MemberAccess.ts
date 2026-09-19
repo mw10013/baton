@@ -37,10 +37,7 @@ import { SubscriptionPlan } from "@/lib/SubscriptionPlan";
  * an error. A member cannot fix billing — only the merchant can, from `/app` —
  * so the page tells them to contact the shop owner and asks nothing of them.
  * The socket gate translates the same redirect into `402`, the status the
- * merchant gate already uses for the same condition. With `BILLING_ENABLED`
- * off `SubscriptionPlan.resolve` grants every shop the default plan, so this
- * arm is exercised only by tests until billing is turned on; it is here now so
- * that turning it on does not open the member area to lapsed shops.
+ * merchant gate already uses for the same condition.
  */
 export const requireMember = (input: {
   readonly shop: string;
