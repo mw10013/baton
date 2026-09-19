@@ -1,6 +1,6 @@
 import type { SqlError } from "effect/unstable/sql";
 
-import { Clock, Context, Effect, Layer, Option, Schema } from "effect";
+import { Clock, Context, Effect, Layer, Option, Schema, Struct } from "effect";
 import { SqlClient, type Statement } from "effect/unstable/sql";
 
 import * as Domain from "@/lib/Domain";
@@ -343,13 +343,17 @@ export class WorkflowRunRepository extends Context.Service<
       | RunItemBusyError
     >;
     /**
-     * The member queue, tiered and capped here rather than on the page: every
-     * run with at least one ready step owned by `teamIds`, grouped by
-     * {@link Domain.tierOf} against `memberEmail`, oldest order first, cut to
-     * `query.limits` per tier. Every tier's `total` is the count before the
-     * cut, and `teamCounts` / `total` are over all of `teamIds` whatever
-     * `query.team` narrows to, so the chips do not move under the chip just
-     * pressed.
+     * The member queue, tiered and cut here rather than on the page: every run
+     * with at least one ready step owned by `teamIds`, grouped by
+     * {@link Domain.tierOf} against `memberEmail`. **Every** tier is counted;
+     * **one** is returned — the one `query.tab` names — sorted oldest first
+     * and cut to `query.limit`. `tab: "done"` returns no items at all and the
+     * caller reads `listDone` for that tab's rows.
+     *
+     * `teamCounts` and `total` are over all of `teamIds` whatever `query.team`
+     * narrows to, so the team select does not move under the finger, while the
+     * four tier counts are after the narrowing, because they describe the
+     * lists the member can switch to.
      *
      * Both statements still read every row of `teamIds`: the rows are not the
      * cost, the bytes leaving the Durable Object are, so the bound is on what
@@ -360,7 +364,10 @@ export class WorkflowRunRepository extends Context.Service<
       readonly memberEmail: Domain.Email;
       readonly query: Domain.QueueQuery;
     }) => Effect.Effect<
-      Omit<Domain.QueueView, "done">,
+      {
+        readonly counts: Omit<Domain.QueueCounts, "done">;
+        readonly items: readonly Domain.QueueItem[];
+      },
       SqlError.SqlError | WorkflowRunRepositoryError
     >;
     /**
@@ -768,8 +775,15 @@ export class WorkflowRunRepository extends Context.Service<
                   (step) =>
                     step.teamId !== null && teamIds.includes(step.teamId),
                 )
+                // The completed slot is dropped, not nulled: a ready step
+                // has none, and it is four fields on every row of every read.
                 .map((step) => ({
-                  ...step,
+                  ...Struct.omit(step, [
+                    "completedAt",
+                    "completedBy",
+                    "completedByEmail",
+                    "completedByRole",
+                  ]),
                   siblings: ofRun
                     .filter(
                       (other) =>
@@ -1508,9 +1522,9 @@ export class WorkflowRunRepository extends Context.Service<
          * team list a single bound parameter.
          *
          * The statements ignore `query.team` and read all of `teamIds`: the
-         * counts the chips show are over every team, and narrowing the SQL
-         * would make each chip press a different read whose totals disagreed
-         * with the one beside it.
+         * counts the team select shows are over every team, and narrowing the
+         * SQL would make each selection a different read whose totals
+         * disagreed with the one beside it.
          */
         listQueue: Effect.fn("WorkflowRunRepository.listQueue")(function* ({
           teamIds,
@@ -1542,29 +1556,34 @@ export class WorkflowRunRepository extends Context.Service<
                     ? []
                     : [{ ...item, steps: [first, ...rest] }];
                 });
-          const tiered = narrowed.map((item) => ({
-            item,
-            tier: Domain.tierOf(item, memberEmail),
-          }));
-          const tier = (wanted: Domain.QueueTier) => {
-            const all = tiered
-              .filter((row) => row.tier === wanted)
-              .map((row) => row.item)
-              .toSorted(Domain.byAge);
-            return {
-              items: all.slice(0, query.limits[wanted]),
-              total: all.length,
-            };
-          };
-          return {
-            tiers: {
-              attention: tier("attention"),
-              mine: tier("mine"),
-              inProgress: tier("inProgress"),
-              upNext: tier("upNext"),
+          // `Map.groupBy` would say this in one line, but the repo's `lib` is
+          // below es2024; a reduce into a record is the same pass.
+          const byTier = narrowed.reduce<
+            Record<Domain.QueueTier, Domain.QueueItem[]>
+          >(
+            (grouped, item) => {
+              grouped[Domain.tierOf(item, memberEmail)].push(item);
+              return grouped;
             },
-            teamCounts,
-            total: items.length,
+            { attention: [], mine: [], inProgress: [], upNext: [] },
+          );
+          const tier = (wanted: Domain.QueueTier) => byTier[wanted];
+          // "done" is not a tier: its rows come from `listDone`, which reads
+          // finished steps rather than the ready ones grouped here.
+          const selected =
+            query.tab === "done"
+              ? []
+              : tier(query.tab).toSorted(Domain.byAge).slice(0, query.limit);
+          return {
+            counts: {
+              mine: tier("mine").length,
+              upNext: tier("upNext").length,
+              inProgress: tier("inProgress").length,
+              attention: tier("attention").length,
+              total: items.length,
+              teamCounts,
+            },
+            items: selected,
           };
         }),
 

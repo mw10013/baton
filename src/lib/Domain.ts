@@ -2018,19 +2018,22 @@ export interface TeamLoaderData extends TeamDetail {
 
 /**
  * `/shop/$shop` (`shop.$shop.index`): the queue, which is the member area's
- * landing page. `view` is the read of {@link DEFAULT_QUEUE_QUERY}, already
- * tiered by the object, which is why `memberEmail` is here to be *sent* on
+ * landing page. `view` is the read of `query` — the tab from the URL, every
+ * team, one page deep — which is why `memberEmail` is here to be *sent* on
  * the socket's later reads rather than to group rows the page holds; it and
  * `memberId` come out of the same `requireMember` that resolved `teams`.
- * `shop` is the `myshopify.com` domain — the Admin API's display name is not
- * stored anywhere in Baton, and the domain is what the URL and every
- * membership row key on.
+ * `query` travels with the view so the page can tell whether the socket is
+ * about to ask for the same read ({@link sameQueueQuery}) and hand these rows
+ * over as `initialData`. `shop` is the `myshopify.com` domain — the Admin
+ * API's display name is not stored anywhere in Baton, and the domain is what
+ * the URL and every membership row key on.
  */
 export interface QueueLoaderData {
   readonly shop: Shop;
   readonly memberId: MemberId;
   readonly memberEmail: Email;
   readonly teams: MemberAccess["teams"];
+  readonly query: QueueQuery;
   readonly view: QueueView;
 }
 
@@ -2428,8 +2431,14 @@ const actorFrom = (
     : { role: "member", memberId, email };
 };
 
-export const stepStartedBy = (step: WorkflowRunStep) =>
-  actorFrom(step.startedByRole, step.startedBy, step.startedByEmail);
+/**
+ * Each of these takes the slot it reads rather than a whole
+ * {@link WorkflowRunStep}, so a {@link QueueStep} — which carries no
+ * `completed*` slot at all — is as good an argument as a finished one.
+ */
+export const stepStartedBy = (
+  step: Pick<WorkflowRunStep, "startedByRole" | "startedBy" | "startedByEmail">,
+) => actorFrom(step.startedByRole, step.startedBy, step.startedByEmail);
 
 export const stepCompletedBy = (step: WorkflowRunStep) =>
   actorFrom(step.completedByRole, step.completedBy, step.completedByEmail);
@@ -2439,7 +2448,9 @@ export const stepCompletedBy = (step: WorkflowRunStep) =>
  * column (see {@link WorkflowRunStep}), so this is an {@link ActorDisplay} —
  * enough for {@link actorLabel}, which is all anything does with it.
  */
-export const stepReopenedBy = (step: WorkflowRunStep): ActorDisplay | null => {
+export const stepReopenedBy = (
+  step: Pick<WorkflowRunStep, "reopenedByRole" | "reopenedByEmail">,
+): ActorDisplay | null => {
   if (step.reopenedByRole === null) return null;
   if (step.reopenedByRole === "merchant") return { role: "merchant" };
   return step.reopenedByEmail === null
@@ -2453,7 +2464,9 @@ export const stepReopenedBy = (step: WorkflowRunStep): ActorDisplay | null => {
  * queue and the work page the author is a teammate by default and
  * "Note (Member)" would say nothing a reader did not assume.
  */
-export const stepNoteLine = (step: WorkflowRunStep) =>
+export const stepNoteLine = (
+  step: Pick<WorkflowRunStep, "noteByRole" | "note">,
+) =>
   step.noteByRole === "merchant"
     ? `Note (Merchant): ${step.note ?? ""}`
     : `Note: ${step.note ?? ""}`;
@@ -2478,9 +2491,22 @@ export type WorkflowRunDetail = typeof WorkflowRunDetail.Type;
  * the same stage that are *not* in the item — owned by other teams — so a
  * worker can see who they are working alongside. `startedByEmail` is read
  * off the row, the snapshot taken at Start, never a live join.
+ *
+ * The four `completed*` columns are omitted rather than carried as nulls.
+ * Readiness is `completedAt is null` (`readyWhere`), and Undo clears the
+ * whole slot, so on a queue step every one of them is null by construction —
+ * four fields per step that cost bytes on every SSR paint and every refetch
+ * and can never say anything. A finished step is a {@link DoneItem}, which
+ * carries the full {@link WorkflowRunStep} because there the slot is the
+ * point.
  */
 export const QueueStep = Schema.Struct({
-  ...WorkflowRunStep.fields,
+  ...Struct.omit(WorkflowRunStep.fields, [
+    "completedAt",
+    "completedBy",
+    "completedByEmail",
+    "completedByRole",
+  ]),
   siblings: Schema.Array(Schema.Struct({ name: StepName, teamName: TeamName })),
 });
 export type QueueStep = typeof QueueStep.Type;
@@ -2517,7 +2543,9 @@ export const QueueItem = Schema.Struct({
 export type QueueItem = typeof QueueItem.Type;
 
 /**
- * The queue's four tiers, in the order they are presented. The labels the
+ * The four tiers a waiting row can fall in. Four of the five tabs
+ * ({@link QueueTab}) are these; `done` is not a tier because it is a window
+ * over finished steps rather than a grouping of the queue. The labels the
  * member reads are the route's (`queueTiers.ts`); the object only needs the
  * keys, because it is the side that groups, sorts, and caps.
  */
@@ -2528,6 +2556,23 @@ export const QueueTier = Schema.Literals([
   "upNext",
 ]);
 export type QueueTier = typeof QueueTier.Type;
+
+/**
+ * The five screens of the member queue, in strip order: what I am finishing,
+ * what I can start, what a teammate is holding, what has stopped, what can be
+ * undone. Four are the tiers of {@link tierOf}; `done` is the finished-steps
+ * window. The tab is the unit of a read: one read returns every tab's count
+ * and one tab's rows.
+ */
+export const QueueTab = Schema.Literals([
+  "mine",
+  "upNext",
+  "inProgress",
+  "attention",
+  "done",
+]);
+export type QueueTab = typeof QueueTab.Type;
+export const DEFAULT_QUEUE_TAB: QueueTab = "mine";
 
 /**
  * Which tier a queue row belongs in: a flag wins; else a step the viewer
@@ -2542,8 +2587,8 @@ export type QueueTier = typeof QueueTier.Type;
  * not a member of this queue.
  *
  * Here rather than beside the route's labels because the object tiers the
- * rows now: the read is capped per tier, so the grouping has to happen on the
- * side that decides what leaves.
+ * rows now: one read counts every tier and returns one of them, so the
+ * grouping has to happen on the side that decides what leaves.
  */
 export const tierOf = (
   { run, steps }: QueueItem,
@@ -2627,78 +2672,42 @@ export const DoneItem = Schema.Struct({
 export type DoneItem = typeof DoneItem.Type;
 
 /**
- * Provisional. How many rows of a bounded tier (Blocked, Mine, In progress)
- * the queue read returns before the heading says "showing N" and offers
- * more. A proposal, not a tuned figure: no shop has run against it.
+ * Provisional. The rows one tab returns before it offers "Show more", and the
+ * size of each "more". One number for every tab: a member's own tab (Mine) is
+ * the one they scroll least and the one that must fit, and at ~50 px a row 25
+ * is under two phone screens. A proposal, not a tuned figure.
  */
-export const QUEUE_TIER_CAP = 25;
-/** Provisional: the page size for Up next, Done today, and every "Show 10 more". */
-export const QUEUE_PAGE = 10;
-/** Provisional: the most rows one tier may be expanded to in a single read. */
+export const QUEUE_PAGE = 25;
+/** Provisional: the most rows one tab may be expanded to in a single read. */
 export const QUEUE_LIMIT_MAX = 100;
 
 const QueueLimit = Schema.Number.check(
   Schema.isInt(),
-  Schema.isBetween({ minimum: 0, maximum: QUEUE_LIMIT_MAX }),
+  Schema.isBetween({ minimum: 1, maximum: QUEUE_LIMIT_MAX }),
 );
 
 /**
- * How many rows of each tier the caller wants. The object always computes
- * every tier's total; the limit only bounds what is returned. `done: 0` skips
- * the Done today read entirely, which is the collapsed state.
- */
-export const QueueLimits = Schema.Struct({
-  attention: QueueLimit,
-  mine: QueueLimit,
-  inProgress: QueueLimit,
-  upNext: QueueLimit,
-  done: QueueLimit,
-});
-export type QueueLimits = typeof QueueLimits.Type;
-
-export const DEFAULT_QUEUE_LIMITS: QueueLimits = {
-  attention: QUEUE_TIER_CAP,
-  mine: QUEUE_TIER_CAP,
-  inProgress: QUEUE_TIER_CAP,
-  upNext: QUEUE_PAGE,
-  done: 0,
-};
-
-/**
  * What the browser may choose about its queue: one of its own teams to narrow
- * to (`null` is every team on the connection), and how deep each tier goes.
- * `team` is validated against the connection's `teamIds` by the object; a
- * team the member is not on reads as an empty queue, never as an error.
+ * to (`null` is every team on the connection), which tab, and how many rows of
+ * that tab. `team` is validated against the connection's `teamIds` by the
+ * object; a team the member is not on reads as an empty queue, never as an
+ * error. The counts of every tab come back regardless of `tab`, so the strip
+ * is always current.
  */
 export const QueueQuery = Schema.Struct({
   team: Schema.NullOr(TeamId),
-  limits: QueueLimits,
+  tab: QueueTab,
+  limit: QueueLimit,
 });
 export type QueueQuery = typeof QueueQuery.Type;
 
-export const DEFAULT_QUEUE_QUERY: QueueQuery = {
-  team: null,
-  limits: DEFAULT_QUEUE_LIMITS,
-};
-
 /**
- * Whether a query is the one the loader already read, which is what lets the
- * page hand its SSR rows to the socket query as `initialData`. Structural
- * rather than referential: the route rebuilds the value on every chip press,
- * and pressing back to the default has to count as the default.
+ * Structural equality, for deciding whether the loader's rows may serve as
+ * the socket query's `initialData`: the route rebuilds the value on every
+ * press, and the loader's own query is built from the URL.
  */
-export const isDefaultQuery = (query: QueueQuery) =>
-  query.team === DEFAULT_QUEUE_QUERY.team &&
-  (Object.keys(DEFAULT_QUEUE_LIMITS) as (keyof QueueLimits)[]).every(
-    (tier) => query.limits[tier] === DEFAULT_QUEUE_LIMITS[tier],
-  );
-
-export const QueueTierView = Schema.Struct({
-  items: Schema.Array(QueueItem),
-  /** Rows in the tier before the limit; the number the heading shows. */
-  total: Schema.Number,
-});
-export type QueueTierView = typeof QueueTierView.Type;
+export const sameQueueQuery = (a: QueueQuery, b: QueueQuery) =>
+  a.team === b.team && a.tab === b.tab && a.limit === b.limit;
 
 export const QueueTeamCount = Schema.Struct({
   teamId: TeamId,
@@ -2707,27 +2716,34 @@ export const QueueTeamCount = Schema.Struct({
 export type QueueTeamCount = typeof QueueTeamCount.Type;
 
 /**
- * The member queue in one read, already tiered and capped by the object, and
- * what the team finished recently. One value rather than several reads so the
- * socket's `subscribeQueue` and the loader's `listQueue` paint the same page
- * from the same snapshot, and a teammate's Undo moves a row between the tiers
- * and Done under one push.
- *
- * `teamCounts` and `total` are over every team on the connection regardless
- * of `query.team`, so the chips do not move under the chip just pressed.
- * `done.items` is empty when `limits.done` is 0; `done.total` is always the
- * count inside {@link DONE_WINDOW_MS}.
+ * The strip. `mine`, `upNext`, `inProgress`, `attention` and `done` are the
+ * counts of the five tabs **after** `query.team` narrows them, because they
+ * describe the lists the member can switch to. `total` and `teamCounts` are
+ * over every team on the connection regardless of `query.team`, so the team
+ * select does not move under the finger.
+ */
+export const QueueCounts = Schema.Struct({
+  mine: Schema.Number,
+  upNext: Schema.Number,
+  inProgress: Schema.Number,
+  attention: Schema.Number,
+  done: Schema.Number,
+  total: Schema.Number,
+  teamCounts: Schema.Array(QueueTeamCount),
+});
+export type QueueCounts = typeof QueueCounts.Type;
+
+/**
+ * One read of the member queue: every tab's count and one tab's rows. Exactly
+ * one of `items` and `done` is populated: `items` when `query.tab` is a tier,
+ * `done` when it is "done". The selected tab's total is `counts[query.tab]`.
+ * One value rather than two reads so the loader and the socket paint the same
+ * snapshot and the strip never disagrees with the list under it.
  */
 export const QueueView = Schema.Struct({
-  tiers: Schema.Struct({
-    attention: QueueTierView,
-    mine: QueueTierView,
-    inProgress: QueueTierView,
-    upNext: QueueTierView,
-  }),
-  teamCounts: Schema.Array(QueueTeamCount),
-  total: Schema.Number,
-  done: Schema.Struct({ items: Schema.Array(DoneItem), total: Schema.Number }),
+  counts: QueueCounts,
+  items: Schema.Array(QueueItem),
+  done: Schema.Array(DoneItem),
 });
 export type QueueView = typeof QueueView.Type;
 
@@ -2812,8 +2828,8 @@ export type ListQueueInput = typeof ListQueueInput.Type;
  * returns, plus a subscription registered on the connection in the same round
  * trip. `teamIds` and `memberEmail` are absent on purpose — the queue is
  * scoped by the membership on the connection, which the member cannot name
- * for themselves. `query` is theirs to name: it chooses among their own teams
- * and how far each tier is expanded, and the object bounds both.
+ * for themselves. `query` is theirs to name: it chooses among their own teams,
+ * which tab, and how far that tab is expanded, and the object bounds all three.
  */
 export const SubscribeQueueInput = Schema.Struct({
   ...SubscriberIdInput.fields,

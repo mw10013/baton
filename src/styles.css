@@ -165,3 +165,42 @@ details[open] > .live-value-summary .live-value-preview {
     display: none !important;
   }
 }
+
+/*
+ * The member queue (`shop.$shop.index.tsx`). Here rather than inline because
+ * the clamp needs three declarations React's `style` types deprecate, and
+ * because the file already owns the member area's other plain-element rules.
+ */
+
+/*
+ * The strip travels with the list: a member scrolling Up next switches tabs
+ * without scrolling back to the top. `s-box` has no `position`, so the sticky
+ * wrapper is a plain div. The surface colour is repeated because a
+ * transparent sticky element would let rows scroll through it.
+ */
+.queue-strip {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+  padding-block: 0.25rem;
+  background: var(--s-color-bg-surface, #fff);
+}
+
+/* Five tabs on a phone are wider than the viewport; they scroll rather than wrap into a second row that moves the list under the finger. */
+.queue-strip-tabs {
+  overflow-x: auto;
+}
+
+/*
+ * Line two of a queue row, cut to two lines with an ellipsis: a blocked reason
+ * can be a paragraph, and the row is not where it is read — the expanded row
+ * shows the whole thing in its banner. `-webkit-box` is still the only clamp
+ * Safari honours.
+ */
+.queue-detail-line {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}

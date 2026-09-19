@@ -102,26 +102,32 @@ afterEach(async () => {
  * tests in the same worker, so sharing a shop would leak workflows between cases.
  */
 /**
- * The ready half of the queue view, flattened back into one list in tier
- * order; the Done tier and the tiering itself are covered by the repository
- * tests. The email is nobody these tests started work as, so every started
- * step reads as a teammate's.
+ * The ready half of the queue view, flattened back into one list in strip
+ * order because one read now returns one tab; the Done tab and the tiering
+ * itself are covered by the repository tests. `memberEmail` defaults to
+ * nobody these tests started work as, so every started step reads as a
+ * teammate's; `tab` names one tab where that is what a case is about.
  */
 const queueItems = async (
   agent: Awaited<ReturnType<typeof getAgentByName<Cloudflare.Env, ShopAgent>>>,
   teamIds: readonly string[],
+  {
+    memberEmail = "viewer@example.com",
+    tab,
+  }: { readonly memberEmail?: string; readonly tab?: Domain.QueueTab } = {},
 ) => {
-  const view = await agent.listQueue({
-    teamIds,
-    memberEmail: "viewer@example.com",
-    query: Domain.DEFAULT_QUEUE_QUERY,
-  });
-  return [
-    ...view.tiers.attention.items,
-    ...view.tiers.mine.items,
-    ...view.tiers.inProgress.items,
-    ...view.tiers.upNext.items,
-  ];
+  const read = async (wanted: Domain.QueueTab) => {
+    const view = await agent.listQueue({
+      teamIds,
+      memberEmail,
+      query: { team: null, tab: wanted, limit: Domain.QUEUE_PAGE },
+    });
+    return view.items;
+  };
+  if (tab !== undefined) return await read(tab);
+  const tabs = ["mine", "upNext", "inProgress", "attention"] as const;
+  const reads = await Promise.all(tabs.map(read));
+  return reads.flat();
 };
 
 describe("ShopAgent workflow callables", () => {
@@ -983,7 +989,12 @@ describe("ShopAgent workflow run callables", () => {
       teamIds: [team.id],
     });
     expect(await engraver.startStep({ runStepId })).toEqual({ _tag: "Ok" });
-    const [item] = await queueItems(agent, [team.id]);
+    // Their own started step, so it is Mine for them — which is the tab the
+    // snapshotted email has to survive the delete in.
+    const [item] = await queueItems(agent, [team.id], {
+      memberEmail,
+      tab: "mine",
+    });
     strictEqual(item?.run.status, "active");
     strictEqual(item?.steps[0]?.startedByEmail, "w@example.com");
     strictEqual(item?.stageCount, 1);
@@ -997,7 +1008,10 @@ describe("ShopAgent workflow run callables", () => {
         });
       }).pipe(Effect.provide(layer)),
     );
-    const [deletedItem] = await queueItems(agent, [team.id]);
+    const [deletedItem] = await queueItems(agent, [team.id], {
+      memberEmail,
+      tab: "mine",
+    });
     strictEqual(deletedItem?.steps[0]?.startedByEmail, "w@example.com");
     expect(
       await engraver.setStepNote({

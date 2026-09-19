@@ -380,12 +380,8 @@ const queueItem = (
           : Schema.decodeUnknownSync(Domain.Email)(
               overrides.startedByEmail ?? `${overrides.startedBy}@example.com`,
             ),
-      completedAt: null,
-      completedBy: null,
-      completedByEmail: null,
       note: null,
       startedByRole: overrides.startedBy === undefined ? null : "member",
-      completedByRole: null,
       reopenedAt: null,
       reopenedByRole: null,
       reopenedByEmail: null,
@@ -463,6 +459,33 @@ describe("Domain.byAge", () => {
         ].toSorted(Domain.byAge),
       ),
       "z-first-line,a-same-age,b-same-age,late-next",
+    );
+  });
+});
+
+describe("Domain.sameQueueQuery", () => {
+  const query: Domain.QueueQuery = {
+    team: null,
+    tab: "mine",
+    limit: Domain.QUEUE_PAGE,
+  };
+
+  it("is structural, and every field counts", () => {
+    strictEqual(Domain.sameQueueQuery(query, { ...query }), true);
+    strictEqual(
+      Domain.sameQueueQuery(query, {
+        ...query,
+        team: Schema.decodeUnknownSync(Domain.TeamId)("team-a"),
+      }),
+      false,
+    );
+    strictEqual(Domain.sameQueueQuery(query, { ...query, tab: "done" }), false);
+    strictEqual(
+      Domain.sameQueueQuery(query, {
+        ...query,
+        limit: Domain.QUEUE_PAGE + 1,
+      }),
+      false,
     );
   });
 });

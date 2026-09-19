@@ -1,6 +1,6 @@
 import * as React from "react";
 
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
@@ -17,13 +17,16 @@ import {
 import * as Domain from "@/lib/Domain";
 import { requireMember } from "@/lib/MemberAccess";
 import { memberServerFnMiddleware } from "@/lib/MemberServerFnMiddleware";
-import { TIER_LABEL, TIERS } from "@/lib/queueTiers";
+import { TAB_EMPTY, TAB_LABEL, TABS } from "@/lib/queueTiers";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { SocketBanner } from "@/lib/SocketBanner";
 import { useMemberRunActions } from "@/lib/useMemberRunActions";
 import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
 
-const ShopParamInput = Schema.Struct({ shop: Schema.String });
+const LoaderInput = Schema.Struct({
+  shop: Schema.String,
+  tab: Domain.QueueTab,
+});
 
 /**
  * The queue's first paint. SSR, so it cannot be a socket call: `requireMember`
@@ -35,11 +38,13 @@ const ShopParamInput = Schema.Struct({ shop: Schema.String });
  * (`useMemberRunActions`). Either way `teamIds`, `memberId`, and
  * `memberEmail` are resolved server-side and never sent by the browser.
  *
- * The loader reads the default query, which is what lets its rows serve as the
- * socket query's `initialData` until the member presses a chip or a Show more.
+ * The query it reads comes back beside the view, which is what lets its rows
+ * serve as the socket query's `initialData` until the member narrows to a team
+ * or presses Show more. The tab is in the URL and so is the loader's to read;
+ * team and depth are not, so the loader always reads every team one page deep.
  */
 const getLoaderData = createServerFn({ method: "GET" })
-  .validator(Schema.toStandardSchemaV1(ShopParamInput))
+  .validator(Schema.toStandardSchemaV1(LoaderInput))
   .middleware([memberServerFnMiddleware])
   .handler(({ data, context: { runEffect, user } }) =>
     runEffect(
@@ -48,24 +53,51 @@ const getLoaderData = createServerFn({ method: "GET" })
           shop: data.shop,
           email: user.email,
         });
+        const query: Domain.QueueQuery = {
+          team: null,
+          tab: data.tab,
+          limit: Domain.QUEUE_PAGE,
+        };
         const view = yield* (yield* ShopAgentClient).listQueue(shop, {
           teamIds: teams.map((team) => team.id),
           memberEmail: user.email,
-          query: Domain.DEFAULT_QUEUE_QUERY,
+          query,
         });
         return {
           shop,
           memberId,
           memberEmail: user.email,
           teams,
+          query,
           view,
         } satisfies Domain.QueueLoaderData;
       }),
     ),
   );
 
+/**
+ * The tab is the one thing about the queue worth putting in the URL: it is
+ * what a member is looking at, so a link, a refresh, and the back button all
+ * mean something. An invalid `?tab=` fails here and the router's error
+ * boundary shows; nothing on the page links to one.
+ */
+const QueueSearch = Schema.Struct({
+  tab: Schema.optionalKey(Domain.QueueTab),
+});
+
 export const Route = createFileRoute("/shop/$shop/")({
-  loader: ({ params }) => getLoaderData({ data: { shop: params.shop } }),
+  validateSearch: Schema.toStandardSchemaV1(QueueSearch),
+  loaderDeps: ({ search }) => ({ tab: search.tab ?? Domain.DEFAULT_QUEUE_TAB }),
+  loader: ({ params, deps }) =>
+    getLoaderData({ data: { shop: params.shop, tab: deps.tab } }),
+  /**
+   * A tab is a different loader key, so its first visit runs the loader once
+   * and that read is the socket query's `initialData` for the new key; after
+   * that the socket owns the data and pushes keep it current. Without this the
+   * default `staleTime: 0` would re-run the loader on every return to a tab
+   * whose data the socket already holds.
+   */
+  staleTime: Infinity,
   head: () => ({ meta: [{ title: "Queue — Baton" }] }),
   component: RouteComponent,
 });
@@ -77,16 +109,24 @@ const doneActorLabel = (step: Domain.WorkflowRunStep) => {
 };
 
 function RouteComponent() {
-  const { shop, memberEmail, teams, view: loaderView } = Route.useLoaderData();
+  const {
+    shop,
+    memberEmail,
+    teams,
+    query: loaderQuery,
+    view: loaderView,
+  } = Route.useLoaderData();
+  const { tab = Domain.DEFAULT_QUEUE_TAB } = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
   /**
-   * The queue the browser is asking for: which of its own teams, and how far
-   * each tier is expanded. Client state, not a search param — a bench does not
-   * share URLs — and part of the query key, because every one of these is a
-   * different read of the object.
+   * Which of the member's own teams, and how far the open tab goes. Client
+   * state rather than search params — a bench does not share a team or a
+   * scroll depth — while the tab, which is what the member is looking at, is
+   * the URL's. All three are part of the query key, because every one of them
+   * is a different read of the object.
    */
-  const [query, setQuery] = React.useState<Domain.QueueQuery>(
-    Domain.DEFAULT_QUEUE_QUERY,
-  );
+  const [team, setTeam] = React.useState<Domain.TeamId | null>(null);
+  const [limit, setLimit] = React.useState(Domain.QUEUE_PAGE);
   /**
    * Run ids whose detail is showing. Nothing is open on first paint, not even
    * Mine: every open row ships its attributes, instructions, note, and step
@@ -108,18 +148,21 @@ function RouteComponent() {
    * read the SSR paint never made, and `keepPreviousData` in the hook holds
    * the previous rows on screen until it returns.
    */
+  const query: Domain.QueueQuery = { team, tab, limit };
   const { data, invalidate, agent, identified } = useSubscribedQuery({
     queryKey: ["shop-queue", shop, query],
     subscribe: (stub, subscriberId) =>
       stub.subscribeQueue({ subscriberId, query }),
-    initialData: Domain.isDefaultQuery(query) ? loaderView : undefined,
+    initialData: Domain.sameQueueQuery(query, loaderQuery)
+      ? loaderView
+      : undefined,
   });
   /**
-   * Chip counts are the same for every query (they are over every team), so
-   * the loader's stand in while a new key is in flight. The tiers are not:
-   * for a non-default query with no previous rows to keep, the page says it
-   * is loading rather than paint the unnarrowed loader rows under a pressed
-   * chip.
+   * `total` and the team counts are the same for every query (they are over
+   * every team), so the loader's stand in while a new key is in flight. The
+   * rows are not: for a query the loader never read and with no previous rows
+   * to keep, the page says it is loading rather than paint the unnarrowed
+   * loader rows under a pressed tab.
    */
   const view = data ?? loaderView;
   const loading = data === undefined;
@@ -136,12 +179,7 @@ function RouteComponent() {
    * than reopening unasked, and the set cannot grow for the life of the mount.
    */
   const shownIds = React.useMemo(
-    () =>
-      new Set<string>(
-        TIERS.flatMap((tier) =>
-          view.tiers[tier].items.map((item) => item.run.id),
-        ),
-      ),
+    () => new Set<string>(view.items.map((item) => item.run.id)),
     [view],
   );
   // Adjusted during render, not in an effect, so the pruned set paints in the
@@ -162,29 +200,30 @@ function RouteComponent() {
     });
   };
 
-  /** A chip resets every limit: "Show 10 more" on All is not a promise about Engraving. */
-  const selectTeam = (team: Domain.TeamId | null) => {
-    setQuery({ team, limits: Domain.DEFAULT_QUEUE_LIMITS });
+  /**
+   * A tab is a different list: depth resets and expansions close, because
+   * "Show 25 more" of Up next is not a promise about Blocked. `replace: true`
+   * so Back leaves the queue rather than walking the member back through every
+   * tab they glanced at.
+   */
+  const selectTab = (next: Domain.QueueTab) => {
+    if (next === tab) return;
+    setLimit(Domain.QUEUE_PAGE);
+    setOpen(new Set());
+    void navigate({ search: { tab: next }, replace: true });
   };
 
-  const showMore = (tier: keyof Domain.QueueLimits) => {
-    setQuery((current) => ({
-      ...current,
-      limits: {
-        ...current.limits,
-        [tier]: Math.min(
-          current.limits[tier] + Domain.QUEUE_PAGE,
-          Domain.QUEUE_LIMIT_MAX,
-        ),
-      },
-    }));
+  /** A team change is a new list too: same reset, and it stays out of the URL. */
+  const selectTeam = (next: Domain.TeamId | null) => {
+    setTeam(next);
+    setLimit(Domain.QUEUE_PAGE);
+    setOpen(new Set());
   };
 
-  const setDone = (limit: number) => {
-    setQuery((current) => ({
-      ...current,
-      limits: { ...current.limits, done: limit },
-    }));
+  const showMore = () => {
+    setLimit((current) =>
+      Math.min(current + Domain.QUEUE_PAGE, Domain.QUEUE_LIMIT_MAX),
+    );
   };
 
   /**
@@ -283,7 +322,7 @@ function RouteComponent() {
    */
   const renderItem = (
     item: Domain.QueueItem,
-    tier: Domain.QueueTier,
+    tab: Domain.QueueTab,
     first: boolean,
   ) => {
     const { run, steps } = item;
@@ -396,7 +435,7 @@ function RouteComponent() {
            subdued / base / strong, with no critical or success surface to tint
            one with. A flag gets an inline-start rule under its tone badge; a
            row the reader has in hand gets the subdued surface. */
-        background={!flagged && tier === "mine" ? "subdued" : "base"}
+        background={!flagged && tab === "mine" ? "subdued" : "base"}
         borderWidth={`${first ? "none" : "base"} none ${flagged ? "large-100" : "none"} none`}
         borderColor={flagged ? "strong" : "base"}
       >
@@ -429,7 +468,10 @@ function RouteComponent() {
                     </s-badge>
                   )}
                 </s-stack>
-                <s-text color="subdued">{detailLine()}</s-text>
+                {/* `.queue-detail-line` in `styles.css` cuts it to two lines. */}
+                <div className="queue-detail-line">
+                  <s-text color="subdued">{detailLine()}</s-text>
+                </div>
               </s-stack>
             </s-clickable>
             <s-stack direction="inline" gap="small-300" alignItems="center">
@@ -524,54 +566,124 @@ function RouteComponent() {
   );
 
   /**
-   * "Show 10 more of N". The button is the only way past a tier's cap and it
-   * asks the object for the deeper read rather than revealing rows the page
-   * already holds, so the count it names is the object's count.
+   * "Show 25 more of N". The button is the only way past the open tab's cut
+   * and it asks the object for the deeper read rather than revealing rows the
+   * page already holds, so the count it names is the object's count.
    */
-  const renderMore = (tier: keyof Domain.QueueLimits, hidden: number) => (
+  const renderMore = (hidden: number) => (
     <s-box padding="small-300 base">
       <s-button
         variant="tertiary"
         inlineSize="fill"
-        disabled={query.limits[tier] >= Domain.QUEUE_LIMIT_MAX}
-        onClick={() => {
-          showMore(tier);
-        }}
+        disabled={limit >= Domain.QUEUE_LIMIT_MAX}
+        onClick={showMore}
       >
-        {`Show ${String(Domain.QUEUE_PAGE)} more of ${String(hidden)}`}
+        {`Show ${String(Math.min(Domain.QUEUE_PAGE, hidden))} more of ${String(hidden)}`}
       </s-button>
     </s-box>
   );
 
   const teamCount = (teamId: string) =>
-    view.teamCounts.find((count) => count.teamId === teamId)?.count ?? 0;
+    view.counts.teamCounts.find((count) => count.teamId === teamId)?.count ?? 0;
 
-  const chips =
+  /**
+   * A select rather than a row of chips: the team list is unbounded, and a
+   * select whose value is the team already reads as the pressed chip, so this
+   * is one control where the chips were a row that wrapped. Its counts are
+   * over every team whatever is selected, so the option just chosen does not
+   * renumber itself.
+   */
+  const teamSelect =
     teams.length > 1 ? (
+      <s-select
+        label="Team"
+        labelAccessibilityVisibility="exclusive"
+        value={team ?? ""}
+        onChange={(event) => {
+          const value = event.currentTarget.value;
+          selectTeam(teams.find(({ id }) => id === value)?.id ?? null);
+        }}
+      >
+        <s-option value="">{`All teams · ${String(view.counts.total)}`}</s-option>
+        {teams.map((each) => (
+          <s-option key={each.id} value={each.id}>
+            {`${each.name} · ${String(teamCount(each.id))}`}
+          </s-option>
+        ))}
+      </s-select>
+    ) : null;
+
+  /**
+   * The strip is the heading: every tab with its count, the open one pressed.
+   * A zero-count tab stays — the strip must not reflow when a count crosses
+   * zero — and stays enabled, because an empty list with its empty state is a
+   * valid screen to land on. Blocked goes critical only while it has rows, so
+   * the one colour on the strip always means something is stopped.
+   */
+  const strip = (
+    <div className="queue-strip-tabs">
+      {/* `s-stack`, not `s-button-group`: the group renders only its named
+          action slots, so buttons in its default slot never reach the page. */}
       <s-stack direction="inline" gap="small-300">
-        <s-button
-          variant={query.team === null ? "primary" : "secondary"}
-          onClick={() => {
-            selectTeam(null);
-          }}
-        >
-          {`All · ${String(view.total)}`}
-        </s-button>
-        {teams.map((team) => (
+        {TABS.map((each) => (
           <s-button
-            key={team.id}
-            variant={query.team === team.id ? "primary" : "secondary"}
+            key={each}
+            variant={each === tab ? "primary" : "secondary"}
+            tone={
+              each === "attention" && view.counts.attention > 0
+                ? "critical"
+                : "auto"
+            }
+            aria-pressed={each === tab}
             onClick={() => {
-              selectTeam(team.id);
+              selectTab(each);
             }}
           >
-            {`${team.name} · ${String(teamCount(team.id))}`}
+            {`${TAB_LABEL[each]} · ${String(view.counts[each])}`}
           </s-button>
         ))}
       </s-stack>
-    ) : null;
+    </div>
+  );
 
-  const shown = TIERS.reduce((sum, tier) => sum + view.tiers[tier].total, 0);
+  const total = view.counts[tab];
+  const rows = tab === "done" ? view.done : view.items;
+  const hidden = total - rows.length;
+  /**
+   * The way out of an empty tab; `null` when there is nowhere worth sending
+   * the reader. "Go to" rather than the bare label so the button cannot be
+   * confused with the strip button above it that carries the same count.
+   */
+  const goTo = TAB_EMPTY[tab].goTo;
+  const renderEmpty = () => (
+    <s-stack gap="small-300">
+      <s-paragraph color="subdued">{TAB_EMPTY[tab].text}</s-paragraph>
+      {goTo !== null && view.counts[goTo] > 0 && (
+        <s-button
+          variant="tertiary"
+          onClick={() => {
+            selectTab(goTo);
+          }}
+        >
+          {`Go to ${TAB_LABEL[goTo]} · ${String(view.counts[goTo])}`}
+        </s-button>
+      )}
+    </s-stack>
+  );
+  const renderList = () => (
+    <s-box borderWidth="base" borderRadius="base">
+      {tab === "done"
+        ? view.done.map((entry, index) => renderDone(entry, index === 0))
+        : view.items.map((item, index) => renderItem(item, tab, index === 0))}
+      {hidden > 0 && renderMore(hidden)}
+    </s-box>
+  );
+  const renderQueue = () => {
+    if (loading)
+      return <s-paragraph color="subdued">Loading&hellip;</s-paragraph>;
+    if (total === 0) return renderEmpty();
+    return renderList();
+  };
 
   return (
     <>
@@ -590,84 +702,14 @@ function RouteComponent() {
               </s-paragraph>
             ) : (
               <>
-                {chips}
-                {loading && (
-                  <s-paragraph color="subdued">Loading&hellip;</s-paragraph>
-                )}
-                {!loading && shown === 0 && (
-                  <s-paragraph color="subdued">
-                    Nothing to do right now.
-                  </s-paragraph>
-                )}
-                {!loading &&
-                  TIERS.map((tier) => {
-                    const { items, total } = view.tiers[tier];
-                    if (total === 0) return null;
-                    const hidden = total - items.length;
-                    return (
-                      <s-stack key={tier} gap="small-300">
-                        {/* The heading counts the whole tier; "showing N" is
-                          the only place the page admits it is holding less,
-                          so the number a member reads is the number of things
-                          waiting. */}
-                        <s-stack
-                          direction="inline"
-                          gap="small-300"
-                          alignItems="center"
-                        >
-                          <s-heading>
-                            {`${TIER_LABEL[tier]} · ${String(total)}`}
-                          </s-heading>
-                          {hidden > 0 && (
-                            <s-text color="subdued">
-                              {`showing ${String(items.length)}`}
-                            </s-text>
-                          )}
-                        </s-stack>
-                        <s-box borderWidth="base" borderRadius="base">
-                          {items.map((item, index) =>
-                            renderItem(item, tier, index === 0),
-                          )}
-                          {hidden > 0 && renderMore(tier, hidden)}
-                        </s-box>
-                      </s-stack>
-                    );
-                  })}
-                {!loading && view.done.total > 0 && (
+                {/* `.queue-strip` in `styles.css` keeps it on screen. */}
+                <div className="queue-strip">
                   <s-stack gap="small-300">
-                    <s-stack
-                      direction="inline"
-                      gap="small-300"
-                      alignItems="center"
-                    >
-                      <s-heading>
-                        {`Done today · ${String(view.done.total)}`}
-                      </s-heading>
-                      <s-button
-                        variant="tertiary"
-                        onClick={() => {
-                          setDone(
-                            query.limits.done === 0 ? Domain.QUEUE_PAGE : 0,
-                          );
-                        }}
-                      >
-                        {query.limits.done === 0 ? "Show" : "Hide"}
-                      </s-button>
-                    </s-stack>
-                    {query.limits.done > 0 && view.done.items.length > 0 && (
-                      <s-box borderWidth="base" borderRadius="base">
-                        {view.done.items.map((entry, index) =>
-                          renderDone(entry, index === 0),
-                        )}
-                        {view.done.items.length < view.done.total &&
-                          renderMore(
-                            "done",
-                            view.done.total - view.done.items.length,
-                          )}
-                      </s-box>
-                    )}
+                    {teamSelect}
+                    {strip}
                   </s-stack>
-                )}
+                </div>
+                {renderQueue()}
               </>
             )}
           </s-stack>

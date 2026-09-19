@@ -180,24 +180,28 @@ const seedShopWithWork = async (shopName: string) => {
   return { shop, runStepId, ...seeded };
 };
 
+/** One page of Up next, every team: what every test here seeds a single row into. */
+const UP_NEXT: Domain.QueueQuery = {
+  team: null,
+  tab: "upNext",
+  limit: Domain.QUEUE_PAGE,
+};
+
 const subscribeView = (
   socket: AgentSocket,
   subscriberId: string,
-  query: Domain.QueueQuery = Domain.DEFAULT_QUEUE_QUERY,
+  query: Domain.QueueQuery = UP_NEXT,
 ) => socket.call<Domain.QueueView>("subscribeQueue", { subscriberId, query });
 
-/** The ready rows in tier order; every test here seeds one team's single step. */
+/**
+ * The ready rows of one tab. Every test here seeds a single untouched step on
+ * one team, which is Up next for whoever reads it.
+ */
 const subscribe = (
   socket: AgentSocket,
   subscriberId: string,
   query?: Domain.QueueQuery,
-) =>
-  subscribeView(socket, subscriberId, query).then((view) => [
-    ...view.tiers.attention.items,
-    ...view.tiers.mine.items,
-    ...view.tiers.inProgress.items,
-    ...view.tiers.upNext.items,
-  ]);
+) => subscribeView(socket, subscriberId, query).then((view) => view.items);
 
 afterEach(async () => {
   await resetMemberTables();
@@ -230,11 +234,13 @@ describe("member queue socket", () => {
   });
 
   /**
-   * The limits are the browser's to choose and the object's to honour: the
-   * same connection, re-subscribing with a deeper Up next, reads the row the
-   * first subscribe left out while both reads agree on the total.
+   * The query is the browser's to choose and the object's to honour: the same
+   * connection, re-subscribing with a different tab, gets that tab's rows
+   * while every read agrees on the counts. What this proves is that `query`
+   * reaches the object and selects the tab — the tiering itself is the
+   * repository's test.
    */
-  it("re-subscribing with different limits changes what the read returns", async () => {
+  it("re-subscribing with a different query changes what the read returns", async () => {
     const { shop, working, alice } = await seedShopWithWork(
       "queue-limits.myshopify.com",
     );
@@ -243,20 +249,21 @@ describe("member queue socket", () => {
       memberEmail: "alice@example.com",
       teamIds: [working.id],
     });
-    const collapsed = await subscribeView(worker.socket, "sub-alice", {
-      ...Domain.DEFAULT_QUEUE_QUERY,
-      limits: { ...Domain.DEFAULT_QUEUE_LIMITS, upNext: 0 },
+    const upNext = await subscribeView(worker.socket, "sub-alice", {
+      ...UP_NEXT,
+      limit: 1,
     });
-    expect(collapsed.tiers.upNext.items).toHaveLength(0);
-    expect(collapsed.tiers.upNext.total).toBe(1);
-    expect(collapsed.total).toBe(1);
+    expect(upNext.items).toHaveLength(1);
+    expect(upNext.counts.upNext).toBe(1);
+    expect(upNext.counts.total).toBe(1);
 
-    const expanded = await subscribeView(worker.socket, "sub-alice", {
-      ...Domain.DEFAULT_QUEUE_QUERY,
-      limits: { ...Domain.DEFAULT_QUEUE_LIMITS, upNext: 20 },
+    const done = await subscribeView(worker.socket, "sub-alice", {
+      ...UP_NEXT,
+      tab: "done",
     });
-    expect(expanded.tiers.upNext.items).toHaveLength(1);
-    expect(expanded.tiers.upNext.total).toBe(1);
+    expect(done.items).toHaveLength(0);
+    expect(done.done).toHaveLength(0);
+    expect(done.counts.upNext).toBe(1);
     worker.close();
   });
 

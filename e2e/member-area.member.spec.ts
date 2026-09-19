@@ -115,10 +115,10 @@ test("removing a member closes the shop page on their live session", async ({
  * Teams are resolved by the same `requireMember` query that proves membership,
  * so a member sees the teams they are on and nothing else — a team that exists
  * in the same shop, staffed by someone else, must not appear. The queue shows
- * team chips only for a member on more than one team, so the member here is
- * on two of three: their two chips render, the stranger's does not. Seeded
- * rather than created through the admin because the two surfaces are separate
- * Playwright projects; `teams.spec.ts` owns the admin half.
+ * its team select only for a member on more than one team, so the member here
+ * is on two of three: their two options render, the stranger's does not.
+ * Seeded rather than created through the admin because the two surfaces are
+ * separate Playwright projects; `teams.spec.ts` owns the admin half.
  */
 test("a member sees the teams they are on, and only those", async ({
   page,
@@ -138,10 +138,13 @@ test("a member sees the teams they are on, and only those", async ({
   await followMagicLink(page);
   await expect(page.locator('s-page[heading="Queue"]')).toBeVisible();
 
-  await expect(page.getByRole("button", { name: `${TEAM} · 0` })).toBeVisible();
+  const teams = page.getByRole("combobox", { name: "Team" });
+  await expect(teams.getByRole("option", { name: `${TEAM} · 0` })).toHaveCount(
+    1,
+  );
   await expect(
-    page.getByRole("button", { name: `${SECOND_TEAM} · 0` }),
-  ).toBeVisible();
+    teams.getByRole("option", { name: `${SECOND_TEAM} · 0` }),
+  ).toHaveCount(1);
   await expect(page.getByText(OTHER_TEAM)).toBeHidden();
   await expect(page.getByText(TEAMLESS_STATE)).toBeHidden();
 });

@@ -75,32 +75,45 @@ const note = Schema.decodeUnknownSync(Domain.StepNote);
 /** Nobody's queue in particular: a reader who has started nothing, so `tierOf` never answers "mine". */
 const VIEWER = emailOf("viewer@example.com");
 
+/** The four tabs whose rows `listQueue` returns; "done" is `listDone`'s. */
+const TIER_TABS = [
+  "mine",
+  "upNext",
+  "inProgress",
+  "attention",
+] as const satisfies readonly Domain.QueueTab[];
+
 /**
- * The rows `listQueue` returns, flattened back into one list in tier order, so
- * a test that only cares about *which* runs are queued reads the same as it
- * did before the object tiered them. Tests about the tiering itself call
+ * The rows `listQueue` returns, flattened back into one list in strip order,
+ * so a test that only cares about *which* runs are queued reads the same as it
+ * did before the read became one tab at a time. `tab` names the single tab
+ * where that is what the test is about; tests about the tiering itself call
  * `listQueue` directly.
  */
 const queueRows = Effect.fn("queueRows")(function* ({
   teamIds,
   memberEmail = VIEWER,
-  query = Domain.DEFAULT_QUEUE_QUERY,
+  tab,
+  team = null,
+  limit = Domain.QUEUE_PAGE,
 }: {
   readonly teamIds: readonly Domain.TeamId[];
   readonly memberEmail?: Domain.Email;
-  readonly query?: Domain.QueueQuery;
+  readonly tab?: Domain.QueueTab;
+  readonly team?: Domain.TeamId | null;
+  readonly limit?: number;
 }) {
-  const view = yield* (yield* WorkflowRunRepository).listQueue({
-    teamIds,
-    memberEmail,
-    query,
-  });
-  return [
-    ...view.tiers.attention.items,
-    ...view.tiers.mine.items,
-    ...view.tiers.inProgress.items,
-    ...view.tiers.upNext.items,
-  ];
+  const repository = yield* WorkflowRunRepository;
+  const read = (wanted: Domain.QueueTab) =>
+    repository.listQueue({
+      teamIds,
+      memberEmail,
+      query: { team, tab: wanted, limit },
+    });
+  if (tab !== undefined) return (yield* read(tab)).items;
+  const rows: Domain.QueueItem[] = [];
+  for (const wanted of TIER_TABS) rows.push(...(yield* read(wanted)).items);
+  return rows;
 });
 
 const ORDER_ID = "gid://shopify/Order/1";
@@ -1439,19 +1452,24 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         yield* upsertAndReconcile(order({ updatedAt: PROCESSED_AT + 1 }), [
           lineItem(1, ["a"]),
         ]);
-        const flaggedFirst = yield* queueRows({
+        // The flag decides the tab, not the position in one list: the
+        // reconciled run leaves Up next for Blocked and the untouched one
+        // stays.
+        const blocked = yield* queueRows({
           teamIds: [TEAM_A.id, TEAM_B.id],
+          tab: "attention",
         });
         deepStrictEqual(
-          flaggedFirst.map((item) => [item.run.id, item.run.flag]),
-          [
-            [second.run.id, "item_removed"],
-            [first.run.id, null],
-          ],
+          blocked.map((item) => [item.run.id, item.run.flag]),
+          [[second.run.id, "item_removed"]],
         );
-        strictEqual(
-          flaggedFirst[0]?.run.customAttributes?.[0]?.value,
-          "Hello 2",
+        strictEqual(blocked[0]?.run.customAttributes?.[0]?.value, "Hello 2");
+        deepStrictEqual(
+          (yield* queueRows({
+            teamIds: [TEAM_A.id, TEAM_B.id],
+            tab: "upNext",
+          })).map((item) => [item.run.id, item.run.flag]),
+          [[first.run.id, null]],
         );
 
         const wrongTeam = yield* runs
@@ -1576,38 +1594,57 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           reason: note("Waiting on the customer"),
         });
 
-        const asMaker = yield* runs.listQueue({
-          teamIds: [TEAM_A.id],
-          memberEmail: maker.email,
-          query: Domain.DEFAULT_QUEUE_QUERY,
-        });
-        deepStrictEqual(
-          [
-            asMaker.tiers.attention.items.map((item) => item.run.id),
-            asMaker.tiers.mine.items.map((item) => item.run.id),
-            asMaker.tiers.inProgress.items.map((item) => item.run.id),
-            asMaker.tiers.upNext.items.map((item) => item.run.id),
-          ],
-          [[theirs.run.id], [mine.run.id], [], []],
-        );
+        // The counts come back whatever tab is asked for, so one read per
+        // reader says where every row landed for them.
+        const countsFor = (memberEmail: Domain.Email) =>
+          runs
+            .listQueue({
+              teamIds: [TEAM_A.id],
+              memberEmail,
+              query: { team: null, tab: "mine", limit: Domain.QUEUE_PAGE },
+            })
+            .pipe(
+              Effect.map(({ counts, items }) => ({
+                counts: [
+                  counts.mine,
+                  counts.upNext,
+                  counts.inProgress,
+                  counts.attention,
+                ],
+                mine: items.map((item) => item.run.id),
+              })),
+            );
 
-        const asMate = yield* runs.listQueue({
-          teamIds: [TEAM_A.id],
-          memberEmail: VIEWER,
-          query: Domain.DEFAULT_QUEUE_QUERY,
+        deepStrictEqual(yield* countsFor(maker.email), {
+          counts: [1, 0, 0, 1],
+          mine: [mine.run.id],
         });
+        deepStrictEqual(yield* countsFor(VIEWER), {
+          counts: [0, 0, 1, 1],
+          mine: [],
+        });
+        // The flagged run is Blocked for both, and the started one is In
+        // progress for the reader who did not start it.
         deepStrictEqual(
-          [
-            asMate.tiers.attention.items.map((item) => item.run.id),
-            asMate.tiers.mine.items.map((item) => item.run.id),
-            asMate.tiers.inProgress.items.map((item) => item.run.id),
-          ],
-          [[theirs.run.id], [], [mine.run.id]],
+          (yield* queueRows({
+            teamIds: [TEAM_A.id],
+            memberEmail: VIEWER,
+            tab: "inProgress",
+          })).map((item) => item.run.id),
+          [mine.run.id],
+        );
+        deepStrictEqual(
+          (yield* queueRows({
+            teamIds: [TEAM_A.id],
+            memberEmail: maker.email,
+            tab: "attention",
+          })).map((item) => item.run.id),
+          [theirs.run.id],
         );
       }),
     ));
 
-  it("listQueue counts the whole tier and returns only the limit; the team counts ignore the narrowing", () =>
+  it("listQueue counts the whole tab and returns only the limit; the team counts ignore the narrowing", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -1616,17 +1653,21 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           order(),
           Array.from({ length: 12 }, (_, index) => lineItem(index + 1, ["a"])),
         );
+        // An explicit limit rather than `QUEUE_PAGE`: what is on trial is that
+        // the cut happens at the number asked for, not what that number is.
+        const read = (limit: number) =>
+          runs.listQueue({
+            teamIds: [TEAM_A.id, TEAM_B.id],
+            memberEmail: VIEWER,
+            query: { team: null, tab: "upNext", limit },
+          });
 
-        const capped = yield* runs.listQueue({
-          teamIds: [TEAM_A.id, TEAM_B.id],
-          memberEmail: VIEWER,
-          query: Domain.DEFAULT_QUEUE_QUERY,
-        });
-        strictEqual(capped.tiers.upNext.items.length, Domain.QUEUE_PAGE);
-        strictEqual(capped.tiers.upNext.total, 12);
-        strictEqual(capped.total, 12);
+        const capped = yield* read(10);
+        strictEqual(capped.items.length, 10);
+        strictEqual(capped.counts.upNext, 12);
+        strictEqual(capped.counts.total, 12);
         deepStrictEqual(
-          capped.teamCounts.map(({ teamId, count }) => [teamId, count]),
+          capped.counts.teamCounts.map(({ teamId, count }) => [teamId, count]),
           [
             [TEAM_A.id, 12],
             // Finish is stage 2 and nothing is done, so B owns no ready step.
@@ -1634,16 +1675,29 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           ],
         );
 
-        const deeper = yield* runs.listQueue({
-          teamIds: [TEAM_A.id, TEAM_B.id],
+        const deeper = yield* read(20);
+        strictEqual(deeper.items.length, 12);
+        strictEqual(deeper.counts.upNext, 12);
+      }),
+    ));
+
+  it("listQueue on the Done tab returns no items and counts the tiers all the same", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seed;
+        const runs = yield* WorkflowRunRepository;
+        yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
+
+        const done = yield* runs.listQueue({
+          teamIds: [TEAM_A.id],
           memberEmail: VIEWER,
-          query: {
-            team: null,
-            limits: { ...Domain.DEFAULT_QUEUE_LIMITS, upNext: 20 },
-          },
+          query: { team: null, tab: "done", limit: Domain.QUEUE_PAGE },
         });
-        strictEqual(deeper.tiers.upNext.items.length, 12);
-        strictEqual(deeper.tiers.upNext.total, 12);
+        // The Done tab's rows are `listDone`'s; the strip above them is still
+        // this read's, which is why the counts do not depend on the tab.
+        strictEqual(done.items.length, 0);
+        strictEqual(done.counts.upNext, 1);
+        strictEqual(done.counts.total, 1);
       }),
     ));
 
@@ -1655,50 +1709,44 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         yield* stagedRun();
         const teamIds = [TEAM_A.id, TEAM_B.id];
 
-        const both = yield* runs.listQueue({
-          teamIds,
-          memberEmail: VIEWER,
-          query: Domain.DEFAULT_QUEUE_QUERY,
-        });
+        const read = (team: Domain.TeamId | null) =>
+          runs.listQueue({
+            teamIds,
+            memberEmail: VIEWER,
+            query: { team, tab: "upNext", limit: Domain.QUEUE_PAGE },
+          });
+
+        const both = yield* read(null);
         deepStrictEqual(
-          both.tiers.upNext.items.map((item) =>
-            item.steps.map((step) => step.name),
-          ),
+          both.items.map((item) => item.steps.map((step) => step.name)),
           [[stepName("Artwork"), stepName("Materials")]],
         );
 
-        const onlyA = yield* runs.listQueue({
-          teamIds,
-          memberEmail: VIEWER,
-          query: { team: TEAM_A.id, limits: Domain.DEFAULT_QUEUE_LIMITS },
-        });
+        const onlyA = yield* read(TEAM_A.id);
         deepStrictEqual(
-          onlyA.tiers.upNext.items.map((item) =>
-            item.steps.map((step) => step.name),
-          ),
+          onlyA.items.map((item) => item.steps.map((step) => step.name)),
           [[stepName("Artwork")]],
         );
-        // The chips are counted over every team on the connection, so pressing
-        // one does not move the numbers beside it.
+        // The team counts are over every team on the connection, so choosing
+        // one does not move the numbers in the select beside it.
         deepStrictEqual(
-          onlyA.teamCounts.map(({ teamId, count }) => [teamId, count]),
+          onlyA.counts.teamCounts.map(({ teamId, count }) => [teamId, count]),
           [
             [TEAM_A.id, 1],
             [TEAM_B.id, 1],
           ],
         );
-        strictEqual(onlyA.total, 1);
+        strictEqual(onlyA.counts.total, 1);
+        strictEqual(onlyA.counts.upNext, 1);
 
-        const foreign = yield* runs.listQueue({
-          teamIds,
-          memberEmail: VIEWER,
-          query: { team: TEAM_C.id, limits: Domain.DEFAULT_QUEUE_LIMITS },
-        });
-        strictEqual(foreign.tiers.upNext.items.length, 0);
-        strictEqual(foreign.tiers.upNext.total, 0);
-        strictEqual(foreign.total, 1);
+        const foreign = yield* read(TEAM_C.id);
+        strictEqual(foreign.items.length, 0);
+        // The tab counts are after the narrowing — they describe the lists the
+        // member can switch to — while `total` and `teamCounts` are not.
+        strictEqual(foreign.counts.upNext, 0);
+        strictEqual(foreign.counts.total, 1);
         deepStrictEqual(
-          foreign.teamCounts.map(({ count }) => count),
+          foreign.counts.teamCounts.map(({ count }) => count),
           [1, 1],
         );
       }),

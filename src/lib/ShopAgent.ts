@@ -3087,8 +3087,12 @@ export class ShopAgent extends Agent {
   /**
    * No D1 read: `startedByEmail` is a snapshot on the row, so the queue reads
    * the same after the member is deleted. Every half of `Domain.QueueView`
-   * comes from one call so the loader and the socket paint one snapshot, and
-   * the tiers and the Done count agree with each other.
+   * comes from one call so the loader and the socket paint one snapshot: the
+   * strip and the list under it are never two reads that can disagree.
+   *
+   * The Done count is read on every tab (`listDone` with `limit: 0` counts
+   * without reading rows) because the strip shows it whatever is open; its
+   * rows are read only when `query.tab` is "done".
    *
    * `query.team` narrows Done the same way it narrows the tiers, and a team
    * the member is not on narrows it to nothing — the same answer the
@@ -3104,7 +3108,7 @@ export class ShopAgent extends Agent {
     return Effect.gen(function* () {
       const repository = yield* WorkflowRunRepository;
       const started = yield* Clock.currentTimeMillis;
-      const tiers = yield* repository.listQueue({
+      const { counts, items } = yield* repository.listQueue({
         teamIds,
         memberEmail,
         query,
@@ -3116,32 +3120,33 @@ export class ShopAgent extends Agent {
       const done = yield* repository.listDone({
         teamIds: doneTeamIds,
         since: started - Domain.DONE_WINDOW_MS,
-        limit: query.limits.done,
+        limit: query.tab === "done" ? query.limit : 0,
       });
       /**
-       * The fan-out this read was capped to bound, measured on real shops:
-       * `items` is what left the object, and it must stay at or under the sum
-       * of `query.limits`.
+       * The fan-out this read was cut to bound, measured on real shops:
+       * `rows` is what left the object, and it must stay at or under
+       * `query.limit`.
        */
-      const items = Object.values(tiers.tiers).reduce(
-        (sum, tier) => sum + tier.items.length,
-        0,
-      );
+      const rows = query.tab === "done" ? done.items.length : items.length;
       const team = query.team ?? "all";
       const ms = (yield* Clock.currentTimeMillis) - started;
       yield* Effect.logInfo(
-        `ShopAgent.readQueue: shop=${shop} teams=${String(teamIds.length)} team=${team} items=${String(items)} done=${String(done.items.length)} ms=${String(ms)}`,
+        `ShopAgent.readQueue: shop=${shop} teams=${String(teamIds.length)} team=${team} tab=${query.tab} rows=${String(rows)} ms=${String(ms)}`,
       ).pipe(
         Effect.annotateLogs({
           shop,
           teams: teamIds.length,
           team,
-          items,
-          done: done.items.length,
+          tab: query.tab,
+          rows,
           ms,
         }),
       );
-      return { ...tiers, done } satisfies Domain.QueueView;
+      return {
+        counts: { ...counts, done: done.total },
+        items,
+        done: done.items,
+      } satisfies Domain.QueueView;
     });
   }
 
