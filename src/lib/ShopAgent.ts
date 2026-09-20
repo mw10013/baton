@@ -1,5 +1,7 @@
 import type * as ShopifyApi from "@shopify/shopify-api";
 
+import type { OrdersSyncParams } from "@/lib/OrdersSyncWorkflow";
+
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-do";
 import {
   Agent,
@@ -9,7 +11,6 @@ import {
   type ConnectionContext,
 } from "agents";
 import {
-  Cause,
   Clock,
   Effect,
   Exit,
@@ -31,10 +32,7 @@ import {
   makeEnvLayer,
   makeLoggerLayer,
 } from "@/lib/LayerEx";
-import {
-  OrderRepository,
-  type OrderRepositoryError,
-} from "@/lib/OrderRepository";
+import { OrderRepository } from "@/lib/OrderRepository";
 import {
   orderSyncQuery,
   OrderSyncResponse,
@@ -42,11 +40,7 @@ import {
   toOrderLineItem,
   toShopOrder,
 } from "@/lib/OrderSync";
-import {
-  ORDER_SYNC_WINDOW_DAYS,
-  ORDER_SYNC_OVERLAP_MS,
-  ORDERS_SYNC_WORKFLOW_NAME,
-} from "@/lib/orderSyncConstants";
+import { ORDERS_SYNC_WORKFLOW_NAME } from "@/lib/orderSyncConstants";
 import { Repository, type RepositoryError } from "@/lib/Repository";
 import {
   type OrdersStreamCounts,
@@ -316,8 +310,11 @@ const memberCallableEffect =
  * 8 times over 4 hours replaying the original payload, and warns the same
  * delivery may arrive more than once. `receivedAt` is indexed so its retention
  * sweep walks the oldest rows instead of the table. `SyncState` is one row
- * under `check (id = 1)`, seeded here so every read is a plain `select` and the
- * reservation write in `syncOrders` is an `update` that cannot race an insert.
+ * under `check (id = 1)`, seeded here so every read is a plain `select` and
+ * every write is an `update` that cannot race an insert. It holds what the
+ * last import left behind — its error, its completion — and nothing about a
+ * run in flight: that is the Agents SDK's `cf_agents_workflows` row, read by
+ * {@link ShopAgent.syncOrders}.
  *
  * `ShopUsage` is the same one-row shape and holds everything the Worker needs
  * to compare this shop against its plan without the object knowing what the
@@ -340,13 +337,10 @@ const memberCallableEffect =
  * `ShopOrder.countedAt` is its per-order counterpart: null means never counted,
  * which is what makes a cancellation reverse exactly once.
  *
- * `ShopOrder_closed_idx` is the negation of `ShopOrder_open_idx`, ordered by
- * `updatedAt`: the retention sweep's one access path, so ageing out closed
- * orders never reads the open working set.
- *
  * The `(processedAt desc, id desc)` index is the keyset the orders page pages
  * on; `id desc` is in it so the tiebreak is index-ordered too, since a shop
- * can place several orders in the same millisecond.
+ * can place several orders in the same millisecond. The retention sweep reads
+ * the same index as a range scan (`Domain.ShopLimits.orderRetentionDays`).
  *
  * `Workflow` / `WorkflowStep` are the production-workflow *definitions* a
  * merchant configures: what starts runs. `WorkflowDraft` / `WorkflowDraftStep`
@@ -442,25 +436,22 @@ const initializeSchema = Effect.gen(function* () {
       financialStatus text,
       fulfillmentStatus text not null,
       fullyPaid integer not null,
-      tags text not null,
       note text,
       customAttributes text not null,
-      lineItemsComplete integer not null,
       lineItemsTruncated integer not null default 0,
       syncedAt integer not null,
       syncSource text not null,
       countedAt integer,
       firstCycleStartAt integer not null
     );
+    -- Serves the index page's keyset and the retention sweep's range scan
+    -- alike; a descending index reads a range as readily as an ascending one,
+    -- so the sweep needs no index of its own.
     create index if not exists ShopOrder_processedAt
       on ShopOrder (processedAt desc, id desc);
     create index if not exists ShopOrder_open_idx
       on ShopOrder (processedAt desc, id desc)
       where fulfillmentStatus <> 'FULFILLED' and cancelledAt is null;
-    create index if not exists ShopOrder_closed_idx
-      on ShopOrder (updatedAt)
-      where fulfillmentStatus = 'FULFILLED' or cancelledAt is not null
-        or closedAt is not null;
     create table if not exists OrderLineItem (
       id text primary key,
       orderId text not null references ShopOrder(id) on delete cascade,
@@ -490,11 +481,8 @@ const initializeSchema = Effect.gen(function* () {
       on WebhookDelivery (receivedAt);
     create table if not exists SyncState (
       id integer primary key check (id = 1),
-      workflowId text,
-      startedAt integer,
-      lastFullSyncAt integer,
-      lastFullSyncWindowStart integer,
-      lastError text
+      lastError text,
+      lastCompletedAt integer
     );
     insert or ignore into SyncState (id) values (1);
     create table if not exists ShopUsage (
@@ -1037,65 +1025,25 @@ const runResult = <R>(
 const SHOP_AGENT_BINDING = "SHOP_AGENT";
 
 /**
- * How long a reservation is trusted on its own. Past this the Durable Object
- * asks Cloudflare whether the instance is really still running, so a callback
- * lost to a crash cannot wedge the button forever. Comfortably longer than the
- * poll schedule's ~10.5-minute ceiling plus the stream.
+ * Statuses the Agents SDK's tracking row carries while an import is under
+ * way. `waiting` is in the set because a refreshed row reads that way while
+ * the instance sleeps between polls (`OrdersSyncWorkflow`), and a sleeping
+ * import is still an import.
  */
-const SYNC_RESERVATION_TTL_MS = 60 * 60 * 1000;
+const IMPORT_IN_FLIGHT = ["queued", "running", "waiting"] as const;
 
+/** The Workflows binding's own wording for an id it has no instance for. */
 const isWorkflowInstanceNotFoundError = (cause: unknown) =>
   cause instanceof Error && cause.message.includes("instance.not_found");
 
 /**
- * Cloudflare instance ids must start with `[a-zA-Z0-9_]`, so the shop's dots
- * are folded out. The `startedAt` suffix makes every run a fresh id: the
- * "only one sync per shop" rule is a business invariant living in `SyncState`,
- * not something to encode in Cloudflare's id space, where a fixed id would
- * force an already-exists/inspect/restart dance on every click.
+ * How long a tracking row is trusted on its own before the object asks
+ * Cloudflare what really became of the instance. The SDK never reaps a row: a
+ * Workflow that dies without reporting leaves one reading `running` forever,
+ * and with it a permanently disabled button. Ten minutes is comfortably past
+ * the workflow's own give-up bound plus its stream.
  */
-const ordersSyncWorkflowId = (shop: string, startedAt: number) =>
-  `orders-sync_${shop.replaceAll(/[^a-zA-Z0-9_-]/gu, "_")}_${String(startedAt)}`;
-
-/**
- * `Option.none()` means Cloudflare says the instance does not exist. Any other
- * failure is deliberately reported as "still there": treating an unreachable
- * control plane as proof of absence would release a reservation held by a run
- * that is very much alive.
- */
-const ordersSyncWorkflowExists = (
-  workflow: Workflow,
-  id: string,
-): Effect.Effect<boolean> =>
-  Effect.tryPromise(() => workflow.get(id)).pipe(
-    Effect.flatMap((instance) => Effect.tryPromise(() => instance.status())),
-    Effect.as(true),
-    Effect.catch((error) =>
-      Effect.succeed(!isWorkflowInstanceNotFoundError(error.cause)),
-    ),
-  );
-
-/**
- * Where the next window starts, and which timestamp to filter on.
- *
- * The first sync has nothing stored and asks for orders *placed* inside the
- * window. Every later sync asks for orders *touched* since the last one, minus
- * an overlap, and never reaches back past the window Shopify grants without
- * `read_all_orders`. `updated_at` is what makes an old order edited yesterday
- * show up — the reconciliation job Shopify tells apps to back webhooks with.
- */
-const orderSyncWindow = (
-  now: number,
-  lastFullSyncAt: number | null,
-): { readonly field: Domain.OrderSyncField; readonly windowStart: number } => {
-  const earliest = now - ORDER_SYNC_WINDOW_DAYS * 24 * 60 * 60 * 1000;
-  return lastFullSyncAt === null
-    ? { field: "created_at", windowStart: earliest }
-    : {
-        field: "updated_at",
-        windowStart: Math.max(lastFullSyncAt - ORDER_SYNC_OVERLAP_MS, earliest),
-      };
-};
+const IMPORT_STALE_MS = 10 * 60 * 1000;
 
 /**
  * The webhook payload after `include_fields` trimming. Decoded laxly and
@@ -1112,10 +1060,7 @@ export const OrderWebhookInput = Schema.Struct({
 });
 export type OrderWebhookInput = typeof OrderWebhookInput.Type;
 
-const OrdersSyncErrorInput = Schema.Struct({
-  startedAt: Schema.Number,
-  message: Schema.String,
-});
+const OrdersSyncErrorInput = Schema.Struct({ message: Schema.String });
 
 const OrdersStreamInput = Schema.Struct({ url: Schema.String });
 
@@ -1191,6 +1136,15 @@ const seedReadySteps = (
 
 export class ShopAgent extends Agent {
   declare private readonly runEffect: ReturnType<typeof makeRunEffect>;
+
+  /**
+   * Set for the width of the `await` inside {@link ShopAgent.syncOrders} that
+   * creates the workflow instance, and read by the next click. The object
+   * runs one JavaScript thread, so a plain field is complete mutual exclusion
+   * over the one window no stored row can cover: the Agents SDK inserts its
+   * tracking row only after that same await returns.
+   */
+  private importStarting = false;
 
   constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
     super(ctx, env);
@@ -1532,17 +1486,24 @@ export class ShopAgent extends Agent {
         ).pipe(Effect.annotateLogs({ shop, orderId, source }));
         return false;
       }
-      const lineItemsComplete = !order.lineItems.pageInfo.hasNextPage;
-      if (!lineItemsComplete)
+      const lineItemsTruncated = order.lineItems.pageInfo.hasNextPage;
+      if (lineItemsTruncated)
         yield* Effect.logError(
-          `ShopAgent.fetchAndUpsertOrder: shop=${shop} orderId=${orderId}: line items truncated, merging instead of replacing`,
-        ).pipe(Effect.annotateLogs({ shop, orderId, source }));
+          `ShopAgent.fetchAndUpsertOrder: shop=${shop} orderId=${orderId} limit=${String(Domain.ShopLimits.maxLineItemsPerOrder)}: line items truncated`,
+        ).pipe(
+          Effect.annotateLogs({
+            shop,
+            orderId,
+            source,
+            limit: Domain.ShopLimits.maxLineItemsPerOrder,
+          }),
+        );
       const reconcile = yield* reconciler();
       const shopOrder = toShopOrder({
         node: order,
         source,
         syncedAt: yield* Clock.currentTimeMillis,
-        lineItemsComplete,
+        lineItemsTruncated,
       });
       const { written } = yield* (yield* OrderRepository).upsertOrder({
         order: shopOrder,
@@ -1559,7 +1520,7 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Starts the 30-day window sync, or reports the one already running.
+   * Starts the open-order import, or reports the one already running.
    *
    * `@callable()`: the socket this arrives on already passed the Worker's gate
    * (session-token signature, `exp`/`nbf`/`aud`, the URL's shop matching the
@@ -1570,35 +1531,78 @@ export class ShopAgent extends Agent {
    * new. `ShopAgentClient` is for calls that must carry a Worker-resolved input
    * such as a plan ceiling.
    *
-   * The reservation is written **before** `runWorkflow`, which creates the
-   * Cloudflare instance and only then inserts its tracking row — two writes
-   * that cannot be one transaction. Reserving first means a throw between them
-   * leaves a claim to verify against `status()` rather than a running sync
-   * behind a re-enabled button. Durable Object output gates hold the outgoing
-   * `create` until the preceding SQLite write is durable, so the reservation
-   * cannot be lost to the same fault that loses the tracking row.
+   * **One import at a time**, tracked by the Agents SDK and nowhere else. The
+   * SDK's `cf_agents_workflows` row is the only record that an import is
+   * running, so there is no reservation to reconcile against it and no way for
+   * the two to disagree. Three cases, and the code above is all three:
+   *
+   * - *Two clicks in one tick.* `runWorkflow` awaits `workflow.create` before
+   *   it inserts the tracking row, so a second call during that await would
+   *   read an empty {@link IMPORT_IN_FLIGHT} query. The object runs one
+   *   JavaScript thread and `getWorkflows` is synchronous, so the plain
+   *   `importStarting` field set before the await closes the gap exactly.
+   * - *A wedged row.* The SDK never reaps its own rows. A row older than
+   *   {@link IMPORT_STALE_MS} is refreshed from the Workflows API through
+   *   `getWorkflowStatus`, which rewrites it; if it still reads as in flight
+   *   afterwards, the instance really is alive. A row whose instance the
+   *   platform no longer has (`instance.not_found`) is deleted outright,
+   *   since nothing else ever would and it would disable the button for good.
+   * - *A throw between `create` and the insert.* The instance runs untracked
+   *   and this call surfaces the error. Harmless: the query is fixed and the
+   *   upsert idempotent, so the orphan run does exactly what a re-click would,
+   *   and the next click starts a fresh one.
    */
   @callable()
-  syncOrders(): Promise<Domain.SyncState> {
+  syncOrders(): Promise<Domain.OrdersSyncResult> {
     const shop = this.name;
-    const workflow = this.env.ORDERS_SYNC_WORKFLOW;
-    const runWorkflow = (
-      params: {
-        readonly shop: string;
-        readonly startedAt: number;
-        readonly windowStart: number;
-        readonly field: Domain.OrderSyncField;
-      },
-      id: string,
-    ) =>
+    const runningImports = () =>
+      this.getWorkflows({
+        status: [...IMPORT_IN_FLIGHT],
+        workflowName: ORDERS_SYNC_WORKFLOW_NAME,
+      }).workflows;
+    const deleteWorkflow = (workflowId: string) =>
+      this.deleteWorkflow(workflowId);
+    const refreshWorkflow = (workflowId: string) =>
       Effect.tryPromise(() =>
-        this.runWorkflow(ORDERS_SYNC_WORKFLOW_NAME, params, {
-          id,
-          agentBinding: SHOP_AGENT_BINDING,
-        }),
+        this.getWorkflowStatus(ORDERS_SYNC_WORKFLOW_NAME, workflowId),
+      ).pipe(
+        Effect.catch((error) =>
+          /**
+           * `instance.not_found` is Cloudflare saying the instance is gone —
+           * a lost callback whose instance has since passed the platform's
+           * retention — and the row it left is the only thing disabling the
+           * button, so it goes. Any other failure is an unreachable control
+           * plane, which is not proof of absence: the row is left as it
+           * stands and the next click asks again.
+           */
+          isWorkflowInstanceNotFoundError(error.cause)
+            ? Effect.logWarning(
+                `ShopAgent.syncOrders: shop=${shop} workflowId=${workflowId}: instance not found, untracking`,
+              ).pipe(
+                Effect.annotateLogs({ shop, workflowId }),
+                Effect.andThen(Effect.sync(() => deleteWorkflow(workflowId))),
+              )
+            : Effect.logWarning(
+                `ShopAgent.syncOrders: shop=${shop} workflowId=${workflowId}: status refresh failed: ${error.message}`,
+              ).pipe(Effect.annotateLogs({ shop, workflowId })),
+        ),
       );
+    const startWorkflow = () =>
+      Effect.tryPromise(() =>
+        this.runWorkflow(
+          ORDERS_SYNC_WORKFLOW_NAME,
+          { shop } satisfies OrdersSyncParams,
+          { agentBinding: SHOP_AGENT_BINDING },
+        ),
+      );
+    const beginStarting = () => {
+      this.importStarting = true;
+    };
+    const endStarting = () => {
+      this.importStarting = false;
+    };
+    const starting = () => this.importStarting;
     const publish = () => this.publish("all");
-    const readDatabaseSize = () => this.ctx.storage.sql.databaseSize;
     return this.runEffect(
       Effect.gen(function* () {
         // The one `@callable()` that takes no input, so it has no
@@ -1606,62 +1610,34 @@ export class ShopAgent extends Agent {
         yield* connectionRoleGuard("merchant");
         const repository = yield* OrderRepository;
         const now = yield* Clock.currentTimeMillis;
-        const current = yield* repository.getSyncState();
-        if (current.workflowId !== null && current.startedAt !== null) {
-          const fresh = now - current.startedAt < SYNC_RESERVATION_TTL_MS;
-          if (
-            fresh ||
-            (yield* ordersSyncWorkflowExists(workflow, current.workflowId))
-          ) {
-            yield* Effect.logInfo(
-              `ShopAgent.syncOrders: shop=${shop} status=in-flight`,
-            ).pipe(
-              Effect.annotateLogs({
-                shop,
-                status: "in-flight",
-                workflowId: current.workflowId,
-              }),
+        const inFlight = Effect.fn("ShopAgent.syncOrders.inFlight")(
+          function* () {
+            const running = runningImports();
+            const stale = running.filter(
+              (row) => now - row.createdAt.getTime() >= IMPORT_STALE_MS,
             );
-            return current;
-          }
-          yield* repository.clearSync();
+            if (stale.length === 0) return running.length > 0;
+            yield* Effect.forEach(
+              stale,
+              (row) => refreshWorkflow(row.workflowId),
+              { discard: true },
+            );
+            return runningImports().length > 0;
+          },
+        );
+        if (starting() || (yield* inFlight())) {
+          yield* Effect.logInfo(
+            `ShopAgent.syncOrders: shop=${shop} status=in-flight`,
+          ).pipe(Effect.annotateLogs({ shop, status: "in-flight" }));
+          return { status: "in_flight" } satisfies Domain.OrdersSyncResult;
         }
         /**
-         * The storage guard, and the only place `databaseSize` gates anything.
-         * Webhooks are deliberately not gated: a single-order write keeps the
-         * production floor running and costs kilobytes, while a bulk import is
-         * the one operation that can add gigabytes to an object that has no
-         * way to grow past its limit. Refusing it leaves the merchant with a
-         * visible error on the orders page rather than a sync that fails deep
-         * inside a stream.
-         */
-        const databaseSize = readDatabaseSize();
-        yield* Effect.logInfo(
-          `ShopAgent.syncOrders: shop=${shop} databaseSize=${String(databaseSize)}`,
-        ).pipe(Effect.annotateLogs({ shop, databaseSize }));
-        if (databaseSize >= Domain.ShopLimits.storageSoftLimitBytes) {
-          yield* Effect.logError(
-            `ShopAgent.syncOrders: shop=${shop} status=storage-limit databaseSize=${String(databaseSize)}`,
-          ).pipe(
-            Effect.annotateLogs({
-              shop,
-              status: "storage-limit",
-              databaseSize,
-            }),
-          );
-          const state = yield* repository.setSyncError({
-            error:
-              "Storage limit reached; this shop's order sync is paused. Contact support.",
-          });
-          yield* publish();
-          return state;
-        }
-        /**
-         * The order ceiling, beside the storage guard: a bulk import that
-         * would be refused order by order should be refused once, visibly,
-         * before it starts. A stream that crosses the ceiling mid-file is
-         * stopped per order by `upsertOrder` instead, and the webhook path
-         * carries the same test for single orders.
+         * The order ceiling: an import that would be refused order by order
+         * should be refused once, visibly, before it starts. A stream that
+         * crosses the ceiling mid-file is stopped per order by `upsertOrder`
+         * instead, and the webhook path carries the same test for single
+         * orders. No storage guard beside it: the import's fixed open-work
+         * query is what bounds how much this object can take on.
          */
         const usage = yield* repository.getUsage();
         if (Domain.cycleAtOrderCeiling(usage.ordersThisCycle)) {
@@ -1674,70 +1650,24 @@ export class ShopAgent extends Agent {
               ordersThisCycle: usage.ordersThisCycle,
             }),
           );
-          const state = yield* repository.setSyncError({
-            error: `Baton is built for shops under ${Domain.ShopLimits.maxOrdersPerCycle.toLocaleString("en-US")} orders a billing period; syncing resumes when the period ends.`,
+          yield* repository.setSyncError({
+            error: `Baton is built for shops under ${Domain.ShopLimits.maxOrdersPerCycle.toLocaleString("en-US")} orders a billing period; importing resumes when the period ends.`,
           });
           yield* repository.markOrdersLimited(now);
           yield* publish();
-          return state;
+          return { status: "refused" } satisfies Domain.OrdersSyncResult;
         }
-        const { field, windowStart } = orderSyncWindow(
-          now,
-          current.lastFullSyncAt,
-        );
-        const id = ordersSyncWorkflowId(shop, now);
-        const reserved = yield* repository.reserveSync({
-          workflowId: id,
-          startedAt: now,
-          windowStart,
-        });
-        /**
-         * `runWorkflow` can create the instance and still throw on its tracking
-         * insert. If the instance exists the run is live and the reservation is
-         * correct, so the throw is swallowed and only the tracking row is lost —
-         * which nothing here reads. A genuinely absent instance releases the
-         * claim and surfaces.
-         */
-        yield* runWorkflow(
-          { shop, startedAt: now, windowStart, field },
-          id,
-        ).pipe(
-          Effect.catch((error) =>
-            Effect.flatMap(
-              ordersSyncWorkflowExists(workflow, id),
-              (
-                exists,
-              ): Effect.Effect<
-                void,
-                typeof error | SqlError.SqlError | OrderRepositoryError
-              > =>
-                exists
-                  ? Effect.logWarning(
-                      `ShopAgent.syncOrders: shop=${shop} status=untracked: ${causeToErrorMessage(Cause.fail(error))}`,
-                    ).pipe(
-                      Effect.annotateLogs({
-                        shop,
-                        status: "untracked",
-                        workflowId: id,
-                      }),
-                    )
-                  : Effect.andThen(repository.clearSync(), Effect.fail(error)),
-            ),
-          ),
+        yield* repository.clearSyncError();
+        const workflowId = yield* Effect.acquireUseRelease(
+          Effect.sync(beginStarting),
+          startWorkflow,
+          () => Effect.sync(endStarting),
         );
         yield* Effect.logInfo(
-          `ShopAgent.syncOrders: shop=${shop} status=started field=${field}`,
-        ).pipe(
-          Effect.annotateLogs({
-            shop,
-            status: "started",
-            field,
-            windowStart,
-            workflowId: id,
-          }),
-        );
+          `ShopAgent.syncOrders: shop=${shop} status=started workflowId=${workflowId}`,
+        ).pipe(Effect.annotateLogs({ shop, status: "started", workflowId }));
         yield* publish();
-        return reserved;
+        return { status: "started" } satisfies Domain.OrdersSyncResult;
       }).pipe(Effect.withLogSpan("ShopAgent.syncOrders")),
     );
   }
@@ -1823,26 +1753,23 @@ export class ShopAgent extends Agent {
 
   /**
    * The workflow's durable error sink, reached before the failure propagates,
-   * so the message survives even if the callback that follows never arrives.
+   * so the merchant-facing message survives even if the callback that follows
+   * never arrives. {@link ShopAgent.onWorkflowError} writes the same column
+   * from the platform's own account of the failure; whichever lands last
+   * wins, and they say the same thing.
    */
-  onOrdersSyncError(input: {
-    readonly startedAt: number;
-    readonly message: string;
-  }): Promise<void> {
+  onOrdersSyncError(input: { readonly message: string }): Promise<void> {
     const shop = this.name;
     const publish = () => this.publish("all");
     return this.runEffect(
       callableEffect("ShopAgent.onOrdersSyncError", OrdersSyncErrorInput, {
         role: "rpc",
-      })(({ startedAt, message }) =>
+      })(({ message }) =>
         Effect.gen(function* () {
           yield* Effect.logError(
             `ShopAgent.onOrdersSyncError: shop=${shop}: ${message}`,
-          ).pipe(Effect.annotateLogs({ shop, startedAt, message }));
-          yield* (yield* OrderRepository).failSync({
-            startedAt,
-            error: message,
-          });
+          ).pipe(Effect.annotateLogs({ shop, message }));
+          yield* (yield* OrderRepository).setSyncError({ error: message });
           yield* publish();
         }),
       )(input),
@@ -1851,38 +1778,37 @@ export class ShopAgent extends Agent {
 
   /**
    * Completion is recorded here rather than at the end of the stream: a file
-   * that streams halfway and then fails must not leave `lastFullSyncAt`
-   * claiming the window was covered, or the next run's `updated_at` bound would
-   * skip everything the failed run never read.
+   * that streams halfway and then fails must not leave a timestamp claiming
+   * an import completed. The workflow reports no result — there is nothing
+   * about the run the object does not already know — so nothing is decoded.
    */
   override async onWorkflowComplete(
     workflowName: string,
     workflowId: string,
-    result?: unknown,
   ): Promise<void> {
     if (workflowName !== ORDERS_SYNC_WORKFLOW_NAME) return;
     const shop = this.name;
     const deleteWorkflow = () => this.deleteWorkflow(workflowId);
     const publish = () => this.publish("all");
     await this.runEffect(
-      callableEffect("ShopAgent.onWorkflowComplete", Domain.OrdersSyncResult, {
-        role: "rpc",
-      })(({ startedAt }) =>
-        Effect.gen(function* () {
-          const state = yield* (yield* OrderRepository).completeSync({
-            startedAt,
-          });
-          yield* Effect.logInfo(
-            `ShopAgent.onWorkflowComplete: shop=${shop} workflowId=${workflowId}`,
-          ).pipe(Effect.annotateLogs({ shop, workflowId, startedAt }));
-          yield* Effect.sync(deleteWorkflow);
-          yield* publish();
-          return state;
-        }),
-      )(result),
+      Effect.gen(function* () {
+        yield* (yield* OrderRepository).setLastCompletedAt({
+          now: yield* Clock.currentTimeMillis,
+        });
+        yield* Effect.logInfo(
+          `ShopAgent.onWorkflowComplete: shop=${shop} workflowId=${workflowId}`,
+        ).pipe(Effect.annotateLogs({ shop, workflowId }));
+        yield* Effect.sync(deleteWorkflow);
+        yield* publish();
+      }).pipe(Effect.withLogSpan("ShopAgent.onWorkflowComplete")),
     );
   }
 
+  /**
+   * Deleting the tracking row is what re-enables the button: it is the only
+   * record that an import is running ({@link ShopAgent.syncOrders}), so a row
+   * left behind by a failed run would wedge it until the staleness refresh.
+   */
   override async onWorkflowError(
     workflowName: string,
     workflowId: string,
@@ -1897,15 +1823,7 @@ export class ShopAgent extends Agent {
         yield* Effect.logError(
           `ShopAgent.onWorkflowError: shop=${shop} workflowId=${workflowId}: ${error}`,
         ).pipe(Effect.annotateLogs({ shop, workflowId, error }));
-        const repository = yield* OrderRepository;
-        const state = yield* repository.getSyncState();
-        /**
-         * `onOrdersSyncError` normally recorded the message already and
-         * released the claim; this clears whatever the failed run still holds
-         * so a lost error step cannot wedge the button.
-         */
-        if (state.startedAt !== null)
-          yield* repository.failSync({ startedAt: state.startedAt, error });
+        yield* (yield* OrderRepository).setSyncError({ error });
         yield* Effect.sync(deleteWorkflow);
         yield* publish();
       }).pipe(Effect.withLogSpan("ShopAgent.onWorkflowError")),
@@ -1917,7 +1835,9 @@ export class ShopAgent extends Agent {
    * `/webhooks/orders`, after HMAC validation.
    *
    * Two guards make an unordered, retried, at-least-once delivery channel
-   * idempotent: the `X-Shopify-Webhook-Id` log rejects a redelivery outright,
+   * idempotent *on this path only* — `deleteOrder` records no delivery and
+   * needs none, since deleting an order twice is deleting it once: the
+   * `X-Shopify-Webhook-Id` log rejects a redelivery outright,
    * and the payload's `updated_at` skips a fetch that could only produce an
    * older view than the one already stored. The upsert's own guard is the
    * third, and the only one that survives two paths writing at once.
@@ -2019,10 +1939,16 @@ export class ShopAgent extends Agent {
             /**
              * The second retention carrier, rate-limited by `lastSweepAt`
              * rather than run on every delivery: a busy shop must not pay for
-             * a batch of deletes per webhook, and a shop quiet enough never to
-             * sync still needs its closed orders to age out eventually. The
-             * `ShopUsage` row it reads is the one the ceiling already read
-             * above, so the rate limit costs nothing extra per delivery.
+             * a batch of deletes per webhook. The `ShopUsage` row it reads is
+             * the one the ceiling already read above, so the rate limit costs
+             * nothing extra per delivery.
+             *
+             * With the import, this is the whole of when orders age out.
+             * There is no alarm, so a shop that receives no webhooks and runs
+             * no import never sweeps — which is correct rather than a gap: it
+             * is also a shop that is not growing, and its rows sit inert
+             * until uninstall destroys the object
+             * ({@link Domain.ShopLimits.orderRetentionDays}).
              */
             const now = yield* Clock.currentTimeMillis;
             if (
@@ -2221,6 +2147,17 @@ export class ShopAgent extends Agent {
     team,
   }: Domain.ListOrdersInput) {
     const readTeams = () => this.teams();
+    /**
+     * Read, never refreshed: this is the loader half of a page and must not
+     * reach the Workflows API. A row wedged by a dead instance is cleared by
+     * the next click ({@link ShopAgent.syncOrders}), which is also the only
+     * place the merchant can be waiting on the answer.
+     */
+    const importInFlight = () =>
+      this.getWorkflows({
+        status: [...IMPORT_IN_FLIGHT],
+        workflowName: ORDERS_SYNC_WORKFLOW_NAME,
+      }).workflows.length > 0;
     return Effect.gen(function* () {
       const repository = yield* OrderRepository;
       /* One roster read for both consumers: the repository derives
@@ -2238,7 +2175,10 @@ export class ShopAgent extends Agent {
           team,
           teams,
         }),
-        syncState: yield* repository.getSyncState(),
+        syncState: {
+          inFlight: importInFlight(),
+          ...(yield* repository.getSyncState()),
+        },
         teams,
       } satisfies Domain.OrdersView;
     });
@@ -2991,7 +2931,8 @@ export class ShopAgent extends Agent {
    * definition half of the start predicate (`canStart`): an admin choosing a
    * workflow for a line item by hand is exactly the override for a missing
    * tag, a fulfilled line, or an order placed before the workflow was turned
-   * on.
+   * on. What it is not is an override of the order itself being over, which
+   * is `Domain.canAttachRun`.
    *
    * An item holds at most one live run, so attaching over one is a replace:
    * the incumbent is cancelled in the same transaction and comes back as
@@ -3030,6 +2971,8 @@ export class ShopAgent extends Agent {
             return {
               _tag: "WorkflowCannotStart",
             } satisfies Domain.AttachResult;
+          if (!Domain.canAttachRun(target.value.order))
+            return { _tag: "OrderClosed" } satisfies Domain.AttachResult;
           const set = yield* (yield* WorkflowRunRepository).setRun({
             workflow: detail,
             teams: roster,
@@ -4292,10 +4235,8 @@ export class ShopAgent extends Agent {
               financialStatus: seed.unpaid === true ? "PENDING" : "PAID",
               fulfillmentStatus: seed.fulfillmentStatus ?? "UNFULFILLED",
               fullyPaid: seed.unpaid !== true,
-              tags: ["seed"],
               note: seed.note ?? null,
               customAttributes: [],
-              lineItemsComplete: true,
               lineItemsTruncated: false,
               syncedAt: now,
               syncSource: "manual",

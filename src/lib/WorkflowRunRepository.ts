@@ -165,8 +165,10 @@ export interface StartContext {
  * nothing". A team with no members does *not* block: the run is created and
  * its step waits in nobody's queue until someone joins. Shared by the tag
  * match on upsert and by manual attach — the latter skips the line-item half
- * (tags, quantity, fulfilment, age) but never this half. Drafts never reach
- * here: `WorkflowDetail` carries workflow steps only.
+ * (tags, quantity, fulfilment, age) but never this half, and answers
+ * separately to {@link Domain.canAttachRun} for the state of the order as a
+ * whole. Drafts never reach here: `WorkflowDetail` carries workflow steps
+ * only.
  */
 export const canStart = (
   { workflow, steps }: Domain.WorkflowDetail,
@@ -249,9 +251,9 @@ export class WorkflowRunRepository extends Context.Service<
      * Plain statements, no transaction of its own: called from inside
      * `OrderRepository.upsertOrder`'s transaction via `afterWrite`, and Durable
      * Object SQLite refuses to nest. Reads the order and its stored line items
-     * back rather than trusting the caller's view, so a merge under
-     * `lineItemsComplete = false` still reconciles against what is actually
-     * stored.
+     * back rather than trusting the caller's view, so a reconcile is against
+     * what is actually stored — including an order whose line items the write
+     * stored short (`Domain.ShopOrder.lineItemsTruncated`).
      */
     readonly reconcileOrder: (
       input: StartContext & { readonly orderId: string },
@@ -265,7 +267,13 @@ export class WorkflowRunRepository extends Context.Service<
      * date moved, Apply). Fulfilled orders are excluded on purpose —
      * reconcile treats fulfilled as terminal and there is nothing left to
      * make or pack — and unpaid ones because they reconcile when they pay.
-     * Bounded by the merchant's live floor, not the whole stored window.
+     *
+     * **Unbounded**: every open paid order the object holds, with no limit
+     * and no batching, one transaction each. What bounds it in practice is
+     * the shop's open working set and retention
+     * ({@link Domain.ShopLimits.orderRetentionDays}), not this code — a shop
+     * with an unusual number of open orders pays for all of them on the
+     * request that changed the definition.
      */
     readonly reconcileAll: (
       input: StartContext,
@@ -650,9 +658,8 @@ export class WorkflowRunRepository extends Context.Service<
 
       const orderColumns = sql.literal(
         `id, legacyId, name, processedAt, updatedAt, cancelledAt,
-         closedAt, financialStatus, fulfillmentStatus, fullyPaid, tags, note,
-         customAttributes, lineItemsComplete, lineItemsTruncated, syncedAt,
-         syncSource`,
+         closedAt, financialStatus, fulfillmentStatus, fullyPaid, note,
+         customAttributes, lineItemsTruncated, syncedAt, syncSource`,
       );
 
       const findRun = (runId: string) =>
@@ -1024,6 +1031,27 @@ export class WorkflowRunRepository extends Context.Service<
       ) => flagWhere(sql`status = 'active'`, where, flag, detail, now);
 
       /**
+       * The one write that marks a run whose line item changed size, and the
+       * one flag a `done` run can take (the rule is on `Domain.RunFlag`): a
+       * finished run keeps its quantity, so the flag is all that happens to
+       * it, while an active run is resized first by the caller. A `pending`
+       * run never reaches here — nobody has started it, so it is resized
+       * silently.
+       */
+      const flagQuantityChanged = (
+        runId: string,
+        detail: Domain.RunFlagDetail,
+        now: number,
+      ) =>
+        flagWhere(
+          sql`status in ('active', 'done')`,
+          sql`id = ${runId}`,
+          "quantity_changed",
+          detail,
+          now,
+        );
+
+      /**
        * `canStart` has already required every step's team to be in `teams`,
        * so the `teamName` lookup cannot miss.
        *
@@ -1099,6 +1127,16 @@ export class WorkflowRunRepository extends Context.Service<
       `;
 
       /**
+       * `OrderLineItem.matchedWorkflowIds` is written on the way through, so
+       * it is current only for the orders this function walks all of: an
+       * order that is cancelled or fulfilled returns before the column is
+       * touched, and `reconcileAll` skips unpaid orders entirely. The badges
+       * derived from it (`Domain.ambiguousItems`, the index's "Choose a
+       * workflow") are therefore current for **open, paid** orders and may be
+       * stale for any other — which is the right trade: a closed order's
+       * matches are of no interest, and an unpaid one is reconciled the
+       * moment it pays.
+       *
        * Two gates, deliberately split. `Domain.isCancelled` and
        * `Domain.isFulfilled` are the stop gates and return early;
        * `Domain.canStartRuns` (paid) gates only run *creation*. Adjusting
@@ -1275,16 +1313,34 @@ export class WorkflowRunRepository extends Context.Service<
               ),
           ).pipe(Effect.map((results) => results.filter(Option.isSome)));
           const created = inserted.length;
-          const openRuns = runs.filter(Domain.runIsOpen);
           /**
            * Tracks `Domain.unitsToMake`, so a refund that zeroes or lowers
            * `unfulfilledQuantity` reads exactly like a removal or an edit.
+           *
+           * Runs over every live run, `done` included, because a quantity
+           * change on a finished line is exactly the case nobody is watching
+           * for: the merchant edits the order in Shopify and the maker has
+           * already put the work down. A `done` run takes the flag and
+           * nothing else — see `Domain.RunFlag` for the whole rule, including
+           * why a `done` run whose units reach zero is left alone.
            */
           const adjust = (run: Domain.WorkflowRun) => {
             const lineItem = lineItems.find(
               (item) => item.id === run.lineItemId,
             );
-            if (lineItem === undefined || Domain.unitsToMake(lineItem) === 0)
+            const units =
+              lineItem === undefined ? 0 : Domain.unitsToMake(lineItem);
+            if (Domain.runIsDone(run))
+              return units === 0 ||
+                units === run.quantity ||
+                Domain.alreadyFlaggedQuantity(run, units)
+                ? Effect.succeed({ cancelled: 0, flagged: 0 })
+                : flagQuantityChanged(
+                    run.id,
+                    { from: run.quantity, to: units },
+                    now,
+                  ).pipe(Effect.map((flagged) => ({ cancelled: 0, flagged })));
+            if (units === 0)
               return Domain.runIsUnstarted(run)
                 ? sql`
                       update WorkflowRun
@@ -1294,7 +1350,6 @@ export class WorkflowRunRepository extends Context.Service<
                 : flagActive(sql`id = ${run.id}`, "item_removed", {}, now).pipe(
                     Effect.map((flagged) => ({ cancelled: 0, flagged })),
                   );
-            const units = Domain.unitsToMake(lineItem);
             if (units === run.quantity)
               return Effect.succeed({ cancelled: 0, flagged: 0 });
             return sql`
@@ -1305,9 +1360,8 @@ export class WorkflowRunRepository extends Context.Service<
               Effect.andThen(
                 Domain.runIsUnstarted(run)
                   ? Effect.succeed(0)
-                  : flagActive(
-                      sql`id = ${run.id}`,
-                      "quantity_changed",
+                  : flagQuantityChanged(
+                      run.id,
                       { from: run.quantity, to: units },
                       now,
                     ),
@@ -1315,7 +1369,9 @@ export class WorkflowRunRepository extends Context.Service<
               Effect.map((flagged) => ({ cancelled: 0, flagged })),
             );
           };
-          const adjusted = yield* Effect.all(openRuns.map(adjust));
+          // `runs` is every non-cancelled run on the order, which is exactly
+          // the set `adjust` is written for.
+          const adjusted = yield* Effect.all(runs.map(adjust));
           return adjusted.reduce<ReconcileCounts>(
             (counts, delta) => ({
               ...counts,
@@ -1970,7 +2026,17 @@ export class WorkflowRunRepository extends Context.Service<
           const run = yield* requireRun(runId);
           yield* requireReadyTeam(runId, teamIds);
           const now = yield* Clock.currentTimeMillis;
-          yield* sql`
+          // A `done` run's quantity flag is cleared by accepting the units it
+          // reported (`Domain.dismissAcceptsQuantity`); clearing alone would
+          // have the next reconcile raise it again.
+          yield* Domain.dismissAcceptsQuantity(run)
+            ? sql`
+              update WorkflowRun
+              set flag = null, flagAt = null, flagDetail = null,
+                  quantity = ${run.flagDetail.to}, updatedAt = ${now}
+              where id = ${run.id}
+            `
+            : sql`
               update WorkflowRun
               set flag = null, flagAt = null, flagDetail = null, updatedAt = ${now}
               where id = ${run.id}

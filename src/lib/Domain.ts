@@ -65,8 +65,8 @@ export type Plan = typeof Plan.Type;
 
 /**
  * Normalization, not entitlement. The mapping exists so nothing downstream has
- * to learn about Shopify's four-handle catalog; what each tier *grants* is
- * {@link entitlementsOfPlan}.
+ * to learn Shopify's plan handles ({@link PlanHandle}); what each tier
+ * *grants* is {@link entitlementsOfPlan}.
  */
 export const planOfHandle = (handle: PlanHandle): Plan =>
   handle === "baton-pro" ? "pro" : "basic";
@@ -95,9 +95,12 @@ export interface Entitlements {
  * Provisional. Working proposals, not tuned figures: nothing was measured to
  * arrive at them and nothing should be derived from them. Change freely, and
  * move the Partner Dashboard plan copy (and the table in `README.md`) with
- * them. `ordersPerCycle` must equal the first (free) tier of the
- * {@link USAGE_METER_ORDER} meter on that plan, or the merchant is billed for
- * an order the app calls included.
+ * them. `ordersPerCycle` must equal tier 1 of the {@link USAGE_METER_ORDER}
+ * meter on that plan — the **included allowance**, the band priced at $0.00 —
+ * or the merchant is billed for an order the app calls included. It is not a
+ * "free tier": the allowance is what the subscription already paid for.
+ * Nothing verifies the two agree; it is operator discipline, because the meter
+ * lives in the Partner Dashboard and the app cannot read its tiers.
  *
  * Raising a limit is always safe; lowering one is not, with no grandfathering:
  * a cut applies to existing shops immediately. A cut to `maxMembers` takes
@@ -541,8 +544,23 @@ export const ShopLimits = {
   maxOrdersPerCycle: 10_000,
   /** Line items kept per order on the bulk path; the rest are dropped and the order flagged. */
   maxLineItemsPerOrder: 250,
-  /** A closed order untouched for this long is deleted with its runs. */
-  orderRetentionDays: 90,
+  /**
+   * An order whose `processedAt` is older than this is deleted on the next
+   * sweep, open or closed, with or without runs; its runs go with it, deleted
+   * in the same transaction and not flagged first, because a flag on a row
+   * the next statement deletes is read by nobody. The rule is one `where` clause in
+   * `OrderRepository.sweepExpiredOrders`, which is its only enforcer and its
+   * only reader — no TypeScript site asks whether an order has expired, so
+   * there is no predicate here to drift from the SQL. Baton is a working
+   * set, not an archive — Shopify keeps every order — so one rule replaces
+   * asking what "closed" or "untouched" means.
+   *
+   * The sweep rides the import and, at most every {@link
+   * ShopLimits.sweepIntervalMs}, the webhook path. There is no alarm: a shop
+   * receiving no webhooks is not growing, and an alarm would add a schedule,
+   * a test surface and a failure mode for a shop that has stopped trading.
+   */
+  orderRetentionDays: 365,
   /** `WebhookDelivery` rows older than this are deleted; Shopify retries for at most 4 hours. */
   webhookDeliveryRetentionDays: 7,
   /** `syncOrders` refuses to start a bulk import when the object's SQLite is past this. */
@@ -716,9 +734,18 @@ export const usageEventIsDead = (occurredAt: number, cycleStartAt: number) =>
  * The one hard stop on orders, and it is positioning rather than protection:
  * storage is nowhere near its limit at this volume, but a shop above it is
  * outside what Baton is built for, and saying so with a number the merchant can
- * read beats letting the storage guard fire late on the bulk path. Updates to
- * orders already stored keep flowing — the production floor must not lose the
- * work it is already carrying.
+ * read beats letting an import fail late inside a stream. Updates to orders
+ * already stored keep flowing — the production floor must not lose the work it
+ * is already carrying.
+ *
+ * **An order refused here is lost to Baton for the rest of the cycle.** The
+ * webhook path answers Shopify 2xx without storing it, because a 5xx would
+ * only have Shopify retry for four hours against a condition that four hours
+ * cannot clear; Shopify does not redeliver afterwards, and nothing re-reads
+ * the gap. What recovers it is the merchant: once the cycle rolls over,
+ * Import open orders re-fetches whatever is still open
+ * (`ShopAgent.syncOrders`). `ShopUsage.ordersLimitedAt` is what raises the
+ * banner saying so.
  */
 export const cycleAtOrderCeiling = (ordersThisCycle: number) =>
   ordersThisCycle >= ShopLimits.maxOrdersPerCycle;
@@ -1487,25 +1514,14 @@ export const ShopOrder = Schema.Struct({
   financialStatus: Schema.NullOr(Schema.String),
   fulfillmentStatus: Schema.String,
   fullyPaid: SqliteBoolean,
-  tags: Schema.fromJsonString(Schema.Array(Schema.String)),
   note: Schema.NullOr(Schema.String),
   customAttributes: Schema.fromJsonString(Schema.Array(OrderAttribute)),
   /**
-   * Whether the stored line-item set is the whole set. False only when a
-   * single-order fetch hit `ORDER_SYNC_LINE_ITEMS` and reported another page,
-   * in which case the write merges instead of replacing so the unseen tail is
-   * not deleted. The bulk path is always complete — flattened connections are
-   * not paginated.
-   */
-  lineItemsComplete: SqliteBoolean,
-  /**
    * Whether line items were **dropped** on the way in, past
-   * {@link ShopLimits.maxLineItemsPerOrder}. The complement of
-   * `lineItemsComplete` rather than a second name for it: `lineItemsComplete`
-   * false says the fetch saw more than it stored and so must merge, while this
-   * says the stored set is knowingly short of the order — which is what the
-   * order page warns about. The single-order path sets both together, since a
-   * fetch that paginated is also a set that is not the whole order.
+   * {@link ShopLimits.maxLineItemsPerOrder}. Both paths ask Shopify for that
+   * many and neither pages, so this is the whole of "the stored set is short
+   * of the order" — see {@link OrderRepository.upsertOrder}, which states the
+   * rule. The order page warns on it; nothing else reads it.
    */
   lineItemsTruncated: SqliteBoolean,
   syncedAt: Schema.Number,
@@ -1566,6 +1582,20 @@ export const isCancelled = (order: ShopOrder) => order.cancelledAt !== null;
 /** Shopify reported every fulfillable unit shipped; nothing is left to make or pack. */
 export const isFulfilled = (order: ShopOrder) =>
   order.fulfillmentStatus === "FULFILLED";
+
+/**
+ * Whether the merchant may attach a workflow to one of this order's line
+ * items by hand (`ShopAgent.attachWorkflow`).
+ *
+ * Manual attach is the merchant overriding the tag, activation-date and
+ * payment gates on purpose; it is not an override of the order being over. A
+ * cancelled or fully fulfilled order has no work left, so attach is refused —
+ * reconcile would only cancel or flag the run on its next pass. Unpaid is
+ * deliberately allowed: the merchant may start work on a deposit, which is
+ * the same judgement {@link canStartRuns} withholds from *automatic* starts.
+ */
+export const canAttachRun = (order: ShopOrder) =>
+  !isCancelled(order) && !isFulfilled(order);
 
 /**
  * Units a maker should see and a run should snapshot. `unfulfilledQuantity`,
@@ -1729,28 +1759,29 @@ export const SeedOrdersInput = Schema.Struct({
 export type SeedOrdersInput = typeof SeedOrdersInput.Type;
 
 /**
- * The single `SyncState` row: the reservation held while a window sync is in
- * flight, plus what the last one achieved.
+ * The single `SyncState` row: what the last import left behind, and nothing
+ * else. Whether one is running now is not stored — the Agents SDK's own
+ * `cf_agents_workflows` row is the only run tracker ({@link
+ * OrdersSyncStatus.inFlight}) — because two records of the same fact drift
+ * the moment a workflow dies without reporting.
  *
- * `workflowId` non-null *is* the "a sync is running" flag, and it is written
- * before `runWorkflow` is called rather than after. The Agents SDK creates the
- * Cloudflare instance and only then inserts its tracking row, two steps that
- * cannot be one transaction; reserving first means a throw between them leaves
- * a claim we can verify against `status()` instead of a running workflow with
- * a re-enabled button in front of it.
- *
- * `startedAt` doubles as the run's identity. Workflow completion callbacks
- * carry it back, so a late callback from a superseded run cannot clear a newer
- * reservation.
+ * `lastError` is the banner on the orders index and survives until the next
+ * import starts; `lastCompletedAt` is "Last imported" and is written by
+ * `onWorkflowComplete`, not by the stream, so a file that streams halfway and
+ * then fails never claims a completed import.
  */
 export const SyncState = Schema.Struct({
-  workflowId: Schema.NullOr(Schema.String),
-  startedAt: Schema.NullOr(Schema.Number),
-  lastFullSyncAt: Schema.NullOr(Schema.Number),
-  lastFullSyncWindowStart: Schema.NullOr(Schema.Number),
   lastError: Schema.NullOr(Schema.String),
+  lastCompletedAt: Schema.NullOr(Schema.Number),
 });
 export type SyncState = typeof SyncState.Type;
+
+/** {@link SyncState} as the orders view carries it, plus whether an import is tracked as running right now. */
+export const OrdersSyncStatus = Schema.Struct({
+  inFlight: Schema.Boolean,
+  ...SyncState.fields,
+});
+export type OrdersSyncStatus = typeof OrdersSyncStatus.Type;
 
 /**
  * Never stored: computed from the order row and its run counts on every read,
@@ -1773,6 +1804,24 @@ export const ProductionState = Schema.Literals([
   "cancelled",
 ]);
 export type ProductionState = typeof ProductionState.Type;
+
+/**
+ * The orders index's stage filter, which is {@link ProductionState} plus one
+ * value that is not a stage.
+ *
+ * `null` is **open work**: everything except `shipped` and `cancelled`. It is
+ * the default because retention keeps a year of orders
+ * ({@link ShopLimits.orderRetentionDays}) and a merchant opening Orders is
+ * looking at the bench, not at the year. `"all"` is the escape hatch that
+ * shows the closed ones too, and is the only value here that crosses the open
+ * and closed sets — which is why it is not a `ProductionState`: nothing
+ * derives it from an order, and `productionState` must never return it.
+ */
+export const OrdersFilterState = Schema.Union([
+  ProductionState,
+  Schema.Literal("all"),
+]);
+export type OrdersFilterState = typeof OrdersFilterState.Type;
 
 /**
  * Keyset cursor over `(processedAt desc, id desc)`, encoded as
@@ -1829,8 +1878,8 @@ export const ListOrdersInput = Schema.Struct({
    * Always send the key, for the same reason as `team`.
    */
   q: Schema.NullOr(OrderSearch),
-  /** `null` is every order; each state has a SQL form in `OrderRepository.listOrders` that restates `productionState`. */
-  state: Schema.NullOr(ProductionState),
+  /** {@link OrdersFilterState}: `null` is open work, `"all"` is every order, and each stage has a SQL form in `OrderRepository.listOrders` that restates `productionState`. */
+  state: Schema.NullOr(OrdersFilterState),
   /** `null` is any payment state; `true`/`false` filters on `fullyPaid`, the run-creation gate. */
   paid: Schema.NullOr(Schema.Boolean),
   /** `true` keeps only orders with an open run that needs attention (see `OrderRow.attention`). */
@@ -2106,29 +2155,20 @@ export const BulkOperation = Schema.Struct({
 export type BulkOperation = typeof BulkOperation.Type;
 
 /**
- * Which timestamp the window sync filters on. The first run has nothing stored
- * and asks for orders *placed* in the window; every later run asks for orders
- * *touched* since the last one, which also picks up an old order that was just
- * edited — exactly the reconciliation Shopify recommends webhooks be backed by.
- */
-export const OrderSyncField = Schema.Literals(["created_at", "updated_at"]);
-export type OrderSyncField = typeof OrderSyncField.Type;
-
-/**
- * What `step.reportComplete` carries back to the agent. `startedAt` identifies
- * the run so `completeSync` cannot release a reservation a later run took out.
- * Crosses a workflow callback boundary as JSON, hence the re-decode.
+ * What the Import open orders button is told it did. `in_flight` is an import
+ * already tracked as running, `refused` is a refusal recorded on
+ * {@link SyncState.lastError} for the banner to carry; neither is an error,
+ * and in all three cases the page re-reads the view.
  */
 export const OrdersSyncResult = Schema.Struct({
-  shop: Schema.String,
-  startedAt: Schema.Number,
+  status: Schema.Literals(["started", "in_flight", "refused"]),
 });
 export type OrdersSyncResult = typeof OrdersSyncResult.Type;
 
 /** Everything `/app/orders` renders, in one socket round trip. */
 export const OrdersView = Schema.Struct({
   page: OrdersPage,
-  syncState: SyncState,
+  syncState: OrdersSyncStatus,
   /**
    * The live D1 roster the page was read against — the same list `attention`
    * and `OrderRow.waitingOn` were derived from, carried so the route can name
@@ -2608,6 +2648,7 @@ export type RunSource = typeof RunSource.Type;
  * | Undo (reopen a finished step)   | {@link runIsLive}, see {@link undoBlockedBy} |
  * | Un-cancel                       | the inverse of {@link runIsLive}: only `cancelled` |
  * | reconcile adjusts the run       | {@link runIsOpen}; silently if {@link runIsUnstarted}, flagged otherwise |
+ * | reconcile flags a quantity change | {@link runIsOpen} or {@link runIsDone}; a `done` run keeps its quantity |
  * | holds the line item's one slot  | {@link runIsLive}                     |
  * | replaced by a manual attach     | {@link runIsOpen}: a `done` run is a record, `RunFinishedError` |
  * | counts against the shop ceiling | {@link runIsOpen}                     |
@@ -2638,6 +2679,10 @@ export const runIsUnstarted = (run: { readonly status: RunStatus }) =>
 export const runIsOpen = (run: { readonly status: RunStatus }) =>
   run.status === "pending" || run.status === "active";
 
+/** The last step's Done: no work is recorded on it again unless Undo reopens it. */
+export const runIsDone = (run: { readonly status: RunStatus }) =>
+  run.status === "done";
+
 /**
  * The run still stands for its line item. Only `cancelled` is out, because
  * only `cancelled` was chosen; `done` is the last step's Done and is undone
@@ -2649,10 +2694,28 @@ export const runIsLive = (run: { readonly status: RunStatus }) =>
   run.status !== "cancelled";
 
 /**
- * Attention markers reconcile leaves on an `active` run when the order under
- * it changed. A `pending` run is cancelled or updated silently instead — no
- * one has started it — and a `done` run is never touched. A later flag
- * overwrites an earlier one; a person clears it from the queue.
+ * Attention markers reconcile leaves on a run when the order under it changed.
+ * A `pending` run is cancelled or updated silently instead — no one has
+ * started it. A later flag overwrites an earlier one; a person clears it from
+ * the queue.
+ *
+ * A `done` run keeps its quantity, and a later change to its line item's
+ * {@link unitsToMake} flags it `quantity_changed` so the merchant sees it on
+ * the order page and in the run list. Reopening is the merchant's call
+ * through Undo ({@link undoBlockedBy}), after which the run is active again
+ * and ordinary quantity handling applies. Nothing else touches a `done` run:
+ * it is not resized, not cancelled, and no second run is ever created for a
+ * line item that already has one, `done` included. A line whose units reach
+ * zero under a `done` run is the ordinary end of that work — the unit shipped
+ * or was refunded — so it is left alone rather than read as `item_removed`.
+ *
+ * Dismissing that flag **accepts** the change ({@link dismissAcceptsQuantity}):
+ * the run's `quantity` becomes the units the flag reported, so the next
+ * reconcile finds them equal and the flag does not return. An active run is
+ * resized by reconcile itself; a `done` run is resized only by this
+ * acknowledgement, because until then the merchant has not looked. Reconcile
+ * also leaves a `done` run alone when it already carries this flag for the
+ * same units, so a webhook that changed nothing does not restamp `flagAt`.
  *
  * `blocked` is the one flag a person sets rather than reconcile: a worker
  * marking the run as needing attention, with an optional reason. A later
@@ -2672,7 +2735,9 @@ export const runIsLive = (run: { readonly status: RunStatus }) =>
  * | the block reason is editable              | {@link runIsBlocked}, `setBlockReason`      |
  * | a blocked run holds no team ("waiting on") and shows no Now line | {@link runIsBlocked} |
  * | counted as `blocked` or `flagged`, open runs only | {@link runCounts}                   |
- * | reconcile flags active runs, cancels pending, leaves done | `flagActive`, `cancelPending` |
+ * | reconcile flags active runs, cancels pending | `flagActive`, `cancelPending` |
+ * | a quantity change flags an active or a `done` run | `flagQuantityChanged` |
+ * | Dismiss on a `done` run's quantity flag resizes it | {@link dismissAcceptsQuantity} |
  * | a flag puts the queue row in Attention    | {@link tierOf}                              |
  */
 export const RunFlag = Schema.Literals([
@@ -2694,6 +2759,29 @@ export type RunFlag = typeof RunFlag.Type;
  */
 export const runIsFlagged = (run: { readonly flag: RunFlag | null }) =>
   run.flag !== null;
+
+/**
+ * Whether Dismiss should also write the flagged units into the run's
+ * `quantity` — a `done` run carrying `quantity_changed` with a `to`, and only
+ * that. Rule and reasoning on {@link RunFlag}.
+ */
+export const dismissAcceptsQuantity = (run: {
+  readonly status: RunStatus;
+  readonly flag: RunFlag | null;
+  readonly flagDetail: RunFlagDetail | null;
+}): run is typeof run & { readonly flagDetail: { readonly to: number } } =>
+  runIsDone(run) &&
+  run.flag === "quantity_changed" &&
+  run.flagDetail?.to !== undefined;
+
+/** Reconcile's "already told": the run carries `quantity_changed` reporting exactly these units ({@link RunFlag}). */
+export const alreadyFlaggedQuantity = (
+  run: {
+    readonly flag: RunFlag | null;
+    readonly flagDetail: RunFlagDetail | null;
+  },
+  units: number,
+) => run.flag === "quantity_changed" && run.flagDetail?.to === units;
 
 /** A person set the hold; the block reason is editable and the button reads Unblock. */
 export const runIsBlocked = (run: { readonly flag: RunFlag | null }) =>
@@ -3484,6 +3572,8 @@ export const AttachResult = Schema.Union([
     _tag: Schema.Literal("ItemDone"),
     workflowName: WorkflowName,
   }),
+  /** The order is cancelled or fully fulfilled, so there is nothing to attach work to ({@link canAttachRun}). */
+  Schema.Struct({ _tag: Schema.Literal("OrderClosed") }),
 ]);
 export type AttachResult = typeof AttachResult.Type;
 

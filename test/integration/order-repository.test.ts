@@ -64,10 +64,8 @@ const anOrder = (
   financialStatus: "PENDING",
   fulfillmentStatus: "UNFULFILLED",
   fullyPaid: false,
-  tags: ["rush"],
   note: null,
   customAttributes: [{ key: "gift", value: "yes" }],
-  lineItemsComplete: true,
   lineItemsTruncated: false,
   syncedAt: 1000,
   syncSource: "bulk",
@@ -164,7 +162,6 @@ describe("OrderRepository.upsertOrder", () => {
     strictEqual(order.fullyPaid, false);
     strictEqual(lineItems.length, 2);
     strictEqual(lineItems[0]?.productTags[0], "engraved");
-    strictEqual(order.tags[0], "rush");
     strictEqual(order.customAttributes[0]?.value, "yes");
   });
 
@@ -192,7 +189,7 @@ describe("OrderRepository.upsertOrder", () => {
     strictEqual(lineItems[0]?.id, lineItemId(1));
   });
 
-  it("replaces the line-item set when the write reports it is complete", async () => {
+  it("replaces the line-item set on every accepted write", async () => {
     const detail = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
@@ -206,22 +203,33 @@ describe("OrderRepository.upsertOrder", () => {
     strictEqual(lineItems[0]?.id, lineItemId(2));
   });
 
-  it("merges instead of replacing when the fetch was truncated", async () => {
-    const detail = await runInRepository(
+  /**
+   * The guard is `>=`, not `>`: both timestamps are Shopify's own version of
+   * the order, so an equal one is the same version and rewriting it is free.
+   * Refusing a tie would instead drop a redelivery of a write that failed
+   * halfway through its line items.
+   */
+  it("accepts an equal updatedAt and rewrites the row", async () => {
+    const { written, detail } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
-        yield* upsert(repository, anOrder(), [aLineItem(1), aLineItem(2)]);
-        yield* upsert(
+        yield* upsert(repository, anOrder({ updatedAt: 2000 }), [aLineItem(1)]);
+        const again = yield* upsert(
           repository,
-          anOrder({ updatedAt: 3000, lineItemsComplete: false }),
-          [aLineItem(3)],
+          anOrder({ updatedAt: 2000, name: "#TIE" }),
+          [aLineItem(2)],
         );
-        return yield* repository.getOrder(orderId(1));
+        return {
+          written: again.written,
+          detail: yield* repository.getOrder(orderId(1)),
+        };
       }),
     );
+    strictEqual(written, true);
     const { order, lineItems } = Option.getOrThrow(detail);
-    strictEqual(order.lineItemsComplete, false);
-    strictEqual(lineItems.length, 3);
+    strictEqual(order.name, "#TIE");
+    strictEqual(lineItems.length, 1);
+    strictEqual(lineItems[0]?.id, lineItemId(2));
   });
 
   it("deletes the order and its line items together", async () => {
@@ -389,7 +397,7 @@ describe("OrderRepository.listOrders filters", () => {
     const pages = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* seedStates;
-        const list = (state: Domain.ProductionState | null) =>
+        const list = (state: Domain.OrdersFilterState | null) =>
           repository.listOrders({
             limit: 20,
             cursor: null,
@@ -401,7 +409,8 @@ describe("OrderRepository.listOrders filters", () => {
             teams: [],
           });
         return {
-          all: yield* list(null),
+          open: yield* list(null),
+          all: yield* list("all"),
           no_workflow: yield* list("no_workflow"),
           multiple_workflows: yield* list("multiple_workflows"),
           in_production: yield* list("in_production"),
@@ -429,6 +438,43 @@ describe("OrderRepository.listOrders filters", () => {
         `${row.order.name} as ${String(state)}`,
       );
     }
+  });
+
+  /**
+   * Retention keeps a year of orders, so the list a merchant opens is the
+   * bench, not the year; `"all"` is the only way to the closed ones
+   * (`Domain.OrdersFilterState`).
+   */
+  it("lists open orders by default and everything under all", async () => {
+    const { open, all } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* seedStates;
+        const list = (state: Domain.OrdersFilterState | null) =>
+          repository.listOrders({
+            limit: 20,
+            cursor: null,
+            q: null,
+            state,
+            paid: null,
+            attention: false,
+            team: null,
+            teams: [],
+          });
+        return { open: yield* list(null), all: yield* list("all") };
+      }),
+    );
+    const closed = ["#1011", "#1007", "#1006"];
+    strictEqual(all.orders.length, 14);
+    strictEqual(open.orders.length, 14 - closed.length);
+    for (const name of closed) strictEqual(names(open).includes(name), false);
+    // Every open stage is still in the default view, and nothing else is.
+    for (const row of open.orders)
+      strictEqual(
+        Domain.productionState(row) !== "shipped" &&
+          Domain.productionState(row) !== "cancelled",
+        true,
+        row.order.name,
+      );
   });
 
   it("counts the open stages once, independent of the page's filters", async () => {
@@ -1456,9 +1502,11 @@ describe("OrderRepository usage", () => {
   });
 });
 
-const NOW = 200 * 86_400_000;
-const OLD = NOW - (Domain.ShopLimits.orderRetentionDays + 10) * 86_400_000;
-const RECENT = NOW - 10 * 86_400_000;
+const NOW = 400 * 86_400_000;
+/** Past the window by a day; `processedAt` is what the sweep reads. */
+const EXPIRED = NOW - (Domain.ShopLimits.orderRetentionDays + 1) * 86_400_000;
+/** Inside it by a day, whatever else is true of the order. */
+const KEPT = NOW - (Domain.ShopLimits.orderRetentionDays - 1) * 86_400_000;
 
 /** A run written straight to SQL: these tests care about the sweep, not how the run got there. */
 const runWith =
@@ -1478,54 +1526,57 @@ const runWith =
     `;
 
 describe("OrderRepository.sweepExpiredOrders", () => {
-  it("deletes only closed, untouched orders with no live run, plus orphaned runs", async () => {
+  it("deletes any order older than 365 days, open or closed, with its runs, plus orphaned runs", async () => {
     const { swept, orders, runs, usage } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
         const sql = yield* SqlClient.SqlClient;
-        // Expired and free: goes.
+        // Expired and open, with someone still working on it: goes anyway,
+        // and the run goes with it. A year is long past "someone is on it".
         yield* upsert(
           repository,
-          anOrder({
-            id: orderId(1),
-            name: "#1001",
-            fulfillmentStatus: "FULFILLED",
-            updatedAt: OLD,
-          }),
+          anOrder({ id: orderId(1), name: "#1001", processedAt: EXPIRED }),
           [],
         );
-        yield* runWith(orderId(1), "done", OLD)(sql);
-        // Expired but someone is still working on it: stays.
+        yield* runWith(orderId(1), "active", EXPIRED)(sql);
+        // Expired, closed, with a pending run: goes.
         yield* upsert(
           repository,
           anOrder({
             id: orderId(2),
             name: "#1002",
+            processedAt: EXPIRED,
             fulfillmentStatus: "FULFILLED",
-            updatedAt: OLD,
           }),
           [],
         );
-        yield* runWith(orderId(2), "active", OLD)(sql);
-        // Old but still open: stays, whatever its age.
+        yield* runWith(orderId(2), "pending", EXPIRED)(sql);
+        // Closed, but inside the window: stays. Closing an order is not what
+        // ages it out.
         yield* upsert(
           repository,
-          anOrder({ id: orderId(3), name: "#1003", updatedAt: OLD }),
+          anOrder({
+            id: orderId(3),
+            name: "#1003",
+            processedAt: KEPT,
+            cancelledAt: KEPT,
+          }),
           [],
         );
-        // Closed but touched recently: stays.
+        // Placed inside the window and edited long ago is impossible; placed
+        // inside it and edited yesterday is the ordinary case: stays.
         yield* upsert(
           repository,
           anOrder({
             id: orderId(4),
             name: "#1004",
-            cancelledAt: RECENT,
-            updatedAt: RECENT,
+            processedAt: KEPT,
+            updatedAt: NOW,
           }),
           [],
         );
         // A run whose order was deleted by `orders/delete`, long ago.
-        yield* runWith("gid://shopify/Order/999", "done", OLD)(sql);
+        yield* runWith("gid://shopify/Order/999", "done", EXPIRED)(sql);
         const swept = yield* repository.sweepExpiredOrders({ now: NOW });
         const orders = (yield* sql`select id from ShopOrder order by id`
           .values).map((row) => String(row[0]));
@@ -1534,82 +1585,48 @@ describe("OrderRepository.sweepExpiredOrders", () => {
         return { swept, orders, runs, usage: yield* repository.getUsage() };
       }),
     );
-    deepStrictEqual(swept, { orders: 1, runs: 2 });
-    deepStrictEqual(orders, [orderId(2), orderId(3), orderId(4)]);
-    deepStrictEqual(runs, [`run-${orderId(2)}-active`]);
+    deepStrictEqual(swept, { orders: 2, runs: 3 });
+    deepStrictEqual(orders, [orderId(3), orderId(4)]);
+    deepStrictEqual(runs, []);
     strictEqual(usage.lastSweepAt, NOW);
   });
 });
 
 describe("OrderRepository sync state", () => {
-  it("starts idle, reserves, and completes", async () => {
-    const { idle, reserved, completed } = await runInRepository(
+  it("records the last completed import and the last error", async () => {
+    const { idle, failed, completed } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
         const idle = yield* repository.getSyncState();
-        const reserved = yield* repository.reserveSync({
-          workflowId: "wf-1",
-          startedAt: 5000,
-          windowStart: 1000,
+        const failed = yield* repository.setSyncError({
+          error: "bulk submit failed",
         });
         return {
           idle,
-          reserved,
-          completed: yield* repository.completeSync({ startedAt: 5000 }),
+          failed,
+          completed: yield* repository.setLastCompletedAt({ now: 5000 }),
         };
       }),
     );
-    strictEqual(idle.workflowId, null);
-    strictEqual(idle.lastFullSyncAt, null);
-    strictEqual(reserved.workflowId, "wf-1");
-    strictEqual(reserved.lastFullSyncWindowStart, 1000);
-    strictEqual(completed.workflowId, null);
-    strictEqual(completed.lastFullSyncAt, 5000);
+    strictEqual(idle.lastError, null);
+    strictEqual(idle.lastCompletedAt, null);
+    strictEqual(failed.lastError, "bulk submit failed");
+    strictEqual(failed.lastCompletedAt, null);
+    strictEqual(completed.lastCompletedAt, 5000);
+    // A completed import answers the banner the failed one raised.
+    strictEqual(completed.lastError, null);
   });
 
-  /**
-   * A completion callback from a superseded run must not release the claim the
-   * run that replaced it is holding.
-   */
-  it("ignores a completion for a run that is no longer the reserved one", async () => {
+  it("clears the error the next import is about to supersede", async () => {
     const state = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
-        yield* repository.reserveSync({
-          workflowId: "wf-1",
-          startedAt: 5000,
-          windowStart: 1000,
-        });
-        yield* repository.reserveSync({
-          workflowId: "wf-2",
-          startedAt: 9000,
-          windowStart: 4000,
-        });
-        return yield* repository.completeSync({ startedAt: 5000 });
+        yield* repository.setSyncError({ error: "gone" });
+        yield* repository.clearSyncError();
+        return yield* repository.getSyncState();
       }),
     );
-    strictEqual(state.workflowId, "wf-2");
-    strictEqual(state.startedAt, 9000);
-    strictEqual(state.lastFullSyncAt, null);
-  });
-
-  it("records the error and releases the claim on failure", async () => {
-    const state = await runInRepository(
-      Effect.gen(function* () {
-        const repository = yield* OrderRepository;
-        yield* repository.reserveSync({
-          workflowId: "wf-1",
-          startedAt: 5000,
-          windowStart: 1000,
-        });
-        return yield* repository.failSync({
-          startedAt: 5000,
-          error: "bulk submit failed",
-        });
-      }),
-    );
-    strictEqual(state.workflowId, null);
-    strictEqual(state.lastError, "bulk submit failed");
+    strictEqual(state.lastError, null);
   });
 
   it("reports the stored updatedAt for the webhook staleness check", async () => {

@@ -73,7 +73,6 @@ const orderLine = (n: number, updatedAt: string) => ({
   displayFinancialStatus: "PAID",
   displayFulfillmentStatus: "UNFULFILLED",
   fullyPaid: true,
-  tags: ["rush"],
   note: null,
   customAttributes: [],
 });
@@ -129,7 +128,7 @@ describe("runShopAgentOrdersStream", () => {
     strictEqual(one.order.name, "#1001");
     strictEqual(one.order.fullyPaid, true);
     strictEqual(one.order.syncSource, "bulk");
-    strictEqual(one.order.lineItemsComplete, true);
+    strictEqual(one.order.lineItemsTruncated, false);
     strictEqual(one.lineItems.length, 2);
     strictEqual(one.lineItems[0]?.productTags[0], "engraved");
     strictEqual(one.lineItems[0]?.customAttributes[0]?.value, "Hello");
@@ -166,10 +165,6 @@ describe("runShopAgentOrdersStream", () => {
       Domain.ShopLimits.maxLineItemsPerOrder,
     );
     strictEqual(stored.order.lineItemsTruncated, true);
-    // The bulk path's set is complete in Shopify's sense — nothing paginated —
-    // and short only where this app capped it, which is the whole distinction
-    // between the two flags.
-    strictEqual(stored.order.lineItemsComplete, true);
   });
 
   it("fails when a line item names a parent that is not the open order", async () => {
@@ -219,10 +214,8 @@ describe("runShopAgentOrdersStream", () => {
             financialStatus: "REFUNDED",
             fulfillmentStatus: "FULFILLED",
             fullyPaid: true,
-            tags: [],
             note: null,
             customAttributes: [],
-            lineItemsComplete: true,
             lineItemsTruncated: false,
             syncedAt: 0,
             syncSource: "webhook",

@@ -1,7 +1,6 @@
 import { Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
-import { ORDER_SYNC_LINE_ITEMS } from "@/lib/orderSyncConstants";
 
 /**
  * The order-level selection both ingestion paths share, decoded once here so
@@ -24,7 +23,6 @@ export const OrderNode = Schema.Struct({
   displayFinancialStatus: Schema.NullOr(Schema.String),
   displayFulfillmentStatus: Schema.String,
   fullyPaid: Schema.Boolean,
-  tags: Schema.Array(Schema.String),
   note: Schema.NullOr(Schema.String),
   customAttributes: Schema.Array(Domain.OrderAttribute),
 });
@@ -57,21 +55,19 @@ export const toShopOrder = ({
   node,
   source,
   syncedAt,
-  lineItemsComplete,
-  lineItemsTruncated = !lineItemsComplete,
+  lineItemsTruncated,
 }: {
   readonly node: OrderNode;
   readonly source: Domain.OrderSyncSource;
   readonly syncedAt: number;
-  readonly lineItemsComplete: boolean;
   /**
-   * Defaults to the negation of `lineItemsComplete`, which is the single-order
-   * path's answer: a fetch that reported another page stored less than the
-   * order has. The bulk path passes it explicitly, because there the set is
-   * complete as far as pagination goes and short only where this app capped it
-   * ({@link Domain.ShopLimits.maxLineItemsPerOrder}).
+   * Whether this fetch stored less than the order has: another page on the
+   * single-order path, more lines than
+   * {@link Domain.ShopLimits.maxLineItemsPerOrder} on the bulk one. Both mean
+   * the same thing to the merchant and neither changes how the write
+   * behaves — see {@link OrderRepository.upsertOrder}.
    */
-  readonly lineItemsTruncated?: boolean;
+  readonly lineItemsTruncated: boolean;
 }): Domain.ShopOrder => ({
   id: node.id,
   legacyId: node.legacyResourceId,
@@ -83,10 +79,8 @@ export const toShopOrder = ({
   financialStatus: node.displayFinancialStatus,
   fulfillmentStatus: node.displayFulfillmentStatus,
   fullyPaid: node.fullyPaid,
-  tags: node.tags,
   note: node.note,
   customAttributes: node.customAttributes,
-  lineItemsComplete,
   lineItemsTruncated,
   syncedAt,
   syncSource: source,
@@ -122,10 +116,11 @@ export const toOrderLineItem = (
  * `include_fields` trimmed to ids anyway, so the payload is a signal and this
  * is the read.
  *
- * `pageInfo.hasNextPage` is selected rather than assumed away: past
- * {@link ORDER_SYNC_LINE_ITEMS} the fetch has only a partial view, and
- * `OrderRepository.upsertOrder` must merge instead of replacing so the unseen
- * tail is not deleted.
+ * One page of {@link Domain.ShopLimits.maxLineItemsPerOrder} line items and no
+ * pagination loop, which is the same set the bulk path stores;
+ * `pageInfo.hasNextPage` is selected rather than assumed away so an order past
+ * the cap is stored flagged rather than silently short. The rule and the
+ * reason for the number are on {@link OrderRepository.upsertOrder}.
  */
 export const orderSyncQuery = `#graphql
   query OrderSync($id: ID!, $lineItems: Int!) {
@@ -140,7 +135,6 @@ export const orderSyncQuery = `#graphql
       displayFinancialStatus
       displayFulfillmentStatus
       fullyPaid
-      tags
       note
       customAttributes { key value }
       lineItems(first: $lineItems) {
@@ -177,5 +171,5 @@ export const OrderSyncResponse = Schema.Struct({
 
 export const orderSyncVariables = (orderId: string) => ({
   id: orderId,
-  lineItems: ORDER_SYNC_LINE_ITEMS,
+  lineItems: Domain.ShopLimits.maxLineItemsPerOrder,
 });

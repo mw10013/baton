@@ -5,9 +5,10 @@ import { CloudflareEnv } from "@/lib/CloudflareEnv";
 import { handleWebhook } from "@/lib/Shopify";
 
 /**
- * Everything the seven order topics have in common after `include_fields`
- * trimming, decoded laxly: Shopify may widen the payload at any time, and
- * `orders/delete` sends `{ id }` alone.
+ * Everything the three subscribed order topics — `orders/create`,
+ * `orders/updated`, `orders/delete` (`shopify.app.toml`) — have in common
+ * after `include_fields` trimming, decoded laxly: Shopify may widen the
+ * payload at any time, and `orders/delete` sends `{ id }` alone.
  *
  * `id` is a REST numeric id that exceeds `Number.MAX_SAFE_INTEGER` for newer
  * shops, so it is only ever used to reconstruct a GID when
@@ -40,8 +41,8 @@ const updatedAtMillis = (updatedAt: string | null | undefined) => {
 };
 
 /**
- * The real-time half of order sync; the other half is the manual window sync
- * (`ShopAgent.syncOrders`). All seven order topics point here.
+ * The real-time half of order intake; the other half is the manual import
+ * (`ShopAgent.syncOrders`). All three subscribed topics point here.
  *
  * The payload is a signal, not the data. It is REST-shaped, carries no product
  * tags or enriched line-item metadata, and is trimmed to ids by

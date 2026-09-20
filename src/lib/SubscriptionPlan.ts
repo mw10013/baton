@@ -16,8 +16,11 @@ import {
  * One error type collapses three unrelated causes (D1 failure, row decode
  * failure, Partner API failure or timeout) because callers respond to all of
  * them identically and must never respond to any of them the way they respond
- * to `Unsubscribed`: on `/app` this is an error page, on the Flow action path a
- * transient `429`, never a terminal rejection.
+ * to `Unsubscribed`: an embedded navigation gets an error page rather than the
+ * billing redirect `/app` sends an unsubscribed shop to, and a socket connect
+ * is refused as a transient failure rather than with the merchant gate's
+ * `402`, which closes the tab's socket for good (`worker.ts`). "We could not
+ * ask" must never be answered as "you have not paid".
  */
 export class SubscriptionPlanError extends Schema.TaggedError<SubscriptionPlanError>()(
   "SubscriptionPlanError",
@@ -46,15 +49,16 @@ export class SubscriptionPlanError extends Schema.TaggedError<SubscriptionPlanEr
  *   Nothing is destroyed by waiting; the merchant asked to stop.
  * - **Freeze (involuntary — a declined card).** A long window costs nothing and
  *   buys a grace period, because it is the *only* grace period that exists.
- *   What waits on the far side is a terminal rejection of Flow actions, and a
- *   rejected action is never retried: those writes are lost permanently and the
- *   shop's memory stays diverged after payment resumes.
+ *   What waits on the far side is a `402` on every socket and a billing
+ *   redirect on every navigation: the shop's makers are locked out of the
+ *   production floor mid-shift, with work in progress they cannot record,
+ *   over a card their merchant has not been told about yet.
  *
- * So shortening this buys back cents and pays for them by destroying the data
+ * So shortening this buys back cents and pays for them by stopping the floor
  * of merchants whose card just bounced. The asymmetry is the argument. What
  * shortening does cost is real but small — one synchronous Partner round trip
- * per expiry, landing on whichever navigation or Flow action finds the entry
- * stale.
+ * per expiry, landing on whichever navigation or socket connect finds the
+ * entry stale.
  */
 const PLAN_HANDLE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 

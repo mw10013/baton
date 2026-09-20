@@ -272,7 +272,7 @@ const makeShopifyApi = ({
     apiSecretKey: Redacted.value(apiSecretKey),
     hostName: host,
     hostScheme: protocol.replace(":", "") as "http" | "https",
-    apiVersion: ShopifyApi.ApiVersion.July26,
+    apiVersion: ShopifyApi.ApiVersion.October26,
     isEmbeddedApp: true,
     logger:
       environment === "local"

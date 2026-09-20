@@ -1,34 +1,27 @@
 /**
- * Shopify grants the last 60 days of orders without `read_all_orders`, which is
- * a Partner Dashboard access request. 30 leaves headroom for a clock skew or a
- * long-running bulk operation without ever touching that boundary.
+ * How far back the import reaches. Shopify grants the last 60 days of orders
+ * without `read_all_orders`, which is a Partner Dashboard access request; 30
+ * leaves headroom for a clock skew or a long-running bulk operation without
+ * ever touching that boundary. The number is in the button's help text, so it
+ * is a promise to the merchant as well as a query term.
  */
-export const ORDER_SYNC_WINDOW_DAYS = 30;
+export const ORDER_IMPORT_WINDOW_DAYS = 30;
 
 /**
- * Rewind applied to `updated_at:>=` on every sync after the first. A bulk
- * operation observes the shop at some instant between submit and completion,
- * and webhooks that arrive mid-run are unordered — overlapping the next window
- * past the previous run's start is what makes a missed edge impossible. Costs a
- * handful of redundant upserts, which the `updatedAt` guard makes free.
+ * When to stop the spinner, not when to expect success. An open-work export
+ * of a shop under the order ceiling completes in well under a minute, so this
+ * is ten times the expected duration; Shopify itself only fails a bulk query
+ * after 10 days, and the operation it leaves running is cancelled rather than
+ * abandoned ({@link OrdersSyncWorkflow}).
  */
-export const ORDER_SYNC_OVERLAP_MS = 15 * 60 * 1000;
-
-/** 5s x3, 15s x3, then 30s — ~10.5 minutes of polling before the run gives up. */
-export const BULK_POLL_ATTEMPTS = 24;
+export const BULK_GIVE_UP_MS = 5 * 60_000;
 
 /**
- * Line items requested per order on the single-order (webhook/resync) path.
- * The bulk path has no such cap — connections are flattened into their own
- * NDJSON lines.
- *
- * 100 keeps the requested query cost near 400 points, well under the 1,000-point
- * single-query ceiling. An order past the cap is not a silent truncation: the
- * fetch selects `pageInfo.hasNextPage`, and {@link OrderRepository.upsertOrder}
- * is told to merge rather than replace the line-item set so the unseen tail is
- * not deleted.
+ * The gap between polls of the bulk operation. Small enough that a typical
+ * import is noticed within seconds of finishing, and `BULK_GIVE_UP_MS / this`
+ * steps is nothing against a Workflow instance's 10,000-step limit.
  */
-export const ORDER_SYNC_LINE_ITEMS = 100;
+export const BULK_POLL_INTERVAL_MS = 5000;
 
 /**
  * The `wrangler.jsonc` binding name, shared by the kickoff in `ShopAgent` and

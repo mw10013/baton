@@ -19,10 +19,8 @@ const order = (
   financialStatus: "PAID",
   fulfillmentStatus: "UNFULFILLED",
   fullyPaid: true,
-  tags: [],
   note: null,
   customAttributes: [],
-  lineItemsComplete: true,
   lineItemsTruncated: false,
   syncedAt: 0,
   syncSource: "webhook",
@@ -524,7 +522,6 @@ describe("Domain.SeedOrdersInput", () => {
             {
               title: "Board",
               quantity: 1,
-              tags: [],
               progress: { done: true, advance: 1 },
             },
           ],

@@ -133,10 +133,8 @@ const order = (
   financialStatus: "PAID",
   fulfillmentStatus: "UNFULFILLED",
   fullyPaid: true,
-  tags: [],
   note: "Gift wrap please",
   customAttributes: [],
-  lineItemsComplete: true,
   lineItemsTruncated: false,
   syncedAt: PROCESSED_AT,
   syncSource: "webhook",
@@ -944,6 +942,102 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         strictEqual(a?.run.quantity, 3);
         strictEqual(a?.run.flag, "quantity_changed");
         deepStrictEqual(a?.run.flagDetail, { from: 2, to: 3 });
+      }),
+    ));
+
+  /**
+   * The case nobody is watching: the maker has put the work down, and the
+   * merchant edits the order in Shopify. The run keeps its quantity — what
+   * was made was made — and the flag is how the merchant learns of it.
+   */
+  it("a quantity change on a done line flags the run and changes nothing else", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seed;
+        yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
+        const [run] = yield* runsForOrder();
+        if (run === undefined) throw new Error("expected one run");
+        yield* complete(run, 1, [TEAM_A.id]);
+        yield* complete(run, 2, [TEAM_B.id]);
+        strictEqual((yield* runsForOrder())[0]?.run.status, "done");
+
+        const counts = yield* upsertAndReconcile(
+          order({ updatedAt: PROCESSED_AT + 1 }),
+          [lineItem(1, ["a"], { currentQuantity: 5, unfulfilledQuantity: 5 })],
+        );
+        deepStrictEqual(counts, {
+          created: 0,
+          cancelled: 0,
+          flagged: 1,
+          ambiguous: 0,
+        });
+        const flagged = (yield* runsForOrder())[0];
+        strictEqual(flagged?.run.status, "done");
+        strictEqual(flagged?.run.quantity, 2);
+        strictEqual(flagged?.run.flag, "quantity_changed");
+        deepStrictEqual(flagged?.run.flagDetail, { from: 2, to: 5 });
+        strictEqual(flagged?.steps.length, 2);
+
+        // The units reaching zero is the ordinary end of a done run — the
+        // work shipped — so it is not a second change to report.
+        const shipped = yield* upsertAndReconcile(
+          order({ updatedAt: PROCESSED_AT + 2 }),
+          [lineItem(1, ["a"], { currentQuantity: 5, unfulfilledQuantity: 0 })],
+        );
+        deepStrictEqual(shipped, {
+          created: 0,
+          cancelled: 0,
+          flagged: 0,
+          ambiguous: 0,
+        });
+        const after = (yield* runsForOrder())[0];
+        strictEqual(after?.run.status, "done");
+        strictEqual(after?.run.quantity, 2);
+      }),
+    ));
+
+  it("a dismissed quantity flag on a done run does not return on the next reconcile", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seed;
+        yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
+        const [run] = yield* runsForOrder();
+        if (run === undefined) throw new Error("expected one run");
+        yield* complete(run, 1, [TEAM_A.id]);
+        yield* complete(run, 2, [TEAM_B.id]);
+        const changed = [
+          lineItem(1, ["a"], { currentQuantity: 5, unfulfilledQuantity: 5 }),
+        ];
+        yield* upsertAndReconcile(
+          order({ updatedAt: PROCESSED_AT + 1 }),
+          changed,
+        );
+        const flagged = (yield* runsForOrder())[0];
+        strictEqual(flagged?.run.flag, "quantity_changed");
+        // A webhook that changed nothing about the line does not restamp it.
+        const again = yield* upsertAndReconcile(
+          order({ updatedAt: PROCESSED_AT + 2 }),
+          changed,
+        );
+        strictEqual(again.flagged, 0);
+        strictEqual(
+          (yield* runsForOrder())[0]?.run.flagAt,
+          flagged?.run.flagAt,
+        );
+
+        const runs = yield* WorkflowRunRepository;
+        yield* runs.dismissFlag({ runId: run.run.id });
+        const accepted = (yield* runsForOrder())[0];
+        strictEqual(accepted?.run.flag, null);
+        strictEqual(accepted?.run.quantity, 5);
+        strictEqual(accepted?.run.status, "done");
+
+        const after = yield* upsertAndReconcile(
+          order({ updatedAt: PROCESSED_AT + 3 }),
+          changed,
+        );
+        strictEqual(after.flagged, 0);
+        strictEqual((yield* runsForOrder())[0]?.run.flag, null);
       }),
     ));
 

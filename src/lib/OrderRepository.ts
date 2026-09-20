@@ -198,16 +198,29 @@ export class OrderRepository extends Context.Service<
      * The upsert applies `where excluded.updatedAt >= ShopOrder.updatedAt`, so
      * an older observation of an order — a retried webhook replaying its
      * original payload, or a bulk file whose snapshot predates a webhook that
-     * landed mid-stream — leaves the stored row alone. `returning id` is what
+     * landed mid-stream — leaves the stored row alone. Both values are
+     * Shopify's `Order.updatedAt`, never a clock of Baton's: this is a
+     * **version check**, not an ordering of when the two writers ran, which is
+     * what makes it correct across a Worker, a Durable Object and a Workflow
+     * that share no clock. Ties are accepted on purpose (`>=`, not `>`) —
+     * equal timestamps are the same version of the order, so rewriting it is
+     * free and a redelivery of a write that failed halfway through its line
+     * items still completes. `returning id` is what
      * reports that: SQLite emits a row only for an insert or an update that
      * actually ran, so an empty result means the write lost the race, and the
      * line items are then left alone too. Writing them anyway would replace a
      * fresh set with a stale one under a row that correctly refused to move.
      *
-     * When the caller saw the complete line-item set (`lineItemsComplete`), the
-     * set is replaced wholesale, so a removed line disappears. When the fetch
-     * was truncated it merges instead — deleting on a partial view would drop
-     * lines that exist but were never seen.
+     * Line items are replaced wholesale on every accepted write, so a removed
+     * line disappears. Every fetch path asks Shopify for the first
+     * `Domain.ShopLimits.maxLineItemsPerOrder` (250), which is the maximum any
+     * connection page may carry, and neither pages: an order with more is
+     * stored short and flagged `lineItemsTruncated`, never merged. 250 is
+     * Baton's ceiling because it is Shopify's, and because the single-order
+     * query stays inside the 1,000-point cost cap at that width — each line
+     * node selects `variant { id }` and `product { id tags }`, about 3 points,
+     * so 250 lines is roughly 750. A merge path would exist only to protect
+     * lines the app never saw, and there are none.
      *
      * One transaction per order, not per stream: a bulk run opens the Durable
      * Object's input gate on every `await` inside the fetch, so a webhook can
@@ -275,7 +288,7 @@ export class OrderRepository extends Context.Service<
       orderId: string,
     ) => Effect.Effect<Option.Option<number>, SqlError.SqlError>;
     /**
-     * `state` filters by `Domain.productionState` and `paid` by `fullyPaid`;
+     * `state` filters by `Domain.OrdersFilterState` and `paid` by `fullyPaid`;
      * each SQL fragment restates a branch of `productionState` and must move
      * with it. The three open stages and the `openCounts` aggregate spell out
      * `fulfillmentStatus <> 'FULFILLED' and cancelledAt is null` verbatim so
@@ -291,7 +304,7 @@ export class OrderRepository extends Context.Service<
       readonly cursor: string | null;
       /** `null` is no search; otherwise a prefix match on `ShopOrder.name` (`Domain.ListOrdersInput.q`). */
       readonly q: Domain.OrderSearch | null;
-      readonly state: Domain.ProductionState | null;
+      readonly state: Domain.OrdersFilterState | null;
       readonly paid: boolean | null;
       readonly attention: boolean;
       /** `null` is any team; an id is `Domain.ListOrdersInput.team` — waiting on that team. */
@@ -315,50 +328,30 @@ export class OrderRepository extends Context.Service<
       SqlError.SqlError | OrderRepositoryError
     >;
     /**
-     * Claims the singleton before the workflow instance exists, so a
-     * `runWorkflow` that creates the instance and then throws leaves a claim to
-     * verify rather than a running sync with an enabled button in front of it.
+     * The import finished. Not written by the stream: a file that streams
+     * halfway and then fails must not leave a timestamp claiming an import
+     * completed.
      */
-    readonly reserveSync: (input: {
-      readonly workflowId: string;
-      readonly startedAt: number;
-      readonly windowStart: number;
+    readonly setLastCompletedAt: (input: {
+      readonly now: number;
     }) => Effect.Effect<
       Domain.SyncState,
       SqlError.SqlError | OrderRepositoryError
     >;
     /**
-     * Releases the reservation and records the window, but only for the run
-     * that holds it: `startedAt` identifies the run, so a completion callback
-     * arriving after its run was superseded cannot clear the newer claim.
-     */
-    readonly completeSync: (input: {
-      readonly startedAt: number;
-    }) => Effect.Effect<
-      Domain.SyncState,
-      SqlError.SqlError | OrderRepositoryError
-    >;
-    readonly failSync: (input: {
-      readonly startedAt: number;
-      readonly error: string;
-    }) => Effect.Effect<
-      Domain.SyncState,
-      SqlError.SqlError | OrderRepositoryError
-    >;
-    readonly clearSync: () => Effect.Effect<
-      Domain.SyncState,
-      SqlError.SqlError | OrderRepositoryError
-    >;
-    /**
-     * Records a refusal that happened *before* any reservation existed — the
-     * storage guard in `syncOrders`. Deliberately not {@link failSync}, which
-     * releases a claim identified by its `startedAt` and would match nothing
-     * here.
+     * Records why the last import did not happen or did not finish — a
+     * refusal before the workflow started, or the failure that ended it. The
+     * banner on the orders index carries it until the next import clears it.
      */
     readonly setSyncError: (input: {
       readonly error: string;
     }) => Effect.Effect<
       Domain.SyncState,
+      SqlError.SqlError | OrderRepositoryError
+    >;
+    /** Clears the banner; the import about to start owns the state from here. */
+    readonly clearSyncError: () => Effect.Effect<
+      void,
       SqlError.SqlError | OrderRepositoryError
     >;
     /** The stored counters; `databaseSize` is the object's to add (`ShopAgent.getUsage`). */
@@ -426,12 +419,13 @@ export class OrderRepository extends Context.Service<
      */
     readonly deleteSeedOrders: () => Effect.Effect<void, SqlError.SqlError>;
     /**
-     * One retention pass: at most `ShopLimits.sweepBatch` closed orders past
-     * `ShopLimits.orderRetentionDays`, with their runs, plus a batch of runs
-     * orphaned by an `orders/delete`. Deliberately batched and deliberately
-     * carried by a request that was already doing heavy work — there is no
-     * alarm and no cron — so a shop with years of history drains over several
-     * passes instead of one request paying for all of it.
+     * One retention pass: at most `ShopLimits.sweepBatch` orders older than
+     * `ShopLimits.orderRetentionDays` — open or closed, with runs or without —
+     * plus a batch of runs orphaned by an `orders/delete`. Deliberately
+     * batched and deliberately carried by a request that was already doing
+     * heavy work — there is no alarm and no cron — so a shop with years of
+     * history drains over several passes instead of one request paying for
+     * all of it.
      */
     readonly sweepExpiredOrders: (input: {
       readonly now: number;
@@ -461,9 +455,8 @@ export class OrderRepository extends Context.Service<
 
       const orderColumns = sql.literal(
         `id, legacyId, name, processedAt, updatedAt, cancelledAt,
-         closedAt, financialStatus, fulfillmentStatus, fullyPaid, tags, note,
-         customAttributes, lineItemsComplete, lineItemsTruncated, syncedAt,
-         syncSource`,
+         closedAt, financialStatus, fulfillmentStatus, fullyPaid, note,
+         customAttributes, lineItemsTruncated, syncedAt, syncSource`,
       );
 
       /**
@@ -514,11 +507,7 @@ export class OrderRepository extends Context.Service<
       const readSyncState = () =>
         Effect.gen(function* () {
           return yield* syncState(
-            yield* sql`
-              select workflowId, startedAt, lastFullSyncAt,
-                     lastFullSyncWindowStart, lastError
-              from SyncState where id = 1
-            `,
+            yield* sql`select lastError, lastCompletedAt from SyncState where id = 1`,
           );
         });
 
@@ -568,7 +557,20 @@ export class OrderRepository extends Context.Service<
         "Invalid ShopUsage row",
       );
 
-      /** Orders whose `countedAt` is at or after `since`: what a cycle starting there is worth. */
+      /**
+       * Orders whose `countedAt` is at or after `since`: what a cycle
+       * starting there is worth, used to recount when the Worker pushes a new
+       * billing period.
+       *
+       * Correct only while a cycle is a month or less. `countedAt` is a
+       * single timestamp per order, so an order counted in *any* earlier
+       * period still inside `since` would be counted again — which cannot
+       * happen for consecutive monthly cycles, where everything before the
+       * new start belongs to a period that has closed. A yearly cycle would
+       * break it, which is why `README.md` forbids one; nothing in code
+       * enforces that, because the plan's interval lives in the Partner
+       * Dashboard.
+       */
       const countedSince = (since: number) =>
         sql`select count(*) from ShopOrder where countedAt >= ${since}`.values.pipe(
           Effect.map(([row]) => Number(row?.[0] ?? 0)),
@@ -824,16 +826,15 @@ export class OrderRepository extends Context.Service<
                 insert into ShopOrder (
                   id, legacyId, name, processedAt, updatedAt,
                   cancelledAt, closedAt, financialStatus, fulfillmentStatus,
-                  fullyPaid, tags, note, customAttributes, lineItemsComplete,
+                  fullyPaid, note, customAttributes,
                   lineItemsTruncated, syncedAt, syncSource, firstCycleStartAt
                 ) values (
                   ${order.id}, ${order.legacyId}, ${order.name},
                   ${order.processedAt}, ${order.updatedAt},
                   ${order.cancelledAt}, ${order.closedAt},
                   ${order.financialStatus}, ${order.fulfillmentStatus},
-                  ${bit(order.fullyPaid)}, ${json(order.tags)}, ${order.note},
+                  ${bit(order.fullyPaid)}, ${order.note},
                   ${json(order.customAttributes)},
-                  ${bit(order.lineItemsComplete)},
                   ${bit(order.lineItemsTruncated)}, ${order.syncedAt},
                   ${order.syncSource}, ${cycle.cycleStartAt}
                 )
@@ -847,10 +848,8 @@ export class OrderRepository extends Context.Service<
                   financialStatus = excluded.financialStatus,
                   fulfillmentStatus = excluded.fulfillmentStatus,
                   fullyPaid = excluded.fullyPaid,
-                  tags = excluded.tags,
                   note = excluded.note,
                   customAttributes = excluded.customAttributes,
-                  lineItemsComplete = excluded.lineItemsComplete,
                   lineItemsTruncated = excluded.lineItemsTruncated,
                   syncedAt = excluded.syncedAt,
                   syncSource = excluded.syncSource
@@ -859,8 +858,7 @@ export class OrderRepository extends Context.Service<
               `;
                 if (written.length === 0)
                   return { written: false, fresh: false, refused: false };
-                if (order.lineItemsComplete)
-                  yield* sql`delete from OrderLineItem where orderId = ${order.id}`;
+                yield* sql`delete from OrderLineItem where orderId = ${order.id}`;
                 yield* insertLineItems(lineItems);
                 yield* countOrder(order, cycle.cycleStartAt, existing ?? null);
                 if (afterWrite !== undefined) yield* afterWrite;
@@ -954,7 +952,7 @@ export class OrderRepository extends Context.Service<
           readonly limit: number;
           readonly cursor: string | null;
           readonly q: Domain.OrderSearch | null;
-          readonly state: Domain.ProductionState | null;
+          readonly state: Domain.OrdersFilterState | null;
           readonly paid: boolean | null;
           readonly attention: boolean;
           readonly team: Domain.TeamId | null;
@@ -1046,7 +1044,15 @@ export class OrderRepository extends Context.Service<
             Match.when("cancelled", () =>
               sql.literal("cancelledAt is not null"),
             ),
-            Match.when(null, () => sql.literal("1 = 1")),
+            /**
+             * `null` is the default view and it is open work, not everything:
+             * the negation of the `shipped` and `cancelled` branches above,
+             * spelled as `OPEN` so the partial index serves it. `"all"` is the
+             * only filter that reads a shop's whole history
+             * ({@link Domain.OrdersFilterState}).
+             */
+            Match.when(null, () => sql.literal(OPEN)),
+            Match.when("all", () => sql.literal("1 = 1")),
             Match.exhaustive,
           );
           /**
@@ -1317,72 +1323,17 @@ export class OrderRepository extends Context.Service<
 
         getSyncState: Effect.fn("OrderRepository.getSyncState")(readSyncState),
 
-        reserveSync: Effect.fn("OrderRepository.reserveSync")(function* ({
-          workflowId,
-          startedAt,
-          windowStart,
-        }: {
-          readonly workflowId: string;
-          readonly startedAt: number;
-          readonly windowStart: number;
-        }) {
-          return yield* syncState(
-            yield* sql`
-              update SyncState set
-                workflowId = ${workflowId},
-                startedAt = ${startedAt},
-                lastFullSyncWindowStart = ${windowStart},
-                lastError = null
-              where id = 1
-              returning workflowId, startedAt, lastFullSyncAt,
-                        lastFullSyncWindowStart, lastError
-            `,
-          );
-        }),
-
-        completeSync: Effect.fn("OrderRepository.completeSync")(function* ({
-          startedAt,
-        }: {
-          readonly startedAt: number;
-        }) {
-          yield* sql`
-            update SyncState set
-              workflowId = null,
-              startedAt = null,
-              lastFullSyncAt = ${startedAt},
-              lastError = null
-            where id = 1 and startedAt = ${startedAt}
-          `;
-          return yield* readSyncState();
-        }),
-
-        failSync: Effect.fn("OrderRepository.failSync")(function* ({
-          startedAt,
-          error,
-        }: {
-          readonly startedAt: number;
-          readonly error: string;
-        }) {
-          yield* sql`
-            update SyncState set
-              workflowId = null,
-              startedAt = null,
-              lastError = ${error}
-            where id = 1 and startedAt = ${startedAt}
-          `;
-          return yield* readSyncState();
-        }),
-
-        clearSync: Effect.fn("OrderRepository.clearSync")(function* () {
-          return yield* syncState(
-            yield* sql`
-              update SyncState set workflowId = null, startedAt = null
-              where id = 1
-              returning workflowId, startedAt, lastFullSyncAt,
-                        lastFullSyncWindowStart, lastError
-            `,
-          );
-        }),
+        setLastCompletedAt: Effect.fn("OrderRepository.setLastCompletedAt")(
+          function* ({ now }: { readonly now: number }) {
+            return yield* syncState(
+              yield* sql`
+                update SyncState set lastCompletedAt = ${now}, lastError = null
+                where id = 1
+                returning lastError, lastCompletedAt
+              `,
+            );
+          },
+        ),
 
         setSyncError: Effect.fn("OrderRepository.setSyncError")(function* ({
           error,
@@ -1393,11 +1344,16 @@ export class OrderRepository extends Context.Service<
             yield* sql`
               update SyncState set lastError = ${error}
               where id = 1
-              returning workflowId, startedAt, lastFullSyncAt,
-                        lastFullSyncWindowStart, lastError
+              returning lastError, lastCompletedAt
             `,
           );
         }),
+
+        clearSyncError: Effect.fn("OrderRepository.clearSyncError")(
+          function* () {
+            yield* sql`update SyncState set lastError = null where id = 1`;
+          },
+        ),
 
         getUsage: readUsage,
 
@@ -1592,25 +1548,20 @@ export class OrderRepository extends Context.Service<
             return yield* sql.withTransaction(
               Effect.gen(function* () {
                 /**
-                 * `updatedAt` is Shopify's and every upsert refreshes it, so
-                 * "closed and untouched for the window" is what ages out — an
-                 * order a merchant edited last week stays whatever its
-                 * `closedAt` says. The terms are spelled to match
-                 * `ShopOrder_closed_idx` so SQLite can prove the index serves
-                 * them; a live run is an absolute veto, since deleting the
-                 * order would delete work someone is still doing.
+                 * One term, and it is the order's own date rather than
+                 * anything about its state or its runs
+                 * ({@link Domain.ShopLimits.orderRetentionDays} carries the
+                 * rule). `processedAt` is when the merchant sold it, which is
+                 * what a year of retention should mean; `updatedAt` would
+                 * restart the clock every time Shopify touched the row, so a
+                 * shop that edits old orders would keep them forever.
+                 * `order by processedAt` walks the oldest first through
+                 * `ShopOrder_processedAt`.
                  */
                 const expired = yield* sql`
                   select id from ShopOrder
-                  where (fulfillmentStatus = 'FULFILLED' or cancelledAt is not null
-                         or closedAt is not null)
-                    and updatedAt < ${expiredBefore}
-                    and not exists (
-                      select 1 from WorkflowRun r
-                      where r.orderId = ShopOrder.id
-                        and r.status in ('pending', 'active')
-                    )
-                  order by updatedAt
+                  where processedAt < ${expiredBefore}
+                  order by processedAt
                   limit ${Domain.ShopLimits.sweepBatch}
                 `.values;
                 const ids = expired.map((row) => String(row[0]));
@@ -1621,6 +1572,14 @@ export class OrderRepository extends Context.Service<
                   // `sweepBatch` is set to.
                   for (let at = 0; at < ids.length; at += 90) {
                     const chunk = ids.slice(at, at + 90);
+                    /**
+                     * The runs go with the order, live ones included. Nothing
+                     * is flagged on the way out, unlike
+                     * `WorkflowRunRepository.markOrderDeleted`: that flag
+                     * exists so a member reads why their work stopped, and a
+                     * row deleted by the next statement of the same
+                     * transaction is read by nobody.
+                     */
                     const deletedRuns =
                       yield* sql`delete from WorkflowRun where ${sql.in("orderId", chunk)} returning id`;
                     runs += deletedRuns.length;
@@ -1633,7 +1592,9 @@ export class OrderRepository extends Context.Service<
                  * Runs whose order is already gone: `markOrderDeleted` flags
                  * them rather than deleting so a member sees why their work
                  * stopped, and they age out here on their own `updatedAt`,
-                 * the order's being unavailable.
+                 * the order's being unavailable. The same window, counted
+                 * from a different clock on purpose — the order they belong
+                 * to no longer has one.
                  */
                 const orphaned = yield* sql`
                   delete from WorkflowRun

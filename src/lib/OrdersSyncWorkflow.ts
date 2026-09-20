@@ -6,6 +6,7 @@ import * as ShopifyApi from "@shopify/shopify-api";
 import { AgentWorkflow } from "agents/workflows";
 import { NonRetryableError } from "cloudflare:workflows";
 import {
+  Clock,
   Duration,
   Effect,
   Layer,
@@ -27,23 +28,30 @@ import {
   bulkOrdersQueryText,
   OrdersBulkRepository,
 } from "@/lib/OrdersBulkRepository";
-import { BULK_POLL_ATTEMPTS } from "@/lib/orderSyncConstants";
+import {
+  BULK_GIVE_UP_MS,
+  BULK_POLL_INTERVAL_MS,
+} from "@/lib/orderSyncConstants";
 import { Repository } from "@/lib/Repository";
 import { Shopify } from "@/lib/Shopify";
 import { ShopifyAdmin } from "@/lib/ShopifyAdmin";
 
 export interface OrdersSyncParams {
   readonly shop: string;
-  /** The run's identity; `SyncState.startedAt` holds the same value. */
-  readonly startedAt: number;
-  readonly windowStart: number;
-  readonly field: Domain.OrderSyncField;
 }
 
 class OrdersSyncWorkflowError extends Schema.TaggedError<OrdersSyncWorkflowError>()(
   "OrdersSyncWorkflowError",
   { message: Schema.String, cause: Schema.optional(Schema.Defect()) },
 ) {}
+
+/**
+ * What the merchant is told when Shopify has not finished the export inside
+ * {@link BULK_GIVE_UP_MS}. It is the whole of what they can do about it, and
+ * re-running is always safe because the query is fixed
+ * ({@link bulkOrdersQueryText}).
+ */
+const GAVE_UP_MESSAGE = "Shopify did not finish the export in time. Try again.";
 
 /**
  * A permanent failure: retrying an expired refresh token or a rejected bulk
@@ -63,12 +71,6 @@ class OrdersSyncWorkflowError extends Schema.TaggedError<OrdersSyncWorkflowError
  */
 const nonRetryable = (message: string) =>
   Effect.die(new NonRetryableError(message));
-
-const pollDelay = (attempt: number) => {
-  if (attempt < 3) return "5 seconds";
-  if (attempt < 6) return "15 seconds";
-  return "30 seconds";
-};
 
 const toCount = (value: number | string) =>
   typeof value === "string" ? Number(value) : value;
@@ -96,38 +98,16 @@ const timedStep = <A, E, R>(
     Effect.withLogSpan(name),
   );
 
-const timedPollStep = <E, R>(
-  shop: Domain.Shop,
-  name: string,
-  effect: Effect.Effect<Domain.BulkOperation, E, R>,
-  attempt: number,
-  waitBeforePoll: string,
-) =>
-  Effect.timed(effect).pipe(
-    Effect.flatMap(([duration, operation]) =>
-      Effect.logDebug(
-        `OrdersSyncWorkflow.poll: shop=${shop} step=${name} attempt=${String(attempt)} status=${operation.status}`,
-      ).pipe(
-        Effect.annotateLogs({
-          shop,
-          step: name,
-          attempt,
-          waitBeforePoll,
-          durationMs: Duration.toMillis(duration),
-          status: operation.status,
-          objectCount: toCount(operation.objectCount),
-        }),
-        Effect.as(operation),
-      ),
-    ),
-    Effect.withLogSpan(name),
-  );
-
+/**
+ * Still worth waiting for. `CANCELING` is in here on purpose: it is not a
+ * terminal status, and Shopify moves through it to `CANCELED` — a poll loop
+ * that stopped here would report a finished operation that has not finished.
+ */
 const bulkIsActive = ({ status }: Domain.BulkOperation) =>
   status === "CREATED" || status === "RUNNING" || status === "CANCELING";
 
 /**
- * The result URL of a finished operation, or `none` when the window held no
+ * The result URL of a finished operation, or `none` when the query matched no
  * orders. `partialDataUrl` is the fallback because a bulk operation that
  * completed after a partial failure still exposes what it did export, and
  * those rows are as valid as any other under the `updatedAt` upsert guard.
@@ -183,13 +163,10 @@ export const ensureSessionProps = (shop: Domain.Shop) =>
     }),
   );
 
-export const submitBulkOrdersQuery = (params: {
-  readonly field: Domain.OrderSyncField;
-  readonly windowStart: number;
-}) =>
+export const submitBulkOrdersQuery = (now: number) =>
   Effect.gen(function* () {
     return yield* (yield* OrdersBulkRepository).submit(
-      bulkOrdersQueryText(params),
+      bulkOrdersQueryText(now),
     );
   }).pipe(
     Effect.catchTag("OrdersBulkRepositoryError", (error) =>
@@ -226,6 +203,12 @@ export class OrdersSyncWorkflow extends AgentWorkflow<
   }
 
   /**
+   * Submit the import, wait for Shopify, hand the file to the object. Four
+   * steps and one loop; every concept the merchant could not predict — a
+   * window, a first-run-versus-later rule, a reservation — lives nowhere,
+   * because the query is fixed and the agent is the only run tracker
+   * ({@link ShopAgent.syncOrders}).
+   *
    * Two Cloudflare Workflows + Effect constraints dictate this shape, and both
    * are easy to get wrong:
    *
@@ -243,6 +226,13 @@ export class OrdersSyncWorkflow extends AgentWorkflow<
    *    reaches later steps as a pure `Layer.succeed` value, so the
    *    session-dependent layer chain never reintroduces a fallible build.
    *
+   * The poll loop's steps are named per attempt (`poll-bulk-orders-3`) because
+   * a step name is its cache key: a loop that reused one name would read the
+   * first poll's answer on every pass and never see the operation finish. The
+   * bound is wall-clock, not attempts, so the number of steps follows from
+   * {@link BULK_GIVE_UP_MS} and {@link BULK_POLL_INTERVAL_MS} rather than from
+   * a schedule nobody can hold in their head.
+   *
    * `Effect.onError` is the terminal sink. It fires only once a step has
    * exhausted its retries (or a non-step failure such as `completedBulkUrl`
    * fires), and durably records the message through its own step before the
@@ -255,7 +245,7 @@ export class OrdersSyncWorkflow extends AgentWorkflow<
     event: AgentWorkflowEvent<OrdersSyncParams>,
     step: AgentWorkflowStep,
   ) {
-    const { shop: shopName, startedAt, windowStart, field } = event.payload;
+    const { shop: shopName } = event.payload;
     const shop = Schema.decodeUnknownSync(Domain.Shop)(shopName);
     const runtime = ManagedRuntime.make(this.makeRuntimeLayer());
     const agent = this.agent;
@@ -263,9 +253,7 @@ export class OrdersSyncWorkflow extends AgentWorkflow<
     try {
       await runtime.runPromise(
         Effect.gen(function* () {
-          yield* Effect.logInfo(
-            `OrdersSyncWorkflow.run: shop=${shop} field=${field}`,
-          ).pipe(Effect.annotateLogs({ field, startedAt, windowStart }));
+          yield* Effect.logInfo(`OrdersSyncWorkflow.run: shop=${shop}`);
 
           const sessionProps = yield* timedStep(
             shop,
@@ -287,16 +275,20 @@ export class OrdersSyncWorkflow extends AgentWorkflow<
             true,
           );
 
-          const initial = yield* timedStep(
+          const submitted = yield* timedStep(
             shop,
             "run-bulk-orders-query",
             Effect.tryPromise({
               try: () =>
                 step.do("run-bulk-orders-query", () =>
                   runtime.runPromise(
-                    submitBulkOrdersQuery({ field, windowStart }).pipe(
-                      provideOrdersBulk(session),
-                    ),
+                    Effect.gen(function* () {
+                      // The window start is the submitting step's own clock:
+                      // the step result is cached, so a replay keeps the
+                      // window the submitted operation actually ran with.
+                      const now = yield* Clock.currentTimeMillis;
+                      return yield* submitBulkOrdersQuery(now);
+                    }).pipe(provideOrdersBulk(session)),
                   ),
                 ),
               catch: (cause) =>
@@ -307,25 +299,27 @@ export class OrdersSyncWorkflow extends AgentWorkflow<
             }),
           );
 
-          let operation = initial;
+          let operation = submitted;
           for (
-            let attempt = 0;
-            attempt < BULK_POLL_ATTEMPTS && bulkIsActive(operation);
-            attempt += 1
+            let elapsed = 0;
+            elapsed < BULK_GIVE_UP_MS && bulkIsActive(operation);
+            elapsed += BULK_POLL_INTERVAL_MS
           ) {
-            const attemptName = String(attempt);
-            const waitBeforePoll = pollDelay(attempt);
+            const attempt = String(elapsed / BULK_POLL_INTERVAL_MS);
             yield* Effect.tryPromise(() =>
-              step.sleep(`wait-for-bulk-orders-${attemptName}`, waitBeforePoll),
+              step.sleep(
+                `wait-for-bulk-orders-${attempt}`,
+                BULK_POLL_INTERVAL_MS,
+              ),
             );
-            operation = yield* timedPollStep(
+            operation = yield* timedStep(
               shop,
-              `poll-bulk-orders-${attemptName}`,
+              `poll-bulk-orders-${attempt}`,
               Effect.tryPromise({
                 try: () =>
-                  step.do(`poll-bulk-orders-${attemptName}`, () =>
+                  step.do(`poll-bulk-orders-${attempt}`, () =>
                     runtime.runPromise(
-                      pollBulkOrdersQuery(initial.id).pipe(
+                      pollBulkOrdersQuery(submitted.id).pipe(
                         provideOrdersBulk(session),
                         Effect.catchTag("OrdersSyncWorkflowError", (error) =>
                           nonRetryable(error.message),
@@ -339,8 +333,48 @@ export class OrdersSyncWorkflow extends AgentWorkflow<
                     cause,
                   }),
               }),
-              attempt,
-              waitBeforePoll,
+              { attempt, status: operation.status },
+            );
+          }
+
+          /**
+           * Out of patience rather than out of luck: the operation is still
+           * running at Shopify, so it is cancelled before this instance goes.
+           * The cancel's own failure is swallowed — the merchant is already
+           * being told the import did not finish, and a failed cancel would
+           * replace that message with one about a mutation they never made.
+           */
+          if (bulkIsActive(operation)) {
+            yield* timedStep(
+              shop,
+              "cancel-bulk-orders",
+              Effect.promise(() =>
+                step.do("cancel-bulk-orders", () =>
+                  runtime.runPromise(
+                    Effect.gen(function* () {
+                      yield* (yield* OrdersBulkRepository).cancel(submitted.id);
+                    }).pipe(
+                      provideOrdersBulk(session),
+                      Effect.catchCause((cause) =>
+                        Effect.logWarning(
+                          `OrdersSyncWorkflow.cancel: shop=${shop} operationId=${submitted.id}: ${causeToErrorMessage(cause)}`,
+                        ).pipe(
+                          Effect.annotateLogs({
+                            shop,
+                            operationId: submitted.id,
+                          }),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+            return yield* Effect.fail(
+              new OrdersSyncWorkflowError({
+                message: GAVE_UP_MESSAGE,
+                cause: operation,
+              }),
             );
           }
 
@@ -385,12 +419,14 @@ export class OrdersSyncWorkflow extends AgentWorkflow<
               ),
           });
 
-          yield* Effect.tryPromise(() =>
-            step.reportComplete({
-              shop: shopName,
-              startedAt,
-            } satisfies Domain.OrdersSyncResult),
+          yield* Effect.logInfo(
+            `OrdersSyncWorkflow.run: shop=${shop} status=complete objectCount=${String(toCount(operation.objectCount))}`,
+          ).pipe(
+            Effect.annotateLogs({
+              objectCount: toCount(operation.objectCount),
+            }),
           );
+          return yield* Effect.tryPromise(() => step.reportComplete());
         }).pipe(
           Effect.onError((cause) =>
             timedStep(
@@ -399,7 +435,6 @@ export class OrdersSyncWorkflow extends AgentWorkflow<
               Effect.promise(() =>
                 step.do("on-orders-sync-error", () =>
                   agent.onOrdersSyncError({
-                    startedAt,
                     message: causeToErrorMessage(cause),
                   }),
                 ),

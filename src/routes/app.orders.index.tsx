@@ -11,7 +11,7 @@ import { QuotaBanners } from "@/components/QuotaBanners";
 import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
 import { adminOrderUrl, useResourceLinkTarget } from "@/lib/orderLinks";
-import { ORDER_SYNC_WINDOW_DAYS } from "@/lib/orderSyncConstants";
+import { ORDER_IMPORT_WINDOW_DAYS } from "@/lib/orderSyncConstants";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
@@ -26,11 +26,7 @@ const ORDERS_PAGE_SIZE = 25;
  * which is what an emptied field means, so the caller needs no second test.
  */
 const decodeOrderSearch = Schema.decodeUnknownOption(Domain.OrderSearch);
-/**
- * Caps both the Tags and the Waiting on cells, on purpose: two collapsing
- * columns in one table should collapse at the same width and with the same
- * `+N`, so the table has one idiom rather than two.
- */
+/** Caps the Waiting on cell, so a shop with many teams cannot widen the table without bound. */
 const TAG_BADGE_LIMIT = 3;
 
 /**
@@ -41,7 +37,7 @@ const TAG_BADGE_LIMIT = 3;
 const ordersQueryKey = (
   shop: string,
   q: Domain.OrderSearch | null,
-  state: Domain.ProductionState | null,
+  state: Domain.OrdersFilterState | null,
   paid: boolean | null,
   attention: boolean,
   team: Domain.TeamId | null,
@@ -49,35 +45,37 @@ const ordersQueryKey = (
 
 /**
  * `?q=` is the order-number search; `?state=` picks a stage of the strip
- * (`ready_to_ship` is the packer's view); `?paid=` crosses it with the payment
- * gate; `?attention=true` keeps only orders with a run that needs attention
- * (`Domain.OrderRow.attention`); `?team=` keeps only orders waiting on that
- * team, which is the link the team detail page drills in with. Absent means
- * every order.
+ * (`ready_to_ship` is the packer's view, `all` the whole history); `?paid=`
+ * crosses it with the payment gate; `?attention=true` keeps only orders with a
+ * run that needs attention (`Domain.OrderRow.attention`); `?team=` keeps only
+ * orders waiting on that team, which is the link the team detail page drills
+ * in with. An absent `state` is open work (`Domain.OrdersFilterState`).
  */
 const OrdersSearch = Schema.Struct({
   q: Schema.optionalKey(Domain.OrderSearch),
-  state: Schema.optionalKey(Domain.ProductionState),
+  state: Schema.optionalKey(Domain.OrdersFilterState),
   paid: Schema.optionalKey(Schema.Boolean),
   attention: Schema.optionalKey(Schema.Boolean),
   team: Schema.optionalKey(Domain.TeamId),
 });
 
 /**
- * The stage filters, in lifecycle order. `cancelled` is deliberately absent: it
- * is rare, shows as a badge, and is not a stage an order moves through.
- * Only the open stages carry a count (see `Domain.OpenStageCounts`).
+ * The stage filters, in lifecycle order, with the two that are not stages at
+ * either end: Open is the default view and All is the escape hatch to the
+ * closed ones (`Domain.OrdersFilterState`). `cancelled` is deliberately
+ * absent: it is rare, shows as a badge, and is not a stage an order moves
+ * through. Only the open stages carry a count (see `Domain.OpenStageCounts`).
  *
  * No per-stage hint here: `stageText` already says what the selected stage
  * means at sentence length, and carrying both put a four-word gloss on every
  * button directly above the sentence that repeated it.
  */
 const STAGES: readonly {
-  readonly state: Domain.ProductionState | null;
+  readonly state: Domain.OrdersFilterState | null;
   readonly label: string;
   readonly count: keyof Domain.OpenStageCounts | null;
 }[] = [
-  { state: null, label: "All orders", count: null },
+  { state: null, label: "Open", count: null },
   { state: "no_workflow", label: "No workflow", count: "no_workflow" },
   {
     state: "multiple_workflows",
@@ -87,12 +85,13 @@ const STAGES: readonly {
   { state: "in_production", label: "In production", count: "in_production" },
   { state: "ready_to_ship", label: "Ready to ship", count: "ready_to_ship" },
   { state: "shipped", label: "Shipped", count: null },
+  { state: "all", label: "All", count: null },
 ];
 
 /**
  * `Schema.toType`, not the schema itself. A Durable Object RPC result has
  * already been through the repository's decoder, so what arrives is the
- * **decoded** shape — `fullyPaid` a boolean, `tags` an array. Decoding it again
+ * **decoded** shape — `fullyPaid` a boolean, `customAttributes` an array. Decoding it again
  * against `Domain.OrdersView` would demand the *encoded* row shape (`0`/`1`,
  * a JSON string) and fail on the first order. `toType` derives a validator over
  * the decoded side, so the wire value is checked without re-running transforms
@@ -101,8 +100,8 @@ const STAGES: readonly {
 const decodeOrdersView = Schema.decodeUnknownPromise(
   Schema.toType(Domain.OrdersView),
 );
-const decodeSyncState = Schema.decodeUnknownPromise(
-  Schema.toType(Domain.SyncState),
+const decodeSyncResult = Schema.decodeUnknownPromise(
+  Schema.toType(Domain.OrdersSyncResult),
 );
 
 /** The detail page is addressed by `legacyId`; see `Domain.GetOrderDetailInput`. */
@@ -173,30 +172,23 @@ const stateBadge = (row: Domain.OrderRow) =>
     Match.exhaustive,
   );
 
-const tagBadges = (tags: readonly string[]) => (
-  <s-stack direction="inline" gap="small-300">
-    {tags.slice(0, TAG_BADGE_LIMIT).map((tag) => (
-      <s-badge key={tag}>{tag}</s-badge>
-    ))}
-    {tags.length > TAG_BADGE_LIMIT && (
-      <s-text color="subdued">{`+${String(tags.length - TAG_BADGE_LIMIT)}`}</s-text>
-    )}
-  </s-stack>
-);
-
+/**
+ * The import's whole status line. A shop that has never imported gets
+ * nothing: the button beside it says what to do, and "Never imported" would
+ * read as a fault on a shop whose orders all arrived by webhook, which is the
+ * ordinary case after the first day.
+ */
 const syncStatusText = (
   view: Domain.OrdersView | undefined,
   isError: boolean,
 ) => {
-  if (isError) return "Could not read sync status.";
+  if (isError) return "Could not read import status.";
   if (view === undefined) return "Loading…";
-  if (view.syncState.workflowId !== null)
-    return "Syncing… this page updates as orders arrive.";
-  return view.syncState.lastFullSyncAt === null ? (
-    "Never synced."
-  ) : (
+  if (view.syncState.inFlight)
+    return "Importing… this page updates as orders arrive.";
+  return view.syncState.lastCompletedAt === null ? null : (
     <>
-      Last synced <LocalDateTime value={view.syncState.lastFullSyncAt} />.
+      Last imported <LocalDateTime value={view.syncState.lastCompletedAt} />.
     </>
   );
 };
@@ -212,13 +204,14 @@ const orders = (n: number) =>
 
 const stageText = (
   view: Domain.OrdersView | undefined,
-  state: Domain.ProductionState | null,
+  state: Domain.OrdersFilterState | null,
 ) => {
   if (view === undefined) return null;
   const counts = view.page.openCounts;
   return Match.value(state).pipe(
     Match.withReturnType<string | null>(),
     Match.when(null, () => null),
+    Match.when("all", () => null),
     Match.when(
       "no_workflow",
       () =>
@@ -244,8 +237,9 @@ const stageText = (
   );
 };
 
-const emptyText = (state: Domain.ProductionState | null) =>
+const emptyText = (state: Domain.OrdersFilterState | null) =>
   Match.value(state).pipe(
+    Match.when("all", () => "No orders stored."),
     Match.when("no_workflow", () => "Every paid order has a workflow."),
     Match.when("multiple_workflows", () => "No orders need a workflow chosen."),
     Match.when("in_production", () => "Nothing is in production."),
@@ -267,7 +261,7 @@ const emptyText = (state: Domain.ProductionState | null) =>
  */
 const OrdersLoaderInput = Schema.Struct({
   q: Schema.NullOr(Domain.OrderSearch),
-  state: Schema.NullOr(Domain.ProductionState),
+  state: Schema.NullOr(Domain.OrdersFilterState),
   paid: Schema.NullOr(Schema.Boolean),
   attention: Schema.Boolean,
   team: Schema.NullOr(Domain.TeamId),
@@ -359,7 +353,7 @@ function RouteComponent() {
   /** A filter change is a new list, so the cursor stack starts over. */
   const setFilters = (next: {
     readonly q: Domain.OrderSearch | null;
-    readonly state: Domain.ProductionState | null;
+    readonly state: Domain.OrdersFilterState | null;
     readonly paid: boolean | null;
     readonly attention: boolean;
     readonly team: Domain.TeamId | null;
@@ -464,11 +458,13 @@ function RouteComponent() {
     if (!agent) return;
     setSyncing(true);
     withSocketRecovery(agent)(() => agent.stub.syncOrders())
-      .then(decodeSyncState)
+      .then(decodeSyncResult)
       .then(() => invalidate())
       .catch((error: unknown) => {
         shopify.toast.show(
-          error instanceof Error ? error.message : "Could not start the sync.",
+          error instanceof Error
+            ? error.message
+            : "Could not start the import.",
           { isError: true },
         );
       })
@@ -477,7 +473,7 @@ function RouteComponent() {
       });
   };
 
-  const syncInFlight = view !== undefined && view.syncState.workflowId !== null;
+  const syncInFlight = view?.syncState.inFlight ?? false;
   const orders = view?.page.orders ?? [];
   const filtered =
     q !== null || state !== null || paid !== null || attention || team !== null;
@@ -531,7 +527,7 @@ function RouteComponent() {
       disabled={!identified || syncing || syncInFlight}
       onClick={startSync}
     >
-      {`Sync last ${String(ORDER_SYNC_WINDOW_DAYS)} days`}
+      Import open orders
     </s-button>
   );
 
@@ -546,30 +542,21 @@ function RouteComponent() {
    * the window" is the wrong instruction once the pull has happened and come
    * back empty.
    */
-  const emptyState = () => {
-    const synced = view !== undefined && view.syncState.lastFullSyncAt !== null;
-    return (
-      <s-box padding="base">
-        <s-grid gap="base" justifyItems="center" paddingBlock="large-400">
-          <s-grid justifyItems="center" maxInlineSize="450px" gap="base">
-            <s-stack alignItems="center" gap="small-300">
-              <s-heading>
-                {synced
-                  ? `No orders in the last ${String(ORDER_SYNC_WINDOW_DAYS)} days`
-                  : "No orders yet"}
-              </s-heading>
-              <s-paragraph color="subdued">
-                {synced
-                  ? "The last sync found nothing to store. Order webhooks add new orders as they come in, or sync again to re-pull the window."
-                  : `Pull the last ${String(ORDER_SYNC_WINDOW_DAYS)} days from Shopify in one bulk operation; after that, order webhooks keep them current.`}
-              </s-paragraph>
-            </s-stack>
-            {syncButton(false)}
-          </s-grid>
+  const emptyState = () => (
+    <s-box padding="base">
+      <s-grid gap="base" justifyItems="center" paddingBlock="large-400">
+        <s-grid justifyItems="center" maxInlineSize="450px" gap="base">
+          <s-stack alignItems="center" gap="small-300">
+            <s-heading>No open orders</s-heading>
+            <s-paragraph color="subdued">
+              {`Import open orders to pull in what is on the bench, or wait for the next order. The import takes the open, unfulfilled orders from the last ${String(ORDER_IMPORT_WINDOW_DAYS)} days; after that, order webhooks keep them current.`}
+            </s-paragraph>
+          </s-stack>
+          {syncButton(false)}
         </s-grid>
-      </s-box>
-    );
-  };
+      </s-grid>
+    </s-box>
+  );
 
   const renderOrders = () => {
     /**
@@ -639,7 +626,6 @@ function RouteComponent() {
           <s-table-header listSlot="labeled" format="numeric">
             Items
           </s-table-header>
-          <s-table-header listSlot="labeled">Tags</s-table-header>
           <s-table-header listSlot="labeled">Shopify</s-table-header>
         </s-table-header-row>
         <s-table-body>
@@ -678,7 +664,6 @@ function RouteComponent() {
                   flatten that into "nothing to see". */}
               <s-table-cell>{waitingOnBadges(row.waitingOn)}</s-table-cell>
               <s-table-cell>{formatNumber(row.itemUnits)}</s-table-cell>
-              <s-table-cell>{tagBadges(row.order.tags)}</s-table-cell>
               {/* The packer's handoff: a made order is fulfilled in the
                   Shopify admin, never here, so the ready-to-ship row links
                   straight to it. Other rows get the same link under a
@@ -780,9 +765,17 @@ function RouteComponent() {
               view?.syncState.lastError !== undefined && (
                 <s-banner tone="critical">{view.syncState.lastError}</s-banner>
               )}
+            {/* The import's terms, said once and in full: the button cannot
+                carry them, and a merchant who cannot see the filter reads the
+                result as the whole of their shop. */}
             <s-paragraph color="subdued">
-              {syncStatusText(view, ordersQuery.isError)}
+              {`Imports open, unfulfilled orders from the last ${String(ORDER_IMPORT_WINDOW_DAYS)} days. Safe to run again.`}
             </s-paragraph>
+            {syncStatusText(view, ordersQuery.isError) !== null && (
+              <s-paragraph color="subdued">
+                {syncStatusText(view, ordersQuery.isError)}
+              </s-paragraph>
+            )}
           </s-stack>
         </s-box>
         {/* One filter bar, gated on there being something to filter: see

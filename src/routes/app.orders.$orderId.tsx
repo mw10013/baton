@@ -52,6 +52,8 @@ const attachResultMessage = Match.typeTags<
      race where the run finished between the render and the click. */
   ItemDone: ({ workflowName }) =>
     `This item is finished on ${workflowName}. Reopen its last step to change it.`,
+  OrderClosed: () =>
+    "This order is cancelled or fulfilled in Shopify, so there is no work left to attach.",
 });
 
 const assignResultMessage = Match.typeTags<
@@ -1229,6 +1231,25 @@ function RouteComponent() {
           {Domain.runIsFlagged(run) && (
             <s-badge tone="warning">{flagLabel(run)}</s-badge>
           )}
+          {/* A finished run takes the quantity flag (`Domain.RunFlag`) but
+              has no run-action row to carry Dismiss, and reopening it through
+              Undo is a different decision from accepting the change. So the
+              one action its flag allows sits beside the badge. */}
+          {Domain.runIsDone(run) && Domain.runIsFlagged(run) && (
+            <s-button
+              variant="tertiary"
+              disabled={!identified || busy}
+              onClick={() => {
+                intervene({
+                  kind: "unblock",
+                  runId: run.id,
+                  toast: "Flag dismissed",
+                });
+              }}
+            >
+              Dismiss
+            </s-button>
+          )}
           {cancelled && (
             <s-button
               variant="tertiary"
@@ -1571,7 +1592,6 @@ function RouteComponent() {
 
       <SocketBanner />
       {(banner !== null ||
-        !order.lineItemsComplete ||
         order.lineItemsTruncated ||
         state === "ready_to_ship" ||
         orderSummary !== null) && (
@@ -1591,18 +1611,12 @@ function RouteComponent() {
               ; it will show as Shipped here once Shopify reports it.
             </s-banner>
           )}
-          {!order.lineItemsComplete && (
+          {/* One cap, one sentence: every path stores the first 250 and
+              neither pages, so "more than Baton tracks" is the whole of what
+              happened (`OrderRepository.upsertOrder`). */}
+          {order.lineItemsTruncated && (
             <s-banner tone="warning">
-              This order has more line items than one fetch returns; the list
-              below is partial.
-            </s-banner>
-          )}
-          {/* Only the bulk-import cap: the single-order path sets
-              `lineItemsTruncated` together with `lineItemsComplete = false`,
-              which the banner above already explains in its own terms. */}
-          {order.lineItemsTruncated && order.lineItemsComplete && (
-            <s-banner tone="warning">
-              {`This order has more than ${formatNumber(Domain.ShopLimits.maxLineItemsPerOrder)} line items. Only the first ${formatNumber(Domain.ShopLimits.maxLineItemsPerOrder)} are shown.`}
+              {`Baton tracks up to ${formatNumber(Domain.ShopLimits.maxLineItemsPerOrder)} line items per order. This order has more; open it in Shopify for the full list.`}
             </s-banner>
           )}
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
@@ -1697,7 +1711,6 @@ function RouteComponent() {
               <LocalDateTime value={order.closedAt} />
             ),
           )}
-          {fact("Order tags", order.tags.join(", "))}
           {fact(
             "Order attributes",
             order.customAttributes

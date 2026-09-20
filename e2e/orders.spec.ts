@@ -4,7 +4,7 @@ import { clickHoisted, gotoApp, hoistedEnabled } from "./app";
 import { seedConfig, seedMembers } from "./seed";
 
 /**
- * The window sync end to end, against the real sandbox: click, and real orders
+ * The import end to end, against the real sandbox: click, and real orders
  * appear.
  *
  * This is the one test that exercises the whole chain nothing else can —
@@ -15,61 +15,64 @@ import { seedConfig, seedMembers } from "./seed";
  * one proves they are wired to each other.
  *
  * Timings are generous because the run is Shopify's, not ours: submitting the
- * bulk operation, waiting for Shopify to execute it, and the poll schedule's
- * first 5-second sleep put a realistic floor around 15-30s even for a sandbox
- * with fewer than a hundred orders. A two-minute budget is roughly 4x that
- * floor, not a hedge against an unknown.
+ * bulk operation, waiting for Shopify to execute it, and the first 5-second
+ * poll sleep put a realistic floor around 15-30s even for a sandbox with fewer
+ * than a hundred orders. A two-minute budget is roughly 4x that floor, not a
+ * hedge against an unknown.
  *
- * The sync button is the gate on both ends: it disables while `SyncState` holds
- * a reservation and re-enables when the completion callback clears it, so
- * "enabled again" is the honest signal that the run finished — more honest than
- * waiting for rows, which start landing mid-stream.
+ * The import button is the gate on both ends: it disables while the Agents SDK
+ * tracks a run and re-enables when the completion callback deletes that row,
+ * so "enabled again" is the honest signal that the run finished — more honest
+ * than waiting for rows, which start landing mid-stream.
  *
  * Both action buttons sit in the page's `primary-action` slot, which App Bridge
  * hoists out of the iframe into the admin title bar, so they are located on
- * `page`, not `frame`, and driven through the hoisted helpers. The orders index
- * always slots the sync button, and on a shop with nothing stored the empty
- * state carries a second copy inside the frame; the hoisted one is out of the
- * iframe, so the two locators stay disjoint. The test starts from whichever is
- * enabled first, so it passes on both an empty shop (a wiped local Durable
- * Object) and one that has synced before.
+ * `page`, not `frame`, and driven through the hoisted helpers.
+ *
+ * The hoisted copy is the one to drive, and the only one this test names. The
+ * index slots it unconditionally, while the identically named twin inside the
+ * empty state exists only while the shop has no open orders — so a test that
+ * picked between them would be picking against a list that fills underneath
+ * it: on a shop with orders the empty state is on screen for exactly as long
+ * as it takes the first page to paint, and a locator captured in that window
+ * points at a button that is about to be removed.
  */
-test("orders screen syncs the window and lists orders", async ({ page }) => {
+test("orders screen imports open orders and lists them", async ({ page }) => {
   test.setTimeout(180_000);
 
   const frame = await gotoApp(page);
   await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
 
-  const syncName = { name: /^Sync last \d+ days$/u };
-  const hoistedSync = page.getByRole("button", syncName);
-  const emptyStateSync = frame.getByRole("button", syncName);
-  await expect
-    .poll(
-      async () =>
-        (await hoistedEnabled(hoistedSync)) ||
-        (await emptyStateSync.isEnabled().catch(() => false)),
-    )
-    .toBe(true);
-  const sync = (await hoistedSync.count()) > 0 ? hoistedSync : emptyStateSync;
+  const sync = page.getByRole("button", { name: "Import open orders" });
+  await expect.poll(() => hoistedEnabled(sync)).toBe(true);
 
-  /* The completion signal is a *new* `Last synced` timestamp, not the transient
-     "Syncing…" text and not the button re-enabling. A sandbox window syncs in
-     seconds, so the in-flight state can come and go between polls, and the
-     button is momentarily enabled between the click and the state update —
-     both would pass without proving anything ran. Comparing the timestamp
-     against the one on screen beforehand is the only assertion that can only
-     be satisfied by a run that actually finished. */
-  const status = frame.getByText(/^(?:Last synced|Never synced|Syncing)/u);
-  const before = await status.textContent();
+  /* The completion signal is a *new* `Last imported` timestamp, not the
+     transient "Importing…" text and not the button re-enabling. A sandbox
+     imports in seconds, so the in-flight state can come and go between polls,
+     and the button is momentarily enabled between the click and the state
+     update — both would pass without proving anything ran. Comparing the
+     timestamp against the one on screen beforehand is the only assertion that
+     can only be satisfied by a run that actually finished.
+
+     A shop that has never imported shows no line at all, so the text is read
+     through `count()` first: `textContent()` on a locator that matches
+     nothing does not reject, it waits — and with no action timeout
+     configured, it waits out the whole test. */
+  const status = frame.getByText(/^(?:Last imported|Importing)/u);
+  const statusText = async () =>
+    (await status.count()) > 0 ? await status.textContent() : null;
+  const before = await statusText();
 
   await clickHoisted(sync);
 
   await expect
     .poll(
       async () => {
-        const text = (await status.textContent()) ?? "";
-        return text.startsWith("Last synced") && text !== before;
+        const text = await statusText();
+        return (
+          text !== null && text.startsWith("Last imported") && text !== before
+        );
       },
       { timeout: 120_000 },
     )

@@ -199,9 +199,6 @@ export const runShopAgentOrdersStream = <E = never>({
               node: order,
               source: "bulk",
               syncedAt,
-              // Flattened bulk connections are not paginated, so the set is
-              // complete in Shopify's sense whatever this reader did with it.
-              lineItemsComplete: true,
               lineItemsTruncated: truncated,
             });
             if (truncated)

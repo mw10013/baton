@@ -520,6 +520,7 @@ const seedOrder = (
   shop: string,
   processedAt: number,
   productTags: readonly string[] = [],
+  order: Partial<Domain.ShopOrder> = {},
 ) =>
   runInDurableObject(
     env.SHOP_AGENT.get(env.SHOP_AGENT.idFromName(shop)),
@@ -539,13 +540,12 @@ const seedOrder = (
               financialStatus: "PAID",
               fulfillmentStatus: "UNFULFILLED",
               fullyPaid: true,
-              tags: [],
               note: null,
               customAttributes: [],
-              lineItemsComplete: true,
               lineItemsTruncated: false,
               syncedAt: processedAt,
               syncSource: "manual",
+              ...order,
             },
             lineItems: [
               {
@@ -657,6 +657,50 @@ describe("ShopAgent workflow run callables", () => {
       workflowId,
     });
     strictEqual(gone._tag, "WorkflowCannotStart");
+  });
+
+  /**
+   * The one thing manual attach does not override. `Domain.canAttachRun`
+   * carries the reasoning; this is the rule at the callable.
+   */
+  it("manual attach is refused on a cancelled or fulfilled order and allowed on an unpaid one", async () => {
+    const attachTo = async (shop: string, order: Partial<Domain.ShopOrder>) => {
+      const team = await seedTeam(shop, "Engraving");
+      await seedOrder(shop, Date.now() - 86_400_000, [], order);
+      const agent = await getAgentByName(env.SHOP_AGENT, shop);
+      const created = await agent.createWorkflow({
+        name: "Engrave",
+        tag: "engrave",
+      });
+      if (created._tag !== "Ok") throw new Error(created._tag);
+      const workflowId = created.workflow.id;
+      await agent.addStep({ workflowId, name: "Engrave", teamId: team.id });
+      const applied = await agent.applyDraft({ workflowId });
+      if (applied._tag !== "Ok") throw new Error(applied._tag);
+      await agent.setWorkflowActive({ workflowId, active: true });
+      return agent.attachWorkflow({
+        lineItemId: "gid://shopify/LineItem/1",
+        workflowId,
+      });
+    };
+
+    const cancelled = await attachTo("wf-attach-cancelled.myshopify.com", {
+      cancelledAt: Date.now(),
+    });
+    strictEqual(cancelled._tag, "OrderClosed");
+
+    const fulfilled = await attachTo("wf-attach-fulfilled.myshopify.com", {
+      fulfillmentStatus: "FULFILLED",
+    });
+    strictEqual(fulfilled._tag, "OrderClosed");
+
+    // Unpaid is the merchant's judgement to make: work may start on a
+    // deposit, which is exactly what automatic starts withhold.
+    const unpaid = await attachTo("wf-attach-unpaid.myshopify.com", {
+      fullyPaid: false,
+      financialStatus: "PENDING",
+    });
+    strictEqual(unpaid._tag, "Ok");
   });
 
   it("attachWorkflow over a live run replaces it and names what it cancelled", async () => {
@@ -1322,11 +1366,11 @@ describe("ShopAgent seed callables", () => {
       sql.exec(
         `insert or replace into ShopOrder
            (id, legacyId, name, processedAt, updatedAt, cancelledAt, closedAt,
-            financialStatus, fulfillmentStatus, fullyPaid, tags, note,
-            customAttributes, lineItemsComplete, lineItemsTruncated, syncedAt, syncSource,
+            financialStatus, fulfillmentStatus, fullyPaid, note,
+            customAttributes, lineItemsTruncated, syncedAt, syncSource,
             firstCycleStartAt)
          values ('gid://shopify/Order/synced-1', 'synced-1', '#5001', 1, 1, null, null,
-                 'PAID', 'UNFULFILLED', 1, '[]', null, '[]', 1, 0, 1, 'webhook', 0)`,
+                 'PAID', 'UNFULFILLED', 1, null, '[]', 0, 1, 'webhook', 0)`,
       );
       sql.exec(
         `insert or replace into OrderLineItem
