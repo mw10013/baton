@@ -1,18 +1,19 @@
 import * as React from "react";
 
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  useNavigate,
+  useRouter,
+} from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { MemberBar } from "@/components/MemberBar";
 import {
-  FlagBanner,
   flagBody,
   flagHeading,
   flagTone,
-  Prose,
-  RunItem,
   liftFlagLabel,
 } from "@/components/MemberRun";
 import * as Domain from "@/lib/Domain";
@@ -103,6 +104,31 @@ export const Route = createFileRoute("/shop/$shop/")({
   component: RouteComponent,
 });
 
+/**
+ * What every button inside a queue row must do first.
+ *
+ * `s-clickable` renders an `<a href>` in its shadow root and slots the row
+ * into it — the shape Polaris's own resource-list composition uses
+ * (`refs/shopify-docs/docs/api/app-home/latest/patterns/compositions/resource-list.md`,
+ * "Provide search, filtering, and row selection for a resource list") — so a
+ * click on a button inside the row reaches that anchor. `preventDefault` is
+ * what stops the anchor navigating and `stopPropagation` is what stops the
+ * row's own handler: neither does the other's job, because `stopPropagation`
+ * silences listeners rather than an ancestor's default action. Verified
+ * against the CDN `polaris.js` for both mouse and Enter.
+ *
+ * `s-menu` is the one thing this cannot cover: the menu puts an item's
+ * activation on the row whatever the item's own handler does, so a row's menu
+ * is rendered beside its clickable rather than inside it.
+ */
+const insideRow = (event: {
+  preventDefault: () => void;
+  stopPropagation: () => void;
+}) => {
+  event.preventDefault();
+  event.stopPropagation();
+};
+
 /** Who finished a Done-tier entry; empty rather than "nobody" for a row written before the role column. */
 const doneActorLabel = (step: Domain.WorkflowRunStep) => {
   const actor = Domain.stepCompletedBy(step);
@@ -119,6 +145,7 @@ function RouteComponent() {
   } = Route.useLoaderData();
   const { tab = Domain.DEFAULT_QUEUE_TAB } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
+  const router = useRouter();
   /**
    * Which of the member's own teams, and how far the open tab goes. Client
    * state rather than search params — a bench does not share a team or a
@@ -128,15 +155,6 @@ function RouteComponent() {
    */
   const [team, setTeam] = React.useState<Domain.TeamId | null>(null);
   const [limit, setLimit] = React.useState(Domain.QUEUE_PAGE);
-  /**
-   * Run ids whose detail is showing. Nothing is open on first paint, not even
-   * Mine: every open row ships its attributes, instructions, note, and step
-   * buttons, and sixteen of them expanded is what put the first paint at 135
-   * KB against a 100 KB target. The member's own Start opens the row they just
-   * took, which is the one they are about to look at; everything else opens on
-   * a tap.
-   */
-  const [open, setOpen] = React.useState<ReadonlySet<string>>(new Set());
   /**
    * The subscribe pattern (`Domain.Subscription`): the loader's rows paint
    * first, then `subscribeQueue` re-reads them over the socket and registers
@@ -174,43 +192,13 @@ function RouteComponent() {
   });
 
   /**
-   * `open` is pruned to the rows on the page whenever the view changes: an id
-   * whose row has left the queue is forgotten, so a run that comes back later
-   * (an Undo, a reconcile) arrives collapsed like any other newcomer rather
-   * than reopening unasked, and the set cannot grow for the life of the mount.
-   */
-  const shownIds = React.useMemo(
-    () => new Set<string>(view.items.map((item) => item.run.id)),
-    [view],
-  );
-  // Adjusted during render, not in an effect, so the pruned set paints in the
-  // same pass as the view that pruned it (React's "storing information from
-  // previous renders" pattern).
-  const [prunedFor, setPrunedFor] = React.useState(shownIds);
-  if (prunedFor !== shownIds) {
-    setPrunedFor(shownIds);
-    const next = new Set([...open].filter((id) => shownIds.has(id)));
-    if (next.size !== open.size) setOpen(next);
-  }
-
-  const toggle = (runId: string) => {
-    setOpen((current) => {
-      const next = new Set(current);
-      if (!next.delete(runId)) next.add(runId);
-      return next;
-    });
-  };
-
-  /**
-   * A tab is a different list: depth resets and expansions close, because
-   * "Show 25 more" of Up next is not a promise about Blocked. `replace: true`
-   * so Back leaves the queue rather than walking the member back through every
-   * tab they glanced at.
+   * A tab is a different list, so depth resets: "Show 25 more" of Up next is
+   * not a promise about Blocked. `replace: true` so Back leaves the queue
+   * rather than walking the member back through every tab they glanced at.
    */
   const selectTab = (next: Domain.QueueTab) => {
     if (next === tab) return;
     setLimit(Domain.QUEUE_PAGE);
-    setOpen(new Set());
     void navigate({ search: { tab: next }, replace: true });
   };
 
@@ -218,7 +206,6 @@ function RouteComponent() {
   const selectTeam = (next: Domain.TeamId | null) => {
     setTeam(next);
     setLimit(Domain.QUEUE_PAGE);
-    setOpen(new Set());
   };
 
   const showMore = () => {
@@ -228,109 +215,37 @@ function RouteComponent() {
   };
 
   /**
-   * `flagged` hides Start and Done. A flag means the work has stopped or
-   * changed under the maker, so a Start button beneath a banner that says
-   * "Blocked" is the row arguing with itself; the one action offered is the
-   * one in the banner. The fixer's extra tap (Unblock, then Done) is the
-   * price, and they are the rare reader.
+   * The row's link target, built once here. A real `href` — built through the
+   * router rather than written as a string — is what keeps middle-click and
+   * open-in-new-tab working on a row; the click handler beside it turns an
+   * ordinary tap into a client navigation so the socket and the query cache
+   * survive it. `QueueBreadcrumb` on the work page is the same pattern
+   * pointing back the other way.
    */
-  /**
-   * `offered` is the step whose action the row already shows, so the detail
-   * does not repeat that button under it: Start when the step is untouched,
-   * Done once it is in hand. The one button the row cannot offer stays — Done
-   * on an untouched step, for the maker who finished without pressing Start.
-   */
-  const renderStep = (
-    step: Domain.QueueStep,
-    flagged: boolean,
-    offered: boolean,
-  ) => {
-    const started = step.startedAt !== null;
-    /** The viewer's own name is noise on their own row; anyone else's is the point. */
-    const startedBy = Domain.stepStartedBy(step);
-    const startedBySomeoneElse =
-      startedBy === null || Domain.actorIsMember(startedBy, memberEmail)
-        ? null
-        : startedBy;
-    const reopenedBy = Domain.stepReopenedBy(step);
-    return (
-      <s-box
-        key={step.id}
-        padding="small"
-        borderWidth="base"
-        borderRadius="base"
-        background="subdued"
-      >
-        <s-stack gap="small-300">
-          <s-text type="strong">{step.name}</s-text>
-          {step.instructions !== null && <s-text>{step.instructions}</s-text>}
-          {started && (
-            <s-text color="subdued">
-              In progress since{" "}
-              <LocalDateTime value={step.startedAt ?? 0} format="time" />
-              {startedBySomeoneElse === null
-                ? ""
-                : ` by ${Domain.actorLabel(startedBySomeoneElse)}`}
-            </s-text>
-          )}
-          {reopenedBy !== null && step.reopenedAt !== null && (
-            <s-text color="subdued">
-              {`Reopened by ${Domain.actorLabel(reopenedBy)} · `}
-              <LocalDateTime value={step.reopenedAt} format="relative" />
-            </s-text>
-          )}
-          {step.note !== null && (
-            <Prose color="subdued">{Domain.stepNoteLine(step)}</Prose>
-          )}
-          {!flagged && !(offered && started) && (
-            <s-stack direction="inline" gap="base">
-              {!started && !offered && (
-                <s-button
-                  variant="secondary"
-                  disabled={actions.pending}
-                  onClick={() => {
-                    actions.start.mutate(step.id);
-                  }}
-                >
-                  Start
-                </s-button>
-              )}
-              <s-button
-                variant="primary"
-                disabled={actions.pending}
-                onClick={() => {
-                  actions.complete.mutate(step.id);
-                }}
-              >
-                Done
-              </s-button>
-            </s-stack>
-          )}
-        </s-stack>
-      </s-box>
-    );
-  };
+  const workLocation = (runId: string) =>
+    ({ to: "/shop/$shop/work/$runId", params: { shop, runId } }) as const;
 
   /**
-   * One row per queue item, in three columns: the order, the work, the action.
-   * The row is not itself one `s-clickable` — the action button sits inside it
-   * and a button inside a button is neither valid nor operable — so only the
-   * middle column toggles the detail.
+   * One row per queue item: the whole row is one link to the work page, and
+   * the action button is the only thing in it that is not. It replaced three
+   * targets with three results — order link, expand, action — of which only
+   * the first looked interactive; the work page shows everything the expanded
+   * row used to and the run history, the editors and a printable ticket
+   * besides, for the same single tap.
    *
-   * Line two says the one thing the reader needs and no more: why it stopped,
-   * who has it, or where it is in the run. Everything else is behind the tap.
+   * Line one is the order, the step, how many more of the run's steps are
+   * ready, and the flag. Line two carries the item's title — here rather than
+   * beside the step name, where the two ran together with no separator — and
+   * then the one thing the reader needs and no more: why it stopped, who has
+   * it, or where it is in the run.
    */
-  const renderItem = (
-    item: Domain.QueueItem,
-    tab: Domain.QueueTab,
-    first: boolean,
-  ) => {
+  const renderItem = (item: Domain.QueueItem, first: boolean) => {
     const { run, steps } = item;
     const flagged = Domain.runIsFlagged(run);
     const [step, ...rest] = steps;
     const started = step.startedAt !== null;
     const startedBy = Domain.stepStartedBy(step);
-    const expanded = open.has(run.id);
+    const menuId = `queue-actions-${run.id}`;
     const stepLine = `Step ${String(step.stage)} of ${String(item.stageCount)} · ${step.teamName}`;
     const detailLine = () => {
       if (flagged) return flagBody(run) ?? stepLine;
@@ -341,13 +256,21 @@ function RouteComponent() {
         : Domain.actorLabel(startedBy);
       return `In progress · ${who}`;
     };
+    /**
+     * `flagged` hides Start and Done. A flag means the work has stopped or
+     * changed under the maker, so a Start button on a row badged "Blocked" is
+     * the row arguing with itself; the one action offered is the one that
+     * lifts the flag. The fixer's extra tap (Unblock, then Done) is the
+     * price, and they are the rare reader.
+     */
     const action = () => {
       if (flagged)
         return (
           <s-button
             variant="secondary"
             disabled={actions.pending}
-            onClick={() => {
+            onClick={(event) => {
+              insideRow(event);
               actions.dismiss.mutate(run.id);
             }}
           >
@@ -357,56 +280,26 @@ function RouteComponent() {
       /**
        * Several ready steps: one button would act on the first and say
        * nothing about the rest, so the row offers a menu naming each step
-       * with its own action instead. The detail keeps every step's buttons
-       * too, because nothing here is `offered`.
+       * with its own action instead.
        */
-      if (rest.length > 0) {
-        const menuId = `queue-actions-${run.id}`;
+      if (rest.length > 0)
         return (
-          <>
-            <s-button
-              variant="secondary"
-              disabled={actions.pending}
-              commandFor={menuId}
-            >
-              Actions
-            </s-button>
-            <s-menu
-              id={menuId}
-              accessibilityLabel={`Steps of ${run.orderName}`}
-            >
-              {steps.map((each) =>
-                each.startedAt === null ? (
-                  <s-button
-                    key={each.id}
-                    onClick={() => {
-                      actions.start.mutate(each.id);
-                      setOpen((current) => new Set(current).add(run.id));
-                    }}
-                  >
-                    {`Start · ${each.name}`}
-                  </s-button>
-                ) : (
-                  <s-button
-                    key={each.id}
-                    onClick={() => {
-                      actions.complete.mutate(each.id);
-                    }}
-                  >
-                    {`Done · ${each.name}`}
-                  </s-button>
-                ),
-              )}
-            </s-menu>
-          </>
+          <s-button
+            variant="secondary"
+            disabled={actions.pending}
+            commandFor={menuId}
+            onClick={insideRow}
+          >
+            Actions
+          </s-button>
         );
-      }
       if (started)
         return (
           <s-button
             variant="primary"
             disabled={actions.pending}
-            onClick={() => {
+            onClick={(event) => {
+              insideRow(event);
               actions.complete.mutate(step.id);
             }}
           >
@@ -417,9 +310,9 @@ function RouteComponent() {
         <s-button
           variant="secondary"
           disabled={actions.pending}
-          onClick={() => {
+          onClick={(event) => {
+            insideRow(event);
             actions.start.mutate(step.id);
-            setOpen((current) => new Set(current).add(run.id));
           }}
         >
           Start
@@ -429,88 +322,80 @@ function RouteComponent() {
     return (
       <s-box
         key={run.id}
-        padding="small-100 base"
-        /* Two marks rather than two tinted rows: Polaris backgrounds are
-           subdued / base / strong, with no critical or success surface to tint
-           one with. A flag gets an inline-start rule under its tone badge; a
-           row the reader has in hand gets the subdued surface. */
-        background={!flagged && tab === "mine" ? "subdued" : "base"}
-        borderWidth={`${first ? "none" : "base"} none ${flagged ? "large-100" : "none"} none`}
+        /* One mark, not two: a flagged row gets a rule down its leading edge
+           under the tone badge. The subdued surface that used to mark a row
+           in hand went with the expand — it fired on the Mine tab, where
+           every row qualifies, so it tinted the whole list and separated
+           nothing.
+
+           The four values are block-start, inline-end, block-end,
+           inline-start: the first is the separator above every row but the
+           list's first, the last is the flag. The flag used to sit in the
+           third slot, which put it under the row as a heavier separator
+           belonging to whatever came next. */
+        borderWidth={`${first ? "none" : "base"} none none ${flagged ? "large-100" : "none"}`}
         borderColor={flagged ? "strong" : "base"}
       >
-        <s-stack gap="small-300">
+        <s-clickable
+          href={router.buildLocation(workLocation(run.id)).href}
+          accessibilityLabel={`Open ${run.orderName}`}
+          padding="small-100 base"
+          onClick={(event) => {
+            event.preventDefault();
+            void router.navigate(workLocation(run.id));
+          }}
+        >
           <s-grid
-            gridTemplateColumns="auto 1fr auto"
+            gridTemplateColumns="1fr auto"
             gap="small-300"
             alignItems="center"
           >
-            <Link to="/shop/$shop/work/$runId" params={{ shop, runId: run.id }}>
-              {run.orderName}
-            </Link>
-            <s-clickable
-              accessibilityLabel={`${expanded ? "Collapse" : "Expand"} ${run.orderName}`}
-              aria-expanded={expanded}
-              onClick={() => {
-                toggle(run.id);
-              }}
-            >
-              <s-stack gap="small-500">
-                <s-stack direction="inline" gap="small-500" alignItems="center">
-                  <s-text type="strong">{step.name}</s-text>
-                  {rest.length > 0 && (
-                    <s-text color="subdued">{`+${String(rest.length)}`}</s-text>
-                  )}
-                  <s-text color="subdued">{run.lineItemTitle}</s-text>
-                  {flagged && (
-                    <s-badge tone={flagTone(run) ?? "critical"}>
-                      {flagHeading(run) ?? ""}
-                    </s-badge>
-                  )}
-                </s-stack>
-                {/* `.queue-detail-line` in `styles.css` cuts it to two lines. */}
-                <div className="queue-detail-line">
-                  <s-text color="subdued">{detailLine()}</s-text>
-                </div>
+            <s-stack gap="small-500">
+              <s-stack direction="inline" gap="small-300" alignItems="center">
+                <s-text color="subdued">{run.orderName}</s-text>
+                <s-text type="strong">{step.name}</s-text>
+                {rest.length > 0 && (
+                  <s-text color="subdued">{`+${String(rest.length)}`}</s-text>
+                )}
+                {flagged && (
+                  <s-badge tone={flagTone(run) ?? "critical"}>
+                    {flagHeading(run) ?? ""}
+                  </s-badge>
+                )}
               </s-stack>
-            </s-clickable>
-            <s-stack direction="inline" gap="small-300" alignItems="center">
-              <s-text color="subdued">
-                <LocalDateTime value={run.orderProcessedAt} format="relative" />
-              </s-text>
-              {action()}
+              {/* `.queue-detail-line` in `styles.css` cuts it to two lines. */}
+              <div className="queue-detail-line">
+                <s-text color="subdued">{`${run.lineItemTitle} · ${detailLine()}`}</s-text>
+              </div>
             </s-stack>
+            {action()}
           </s-grid>
-          {expanded && (
-            <s-stack gap="small-300">
-              <RunItem run={run} />
-              {item.note !== null && item.note.length > 0 && (
-                <Prose color="subdued">{`Order note: ${item.note}`}</Prose>
-              )}
-              <FlagBanner
-                run={run}
-                actions={
-                  <s-button
-                    slot="secondary-actions"
-                    variant="secondary"
-                    disabled={actions.pending}
-                    onClick={() => {
-                      actions.dismiss.mutate(run.id);
-                    }}
-                  >
-                    {liftFlagLabel(run)}
-                  </s-button>
-                }
-              />
-              {steps.map((each) =>
-                renderStep(
-                  each,
-                  flagged,
-                  rest.length === 0 && each.id === step.id,
-                ),
-              )}
-            </s-stack>
-          )}
-        </s-stack>
+        </s-clickable>
+        {rest.length > 0 && (
+          <s-menu id={menuId} accessibilityLabel={`Steps of ${run.orderName}`}>
+            {steps.map((each) =>
+              each.startedAt === null ? (
+                <s-button
+                  key={each.id}
+                  onClick={() => {
+                    actions.start.mutate(each.id);
+                  }}
+                >
+                  {`Start · ${each.name}`}
+                </s-button>
+              ) : (
+                <s-button
+                  key={each.id}
+                  onClick={() => {
+                    actions.complete.mutate(each.id);
+                  }}
+                >
+                  {`Done · ${each.name}`}
+                </s-button>
+              ),
+            )}
+          </s-menu>
+        )}
       </s-box>
     );
   };
@@ -523,54 +408,71 @@ function RouteComponent() {
       teams.map((team) => team.id),
     ).undo;
 
+  /**
+   * A finished step's row, the same shape as a waiting one. Undo always has a
+   * button — disabled when something downstream has started — because a
+   * missing control reads as a row that was never undoable, while a disabled
+   * one beside the reason reads as the refusal it is. The reason itself goes
+   * on line two: the action column is for what the reader can do, not for a
+   * sentence.
+   */
   const renderDone = (entry: Domain.DoneItem, first: boolean) => (
     <s-box
       key={entry.step.id}
-      padding="small-100 base"
       borderWidth={first ? "none" : "base none none none"}
     >
-      <s-grid
-        gridTemplateColumns="auto 1fr auto"
-        gap="small-300"
-        alignItems="center"
+      <s-clickable
+        href={router.buildLocation(workLocation(entry.run.id)).href}
+        accessibilityLabel={`Open ${entry.run.orderName}`}
+        padding="small-100 base"
+        onClick={(event) => {
+          event.preventDefault();
+          void router.navigate(workLocation(entry.run.id));
+        }}
       >
-        <Link
-          to="/shop/$shop/work/$runId"
-          params={{ shop, runId: entry.run.id }}
+        <s-grid
+          gridTemplateColumns="1fr auto"
+          gap="small-300"
+          alignItems="center"
         >
-          {entry.run.orderName}
-        </Link>
-        <s-stack gap="small-500">
-          <s-stack direction="inline" gap="small-500" alignItems="center">
-            <s-text type="strong">{entry.step.name}</s-text>
-            <s-text color="subdued">{entry.run.lineItemTitle}</s-text>
+          <s-stack gap="small-500">
+            <s-stack direction="inline" gap="small-300" alignItems="center">
+              <s-text color="subdued">{entry.run.orderName}</s-text>
+              <s-text type="strong">{entry.step.name}</s-text>
+            </s-stack>
+            <div className="queue-detail-line">
+              <s-text color="subdued">
+                {`${entry.run.lineItemTitle} · by ${doneActorLabel(entry.step)} at `}
+                <LocalDateTime
+                  value={entry.step.completedAt ?? 0}
+                  format="time"
+                />
+                {entry.step.note === null
+                  ? ""
+                  : ` · ${Domain.stepNoteLine(entry.step)}`}
+              </s-text>
+            </div>
+            {/* Its own line, outside the clamp: this is the row's account of
+                why the button beside it is dead, and a reason cut off at an
+                ellipsis is the refusal without the reason. */}
+            {entry.undoBlockedBy !== null && (
+              <s-text color="subdued">
+                {`Can’t undo: ${Domain.undoBlockerLine(entry.undoBlockedBy)}`}
+              </s-text>
+            )}
           </s-stack>
-          <s-text color="subdued">
-            {`by ${doneActorLabel(entry.step)} at `}
-            <LocalDateTime value={entry.step.completedAt ?? 0} format="time" />
-            {entry.step.note === null
-              ? ""
-              : ` · ${Domain.stepNoteLine(entry.step)}`}
-          </s-text>
-        </s-stack>
-        {doneUndo(entry)?.blockedBy === null ? (
           <s-button
             variant="secondary"
-            disabled={actions.pending}
-            onClick={() => {
+            disabled={actions.pending || doneUndo(entry)?.blockedBy !== null}
+            onClick={(event) => {
+              insideRow(event);
               actions.uncomplete.mutate(entry.step.id);
             }}
           >
             Undo
           </s-button>
-        ) : (
-          entry.undoBlockedBy !== null && (
-            <s-text color="subdued">
-              {`${entry.undoBlockedBy.teamName} started ${entry.undoBlockedBy.stepName} · ask them`}
-            </s-text>
-          )
-        )}
-      </s-grid>
+        </s-grid>
+      </s-clickable>
     </s-box>
   );
 
@@ -596,62 +498,87 @@ function RouteComponent() {
     view.counts.teamCounts.find((count) => count.teamId === teamId)?.count ?? 0;
 
   /**
-   * A select rather than a row of chips: the team list is unbounded, and a
-   * select whose value is the team already reads as the pressed chip, so this
-   * is one control where the chips were a row that wrapped. Its counts are
+   * A button naming the chosen team, with the list behind it, rather than a
+   * full-width select: the filter only exists for a member on more than one
+   * team, and as a select it was the widest and so the loudest control on a
+   * screen whose subject is the list below it. As a button it leads the strip
+   * and takes the width of a team name.
+   *
+   * The button carries no count. The tab counts beside it are narrowed to the
+   * chosen team while `counts.total` is over every team, so two numbers on
+   * one row would be counting different things. Inside the menu the counts
+   * stay, because there they are what is being chosen between — and they are
    * over every team whatever is selected, so the option just chosen does not
    * renumber itself.
    */
-  const teamSelect =
+  const teamMenuId = "queue-team-menu";
+  const teamMenu =
     teams.length > 1 ? (
-      <s-select
-        label="Team"
-        labelAccessibilityVisibility="exclusive"
-        value={team ?? ""}
-        onChange={(event) => {
-          const value = event.currentTarget.value;
-          selectTeam(teams.find(({ id }) => id === value)?.id ?? null);
-        }}
-      >
-        <s-option value="">{`All teams · ${String(view.counts.total)}`}</s-option>
-        {teams.map((each) => (
-          <s-option key={each.id} value={each.id}>
-            {`${each.name} · ${String(teamCount(each.id))}`}
-          </s-option>
-        ))}
-      </s-select>
+      <div>
+        <s-button variant="secondary" commandFor={teamMenuId}>
+          {team === null
+            ? "All teams"
+            : (teams.find(({ id }) => id === team)?.name ?? "All teams")}
+        </s-button>
+        <s-menu id={teamMenuId} accessibilityLabel="Team">
+          <s-button
+            onClick={() => {
+              selectTeam(null);
+            }}
+          >
+            {`All teams · ${String(view.counts.total)}`}
+          </s-button>
+          {teams.map((each) => (
+            <s-button
+              key={each.id}
+              onClick={() => {
+                selectTeam(each.id);
+              }}
+            >
+              {`${each.name} · ${String(teamCount(each.id))}`}
+            </s-button>
+          ))}
+        </s-menu>
+      </div>
     ) : null;
 
   /**
-   * The strip is the heading: every tab with its count, the open one pressed.
-   * A zero-count tab stays — the strip must not reflow when a count crosses
-   * zero — and stays enabled, because an empty list with its empty state is a
-   * valid screen to land on. Blocked goes critical only while it has rows, so
-   * the one colour on the strip always means something is stopped.
+   * The strip is the heading — literally, now that the page has none: every
+   * tab with its count, the open one pressed. A zero-count tab stays — the
+   * strip must not reflow when a count crosses zero — and stays enabled,
+   * because an empty list with its empty state is a valid screen to land on.
+   * Blocked goes critical only while it has rows, so the one colour on the
+   * strip always means something is stopped.
+   *
+   * Five tabs and nothing else. The team filter sits on its own line above
+   * rather than leading this row: a team name is merchant-typed and
+   * unbounded, so sharing the row makes the strip's width a function of how
+   * long somebody called a team — one long name and the tabs are pushed off
+   * the end of a scroller on a screen that had room for them.
    */
   const strip = (
+    /* Not `s-button-group`, which renders only its named action slots so
+       buttons in its default slot never reach the page; and not `s-stack`,
+       which wraps when it is inline. `.queue-strip-tabs` in `styles.css` is
+       the row and the scroller both. */
     <div className="queue-strip-tabs">
-      {/* `s-stack`, not `s-button-group`: the group renders only its named
-          action slots, so buttons in its default slot never reach the page. */}
-      <s-stack direction="inline" gap="small-300">
-        {TABS.map((each) => (
-          <s-button
-            key={each}
-            variant={each === tab ? "primary" : "secondary"}
-            tone={
-              each === "attention" && view.counts.attention > 0
-                ? "critical"
-                : "auto"
-            }
-            aria-pressed={each === tab}
-            onClick={() => {
-              selectTab(each);
-            }}
-          >
-            {`${TAB_LABEL[each]} · ${String(view.counts[each])}`}
-          </s-button>
-        ))}
-      </s-stack>
+      {TABS.map((each) => (
+        <s-button
+          key={each}
+          variant={each === tab ? "primary" : "secondary"}
+          tone={
+            each === "attention" && view.counts.attention > 0
+              ? "critical"
+              : "auto"
+          }
+          aria-pressed={each === tab}
+          onClick={() => {
+            selectTab(each);
+          }}
+        >
+          {`${TAB_LABEL[each]} · ${String(view.counts[each])}`}
+        </s-button>
+      ))}
     </div>
   );
 
@@ -683,7 +610,7 @@ function RouteComponent() {
     <s-box borderWidth="base" borderRadius="base">
       {tab === "done"
         ? view.done.map((entry, index) => renderDone(entry, index === 0))
-        : view.items.map((item, index) => renderItem(item, tab, index === 0))}
+        : view.items.map((item, index) => renderItem(item, index === 0))}
       {hidden > 0 && renderMore(hidden)}
     </s-box>
   );
@@ -697,7 +624,11 @@ function RouteComponent() {
   return (
     <>
       <MemberBar shop={shop} email={memberEmail} />
-      <s-page heading="Queue" inlineSize="small">
+      {/* No `heading`: the strip below says the same word and says more with
+          it, and a heading block above the fold is what a bench tablet has
+          least of. The document title keeps "Queue" — that is the browser
+          tab, which is the one place the app's own noun does work. */}
+      <s-page inlineSize="small">
         <SocketBanner />
         <s-section accessibilityLabel="Queue">
           <s-stack gap="base">
@@ -714,7 +645,7 @@ function RouteComponent() {
                 {/* `.queue-strip` in `styles.css` keeps it on screen. */}
                 <div className="queue-strip">
                   <s-stack gap="small-300">
-                    {teamSelect}
+                    {teamMenu}
                     {strip}
                   </s-stack>
                 </div>

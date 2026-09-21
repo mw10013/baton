@@ -223,6 +223,13 @@ function RouteComponent() {
             )}
           </s-stack>
           {state.text !== null && <s-text color="subdued">{state.text}</s-text>}
+          {/* Under the state line rather than beside the button: the action
+              column says what the reader cannot do, this line says why. */}
+          {can.undo !== null && can.undo.blockedBy !== null && (
+            <s-text color="subdued">
+              {`Can’t undo: ${Domain.undoBlockerLine(can.undo.blockedBy)}`}
+            </s-text>
+          )}
           {reopenedBy !== null && step.reopenedAt !== null && (
             <s-text color="subdued">
               {`Reopened by ${Domain.actorLabel(reopenedBy)} · `}
@@ -314,9 +321,9 @@ function RouteComponent() {
                     Undo
                   </s-button>
                 ) : (
-                  <s-text color="subdued">
-                    {`${can.undo.blockedBy.teamName} started ${can.undo.blockedBy.stepName} · ask them`}
-                  </s-text>
+                  <s-button variant="secondary" disabled>
+                    Undo
+                  </s-button>
                 ))}
               {can.note && !editingNote && (
                 <s-button

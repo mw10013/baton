@@ -4,7 +4,13 @@ import type { SeedConfig } from "./seed";
 
 import { expect, test } from "@playwright/test";
 
-import { awaitEnabled, clickWhenEnabled, gotoMember, signIn } from "./member";
+import {
+  awaitDisabled,
+  awaitEnabled,
+  clickWhenEnabled,
+  gotoMember,
+  signIn,
+} from "./member";
 import { seedConfig, seedMembers } from "./seed";
 
 /**
@@ -42,14 +48,21 @@ const BOX_ORDER = "#9402";
 /** Routed Cut → Polish across the two teams; seeded only where a test needs downstream work. */
 const BAND_ORDER = "#9403";
 const BAND_TAG = "e2e-queue-band";
-/** The queue card names the step and nothing else: progress is the work page's. */
+/** The queue row names the step and nothing else: progress is the work page's. */
 const CUT_STEP = "Cut";
+/** The work page's start line. A queue row says `In progress · <who>` instead. */
 const STARTED = "In progress since";
+/** A queue row's state line once the reader themselves has the step in hand. */
+const MINE_STATE = "In progress · you";
 /** Per-tab empty text (`TAB_EMPTY` in `src/lib/queueTiers.ts`). */
 const EMPTY_MINE = "Nothing in hand.";
 const EMPTY_DONE = "Nothing finished in the last day.";
-/** Every seeded order is `#94xx`, which is how a card is counted rather than read. */
-const ORDER_LINK = /^#94\d\d$/u;
+/**
+ * Every seeded order is `#94xx`, which is how a row is counted rather than
+ * read. The row itself is the link, so what it announces is its
+ * `accessibilityLabel` rather than the order number printed inside it.
+ */
+const ORDER_LINK = /^Open #94\d\d$/u;
 /**
  * Filler Cut orders, numbered clear of the three named ones. Twenty-five and
  * not twenty-four: the ring order is a Cut order too, so the mate's Up next
@@ -63,7 +76,7 @@ const BULK_FIRST = 9410;
 /** Tab labels, as `TAB_LABEL` writes them on the strip. */
 const MINE = "Mine";
 const UP_NEXT = "Up next";
-const IN_PROGRESS = "In progress";
+const TEAMMATES = "Teammates";
 const BLOCKED = "Blocked";
 const DONE_TODAY = "Done today";
 
@@ -224,7 +237,11 @@ const openQueue = async (
     page,
     `/shop/${config.shop}${tab === undefined ? "" : `?tab=${tab}`}`,
   );
-  await expect(page.locator('s-page[heading="Queue"]')).toBeVisible();
+  /* The section, not an `s-page` heading: the page has none, and the section's
+     accessibility label is what names the landmark now. */
+  await expect(
+    page.locator('s-section[accessibilityLabel="Queue"]'),
+  ).toBeVisible();
   return page;
 };
 
@@ -255,6 +272,14 @@ const selectTab = async (
 };
 
 /**
+ * A row's own link to the work page. The whole row is one `s-clickable href`,
+ * so it announces itself by its label rather than by the order number printed
+ * inside it.
+ */
+const rowLink = (page: Page, orderName: string) =>
+  page.getByRole("link", { name: `Open ${orderName}`, exact: true });
+
+/**
  * The queue row for one order: the innermost `s-box` holding that order's
  * link. `.last()`, not `.first()`: the tab's list container is an `s-box`
  * around every row and so matches the same filter, and it is the ancestor, so
@@ -263,16 +288,8 @@ const selectTab = async (
 const card = (page: Page, orderName: string) =>
   page
     .locator("s-box")
-    .filter({ has: page.getByRole("link", { name: orderName, exact: true }) })
+    .filter({ has: rowLink(page, orderName) })
     .last();
-
-/**
- * Opens a row's detail. The row is three columns and only the middle one
- * toggles — an `s-clickable` around a button would be a button inside a
- * button — so the target is that clickable, by the label it announces.
- */
-const expandRow = (page: Page, orderName: string) =>
-  page.locator(`s-clickable[accessibilityLabel="Expand ${orderName}"]`).click();
 
 test.describe.configure({ mode: "serial" });
 
@@ -295,7 +312,9 @@ test.beforeAll(async ({ browser }) => {
     const page = await context.newPage();
     await signIn(page, email);
     // A one-shop member lands on the queue itself, not the picker.
-    await expect(page.locator('s-page[heading="Queue"]')).toBeVisible();
+    await expect(
+      page.locator('s-section[accessibilityLabel="Queue"]'),
+    ).toBeVisible();
     const state = await context.storageState();
     await context.close();
     return state;
@@ -324,7 +343,7 @@ test("a member starts and completes their team's ready step over the socket", as
 
   await expect(page.getByText(RING_ORDER, { exact: true })).toBeVisible();
   await expect(page.getByText(CUT_STEP, { exact: true })).toBeVisible();
-  await expect(page.getByText(STARTED)).toBeHidden();
+  await expect(page.getByText(MINE_STATE)).toBeHidden();
   await markDocument(page);
 
   await clickWhenEnabled(page.getByRole("button", { name: "Start" }));
@@ -340,18 +359,54 @@ test("a member starts and completes their team's ready step over the socket", as
 
   await selectTab(page, "mine", MINE);
   await expect(page.getByText(RING_ORDER, { exact: true })).toBeVisible();
-  await expandRow(page, RING_ORDER);
-  await expect(page.getByText(STARTED)).toBeVisible();
+  /* The row says the start landed without being opened: it is the reader's
+     own, and Start has given way to Done on the row itself. */
+  await expect(page.getByText(MINE_STATE)).toBeVisible();
   await expect(page.getByRole("button", { name: "Start" })).toBeHidden();
 
-  /* The row's Done and the step's Done both finish the same step; the row's
-     is the one a thumb hits. */
   await clickWhenEnabled(
     page.getByRole("button", { name: "Done", exact: true }).first(),
   );
   await expect(page.getByText(RING_ORDER, { exact: true })).toBeHidden();
   await expect(page.getByText(EMPTY_MINE)).toBeVisible();
   await expectSameDocument(page);
+});
+
+/**
+ * The row has one link and one button, and each does only its own job. Both
+ * halves matter: the row body opens the work page, and the action button
+ * writes without moving the reader — a row that navigated under a thumb
+ * reaching for Done would cost the member their place in the list on every
+ * piece they finish.
+ */
+test("a queue row opens the work page and its action button does not", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedQueue(config, { cutMembers: [MAKER], keepIdentities: true });
+  const page = await openQueue(browser, config, makerState, "upNext");
+  await expect(page.getByText(RING_ORDER, { exact: true })).toBeVisible();
+
+  /* The row body, not the order number: the number is plain text now and the
+     whole row is the target. */
+  await rowLink(page, RING_ORDER).click();
+  await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
+
+  await page.goBack();
+  /* Wait for the queue itself, not for the order number: until Back lands,
+     the order number on the work page's own heading matches too. */
+  await expect(
+    page.locator('s-section[accessibilityLabel="Queue"]'),
+  ).toBeVisible();
+  await expect(card(page, RING_ORDER)).toBeVisible();
+  const queueUrl = page.url();
+  await clickWhenEnabled(
+    card(page, RING_ORDER).getByRole("button", { name: "Start" }),
+  );
+  /* The write landed and the reader stayed put: the strip renumbered and the
+     address bar still says the queue. */
+  await expect(page.getByRole("button", { name: `${MINE} · 1` })).toBeVisible();
+  await expect(page).toHaveURL(queueUrl);
 });
 
 /**
@@ -389,18 +444,16 @@ test("a completed step lands on another member's queue without a reload", async 
   /* The push reaches the mate whatever tab they are on: the strip renumbers
      under them while they are still reading Up next. */
   await expect(
-    mate.getByRole("button", { name: `${IN_PROGRESS} · 1` }),
+    mate.getByRole("button", { name: `${TEAMMATES} · 1` }),
   ).toBeVisible();
   await expect(
     mate.getByRole("button", { name: `${UP_NEXT} · 1` }),
   ).toBeVisible();
 
-  /* The mate's row says who has it without being opened; the start time is
-     inside the detail, which only its own reader opens. */
-  await selectTab(mate, "inProgress", IN_PROGRESS);
+  /* The mate's row says who has it; the start time is on the work page the
+     row links to, which is one tap away and not on the list. */
+  await selectTab(mate, "inProgress", TEAMMATES);
   await expect(mate.getByText(`In progress · ${MAKER}`)).toBeVisible();
-  await expandRow(mate, RING_ORDER);
-  await expect(mate.getByText(STARTED)).toBeVisible();
 
   await selectTab(maker, "mine", MINE);
   await clickWhenEnabled(
@@ -453,12 +506,12 @@ test("removing a member from a team empties their open queue", async ({
 /**
  * The strip, driven by the two real actors rather than the seed: untouched
  * work is counted under "Up next"; the maker's own Start moves the card to
- * "Mine" on their page and to "In progress" — naming them — on the mate's,
+ * "Mine" on their page and to "Teammates" — naming them — on the mate's,
  * which arrives by push. The counts on the strip are the shape of the day,
  * and every tab stays on it whatever its count, so nothing reflows when a
  * number crosses zero.
  */
-test("a started card moves to Mine for the starter and In progress for a teammate", async ({
+test("a started card moves to Mine for the starter and Teammates for a teammate", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -488,12 +541,12 @@ test("a started card moves to Mine for the starter and In progress for a teammat
   await expect(card(maker, RING_ORDER).getByText(MINE)).toHaveCount(0);
 
   await expect(
-    mate.getByRole("button", { name: `${IN_PROGRESS} · 1` }),
+    mate.getByRole("button", { name: `${TEAMMATES} · 1` }),
   ).toBeVisible();
   await expect(
     mate.getByRole("button", { name: `${UP_NEXT} · 1` }),
   ).toBeVisible();
-  await selectTab(mate, "inProgress", IN_PROGRESS);
+  await selectTab(mate, "inProgress", TEAMMATES);
   await expect(mate.getByText(`In progress · ${MAKER}`)).toBeVisible();
 });
 
@@ -531,10 +584,14 @@ test("Up next cuts at a page, pages on Show more, and re-cuts when the team chan
   ).toHaveCount(0);
 
   /* The team counts are over every team whatever is selected, so the option
-     names the same 26 before and after it is chosen. */
-  await page
-    .getByRole("combobox", { name: "Team" })
-    .selectOption({ label: `${CUT_TEAM} · 26` });
+     names the same 26 before and after it is chosen. The button beside them
+     carries no count at all: the tab counts are team-narrowed and this one is
+     not, so on one row they would be counting different things. */
+  await page.getByRole("button", { name: "All teams", exact: true }).click();
+  await page.getByRole("menuitem", { name: `${CUT_TEAM} · 26` }).click();
+  await expect(
+    page.getByRole("button", { name: CUT_TEAM, exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: `${UP_NEXT} · 26` }),
   ).toBeVisible();
@@ -542,6 +599,55 @@ test("Up next cuts at a page, pages on Show more, and re-cuts when the team chan
   await expect(
     page.getByRole("button", { name: "Show 1 more of 1" }),
   ).toBeVisible();
+});
+
+/**
+ * Five tabs are wider than a phone. They scroll in one row rather than wrap
+ * into a second that would move the list under a reader's finger every time a
+ * count crossed a digit — and the scrollbar is hidden, because a permanent
+ * grey track is the loudest thing on a screen whose subject is the list under
+ * it.
+ *
+ * The team filter is not one of them. A team name is merchant-typed and
+ * unbounded, so on the strip it would decide how many tabs a screen has room
+ * for; it gets its own line above. The mate drives this because the filter
+ * only renders for a member on more than one team.
+ */
+test("the tabs scroll in one row and the team filter is not one of them", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedQueue(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
+  const page = await openQueue(browser, config, mateState, "upNext");
+  await page.setViewportSize({ width: 375, height: 800 });
+
+  await expect(
+    page.getByRole("button", { name: "All teams", exact: true }),
+  ).toBeVisible();
+  const strip = page.locator(".queue-strip-tabs");
+  const metrics = await strip.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      wrap: style.flexWrap,
+      scrollbar: style.scrollbarWidth,
+      overflows: element.scrollWidth > element.clientWidth,
+      holdsTeamFilter:
+        element.querySelector('[commandfor="queue-team-menu"]') !== null,
+    };
+  });
+  expect(metrics).toEqual({
+    wrap: "nowrap",
+    scrollbar: "none",
+    overflows: true,
+    holdsTeamFilter: false,
+  });
+
+  /* One team, no filter: the line above the strip is not there at all rather
+     than holding a control with nothing to choose between. */
+  const maker = await openQueue(browser, config, makerState, "upNext");
+  await expect(
+    maker.getByRole("button", { name: "All teams", exact: true }),
+  ).toHaveCount(0);
 });
 
 /**
@@ -617,7 +723,7 @@ test("a done run's work page offers Undo on its last step", async ({
   const config = seedConfig();
   await seedQueue(config, { cutMembers: [MAKER], keepIdentities: true });
   const page = await openQueue(browser, config, makerState, "upNext");
-  await page.getByRole("link", { name: RING_ORDER, exact: true }).click();
+  await rowLink(page, RING_ORDER).click();
   await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
 
   await clickWhenEnabled(
@@ -642,10 +748,14 @@ test("a done run's work page offers Undo on its last step", async ({
 
 /**
  * Once downstream has started the fix is a conversation: the mate (on the
- * Polish team) starts the next stage, and the maker's Done today entry loses
- * its Undo button for the "ask them" line naming that team and step.
+ * Polish team) starts the next stage, and the maker's Done today entry keeps
+ * its Undo button — disabled, beside the clause naming the step that stands in
+ * the way. The button stays because a row that simply dropped it reads as one
+ * that was never undoable.
  */
-test("undo is refused once downstream started", async ({ browser }) => {
+test("a blocked undo names the step that stands in the way and keeps a disabled button", async ({
+  browser,
+}) => {
   const config = seedConfig();
   await seedQueue(config, {
     cutMembers: [MAKER],
@@ -653,9 +763,12 @@ test("undo is refused once downstream started", async ({ browser }) => {
     withBand: true,
   });
   const maker = await openQueue(browser, config, makerState, "upNext");
-  /* A step nobody has started offers Start on the row; Done for it is in the
-     detail, which is what the row opens. */
-  await expandRow(maker, BAND_ORDER);
+  /* The row carries one button: Start while nobody has the step, Done once
+     the maker does, so finishing from the queue takes no detour. */
+  await clickWhenEnabled(
+    card(maker, BAND_ORDER).getByRole("button", { name: "Start" }),
+  );
+  await selectTab(maker, "mine", MINE);
   await clickWhenEnabled(
     card(maker, BAND_ORDER).getByRole("button", { name: "Done", exact: true }),
   );
@@ -663,7 +776,7 @@ test("undo is refused once downstream started", async ({ browser }) => {
     maker.getByRole("button", { name: `${DONE_TODAY} · 1` }),
   ).toBeVisible();
   await selectTab(maker, "done", DONE_TODAY);
-  await expect(maker.getByRole("button", { name: "Undo" })).toBeVisible();
+  await awaitEnabled(maker.getByRole("button", { name: "Undo" }));
 
   const mate = await openQueue(browser, config, mateState, "upNext");
   await clickWhenEnabled(
@@ -671,9 +784,9 @@ test("undo is refused once downstream started", async ({ browser }) => {
   );
 
   await expect(
-    maker.getByText(`${PACK_TEAM} started Polish · ask them`),
+    maker.getByText(`Can’t undo: Polish (${PACK_TEAM}) already started`),
   ).toBeVisible();
-  await expect(maker.getByRole("button", { name: "Undo" })).toBeHidden();
+  await awaitDisabled(maker.getByRole("button", { name: "Undo" }));
 });
 
 /**
@@ -692,7 +805,7 @@ test("the work page shows the step history and takes a note, a block, and Done",
     withBand: true,
   });
   const page = await openQueue(browser, config, makerState, "upNext");
-  await page.getByRole("link", { name: BAND_ORDER, exact: true }).click();
+  await rowLink(page, BAND_ORDER).click();
   await expect(page.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
   await expect(page.getByText("E2E Cuff ×1")).toBeVisible();
   await expect(page.getByText("Waiting on step 1")).toBeVisible();
@@ -734,7 +847,9 @@ test("the work page shows the step history and takes a note, a block, and Done",
      inside the banner and offers no step buttons at all, which is the whole
      of "blocked means stop". */
   await page.getByRole("link", { name: "Queue", exact: true }).click();
-  await expect(page.locator('s-page[heading="Queue"]')).toBeVisible();
+  await expect(
+    page.locator('s-section[accessibilityLabel="Queue"]'),
+  ).toBeVisible();
   /* The breadcrumb carries no tab, so the queue lands on Mine; a held run is
      on Blocked, which the strip counts from wherever the reader is. */
   await selectTab(page, "attention", BLOCKED);
@@ -744,7 +859,7 @@ test("the work page shows the step history and takes a note, a block, and Done",
   await expect(
     blocked.getByRole("button", { name: "Done", exact: true }),
   ).toHaveCount(0);
-  await page.getByRole("link", { name: BAND_ORDER, exact: true }).click();
+  await rowLink(page, BAND_ORDER).click();
   await expect(page.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
 
   await clickWhenEnabled(page.getByRole("button", { name: "Unblock" }));
@@ -755,7 +870,9 @@ test("the work page shows the step history and takes a note, a block, and Done",
   await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
 
   await page.getByRole("link", { name: "Queue", exact: true }).click();
-  await expect(page.locator('s-page[heading="Queue"]')).toBeVisible();
+  await expect(
+    page.locator('s-section[accessibilityLabel="Queue"]'),
+  ).toBeVisible();
   /* Cut is done and Polish is the packer's, so the run is no card of the
      maker's any more; what remains of it on this page is the Done entry. */
   await expect(
@@ -794,7 +911,7 @@ test("a merchant's completion reads as Merchant on the queue and the work page",
   await selectTab(page, "done", DONE_TODAY);
   await expect(page.getByText("by Merchant at")).toBeVisible();
 
-  await page.getByRole("link", { name: BAND_ORDER, exact: true }).click();
+  await rowLink(page, BAND_ORDER).click();
   await expect(page.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
   await expect(page.getByText("Done by Merchant")).toBeVisible();
 

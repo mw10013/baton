@@ -1075,7 +1075,13 @@ describe("ShopAgent workflow run callables", () => {
       memberId,
       email: memberEmail,
     });
-    strictEqual(blocked?.steps[0]?.note, "spelling confirmed");
+    // The step note is the work page's read, not the queue row's: the row
+    // shows the step and one state clause and nothing else.
+    const runView = await agent.getRunForMember({ runId, teamIds: [team.id] });
+    strictEqual(
+      runView?.steps.find((step) => step.id === runStepId)?.note,
+      "spelling confirmed",
+    );
   });
 
   it("assignRunStepTeam puts an unassigned open step in the new team's queue; the order view lists the roster", async () => {

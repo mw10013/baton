@@ -87,6 +87,17 @@ export const awaitEnabled = async (locator: Locator): Promise<void> => {
 };
 
 /**
+ * Wait for a control to be really disabled, for the rows that keep a control
+ * on screen to say the reader cannot use it — a missing button reads as a row
+ * that never offered one. Same `disabled` read as {@link awaitEnabled},
+ * because Playwright's own check cannot see an `s-button`'s.
+ */
+export const awaitDisabled = async (locator: Locator): Promise<void> => {
+  await expect(locator).toBeVisible();
+  await expect.poll(() => controlEnabled(locator)).toBe(false);
+};
+
+/**
  * Click a control once it is really clickable.
  *
  * On `/shop/$shop` this doubles as the wait for the `ShopAgent` socket: the

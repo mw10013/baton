@@ -289,8 +289,10 @@ test("the merchant marks a step done, reopens it, and blocks the run", async ({
 
 /**
  * Reopen is not offered once someone downstream has moved — the same rule the
- * worker's Undo obeys, with the instruction instead of "ask them". Both stages
- * are marked done from this page, so Polish is the blocker on Cut's row.
+ * worker's Undo obeys, naming the blocker with the one clause every screen
+ * shares (`Domain.undoBlockerLine`) and the merchant's own verb after it.
+ * Both stages are marked done from this page, so Polish is the blocker on
+ * Cut's row.
  */
 test("the merchant cannot reopen a step whose next stage is done", async ({
   page,
@@ -332,7 +334,9 @@ test("the merchant cannot reopen a step whose next stage is done", async ({
   await frame.getByRole("button", { name: "Manage" }).click();
 
   await expect(
-    frame.getByText(`${POLISH_TEAM} started Polish · reopen it first`),
+    frame.getByText(
+      `Can’t reopen: Polish (${POLISH_TEAM}) already started — reopen it first`,
+    ),
   ).toBeVisible();
   /* Polish itself is the last stage, so exactly one Reopen is on the page. */
   await expect(frame.getByRole("button", { name: "Reopen" })).toHaveCount(1);

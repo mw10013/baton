@@ -366,7 +366,6 @@ const queueItem = (
       name: Schema.decodeUnknownSync(Domain.StepName)("Cut"),
       teamId: Schema.decodeUnknownSync(Domain.TeamId)("t"),
       teamName: Schema.decodeUnknownSync(Domain.TeamName)("T"),
-      instructions: null,
       startedAt: overrides.startedBy === undefined ? null : 1,
       startedBy:
         overrides.startedBy === undefined
@@ -378,17 +377,10 @@ const queueItem = (
           : Schema.decodeUnknownSync(Domain.Email)(
               overrides.startedByEmail ?? `${overrides.startedBy}@example.com`,
             ),
-      note: null,
       startedByRole: overrides.startedBy === undefined ? null : "member",
-      reopenedAt: null,
-      reopenedByRole: null,
-      reopenedByEmail: null,
-      noteByRole: null,
-      siblings: [],
     },
   ],
   stageCount: 1,
-  note: null,
 });
 
 const runIds = (items: readonly Domain.QueueItem[]) =>
@@ -831,5 +823,25 @@ describe("Domain.orderIsSeeded", () => {
       true,
     );
     strictEqual(Domain.orderIsSeeded("gid://shopify/Order/1001"), false);
+  });
+});
+
+describe("Domain.undoBlockerLine", () => {
+  it("the undo blocker is named the same way on every screen", () => {
+    const blocker: Domain.UndoBlocker = {
+      stepName: Schema.decodeUnknownSync(Domain.StepName)("Fit movement"),
+      teamName: Schema.decodeUnknownSync(Domain.TeamName)("Finishing"),
+    };
+    strictEqual(
+      Domain.undoBlockerLine(blocker),
+      "Fit movement (Finishing) already started",
+    );
+    /* The clause states the fact and nothing else: the queue and the work page
+       prefix "Can't undo", the merchant's order page "Can't reopen", so a verb
+       here would be one of them said twice and the other two contradicted. */
+    const line = Domain.undoBlockerLine(blocker).toLowerCase();
+    strictEqual(line.includes("undo"), false);
+    strictEqual(line.includes("reopen"), false);
+    strictEqual(line.includes("ask"), false);
   });
 });

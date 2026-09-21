@@ -186,16 +186,39 @@ details[open] > .live-value-summary .live-value-preview {
   background: var(--s-color-bg-surface, #fff);
 }
 
-/* Five tabs on a phone are wider than the viewport; they scroll rather than wrap into a second row that moves the list under the finger. */
+/*
+ * Five tabs are wider than a phone: they scroll rather than wrap into a
+ * second row that would move the list under a reader's finger. The row is a
+ * plain flex div and not an `s-stack`, because `s-stack direction="inline"`
+ * wraps by contract and a wrapping row inside a horizontal scroller never
+ * scrolls — it just grows taller. `0.375rem` is Polaris's `small-300`, the
+ * gap the strip had while it was a stack.
+ *
+ * The scrollbar itself is hidden. A permanent grey track under the tabs is
+ * the loudest thing on a screen whose subject is the list below it, and on
+ * the bench this is a touch surface where the gesture needs no chrome to
+ * advertise it; the tabs are cut mid-button at the edge, which is the
+ * affordance every horizontal strip uses. Both declarations are needed:
+ * `scrollbar-width` is the standard one, the pseudo-element is what WebKit
+ * honours.
+ */
 .queue-strip-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.375rem;
   overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.queue-strip-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 /*
  * Line two of a queue row, cut to two lines with an ellipsis: a blocked reason
- * can be a paragraph, and the row is not where it is read — the expanded row
- * shows the whole thing in its banner. `-webkit-box` is still the only clamp
- * Safari honours.
+ * can be a paragraph, and the row is not where it is read — the work page the
+ * row links to shows the whole thing in its banner. `-webkit-box` is still the
+ * only clamp Safari honours.
  */
 .queue-detail-line {
   display: -webkit-box;

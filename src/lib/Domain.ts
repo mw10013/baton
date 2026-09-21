@@ -2976,37 +2976,67 @@ export const WorkflowRunDetail = Schema.Struct({
 export type WorkflowRunDetail = typeof WorkflowRunDetail.Type;
 
 /**
- * One ready step the member may act on. `siblings` are the other steps of
- * the same stage that are *not* in the item — owned by other teams — so a
- * worker can see who they are working alongside. `startedByEmail` is read
- * off the row, the snapshot taken at Start, never a live join.
+ * One ready step the member may act on, cut to what a queue row renders.
+ * `startedByEmail` is read off the row — the snapshot taken at Start, never a
+ * live join — and it is load-bearing beyond display: {@link tierOf} decides
+ * "Mine" with it.
  *
- * The four `completed*` columns are omitted rather than carried as nulls.
- * Readiness is `completedAt is null` (`readyWhere`), and Undo clears the
- * whole slot, so on a queue step every one of them is null by construction —
- * four fields per step that cost bytes on every SSR paint and every refetch
- * and can never say anything. A finished step is a {@link DoneItem}, which
- * carries the full {@link WorkflowRunStep} because there the slot is the
- * point.
+ * Two groups of columns are omitted rather than carried as nulls. The four
+ * `completed*` ones can never say anything here: readiness is `completedAt is
+ * null` (`readyWhere`) and Undo clears the whole slot, so on a queue step
+ * every one of them is null by construction. The rest — instructions, the
+ * note and its role, the reopened slot — say something, but only on the work
+ * page: a row shows the step's name and one state clause, and everything
+ * behind that is one tap away. Either way they are fields per step on every
+ * SSR paint and every refetch.
+ *
+ * A finished step is a {@link DoneItem}, which carries the whole
+ * {@link WorkflowRunStep} because there the slot is the point.
  */
-export const QueueStep = Schema.Struct({
-  ...Struct.omit(WorkflowRunStep.fields, [
+export const QueueStep = Schema.Struct(
+  Struct.omit(WorkflowRunStep.fields, [
     "completedAt",
     "completedBy",
     "completedByEmail",
     "completedByRole",
+    "instructions",
+    "note",
+    "noteByRole",
+    "reopenedAt",
+    "reopenedByRole",
+    "reopenedByEmail",
   ]),
-  siblings: Schema.Array(Schema.Struct({ name: StepName, teamName: TeamName })),
-});
+);
 export type QueueStep = typeof QueueStep.Type;
 
 /**
- * One row of a member's queue: a run with every *ready* step — open, and
- * nothing in an earlier stage still open — that belongs to one of the
- * member's teams. `stageCount` is the run's last stage, for "step k of n".
- * `note` is the order's live note, joined at read time rather than
- * snapshotted because a merchant edits it while work is in progress.
+ * The run behind a queue row, cut the same way. `orderProcessedAt` and
+ * `lineItemId` stay although nothing prints them: they are two thirds of
+ * {@link byAge}, which is the order every tier is in. `quantity` stays
+ * because `flagBody` falls back to it when a `quantity_changed` flag carries
+ * no `to`, and that clause is line two of a flagged row.
+ *
+ * What goes is everything only the work page reads — the workflow's name,
+ * the order id, the variant, the SKU, the timestamps, and
+ * `customAttributes`, which is the one that matters: a JSON blob on every row
+ * of every read, parsed on arrival, to render nothing.
  */
+export const QueueRun = Schema.Struct(
+  Struct.omit(WorkflowRun.fields, [
+    "workflowId",
+    "workflowName",
+    "orderId",
+    "variantTitle",
+    "sku",
+    "customAttributes",
+    "source",
+    "createdAt",
+    "updatedAt",
+    "cancelledAt",
+  ]),
+);
+export type QueueRun = typeof QueueRun.Type;
+
 /**
  * One line item of the order a run is on, read live for the work page's
  * "Also on this order" (never snapshotted) so a late item shows as soon as
@@ -3023,11 +3053,20 @@ export const QueueOrderItem = Schema.Struct({
 });
 export type QueueOrderItem = typeof QueueOrderItem.Type;
 
+/**
+ * One row of a member's queue: a run with every *ready* step — open, and
+ * nothing in an earlier stage still open — that belongs to one of the
+ * member's teams. `stageCount` is the run's last stage, for "step k of n".
+ *
+ * The order's live note is not here. It is the work page's, along with the
+ * step instructions and the item's attributes: the row is a list entry that
+ * names the piece and its state, and the page one tap behind it is where a
+ * maker reads anything.
+ */
 export const QueueItem = Schema.Struct({
-  run: WorkflowRun,
+  run: QueueRun,
   steps: Schema.NonEmptyArray(QueueStep),
   stageCount: Schema.Number,
-  note: Schema.NullOr(Schema.String),
 });
 export type QueueItem = typeof QueueItem.Type;
 
@@ -3180,6 +3219,24 @@ export const undoBlockedBy = (
     ? null
     : { stepName: blocker.name, teamName: blocker.teamName };
 };
+
+/**
+ * How every screen names the step that stands between a finished step and
+ * Undo. The step leads and the team is parenthetical: the other order —
+ * "Finishing started Fit movement" — garden-paths, because a reader who does
+ * not already know the team names reads the first word as the subject and the
+ * second as a verb.
+ *
+ * The clause carries no verb of its own. The caller supplies it, because the
+ * two audiences do different things about the same fact: a member cannot undo
+ * and is being told why, a merchant can reopen the blocker first. One
+ * sentence with three callers, so the screens cannot drift the way they had
+ * before this existed.
+ *
+ * See {@link undoBlockedBy} for what qualifies as a blocker.
+ */
+export const undoBlockerLine = (blocker: UndoBlocker) =>
+  `${blocker.stepName} (${blocker.teamName}) already started`;
 
 /**
  * One entry of the queue's "Done today" tier: a step one of the member's

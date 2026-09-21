@@ -27,11 +27,22 @@ export const TABS = [
  * (quantity changed, order cancelled, already shipped) name themselves in
  * their own banner heading inside the row. One accurate word beats a category
  * name that describes nothing the reader can act on.
+ *
+ * The `inProgress` tab reads **Teammates** for the opposite reason: "In
+ * progress" is already the state line on the member's own rows (`In progress
+ * · you`) and the active item badge, so as a tab word it would name the
+ * wrong thing twice over. What the tab is for is who is holding the work, and
+ * that is what it says. The tier key stays `inProgress` — the object groups,
+ * the strip labels.
+ *
+ * `Done today` stays as it is even though the window is
+ * `Domain.DONE_WINDOW_MS` rather than a calendar day: the tab's empty state
+ * says "in the last day", which is where that precision belongs.
  */
 export const TAB_LABEL: Record<Domain.QueueTab, string> = {
   mine: "Mine",
   upNext: "Up next",
-  inProgress: "In progress",
+  inProgress: "Teammates",
   attention: "Blocked",
   done: "Done today",
 };
@@ -44,7 +55,7 @@ export const TAB_EMPTY: Record<
   mine: { text: "Nothing in hand.", goTo: "upNext" },
   upNext: { text: "Nothing to start.", goTo: null },
   inProgress: {
-    text: "Nobody on your teams has work in progress.",
+    text: "Nobody else on your teams has work in hand.",
     goTo: null,
   },
   attention: { text: "Nothing is blocked.", goTo: null },

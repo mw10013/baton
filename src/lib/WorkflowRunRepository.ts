@@ -648,8 +648,7 @@ export class WorkflowRunRepository extends Context.Service<
       const decodeQueueRuns = decode(
         Schema.Array(
           Schema.Struct({
-            ...Domain.WorkflowRun.fields,
-            note: Schema.NullOr(Schema.String),
+            ...Domain.QueueRun.fields,
             stageCount: Schema.Number,
           }),
         ),
@@ -783,10 +782,14 @@ export class WorkflowRunRepository extends Context.Service<
       /**
        * Every queue row the teams own, unsorted and uncapped: one
        * {@link Domain.QueueItem} per run with at least one ready step of
-       * `teamIds`, carrying that run's last stage, the order's live note, and
-       * each step's same-stage siblings owned by *other* teams so a worker can
-       * see who they are working alongside. Actor emails are on the row
+       * `teamIds`, carrying that run's last stage. Actor emails are on the row
        * already, so no roster join and no D1 read.
+       *
+       * The first statement still reads *every* ready step of a qualifying
+       * run, including steps owned by other teams: that is how it decides the
+       * run qualifies at all, and it is why the row's own steps are filtered
+       * in TypeScript below rather than in SQL. Nothing about the other
+       * teams' steps is shipped.
        *
        * Separate from `listQueue` because tiering, narrowing, and capping are
        * decisions about the rows rather than about the query: keeping them
@@ -814,48 +817,42 @@ export class WorkflowRunRepository extends Context.Service<
           const runIds = [...new Set(ready.map((step) => step.runId))];
           const runs = yield* decodeQueueRuns(
             yield* sql`
-              select r.*, o.note,
+              select r.*,
                 (select max(stage) from WorkflowRunStep c where c.runId = r.id) as stageCount
               from WorkflowRun r
-              left join ShopOrder o on o.id = r.orderId
               where r.id in (select value from json_each(${json(runIds)}))
               order by r.orderProcessedAt, r.lineItemId, r.id
             `,
           );
-          return runs.flatMap(
-            ({ note, stageCount, ...run }): Domain.QueueItem[] => {
-              const ofRun = ready.filter((step) => step.runId === run.id);
-              const [first, ...rest] = ofRun
-                .filter(
-                  (step) =>
-                    step.teamId !== null && teamIds.includes(step.teamId),
-                )
-                // The completed slot is dropped, not nulled: a ready step
-                // has none, and it is four fields on every row of every read.
-                .map((step) => ({
-                  ...Struct.omit(step, [
-                    "completedAt",
-                    "completedBy",
-                    "completedByEmail",
-                    "completedByRole",
-                  ]),
-                  siblings: ofRun
-                    .filter(
-                      (other) =>
-                        other.stage === step.stage &&
-                        (other.teamId === null ||
-                          !teamIds.includes(other.teamId)),
-                    )
-                    .map((other) => ({
-                      name: other.name,
-                      teamName: other.teamName,
-                    })),
-                }));
-              return first === undefined
-                ? []
-                : [{ run, steps: [first, ...rest], stageCount, note }];
-            },
-          );
+          return runs.flatMap(({ stageCount, ...run }): Domain.QueueItem[] => {
+            const [first, ...rest] = ready
+              .filter(
+                (step) =>
+                  step.runId === run.id &&
+                  step.teamId !== null &&
+                  teamIds.includes(step.teamId),
+              )
+              // Whatever the row does not render is dropped rather than
+              // nulled or carried: the shape is {@link Domain.QueueStep} and
+              // its JSDoc is why.
+              .map((step) =>
+                Struct.omit(step, [
+                  "completedAt",
+                  "completedBy",
+                  "completedByEmail",
+                  "completedByRole",
+                  "instructions",
+                  "note",
+                  "noteByRole",
+                  "reopenedAt",
+                  "reopenedByRole",
+                  "reopenedByEmail",
+                ]),
+              );
+            return first === undefined
+              ? []
+              : [{ run, steps: [first, ...rest], stageCount }];
+          });
         },
       );
 
@@ -1627,10 +1624,10 @@ export class WorkflowRunRepository extends Context.Service<
 
         /**
          * Two statements, then the grouping in TypeScript: every ready step of
-         * every run that has at least one ready step for the caller's teams (so
-         * siblings owned by other teams are in hand), then those runs with
-         * their last stage and the order's live note. `json_each` keeps the
-         * team list a single bound parameter.
+         * every run that has at least one ready step for the caller's teams
+         * (the other teams' steps are what decide the run qualifies; they are
+         * not shipped), then those runs with their last stage. `json_each`
+         * keeps the team list a single bound parameter.
          *
          * The statements ignore `query.team` and read all of `teamIds`: the
          * counts the team select shows are over every team, and narrowing the

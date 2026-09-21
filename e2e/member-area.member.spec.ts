@@ -63,7 +63,9 @@ test("a seeded member signs in by magic link, lands on their queue, and signs ou
   await followMagicLink(page);
 
   await expect(page).toHaveURL(new RegExp(`/shop/${config.shop}$`, "u"));
-  await expect(page.locator('s-page[heading="Queue"]')).toBeVisible();
+  await expect(
+    page.locator('s-section[accessibilityLabel="Queue"]'),
+  ).toBeVisible();
   await expect(page.getByText(config.shop, { exact: true })).toBeVisible();
   await expect(page.getByText(MEMBER_EMAIL, { exact: true })).toBeVisible();
   /* Seeded with no team: membership is login, teams are work, so a member with
@@ -77,7 +79,9 @@ test("a seeded member signs in by magic link, lands on their queue, and signs ou
     page.locator(`s-section[heading="${MEMBER_EMAIL}"]`),
   ).toBeVisible();
   await page.getByRole("link", { name: config.shop }).click();
-  await expect(page.locator('s-page[heading="Queue"]')).toBeVisible();
+  await expect(
+    page.locator('s-section[accessibilityLabel="Queue"]'),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/localhost:\d+\/$/u);
@@ -100,7 +104,9 @@ test("removing a member closes the shop page on their live session", async ({
 
   await requestMagicLink(page, MEMBER_EMAIL);
   await followMagicLink(page);
-  await expect(page.locator('s-page[heading="Queue"]')).toBeVisible();
+  await expect(
+    page.locator('s-section[accessibilityLabel="Queue"]'),
+  ).toBeVisible();
 
   await seedMembers(config, []);
   await gotoMember(page, `/shop/${config.shop}`);
@@ -136,14 +142,19 @@ test("a member sees the teams they are on, and only those", async ({
 
   await requestMagicLink(page, MEMBER_EMAIL);
   await followMagicLink(page);
-  await expect(page.locator('s-page[heading="Queue"]')).toBeVisible();
+  await expect(
+    page.locator('s-section[accessibilityLabel="Queue"]'),
+  ).toBeVisible();
 
-  const teams = page.getByRole("combobox", { name: "Team" });
-  await expect(teams.getByRole("option", { name: `${TEAM} · 0` })).toHaveCount(
+  /* The filter is a button naming the chosen team with the list behind it;
+     the counts live in the menu, where they are what is being chosen
+     between. */
+  await page.getByRole("button", { name: "All teams", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: `${TEAM} · 0` })).toHaveCount(
     1,
   );
   await expect(
-    teams.getByRole("option", { name: `${SECOND_TEAM} · 0` }),
+    page.getByRole("menuitem", { name: `${SECOND_TEAM} · 0` }),
   ).toHaveCount(1);
   await expect(page.getByText(OTHER_TEAM)).toBeHidden();
   await expect(page.getByText(TEAMLESS_STATE)).toBeHidden();

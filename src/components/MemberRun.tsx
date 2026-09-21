@@ -21,7 +21,7 @@ import { formatNumber } from "@/lib/format";
  */
 
 /** The banner heading: the flag kind, and the only place it is named. */
-export const flagHeading = (run: Domain.WorkflowRun) =>
+export const flagHeading = (run: { readonly flag: Domain.RunFlag | null }) =>
   run.flag === null
     ? null
     : Match.value(run.flag).pipe(
@@ -40,7 +40,11 @@ export const flagHeading = (run: Domain.WorkflowRun) =>
  * already says everything. A `blocked` run's body is the reason **as typed**,
  * with no prefix — the heading is the prefix.
  */
-export const flagBody = (run: Domain.WorkflowRun) =>
+export const flagBody = (run: {
+  readonly flag: Domain.RunFlag | null;
+  readonly flagDetail: Domain.RunFlagDetail | null;
+  readonly quantity: number;
+}) =>
   run.flag === null
     ? null
     : Match.value(run.flag).pipe(
@@ -68,7 +72,7 @@ export const flagBody = (run: Domain.WorkflowRun) =>
  * act (a hold, a cancelled or deleted order); `warning` where the work has
  * merely changed under the maker and the response is to read and acknowledge.
  */
-export const flagTone = (run: Domain.WorkflowRun) =>
+export const flagTone = (run: { readonly flag: Domain.RunFlag | null }) =>
   run.flag === null
     ? null
     : Match.value(run.flag).pipe(

@@ -1532,7 +1532,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
       }),
     ));
 
-  it("listQueue shows only current steps for the given teams, flagged first, with the run's own personalization", () =>
+  it("listQueue shows only current steps for the given teams, flagged first", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -1550,14 +1550,10 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         // orders them: the same order `listRunsForOrder` gave `first` and
         // `second`.
         deepStrictEqual(
-          teamAQueue.map((item) => [
-            item.run.id,
-            item.steps[0]?.name,
-            item.note,
-          ]),
+          teamAQueue.map((item) => [item.run.id, item.steps[0]?.name]),
           [
-            [first.run.id, "Cut", "Gift wrap please"],
-            [second.run.id, "Cut", "Gift wrap please"],
+            [first.run.id, "Cut"],
+            [second.run.id, "Cut"],
           ],
         );
         strictEqual(first.run.lineItemId < second.run.lineItemId, true);
@@ -1585,7 +1581,14 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           blocked.map((item) => [item.run.id, item.run.flag]),
           [[second.run.id, "item_removed"]],
         );
-        strictEqual(blocked[0]?.run.customAttributes?.[0]?.value, "Hello 2");
+        /* The personalization is the work page's, not the row's, so it is
+           read back off the run rather than off the queue item. */
+        const reconciled = yield* runsForOrder();
+        strictEqual(
+          reconciled.find((each) => each.run.id === second.run.id)?.run
+            .customAttributes[0]?.value,
+          "Hello 2",
+        );
         deepStrictEqual(
           (yield* queueRows({
             teamIds: [TEAM_A.id, TEAM_B.id],
@@ -1649,8 +1652,8 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
 
         const queue = yield* queueRows({ teamIds: [TEAM_B.id] });
         deepStrictEqual(
-          queue.map((item) => [item.run.id, item.note]),
-          [[activeRun.run.id, null]],
+          queue.map((item) => item.run.id),
+          [activeRun.run.id],
         );
       }),
     ));
@@ -1689,7 +1692,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
       }),
     ));
 
-  it("listQueue tiers by the reader: my started step is Mine, a teammate's is In progress, a flag is Blocked for both", () =>
+  it("listQueue tiers by the reader: my started step is Mine, a teammate's is Teammates, a flag is Blocked for both", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -1874,7 +1877,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
       }),
     ));
 
-  it("listQueue returns every ready step per run with stageCount and cross-team siblings", () =>
+  it("listQueue returns every ready step per run that the reader's teams own, with stageCount", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedStaged;
@@ -1887,17 +1890,12 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           teamA[0]?.steps.map((s) => [s.name, s.stage]),
           [["Artwork", 1]],
         );
-        deepStrictEqual<unknown>(teamA[0]?.steps[0]?.siblings, [
-          { name: "Materials", teamName: "Team B" },
-        ]);
-
         const both = yield* queueRows({ teamIds: [TEAM_A.id, TEAM_B.id] });
         strictEqual(both.length, 1);
         deepStrictEqual(
           both[0]?.steps.map((s) => s.name),
           ["Artwork", "Materials"],
         );
-        deepStrictEqual(both[0]?.steps[0]?.siblings, []);
 
         strictEqual((yield* queueRows({ teamIds: [TEAM_C.id] })).length, 0);
         yield* complete(detail, 1, [TEAM_A.id]);

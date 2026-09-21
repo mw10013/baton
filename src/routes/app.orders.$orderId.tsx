@@ -1112,7 +1112,7 @@ function RouteComponent() {
                         </s-button>
                       ) : (
                         <s-text color="subdued">
-                          {`${blocker.teamName} started ${blocker.stepName} \u00B7 reopen it first`}
+                          {`Can\u2019t reopen: ${Domain.undoBlockerLine(blocker)} \u2014 reopen it first`}
                         </s-text>
                       ))}
                     {noteButton}
