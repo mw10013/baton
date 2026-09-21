@@ -54,10 +54,7 @@ export const TAB_EMPTY: Record<
 > = {
   mine: { text: "Nothing in hand.", goTo: "upNext" },
   upNext: { text: "Nothing to start.", goTo: null },
-  inProgress: {
-    text: "Nobody else on your teams has work in hand.",
-    goTo: null,
-  },
+  inProgress: { text: "Nobody else has work.", goTo: null },
   attention: { text: "Nothing is blocked.", goTo: null },
   done: { text: "Nothing finished in the last day.", goTo: null },
 };

@@ -1,3 +1,5 @@
+import type * as React from "react";
+
 import { useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
@@ -23,13 +25,22 @@ import { signOutFn } from "@/lib/memberSignOut";
  * heading so it is answered on every screen at the cost of one line on none
  * of them. A shared bench tablet is the case that needs it: the person who
  * picks it up has to know whose session they are about to press Done in.
+ *
+ * `filter` is a slot beside the shop for a control that belongs to the screen
+ * below rather than to the bar. The queue passes its team filter there and
+ * every other member screen passes nothing, so the bar does change shape by
+ * route — that is the price of keeping the queue's one filter off a line of
+ * its own on the screen with least room for one. Nothing the bar owns moves
+ * either way, which is what the "where am I, who am I" job actually needs.
  */
 export function MemberBar({
   shop,
   email,
+  filter,
 }: {
   readonly shop: string;
   readonly email?: string;
+  readonly filter?: React.ReactNode;
 }) {
   const signOut = useServerFn(signOutFn);
   const signOutMutation = useMutation({ mutationFn: () => signOut({}) });
@@ -41,33 +52,36 @@ export function MemberBar({
         alignItems="center"
         justifyContent="space-between"
       >
-        <Link
-          to="/shop/$shop"
-          params={{ shop }}
-          style={{ textDecoration: "none", color: "inherit" }}
-        >
-          <s-stack direction="inline" gap="small-300" alignItems="center">
-            <svg
-              viewBox="0 0 32 32"
-              width="24"
-              height="24"
-              aria-hidden="true"
-              style={{ display: "block", flexShrink: 0 }}
-            >
-              <rect width="32" height="32" rx="7" fill="#1a1a1a" />
-              <rect
-                x="8"
-                y="14"
-                width="16"
-                height="4"
-                rx="2"
-                fill="#fff"
-                transform="rotate(-35 16 16)"
-              />
-            </svg>
-            <s-text type="strong">{shop}</s-text>
-          </s-stack>
-        </Link>
+        <s-stack direction="inline" gap="small-300" alignItems="center">
+          <Link
+            to="/shop/$shop"
+            params={{ shop }}
+            style={{ textDecoration: "none", color: "inherit" }}
+          >
+            <s-stack direction="inline" gap="small-300" alignItems="center">
+              <svg
+                viewBox="0 0 32 32"
+                width="24"
+                height="24"
+                aria-hidden="true"
+                style={{ display: "block", flexShrink: 0 }}
+              >
+                <rect width="32" height="32" rx="7" fill="#1a1a1a" />
+                <rect
+                  x="8"
+                  y="14"
+                  width="16"
+                  height="4"
+                  rx="2"
+                  fill="#fff"
+                  transform="rotate(-35 16 16)"
+                />
+              </svg>
+              <s-text type="strong">{shop}</s-text>
+            </s-stack>
+          </Link>
+          {filter}
+        </s-stack>
         <s-stack direction="inline" gap="small-300" alignItems="center">
           {email !== undefined && <s-text color="subdued">{email}</s-text>}
           <s-button
