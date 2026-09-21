@@ -29,10 +29,12 @@ import { seedConfig } from "./seed";
  * it. It still moves the shared store's real subscription, so whatever plan
  * the store started on is restored in `finally`.
  *
- * The tier is read from the Plan card's "Orders this billing period: n of m"
- * line, the one number that differs between tiers on that page and that comes
- * straight from `Domain.entitlementsOfPlan`; the plan heading is not used
- * because `<s-heading>` renders its text behind a Polaris shadow slot.
+ * The tier is read from the `max` of the home page's orders capacity meter:
+ * that attribute is `Domain.entitlementsOfPlan(...).ordersPerCycle` itself, the
+ * one number that differs between tiers on that page. It is read off the
+ * attribute rather than the text beside it because both the count and the
+ * allowance are rendered in `<s-heading>`, whose text Polaris puts behind a
+ * shadow slot.
  *
  * The second test is a *recording*, not an assertion. Whether Shopify defers a
  * paid-to-paid downgrade to the next cycle or applies it at once is Shopify's
@@ -49,28 +51,22 @@ const ADMIN_EMAIL = "e2e.admin@example.com";
 /** Display names from the Partner Dashboard listing (README, "Billing"). UI labels, not entitlements. */
 const PLAN_CARD_NAME = { basic: "Basic", pro: "Pro" } as const;
 
-/* The line carries a "— resets <date>" suffix once a billing cycle is known,
-   and the date is rendered only after hydration, so the tail is optional. */
-const ordersLine = (frame: FrameLocator) =>
-  frame.getByText(
-    /^Orders this billing period: [\d,]+ of [\d,]+(?: — resets .*)?$/u,
-  );
+/* `aria-label` is the tile heading (`CapacityTile`), and the meter is the only
+   `progress` on the page carrying it. */
+const ordersMeter = (frame: FrameLocator) =>
+  frame.locator('progress[aria-label="Orders this billing period"]');
 
 const readPlan = async (frame: FrameLocator): Promise<Domain.Plan> => {
-  await expect(ordersLine(frame)).toBeVisible({ timeout: 30_000 });
-  const text = (await ordersLine(frame).textContent()) ?? "";
-  const ceiling = Number(
-    (/of (?<ceiling>[\d,]+)/u.exec(text)?.groups?.ceiling ?? "").replaceAll(
-      ",",
-      "",
-    ),
-  );
+  await expect(ordersMeter(frame)).toBeVisible({ timeout: 30_000 });
+  const ceiling = Number(await ordersMeter(frame).getAttribute("max"));
   const plan = Domain.Plan.literals.find(
     (candidate) =>
       Domain.entitlementsOfPlan(candidate).ordersPerCycle === ceiling,
   );
   if (plan === undefined)
-    throw new Error(`Plan card ceiling not recognized: ${text}`);
+    throw new Error(
+      `Orders meter ceiling not recognized: max=${String(ceiling)}`,
+    );
   return plan;
 };
 
@@ -119,8 +115,9 @@ const switchPlan = async (
      comes back expanded with it; left open it outranks the iframe in the hit
      test and swallows the next Manage plan click (`closeDevConsole`). */
   await closeDevConsole(page);
-  await expect(ordersLine(frame)).toContainText(
-    `of ${Domain.entitlementsOfPlan(target).ordersPerCycle.toLocaleString("en-US")}`,
+  await expect(ordersMeter(frame)).toHaveAttribute(
+    "max",
+    String(Domain.entitlementsOfPlan(target).ordersPerCycle),
     { timeout: 60_000 },
   );
   return frame;
@@ -150,13 +147,22 @@ test("switching plans on Shopify's pricing page moves the ceiling on the Plan ca
  * The operator console's cache fields for one shop, read as `label: value`
  * pairs. Each `Field` renders a `div.admin-field` holding its label and its
  * value, so the pairs come off the DOM without a bespoke test id per row.
+ *
+ * The match is anchored to the start of the row because one label contains
+ * another: `hasText` is a case-insensitive substring, so a bare "Billing
+ * period" also matches the "Orders this billing period" row, which renders
+ * first and which `.first()` therefore returned — the recording carried the
+ * order count under the billing-period key and the real cycle dates were never
+ * read. A row's text begins with its own label, so `^` disambiguates. Labels
+ * here are plain words; one containing a regex metacharacter would need
+ * escaping.
  */
 const readAdminFields = async (page: Page, labels: readonly string[]) => {
   const rows: Record<string, string> = {};
   for (const label of labels) {
     const field = page
       .locator("div.admin-field")
-      .filter({ hasText: label })
+      .filter({ hasText: new RegExp(`^${label}`, "u") })
       .first();
     await expect(field).toBeVisible({ timeout: 30_000 });
     rows[label] = ((await field.textContent()) ?? "").replace(label, "").trim();

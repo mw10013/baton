@@ -21,18 +21,25 @@ import { formatNumber } from "@/lib/format";
  * the open-run banner appears only after reconcile declined to start a run, and
  * the order-ceiling banner only after a new order was refused. Each names what
  * clears it.
+ *
+ * Only the quota banner can be suppressed, by `suppressOverage`, because it is
+ * the only one of the three a page can state better by other means — the home page's orders meter draws the same comparison. A page can
+ * never opt out of being told that something stopped.
  */
 export function QuotaBanners({
   usage,
   ordersPerCycle,
   action,
+  suppressOverage = false,
 }: {
   readonly usage: Domain.ShopUsage;
   readonly ordersPerCycle: number;
   /** Rendered inside the quota banner — the page's own Manage plan control, if it has one. */
   readonly action?: ReactNode;
+  /** Set by a page that already shows used against included on a capacity meter, so the banner would say it a second time directly above it. The two `critical` banners are unaffected. */
+  readonly suppressOverage?: boolean;
 }) {
-  const over = usage.ordersThisCycle > ordersPerCycle;
+  const over = !suppressOverage && usage.ordersThisCycle > ordersPerCycle;
   if (
     !over &&
     usage.openRunsLimitedAt === null &&

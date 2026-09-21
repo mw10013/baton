@@ -116,13 +116,13 @@ const decodePlanHandle = Schema.decodeUnknownOption(Domain.PlanHandle);
 
 /**
  * The one place a `Subscribed` status is built, so the cached path and the
- * revalidated path cannot drift about what a scheduled change means. Both feed
- * it the same three raw facts; a `pendingHandle` outside the allowlist is no
- * scheduled change, exactly as an unrecognized `planHandle` is no cache entry.
+ * revalidated path cannot drift about what a contract is. A scheduled *tier*
+ * is not part of it — see {@link Domain.PlanStatus} — but `pendingPlanHandle`
+ * is still cached for the operator console by the revalidating path, straight
+ * from the contract and without passing through here.
  */
 const subscribed = (input: {
   readonly handle: Domain.PlanHandle;
-  readonly pendingHandle: string | null;
   readonly boundaryAt: number | null;
   readonly cancelAtEndOfCycle: boolean;
 }) =>
@@ -130,9 +130,6 @@ const subscribed = (input: {
     _tag: "Subscribed",
     handle: input.handle,
     plan: Domain.planOfHandle(input.handle),
-    pendingPlan: Option.getOrNull(
-      Option.map(decodePlanHandle(input.pendingHandle), Domain.planOfHandle),
-    ),
     boundaryAt: input.boundaryAt,
     cancelAtEndOfCycle: input.cancelAtEndOfCycle,
   }) as const satisfies Domain.PlanStatus;
@@ -161,7 +158,6 @@ const cachedStatus = (
     : Option.map(decodePlanHandle(shopSession.planHandle), (handle) =>
         subscribed({
           handle,
-          pendingHandle: shopSession.pendingPlanHandle,
           boundaryAt: shopSession.planBoundaryAt,
           cancelAtEndOfCycle: shopSession.planCancelAtEndOfCycle,
         }),
@@ -316,7 +312,6 @@ export class SubscriptionPlan extends Context.Service<
             );
         return subscribed({
           handle: contract.handle,
-          pendingHandle: contract.pendingHandle,
           boundaryAt: contract.boundaryAt,
           cancelAtEndOfCycle: contract.cancelAtEndOfCycle,
         });

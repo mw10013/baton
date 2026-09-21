@@ -135,26 +135,26 @@ export const USAGE_METER_ORDER = "orders-synced";
  * What the shop's contract grants right now, plus what is scheduled to happen
  * to it at the next boundary.
  *
- * `pendingPlan` and `cancelAtEndOfCycle` are display-only and deliberately so:
- * nothing enforces a change before it lands, because the merchant is still
- * paying for the plan in force. They exist so the home page can say what is
- * coming while the merchant can still act on it — a downgrade that will leave
- * members without a seat is only fixable *before* the boundary.
+ * `cancelAtEndOfCycle` is display-only and deliberately so: nothing enforces a
+ * change before it lands, because the merchant is still paying for the plan in
+ * force. It is the one scheduled fact a merchant is shown — the home page dates
+ * the end of a cancelled subscription.
+ *
+ * A *pending tier* is deliberately absent from this type. Shopify usually
+ * applies a switch at once (on a $0 development store a paid-to-paid downgrade
+ * moved the handle immediately with `pendingUpdate: null`, measured
+ * 2026-09-19), in which case the entitlements here are already the new ones and
+ * there is nothing to announce; and naming the tier it would switch to means
+ * hardcoding a Partner Dashboard label that changes without a deploy. The raw
+ * handle is still cached — `ShopSession.pendingPlanHandle`, written by
+ * `updateShopSessionPlan` and read by the operator console, which is allowed to
+ * show Shopify's own strings.
  */
 export const PlanStatus = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal("Subscribed"),
     handle: PlanHandle,
     plan: Plan,
-    /**
-     * The plan the contract switches to at {@link boundaryAt}; null when
-     * Shopify reports no scheduled change. Null is not proof that none is
-     * coming: on a $0 development store a paid-to-paid downgrade moved the
-     * handle immediately with `pendingUpdate: null` (measured 2026-09-19), and
-     * a live store owing a proration may defer the same switch to the
-     * boundary instead. The page renders whatever Shopify reports.
-     */
-    pendingPlan: Schema.NullOr(Plan),
     /** The next contract boundary as epoch milliseconds: cycle end, or trial end during a trial. */
     boundaryAt: Schema.NullOr(Schema.Number),
     /** The merchant has cancelled; the contract ends at {@link boundaryAt} rather than renewing. */
@@ -2289,8 +2289,7 @@ export interface AppIndexLoaderData {
   readonly usage: ShopUsage;
   /** `Member` rows in D1, against `Entitlements.maxMembers`. */
   readonly memberCount: number;
-  /** The plan the contract switches to at {@link planBoundaryAt}; null when nothing is scheduled. */
-  readonly pendingPlan: Plan | null;
+  /** The next contract boundary, rendered only as the date a cancelled subscription ends. */
   readonly planBoundaryAt: number | null;
   readonly cancelAtEndOfCycle: boolean;
 }

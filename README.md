@@ -19,11 +19,12 @@ Baton runs on TanStack Start, Cloudflare Workers, Durable Objects, D1, and Effec
 | Production workflow home                           | `src/routes/app.index.tsx`                                 |
 | Public landing + privacy policy                    | `src/routes/index.tsx`, `src/routes/privacy.tsx`           |
 
-The current home page exposes foundational production-workflow data:
+The home page is the shop's standing against its plan, as two capacity meters:
 
-- **Counter** — read and written in the shop's Durable Object SQLite; a bump broadcasts over the WebSocket so every open tab updates without a reload.
-- **Shop** — read from the Shopify Admin API _by the Durable Object_, using the offline session stored in D1.
-- **Plan** — resolved from the plan handle cached on the D1 session row.
+- **Orders this billing period** — counted in the shop's Durable Object, against the orders the plan includes (`Domain.Entitlements.ordersPerCycle`). Past the allowance orders keep syncing and are billed; the hard stop is `Domain.ShopLimits.maxOrdersPerCycle`.
+- **Members** — counted in D1, against the plan's seats (`Domain.Entitlements.maxMembers`). Members past the cap hold no seat and cannot sign in; see `Domain.memberHasSeat`.
+
+Each meter's denominator is what the plan grants, never the count, so a shop past its allowance shows a full bar rather than a rescaled one. **No tier is named anywhere in the merchant UI**: the names live in the Partner Dashboard and change without a deploy, the cached handle can be stale, and the numbers the app actually enforces say the same thing. Manage plan links out to Shopify, which owns both the names and the prices.
 
 ## Billing
 

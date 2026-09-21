@@ -95,7 +95,6 @@ const subscribedTo = (
   _tag: "Subscribed" as const,
   handle,
   plan: Domain.planOfHandle(handle),
-  pendingPlan: null,
   boundaryAt: null,
   cancelAtEndOfCycle: false,
   ...overrides,
@@ -346,7 +345,6 @@ describe("SubscriptionPlan", () => {
           assert.deepStrictEqual(
             yield* (yield* SubscriptionPlan).resolve(shop),
             subscribedTo("baton-pro", {
-              pendingPlan: "basic",
               boundaryAt: 601_000,
               cancelAtEndOfCycle: true,
             }),
@@ -384,7 +382,6 @@ describe("SubscriptionPlan", () => {
             assert.deepStrictEqual(
               yield* (yield* SubscriptionPlan).resolve(shop),
               subscribedTo("baton-pro", {
-                pendingPlan: "basic",
                 boundaryAt: 601_000,
                 cancelAtEndOfCycle: true,
               }),
@@ -395,35 +392,38 @@ describe("SubscriptionPlan", () => {
       }),
   );
 
-  it.effect("a pending handle outside the allowlist is cached as none", () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(1000);
-      yield* run(
-        () =>
-          Effect.succeed(
-            Option.some(
-              contract({
-                handle: "baton-pro",
-                // Shopify may well report a handle this build does not know;
-                // the current plan must survive it.
-                pendingHandle: "baton-retired" as Domain.PlanHandle,
-              }),
+  it.effect(
+    "an unrecognized pending handle is cached raw and changes nothing",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(1000);
+        yield* run(
+          () =>
+            Effect.succeed(
+              Option.some(
+                contract({
+                  handle: "baton-pro",
+                  // Shopify may well report a handle this build does not know.
+                  // It is cached verbatim for the operator console and the
+                  // current plan must survive it.
+                  pendingHandle: "baton-retired" as Domain.PlanHandle,
+                }),
+              ),
             ),
-          ),
-        Effect.gen(function* () {
-          yield* seedShopSession("baton-pro", 500);
-          assert.deepStrictEqual(
-            yield* (yield* SubscriptionPlan).resolve(shop),
-            subscribedTo("baton-pro"),
-          );
-          const stored = Option.getOrThrow(
-            yield* (yield* Repository).findShopSession(shop),
-          );
-          assert.strictEqual(stored.planHandle, "baton-pro");
-          assert.strictEqual(stored.pendingPlanHandle, "baton-retired");
-        }),
-      );
-    }),
+          Effect.gen(function* () {
+            yield* seedShopSession("baton-pro", 500);
+            assert.deepStrictEqual(
+              yield* (yield* SubscriptionPlan).resolve(shop),
+              subscribedTo("baton-pro"),
+            );
+            const stored = Option.getOrThrow(
+              yield* (yield* Repository).findShopSession(shop),
+            );
+            assert.strictEqual(stored.planHandle, "baton-pro");
+            assert.strictEqual(stored.pendingPlanHandle, "baton-retired");
+          }),
+        );
+      }),
   );
 
   it.effect(
