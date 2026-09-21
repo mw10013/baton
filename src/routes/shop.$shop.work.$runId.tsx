@@ -1,6 +1,6 @@
 import * as React from "react";
 
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
@@ -9,7 +9,6 @@ import { MemberBar } from "@/components/MemberBar";
 import {
   FlagBanner,
   liftFlagLabel,
-  OrderItems,
   Prose,
   RunItem,
 } from "@/components/MemberRun";
@@ -64,7 +63,22 @@ export const Route = createFileRoute("/shop/$shop/work/$runId")({
   component: RouteComponent,
 });
 
-/** What a step's state line says, in the order a worker asks: done, under way, ready, waiting. */
+/**
+ * A step's badge and the subdued line under it, in the order a worker asks:
+ * done, under way, ready, waiting.
+ *
+ * **The badge states the step's state and the line never repeats it.** The
+ * line is the team, then who and when — "Jewelry · lead@m.com · Sep 21, 3:52
+ * AM" under a `Done` badge. Saying "Done by" as well would print the badge's
+ * word twice, a stride apart, in every state that has a badge. Waiting is the
+ * one state with no badge, so it is the one state whose line carries the verb.
+ *
+ * The team leads this line rather than sitting beside the step name above it.
+ * Step name and team name are both merchant-authored and unbounded, and side
+ * by side with only a weight between them "Cast Jewelry" reads as one noun
+ * phrase. Here the header line holds one unbounded name and the team is a
+ * subdued clause that wraps.
+ */
 const stepState = (
   step: Domain.RunStepView,
 ): {
@@ -82,8 +96,8 @@ const stepState = (
       text: (
         <>
           {completedBy === null
-            ? "Done · "
-            : `Done by ${Domain.actorLabel(completedBy)} · `}
+            ? `${step.teamName} · `
+            : `${step.teamName} · ${Domain.actorLabel(completedBy)} · `}
           <LocalDateTime value={step.completedAt} />
         </>
       ),
@@ -93,15 +107,19 @@ const stepState = (
       badge: { label: "In progress", tone: "success" },
       text: (
         <>
-          In progress since{" "}
+          {startedBy === null
+            ? `${step.teamName} · since `
+            : `${step.teamName} · ${Domain.actorLabel(startedBy)} · since `}
           <LocalDateTime value={step.startedAt} format="time" />
-          {startedBy === null ? "" : ` by ${Domain.actorLabel(startedBy)}`}
         </>
       ),
     };
   if (step.ready)
-    return { badge: { label: "Ready", tone: "info" }, text: "Ready" };
-  return { badge: null, text: `Waiting on step ${String(step.stage - 1)}` };
+    return { badge: { label: "Ready", tone: "info" }, text: step.teamName };
+  return {
+    badge: null,
+    text: `${step.teamName} · waiting on step ${String(step.stage - 1)}`,
+  };
 };
 
 /**
@@ -117,37 +135,6 @@ function NoteCountdown({ draft }: { readonly draft: string }) {
     <s-text color="subdued">
       {`${formatNumber(Domain.STEP_NOTE_MAX_LENGTH - draft.length)} characters left`}
     </s-text>
-  );
-}
-
-/**
- * The breadcrumb back to the queue. `s-page`'s `breadcrumb-actions` slot
- * takes link components only, so this is an `s-link` with a real `href` —
- * built through the router so the path is the route's, not a string — whose
- * click is intercepted into a client navigation. The `href` is what makes it
- * a link a member can open in a new tab or middle-click; the handler is what
- * keeps the socket and the query cache alive when they do not.
- *
- * It is kept off the printed job ticket by a selector in `styles.css` rather
- * than the `.print-hide` wrapper every other chrome uses: `class` is not in
- * the Polaris elements' JSX props, and a wrapping div would take the slot in
- * the link's place. The rule matches this element and this element only, so
- * moving or renaming the breadcrumb means fixing it there too.
- */
-function QueueBreadcrumb({ shop }: { readonly shop: string }) {
-  const router = useRouter();
-  const to = { to: "/shop/$shop", params: { shop } } as const;
-  return (
-    <s-link
-      slot="breadcrumb-actions"
-      href={router.buildLocation(to).href}
-      onClick={(event) => {
-        event.preventDefault();
-        void router.navigate(to);
-      }}
-    >
-      Queue
-    </s-link>
   );
 }
 
@@ -175,7 +162,13 @@ function RouteComponent() {
     runStepId: string;
     note: string;
   } | null>(null);
-  const [reason, setReason] = React.useState("");
+  /**
+   * The reason a member is about to put a hold on with, or `null` when the
+   * Block editor is closed. Opening it is the page's Block action; the editor
+   * renders where the hold's banner will, so the field stands where its own
+   * result will stand.
+   */
+  const [blockDraft, setBlockDraft] = React.useState<string | null>(null);
   /**
    * The reason editor inside the banner, or `null` when closed. It opens
    * holding the reason that is there now — never empty: one field, anyone may
@@ -195,41 +188,93 @@ function RouteComponent() {
   } | null>(null);
   const teamIds = teams.map((team) => team.id);
 
+  /**
+   * The one editor both paths into a hold's text use: Block writes the first
+   * reason, Edit reason rewrites it. Same field, same countdown, same Cancel;
+   * only the verb and the tone of the commit differ, so the two cannot drift
+   * into looking like different features.
+   *
+   * The label is visible rather than `exclusive`. Block's editor is opened
+   * from an action in the page header and appears with no heading of its own,
+   * so a hidden label would leave a bare box; the banner's copy keeps it for
+   * the same reason the step note does — the control that named the field is
+   * not on screen while the field is.
+   */
+  const reasonEditor = ({
+    draft,
+    onInput,
+    onSubmit,
+    onCancel,
+    submitLabel,
+    critical,
+  }: {
+    readonly draft: string;
+    readonly onInput: (value: string) => void;
+    readonly onSubmit: () => void;
+    readonly onCancel: () => void;
+    readonly submitLabel: string;
+    readonly critical?: boolean;
+  }) => (
+    <s-stack gap="small-300">
+      <s-text-area
+        label="Reason"
+        placeholder="What is stopping this? Who needs to know?"
+        rows={3}
+        value={draft}
+        disabled={actions.pending}
+        onInput={(event) => {
+          onInput(event.currentTarget.value);
+        }}
+      />
+      <s-stack direction="inline" gap="small-300" alignItems="center">
+        <s-button
+          variant="primary"
+          {...(critical === true ? { tone: "critical" as const } : {})}
+          disabled={actions.pending}
+          onClick={onSubmit}
+        >
+          {submitLabel}
+        </s-button>
+        <s-button variant="tertiary" onClick={onCancel}>
+          Cancel
+        </s-button>
+        <NoteCountdown draft={draft} />
+      </s-stack>
+    </s-stack>
+  );
+
   const renderStep = (step: Domain.RunStepView) => {
     if (view === null) return null;
     const state = stepState(step);
     /** Shown only while the slot is filled: the next Done clears it (`Domain.WorkflowRunStep`). */
     const reopenedBy = Domain.stepReopenedBy(step);
     const editingNote = noteDraft?.runStepId === step.id;
-    /** The buttons follow {@link Domain.stepActions}; the banner carries the only action a flag allows. */
+    /**
+     * The buttons follow {@link Domain.stepActions}; the banner carries the
+     * only action a flag allows. Undo is offered where it is allowed and
+     * nowhere else: a blocked undo draws no disabled button and no sentence
+     * explaining itself, because the step standing in the way is on this same
+     * page with an `In progress` badge on it.
+     */
     const can = Domain.stepActions(view.run, step, teamIds);
-    const anyAction = can.done || can.undo !== null || can.note;
+    const anyAction = can.done || can.undo?.blockedBy === null || can.note;
     return (
       <s-box
         key={step.id}
         padding="small"
         borderWidth="base"
         borderRadius="base"
-        background={can.done ? "subdued" : "base"}
       >
         <s-stack gap="small-300">
           <s-stack direction="inline" gap="small-300" alignItems="center">
             <s-text type="strong">
               {`${String(step.stage)} · ${step.name}`}
             </s-text>
-            <s-text color="subdued">{step.teamName}</s-text>
             {state.badge !== null && (
               <s-badge tone={state.badge.tone}>{state.badge.label}</s-badge>
             )}
           </s-stack>
           {state.text !== null && <s-text color="subdued">{state.text}</s-text>}
-          {/* Under the state line rather than beside the button: the action
-              column says what the reader cannot do, this line says why. */}
-          {can.undo !== null && can.undo.blockedBy !== null && (
-            <s-text color="subdued">
-              {`Can’t undo: ${Domain.undoBlockerLine(can.undo.blockedBy)}`}
-            </s-text>
-          )}
           {reopenedBy !== null && step.reopenedAt !== null && (
             <s-text color="subdued">
               {`Reopened by ${Domain.actorLabel(reopenedBy)} · `}
@@ -240,12 +285,15 @@ function RouteComponent() {
           {!editingNote && step.note !== null && (
             <Prose color="subdued">{Domain.stepNoteLine(step)}</Prose>
           )}
+          {/* The editor takes the card's button row with it: Save note is a
+              primary, so leaving Done mounted beside it puts two primaries in
+              one card and asks which one commits the typing. The label is
+              visible because the Add note button that named this field is one
+              of the buttons the editor just replaced. */}
           {editingNote && (
             <s-stack gap="small-300">
               <s-text-area
                 label="Note"
-                labelAccessibilityVisibility="exclusive"
-                placeholder="Note about this step"
                 rows={3}
                 value={noteDraft.note}
                 disabled={actions.pending}
@@ -256,7 +304,7 @@ function RouteComponent() {
                   });
                 }}
               />
-              <s-stack direction="inline" gap="small-300">
+              <s-stack direction="inline" gap="small-300" alignItems="center">
                 <s-button
                   variant="primary"
                   disabled={actions.pending}
@@ -285,7 +333,7 @@ function RouteComponent() {
               </s-stack>
             </s-stack>
           )}
-          {anyAction && (
+          {anyAction && !editingNote && (
             <s-stack direction="inline" gap="base" alignItems="center">
               {can.start && (
                 <s-button
@@ -309,23 +357,18 @@ function RouteComponent() {
                   Done
                 </s-button>
               )}
-              {can.undo !== null &&
-                (can.undo.blockedBy === null ? (
-                  <s-button
-                    variant="secondary"
-                    disabled={actions.pending}
-                    onClick={() => {
-                      actions.uncomplete.mutate(step.id);
-                    }}
-                  >
-                    Undo
-                  </s-button>
-                ) : (
-                  <s-button variant="secondary" disabled>
-                    Undo
-                  </s-button>
-                ))}
-              {can.note && !editingNote && (
+              {can.undo?.blockedBy === null && (
+                <s-button
+                  variant="secondary"
+                  disabled={actions.pending}
+                  onClick={() => {
+                    actions.uncomplete.mutate(step.id);
+                  }}
+                >
+                  Undo
+                </s-button>
+              )}
+              {can.note && (
                 <s-button
                   variant="secondary"
                   disabled={actions.pending}
@@ -348,7 +391,6 @@ function RouteComponent() {
       <>
         <MemberBar shop={shop} email={memberEmail} />
         <s-page heading="Not found" inlineSize="small">
-          <QueueBreadcrumb shop={shop} />
           <s-section accessibilityLabel="Not found">
             <s-paragraph color="subdued">
               This work is not on one of your teams, or it no longer exists.
@@ -359,9 +401,6 @@ function RouteComponent() {
     );
 
   const { run } = view;
-  const others = view.items.filter(
-    (item) => item.lineItemId !== run.lineItemId,
-  );
   /**
    * The open draft, or `null`: a draft stamped with a `flagAt` other than the
    * one on screen belongs to a hold that has since been lifted, and is dead.
@@ -370,6 +409,8 @@ function RouteComponent() {
     Domain.runIsBlocked(run) && reasonDraft?.at === run.flagAt
       ? reasonDraft.text
       : null;
+  /** A member may put a hold on work that is running and not already flagged. */
+  const canBlock = Domain.runIsOpen(run) && !Domain.runIsFlagged(run);
   /**
    * Unblock lifts the hold and nothing else: the run goes back to the tier
    * and the steps it had, and whoever lifted it presses Done next if the work
@@ -408,53 +449,30 @@ function RouteComponent() {
     </>
   ) : null;
 
-  const reasonEditor = (draft: string) => (
-    <s-stack gap="small-300">
-      <s-text-area
-        label="Reason"
-        labelAccessibilityVisibility="exclusive"
-        placeholder="What is stopping this? Who needs to know?"
-        rows={3}
-        value={draft}
-        disabled={actions.pending}
-        onInput={(event) => {
-          setReasonDraft({ at: run.flagAt, text: event.currentTarget.value });
-        }}
-      />
-      <s-stack direction="inline" gap="small-300">
-        <s-button
-          variant="primary"
-          disabled={actions.pending}
-          onClick={() => {
-            actions.setBlockReason.mutate(
-              { runId: run.id, reason: draft },
-              {
-                onSuccess: (result) => {
-                  if (result._tag === "Ok") setReasonDraft(null);
-                },
-              },
-            );
-          }}
-        >
-          Save reason
-        </s-button>
-        <s-button
-          variant="tertiary"
-          onClick={() => {
-            setReasonDraft(null);
-          }}
-        >
-          Cancel
-        </s-button>
-        <NoteCountdown draft={draft} />
-      </s-stack>
-    </s-stack>
-  );
   return (
     <>
       <MemberBar shop={shop} email={memberEmail} />
+      {/* No breadcrumb: `MemberBar` sits directly above this heading and its
+          mark plus shop name is a link to `/shop/$shop`, which is the queue.
+          A second link to the same place, a stride below the first, is one
+          link too many. */}
       <s-page heading={run.orderName} inlineSize="small">
-        <QueueBreadcrumb shop={shop} />
+        {/* Block is a page action rather than a section at the foot of the
+            page: a member holds work rarely, and a field mounted for it all
+            the time takes space on every visit that does not. Pressing it
+            opens the editor below, where the hold's own banner will be. */}
+        {canBlock && blockDraft === null && (
+          <s-button
+            slot="secondary-actions"
+            variant="secondary"
+            disabled={actions.pending}
+            onClick={() => {
+              setBlockDraft("");
+            }}
+          >
+            Block
+          </s-button>
+        )}
         <SocketBanner />
         {/* Item first, chrome under it: what to make is the reason the page
             was opened, and the workflow name, the run's status and its age
@@ -479,66 +497,58 @@ function RouteComponent() {
               <s-banner tone="critical">{actions.banner}</s-banner>
             )}
             <FlagBanner run={run} actions={flagActions}>
-              {editingReason === null ? undefined : reasonEditor(editingReason)}
+              {editingReason === null
+                ? undefined
+                : reasonEditor({
+                    draft: editingReason,
+                    onInput: (text) => {
+                      setReasonDraft({ at: run.flagAt, text });
+                    },
+                    onSubmit: () => {
+                      actions.setBlockReason.mutate(
+                        { runId: run.id, reason: editingReason },
+                        {
+                          onSuccess: (result) => {
+                            if (result._tag === "Ok") setReasonDraft(null);
+                          },
+                        },
+                      );
+                    },
+                    onCancel: () => {
+                      setReasonDraft(null);
+                    },
+                    submitLabel: "Save reason",
+                  })}
             </FlagBanner>
+            {canBlock &&
+              blockDraft !== null &&
+              reasonEditor({
+                draft: blockDraft,
+                onInput: setBlockDraft,
+                onSubmit: () => {
+                  actions.block.mutate(
+                    { runId: run.id, reason: blockDraft },
+                    {
+                      onSuccess: (result) => {
+                        if (result._tag === "Ok") setBlockDraft(null);
+                      },
+                    },
+                  );
+                },
+                onCancel: () => {
+                  setBlockDraft(null);
+                },
+                submitLabel: "Block",
+                critical: true,
+              })}
           </s-stack>
         </s-section>
         <s-section heading="Steps" accessibilityLabel="Steps">
           <s-stack gap="small-300">{view.steps.map(renderStep)}</s-stack>
         </s-section>
-        {others.length > 0 && (
-          <s-section
-            heading="Also on this order"
-            accessibilityLabel="Also on this order"
-          >
-            <OrderItems items={others} />
-          </s-section>
-        )}
         {view.note !== null && view.note.length > 0 && (
           <s-section heading="Order note" accessibilityLabel="Order note">
             <Prose>{view.note}</Prose>
-          </s-section>
-        )}
-        {/* Only the *setting* of a block lives down here. Lifting it and
-            rewriting it are in the banner at the top, because a state and the
-            buttons that change it a screen apart read as two facts. */}
-        {Domain.runIsOpen(run) && !Domain.runIsFlagged(run) && (
-          <s-section heading="Block this work" accessibilityLabel="Block">
-            <div className="print-hide">
-              <s-stack gap="small-300">
-                <s-text-area
-                  label="Reason"
-                  labelAccessibilityVisibility="exclusive"
-                  placeholder="What is stopping this? Who needs to know?"
-                  rows={3}
-                  value={reason}
-                  disabled={actions.pending}
-                  onInput={(event) => {
-                    setReason(event.currentTarget.value);
-                  }}
-                />
-                <s-stack direction="inline" gap="small-300">
-                  <s-button
-                    variant="primary"
-                    tone="critical"
-                    disabled={actions.pending}
-                    onClick={() => {
-                      actions.block.mutate(
-                        { runId: run.id, reason },
-                        {
-                          onSuccess: (result) => {
-                            if (result._tag === "Ok") setReason("");
-                          },
-                        },
-                      );
-                    }}
-                  >
-                    Block
-                  </s-button>
-                  <NoteCountdown draft={reason} />
-                </s-stack>
-              </s-stack>
-            </div>
           </s-section>
         )}
       </s-page>

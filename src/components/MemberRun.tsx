@@ -8,7 +8,7 @@ import { formatNumber } from "@/lib/format";
 
 /**
  * Pieces the queue card and the work page both render, kept together so the
- * two screens describe one item, one flag, and one order in the same words.
+ * two screens describe one item and one flag in the same words.
  *
  * One fact, once. The tier heading on the queue says which tier a card is in,
  * so nothing inside the card repeats it; the flag kind is said by the banner
@@ -116,16 +116,6 @@ export const flagActor = (run: Domain.WorkflowRun) => {
   return by === undefined ? null : Domain.actorLabel(by);
 };
 
-export const ITEM_STATUS = {
-  pending: { label: "Not started", tone: "info" },
-  active: { label: "In progress", tone: "success" },
-  done: { label: "Made", tone: "neutral" },
-  cancelled: { label: "Cancelled", tone: "critical" },
-} as const satisfies Record<
-  Domain.RunStatus,
-  { readonly label: string; readonly tone: string }
->;
-
 /**
  * Personalization as label / value rows rather than one joined string:
  * "Engraving: The Millers · est. 2019" is the thing the worker will make and
@@ -175,39 +165,6 @@ export function RunItem({ run }: { readonly run: Domain.WorkflowRun }) {
       </s-text>
       {run.sku !== null && <s-text color="subdued">{`SKU ${run.sku}`}</s-text>}
       <Personalization attributes={run.customAttributes} />
-    </s-stack>
-  );
-}
-
-/**
- * The order's live line items with each one's make status, as the maker
- * sees them under "Also on this order" on the work page. "No steps", not
- * "No workflow": a worker never sees definitions, so an absence stated in
- * definition terms is nothing they can act on. What the maker needs is that
- * nothing was made for this item.
- */
-export function OrderItems({
-  items,
-}: {
-  readonly items: readonly Domain.QueueOrderItem[];
-}) {
-  return (
-    <s-stack gap="small-300">
-      {items.map((orderItem) => (
-        <s-stack key={orderItem.lineItemId} gap="small-500">
-          <s-stack direction="inline" gap="small-300" alignItems="center">
-            <s-text>{itemLabel(orderItem)}</s-text>
-            {orderItem.runStatus === null ? (
-              <s-badge>No steps</s-badge>
-            ) : (
-              <s-badge tone={ITEM_STATUS[orderItem.runStatus].tone}>
-                {ITEM_STATUS[orderItem.runStatus].label}
-              </s-badge>
-            )}
-          </s-stack>
-          <Personalization attributes={orderItem.customAttributes} />
-        </s-stack>
-      ))}
     </s-stack>
   );
 }

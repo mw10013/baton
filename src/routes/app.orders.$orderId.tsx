@@ -880,13 +880,18 @@ function RouteComponent() {
    * (`Domain.STEP_NOTE_MAX_LENGTH`) announces itself before the write refuses
    * a paragraph that is already typed. The member's fields count from the same
    * number: the same text is typed into both.
+   *
+   * The label is visible and there is no placeholder, matching the member's
+   * step note. `noteButton` is mounted only while this editor is closed, so
+   * the control that named the field is gone the moment the field appears; a
+   * hidden label would leave the placeholder as the field's only name, and a
+   * placeholder stops being a name at the first keystroke. "Note about this
+   * step" said nothing the button had not said anyway.
    */
   const noteEditor = (step: Domain.WorkflowRunStep, draft: string) => (
     <s-stack gap="small-300">
       <s-text-field
         label="Note"
-        labelAccessibilityVisibility="exclusive"
-        placeholder="Note about this step"
         value={draft}
         disabled={!identified || busy}
         onInput={(event) => {
@@ -1111,8 +1116,22 @@ function RouteComponent() {
                           Reopen
                         </s-button>
                       ) : (
+                        /* The only screen that names the blocker, and the
+                           only one that can act on it. A member is told
+                           nothing (`Domain.stepActions`): they cannot undo,
+                           and the blocking step is already on their page
+                           wearing its own badge. A merchant can reopen it,
+                           so this is an instruction, and it has to pick out
+                           a step that "the first started step in a later
+                           stage" does not pick out by eye.
+
+                           Step first, team parenthetical: the other order —
+                           "Finishing started Fit movement" — garden-paths,
+                           because a reader who does not already know the
+                           team names takes the first word as the subject
+                           and the second as a verb. */
                         <s-text color="subdued">
-                          {`Can\u2019t reopen: ${Domain.undoBlockerLine(blocker)} \u2014 reopen it first`}
+                          {`Can\u2019t reopen: ${blocker.stepName} (${blocker.teamName}) already started \u2014 reopen it first`}
                         </s-text>
                       ))}
                     {noteButton}

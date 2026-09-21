@@ -44,8 +44,14 @@ const BAND_ORDER = "#9403";
 const BAND_TAG = "e2e-queue-band";
 /** The queue row names the step and nothing else: progress is the work page's. */
 const CUT_STEP = "Cut";
-/** The work page's start line. A queue row says `In progress · <who>` instead. */
-const STARTED = "In progress since";
+/**
+ * The work page's in-progress line. The badge beside the step name states
+ * the state, so the line under it is team, actor and when, with no "In
+ * progress" in it. A queue row says `In progress · <who>` instead.
+ */
+const STARTED = `${CUT_TEAM} · ${MAKER} · since`;
+/** The same line for a finished step: the `Done` badge carries the verb. */
+const FINISHED = `${CUT_TEAM} · ${MAKER}`;
 /**
  * A queue row's line two where the reader holds the step themselves: where it
  * is in the run, not "In progress · you", which would be true of every row
@@ -784,7 +790,7 @@ test("a done run's work page offers Undo on its last step", async ({
   await clickWhenEnabled(
     page.getByRole("button", { name: "Done", exact: true }),
   );
-  await expect(page.getByText(`Done by ${MAKER}`)).toBeVisible();
+  await expect(page.getByText(FINISHED)).toBeVisible();
   /* The run's own badge says it is finished; the step still offers Undo. */
   await expect(page.locator('s-badge:has-text("Done")').first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
@@ -802,17 +808,26 @@ test("a done run's work page offers Undo on its last step", async ({
 });
 
 /**
- * Once downstream has started the fix is a conversation, and the list says so
- * by offering nothing: the mate (on the Polish team) starts the next stage
- * and the maker's Done today entry loses its menu. The rule used to be the
- * other way — a disabled Undo beside the clause naming the blocker, so that
- * the row read as a refusal rather than as one that was never undoable. That
- * holds while refusal is the exception, and in a running shop it is the rule:
- * a finished step is nearly always downstream of something already started,
- * so the tier was a wall of dead buttons each explaining itself. The reason
- * is not lost; the work page the row still links to names the step in full.
+ * Once downstream has started the fix is a conversation, and **neither member
+ * screen says so in words**: the mate (on the Polish team) starts the next
+ * stage, the maker's Done today entry loses its menu, and the work page the
+ * row still links to simply stops offering Undo.
+ *
+ * The rule used to be a disabled Undo beside a clause naming the blocker, so
+ * that the control read as a refusal rather than as one that was never
+ * undoable. That holds while refusal is the exception, and in a running shop
+ * it is the rule: a finished step is nearly always downstream of something
+ * already started. The queue dropped both on that argument, deferring the
+ * explanation to this page — and this page is where the explanation is least
+ * needed, because it lists the whole run: the step standing in the way is on
+ * screen, directly below, wearing an `In progress` badge. A sentence naming
+ * it is the page arguing with itself.
+ *
+ * The wording survives on the merchant's order page alone, inline in
+ * `app.orders.$orderId.tsx`, because that screen can reopen the blocker and
+ * so has an instruction to give (`e2e/orders.spec.ts`).
  */
-test("a blocked undo drops the row's menu and names the blocker on the work page", async ({
+test("a blocked undo offers nothing and explains nothing, on the row or the work page", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -839,9 +854,67 @@ test("a blocked undo drops the row's menu and names the blocker on the work page
 
   await expect(rowMenu(maker, BAND_ORDER)).toHaveCount(0);
   await rowLink(maker, BAND_ORDER).click();
+  await expect(maker.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
+  /* The blocker itself is the explanation: Polish is on the page, under the
+     step that cannot be undone, with the badge that says why. */
+  await expect(maker.getByText(`${PACK_TEAM} · ${MATE} · since`)).toBeVisible();
+  await expect(maker.getByRole("button", { name: "Undo" })).toHaveCount(0);
+  await expect(maker.getByText("Can’t undo")).toHaveCount(0);
+});
+
+/**
+ * Two shapes the work page's step card holds to, neither of which any other
+ * assertion here would catch.
+ *
+ * **The badge states the step's state and the line under it never repeats
+ * the word.** A `Ready` badge over a line reading "Ready" printed the same
+ * fact twice, a stride apart, and left the team crowded onto the header line
+ * beside the step name — "Cut E2E Queue Cut", two unbounded merchant-authored
+ * names with only a weight between them, which reads as one noun phrase. The
+ * team leads the subdued line instead and the header holds one name.
+ *
+ * **The note editor takes the card's button row with it.** Save note is a
+ * primary; leaving Done mounted beside it put two primaries in one card and
+ * asked the reader which one commits the typing. It is also what makes the
+ * field's visible label load-bearing — the `Add note` button that named it is
+ * one of the buttons the editor just replaced.
+ */
+test("a step card says its state once and its note editor replaces the card's buttons", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedQueue(config, { cutMembers: [MAKER], keepIdentities: true });
+  const page = await openQueue(browser, config, makerState, "upNext");
+  await rowLink(page, RING_ORDER).click();
+  await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
+
+  /* The header line is the step alone; the team is the line under it, and
+     the badge's word appears nowhere but the badge. */
+  await expect(page.getByText(`1 · ${CUT_STEP}`)).toBeVisible();
+  await expect(page.locator('s-badge:has-text("Ready")')).toBeVisible();
+  /* Exact, so it is the line holding the team and nothing else: a `Ready`
+     step's line is the team name alone. */
+  await expect(page.getByText(CUT_TEAM, { exact: true })).toBeVisible();
+
+  /* No breadcrumb: `MemberBar`'s mark above the heading is the link back. */
   await expect(
-    maker.getByText(`Can’t undo: Polish (${PACK_TEAM}) already started`),
-  ).toBeVisible();
+    page.getByRole("link", { name: "Queue", exact: true }),
+  ).toHaveCount(0);
+
+  await clickWhenEnabled(page.getByRole("button", { name: "Add note" }));
+  await expect(
+    page.getByRole("button", { name: "Done", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Start" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Add note" })).toHaveCount(0);
+  /* The label is the only thing naming the field now, so it is visible
+     rather than `exclusive` and the placeholder that restated the button is
+     gone. */
+  await expect(page.getByLabel("Note")).toBeVisible();
+  await expect(page.getByPlaceholder("Note about this step")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("button", { name: "Start" })).toBeVisible();
 });
 
 /**
@@ -863,7 +936,9 @@ test("the work page shows the step history and takes a note, a block, and Done",
   await rowLink(page, BAND_ORDER).click();
   await expect(page.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
   await expect(page.getByText("E2E Cuff ×1")).toBeVisible();
-  await expect(page.getByText("Waiting on step 1")).toBeVisible();
+  await expect(
+    page.getByText(`${PACK_TEAM} · waiting on step 1`),
+  ).toBeVisible();
 
   await clickWhenEnabled(page.getByRole("button", { name: "Add note" }));
   /* The cap announces itself before the write refuses it: past
@@ -882,6 +957,7 @@ test("the work page shows the step history and takes a note, a block, and Done",
      body is the reason with no prefix, and Done is gone until the hold is
      lifted. Edit reason rewrites the text in place — two lines, kept as
      typed — without touching the hold. */
+  await clickWhenEnabled(page.getByRole("button", { name: "Block" }));
   await page.getByLabel("Reason").fill("Waiting on stones");
   await clickWhenEnabled(page.getByRole("button", { name: "Block" }));
   await expect(page.locator('s-banner[heading="Blocked"]')).toBeVisible();
@@ -901,11 +977,11 @@ test("the work page shows the step history and takes a note, a block, and Done",
   /* The same hold as the queue reads it: the card carries its one action
      inside the banner and offers no step buttons at all, which is the whole
      of "blocked means stop". */
-  await page.getByRole("link", { name: "Queue", exact: true }).click();
+  await page.getByRole("link", { name: config.shop }).click();
   await expect(
     page.locator('s-section[accessibilityLabel="Queue"]'),
   ).toBeVisible();
-  /* The breadcrumb carries no tab, so the queue lands on Mine; a held run is
+  /* The bar's mark carries no tab, so the queue lands on Mine; a held run is
      on Blocked, which the strip counts from wherever the reader is. */
   await selectTab(page, "attention", BLOCKED);
   const blocked = card(page, BAND_ORDER);
@@ -932,10 +1008,10 @@ test("the work page shows the step history and takes a note, a block, and Done",
   await clickWhenEnabled(
     page.getByRole("button", { name: "Done", exact: true }),
   );
-  await expect(page.getByText(`Done by ${MAKER}`)).toBeVisible();
+  await expect(page.getByText(FINISHED)).toBeVisible();
   await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
 
-  await page.getByRole("link", { name: "Queue", exact: true }).click();
+  await page.getByRole("link", { name: config.shop }).click();
   await expect(
     page.locator('s-section[accessibilityLabel="Queue"]'),
   ).toBeVisible();
@@ -979,7 +1055,7 @@ test("a merchant's completion reads as Merchant on the queue and the work page",
 
   await rowLink(page, BAND_ORDER).click();
   await expect(page.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
-  await expect(page.getByText("Done by Merchant")).toBeVisible();
+  await expect(page.getByText(`${CUT_TEAM} · Merchant`)).toBeVisible();
 
   /* The maker takes it back: the same line the merchant's reopen writes, with
      the member in the slot, and Cut is ready again. Start is offered because

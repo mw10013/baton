@@ -289,10 +289,13 @@ test("the merchant marks a step done, reopens it, and blocks the run", async ({
 
 /**
  * Reopen is not offered once someone downstream has moved — the same rule the
- * worker's Undo obeys, naming the blocker with the one clause every screen
- * shares (`Domain.undoBlockerLine`) and the merchant's own verb after it.
- * Both stages are marked done from this page, so Polish is the blocker on
- * Cut's row.
+ * worker's Undo obeys (`Domain.undoBlockedBy`), but this is the only screen
+ * that puts the blocker into words, because it is the only one that can act
+ * on it. The assertion is the whole rendered sentence, which is what pins the
+ * wording now that it lives inline in the route rather than in `Domain`:
+ * step first, team parenthetical, and the verb supplied by the prefix. Both
+ * stages are marked done from this page, so Polish is the blocker on Cut's
+ * row.
  */
 test("the merchant cannot reopen a step whose next stage is done", async ({
   page,

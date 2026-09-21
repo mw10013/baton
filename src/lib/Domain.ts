@@ -3038,22 +3038,6 @@ export const QueueRun = Schema.Struct(
 export type QueueRun = typeof QueueRun.Type;
 
 /**
- * One line item of the order a run is on, read live for the work page's
- * "Also on this order" (never snapshotted) so a late item shows as soon as
- * reconcile stores it. `runStatus` is the worst status across that item's runs
- * (`pending` < `active` < `done`), or null when no workflow touched it.
- */
-export const QueueOrderItem = Schema.Struct({
-  lineItemId: BoundedId,
-  title: Schema.String,
-  variantTitle: Schema.NullOr(Schema.String),
-  quantity: Schema.Number,
-  customAttributes: Schema.Array(OrderAttribute),
-  runStatus: Schema.NullOr(RunStatus),
-});
-export type QueueOrderItem = typeof QueueOrderItem.Type;
-
-/**
  * One row of a member's queue: a run with every *ready* step — open, and
  * nothing in an earlier stage still open — that belongs to one of the
  * member's teams. `stageCount` is the run's last stage, for "step k of n".
@@ -3221,24 +3205,6 @@ export const undoBlockedBy = (
 };
 
 /**
- * How every screen names the step that stands between a finished step and
- * Undo. The step leads and the team is parenthetical: the other order —
- * "Finishing started Fit movement" — garden-paths, because a reader who does
- * not already know the team names reads the first word as the subject and the
- * second as a verb.
- *
- * The clause carries no verb of its own. The caller supplies it, because the
- * two audiences do different things about the same fact: a member cannot undo
- * and is being told why, a merchant can reopen the blocker first. One
- * sentence with three callers, so the screens cannot drift the way they had
- * before this existed.
- *
- * See {@link undoBlockedBy} for what qualifies as a blocker.
- */
-export const undoBlockerLine = (blocker: UndoBlocker) =>
-  `${blocker.stepName} (${blocker.teamName}) already started`;
-
-/**
  * One entry of the queue's "Done today" tier: a step one of the member's
  * teams completed inside the window, with its run for the card line and the
  * undo verdict precomputed by the object, which is the only side that can see
@@ -3357,8 +3323,15 @@ export type RunStepView = typeof RunStepView.Type;
  * `teamIds`, as `WorkflowRunRepository.requireActionable` requires; a flag
  * stops Start and Done but not Undo or the note ({@link runIsFlagged}); Undo
  * is offered on a finished step and carries its downstream blocker
- * ({@link undoBlockedBy}) when there is one, so the page can name who to ask
- * instead of a button.
+ * ({@link undoBlockedBy}) when there is one.
+ *
+ * **Nothing on a member screen renders that blocker.** The queue drops the
+ * row's menu and the work page lists the whole run, so the started step
+ * standing in the way is already on screen wearing its own badge, and a
+ * sentence naming it is the page arguing with itself. The merchant's order
+ * page is the one screen that puts it in words, because it can reopen that
+ * step and so has an instruction to give; the wording lives there, next to
+ * the only thing that renders it.
  */
 export const stepActions = (
   run: { readonly status: RunStatus; readonly flag: RunFlag | null },
@@ -3394,15 +3367,19 @@ export const stepActions = (
 };
 
 /**
- * Everything `/shop/$shop/work/$runId` renders. `items` is the order's live
- * line items, so a maker sees what else ships with the piece; the page drops
- * the run's own line. `note` is the order's live note.
+ * Everything `/shop/$shop/work/$runId` renders: one run, its steps, and the
+ * order's live note.
+ *
+ * The other line items on the order are deliberately **not** here. A workflow
+ * is attached to a product and runs once per matching line item
+ * ({@link Workflow}), so a member's unit of work is the line item and its
+ * steps. Nothing on this page acts on the order as a whole, and an order can
+ * carry an unbounded number of lines to render.
  */
 export const RunView = Schema.Struct({
   run: WorkflowRun,
   steps: Schema.Array(RunStepView),
   note: Schema.NullOr(Schema.String),
-  items: Schema.Array(QueueOrderItem),
 });
 export type RunView = typeof RunView.Type;
 

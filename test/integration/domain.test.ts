@@ -825,23 +825,3 @@ describe("Domain.orderIsSeeded", () => {
     strictEqual(Domain.orderIsSeeded("gid://shopify/Order/1001"), false);
   });
 });
-
-describe("Domain.undoBlockerLine", () => {
-  it("the undo blocker is named the same way on every screen", () => {
-    const blocker: Domain.UndoBlocker = {
-      stepName: Schema.decodeUnknownSync(Domain.StepName)("Fit movement"),
-      teamName: Schema.decodeUnknownSync(Domain.TeamName)("Finishing"),
-    };
-    strictEqual(
-      Domain.undoBlockerLine(blocker),
-      "Fit movement (Finishing) already started",
-    );
-    /* The clause states the fact and nothing else: the queue and the work page
-       prefix "Can't undo", the merchant's order page "Can't reopen", so a verb
-       here would be one of them said twice and the other two contradicted. */
-    const line = Domain.undoBlockerLine(blocker).toLowerCase();
-    strictEqual(line.includes("undo"), false);
-    strictEqual(line.includes("reopen"), false);
-    strictEqual(line.includes("ask"), false);
-  });
-});

@@ -231,8 +231,9 @@ function RouteComponent() {
    * router rather than written as a string — is what keeps middle-click and
    * open-in-new-tab working on a row; the click handler beside it turns an
    * ordinary tap into a client navigation so the socket and the query cache
-   * survive it. `QueueBreadcrumb` on the work page is the same pattern
-   * pointing back the other way.
+   * survive it. `MemberBar`'s mark is the same pattern pointing back the
+   * other way; the work page carries no breadcrumb of its own because that
+   * mark is already a link to this screen.
    */
   const workLocation = (runId: string) =>
     ({ to: "/shop/$shop/work/$runId", params: { shop, runId } }) as const;

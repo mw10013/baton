@@ -153,14 +153,11 @@ details[open] > .live-value-summary .live-value-preview {
 
 /*
  * The member work page prints as a job ticket: chrome and every button go.
- * The queue breadcrumb is named here rather than wrapped in `.print-hide`
- * because `class` is not in the Polaris elements' JSX props and a wrapping
- * div would take the `breadcrumb-actions` slot in the link's place — see the
- * `QueueBreadcrumb` JSDoc in `shop.$shop.work.$runId.tsx`.
+ * `s-button` covers the page's own action slots too, so a control added
+ * there needs no rule of its own.
  */
 @media print {
   .print-hide,
-  s-link[slot="breadcrumb-actions"],
   s-button {
     display: none !important;
   }

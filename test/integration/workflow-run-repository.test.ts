@@ -2160,7 +2160,6 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
             ["Inspect", false, null],
           ],
         );
-        strictEqual(view.items.length, 1);
         // No step on the caller's teams, or no such run: the same None.
         strictEqual(
           Option.isNone(

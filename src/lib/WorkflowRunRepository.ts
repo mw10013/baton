@@ -865,76 +865,6 @@ export class WorkflowRunRepository extends Context.Service<
           }));
         });
 
-      const RUN_STATUS_RANK: Record<Domain.RunStatus, number> = {
-        pending: 0,
-        active: 1,
-        done: 2,
-        cancelled: 3,
-      };
-
-      /** The less-finished of two item statuses; null means "no run", which never wins over a run. */
-      const worstStatus = (
-        a: Domain.RunStatus | null,
-        b: Domain.RunStatus | null,
-      ) => {
-        if (a === null) return b;
-        if (b === null) return a;
-        return RUN_STATUS_RANK[a] <= RUN_STATUS_RANK[b] ? a : b;
-      };
-
-      /**
-       * The live line items of the orders behind the runs on a work page,
-       * each with the worst status across its non-cancelled runs
-       * (`pending` < `active` < `done`) or null when no workflow touched
-       * it. Read live rather than snapshotted so a late item shows on the
-       * card as soon as reconcile stores it. `quantity` is `unfulfilledQuantity`
-       * (`Domain.unitsToMake`) and fully refunded or shipped lines are dropped,
-       * so a packer never packs a unit nobody will receive.
-       */
-      const orderItems = (orderIds: readonly string[]) =>
-        orderIds.length === 0
-          ? Effect.succeed([])
-          : sql`
-              select li.orderId, li.id as lineItemId, li.title, li.variantTitle,
-                li.unfulfilledQuantity as quantity, li.customAttributes, r.status as runStatus
-              from OrderLineItem li
-              left join WorkflowRun r on r.lineItemId = li.id and r.status <> 'cancelled'
-              where li.orderId in (select value from json_each(${json(orderIds)}))
-                and li.unfulfilledQuantity > 0
-              order by li.orderId, li.title
-            `.pipe(
-              Effect.flatMap(
-                decode(
-                  Schema.Array(
-                    Schema.Struct({
-                      ...Domain.QueueOrderItem.fields,
-                      orderId: Schema.String,
-                      customAttributes: Schema.fromJsonString(
-                        Schema.Array(Domain.OrderAttribute),
-                      ),
-                    }),
-                  ),
-                  "Invalid queue order item row",
-                ),
-              ),
-              Effect.map((rows) =>
-                rows.reduce<
-                  readonly (Domain.QueueOrderItem & {
-                    readonly orderId: string;
-                  })[]
-                >((acc, row) => {
-                  const previous = acc.find(
-                    (item) => item.lineItemId === row.lineItemId,
-                  );
-                  if (previous === undefined) return [...acc, row];
-                  const worst = worstStatus(row.runStatus, previous.runStatus);
-                  return acc.map((item) =>
-                    item === previous ? { ...item, runStatus: worst } : item,
-                  );
-                }, []),
-              ),
-            );
-
       /**
        * `status` is a function of the steps; recomputing it in SQL from the
        * same rows the step write just touched is what keeps the two in one
@@ -1821,7 +1751,6 @@ export class WorkflowRunRepository extends Context.Service<
           )
             return Option.none();
           const ready = yield* readySteps(run.id);
-          const items = yield* orderItems([run.orderId]);
           const [noteRow] = yield* sql`
             select note from ShopOrder where id = ${run.orderId}
           `;
@@ -1836,7 +1765,6 @@ export class WorkflowRunRepository extends Context.Service<
                   : Domain.undoBlockedBy(step, steps),
             })),
             note: typeof noteRow?.note === "string" ? noteRow.note : null,
-            items: items.map(({ orderId: _orderId, ...item }) => item),
           } satisfies Domain.RunView);
         }),
 
