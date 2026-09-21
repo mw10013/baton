@@ -918,6 +918,60 @@ test("a step card says its state once and its note editor replaces the card's bu
 });
 
 /**
+ * **An open editor takes its container's buttons with it** (`editor` in
+ * `src/routes/shop.$shop.work.$runId.tsx`). The step card above proves the
+ * note half; this is the other two containers.
+ *
+ * The banner's Unblock used to stay mounted beside Save reason, which put two
+ * commits in one box a stride apart and asked the reader which one takes the
+ * typing. Lifting a hold mid-edit now costs Cancel then Unblock, the same two
+ * presses a step's Undo costs while its note editor is open.
+ *
+ * The second half is the reach, which stops at the container: the Block
+ * editor belongs to the page header, so it takes the page's Block action and
+ * leaves every step card below it working.
+ */
+test("an open editor takes its container's buttons with it", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedQueue(config, { cutMembers: [MAKER], keepIdentities: true });
+  const page = await openQueue(browser, config, makerState, "upNext");
+  await rowLink(page, RING_ORDER).click();
+  await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
+
+  await clickWhenEnabled(
+    page.getByRole("button", { name: "Block", exact: true }),
+  );
+  await expect(page.getByLabel("Reason")).toBeVisible();
+  /* The step card is a different container, so it kept its whole row. */
+  await expect(page.getByRole("button", { name: "Start" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add note" })).toBeVisible();
+
+  await page.getByLabel("Reason").fill("Crest file missing");
+  await clickWhenEnabled(
+    page.getByRole("button", { name: "Block", exact: true }),
+  );
+  await expect(page.locator('s-banner[heading="Blocked"]')).toBeVisible();
+  await expect(page.getByRole("button", { name: "Unblock" })).toBeVisible();
+
+  /* The banner is the reason editor's container, so Unblock goes with Edit
+     reason and the hold offers Save reason and Cancel and nothing else. */
+  await clickWhenEnabled(page.getByRole("button", { name: "Edit reason" }));
+  await expect(page.getByRole("button", { name: "Unblock" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Edit reason" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("button", { name: "Save reason" })).toBeVisible();
+
+  /* Cancel hands the banner its buttons back and the hold never moved. */
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("button", { name: "Unblock" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Edit reason" })).toBeVisible();
+  await expect(page.getByText("Crest file missing")).toBeVisible();
+});
+
+/**
  * The work page: opened from the card's order number, it lists every step
  * with its state, takes a note and a block, finishes the step, and reads the
  * actor back. Block comes before Done because blocking needs a ready step on

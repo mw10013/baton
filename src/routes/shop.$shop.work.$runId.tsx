@@ -125,9 +125,8 @@ const stepState = (
 /**
  * How much room is left, shown only past `Domain.NOTE_COUNT_FROM`. Without it
  * the cap is invisible until the write refuses a paragraph that is already
- * typed, and the refusal a member would read is the schema's own words. Every
- * field the same text goes into carries it: step notes, the block reason, and
- * the reason editor in the banner.
+ * typed, and the refusal a member would read is the schema's own words.
+ * Every field the same text goes into carries it, which {@link editor} is how.
  */
 function NoteCountdown({ draft }: { readonly draft: string }) {
   if (draft.length < Domain.NOTE_COUNT_FROM) return null;
@@ -189,18 +188,29 @@ function RouteComponent() {
   const teamIds = teams.map((team) => team.id);
 
   /**
-   * The one editor both paths into a hold's text use: Block writes the first
-   * reason, Edit reason rewrites it. Same field, same countdown, same Cancel;
-   * only the verb and the tone of the commit differ, so the two cannot drift
+   * The one editor this page opens, whichever field is being written: a
+   * step's note, the reason a Block is about to be set with, and the rewrite
+   * of a reason already set. Same field, same countdown, same Cancel; only
+   * the label and the verb on the commit differ, so the three cannot drift
    * into looking like different features.
    *
-   * The label is visible rather than `exclusive`. Block's editor is opened
-   * from an action in the page header and appears with no heading of its own,
-   * so a hidden label would leave a bare box; the banner's copy keeps it for
-   * the same reason the step note does — the control that named the field is
-   * not on screen while the field is.
+   * **An open editor takes its container's buttons with it.** The step card,
+   * the flag banner or the page header that held the button which opened it
+   * shows no buttons of its own until Save or Cancel: Save note beside Done,
+   * or Save reason beside Unblock, is two commits in one box, a stride apart,
+   * asking the reader which one takes the typing. The reach is that container
+   * and no further — an editor open in one step card leaves the other cards
+   * and the page's own Block action mounted, because neither of those is
+   * where the typing is.
+   *
+   * It is also what makes the label visible rather than `exclusive`: the
+   * button that named this field — Add note, Edit reason, Block — is one of
+   * the buttons the editor has just taken, so a hidden label would leave a
+   * bare box.
    */
-  const reasonEditor = ({
+  const editor = ({
+    label,
+    placeholder,
     draft,
     onInput,
     onSubmit,
@@ -208,6 +218,8 @@ function RouteComponent() {
     submitLabel,
     critical,
   }: {
+    readonly label: string;
+    readonly placeholder?: string;
     readonly draft: string;
     readonly onInput: (value: string) => void;
     readonly onSubmit: () => void;
@@ -217,8 +229,8 @@ function RouteComponent() {
   }) => (
     <s-stack gap="small-300">
       <s-text-area
-        label="Reason"
-        placeholder="What is stopping this? Who needs to know?"
+        label={label}
+        {...(placeholder === undefined ? {} : { placeholder })}
         rows={3}
         value={draft}
         disabled={actions.pending}
@@ -257,7 +269,9 @@ function RouteComponent() {
      * page with an `In progress` badge on it.
      */
     const can = Domain.stepActions(view.run, step, teamIds);
-    const anyAction = can.done || can.undo?.blockedBy === null || can.note;
+    /** Not while this card's own editor is open ({@link editor}). */
+    const anyAction =
+      (can.done || can.undo?.blockedBy === null || can.note) && !editingNote;
     return (
       <s-box
         key={step.id}
@@ -285,55 +299,29 @@ function RouteComponent() {
           {!editingNote && step.note !== null && (
             <Prose color="subdued">{Domain.stepNoteLine(step)}</Prose>
           )}
-          {/* The editor takes the card's button row with it: Save note is a
-              primary, so leaving Done mounted beside it puts two primaries in
-              one card and asks which one commits the typing. The label is
-              visible because the Add note button that named this field is one
-              of the buttons the editor just replaced. */}
-          {editingNote && (
-            <s-stack gap="small-300">
-              <s-text-area
-                label="Note"
-                rows={3}
-                value={noteDraft.note}
-                disabled={actions.pending}
-                onInput={(event) => {
-                  setNoteDraft({
-                    runStepId: step.id,
-                    note: event.currentTarget.value,
-                  });
-                }}
-              />
-              <s-stack direction="inline" gap="small-300" alignItems="center">
-                <s-button
-                  variant="primary"
-                  disabled={actions.pending}
-                  onClick={() => {
-                    actions.note.mutate(
-                      { runStepId: step.id, note: noteDraft.note },
-                      {
-                        onSuccess: (result) => {
-                          if (result._tag === "Ok") setNoteDraft(null);
-                        },
-                      },
-                    );
-                  }}
-                >
-                  Save note
-                </s-button>
-                <s-button
-                  variant="tertiary"
-                  onClick={() => {
-                    setNoteDraft(null);
-                  }}
-                >
-                  Cancel
-                </s-button>
-                <NoteCountdown draft={noteDraft.note} />
-              </s-stack>
-            </s-stack>
-          )}
-          {anyAction && !editingNote && (
+          {editingNote &&
+            editor({
+              label: "Note",
+              draft: noteDraft.note,
+              onInput: (note) => {
+                setNoteDraft({ runStepId: step.id, note });
+              },
+              onSubmit: () => {
+                actions.note.mutate(
+                  { runStepId: step.id, note: noteDraft.note },
+                  {
+                    onSuccess: (result) => {
+                      if (result._tag === "Ok") setNoteDraft(null);
+                    },
+                  },
+                );
+              },
+              onCancel: () => {
+                setNoteDraft(null);
+              },
+              submitLabel: "Save note",
+            })}
+          {anyAction && (
             <s-stack direction="inline" gap="base" alignItems="center">
               {can.start && (
                 <s-button
@@ -416,38 +404,42 @@ function RouteComponent() {
    * and the steps it had, and whoever lifted it presses Done next if the work
    * is in fact done. Dismiss is the other word on purpose — a reconcile flag
    * is not a hold anybody set, and acknowledging it is all there is to do.
-   * Edit reason is offered only while no editor is open; the editor's own
-   * Save and Cancel are the buttons for that state.
+   *
+   * Both go while the reason editor is open, because the banner is that
+   * editor's container ({@link editor}): a hold is lifted by Cancel and then
+   * Unblock, the same two presses a step's Undo costs while its note editor
+   * is open.
    */
-  const flagActions = Domain.runIsFlagged(run) ? (
-    <>
-      <s-button
-        slot="secondary-actions"
-        variant="secondary"
-        disabled={actions.pending}
-        onClick={() => {
-          actions.dismiss.mutate(run.id);
-        }}
-      >
-        {liftFlagLabel(run)}
-      </s-button>
-      {Domain.runIsBlocked(run) && editingReason === null && (
+  const flagActions =
+    Domain.runIsFlagged(run) && editingReason === null ? (
+      <>
         <s-button
           slot="secondary-actions"
           variant="secondary"
           disabled={actions.pending}
           onClick={() => {
-            setReasonDraft({
-              at: run.flagAt,
-              text: run.flagDetail?.reason ?? "",
-            });
+            actions.dismiss.mutate(run.id);
           }}
         >
-          Edit reason
+          {liftFlagLabel(run)}
         </s-button>
-      )}
-    </>
-  ) : null;
+        {Domain.runIsBlocked(run) && (
+          <s-button
+            slot="secondary-actions"
+            variant="secondary"
+            disabled={actions.pending}
+            onClick={() => {
+              setReasonDraft({
+                at: run.flagAt,
+                text: run.flagDetail?.reason ?? "",
+              });
+            }}
+          >
+            Edit reason
+          </s-button>
+        )}
+      </>
+    ) : null;
 
   return (
     <>
@@ -460,7 +452,8 @@ function RouteComponent() {
         {/* Block is a page action rather than a section at the foot of the
             page: a member holds work rarely, and a field mounted for it all
             the time takes space on every visit that does not. Pressing it
-            opens the editor below, where the hold's own banner will be. */}
+            opens the editor below, where the hold's own banner will be, and
+            takes this button with it ({@link editor}). */}
         {canBlock && blockDraft === null && (
           <s-button
             slot="secondary-actions"
@@ -499,7 +492,9 @@ function RouteComponent() {
             <FlagBanner run={run} actions={flagActions}>
               {editingReason === null
                 ? undefined
-                : reasonEditor({
+                : editor({
+                    label: "Reason",
+                    placeholder: "What is stopping this? Who needs to know?",
                     draft: editingReason,
                     onInput: (text) => {
                       setReasonDraft({ at: run.flagAt, text });
@@ -522,7 +517,9 @@ function RouteComponent() {
             </FlagBanner>
             {canBlock &&
               blockDraft !== null &&
-              reasonEditor({
+              editor({
+                label: "Reason",
+                placeholder: "What is stopping this? Who needs to know?",
                 draft: blockDraft,
                 onInput: setBlockDraft,
                 onSubmit: () => {
