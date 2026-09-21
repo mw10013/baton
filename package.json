@@ -42,6 +42,7 @@
     "fmt": "oxfmt . '!refs/**' '!dist/**'",
     "fmt:check": "oxfmt --check . '!refs/**' '!dist/**'",
     "port": "source .env && echo $PORT",
+    "icon": "node scripts/icon.ts",
     "seed": "node --env-file=.env scripts/seed.ts",
     "graphql-codegen": "graphql-codegen",
     "d1:migrate:list": "wrangler d1 migrations list baton-d1-local --local",

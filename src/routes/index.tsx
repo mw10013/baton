@@ -1,5 +1,7 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
+import { BatonMark } from "@/components/BatonMark";
+
 export const Route = createFileRoute("/")({
   beforeLoad: ({ location }) => {
     if (location.searchStr.includes("shop=")) {
@@ -24,10 +26,13 @@ function RouteComponent() {
   return (
     <s-page heading="Baton" inlineSize="small">
       <s-section accessibilityLabel="Baton overview">
-        <s-paragraph>
-          Baton gives made-to-order Shopify merchants a clear production
-          workflow from order to completion.
-        </s-paragraph>
+        <s-stack gap="base">
+          <BatonMark size={56} />
+          <s-paragraph>
+            Baton gives made-to-order Shopify merchants a clear production
+            workflow from order to completion.
+          </s-paragraph>
+        </s-stack>
       </s-section>
       <s-section accessibilityLabel="Member login">
         <s-link href="/login">Log in</s-link>

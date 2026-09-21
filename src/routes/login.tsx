@@ -4,6 +4,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Config, Effect, Schema } from "effect";
 
+import { BatonMark } from "@/components/BatonMark";
 import { Auth, magicLinkKvKey } from "@/lib/Auth";
 import { CloudflareEnv } from "@/lib/CloudflareEnv";
 import { CurrentRequest } from "@/lib/CurrentRequest";
@@ -113,6 +114,12 @@ function RouteComponent() {
 
   return (
     <s-page heading="Log in" inlineSize="small">
+      <s-section accessibilityLabel="Baton">
+        <s-stack direction="inline" gap="small-300" alignItems="center">
+          <BatonMark size={32} />
+          <s-text type="strong">Baton</s-text>
+        </s-stack>
+      </s-section>
       {sent ? (
         <s-section
           heading="Check your email"
