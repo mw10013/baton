@@ -65,16 +65,16 @@ const connecting = () =>
  * identify invalidation then performs the first subscribing read. Without it
  * the page shows its own connecting state until `identified`.
  *
- * It may be `undefined`, because a key can outrun the loader: the member queue
- * puts its `Domain.QueueQuery` in the key, and a chip press or a Show more
+ * It may be `undefined`, because a key can outrun the loader: the member's run list
+ * puts its `Domain.RunQuery` in the key, and a chip press or a Show more
  * asks for rows the SSR read never fetched. Claiming the loader's rows for
- * that key would paint the wrong queue as if it were fresh, so that caller
+ * that key would paint the wrong list as if it were fresh, so that caller
  * passes `initialData` only while its query still matches the one the loader
  * read. It stays a *required* argument, and `Initial` is inferred from what is
  * passed: a caller that always has loader data keeps `data: A`, one that may
  * not gets `A | undefined` and has to say what it renders meanwhile.
  * `placeholderData: keepPreviousData` keeps the previous key's rows on screen
- * until the new key's read returns, so a chip press re-renders the queue
+ * until the new key's read returns, so a chip press re-renders the list
  * rather than the page's connecting state.
  *
  * `unsubscribe` is deferred by one task and cancelled if the effect sets up

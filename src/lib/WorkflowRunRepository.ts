@@ -163,7 +163,7 @@ export interface StartContext {
  * `Domain.Workflow`): switched off, empty, or with an unassigned step
  * (`teamId` null, or an id the roster does not carry) all mean "starts
  * nothing". A team with no members does *not* block: the run is created and
- * its step waits in nobody's queue until someone joins. Shared by the tag
+ * its step waits on nobody's list until someone joins. Shared by the tag
  * match on upsert and by manual attach — the latter skips the line-item half
  * (tags, quantity, fulfilment, age) but never this half, and answers
  * separately to {@link Domain.canAttachRun} for the state of the order as a
@@ -382,7 +382,7 @@ export class WorkflowRunRepository extends Context.Service<
       | RunItemBusyError
     >;
     /**
-     * The member queue, tiered and cut here rather than on the page: every run
+     * The member's run list, tiered and cut here rather than on the page: every run
      * with at least one ready step owned by `teamIds`, grouped by
      * {@link Domain.tierOf} against `memberEmail`. **Every** tier is counted;
      * **one** is returned — the one `query.tab` names — sorted oldest first
@@ -398,14 +398,14 @@ export class WorkflowRunRepository extends Context.Service<
      * cost, the bytes leaving the Durable Object are, so the bound is on what
      * is returned rather than on what is read.
      */
-    readonly listQueue: (input: {
+    readonly listRuns: (input: {
       readonly teamIds: readonly Domain.TeamId[];
       readonly memberEmail: Domain.Email;
-      readonly query: Domain.QueueQuery;
+      readonly query: Domain.RunQuery;
     }) => Effect.Effect<
       {
-        readonly counts: Omit<Domain.QueueCounts, "done">;
-        readonly items: readonly Domain.QueueItem[];
+        readonly counts: Omit<Domain.RunListCounts, "done">;
+        readonly items: readonly Domain.RunListItem[];
       },
       SqlError.SqlError | WorkflowRunRepositoryError
     >;
@@ -537,12 +537,12 @@ export class WorkflowRunRepository extends Context.Service<
      * The scope is the *order*, not the run, because the merchant's order
      * page shows every run of the order: an action on one run restates the
      * page for every team working that order. A per-run answer would leave
-     * those queues stale until they reloaded. `null` team ids are excluded —
-     * an unassigned step is in nobody's queue.
+     * those lists stale until they reloaded. `null` team ids are excluded —
+     * an unassigned step is on nobody's list.
      *
      * Used only to scope a `ShopAgent.publish` fan-out, so an over-broad
      * answer costs a redundant refetch and an under-broad one costs a stale
-     * queue; the order boundary is the smallest scope where neither happens.
+     * list; the order boundary is the smallest scope where neither happens.
      */
     readonly listOrderTeamIds: (
       input:
@@ -584,8 +584,8 @@ export class WorkflowRunRepository extends Context.Service<
     >;
     /**
      * Points any *open* run step at `team`, snapshotting the name from the
-     * live roster the caller resolved, and puts the step in that team's
-     * queue. The team's existence is the caller's check (`Team` is a D1 row
+     * live roster the caller resolved, and puts the step on that team's
+     * list. The team's existence is the caller's check (`Team` is a D1 row
      * this store cannot see). Allowed on any open step, assigned or not and
      * started or not — it is both the remedy that makes a team delete safe
      * and the merchant's way to move work between teams. Only `teamId` /
@@ -593,7 +593,7 @@ export class WorkflowRunRepository extends Context.Service<
      * `startedByEmail` and history still names whoever began it. A finished
      * step is refused (`StepFinishedError`), and so is a step of a run that
      * is not {@link Domain.runIsOpen} (`RunTerminalError`): a cancelled run's
-     * steps are in nobody's queue and moving them would say otherwise.
+     * steps are on nobody's list and moving them would say otherwise.
      */
     readonly assignRunStepTeam: (input: {
       readonly runStepId: string;
@@ -645,14 +645,14 @@ export class WorkflowRunRepository extends Context.Service<
         Schema.Array(Domain.OrderLineItem),
         "Invalid OrderLineItem row",
       );
-      const decodeQueueRuns = decode(
+      const decodeRunListRuns = decode(
         Schema.Array(
           Schema.Struct({
-            ...Domain.QueueRun.fields,
+            ...Domain.RunListRun.fields,
             stageCount: Schema.Number,
           }),
         ),
-        "Invalid queue row",
+        "Invalid run list row",
       );
 
       const orderColumns = sql.literal(
@@ -712,7 +712,7 @@ export class WorkflowRunRepository extends Context.Service<
        *
        * `teamIds` undefined means the merchant, and then the team clause is
        * skipped whole — including the refusal for an unassigned step
-       * (`teamId` null). That step is in nobody's queue and no worker can
+       * (`teamId` null). That step is on nobody's list and no worker can
        * reach it, which is exactly the situation the merchant is there to
        * fix; refusing them too would leave the run stuck with no way out.
        */
@@ -730,7 +730,7 @@ export class WorkflowRunRepository extends Context.Service<
           const run = yield* requireRun(step.runId);
           if (!gate(run))
             yield* new RunTerminalError({ runId: run.id, status: run.status });
-          // An unassigned step (`teamId` null) is in nobody's queue and
+          // An unassigned step (`teamId` null) is on nobody's list and
           // no *member* may act on it until a team is assigned.
           if (
             teamIds !== undefined &&
@@ -780,8 +780,8 @@ export class WorkflowRunRepository extends Context.Service<
             `.pipe(Effect.flatMap(decodeSteps));
 
       /**
-       * Every queue row the teams own, unsorted and uncapped: one
-       * {@link Domain.QueueItem} per run with at least one ready step of
+       * Every run list row the teams own, unsorted and uncapped: one
+       * {@link Domain.RunListItem} per run with at least one ready step of
        * `teamIds`, carrying that run's last stage. Actor emails are on the row
        * already, so no roster join and no D1 read.
        *
@@ -791,11 +791,11 @@ export class WorkflowRunRepository extends Context.Service<
        * in TypeScript below rather than in SQL. Nothing about the other
        * teams' steps is shipped.
        *
-       * Separate from `listQueue` because tiering, narrowing, and capping are
+       * Separate from `listRuns` because tiering, narrowing, and capping are
        * decisions about the rows rather than about the query: keeping them
        * apart means the two statements below are read once, in one place.
        */
-      const queueItems = Effect.fn("WorkflowRunRepository.queueItems")(
+      const runListItems = Effect.fn("WorkflowRunRepository.runListItems")(
         function* (teamIds: readonly Domain.TeamId[]) {
           if (teamIds.length === 0) return [];
           const ready = yield* decodeSteps(
@@ -815,7 +815,7 @@ export class WorkflowRunRepository extends Context.Service<
           );
           if (ready.length === 0) return [];
           const runIds = [...new Set(ready.map((step) => step.runId))];
-          const runs = yield* decodeQueueRuns(
+          const runs = yield* decodeRunListRuns(
             yield* sql`
               select r.*,
                 (select max(stage) from WorkflowRunStep c where c.runId = r.id) as stageCount
@@ -824,35 +824,37 @@ export class WorkflowRunRepository extends Context.Service<
               order by r.orderProcessedAt, r.lineItemId, r.id
             `,
           );
-          return runs.flatMap(({ stageCount, ...run }): Domain.QueueItem[] => {
-            const [first, ...rest] = ready
-              .filter(
-                (step) =>
-                  step.runId === run.id &&
-                  step.teamId !== null &&
-                  teamIds.includes(step.teamId),
-              )
-              // Whatever the row does not render is dropped rather than
-              // nulled or carried: the shape is {@link Domain.QueueStep} and
-              // its JSDoc is why.
-              .map((step) =>
-                Struct.omit(step, [
-                  "completedAt",
-                  "completedBy",
-                  "completedByEmail",
-                  "completedByRole",
-                  "instructions",
-                  "note",
-                  "noteByRole",
-                  "reopenedAt",
-                  "reopenedByRole",
-                  "reopenedByEmail",
-                ]),
-              );
-            return first === undefined
-              ? []
-              : [{ run, steps: [first, ...rest], stageCount }];
-          });
+          return runs.flatMap(
+            ({ stageCount, ...run }): Domain.RunListItem[] => {
+              const [first, ...rest] = ready
+                .filter(
+                  (step) =>
+                    step.runId === run.id &&
+                    step.teamId !== null &&
+                    teamIds.includes(step.teamId),
+                )
+                // Whatever the row does not render is dropped rather than
+                // nulled or carried: the shape is {@link Domain.RunListStep} and
+                // its JSDoc is why.
+                .map((step) =>
+                  Struct.omit(step, [
+                    "completedAt",
+                    "completedBy",
+                    "completedByEmail",
+                    "completedByRole",
+                    "instructions",
+                    "note",
+                    "noteByRole",
+                    "reopenedAt",
+                    "reopenedByRole",
+                    "reopenedByEmail",
+                  ]),
+                );
+              return first === undefined
+                ? []
+                : [{ run, steps: [first, ...rest], stageCount }];
+            },
+          );
         },
       );
 
@@ -1564,16 +1566,16 @@ export class WorkflowRunRepository extends Context.Service<
          * SQL would make each selection a different read whose totals
          * disagreed with the one beside it.
          */
-        listQueue: Effect.fn("WorkflowRunRepository.listQueue")(function* ({
+        listRuns: Effect.fn("WorkflowRunRepository.listRuns")(function* ({
           teamIds,
           memberEmail,
           query,
         }: {
           readonly teamIds: readonly Domain.TeamId[];
           readonly memberEmail: Domain.Email;
-          readonly query: Domain.QueueQuery;
+          readonly query: Domain.RunQuery;
         }) {
-          const items = yield* queueItems(teamIds);
+          const items = yield* runListItems(teamIds);
           const teamCounts = teamIds.map((teamId) => ({
             teamId,
             count: items.filter((item) =>
@@ -1586,7 +1588,7 @@ export class WorkflowRunRepository extends Context.Service<
           const narrowed =
             query.team === null
               ? items
-              : items.flatMap((item): Domain.QueueItem[] => {
+              : items.flatMap((item): Domain.RunListItem[] => {
                   const [first, ...rest] = item.steps.filter(
                     (step) => step.teamId === query.team,
                   );
@@ -1597,7 +1599,7 @@ export class WorkflowRunRepository extends Context.Service<
           // `Map.groupBy` would say this in one line, but the repo's `lib` is
           // below es2024; a reduce into a record is the same pass.
           const byTier = narrowed.reduce<
-            Record<Domain.QueueTier, Domain.QueueItem[]>
+            Record<Domain.RunTier, Domain.RunListItem[]>
           >(
             (grouped, item) => {
               grouped[Domain.tierOf(item, memberEmail)].push(item);
@@ -1605,7 +1607,7 @@ export class WorkflowRunRepository extends Context.Service<
             },
             { attention: [], mine: [], inProgress: [], upNext: [] },
           );
-          const tier = (wanted: Domain.QueueTier) => byTier[wanted];
+          const tier = (wanted: Domain.RunTier) => byTier[wanted];
           // "done" is not a tier: its rows come from `listDone`, which reads
           // finished steps rather than the ready ones grouped here.
           const selected =

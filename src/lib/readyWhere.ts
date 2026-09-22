@@ -3,16 +3,16 @@
  * the same run is still open. `Domain.readySteps` is the same rule over
  * rows in hand, for the pages and the seeder that cannot run SQL; a test
  * holds the two together. Evaluated live, so a step whose earlier
- * stage is reopened leaves the queue again without a write. The
+ * stage is reopened leaves the run list again without a write. The
  * subquery is `exists` and stops at its first row. One definition,
- * interpolated as a literal with the outer alias, so the queue and
+ * interpolated as a literal with the outer alias, so the run list and
  * every action agree.
  *
  * A module of its own rather than a closure in one repository because three
- * readers depend on agreeing exactly: the member queue (`listQueue`), every
+ * readers depend on agreeing exactly: the member's run list (`listRuns`), every
  * step action's guard, and the orders index's waiting-on column and team
  * filter, which run inside `OrderRepository`. A second copy would drift, and a
- * merchant filter that disagrees with a worker's queue is worse than no filter.
+ * merchant filter that disagrees with a worker's run list is worse than no filter.
  *
  * The inner subquery binds the alias `p`. A caller must not use it for an
  * outer table it joins: SQLite resolves an unqualified inner reference

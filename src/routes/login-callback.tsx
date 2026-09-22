@@ -11,7 +11,7 @@ import { Repository } from "@/lib/Repository";
  * Invisible on success: the verify endpoint has already set the session
  * cookie, so this resolves straight to a redirect — `/admin` for the operator
  * role, otherwise the member's work. A member of exactly one shop lands on
- * that shop's queue: the picker would be a page with one link on it, and a
+ * that shop's run list: the picker would be a page with one link on it, and a
  * bench wants the work, not a menu. Zero or several memberships land on
  * `/shop`, the picker (which is also where a member with no shops reads why).
  * Admin and member surfaces are disjoint: an admin never lands on `/shop`

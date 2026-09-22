@@ -102,25 +102,25 @@ afterEach(async () => {
  * tests in the same worker, so sharing a shop would leak workflows between cases.
  */
 /**
- * The ready half of the queue view, flattened back into one list in strip
+ * The ready half of the run list view, flattened back into one list in strip
  * order because one read now returns one tab; the Done tab and the tiering
  * itself are covered by the repository tests. `memberEmail` defaults to
  * nobody these tests started work as, so every started step reads as a
  * teammate's; `tab` names one tab where that is what a case is about.
  */
-const queueItems = async (
+const runListItems = async (
   agent: Awaited<ReturnType<typeof getAgentByName<Cloudflare.Env, ShopAgent>>>,
   teamIds: readonly string[],
   {
     memberEmail = "viewer@example.com",
     tab,
-  }: { readonly memberEmail?: string; readonly tab?: Domain.QueueTab } = {},
+  }: { readonly memberEmail?: string; readonly tab?: Domain.RunTab } = {},
 ) => {
-  const read = async (wanted: Domain.QueueTab) => {
-    const view = await agent.listQueue({
+  const read = async (wanted: Domain.RunTab) => {
+    const view = await agent.listRuns({
       teamIds,
       memberEmail,
-      query: { team: null, tab: wanted, limit: Domain.QUEUE_PAGE },
+      query: { team: null, tab: wanted, limit: Domain.RUN_PAGE },
     });
     return view.items;
   };
@@ -948,14 +948,14 @@ describe("ShopAgent workflow run callables", () => {
       _tag: "NotAllowed",
     });
     stranger.close();
-    expect(await queueItems(agent, [team.id])).toHaveLength(1);
+    expect(await runListItems(agent, [team.id])).toHaveLength(1);
     const engraver = await openMemberSocket(shop, {
       memberId: "m1",
       memberEmail: "m1@example.com",
       teamIds: [team.id],
     });
     expect(await engraver.completeStep({ runStepId })).toEqual({ _tag: "Ok" });
-    expect(await queueItems(agent, [team.id])).toHaveLength(0);
+    expect(await runListItems(agent, [team.id])).toHaveLength(0);
     expect(await agent.cancelRun({ runId })).toEqual({ _tag: "Terminal" });
     expect(await engraver.dismissFlag({ runId })).toEqual({
       _tag: "NotAllowed",
@@ -967,10 +967,10 @@ describe("ShopAgent workflow run callables", () => {
    * The member-area server fns cannot be driven end to end here (their route
    * needs a Shopify session the isolate cannot stub), so the kind check they
    * delegate to is asserted at the object: a team outside the caller's is
-   * `NotAllowed` for every action, and `listQueue` returns the snapshotted
+   * `NotAllowed` for every action, and `listRuns` returns the snapshotted
    * `startedByEmail`.
    */
-  it("startStep / setStepNote / blockRun refuse another team's work; listQueue reads startedByEmail after the member is deleted", async () => {
+  it("startStep / setStepNote / blockRun refuse another team's work; listRuns reads startedByEmail after the member is deleted", async () => {
     const shop = "wf-start.myshopify.com";
     const team = await seedTeam(shop, "Engraving");
     await seedOrder(shop, Date.now());
@@ -1035,7 +1035,7 @@ describe("ShopAgent workflow run callables", () => {
     expect(await engraver.startStep({ runStepId })).toEqual({ _tag: "Ok" });
     // Their own started step, so it is Mine for them — which is the tab the
     // snapshotted email has to survive the delete in.
-    const [item] = await queueItems(agent, [team.id], {
+    const [item] = await runListItems(agent, [team.id], {
       memberEmail,
       tab: "mine",
     });
@@ -1052,7 +1052,7 @@ describe("ShopAgent workflow run callables", () => {
         });
       }).pipe(Effect.provide(layer)),
     );
-    const [deletedItem] = await queueItems(agent, [team.id], {
+    const [deletedItem] = await runListItems(agent, [team.id], {
       memberEmail,
       tab: "mine",
     });
@@ -1067,7 +1067,7 @@ describe("ShopAgent workflow run callables", () => {
       await engraver.blockRun({ runId, reason: "waiting on stock" }),
     ).toEqual({ _tag: "Ok" });
     engraver.close();
-    const [blocked] = await queueItems(agent, [team.id]);
+    const [blocked] = await runListItems(agent, [team.id]);
     strictEqual(blocked?.run.flag, "blocked");
     strictEqual(blocked?.run.flagDetail?.reason, "waiting on stock");
     deepStrictEqual<unknown>(blocked?.run.flagDetail?.by, {
@@ -1075,7 +1075,7 @@ describe("ShopAgent workflow run callables", () => {
       memberId,
       email: memberEmail,
     });
-    // The step note is the work page's read, not the queue row's: the row
+    // The step note is the work page's read, not the row's: the row
     // shows the step and one state clause and nothing else.
     const runView = await agent.getRunForMember({ runId, teamIds: [team.id] });
     strictEqual(
@@ -1084,7 +1084,7 @@ describe("ShopAgent workflow run callables", () => {
     );
   });
 
-  it("assignRunStepTeam puts an unassigned open step in the new team's queue; the order view lists the roster", async () => {
+  it("assignRunStepTeam puts an unassigned open step on the new team's list; the order view lists the roster", async () => {
     const shop = "wf-assign.myshopify.com";
     const a = await seedTeam(shop, "A");
     await seedOrder(shop, Date.now());
@@ -1108,7 +1108,7 @@ describe("ShopAgent workflow run callables", () => {
     const runStepId = detail?.steps[0]?.id ?? "";
 
     await agent.deleteTeam({ teamId: a.id });
-    expect(await queueItems(agent, [a.id])).toEqual([]);
+    expect(await runListItems(agent, [a.id])).toEqual([]);
     const view = await agent.getOrderDetail({ legacyId: "1" });
     expect(view?.runs[0]?.steps[0]?.teamId).toBe(null);
     expect(view?.teams).toEqual([]);
@@ -1120,7 +1120,7 @@ describe("ShopAgent workflow run callables", () => {
     expect(await agent.assignRunStepTeam({ runStepId, teamId: b.id })).toEqual({
       _tag: "Assigned",
     });
-    const [item] = await queueItems(agent, [b.id]);
+    const [item] = await runListItems(agent, [b.id]);
     strictEqual(item?.steps[0]?.id, runStepId);
     strictEqual(item?.steps[0]?.teamName, "B");
     const after = await agent.getOrderDetail({ legacyId: "1" });
@@ -1140,8 +1140,8 @@ describe("ShopAgent workflow run callables", () => {
     expect(await agent.assignRunStepTeam({ runStepId, teamId: c.id })).toEqual({
       _tag: "Assigned",
     });
-    expect(await queueItems(agent, [b.id])).toEqual([]);
-    const [moved] = await queueItems(agent, [c.id]);
+    expect(await runListItems(agent, [b.id])).toEqual([]);
+    const [moved] = await runListItems(agent, [c.id]);
     strictEqual(moved?.steps[0]?.id, runStepId);
     strictEqual(moved?.steps[0]?.teamName, "C");
     strictEqual(moved?.steps[0]?.startedByEmail, "m1@example.com");

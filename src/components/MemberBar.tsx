@@ -17,9 +17,18 @@ import { signOutFn } from "@/lib/memberSignOut";
  * print (`.print-hide`): a printed work page is a job ticket, and the ticket
  * needs no sign-out button.
  *
- * The shop is the `myshopify.com` domain, the only name Baton stores for it.
- * It links to the queue, which is the area's landing page, so the mark plus
- * shop doubles as "back to the start" wherever the member is.
+ * **The mark is home.** The link around it goes to `/shop/$shop`, the run
+ * list, and it lands on the list the member left — same tab, same team, same
+ * depth — because the layout's middleware puts their context on every link
+ * built under `/shop/$shop` (`MemberSearch` in `src/routes/shop.$shop.tsx`).
+ * This bar is the only chrome the member area has, so the mark is the only
+ * standing way home and is styled to read as one: `.member-bar-home` in
+ * `styles.css` rings the mark on hover and focus. The shop domain — the only
+ * name Baton stores for the shop — is inside the same link rather than beside
+ * it, because the mark alone is 24 px and Polaris's minimum touch target is
+ * 44; it stays plain, so the mark is what reads as the control, and it is the
+ * link's accessible name, so a screen reader hears which shop rather than a
+ * label the mark already means.
  *
  * `email` is the "who am I" half, and it lives here rather than under a page
  * heading so it is answered on every screen at the cost of one line on none
@@ -27,9 +36,9 @@ import { signOutFn } from "@/lib/memberSignOut";
  * picks it up has to know whose session they are about to press Done in.
  *
  * `filter` is a slot beside the shop for a control that belongs to the screen
- * below rather than to the bar. The queue passes its team filter there and
+ * below rather than to the bar. The run list passes its team filter there and
  * every other member screen passes nothing, so the bar does change shape by
- * route — that is the price of keeping the queue's one filter off a line of
+ * route — that is the price of keeping the run list's one filter off a line of
  * its own on the screen with least room for one. Nothing the bar owns moves
  * either way, which is what the "where am I, who am I" job actually needs.
  */
@@ -53,11 +62,7 @@ export function MemberBar({
         justifyContent="space-between"
       >
         <s-stack direction="inline" gap="small-300" alignItems="center">
-          <Link
-            to="/shop/$shop"
-            params={{ shop }}
-            style={{ textDecoration: "none", color: "inherit" }}
-          >
+          <Link to="/shop/$shop" params={{ shop }} className="member-bar-home">
             <s-stack direction="inline" gap="small-300" alignItems="center">
               <BatonMark />
               <s-text type="strong">{shop}</s-text>

@@ -175,7 +175,7 @@ export const isValid = (layout: Layout): boolean => {
   });
 };
 
-/** Steps grouped by stage in stage order, each group in position order — the shape the editor and queue render. */
+/** Steps grouped by stage in stage order, each group in position order — the shape the editor and the run list render. */
 export const stagesOf = <P extends Placed>(
   layout: readonly P[],
 ): readonly (readonly P[])[] => {

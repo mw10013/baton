@@ -27,7 +27,7 @@ import {
  */
 const CALLABLE_ROLES = {
   unsubscribe: "any",
-  subscribeQueue: "member",
+  subscribeRuns: "member",
   startStep: "member",
   completeStep: "member",
   setStepNote: "member",

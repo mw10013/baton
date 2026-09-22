@@ -15,7 +15,7 @@ const GRACE_MS = 4000;
 
 /**
  * The one place a page's `ShopAgent` socket health is surfaced — to merchants
- * on `/app` and to members on `/shop/$shop`, whose queue actions have no
+ * on `/app` and to members on `/shop/$shop`, whose run actions have no
  * transport but this socket.
  *
  * Renders nothing while the socket is healthy, because connected is the

@@ -42,7 +42,7 @@ export const runResultMessage = Match.typeTags<
 });
 
 /**
- * The member mutations, shared by the queue and the work page so the two
+ * The member mutations, shared by the run list and the work page so the two
  * cannot drift on how a click reaches the object or how its answer reads.
  *
  * Every action is a `@callable()` on the member socket, reached through

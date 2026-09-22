@@ -19,7 +19,7 @@ const LapsedSearch = Schema.Struct({
 const COPY = {
   subscription: {
     heading: "Subscription inactive",
-    body: "This shop’s Baton subscription is not active, so its work queue is unavailable. Ask the shop owner to renew the subscription from the Baton app in their Shopify admin.",
+    body: "This shop’s Baton subscription is not active, so its workflows are unavailable. Ask the shop owner to renew the subscription from the Baton app in their Shopify admin.",
   },
   seat: {
     heading: "No seat on this plan",

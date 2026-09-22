@@ -763,7 +763,7 @@ describe("OrderRepository.listOrders attention", () => {
 
 /**
  * `Domain.OrderRow.waitingOn`: the teams with a ready step on an open run,
- * through the same `readyWhere` the worker queue runs on, so the cell and the
+ * through the same `readyWhere` the member's run list runs on, so the cell and the
  * filter are one fact rendered two ways. The fixture reuses `seedStates`'
  * runs and hangs steps off them; on #1003 and #1004, `run-N-0` is done and
  * `run-N-1` is open.
@@ -779,7 +779,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
   const waitingFixture = Effect.gen(function* () {
     const repository = yield* seedStates;
     const sql = yield* SqlClient.SqlClient;
-    /* `position` is unique per run and only orders a queue, so it comes off a
+    /* `position` is unique per run and only orders a list, so it comes off a
        counter; `stage` is what readiness is about and every case names it. */
     let position = 0;
     const step = (
@@ -846,7 +846,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
   });
 
   /**
-   * A blocked run's ready step still satisfies `readyWhere` (the queue keeps
+   * A blocked run's ready step still satisfies `readyWhere` (the run list keeps
    * showing it), but the team cannot move it, so the cell and the filter both
    * leave the team out; `RunCounts.blocked` is where that run is counted.
    */

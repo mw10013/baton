@@ -298,7 +298,7 @@ describe("groupUsedBy", () => {
  * One fact, once: the heading names the flag and the body carries only the
  * detail, so no body repeats its own heading and two of them are empty. The
  * table is here rather than in a route test because the copy is the contract
- * between the queue card and the work page, which share one banner.
+ * between the run list and the work page, which share one banner.
  */
 describe("flagHeading / flagBody / flagTone", () => {
   const cases: readonly [
@@ -341,7 +341,7 @@ describe("flagHeading / flagBody / flagTone", () => {
   });
 });
 
-const queueItem = (
+const runListItem = (
   id: string,
   orderProcessedAt: number,
   overrides: {
@@ -350,7 +350,7 @@ const queueItem = (
     /** Defaults to `<startedBy>@example.com`; name it to make the id and the email disagree. */
     readonly startedByEmail?: string;
   } = {},
-): Domain.QueueItem => ({
+): Domain.RunListItem => ({
   run: {
     ...run("active", overrides.flag ?? null),
     id: Schema.decodeUnknownSync(Domain.WorkflowRunId)(id),
@@ -383,7 +383,7 @@ const queueItem = (
   stageCount: 1,
 });
 
-const runIds = (items: readonly Domain.QueueItem[]) =>
+const runIds = (items: readonly Domain.RunListItem[]) =>
   items.map((item) => item.run.id).join(",");
 
 const ME = Schema.decodeUnknownSync(Domain.Email)("me@example.com");
@@ -392,20 +392,20 @@ describe("Domain.tierOf", () => {
   it("a flag first, then mine, then a teammate's, then untouched", () => {
     strictEqual(
       Domain.tierOf(
-        queueItem("flagged-mine", 40, { flag: "blocked", startedBy: "me" }),
+        runListItem("flagged-mine", 40, { flag: "blocked", startedBy: "me" }),
         ME,
       ),
       "attention",
     );
     strictEqual(
-      Domain.tierOf(queueItem("mine", 20, { startedBy: "me" }), ME),
+      Domain.tierOf(runListItem("mine", 20, { startedBy: "me" }), ME),
       "mine",
     );
     strictEqual(
-      Domain.tierOf(queueItem("theirs", 5, { startedBy: "them" }), ME),
+      Domain.tierOf(runListItem("theirs", 5, { startedBy: "them" }), ME),
       "inProgress",
     );
-    strictEqual(Domain.tierOf(queueItem("early-next", 10), ME), "upNext");
+    strictEqual(Domain.tierOf(runListItem("early-next", 10), ME), "upNext");
   });
 
   /**
@@ -417,7 +417,7 @@ describe("Domain.tierOf", () => {
   it("keeps a step under Mine when the id changed but the email did not", () => {
     strictEqual(
       Domain.tierOf(
-        queueItem("re-added", 20, {
+        runListItem("re-added", 20, {
           startedBy: "old-id",
           startedByEmail: "me@example.com",
         }),
@@ -426,13 +426,13 @@ describe("Domain.tierOf", () => {
       "mine",
     );
     strictEqual(
-      Domain.tierOf(queueItem("someone-else", 10, { startedBy: "them" }), ME),
+      Domain.tierOf(runListItem("someone-else", 10, { startedBy: "them" }), ME),
       "inProgress",
     );
   });
 });
 
-const withLine = (item: Domain.QueueItem, lineItemId: string) => ({
+const withLine = (item: Domain.RunListItem, lineItemId: string) => ({
   ...item,
   run: { ...item.run, lineItemId },
 });
@@ -442,10 +442,10 @@ describe("Domain.byAge", () => {
     strictEqual(
       runIds(
         [
-          queueItem("late-next", 30),
-          withLine(queueItem("b-same-age", 10), "line-2"),
-          withLine(queueItem("z-first-line", 10), "line-1"),
-          withLine(queueItem("a-same-age", 10), "line-2"),
+          runListItem("late-next", 30),
+          withLine(runListItem("b-same-age", 10), "line-2"),
+          withLine(runListItem("z-first-line", 10), "line-1"),
+          withLine(runListItem("a-same-age", 10), "line-2"),
         ].toSorted(Domain.byAge),
       ),
       "z-first-line,a-same-age,b-same-age,late-next",
@@ -453,27 +453,27 @@ describe("Domain.byAge", () => {
   });
 });
 
-describe("Domain.sameQueueQuery", () => {
-  const query: Domain.QueueQuery = {
+describe("Domain.sameRunQuery", () => {
+  const query: Domain.RunQuery = {
     team: null,
     tab: "mine",
-    limit: Domain.QUEUE_PAGE,
+    limit: Domain.RUN_PAGE,
   };
 
   it("is structural, and every field counts", () => {
-    strictEqual(Domain.sameQueueQuery(query, { ...query }), true);
+    strictEqual(Domain.sameRunQuery(query, { ...query }), true);
     strictEqual(
-      Domain.sameQueueQuery(query, {
+      Domain.sameRunQuery(query, {
         ...query,
         team: Schema.decodeUnknownSync(Domain.TeamId)("team-a"),
       }),
       false,
     );
-    strictEqual(Domain.sameQueueQuery(query, { ...query, tab: "done" }), false);
+    strictEqual(Domain.sameRunQuery(query, { ...query, tab: "done" }), false);
     strictEqual(
-      Domain.sameQueueQuery(query, {
+      Domain.sameRunQuery(query, {
         ...query,
-        limit: Domain.QUEUE_PAGE + 1,
+        limit: Domain.RUN_PAGE + 1,
       }),
       false,
     );

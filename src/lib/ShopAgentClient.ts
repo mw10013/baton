@@ -57,7 +57,7 @@ export class ShopAgentClientError extends Schema.TaggedError<ShopAgentClientErro
  * the object:
  *
  * - **Configuration a page reads and one person edits** (members, teams, the
- *   steps a team owns, the member queue) goes through a route `loader` — via
+ *   steps a team owns, the member's run list) goes through a route `loader` — via
  *   `Repository` for D1 rows, via this service for Durable Object rows. The
  *   page paints during SSR, and its own mutations refresh it with
  *   `router.invalidate()`. The route's server function is the module-private
@@ -74,8 +74,8 @@ export class ShopAgentClientError extends Schema.TaggedError<ShopAgentClientErro
  * The `@callable()` set on `ShopAgent` is exactly what the browser may reach
  * over the socket; a read that only loaders need is plain RPC and lives here.
  *
- * The member queue is the rule's clearest case, and the reason the five member
- * mutations are *not* here: `listQueue` is the SSR paint and stays on this
+ * The member's run list is the rule's clearest case, and the reason the five member
+ * mutations are *not* here: `listRuns` is the SSR paint and stays on this
  * path, while Start, Done, Note, Block, and Dismiss became `@callable()` once
  * `/shop/*` got a socket. Their privileged inputs did not become less
  * privileged — they moved from a Worker-resolved argument to
@@ -85,10 +85,10 @@ export class ShopAgentClientError extends Schema.TaggedError<ShopAgentClientErro
 export class ShopAgentClient extends Context.Service<
   ShopAgentClient,
   {
-    readonly listQueue: (
+    readonly listRuns: (
       shop: string,
-      input: Domain.ListQueueInput,
-    ) => Effect.Effect<Domain.QueueView, ShopAgentClientError>;
+      input: Domain.ListRunsInput,
+    ) => Effect.Effect<Domain.RunListView, ShopAgentClientError>;
     /** The work page's loader read; `null` is "not yours or not there", one answer on purpose. */
     readonly getRunForMember: (
       shop: string,
@@ -228,7 +228,7 @@ export class ShopAgentClient extends Context.Service<
        * value is the decoded shape (`customAttributes` an array, not JSON
        * text) and must be validated on that side.
        */
-      const queueView = Schema.toType(Domain.QueueView);
+      const runListView = Schema.toType(Domain.RunListView);
       const runView = Schema.toType(Schema.NullOr(Domain.RunView));
       const ownedSteps = Schema.toType(Schema.Array(Domain.OwnedStep));
       const teamStepCounts = Schema.toType(Schema.Array(Domain.TeamStepCounts));
@@ -243,9 +243,9 @@ export class ShopAgentClient extends Context.Service<
         Schema.NullOr(Domain.WorkflowDetailView),
       );
       return ShopAgentClient.of({
-        listQueue: Effect.fn("ShopAgentClient.listQueue")(
-          (shop: string, input: Domain.ListQueueInput) =>
-            call("listQueue", queueView, shop, (stub) => stub.listQueue(input)),
+        listRuns: Effect.fn("ShopAgentClient.listRuns")(
+          (shop: string, input: Domain.ListRunsInput) =>
+            call("listRuns", runListView, shop, (stub) => stub.listRuns(input)),
         ),
         getRunForMember: Effect.fn("ShopAgentClient.getRunForMember")(
           (shop: string, input: Domain.GetRunForMemberInput) =>

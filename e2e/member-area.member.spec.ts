@@ -48,12 +48,12 @@ test("a non-member gets the same confirmation and no link", async ({
 
 /**
  * A member of exactly one shop never sees the picker: the magic link lands
- * them on that shop's queue, with the top bar naming the shop and carrying
+ * them on that shop's run list, with the top bar naming the shop and carrying
  * Sign out. The picker at `/shop` still exists for a member of several shops
  * and is reachable by URL, which is how the test also proves it lists the
  * shop.
  */
-test("a seeded member signs in by magic link, lands on their queue, and signs out", async ({
+test("a seeded member signs in by magic link, lands on their run list, and signs out", async ({
   page,
 }) => {
   const config = seedConfig();
@@ -64,7 +64,7 @@ test("a seeded member signs in by magic link, lands on their queue, and signs ou
 
   await expect(page).toHaveURL(new RegExp(`/shop/${config.shop}$`, "u"));
   await expect(
-    page.locator('s-section[accessibilityLabel="Queue"]'),
+    page.locator('s-section[accessibilityLabel="Workflows"]'),
   ).toBeVisible();
   await expect(page.getByText(config.shop, { exact: true })).toBeVisible();
   await expect(page.getByText(MEMBER_EMAIL, { exact: true })).toBeVisible();
@@ -80,7 +80,7 @@ test("a seeded member signs in by magic link, lands on their queue, and signs ou
   ).toBeVisible();
   await page.getByRole("link", { name: config.shop }).click();
   await expect(
-    page.locator('s-section[accessibilityLabel="Queue"]'),
+    page.locator('s-section[accessibilityLabel="Workflows"]'),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Sign out" }).click();
@@ -105,7 +105,7 @@ test("removing a member closes the shop page on their live session", async ({
   await requestMagicLink(page, MEMBER_EMAIL);
   await followMagicLink(page);
   await expect(
-    page.locator('s-section[accessibilityLabel="Queue"]'),
+    page.locator('s-section[accessibilityLabel="Workflows"]'),
   ).toBeVisible();
 
   await seedMembers(config, []);
@@ -120,7 +120,7 @@ test("removing a member closes the shop page on their live session", async ({
 /**
  * Teams are resolved by the same `requireMember` query that proves membership,
  * so a member sees the teams they are on and nothing else — a team that exists
- * in the same shop, staffed by someone else, must not appear. The queue shows
+ * in the same shop, staffed by someone else, must not appear. The run list shows
  * its team select only for a member on more than one team, so the member here
  * is on two of three: their two options render, the stranger's does not.
  * Seeded rather than created through the admin because the two surfaces are
@@ -143,7 +143,7 @@ test("a member sees the teams they are on, and only those", async ({
   await requestMagicLink(page, MEMBER_EMAIL);
   await followMagicLink(page);
   await expect(
-    page.locator('s-section[accessibilityLabel="Queue"]'),
+    page.locator('s-section[accessibilityLabel="Workflows"]'),
   ).toBeVisible();
 
   /* The filter is a button naming the chosen team with the list behind it;

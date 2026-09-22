@@ -1,5 +1,3 @@
-import * as React from "react";
-
 import {
   createFileRoute,
   useNavigate,
@@ -19,7 +17,7 @@ import {
 import * as Domain from "@/lib/Domain";
 import { requireMember } from "@/lib/MemberAccess";
 import { memberServerFnMiddleware } from "@/lib/MemberServerFnMiddleware";
-import { TAB_EMPTY, TAB_LABEL, TABS } from "@/lib/queueTiers";
+import { TAB_EMPTY, TAB_LABEL, TABS } from "@/lib/runTabs";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { SocketBanner } from "@/lib/SocketBanner";
 import { useMemberRunActions } from "@/lib/useMemberRunActions";
@@ -27,12 +25,15 @@ import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
 
 const LoaderInput = Schema.Struct({
   shop: Schema.String,
-  tab: Domain.QueueTab,
+  tab: Domain.RunTab,
+  /** Text, not a {@link Domain.TeamId}: the roster resolves it (`MemberSearch` in `shop.$shop.tsx`). */
+  team: Schema.String.check(Schema.isMaxLength(Domain.TEAM_SEARCH_MAX)),
+  limit: Domain.RunLimit,
 });
 
 /**
- * The queue's first paint. SSR, so it cannot be a socket call: `requireMember`
- * resolves the shop and the member's teams from the cookie, and `listQueue`
+ * The run list's first paint. SSR, so it cannot be a socket call: `requireMember`
+ * resolves the shop and the member's teams from the cookie, and `listRuns`
  * reads the object through `ShopAgentClient`.
  *
  * The actions go the other way — over the member socket, where the same
@@ -40,10 +41,17 @@ const LoaderInput = Schema.Struct({
  * (`useMemberRunActions`). Either way `teamIds`, `memberId`, and
  * `memberEmail` are resolved server-side and never sent by the browser.
  *
- * The query it reads comes back beside the view, which is what lets its rows
- * serve as the socket query's `initialData` until the member narrows to a team
- * or presses Show more. The tab is in the URL and so is the loader's to read;
- * team and depth are not, so the loader always reads every team one page deep.
+ * **The whole query comes from the URL, so the paint is the screen the member
+ * left.** Tab, team and depth are the member's context (`MemberSearch` in
+ * `shop.$shop.tsx`), which every link under `/shop/$shop` carries, so a return
+ * from the work page server-renders narrowed and deepened rather than painting
+ * page one of every team and correcting itself when the socket answers. The
+ * query it read comes back beside the view, which is what lets these rows
+ * serve as the socket query's `initialData` ({@link Domain.sameRunQuery}).
+ *
+ * `team` is resolved against the live roster here, not trusted: a member taken
+ * off a team keeps the id in their URL, and this is where it becomes "All
+ * teams" rather than a read that returns nothing.
  */
 const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(LoaderInput))
@@ -55,12 +63,12 @@ const getLoaderData = createServerFn({ method: "GET" })
           shop: data.shop,
           email: user.email,
         });
-        const query: Domain.QueueQuery = {
-          team: null,
+        const query: Domain.RunQuery = {
+          team: teams.find((team) => team.id === data.team)?.id ?? null,
           tab: data.tab,
-          limit: Domain.QUEUE_PAGE,
+          limit: data.limit,
         };
-        const view = yield* (yield* ShopAgentClient).listQueue(shop, {
+        const view = yield* (yield* ShopAgentClient).listRuns(shop, {
           teamIds: teams.map((team) => team.id),
           memberEmail: user.email,
           query,
@@ -72,40 +80,34 @@ const getLoaderData = createServerFn({ method: "GET" })
           teams,
           query,
           view,
-        } satisfies Domain.QueueLoaderData;
+        } satisfies Domain.RunListLoaderData;
       }),
     ),
   );
 
-/**
- * The tab is the one thing about the queue worth putting in the URL: it is
- * what a member is looking at, so a link, a refresh, and the back button all
- * mean something. An invalid `?tab=` fails here and the router's error
- * boundary shows; nothing on the page links to one.
- */
-const QueueSearch = Schema.Struct({
-  tab: Schema.optionalKey(Domain.QueueTab),
-});
-
 export const Route = createFileRoute("/shop/$shop/")({
-  validateSearch: Schema.toStandardSchemaV1(QueueSearch),
-  loaderDeps: ({ search }) => ({ tab: search.tab ?? Domain.DEFAULT_QUEUE_TAB }),
+  loaderDeps: ({ search }) => ({
+    tab: search.tab ?? Domain.DEFAULT_RUN_TAB,
+    team: search.team ?? "",
+    limit: search.limit ?? Domain.RUN_PAGE,
+  }),
   loader: ({ params, deps }) =>
-    getLoaderData({ data: { shop: params.shop, tab: deps.tab } }),
+    getLoaderData({ data: { shop: params.shop, ...deps } }),
   /**
-   * A tab is a different loader key, so its first visit runs the loader once
+   * A query is a different loader key, so its first visit runs the loader once
    * and that read is the socket query's `initialData` for the new key; after
    * that the socket owns the data and pushes keep it current. Without this the
-   * default `staleTime: 0` would re-run the loader on every return to a tab
-   * whose data the socket already holds.
+   * default `staleTime: 0` would re-run the loader on every return to a tab,
+   * team or depth whose data the socket already holds — which, now that all
+   * three are in the URL, is every way back to this screen.
    */
   staleTime: Infinity,
-  head: () => ({ meta: [{ title: "Queue — Baton" }] }),
+  head: () => ({ meta: [{ title: "Workflows — Baton" }] }),
   component: RouteComponent,
 });
 
 /**
- * What every button inside a queue row must do first.
+ * What every button inside a row must do first.
  *
  * `s-clickable` renders an `<a href>` in its shadow root and slots the row
  * into it — the shape Polaris's own resource-list composition uses
@@ -155,21 +157,28 @@ function RouteComponent() {
     query: loaderQuery,
     view: loaderView,
   } = Route.useLoaderData();
-  const { tab = Domain.DEFAULT_QUEUE_TAB } = Route.useSearch();
+  /**
+   * Which list, narrowed to which team, how far down: all three from the URL
+   * (`MemberSearch` in `shop.$shop.tsx`), with the defaults applied here at the
+   * read. All three are part of the query key, because every one of them is a
+   * different read of the object.
+   *
+   * A `team` the member is no longer on is read as All teams, the same
+   * resolution the loader makes: the roster is what says which ids mean
+   * something, the button above already falls back to that label, and the
+   * alternative is a list that is empty for a reason nothing on screen states.
+   */
+  const {
+    tab = Domain.DEFAULT_RUN_TAB,
+    team: searchTeam = "",
+    limit = Domain.RUN_PAGE,
+  } = Route.useSearch();
+  const team = teams.find(({ id }) => id === searchTeam)?.id ?? null;
   const navigate = useNavigate({ from: Route.fullPath });
   const router = useRouter();
   /**
-   * Which of the member's own teams, and how far the open tab goes. Client
-   * state rather than search params — a bench does not share a team or a
-   * scroll depth — while the tab, which is what the member is looking at, is
-   * the URL's. All three are part of the query key, because every one of them
-   * is a different read of the object.
-   */
-  const [team, setTeam] = React.useState<Domain.TeamId | null>(null);
-  const [limit, setLimit] = React.useState(Domain.QUEUE_PAGE);
-  /**
    * The subscribe pattern (`Domain.Subscription`): the loader's rows paint
-   * first, then `subscribeQueue` re-reads them over the socket and registers
+   * first, then `subscribeRuns` re-reads them over the socket and registers
    * this connection for pushes, so work another member finishes lands here
    * without a reload. The subscription's scope is the teams on the connection,
    * so nothing about it is named by the browser — `query` only chooses among
@@ -179,12 +188,12 @@ function RouteComponent() {
    * read the SSR paint never made, and `keepPreviousData` in the hook holds
    * the previous rows on screen until it returns.
    */
-  const query: Domain.QueueQuery = { team, tab, limit };
+  const query: Domain.RunQuery = { team, tab, limit };
   const { data, invalidate, agent, identified } = useSubscribedQuery({
-    queryKey: ["shop-queue", shop, query],
+    queryKey: ["shop-runs", shop, query],
     subscribe: (stub, subscriberId) =>
-      stub.subscribeQueue({ subscriberId, query }),
-    initialData: Domain.sameQueueQuery(query, loaderQuery)
+      stub.subscribeRuns({ subscriberId, query }),
+    initialData: Domain.sameRunQuery(query, loaderQuery)
       ? loaderView
       : undefined,
   });
@@ -204,26 +213,45 @@ function RouteComponent() {
   });
 
   /**
-   * A tab is a different list, so depth resets: "Show 25 more" of Up next is
-   * not a promise about Blocked. `replace: true` so Back leaves the queue
-   * rather than walking the member back through every tab they glanced at.
+   * The three controls, all of them navigations, because all three are in the
+   * URL. `replace: true` on every one so Back leaves the run list rather than
+   * walking the member back through every tab and team they glanced at — the
+   * filters are a screen's state, not a trail of places they have been.
+   *
+   * A tab or a team is a different list, so depth resets: "Show 25 more" of Up
+   * next is not a promise about Blocked. `undefined` is how a key is removed,
+   * which is what puts the default back and keeps it out of the URL.
    */
-  const selectTab = (next: Domain.QueueTab) => {
+  const selectTab = (next: Domain.RunTab) => {
     if (next === tab) return;
-    setLimit(Domain.QUEUE_PAGE);
-    void navigate({ search: { tab: next }, replace: true });
+    void navigate({
+      search: (prev) => ({ ...prev, tab: next, limit: undefined }),
+      replace: true,
+    });
   };
 
-  /** A team change is a new list too: same reset, and it stays out of the URL. */
   const selectTeam = (next: Domain.TeamId | null) => {
-    setTeam(next);
-    setLimit(Domain.QUEUE_PAGE);
+    void navigate({
+      search: (prev) => ({
+        ...prev,
+        team: next ?? undefined,
+        limit: undefined,
+      }),
+      replace: true,
+    });
   };
 
   const showMore = () => {
-    setLimit((current) =>
-      Math.min(current + Domain.QUEUE_PAGE, Domain.QUEUE_LIMIT_MAX),
-    );
+    void navigate({
+      search: (prev) => ({
+        ...prev,
+        limit: Math.min(
+          (prev.limit ?? Domain.RUN_PAGE) + Domain.RUN_PAGE,
+          Domain.RUN_LIMIT_MAX,
+        ),
+      }),
+      replace: true,
+    });
   };
 
   /**
@@ -234,9 +262,13 @@ function RouteComponent() {
    * survive it. `MemberBar`'s mark is the same pattern pointing back the
    * other way; the work page carries no breadcrumb of its own because that
    * mark is already a link to this screen.
+   *
+   * No `search`: the layout's middleware puts the member's context on this
+   * link, and on the mark's link back, without either site naming the keys
+   * (`MemberSearch` in `shop.$shop.tsx`).
    */
   const workLocation = (runId: string) =>
-    ({ to: "/shop/$shop/work/$runId", params: { shop, runId } }) as const;
+    ({ to: "/shop/$shop/workflows/$runId", params: { shop, runId } }) as const;
 
   /**
    * Whether a row names its team. The team name is on the row for the one
@@ -250,7 +282,7 @@ function RouteComponent() {
   const showTeam = teams.length > 1 && team === null;
 
   /**
-   * One row per queue item: the whole row is one link to the work page, and
+   * One row per run: the whole row is one link to the work page, and
    * the kebab beside it is the only thing in it that is not. It replaced
    * three targets with three results — order link, expand, action — of which
    * only the first looked interactive; the work page shows everything the
@@ -263,13 +295,13 @@ function RouteComponent() {
    * then the one thing the reader needs and no more: why it stopped, who has
    * it, or where it is in the run.
    */
-  const renderItem = (item: Domain.QueueItem, first: boolean) => {
+  const renderItem = (item: Domain.RunListItem, first: boolean) => {
     const { run, steps } = item;
     const flagged = Domain.runIsFlagged(run);
     const [step, ...rest] = steps;
     const started = step.startedAt !== null;
     const startedBy = Domain.stepStartedBy(step);
-    const menuId = `queue-actions-${run.id}`;
+    const menuId = `run-actions-${run.id}`;
     const stepLine = `Step ${String(step.stage)} of ${String(item.stageCount)}${showTeam ? ` · ${step.teamName}` : ""}`;
     /**
      * A row you started says where it is in the run, not "In progress · you".
@@ -408,8 +440,8 @@ function RouteComponent() {
                   </s-badge>
                 )}
               </s-stack>
-              {/* `.queue-detail-line` in `styles.css` cuts it to two lines. */}
-              <div className="queue-detail-line">
+              {/* `.run-detail-line` in `styles.css` cuts it to two lines. */}
+              <div className="run-detail-line">
                 <s-text color="subdued">{`${run.lineItemTitle} · ${detailLine()}`}</s-text>
               </div>
             </s-stack>
@@ -454,7 +486,7 @@ function RouteComponent() {
    * links to states it in full, for the reader who went looking.
    */
   const renderDone = (entry: Domain.DoneItem, first: boolean) => {
-    const menuId = `queue-undo-${entry.step.id}`;
+    const menuId = `run-undo-${entry.step.id}`;
     const undoable = doneUndo(entry)?.blockedBy === null;
     return (
       <s-box
@@ -480,7 +512,7 @@ function RouteComponent() {
                 <s-text color="subdued">{entry.run.orderName}</s-text>
                 <s-text type="strong">{entry.step.name}</s-text>
               </s-stack>
-              <div className="queue-detail-line">
+              <div className="run-detail-line">
                 <s-text color="subdued">
                   {`${entry.run.lineItemTitle} · by ${doneActorLabel(entry.step, memberEmail)} at `}
                   <LocalDateTime
@@ -533,10 +565,10 @@ function RouteComponent() {
       <s-button
         variant="tertiary"
         inlineSize="fill"
-        disabled={limit >= Domain.QUEUE_LIMIT_MAX}
+        disabled={limit >= Domain.RUN_LIMIT_MAX}
         onClick={showMore}
       >
-        {`Show ${String(Math.min(Domain.QUEUE_PAGE, hidden))} more of ${String(hidden)}`}
+        {`Show ${String(Math.min(Domain.RUN_PAGE, hidden))} more of ${String(hidden)}`}
       </s-button>
     </s-box>
   );
@@ -550,7 +582,7 @@ function RouteComponent() {
    * team, and as a select it was the widest and so the loudest control on a
    * screen whose subject is the list below it.
    *
-   * It is rendered into `MemberBar`, beside the shop. On the queue it had a
+   * It is rendered into `MemberBar`, beside the shop. On the run list it had a
    * line of its own above the tabs — it cannot share the tab row, where a
    * merchant-typed team name would decide how many tabs a phone has room for
    * — and a whole line above the fold is what a bench tablet has least of.
@@ -564,7 +596,7 @@ function RouteComponent() {
    * over every team whatever is selected, so the option just chosen does not
    * renumber itself.
    */
-  const teamMenuId = "queue-team-menu";
+  const teamMenuId = "run-team-menu";
   const teamMenu =
     teams.length > 1 ? (
       <div>
@@ -615,9 +647,9 @@ function RouteComponent() {
   const strip = (
     /* Not `s-button-group`, which renders only its named action slots so
        buttons in its default slot never reach the page; and not `s-stack`,
-       which wraps when it is inline. `.queue-strip-tabs` in `styles.css` is
+       which wraps when it is inline. `.run-strip-tabs` in `styles.css` is
        the grid, and says why it is not a scroller. */
-    <div className="queue-strip-tabs">
+    <div className="run-strip-tabs">
       {TABS.map((each) => (
         <s-button
           key={each}
@@ -671,7 +703,7 @@ function RouteComponent() {
       {hidden > 0 && renderMore(hidden)}
     </s-box>
   );
-  const renderQueue = () => {
+  const renderRuns = () => {
     if (loading)
       return <s-paragraph color="subdued">Loading&hellip;</s-paragraph>;
     if (total === 0) return renderEmpty();
@@ -683,11 +715,11 @@ function RouteComponent() {
       <MemberBar shop={shop} email={memberEmail} filter={teamMenu} />
       {/* No `heading`: the strip below says the same word and says more with
           it, and a heading block above the fold is what a bench tablet has
-          least of. The document title keeps "Queue" — that is the browser
-          tab, which is the one place the app's own noun does work. */}
+          least of. The document title says "Workflows" — that is the
+          browser tab, which is the one place the app's own noun does work. */}
       <s-page inlineSize="small">
         <SocketBanner />
-        <s-section accessibilityLabel="Queue">
+        <s-section accessibilityLabel="Workflows">
           <s-stack gap="base">
             {actions.banner !== null && (
               <s-banner tone="critical">{actions.banner}</s-banner>
@@ -699,9 +731,9 @@ function RouteComponent() {
               </s-paragraph>
             ) : (
               <>
-                {/* `.queue-strip` in `styles.css` keeps it on screen. */}
-                <div className="queue-strip">{strip}</div>
-                {renderQueue()}
+                {/* `.run-strip` in `styles.css` keeps it on screen. */}
+                <div className="run-strip">{strip}</div>
+                {renderRuns()}
               </>
             )}
           </s-stack>

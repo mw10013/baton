@@ -28,7 +28,7 @@ import {
 } from "./member-fixtures";
 
 /**
- * The member socket end to end: the queue read that registers a subscription,
+ * The member socket end to end: the run list read that registers a subscription,
  * the push fan-out that decides who hears about a write, and one full hop
  * through the Worker's gate with a real sign-in cookie.
  *
@@ -103,7 +103,7 @@ const seedOrder = (shop: string) =>
 /**
  * One shop with two teams, a member on each, an order, and a one-step item
  * workflow owned by the first team — the smallest arrangement in which a write
- * is in one team's queue and not the other's.
+ * is on one team's list and not the other's.
  */
 const seedShopWithWork = async (shopName: string) => {
   const shop = shopOf(shopName);
@@ -179,17 +179,17 @@ const seedShopWithWork = async (shopName: string) => {
 };
 
 /** One page of Up next, every team: what every test here seeds a single row into. */
-const UP_NEXT: Domain.QueueQuery = {
+const UP_NEXT: Domain.RunQuery = {
   team: null,
   tab: "upNext",
-  limit: Domain.QUEUE_PAGE,
+  limit: Domain.RUN_PAGE,
 };
 
 const subscribeView = (
   socket: AgentSocket,
   subscriberId: string,
-  query: Domain.QueueQuery = UP_NEXT,
-) => socket.call<Domain.QueueView>("subscribeQueue", { subscriberId, query });
+  query: Domain.RunQuery = UP_NEXT,
+) => socket.call<Domain.RunListView>("subscribeRuns", { subscriberId, query });
 
 /**
  * The ready rows of one tab. Every test here seeds a single untouched step on
@@ -198,17 +198,17 @@ const subscribeView = (
 const subscribe = (
   socket: AgentSocket,
   subscriberId: string,
-  query?: Domain.QueueQuery,
+  query?: Domain.RunQuery,
 ) => subscribeView(socket, subscriberId, query).then((view) => view.items);
 
 afterEach(async () => {
   await resetMemberTables();
 });
 
-describe("member queue socket", () => {
-  it("reads the queue for the connection's teams and subscribes", async () => {
+describe("member run list socket", () => {
+  it("reads the run list for the connection's teams and subscribes", async () => {
     const { shop, working, alice, idle, carol } = await seedShopWithWork(
-      "queue-read.myshopify.com",
+      "runs-read.myshopify.com",
     );
     const worker = await openMemberSocket(shop, {
       memberId: alice,
@@ -240,7 +240,7 @@ describe("member queue socket", () => {
    */
   it("re-subscribing with a different query changes what the read returns", async () => {
     const { shop, working, alice } = await seedShopWithWork(
-      "queue-limits.myshopify.com",
+      "runs-limits.myshopify.com",
     );
     const worker = await openMemberSocket(shop, {
       memberId: alice,
@@ -267,7 +267,7 @@ describe("member queue socket", () => {
 
   it("pushes a completed step to the team, and not to a team with no work on that order", async () => {
     const { shop, working, idle, runStepId, alice, bob, carol } =
-      await seedShopWithWork("queue-push.myshopify.com");
+      await seedShopWithWork("runs-push.myshopify.com");
     const acting = await openMemberSocket(shop, {
       memberId: alice,
       memberEmail: "alice@example.com",
@@ -307,7 +307,7 @@ describe("member queue socket", () => {
    */
   it("completes a member's step over a merchant socket and pushes it to the team", async () => {
     const { shop, working, runStepId, alice } = await seedShopWithWork(
-      "queue-merchant.myshopify.com",
+      "runs-merchant.myshopify.com",
     );
     const worker = await openMemberSocket(shop, {
       memberId: alice,
@@ -332,7 +332,7 @@ describe("member queue socket", () => {
    */
   it("completes a step over a socket opened with a real member cookie", async () => {
     const { shop, runStepId } = await seedShopWithWork(
-      "queue-cookie.myshopify.com",
+      "runs-cookie.myshopify.com",
     );
     const cookie = await Effect.runPromise(
       run(signInThroughWorker(emailOf("alice@example.com"))),

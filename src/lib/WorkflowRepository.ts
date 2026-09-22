@@ -145,7 +145,7 @@ export class WorkflowRepository extends Context.Service<
      * and finished, and keeps working — a run snapshots `workflowName`
      * and each step's `name`, `stage`, `instructions`, and `teamName`, and
      * no read joins a run back to `Workflow`, so an orphan run renders,
-     * queues, starts, completes, blocks, and cancels unchanged.
+     * lists, starts, completes, blocks, and cancels unchanged.
      * `WorkflowRun.workflowId` stays `not null` because it is the conflict
      * key of `unique (lineItemId, workflowId)`.
      * No turn-off-first rule.

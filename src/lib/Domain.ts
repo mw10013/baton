@@ -1641,7 +1641,7 @@ const SeedProgressFields = {
    * done, step 2 up next". `done` is the limit of this.
    */
   advance: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
-  /** After `advance`, Start what is ready so the queue shows "In progress since … by <seed member>". */
+  /** After `advance`, Start what is ready so the run list shows "In progress since … by <seed member>". */
   started: Schema.optionalKey(Schema.Boolean),
   /**
    * Record the `done` / `advance` / `blocked` progress as the **merchant**
@@ -1886,7 +1886,7 @@ export const ListOrdersInput = Schema.Struct({
   attention: Schema.Boolean,
   /**
    * `null` is any team; an id keeps only orders with a ready step on that
-   * team — "waiting on", the queue's own predicate, not "owns a step
+   * team — "waiting on", the run list's own predicate, not "owns a step
    * somewhere in the run". The looser reading pulls in orders the team
    * finished days ago and orders it will not touch for two more stages, so
    * the label carries the predicate.
@@ -2367,27 +2367,27 @@ export interface TeamLoaderData extends TeamDetail {
 }
 
 /**
- * `/shop/$shop` (`shop.$shop.index`): the queue, which is the member area's
- * landing page. `view` is the read of `query` — the tab from the URL, every
+ * `/shop/$shop` (`shop.$shop.index`): the member's run list, which is the
+ * member area's landing page. `view` is the read of `query` — the tab from the URL, every
  * team, one page deep — which is why `memberEmail` is here to be *sent* on
  * the socket's later reads rather than to group rows the page holds; it and
  * `memberId` come out of the same `requireMember` that resolved `teams`.
  * `query` travels with the view so the page can tell whether the socket is
- * about to ask for the same read ({@link sameQueueQuery}) and hand these rows
+ * about to ask for the same read ({@link sameRunQuery}) and hand these rows
  * over as `initialData`. `shop` is the `myshopify.com` domain — the Admin
  * API's display name is not stored anywhere in Baton, and the domain is what
  * the URL and every membership row key on.
  */
-export interface QueueLoaderData {
+export interface RunListLoaderData {
   readonly shop: Shop;
   readonly memberId: MemberId;
   readonly memberEmail: Email;
   readonly teams: MemberAccess["teams"];
-  readonly query: QueueQuery;
-  readonly view: QueueView;
+  readonly query: RunQuery;
+  readonly view: RunListView;
 }
 
-/** `/shop/$shop/work/$runId` (`shop.$shop.work.$runId`). `view` is null when the run is not the member's to see. */
+/** `/shop/$shop/workflows/$runId` (`shop.$shop.workflows.$runId`). `view` is null when the run is not the member's to see. */
 export interface RunLoaderData {
   readonly shop: Shop;
   readonly memberId: MemberId;
@@ -2696,7 +2696,7 @@ export const runIsLive = (run: { readonly status: RunStatus }) =>
  * Attention markers reconcile leaves on a run when the order under it changed.
  * A `pending` run is cancelled or updated silently instead — no one has
  * started it. A later flag overwrites an earlier one; a person clears it from
- * the queue.
+ * the run list.
  *
  * A `done` run keeps its quantity, and a later change to its line item's
  * {@link unitsToMake} flags it `quantity_changed` so the merchant sees it on
@@ -2737,7 +2737,7 @@ export const runIsLive = (run: { readonly status: RunStatus }) =>
  * | reconcile flags active runs, cancels pending | `flagActive`, `cancelPending` |
  * | a quantity change flags an active or a `done` run | `flagQuantityChanged` |
  * | Dismiss on a `done` run's quantity flag resizes it | {@link dismissAcceptsQuantity} |
- * | a flag puts the queue row in Attention    | {@link tierOf}                              |
+ * | a flag puts the run's row in Attention    | {@link tierOf}                              |
  */
 export const RunFlag = Schema.Literals([
   "item_removed",
@@ -2809,7 +2809,7 @@ export type RunFlagDetail = typeof RunFlagDetail.Type;
 /**
  * One workflow applied to one line item. Every display field
  * is a snapshot taken at creation — `workflowName`, `orderName`, the line
- * item's title and personalization — so the queue card reads only this row
+ * item's title and personalization — so a run's row reads only this row
  * and the run outlives an order delete, a definition rename, or a line item
  * dropped from the order. No foreign keys to `ShopOrder`, `OrderLineItem`, or
  * `Workflow` for that reason. `unique (lineItemId, workflowId)` spans every
@@ -2828,7 +2828,7 @@ export const WorkflowRun = Schema.Struct({
   orderName: Schema.String,
   /**
    * `ShopOrder.processedAt` snapshotted at creation, like `orderName`: the
-   * queue sorts every tier oldest-order-first and must not join `ShopOrder`
+   * run list sorts every tier oldest-order-first and must not join `ShopOrder`
    * (which an order delete removes) to do it.
    */
   orderProcessedAt: Schema.Number,
@@ -2851,10 +2851,10 @@ export type WorkflowRun = typeof WorkflowRun.Type;
 
 /**
  * A step copied from the definition at run creation. `teamName` is
- * snapshotted alongside `teamId` so the queue never joins D1. `teamId` is the
- * live pointer that puts the step in a team's queue; a team delete nulls it
- * on *open* steps only (**unassigned**: red on the order page, in nobody's
- * queue, waiting for **assign a team**), while a finished step keeps both the
+ * snapshotted alongside `teamId` so the run list never joins D1. `teamId` is
+ * the live pointer that puts the step on a team's list; a team delete nulls
+ * it on *open* steps only (**unassigned**: red on the order page, on nobody's
+ * list, waiting for **assign a team**), while a finished step keeps both the
  * id and the name. `startedBy` / `completedBy` are D1 `Member.id`s,
  * cross-store and unreferenced; `startedByEmail` / `completedByEmail` are
  * the snapshots taken at the action that keep history readable after the
@@ -2922,7 +2922,7 @@ const actorFrom = (
 
 /**
  * Each of these takes the slot it reads rather than a whole
- * {@link WorkflowRunStep}, so a {@link QueueStep} — which carries no
+ * {@link WorkflowRunStep}, so a {@link RunListStep} — which carries no
  * `completed*` slot at all — is as good an argument as a finished one.
  */
 export const stepStartedBy = (
@@ -2950,7 +2950,7 @@ export const stepReopenedBy = (
 /**
  * A step's note as every screen prints it. The merchant is named because a
  * worker did not expect them; a member's note is unprefixed, since on the
- * queue and the work page the author is a teammate by default and
+ * run list and the work page the author is a teammate by default and
  * "Note (Member)" would say nothing a reader did not assume.
  */
 export const stepNoteLine = (
@@ -2976,14 +2976,14 @@ export const WorkflowRunDetail = Schema.Struct({
 export type WorkflowRunDetail = typeof WorkflowRunDetail.Type;
 
 /**
- * One ready step the member may act on, cut to what a queue row renders.
+ * One ready step the member may act on, cut to what a run's row renders.
  * `startedByEmail` is read off the row — the snapshot taken at Start, never a
  * live join — and it is load-bearing beyond display: {@link tierOf} decides
  * "Mine" with it.
  *
  * Two groups of columns are omitted rather than carried as nulls. The four
  * `completed*` ones can never say anything here: readiness is `completedAt is
- * null` (`readyWhere`) and Undo clears the whole slot, so on a queue step
+ * null` (`readyWhere`) and Undo clears the whole slot, so on a list step
  * every one of them is null by construction. The rest — instructions, the
  * note and its role, the reopened slot — say something, but only on the work
  * page: a row shows the step's name and one state clause, and everything
@@ -2993,7 +2993,7 @@ export type WorkflowRunDetail = typeof WorkflowRunDetail.Type;
  * A finished step is a {@link DoneItem}, which carries the whole
  * {@link WorkflowRunStep} because there the slot is the point.
  */
-export const QueueStep = Schema.Struct(
+export const RunListStep = Schema.Struct(
   Struct.omit(WorkflowRunStep.fields, [
     "completedAt",
     "completedBy",
@@ -3007,10 +3007,10 @@ export const QueueStep = Schema.Struct(
     "reopenedByEmail",
   ]),
 );
-export type QueueStep = typeof QueueStep.Type;
+export type RunListStep = typeof RunListStep.Type;
 
 /**
- * The run behind a queue row, cut the same way. `orderProcessedAt` and
+ * The run behind a row, cut the same way. `orderProcessedAt` and
  * `lineItemId` stay although nothing prints them: they are two thirds of
  * {@link byAge}, which is the order every tier is in. `quantity` stays
  * because `flagBody` falls back to it when a `quantity_changed` flag carries
@@ -3021,7 +3021,7 @@ export type QueueStep = typeof QueueStep.Type;
  * `customAttributes`, which is the one that matters: a JSON blob on every row
  * of every read, parsed on arrival, to render nothing.
  */
-export const QueueRun = Schema.Struct(
+export const RunListRun = Schema.Struct(
   Struct.omit(WorkflowRun.fields, [
     "workflowId",
     "workflowName",
@@ -3035,10 +3035,10 @@ export const QueueRun = Schema.Struct(
     "cancelledAt",
   ]),
 );
-export type QueueRun = typeof QueueRun.Type;
+export type RunListRun = typeof RunListRun.Type;
 
 /**
- * One row of a member's queue: a run with every *ready* step — open, and
+ * One row of a member's run list: a run with every *ready* step — open, and
  * nothing in an earlier stage still open — that belongs to one of the
  * member's teams. `stageCount` is the run's last stage, for "step k of n".
  *
@@ -3047,47 +3047,47 @@ export type QueueRun = typeof QueueRun.Type;
  * names the piece and its state, and the page one tap behind it is where a
  * maker reads anything.
  */
-export const QueueItem = Schema.Struct({
-  run: QueueRun,
-  steps: Schema.NonEmptyArray(QueueStep),
+export const RunListItem = Schema.Struct({
+  run: RunListRun,
+  steps: Schema.NonEmptyArray(RunListStep),
   stageCount: Schema.Number,
 });
-export type QueueItem = typeof QueueItem.Type;
+export type RunListItem = typeof RunListItem.Type;
 
 /**
  * The four tiers a waiting row can fall in. Four of the five tabs
- * ({@link QueueTab}) are these; `done` is not a tier because it is a window
- * over finished steps rather than a grouping of the queue. The labels the
- * member reads are the route's (`queueTiers.ts`); the object only needs the
+ * ({@link RunTab}) are these; `done` is not a tier because it is a window
+ * over finished steps rather than a grouping of the list. The labels the
+ * member reads are the route's (`runTabs.ts`); the object only needs the
  * keys, because it is the side that groups, sorts, and caps.
  */
-export const QueueTier = Schema.Literals([
+export const RunTier = Schema.Literals([
   "attention",
   "mine",
   "inProgress",
   "upNext",
 ]);
-export type QueueTier = typeof QueueTier.Type;
+export type RunTier = typeof RunTier.Type;
 
 /**
- * The five screens of the member queue, in strip order: what I am finishing,
+ * The five screens of the member's run list, in strip order: what I am finishing,
  * what I can start, what a teammate is holding, what has stopped, what can be
  * undone. Four are the tiers of {@link tierOf}; `done` is the finished-steps
  * window. The tab is the unit of a read: one read returns every tab's count
  * and one tab's rows.
  */
-export const QueueTab = Schema.Literals([
+export const RunTab = Schema.Literals([
   "mine",
   "upNext",
   "inProgress",
   "attention",
   "done",
 ]);
-export type QueueTab = typeof QueueTab.Type;
-export const DEFAULT_QUEUE_TAB: QueueTab = "mine";
+export type RunTab = typeof RunTab.Type;
+export const DEFAULT_RUN_TAB: RunTab = "mine";
 
 /**
- * Which tier a queue row belongs in: a flag wins; else a step the viewer
+ * Which tier a row belongs in: a flag wins; else a step the viewer
  * started; else any started step; else up next.
  *
  * "Mine" is by `startedByEmail`, not by the `startedBy` member id. Removing a
@@ -3096,16 +3096,16 @@ export const DEFAULT_QUEUE_TAB: QueueTab = "mine";
  * matching the person still standing at the bench, while the email — the
  * snapshot the migration calls the durable one — keeps matching. A merchant's
  * step has no email at all and so is nobody's, which is right: `Merchant` is
- * not a member of this queue.
+ * not a member of this shop.
  *
  * Here rather than beside the route's labels because the object tiers the
  * rows now: one read counts every tier and returns one of them, so the
  * grouping has to happen on the side that decides what leaves.
  */
 export const tierOf = (
-  { run, steps }: QueueItem,
+  { run, steps }: RunListItem,
   memberEmail: Email,
-): QueueTier => {
+): RunTier => {
   if (run.flag !== null) return "attention";
   if (steps.some((step) => step.startedByEmail === memberEmail)) return "mine";
   if (steps.some((step) => step.startedAt !== null)) return "inProgress";
@@ -3122,7 +3122,7 @@ export const tierOf = (
  * two workflows on one line. The triple is a key an index can serve and a
  * cursor could later resume from — which the order name would not be.
  */
-export const byAge = (a: QueueItem, b: QueueItem) =>
+export const byAge = (a: RunListItem, b: RunListItem) =>
   a.run.orderProcessedAt - b.run.orderProcessedAt ||
   a.run.lineItemId.localeCompare(b.run.lineItemId) ||
   a.run.id.localeCompare(b.run.id);
@@ -3157,7 +3157,7 @@ export const lowestOpenStage = (steps: readonly WorkflowRunStep[]) =>
  * is {@link runIsOpen}, it is open, and nothing in an earlier stage of the
  * same run is still open. Several are ready at once on a parallel stage, so
  * this is a list and every caller copes with more than one. `readyWhere.ts`
- * is the same rule as SQL for the queue and the step guards; this is the one
+ * is the same rule as SQL for the run list and the step guards; this is the one
  * TypeScript copy, for the merchant's order page (which holds every step of
  * the order) and the dev seeder (which walks runs a stage at a time), and the
  * test on it pins that the two agree.
@@ -3205,7 +3205,7 @@ export const undoBlockedBy = (
 };
 
 /**
- * One entry of the queue's "Done today" tier: a step one of the member's
+ * One entry of the run list's "Done today" tier: a step one of the member's
  * teams completed inside the window, with its run for the card line and the
  * undo verdict precomputed by the object, which is the only side that can see
  * the downstream steps.
@@ -3223,43 +3223,79 @@ export type DoneItem = typeof DoneItem.Type;
  * the one they scroll least and the one that must fit, and at ~50 px a row 25
  * is under two phone screens. A proposal, not a tuned figure.
  */
-export const QUEUE_PAGE = 25;
+export const RUN_PAGE = 25;
 /** Provisional: the most rows one tab may be expanded to in a single read. */
-export const QUEUE_LIMIT_MAX = 100;
+export const RUN_LIMIT_MAX = 100;
 
-const QueueLimit = Schema.Number.check(
+/**
+ * How deep one read of a tab goes, as the object accepts it: a whole number
+ * of rows from 1 to {@link RUN_LIMIT_MAX}.
+ *
+ * **The object refuses a depth out of range; the URL clamps one into it.**
+ * Depth is in the member's URL (`MemberSearch` in `src/routes/shop.$shop.tsx`),
+ * so `?limit=1000` is a thing a person can type into the address bar of a page
+ * they are standing on, and a typed URL is not a bug report — the router's
+ * error boundary over a whole shop's work is a worse answer than a hundred
+ * rows. The two halves cannot be one rule: this schema is the wire between the
+ * page and the object, where a depth out of range is a caller's mistake worth
+ * failing on, while the URL is text a person edits. {@link clampRunLimit} is
+ * the URL's half, applied where the search schema decodes, so everything
+ * downstream of it — the query key, the loader, this schema — is handed a
+ * depth already in range.
+ */
+export const RunLimit = Schema.Number.check(
   Schema.isInt(),
-  Schema.isBetween({ minimum: 1, maximum: QUEUE_LIMIT_MAX }),
+  Schema.isBetween({ minimum: 1, maximum: RUN_LIMIT_MAX }),
 );
 
 /**
- * What the browser may choose about its queue: one of its own teams to narrow
+ * How much of a `?team=` the URL's schema keeps. The id it carries is a UUID
+ * and the roster is what decides whether it means anything, so this is only
+ * the bound that stops a pasted essay travelling to the object.
+ */
+export const TEAM_SEARCH_MAX = 128;
+
+/**
+ * The URL's half of {@link RunLimit}: whatever number the address bar carried,
+ * as a whole number of rows in range. A value that is not finite falls back to
+ * {@link RUN_PAGE} rather than clamping to an edge, because it names no depth
+ * at all.
+ */
+export const clampRunLimit = (value: number) =>
+  Number.isFinite(value)
+    ? Math.min(Math.max(Math.trunc(value), 1), RUN_LIMIT_MAX)
+    : RUN_PAGE;
+
+/**
+ * What the browser may choose about its run list: one of its own teams to narrow
  * to (`null` is every team on the connection), which tab, and how many rows of
  * that tab. `team` is validated against the connection's `teamIds` by the
- * object; a team the member is not on reads as an empty queue, never as an
- * error. The counts of every tab come back regardless of `tab`, so the strip
- * is always current.
+ * object; a team the member is not on reads as an empty list, never as an
+ * error. The screen resolves a URL's team against the roster before it gets
+ * here (`shop.$shop.index.tsx`), so that empty list is reserved for a caller
+ * that ignored the roster. The counts of every tab come back regardless of
+ * `tab`, so the strip is always current.
  */
-export const QueueQuery = Schema.Struct({
+export const RunQuery = Schema.Struct({
   team: Schema.NullOr(TeamId),
-  tab: QueueTab,
-  limit: QueueLimit,
+  tab: RunTab,
+  limit: RunLimit,
 });
-export type QueueQuery = typeof QueueQuery.Type;
+export type RunQuery = typeof RunQuery.Type;
 
 /**
  * Structural equality, for deciding whether the loader's rows may serve as
  * the socket query's `initialData`: the route rebuilds the value on every
  * press, and the loader's own query is built from the URL.
  */
-export const sameQueueQuery = (a: QueueQuery, b: QueueQuery) =>
+export const sameRunQuery = (a: RunQuery, b: RunQuery) =>
   a.team === b.team && a.tab === b.tab && a.limit === b.limit;
 
-export const QueueTeamCount = Schema.Struct({
+export const RunListTeamCount = Schema.Struct({
   teamId: TeamId,
   count: Schema.Number,
 });
-export type QueueTeamCount = typeof QueueTeamCount.Type;
+export type RunListTeamCount = typeof RunListTeamCount.Type;
 
 /**
  * The strip. `mine`, `upNext`, `inProgress`, `attention` and `done` are the
@@ -3268,30 +3304,30 @@ export type QueueTeamCount = typeof QueueTeamCount.Type;
  * over every team on the connection regardless of `query.team`, so the team
  * select does not move under the finger.
  */
-export const QueueCounts = Schema.Struct({
+export const RunListCounts = Schema.Struct({
   mine: Schema.Number,
   upNext: Schema.Number,
   inProgress: Schema.Number,
   attention: Schema.Number,
   done: Schema.Number,
   total: Schema.Number,
-  teamCounts: Schema.Array(QueueTeamCount),
+  teamCounts: Schema.Array(RunListTeamCount),
 });
-export type QueueCounts = typeof QueueCounts.Type;
+export type RunListCounts = typeof RunListCounts.Type;
 
 /**
- * One read of the member queue: every tab's count and one tab's rows. Exactly
+ * One read of the member's run list: every tab's count and one tab's rows. Exactly
  * one of `items` and `done` is populated: `items` when `query.tab` is a tier,
  * `done` when it is "done". The selected tab's total is `counts[query.tab]`.
  * One value rather than two reads so the loader and the socket paint the same
  * snapshot and the strip never disagrees with the list under it.
  */
-export const QueueView = Schema.Struct({
-  counts: QueueCounts,
-  items: Schema.Array(QueueItem),
+export const RunListView = Schema.Struct({
+  counts: RunListCounts,
+  items: Schema.Array(RunListItem),
   done: Schema.Array(DoneItem),
 });
-export type QueueView = typeof QueueView.Type;
+export type RunListView = typeof RunListView.Type;
 
 /**
  * How far back "Done today" reaches. A day, not a shift: a mistake is
@@ -3303,7 +3339,7 @@ export const DONE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
  * A run step on the work page, decorated with what the page needs to offer
- * the right button: `ready` is the queue's readiness rule evaluated for this
+ * the right button: `ready` is the run list's readiness rule evaluated for this
  * step, and `undoBlockedBy` is the undo verdict for a finished one. Both are
  * facts about *other* rows (earlier and later stages of the run), which is
  * why the object computes them rather than the page.
@@ -3317,7 +3353,7 @@ export type RunStepView = typeof RunStepView.Type;
 
 /**
  * What a member may do to a step, in one place for the work page and the
- * queue's Done tier so the buttons and the writes cannot disagree. Rules: the
+ * run list's Done tier so the buttons and the writes cannot disagree. Rules: the
  * {@link RunStatus} table for status (Start and Done need {@link runIsOpen};
  * Undo and the note need {@link runIsLive}); the step's team must be one of
  * `teamIds`, as `WorkflowRunRepository.requireActionable` requires; a flag
@@ -3325,7 +3361,7 @@ export type RunStepView = typeof RunStepView.Type;
  * is offered on a finished step and carries its downstream blocker
  * ({@link undoBlockedBy}) when there is one.
  *
- * **Nothing on a member screen renders that blocker.** The queue drops the
+ * **Nothing on a member screen renders that blocker.** The run list drops the
  * row's menu and the work page lists the whole run, so the started step
  * standing in the way is already on screen wearing its own badge, and a
  * sentence naming it is the page arguing with itself. The merchant's order
@@ -3367,7 +3403,7 @@ export const stepActions = (
 };
 
 /**
- * Everything `/shop/$shop/work/$runId` renders: one run, its steps, and the
+ * Everything `/shop/$shop/workflows/$runId` renders: one run, its steps, and the
  * order's live note.
  *
  * The other line items on the order are deliberately **not** here. A workflow
@@ -3412,35 +3448,35 @@ export const OrderDetailView = Schema.Struct({
 export type OrderDetailView = typeof OrderDetailView.Type;
 
 /**
- * The member queue's loader read. Still Worker-resolved: `teamIds` comes from
- * `requireMember`, and the queue's first paint is SSR, where there is no socket
+ * The member run list's loader read. Still Worker-resolved: `teamIds` comes
+ * from `requireMember`, and the list's first paint is SSR, where there is no socket
  * to carry an identity — so this one stays plain RPC through `ShopAgentClient`
  * while the mutations below moved onto the socket.
  */
-export const ListQueueInput = Schema.Struct({
+export const ListRunsInput = Schema.Struct({
   teamIds: Schema.Array(TeamId),
   memberEmail: Email,
-  query: QueueQuery,
+  query: RunQuery,
 });
-export type ListQueueInput = typeof ListQueueInput.Type;
+export type ListRunsInput = typeof ListRunsInput.Type;
 
 /**
- * The socket half of the member queue's read: the same rows `listQueue`
+ * The socket half of the member run list's read: the same rows `listRuns`
  * returns, plus a subscription registered on the connection in the same round
- * trip. `teamIds` and `memberEmail` are absent on purpose — the queue is
+ * trip. `teamIds` and `memberEmail` are absent on purpose — the list is
  * scoped by the membership on the connection, which the member cannot name
  * for themselves. `query` is theirs to name: it chooses among their own teams,
  * which tab, and how far that tab is expanded, and the object bounds all three.
  */
-export const SubscribeQueueInput = Schema.Struct({
+export const SubscribeRunsInput = Schema.Struct({
   ...SubscriberIdInput.fields,
-  query: QueueQuery,
+  query: RunQuery,
 });
-export type SubscribeQueueInput = typeof SubscribeQueueInput.Type;
+export type SubscribeRunsInput = typeof SubscribeRunsInput.Type;
 
 /**
  * The work page's loader read, Worker-resolved for the same reason as
- * {@link ListQueueInput}. The guard is "any step of the run on one of my
+ * {@link ListRunsInput}. The guard is "any step of the run on one of my
  * teams", not "a ready step": a member may open work they have finished.
  */
 export const GetRunForMemberInput = Schema.Struct({

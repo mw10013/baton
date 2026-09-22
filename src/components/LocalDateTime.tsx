@@ -30,7 +30,7 @@ export function LocalDateTime({
   format = "dateTime",
 }: {
   readonly value: string | number;
-  /** `time` is the clock-only form ("… at 3:12 PM", "… · since 3:12 PM"); `relative` the queue's "ordered 3d ago". */
+  /** `time` is the clock-only form ("… at 3:12 PM", "… · since 3:12 PM"); `relative` the run list's "ordered 3d ago". */
   readonly format?: "dateTime" | "time" | "relative";
 }) {
   const hydrated = useHydrated();

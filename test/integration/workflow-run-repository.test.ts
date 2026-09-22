@@ -72,46 +72,46 @@ const TEAMS = [TEAM_A, TEAM_B, TEAM_C];
 const instructions = Schema.decodeUnknownSync(Domain.StepInstructions);
 const note = Schema.decodeUnknownSync(Domain.StepNote);
 
-/** Nobody's queue in particular: a reader who has started nothing, so `tierOf` never answers "mine". */
+/** Nobody's list in particular: a reader who has started nothing, so `tierOf` never answers "mine". */
 const VIEWER = emailOf("viewer@example.com");
 
-/** The four tabs whose rows `listQueue` returns; "done" is `listDone`'s. */
+/** The four tabs whose rows `listRuns` returns; "done" is `listDone`'s. */
 const TIER_TABS = [
   "mine",
   "upNext",
   "inProgress",
   "attention",
-] as const satisfies readonly Domain.QueueTab[];
+] as const satisfies readonly Domain.RunTab[];
 
 /**
- * The rows `listQueue` returns, flattened back into one list in strip order,
- * so a test that only cares about *which* runs are queued reads the same as it
+ * The rows `listRuns` returns, flattened back into one list in strip order,
+ * so a test that only cares about *which* runs are listed reads the same as it
  * did before the read became one tab at a time. `tab` names the single tab
  * where that is what the test is about; tests about the tiering itself call
- * `listQueue` directly.
+ * `listRuns` directly.
  */
-const queueRows = Effect.fn("queueRows")(function* ({
+const runListRows = Effect.fn("runListRows")(function* ({
   teamIds,
   memberEmail = VIEWER,
   tab,
   team = null,
-  limit = Domain.QUEUE_PAGE,
+  limit = Domain.RUN_PAGE,
 }: {
   readonly teamIds: readonly Domain.TeamId[];
   readonly memberEmail?: Domain.Email;
-  readonly tab?: Domain.QueueTab;
+  readonly tab?: Domain.RunTab;
   readonly team?: Domain.TeamId | null;
   readonly limit?: number;
 }) {
   const repository = yield* WorkflowRunRepository;
-  const read = (wanted: Domain.QueueTab) =>
-    repository.listQueue({
+  const read = (wanted: Domain.RunTab) =>
+    repository.listRuns({
       teamIds,
       memberEmail,
       query: { team, tab: wanted, limit },
     });
   if (tab !== undefined) return (yield* read(tab)).items;
-  const rows: Domain.QueueItem[] = [];
+  const rows: Domain.RunListItem[] = [];
   for (const wanted of TIER_TABS) rows.push(...(yield* read(wanted)).items);
   return rows;
 });
@@ -1468,7 +1468,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
     ));
 });
 
-describe("WorkflowRunRepository steps, queue, flags, delete", () => {
+describe("WorkflowRunRepository steps, run list, flags, delete", () => {
   it("completeStep enforces team, order, and terminal state and records completedBy", () =>
     runInRepository(
       Effect.gen(function* () {
@@ -1532,7 +1532,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
       }),
     ));
 
-  it("listQueue shows only current steps for the given teams, flagged first", () =>
+  it("listRuns shows only current steps for the given teams, flagged first", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -1545,25 +1545,25 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         if (first === undefined || second === undefined)
           throw new Error("expected two runs");
 
-        const teamAQueue = yield* queueRows({ teamIds: [TEAM_A.id] });
+        const teamARows = yield* runListRows({ teamIds: [TEAM_A.id] });
         // Two runs of one order share `orderProcessedAt`, so the line item
         // orders them: the same order `listRunsForOrder` gave `first` and
         // `second`.
         deepStrictEqual(
-          teamAQueue.map((item) => [item.run.id, item.steps[0]?.name]),
+          teamARows.map((item) => [item.run.id, item.steps[0]?.name]),
           [
             [first.run.id, "Cut"],
             [second.run.id, "Cut"],
           ],
         );
         strictEqual(first.run.lineItemId < second.run.lineItemId, true);
-        strictEqual((yield* queueRows({ teamIds: [TEAM_B.id] })).length, 0);
-        strictEqual((yield* queueRows({ teamIds: [] })).length, 0);
+        strictEqual((yield* runListRows({ teamIds: [TEAM_B.id] })).length, 0);
+        strictEqual((yield* runListRows({ teamIds: [] })).length, 0);
 
         yield* complete(second, 1, [TEAM_A.id]);
-        const teamBQueue = yield* queueRows({ teamIds: [TEAM_B.id] });
+        const teamBRows = yield* runListRows({ teamIds: [TEAM_B.id] });
         deepStrictEqual(
-          teamBQueue.map((item) => [item.run.id, item.steps[0]?.name]),
+          teamBRows.map((item) => [item.run.id, item.steps[0]?.name]),
           [[second.run.id, "Finish"]],
         );
 
@@ -1573,7 +1573,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         // The flag decides the tab, not the position in one list: the
         // reconciled run leaves Up next for Blocked and the untouched one
         // stays.
-        const blocked = yield* queueRows({
+        const blocked = yield* runListRows({
           teamIds: [TEAM_A.id, TEAM_B.id],
           tab: "attention",
         });
@@ -1582,7 +1582,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           [[second.run.id, "item_removed"]],
         );
         /* The personalization is the work page's, not the row's, so it is
-           read back off the run rather than off the queue item. */
+           read back off the run rather than off the list item. */
         const reconciled = yield* runsForOrder();
         strictEqual(
           reconciled.find((each) => each.run.id === second.run.id)?.run
@@ -1590,7 +1590,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           "Hello 2",
         );
         deepStrictEqual(
-          (yield* queueRows({
+          (yield* runListRows({
             teamIds: [TEAM_A.id, TEAM_B.id],
             tab: "upNext",
           })).map((item) => [item.run.id, item.run.flag]),
@@ -1650,9 +1650,9 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         strictEqual(done?.run.status, "done");
         strictEqual(done?.run.flag, null);
 
-        const queue = yield* queueRows({ teamIds: [TEAM_B.id] });
+        const rows = yield* runListRows({ teamIds: [TEAM_B.id] });
         deepStrictEqual(
-          queue.map((item) => item.run.id),
+          rows.map((item) => item.run.id),
           [activeRun.run.id],
         );
       }),
@@ -1692,7 +1692,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
       }),
     ));
 
-  it("listQueue tiers by the reader: my started step is Mine, a teammate's is Teammates, a flag is Blocked for both", () =>
+  it("listRuns tiers by the reader: my started step is Mine, a teammate's is Teammates, a flag is Blocked for both", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -1723,10 +1723,10 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         // reader says where every row landed for them.
         const countsFor = (memberEmail: Domain.Email) =>
           runs
-            .listQueue({
+            .listRuns({
               teamIds: [TEAM_A.id],
               memberEmail,
-              query: { team: null, tab: "mine", limit: Domain.QUEUE_PAGE },
+              query: { team: null, tab: "mine", limit: Domain.RUN_PAGE },
             })
             .pipe(
               Effect.map(({ counts, items }) => ({
@@ -1751,7 +1751,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         // The flagged run is Blocked for both, and the started one is In
         // progress for the reader who did not start it.
         deepStrictEqual(
-          (yield* queueRows({
+          (yield* runListRows({
             teamIds: [TEAM_A.id],
             memberEmail: VIEWER,
             tab: "inProgress",
@@ -1759,7 +1759,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           [mine.run.id],
         );
         deepStrictEqual(
-          (yield* queueRows({
+          (yield* runListRows({
             teamIds: [TEAM_A.id],
             memberEmail: maker.email,
             tab: "attention",
@@ -1769,7 +1769,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
       }),
     ));
 
-  it("listQueue counts the whole tab and returns only the limit; the team counts ignore the narrowing", () =>
+  it("listRuns counts the whole tab and returns only the limit; the team counts ignore the narrowing", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -1778,10 +1778,10 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           order(),
           Array.from({ length: 12 }, (_, index) => lineItem(index + 1, ["a"])),
         );
-        // An explicit limit rather than `QUEUE_PAGE`: what is on trial is that
+        // An explicit limit rather than `RUN_PAGE`: what is on trial is that
         // the cut happens at the number asked for, not what that number is.
         const read = (limit: number) =>
-          runs.listQueue({
+          runs.listRuns({
             teamIds: [TEAM_A.id, TEAM_B.id],
             memberEmail: VIEWER,
             query: { team: null, tab: "upNext", limit },
@@ -1806,17 +1806,17 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
       }),
     ));
 
-  it("listQueue on the Done tab returns no items and counts the tiers all the same", () =>
+  it("listRuns on the Done tab returns no items and counts the tiers all the same", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
         const runs = yield* WorkflowRunRepository;
         yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
 
-        const done = yield* runs.listQueue({
+        const done = yield* runs.listRuns({
           teamIds: [TEAM_A.id],
           memberEmail: VIEWER,
-          query: { team: null, tab: "done", limit: Domain.QUEUE_PAGE },
+          query: { team: null, tab: "done", limit: Domain.RUN_PAGE },
         });
         // The Done tab's rows are `listDone`'s; the strip above them is still
         // this read's, which is why the counts do not depend on the tab.
@@ -1826,7 +1826,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
       }),
     ));
 
-  it("listQueue narrows rows and their steps to one team, and a team the member is not on reads empty", () =>
+  it("listRuns narrows rows and their steps to one team, and a team the member is not on reads empty", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedStaged;
@@ -1835,10 +1835,10 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         const teamIds = [TEAM_A.id, TEAM_B.id];
 
         const read = (team: Domain.TeamId | null) =>
-          runs.listQueue({
+          runs.listRuns({
             teamIds,
             memberEmail: VIEWER,
-            query: { team, tab: "upNext", limit: Domain.QUEUE_PAGE },
+            query: { team, tab: "upNext", limit: Domain.RUN_PAGE },
           });
 
         const both = yield* read(null);
@@ -1877,31 +1877,31 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
       }),
     ));
 
-  it("listQueue returns every ready step per run that the reader's teams own, with stageCount", () =>
+  it("listRuns returns every ready step per run that the reader's teams own, with stageCount", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedStaged;
         const detail = yield* stagedRun();
 
-        const teamA = yield* queueRows({ teamIds: [TEAM_A.id] });
+        const teamA = yield* runListRows({ teamIds: [TEAM_A.id] });
         strictEqual(teamA.length, 1);
         strictEqual(teamA[0]?.stageCount, 3);
         deepStrictEqual(
           teamA[0]?.steps.map((s) => [s.name, s.stage]),
           [["Artwork", 1]],
         );
-        const both = yield* queueRows({ teamIds: [TEAM_A.id, TEAM_B.id] });
+        const both = yield* runListRows({ teamIds: [TEAM_A.id, TEAM_B.id] });
         strictEqual(both.length, 1);
         deepStrictEqual(
           both[0]?.steps.map((s) => s.name),
           ["Artwork", "Materials"],
         );
 
-        strictEqual((yield* queueRows({ teamIds: [TEAM_C.id] })).length, 0);
+        strictEqual((yield* runListRows({ teamIds: [TEAM_C.id] })).length, 0);
         yield* complete(detail, 1, [TEAM_A.id]);
-        strictEqual((yield* queueRows({ teamIds: [TEAM_C.id] })).length, 0);
+        strictEqual((yield* runListRows({ teamIds: [TEAM_C.id] })).length, 0);
         yield* complete(detail, 2, [TEAM_B.id]);
-        const teamC = yield* queueRows({ teamIds: [TEAM_C.id] });
+        const teamC = yield* runListRows({ teamIds: [TEAM_C.id] });
         deepStrictEqual(
           teamC[0]?.steps.map((s) => [s.name, s.stage]),
           [["Produce", 2]],
@@ -1992,8 +1992,8 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         );
         yield* complete(detail, 1, [TEAM_A.id]);
         yield* complete(detail, 2, [TEAM_B.id]);
-        // Stage 2 is ready now; Team C's queue has Produce.
-        strictEqual((yield* queueRows({ teamIds: [TEAM_C.id] })).length, 1);
+        // Stage 2 is ready now; Team C's list has Produce.
+        strictEqual((yield* runListRows({ teamIds: [TEAM_C.id] })).length, 1);
         // Wrong team.
         strictEqual(
           (yield* runs
@@ -2018,10 +2018,10 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         strictEqual(undone.steps[0]?.completedBy, null);
         strictEqual(undone.steps[0]?.startedBy, "member-1");
         strictEqual(undone.run.status, "active");
-        // Produce left Team C's queue: stage 1 is open again.
-        strictEqual((yield* queueRows({ teamIds: [TEAM_C.id] })).length, 0);
+        // Produce left Team C's list: stage 1 is open again.
+        strictEqual((yield* runListRows({ teamIds: [TEAM_C.id] })).length, 0);
         strictEqual(
-          (yield* queueRows({ teamIds: [TEAM_A.id] }))[0]?.steps[0]?.id,
+          (yield* runListRows({ teamIds: [TEAM_A.id] }))[0]?.steps[0]?.id,
           artwork,
         );
 
@@ -2309,8 +2309,8 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           reason: "Out of chain",
           by: { role: "member", memberId: "m1", email: "m1@example.com" },
         });
-        const queue = yield* queueRows({ teamIds: [TEAM_B.id] });
-        strictEqual(queue[0]?.run.flag, "blocked");
+        const rows = yield* runListRows({ teamIds: [TEAM_B.id] });
+        strictEqual(rows[0]?.run.flag, "blocked");
 
         yield* runs.dismissFlag({ runId: detail.run.id, teamIds: [TEAM_B.id] });
         const cleared = Option.getOrThrow(
@@ -2358,7 +2358,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
   /**
    * The edit is text and nothing else. `by` and `flagAt` record who set the
    * hold and when, and a correction to its wording must not restate either —
-   * the merchant reading the queue is chasing the person who blocked it, not
+   * the merchant reading the run list is chasing the person who blocked it, not
    * whoever last fixed a typo.
    */
   it("setBlockReason rewrites the reason, keeps by, and refuses anything that is not a standing block", () =>
@@ -2437,7 +2437,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         const sql = yield* SqlClient.SqlClient;
         const detail = yield* stagedRun();
         const artwork = detail.steps[0]?.id ?? "";
-        // The state a team delete leaves behind: in nobody's queue, which is
+        // The state a team delete leaves behind: on nobody's list, which is
         // the very run the merchant is there to unstick.
         yield* sql`update WorkflowRunStep set teamId = null where id = ${artwork}`;
         const refused = yield* runs
@@ -2786,7 +2786,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
         strictEqual(oldest?.steps.length, 2);
       }),
     ));
-  it("deleteWorkflow leaves its runs and run steps, open and finished; the queue, order view, start, complete, block, and cancel still work on them", () =>
+  it("deleteWorkflow leaves its runs and run steps, open and finished; the run list, order view, start, complete, block, and cancel still work on them", () =>
     runInRepository(
       Effect.gen(function* () {
         const { a, b } = yield* seed;
@@ -2833,11 +2833,11 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           true,
         );
 
-        // The orphan is still queued, and every step write still lands. Found
+        // The orphan is still listed, and every step write still lands. Found
         // by id rather than by position: which run it is does not matter here.
-        const queued = yield* queueRows({ teamIds: [TEAM_A.id] });
+        const listed = yield* runListRows({ teamIds: [TEAM_A.id] });
         strictEqual(
-          queued.some((item) => item.run.id === stillOpen.run.id),
+          listed.some((item) => item.run.id === stillOpen.run.id),
           true,
         );
         const [cut, finish] = stillOpen.steps;
@@ -2857,7 +2857,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           runStepId: finish.id,
           team: TEAM_C,
         });
-        const [reassigned] = yield* queueRows({ teamIds: [TEAM_C.id] });
+        const [reassigned] = yield* runListRows({ teamIds: [TEAM_C.id] });
         strictEqual(reassigned?.steps[0]?.id, finish.id);
         yield* runs.blockRun({
           runId: stillOpen.run.id,
@@ -2936,7 +2936,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
       }),
     ));
 
-  it("start, complete, and block snapshot the actor's email onto the row; listQueue reads it back with no roster", () =>
+  it("start, complete, and block snapshot the actor's email onto the row; listRuns reads it back with no roster", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedStaged;
@@ -2967,12 +2967,12 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
             ["m2@example.com", "m2@example.com"],
           ],
         );
-        const [queued] = yield* queueRows({ teamIds: [TEAM_A.id] });
-        strictEqual(queued?.steps[0]?.startedByEmail, "m1@example.com");
+        const [listed] = yield* runListRows({ teamIds: [TEAM_A.id] });
+        strictEqual(listed?.steps[0]?.startedByEmail, "m1@example.com");
       }),
     ));
 
-  it("unassignTeam nulls open run steps only; the step leaves every queue and cannot be worked; assignRunStepTeam brings it back", () =>
+  it("unassignTeam nulls open run steps only; the step leaves every list and cannot be worked; assignRunStepTeam brings it back", () =>
     runInRepository(
       Effect.gen(function* () {
         const { a } = yield* seed;
@@ -3002,7 +3002,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
             [null, "Team B"],
           ],
         );
-        strictEqual((yield* queueRows({ teamIds: [TEAM_B.id] })).length, 0);
+        strictEqual((yield* runListRows({ teamIds: [TEAM_B.id] })).length, 0);
         const refused = yield* runs
           .startStep({
             runStepId: finish.id,
@@ -3031,7 +3031,7 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           .pipe(Effect.flip);
         strictEqual(notOpen._tag, "RunTerminalError");
         yield* runs.uncancelRun({ runId: run.run.id });
-        // Assign Team C: name snapshotted, step in C's queue, workable.
+        // Assign Team C: name snapshotted, step on C's list, workable.
         yield* runs.assignRunStepTeam({ runStepId: finish.id, team: TEAM_C });
         const assigned = Option.getOrThrow(
           yield* runs.getRun({ runId: run.run.id }),
@@ -3040,8 +3040,8 @@ describe("WorkflowRunRepository steps, queue, flags, delete", () => {
           [assigned.steps[1]?.teamId, assigned.steps[1]?.teamName],
           [TEAM_C.id, "Team C"],
         );
-        const [queued] = yield* queueRows({ teamIds: [TEAM_C.id] });
-        strictEqual(queued?.steps[0]?.id, finish.id);
+        const [listed] = yield* runListRows({ teamIds: [TEAM_C.id] });
+        strictEqual(listed?.steps[0]?.id, finish.id);
         yield* runs.completeStep({
           runStepId: finish.id,
           actor: memberActor("m3"),

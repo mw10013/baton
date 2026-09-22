@@ -27,7 +27,7 @@ const ParamsInput = Schema.Struct({
 });
 
 /**
- * The work page's first paint, SSR like the queue's. `getRunForMember`
+ * The work page's first paint, SSR like the run list's. `getRunForMember`
  * answers `null` for a run that is not there *or* not on one of the member's
  * teams — one answer, so a member cannot probe run ids — and the page renders
  * its not-found state for both.
@@ -57,9 +57,17 @@ const getLoaderData = createServerFn({ method: "GET" })
     ),
   );
 
-export const Route = createFileRoute("/shop/$shop/work/$runId")({
+export const Route = createFileRoute("/shop/$shop/workflows/$runId")({
   loader: ({ params }) =>
     getLoaderData({ data: { shop: params.shop, runId: params.runId } }),
+  /** The browser tab says what the heading says: the order, or that there is none. */
+  head: ({ loaderData }) => ({
+    meta: [
+      {
+        title: `${loaderData?.view?.run.orderName ?? "Not found"} — Baton`,
+      },
+    ],
+  }),
   component: RouteComponent,
 });
 
@@ -445,9 +453,11 @@ function RouteComponent() {
     <>
       <MemberBar shop={shop} email={memberEmail} />
       {/* No breadcrumb: `MemberBar` sits directly above this heading and its
-          mark plus shop name is a link to `/shop/$shop`, which is the queue.
-          A second link to the same place, a stride below the first, is one
-          link too many. */}
+          mark is the link to `/shop/$shop`, which is the run list. A second
+          link to the same place, a stride below the first, is one link too
+          many — and the mark's link lands on the list the member left, tab,
+          team and depth included, because this page's URL carries their
+          context too (`MemberSearch` in `shop.$shop.tsx`). */}
       <s-page heading={run.orderName} inlineSize="small">
         {/* Block is a page action rather than a section at the foot of the
             page: a member holds work rarely, and a field mounted for it all

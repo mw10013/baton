@@ -962,8 +962,8 @@ export class OrderRepository extends Context.Service<
            * `Domain.OrderRow.attention` in SQL, bound to the roster the
            * caller read from D1: an open step is unassigned when its team id
            * is null or not in the roster, and a ready step (`readyWhere`, the
-           * one definition the worker queue also runs on) on a team with no
-           * members is stuck in nobody's queue.
+           * one definition the member's run list also runs on) on a team with no
+           * members is stuck on nobody's list.
            */
           const liveIds = teams.map(({ id }) => id);
           const emptyIds = teams
@@ -1163,7 +1163,7 @@ export class OrderRepository extends Context.Service<
            * own run inside its subqueries (see its JSDoc). A blocked run is
            * left out even though its step is ready: the team cannot move it,
            * so naming them here would send the merchant to the wrong desk —
-           * `RunCounts.blocked` is that run's column. The queue still lists it
+           * `RunCounts.blocked` is that run's column. The run list still shows it
            * (last), because the worker who blocked it is the one who unblocks.
            */
           const waitingRows =

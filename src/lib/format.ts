@@ -36,7 +36,7 @@ export const formatNumber = (value: number) =>
   value.toLocaleString("en-US", { maximumFractionDigits: 0 });
 
 /**
- * Coarse age for the queue card's "ordered 3d ago": minutes under an hour,
+ * Coarse age for a run row's "ordered 3d ago": minutes under an hour,
  * hours under a day, then days. Coarse on purpose — a bench wants "is this
  * from today or last week", not a timestamp, which the work page has. Same
  * SSR caveat as `formatDateTime`: `Date.now()` differs between the server

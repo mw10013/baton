@@ -179,14 +179,14 @@ describe("member area", () => {
   );
 });
 
-describe("member queue", () => {
+describe("member run list", () => {
   /**
-   * The queue is `/shop/$shop` itself, the index under the `/shop/$shop`
+   * The run list is `/shop/$shop` itself, the index under the `/shop/$shop`
    * layout, which owns no loader of its own — each child's server fn calls
-   * `requireMember` itself. The queue read hits only the Durable Object and
+   * `requireMember` itself. The run list read hits only the Durable Object and
    * renders `200`; the `404` on another shop proves the route is behind the
    * same gate. The work page is a sibling and is gated the same way. The page's own actions are socket callables and are covered
-   * against the object in `member-queue-socket.test.ts` and
+   * against the object in `member-runs-socket.test.ts` and
    * `shop-agent-workflows.test.ts`.
    */
   it.effect("is gated by membership like the shop page", () =>
@@ -208,7 +208,7 @@ describe("member queue", () => {
           200,
         );
         strictEqual(
-          (yield* fetchWorker(`http://localhost/shop/${SHOP}/work/none`, {
+          (yield* fetchWorker(`http://localhost/shop/${SHOP}/workflows/none`, {
             headers: { cookie },
           })).status,
           200,
@@ -220,9 +220,12 @@ describe("member queue", () => {
           404,
         );
         strictEqual(
-          (yield* fetchWorker(`http://localhost/shop/${OTHER_SHOP}/work/none`, {
-            headers: { cookie },
-          })).status,
+          (yield* fetchWorker(
+            `http://localhost/shop/${OTHER_SHOP}/workflows/none`,
+            {
+              headers: { cookie },
+            },
+          )).status,
           404,
         );
       }),
@@ -351,7 +354,7 @@ describe("member queue", () => {
         });
         const cookie = yield* signInThroughWorker(MEMBER);
         const stranger = yield* signInThroughWorker(STRANGER);
-        for (const path of [`/shop/${SHOP}`, `/shop/${SHOP}/work/none`]) {
+        for (const path of [`/shop/${SHOP}`, `/shop/${SHOP}/workflows/none`]) {
           const response = yield* fetchWorker(`http://localhost${path}`, {
             headers: { cookie },
           });
@@ -431,12 +434,12 @@ describe("admin console", () => {
 
 describe("login-callback", () => {
   /**
-   * One membership lands on that shop's queue; two land on the picker. The
+   * One membership lands on that shop's run list; two land on the picker. The
    * picker is a page with one link when there is one shop, and a bench wants
    * the work, not a menu.
    */
   it.effect(
-    "sends a one-shop member to their queue and a two-shop member to /shop",
+    "sends a one-shop member to their run list and a two-shop member to /shop",
     () =>
       run(
         Effect.gen(function* () {

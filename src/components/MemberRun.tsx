@@ -7,10 +7,10 @@ import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
 
 /**
- * Pieces the queue card and the work page both render, kept together so the
+ * Pieces the run list's rows and the work page both render, kept together so the
  * two screens describe one item and one flag in the same words.
  *
- * One fact, once. The tier heading on the queue says which tier a card is in,
+ * One fact, once. The pressed tab on the run list says which tier a row is in,
  * so nothing inside the card repeats it; the flag kind is said by the banner
  * *heading* and by nothing else, which is why {@link flagBody} carries only
  * the detail and is allowed to be null. {@link FlagBanner} takes the buttons
@@ -217,7 +217,7 @@ export function FlagBanner({
  * The one button a flag allows, by who set it: Unblock lifts a person's hold
  * ({@link Domain.runIsBlocked}); Dismiss acknowledges a reconcile flag, which
  * is not a hold anybody set. Both screens read it from here so the word
- * cannot differ between the queue card and the work page.
+ * cannot differ between the run list and the work page.
  */
 export const liftFlagLabel = (run: { readonly flag: Domain.RunFlag | null }) =>
   Domain.runIsBlocked(run) ? "Unblock" : "Dismiss";

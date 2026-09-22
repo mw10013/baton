@@ -8,7 +8,7 @@ import { awaitEnabled, clickWhenEnabled, gotoMember, signIn } from "./member";
 import { seedConfig, seedMembers } from "./seed";
 
 /**
- * The member queue through a real browser: cookie → Worker gate → member
+ * The member's run list through a real browser: cookie → Worker gate → member
  * socket → `@callable()`. The integration suite already proves the object's
  * side; what only a browser can prove is that a member holding nothing but a
  * better-auth cookie reaches the Durable Object at all, that the page's
@@ -25,41 +25,41 @@ import { seedConfig, seedMembers } from "./seed";
  * the two sessions survive.
  *
  * Two teams, so team scoping is observable from both sides: the maker is on
- * `CUT_TEAM` only and the mate is on both, so the mate's queue holds a card
+ * `CUT_TEAM` only and the mate is on both, so the mate's list holds a card
  * the maker's cannot show.
  */
 
-const MAKER = "e2e.queue.maker@example.com";
-const MATE = "e2e.queue.mate@example.com";
-const CUT_TEAM = "E2E Queue Cut";
-const PACK_TEAM = "E2E Queue Pack";
-const RING_TAG = "e2e-queue-ring";
-const BOX_TAG = "e2e-queue-box";
+const MAKER = "e2e.runs.maker@example.com";
+const MATE = "e2e.runs.mate@example.com";
+const CUT_TEAM = "E2E Runs Cut";
+const PACK_TEAM = "E2E Runs Pack";
+const RING_TAG = "e2e-runs-ring";
+const BOX_TAG = "e2e-runs-box";
 /** Routed to `CUT_TEAM`, so both members see it. */
 const RING_ORDER = "#9401";
 /** Routed to `PACK_TEAM`, so only the mate sees it. */
 const BOX_ORDER = "#9402";
 /** Routed Cut → Polish across the two teams; seeded only where a test needs downstream work. */
 const BAND_ORDER = "#9403";
-const BAND_TAG = "e2e-queue-band";
-/** The queue row names the step and nothing else: progress is the work page's. */
+const BAND_TAG = "e2e-runs-band";
+/** A run's row names the step and nothing else: progress is the work page's. */
 const CUT_STEP = "Cut";
 /**
  * The work page's in-progress line. The badge beside the step name states
  * the state, so the line under it is team, actor and when, with no "In
- * progress" in it. A queue row says `In progress · <who>` instead.
+ * progress" in it. A run's row says `In progress · <who>` instead.
  */
 const STARTED = `${CUT_TEAM} · ${MAKER} · since`;
 /** The same line for a finished step: the `Done` badge carries the verb. */
 const FINISHED = `${CUT_TEAM} · ${MAKER}`;
 /**
- * A queue row's line two where the reader holds the step themselves: where it
+ * A row's line two where the reader holds the step themselves: where it
  * is in the run, not "In progress · you", which would be true of every row
  * under a pressed Mine. The ring workflow has one step, and the maker is on
  * one team, so no team name follows it either.
  */
 const MINE_STATE = "Step 1 of 1";
-/** Per-tab empty text (`TAB_EMPTY` in `src/lib/queueTiers.ts`). */
+/** Per-tab empty text (`TAB_EMPTY` in `src/lib/runTabs.ts`). */
 const EMPTY_MINE = "Nothing in hand.";
 const EMPTY_TEAMMATES = "Nobody else has work.";
 const EMPTY_DONE = "Nothing finished in the last day.";
@@ -73,7 +73,7 @@ const ORDER_LINK = /^Open #94\d\d$/u;
  * Filler Cut orders, numbered clear of the three named ones. Twenty-five and
  * not twenty-four: the ring order is a Cut order too, so the mate's Up next
  * comes to twenty-seven and the maker's to twenty-six — both over
- * `Domain.QUEUE_PAGE` (25), and the two counts differ, so an assertion cannot
+ * `Domain.RUN_PAGE` (25), and the two counts differ, so an assertion cannot
  * pass by reading the wrong page.
  */
 const BULK_COUNT = 25;
@@ -93,7 +93,7 @@ const DONE_TODAY = "Done today";
  * seeded fresh (`pending`, nothing started), so each carries exactly one ready
  * step.
  */
-const seedQueue = (
+const seedRuns = (
   config: SeedConfig,
   options: {
     readonly cutMembers: readonly string[];
@@ -107,7 +107,7 @@ const seedQueue = (
      */
     readonly bandDoneByMerchant?: boolean;
     /**
-     * Enough more Cut orders to cross `Domain.QUEUE_PAGE`, which is the only
+     * Enough more Cut orders to cross `Domain.RUN_PAGE`, which is the only
      * way to reach Show more. They carry nothing a test reads but their names:
      * the cut is about how many rows the read returns, not what is on them.
      */
@@ -123,19 +123,19 @@ const seedQueue = (
     ],
     [
       {
-        name: "E2E Queue Ring",
+        name: "E2E Runs Ring",
         tag: RING_TAG,
         steps: [{ name: "Cut", team: CUT_TEAM }],
       },
       {
-        name: "E2E Queue Box",
+        name: "E2E Runs Box",
         tag: BOX_TAG,
         steps: [{ name: "Pack", team: PACK_TEAM }],
       },
       ...(options.withBand === true
         ? [
             {
-              name: "E2E Queue Band",
+              name: "E2E Runs Band",
               tag: BAND_TAG,
               steps: [
                 { name: "Cut", team: CUT_TEAM },
@@ -225,12 +225,12 @@ const memberContext = (
 const contexts: BrowserContext[] = [];
 
 /**
- * Land a signed-in member on their queue. `tab` goes in the URL rather than
+ * Land a signed-in member on their run list. `tab` goes in the URL rather than
  * through a click, because the tab is a search param and most tests here are
  * about the rows rather than about getting to them; the default landing tab
  * is Mine, which is empty until somebody starts something.
  */
-const openQueue = async (
+const openRuns = async (
   browser: Browser,
   config: SeedConfig,
   storageState: StorageState,
@@ -246,7 +246,7 @@ const openQueue = async (
   /* The section, not an `s-page` heading: the page has none, and the section's
      accessibility label is what names the landmark now. */
   await expect(
-    page.locator('s-section[accessibilityLabel="Queue"]'),
+    page.locator('s-section[accessibilityLabel="Workflows"]'),
   ).toBeVisible();
   return page;
 };
@@ -261,12 +261,19 @@ const tab = (page: Page, label: string) =>
     name: new RegExp(`^${label} · \\d+$`, "u"),
   });
 
+/** The landing tab, `Domain.DEFAULT_RUN_TAB`, which the URL never spells out. */
+const DEFAULT_TAB = "mine";
+
 /**
  * Switch tabs and wait for the switch to land. The wait is on the URL rather
  * than on `aria-pressed`, because `getByRole` may resolve to either the
  * `s-button` host or the native button inside its shadow root and only the
  * host carries the attribute — the search param is the same fact, on the
  * side that cannot be ambiguous.
+ *
+ * The default tab is the absence of the key: `stripSearchParams` keeps it out
+ * of the URL so the bare `/shop/$shop` stays the canonical way home
+ * (`MemberSearch` in `src/routes/shop.$shop.tsx`).
  */
 const selectTab = async (
   page: Page,
@@ -274,7 +281,32 @@ const selectTab = async (
   label: string,
 ): Promise<void> => {
   await tab(page, label).click();
-  await expect(page).toHaveURL(new RegExp(`[?&]tab=${name}(&|$)`, "u"));
+  await expect(page).toHaveURL(
+    (url) => (url.searchParams.get("tab") ?? DEFAULT_TAB) === name,
+  );
+};
+
+/**
+ * The bar's mark: the member area's one standing way home. The link's
+ * accessible name is the shop domain inside it, so it is found by its class
+ * (`MemberBar.tsx`).
+ */
+const homeLink = (page: Page) => page.locator("a.member-bar-home");
+
+/** The `team` the address bar is carrying, or `null`. */
+const teamParam = (page: Page) => new URL(page.url()).searchParams.get("team");
+
+/**
+ * The rows a *cold* request paints, counted in the HTML the server sent rather
+ * than in the DOM the socket has since had its hands on. `page.request` shares
+ * the context's cookies, so this is the SSR paint a member gets when they open
+ * the URL fresh — which is the whole claim these navigation tests make.
+ */
+const serverRows = async (page: Page, path: string): Promise<number> => {
+  const response = await page.request.get(path);
+  expect(response.ok()).toBe(true);
+  const html = await response.text();
+  return html.match(/Open #94\d\d/gu)?.length ?? 0;
 };
 
 /**
@@ -286,7 +318,7 @@ const rowLink = (page: Page, orderName: string) =>
   page.getByRole("link", { name: `Open ${orderName}`, exact: true });
 
 /**
- * The queue row for one order: the innermost `s-box` holding that order's
+ * The row for one order: the innermost `s-box` holding that order's
  * link. `.last()`, not `.first()`: the tab's list container is an `s-box`
  * around every row and so matches the same filter, and it is the ancestor, so
  * document order puts it first.
@@ -331,7 +363,7 @@ test.describe.configure({ mode: "serial" });
  */
 test.beforeAll(async ({ browser }) => {
   const config = seedConfig();
-  await seedQueue(config, {
+  await seedRuns(config, {
     cutMembers: [MAKER, MATE],
     keepIdentities: false,
   });
@@ -342,9 +374,9 @@ test.beforeAll(async ({ browser }) => {
     });
     const page = await context.newPage();
     await signIn(page, email);
-    // A one-shop member lands on the queue itself, not the picker.
+    // A one-shop member lands on the run list itself, not the picker.
     await expect(
-      page.locator('s-section[accessibilityLabel="Queue"]'),
+      page.locator('s-section[accessibilityLabel="Workflows"]'),
     ).toBeVisible();
     const state = await context.storageState();
     await context.close();
@@ -369,8 +401,8 @@ test("a member starts and completes their team's ready step over the socket", as
   browser,
 }) => {
   const config = seedConfig();
-  await seedQueue(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
-  const page = await openQueue(browser, config, makerState, "upNext");
+  await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
+  const page = await openRuns(browser, config, makerState, "upNext");
 
   await expect(page.getByText(RING_ORDER, { exact: true })).toBeVisible();
   await expect(page.getByText(CUT_STEP, { exact: true })).toBeVisible();
@@ -411,12 +443,12 @@ test("a member starts and completes their team's ready step over the socket", as
  * a thumb reaching for Done would cost the member their place in the list on
  * every piece they finish.
  */
-test("a queue row opens the work page and its menu does not", async ({
+test("a run's row opens the work page and its menu does not", async ({
   browser,
 }) => {
   const config = seedConfig();
-  await seedQueue(config, { cutMembers: [MAKER], keepIdentities: true });
-  const page = await openQueue(browser, config, makerState, "upNext");
+  await seedRuns(config, { cutMembers: [MAKER], keepIdentities: true });
+  const page = await openRuns(browser, config, makerState, "upNext");
   await expect(page.getByText(RING_ORDER, { exact: true })).toBeVisible();
 
   /* The row body, not the order number: the number is plain text now and the
@@ -425,18 +457,18 @@ test("a queue row opens the work page and its menu does not", async ({
   await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
 
   await page.goBack();
-  /* Wait for the queue itself, not for the order number: until Back lands,
+  /* Wait for the run list itself, not for the order number: until Back lands,
      the order number on the work page's own heading matches too. */
   await expect(
-    page.locator('s-section[accessibilityLabel="Queue"]'),
+    page.locator('s-section[accessibilityLabel="Workflows"]'),
   ).toBeVisible();
   await expect(card(page, RING_ORDER)).toBeVisible();
-  const queueUrl = page.url();
+  const runsUrl = page.url();
   await rowAction(page, RING_ORDER, "Start");
   /* The write landed and the reader stayed put: the strip renumbered and the
-     address bar still says the queue. */
+     address bar still says the run list. */
   await expect(page.getByRole("button", { name: `${MINE} · 1` })).toBeVisible();
-  await expect(page).toHaveURL(queueUrl);
+  await expect(page).toHaveURL(runsUrl);
 });
 
 /**
@@ -444,28 +476,28 @@ test("a queue row opens the work page and its menu does not", async ({
  * acts, and the mate's page is never touched after it loads — so every change
  * it shows arrived as a `publish` over its own socket.
  *
- * The observer's page is opened first: its `subscribeQueue` has to be
+ * The observer's page is opened first: its `subscribeRuns` has to be
  * registered before the write it is meant to hear about, and the maker's own
  * page load and socket handshake are the margin.
  *
  * The cross-team half rides along: the box order is routed to a team the maker
- * is not on, so it must be absent from the maker's queue while sitting in
+ * is not on, so it must be absent from the maker's list while sitting in
  * plain sight on the mate's, and it must still be there after the ring work is
  * finished.
  */
-test("a completed step lands on another member's queue without a reload", async ({
+test("a completed step lands on another member's run list without a reload", async ({
   browser,
 }) => {
   const config = seedConfig();
-  await seedQueue(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
+  await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
 
-  const mate = await openQueue(browser, config, mateState, "upNext");
+  const mate = await openRuns(browser, config, mateState, "upNext");
   await expect(mate.getByText(RING_ORDER, { exact: true })).toBeVisible();
   await expect(mate.getByText(BOX_ORDER, { exact: true })).toBeVisible();
   await awaitEnabled(rowMenu(mate, RING_ORDER));
   await markDocument(mate);
 
-  const maker = await openQueue(browser, config, makerState, "upNext");
+  const maker = await openRuns(browser, config, makerState, "upNext");
   await expect(maker.getByText(RING_ORDER, { exact: true })).toBeVisible();
   await expect(maker.getByText(BOX_ORDER, { exact: true })).toBeHidden();
   await expect(maker.getByText("Pack")).toBeHidden();
@@ -500,7 +532,7 @@ test("a completed step lands on another member's queue without a reload", async 
 });
 
 /**
- * Taking a member off a team while they are standing on the queue. The seed
+ * Taking a member off a team while they are standing on the run list. The seed
  * ends by revoking the connections of the members it replaced, which is what
  * `app.members` and `app.teams.$teamId` do after their own roster writes, so
  * this is the same close a merchant edit produces: code 4401, `/shop/$shop`
@@ -510,21 +542,21 @@ test("a completed step lands on another member's queue without a reload", async 
  * the test would pass for the wrong reason — hence `awaitEnabled` first, which
  * is exactly the identified gate.
  *
- * The member keeps their shop membership here, so the answer is the queue's
+ * The member keeps their shop membership here, so the answer is the list's
  * "not on a team yet" state rather than not-found; `member-area.member.spec.ts`
  * owns the removed-from-the-shop case.
  */
-test("removing a member from a team empties their open queue", async ({
+test("removing a member from a team empties their open run list", async ({
   browser,
 }) => {
   const config = seedConfig();
-  await seedQueue(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
-  const page = await openQueue(browser, config, makerState, "upNext");
+  await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
+  const page = await openRuns(browser, config, makerState, "upNext");
   await expect(page.getByText(RING_ORDER, { exact: true })).toBeVisible();
   await awaitEnabled(rowMenu(page, RING_ORDER));
   await markDocument(page);
 
-  await seedQueue(config, { cutMembers: [MATE], keepIdentities: true });
+  await seedRuns(config, { cutMembers: [MATE], keepIdentities: true });
 
   await expect(page.getByText(RING_ORDER, { exact: true })).toBeHidden();
   await expect(page.getByText("You’re not on a team yet.")).toBeVisible();
@@ -543,14 +575,14 @@ test("a started card moves to Mine for the starter and Teammates for a teammate"
   browser,
 }) => {
   const config = seedConfig();
-  await seedQueue(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
-  const mate = await openQueue(browser, config, mateState, "upNext");
+  await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
+  const mate = await openRuns(browser, config, mateState, "upNext");
   await expect(
     mate.getByRole("button", { name: `${UP_NEXT} · 2` }),
   ).toBeVisible();
   await awaitEnabled(rowMenu(mate, RING_ORDER));
 
-  const maker = await openQueue(browser, config, makerState, "upNext");
+  const maker = await openRuns(browser, config, makerState, "upNext");
   await expect(
     maker.getByRole("button", { name: `${UP_NEXT} · 1` }),
   ).toBeVisible();
@@ -586,7 +618,7 @@ test("a started card moves to Mine for the starter and Teammates for a teammate"
 
 /**
  * The one place in the member area where the number on the strip is not the
- * number of rows under it. Up next is cut to `Domain.QUEUE_PAGE` (25) and the
+ * number of rows under it. Up next is cut to `Domain.RUN_PAGE` (25) and the
  * strip still counts the whole tab, which is the promise being tested: a
  * member who reads "Up next · 27" above twenty-five rows must be able to reach
  * the other two — and the button that does it asks the object for a deeper
@@ -599,12 +631,12 @@ test("Up next cuts at a page, pages on Show more, and re-cuts when the team chan
   browser,
 }) => {
   const config = seedConfig();
-  await seedQueue(config, {
+  await seedRuns(config, {
     cutMembers: [MAKER, MATE],
     keepIdentities: true,
     withBulk: true,
   });
-  const page = await openQueue(browser, config, mateState, "upNext");
+  const page = await openRuns(browser, config, mateState, "upNext");
 
   await expect(
     page.getByRole("button", { name: `${UP_NEXT} · 27` }),
@@ -652,18 +684,18 @@ test("the tabs are a grid that never scrolls and the team filter sits in the mem
   browser,
 }) => {
   const config = seedConfig();
-  await seedQueue(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
-  const page = await openQueue(browser, config, mateState, "upNext");
+  await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
+  const page = await openRuns(browser, config, mateState, "upNext");
   await page.setViewportSize({ width: 375, height: 800 });
 
-  const strip = page.locator(".queue-strip-tabs");
+  const strip = page.locator(".run-strip-tabs");
   const metrics = await strip.evaluate((element) => {
     const style = getComputedStyle(element);
     return {
       display: style.display,
       overflows: element.scrollWidth > element.clientWidth,
       holdsTeamFilter:
-        element.querySelector('[commandfor="queue-team-menu"]') !== null,
+        element.querySelector('[commandfor="run-team-menu"]') !== null,
     };
   });
   expect(metrics).toEqual({
@@ -673,12 +705,12 @@ test("the tabs are a grid that never scrolls and the team filter sits in the mem
   });
 
   await expect(
-    page.locator('.member-bar [commandfor="queue-team-menu"]'),
+    page.locator('.member-bar [commandfor="run-team-menu"]'),
   ).toBeVisible();
 
   /* One team, no filter: the bar holds the shop and the session and nothing
      else, rather than a control with nothing to choose between. */
-  const maker = await openQueue(browser, config, makerState, "upNext");
+  const maker = await openRuns(browser, config, makerState, "upNext");
   await expect(
     maker.getByRole("button", { name: "All teams", exact: true }),
   ).toHaveCount(0);
@@ -696,8 +728,8 @@ test("a row names its team only for a member on several teams looking at all of 
   browser,
 }) => {
   const config = seedConfig();
-  await seedQueue(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
-  const mate = await openQueue(browser, config, mateState, "upNext");
+  await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
+  const mate = await openRuns(browser, config, mateState, "upNext");
   await expect(card(mate, RING_ORDER).getByText(CUT_TEAM)).toHaveCount(1);
 
   await mate.getByRole("button", { name: "All teams", exact: true }).click();
@@ -707,7 +739,7 @@ test("a row names its team only for a member on several teams looking at all of 
   ).toBeVisible();
   await expect(card(mate, RING_ORDER).getByText(CUT_TEAM)).toHaveCount(0);
 
-  const maker = await openQueue(browser, config, makerState, "upNext");
+  const maker = await openRuns(browser, config, makerState, "upNext");
   await expect(card(maker, RING_ORDER).getByText(CUT_TEAM)).toHaveCount(0);
 });
 
@@ -715,14 +747,14 @@ test("a row names its team only for a member on several teams looking at all of 
  * The tab is a search param, so it survives a paste into the address bar and
  * it is what the back button walks out of. `replace: true` on the switch is
  * the second half: a member who glanced at three tabs presses Back once and
- * is out of the queue, not walked back through them.
+ * is out of the run list, not walked back through them.
  */
 test("the tab is in the URL and switching tabs replaces it", async ({
   browser,
 }) => {
   const config = seedConfig();
-  await seedQueue(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
-  const page = await openQueue(browser, config, makerState);
+  await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
+  const page = await openRuns(browser, config, makerState);
   await expect(page.getByText(EMPTY_MINE)).toBeVisible();
 
   await gotoMember(page, `/shop/${config.shop}?tab=upNext`);
@@ -736,14 +768,224 @@ test("the tab is in the URL and switching tabs replaces it", async ({
 });
 
 /**
- * Done today and Undo. The finished step leaves the queue for the Done tab;
+ * The team is the member's context, not the screen's: a bench narrows to one
+ * team once and everything they do afterwards is that team's. It is in the
+ * URL for the same two reasons the tab is — a cold load paints it, and Back
+ * walks out of the list rather than through the filters — and `replace: true`
+ * is what keeps one glance at one team from costing one press of Back.
+ */
+test("the team is in the URL and switching teams replaces it", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
+  const page = await openRuns(browser, config, mateState);
+  await gotoMember(page, `/shop/${config.shop}?tab=upNext`);
+
+  await page.getByRole("button", { name: "All teams", exact: true }).click();
+  await page.getByRole("menuitem", { name: `${CUT_TEAM} · 1` }).click();
+  await expect(page).toHaveURL(/[?&]team=/u);
+  const team = teamParam(page);
+  expect(team).not.toBeNull();
+
+  /* One press, out: the team switch replaced the entry the tab switch made,
+     so Back is the way out of the list rather than back through the filter. */
+  await page.goBack();
+  await expect(page).toHaveURL(new RegExp(`/shop/${config.shop}$`, "u"));
+  await expect(page.getByText(EMPTY_MINE)).toBeVisible();
+
+  /* Cold, with the team in the URL: the loader reads it, so the narrowed list
+     is what the server paints — one Cut row, not two rows corrected after the
+     socket answers. */
+  const narrowed = `/shop/${config.shop}?tab=upNext&team=${String(team)}`;
+  expect(await serverRows(page, narrowed)).toBe(1);
+  await gotoMember(page, narrowed);
+  await expect(
+    page.getByRole("button", { name: `${UP_NEXT} · 1` }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: CUT_TEAM, exact: true }),
+  ).toBeVisible();
+  await expect(rowLink(page, BOX_ORDER)).toHaveCount(0);
+  /* Narrowed, every row is that team, so no row names it. */
+  await expect(card(page, RING_ORDER).getByText(CUT_TEAM)).toHaveCount(0);
+});
+
+/**
+ * Depth is context too, and it is the one that costs the most to lose: a
+ * member who pressed Show more and opened a row from the second page comes
+ * back to page one and has to find their place by scrolling. So `limit` rides
+ * in the URL and the loader reads it, and the deepened list is what a cold
+ * request paints.
+ *
+ * **A depth out of range clamps rather than fails** (`Domain.clampRunLimit`):
+ * the address bar is text a member can edit, and the router's error boundary
+ * over a shop's work is a worse answer than a list.
+ */
+test("depth is in the URL and a return lands on the same depth", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedRuns(config, {
+    cutMembers: [MAKER, MATE],
+    keepIdentities: true,
+    withBulk: true,
+  });
+  const page = await openRuns(browser, config, mateState, "upNext");
+
+  await page.getByRole("button", { name: "Show 2 more of 2" }).click();
+  await expect(page).toHaveURL(/[?&]limit=50(?:&|$)/u);
+  await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(27);
+
+  /* Cold at that depth: all 27 in the SSR paint, and no button offering rows
+     that are already there. */
+  const deep = `/shop/${config.shop}?tab=upNext&limit=50`;
+  expect(await serverRows(page, deep)).toBe(27);
+  await gotoMember(page, deep);
+  await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(27);
+  await expect(
+    page.getByRole("button", { name: /^Show \d+ more/u }),
+  ).toHaveCount(0);
+
+  /* Below the floor and far above the ceiling: both are lists, neither is an
+     error page. `limit=0` clamps to one row, which is the sharp end of the
+     rule — the tab still counts 27 and offers the rest. */
+  await gotoMember(page, `/shop/${config.shop}?tab=upNext&limit=0`);
+  await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(1);
+  await expect(
+    page.getByRole("button", { name: "Show 25 more of 26" }),
+  ).toBeVisible();
+
+  await gotoMember(page, `/shop/${config.shop}?tab=upNext&limit=1000`);
+  await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(27);
+  await expect(
+    page.getByRole("button", { name: `${UP_NEXT} · 27` }),
+  ).toBeVisible();
+});
+
+/**
+ * The two ways home are one screen. The bar's mark is the member area's only
+ * standing link back, and the browser's Back is the other way; both have to
+ * land on the list the member left, filters and depth included, or the filter
+ * is a thing you set once per drill-down.
+ *
+ * Nothing in `MemberBar` or in the row's link names a search key: the layout's
+ * middleware puts the context on every link built under `/shop/$shop`
+ * (`MemberSearch` in `src/routes/shop.$shop.tsx`), which is why the work page's
+ * URL carries filters it does not itself read.
+ */
+test("the bar's mark returns to the screen the member left", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
+  const page = await openRuns(browser, config, mateState, "upNext");
+  await page.getByRole("button", { name: "All teams", exact: true }).click();
+  await page.getByRole("menuitem", { name: `${CUT_TEAM} · 1` }).click();
+  const team = teamParam(page);
+
+  await rowLink(page, RING_ORDER).click();
+  await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
+  await expect(page).toHaveURL(/[?&]tab=upNext(?:&|$)/u);
+  await expect(page).toHaveURL(
+    new RegExp(`[?&]team=${String(team)}(&|$)`, "u"),
+  );
+
+  const expectLeftScreen = async (): Promise<void> => {
+    await expect(
+      page.locator('s-section[accessibilityLabel="Workflows"]'),
+    ).toBeVisible();
+    await expect(page).toHaveURL(/[?&]tab=upNext(?:&|$)/u);
+    expect(teamParam(page)).toBe(team);
+    await expect(
+      page.getByRole("button", { name: `${UP_NEXT} · 1` }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: CUT_TEAM, exact: true }),
+    ).toBeVisible();
+  };
+
+  await homeLink(page).click();
+  await expectLeftScreen();
+
+  await rowLink(page, RING_ORDER).click();
+  await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
+  await page.goBack();
+  await expectLeftScreen();
+});
+
+/**
+ * A `team` in the URL is a shape, not a membership: the schema cannot know the
+ * roster, and a member taken off a team keeps the id in every link they had
+ * open. The screen resolves it against the teams `requireMember` returned and
+ * reads an id that is not among them as All teams — the button already says
+ * so, and the alternative is an empty list for a reason nothing on screen
+ * states.
+ */
+test("a team the member is no longer on reads as all teams", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
+  const page = await openRuns(browser, config, mateState);
+  await gotoMember(
+    page,
+    `/shop/${config.shop}?tab=upNext&team=not-a-team-of-theirs`,
+  );
+
+  await expect(
+    page.getByRole("button", { name: "All teams", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: `${UP_NEXT} · 2` }),
+  ).toBeVisible();
+  await expect(rowLink(page, RING_ORDER)).toBeVisible();
+  await expect(rowLink(page, BOX_ORDER)).toBeVisible();
+});
+
+/**
+ * The three keys ride in a URL a member can edit, so none of them can fail:
+ * a `tab` the schema cannot read is the default tab, a `limit` that is not a
+ * number is a page, and an empty `team` is every team (`MemberSearch` in
+ * `src/routes/shop.$shop.tsx`). The schema guards the whole member area now,
+ * work page included, so the alternative to a default is the router's error
+ * boundary over a shop's work because somebody mistyped one character.
+ */
+test("a value the search schema cannot read falls back to the default", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedRuns(config, {
+    cutMembers: [MAKER, MATE],
+    keepIdentities: true,
+    withBulk: true,
+  });
+  const page = await openRuns(browser, config, mateState);
+
+  await gotoMember(page, `/shop/${config.shop}?tab=bogus`);
+  await expect(page.getByText(EMPTY_MINE)).toBeVisible();
+
+  await gotoMember(page, `/shop/${config.shop}?tab=upNext&limit=abc`);
+  await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(25);
+
+  await gotoMember(page, `/shop/${config.shop}?tab=upNext&team=`);
+  await expect(
+    page.getByRole("button", { name: "All teams", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: `${UP_NEXT} · 27` }),
+  ).toBeVisible();
+});
+
+/**
+ * Done today and Undo. The finished step leaves the list for the Done tab;
  * Undo puts it back, and because Undo keeps the original starter the card
  * returns to "Mine", not "Up next".
  */
 test("undo puts a finished step back in progress", async ({ browser }) => {
   const config = seedConfig();
-  await seedQueue(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
-  const page = await openQueue(browser, config, makerState, "upNext");
+  await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
+  const page = await openRuns(browser, config, makerState, "upNext");
   await expect(
     page.getByRole("button", { name: `${DONE_TODAY} · 0` }),
   ).toBeVisible();
@@ -774,7 +1016,7 @@ test("undo puts a finished step back in progress", async ({ browser }) => {
 
 /**
  * A `done` run is only its last step's Done, and the work page must offer
- * Undo there just as the queue's Done tier does (`Domain.stepActions`: Undo's
+ * Undo there just as the run list's Done tier does (`Domain.stepActions`: Undo's
  * gate is `runIsLive`, not `runIsOpen`). The ring order has one step, so Done
  * on it finishes the run, and the page it links to is the page under test.
  */
@@ -782,8 +1024,8 @@ test("a done run's work page offers Undo on its last step", async ({
   browser,
 }) => {
   const config = seedConfig();
-  await seedQueue(config, { cutMembers: [MAKER], keepIdentities: true });
-  const page = await openQueue(browser, config, makerState, "upNext");
+  await seedRuns(config, { cutMembers: [MAKER], keepIdentities: true });
+  const page = await openRuns(browser, config, makerState, "upNext");
   await rowLink(page, RING_ORDER).click();
   await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
 
@@ -817,7 +1059,7 @@ test("a done run's work page offers Undo on its last step", async ({
  * that the control read as a refusal rather than as one that was never
  * undoable. That holds while refusal is the exception, and in a running shop
  * it is the rule: a finished step is nearly always downstream of something
- * already started. The queue dropped both on that argument, deferring the
+ * already started. The run list dropped both on that argument, deferring the
  * explanation to this page — and this page is where the explanation is least
  * needed, because it lists the whole run: the step standing in the way is on
  * screen, directly below, wearing an `In progress` badge. A sentence naming
@@ -831,14 +1073,14 @@ test("a blocked undo offers nothing and explains nothing, on the row or the work
   browser,
 }) => {
   const config = seedConfig();
-  await seedQueue(config, {
+  await seedRuns(config, {
     cutMembers: [MAKER],
     keepIdentities: true,
     withBand: true,
   });
-  const maker = await openQueue(browser, config, makerState, "upNext");
+  const maker = await openRuns(browser, config, makerState, "upNext");
   /* The row carries one menu, whose verb is Start while nobody has the step
-     and Done once the maker does, so finishing from the queue takes no
+     and Done once the maker does, so finishing from the list takes no
      detour. */
   await rowAction(maker, BAND_ORDER, "Start");
   await selectTab(maker, "mine", MINE);
@@ -849,7 +1091,7 @@ test("a blocked undo offers nothing and explains nothing, on the row or the work
   await selectTab(maker, "done", DONE_TODAY);
   await awaitEnabled(rowMenu(maker, BAND_ORDER));
 
-  const mate = await openQueue(browser, config, mateState, "upNext");
+  const mate = await openRuns(browser, config, mateState, "upNext");
   await rowAction(mate, BAND_ORDER, "Start");
 
   await expect(rowMenu(maker, BAND_ORDER)).toHaveCount(0);
@@ -869,7 +1111,7 @@ test("a blocked undo offers nothing and explains nothing, on the row or the work
  * **The badge states the step's state and the line under it never repeats
  * the word.** A `Ready` badge over a line reading "Ready" printed the same
  * fact twice, a stride apart, and left the team crowded onto the header line
- * beside the step name — "Cut E2E Queue Cut", two unbounded merchant-authored
+ * beside the step name — "Cut E2E Runs Cut", two unbounded merchant-authored
  * names with only a weight between them, which reads as one noun phrase. The
  * team leads the subdued line instead and the header holds one name.
  *
@@ -883,8 +1125,8 @@ test("a step card says its state once and its note editor replaces the card's bu
   browser,
 }) => {
   const config = seedConfig();
-  await seedQueue(config, { cutMembers: [MAKER], keepIdentities: true });
-  const page = await openQueue(browser, config, makerState, "upNext");
+  await seedRuns(config, { cutMembers: [MAKER], keepIdentities: true });
+  const page = await openRuns(browser, config, makerState, "upNext");
   await rowLink(page, RING_ORDER).click();
   await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
 
@@ -896,9 +1138,11 @@ test("a step card says its state once and its note editor replaces the card's bu
      step's line is the team name alone. */
   await expect(page.getByText(CUT_TEAM, { exact: true })).toBeVisible();
 
-  /* No breadcrumb: `MemberBar`'s mark above the heading is the link back. */
+  /* No breadcrumb: `MemberBar`'s mark above the heading is the link back, and
+     it is the only one — `s-page` holds none of its own. */
+  await expect(homeLink(page)).toHaveCount(1);
   await expect(
-    page.getByRole("link", { name: "Queue", exact: true }),
+    page.locator("s-page").getByRole("link", { name: config.shop }),
   ).toHaveCount(0);
 
   await clickWhenEnabled(page.getByRole("button", { name: "Add note" }));
@@ -935,8 +1179,8 @@ test("an open editor takes its container's buttons with it", async ({
   browser,
 }) => {
   const config = seedConfig();
-  await seedQueue(config, { cutMembers: [MAKER], keepIdentities: true });
-  const page = await openQueue(browser, config, makerState, "upNext");
+  await seedRuns(config, { cutMembers: [MAKER], keepIdentities: true });
+  const page = await openRuns(browser, config, makerState, "upNext");
   await rowLink(page, RING_ORDER).click();
   await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
 
@@ -981,12 +1225,12 @@ test("the work page shows the step history and takes a note, a block, and Done",
   browser,
 }) => {
   const config = seedConfig();
-  await seedQueue(config, {
+  await seedRuns(config, {
     cutMembers: [MAKER],
     keepIdentities: true,
     withBand: true,
   });
-  const page = await openQueue(browser, config, makerState, "upNext");
+  const page = await openRuns(browser, config, makerState, "upNext");
   await rowLink(page, BAND_ORDER).click();
   await expect(page.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
   await expect(page.getByText("E2E Cuff ×1")).toBeVisible();
@@ -1028,15 +1272,16 @@ test("the work page shows the step history and takes a note, a block, and Done",
   await expect(page.getByText("Called the supplier")).toBeVisible();
   await expect(page.locator('s-banner[heading="Blocked"]')).toBeVisible();
 
-  /* The same hold as the queue reads it: the card carries its one action
+  /* The same hold as the run list reads it: the card carries its one action
      inside the banner and offers no step buttons at all, which is the whole
      of "blocked means stop". */
-  await page.getByRole("link", { name: config.shop }).click();
+  await homeLink(page).click();
   await expect(
-    page.locator('s-section[accessibilityLabel="Queue"]'),
+    page.locator('s-section[accessibilityLabel="Workflows"]'),
   ).toBeVisible();
-  /* The bar's mark carries no tab, so the queue lands on Mine; a held run is
-     on Blocked, which the strip counts from wherever the reader is. */
+  /* The mark lands back on Up next, the tab this test came from; the held run
+     is on Blocked, which the strip counts from wherever the reader is. */
+  await expect(page).toHaveURL(/[?&]tab=upNext(?:&|$)/u);
   await selectTab(page, "attention", BLOCKED);
   const blocked = card(page, BAND_ORDER);
   /* No badge on the row either: "Blocked" there would repeat the pressed tab,
@@ -1065,9 +1310,9 @@ test("the work page shows the step history and takes a note, a block, and Done",
   await expect(page.getByText(FINISHED)).toBeVisible();
   await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
 
-  await page.getByRole("link", { name: config.shop }).click();
+  await homeLink(page).click();
   await expect(
-    page.locator('s-section[accessibilityLabel="Queue"]'),
+    page.locator('s-section[accessibilityLabel="Workflows"]'),
   ).toBeVisible();
   /* Cut is done and Polish is the packer's, so the run is no card of the
      maker's any more; what remains of it on this page is the Done entry. */
@@ -1089,17 +1334,17 @@ test("the work page shows the step history and takes a note, a block, and Done",
  * "Reopened by …" line is one rendering, and a merchant reopen exercising it
  * is asserted on the order page instead.
  */
-test("a merchant's completion reads as Merchant on the queue and the work page", async ({
+test("a merchant's completion reads as Merchant on the run list and the work page", async ({
   browser,
 }) => {
   const config = seedConfig();
-  await seedQueue(config, {
+  await seedRuns(config, {
     cutMembers: [MAKER],
     keepIdentities: true,
     withBand: true,
     bandDoneByMerchant: true,
   });
-  const page = await openQueue(browser, config, makerState);
+  const page = await openRuns(browser, config, makerState);
 
   await expect(
     page.getByRole("button", { name: `${DONE_TODAY} · 1` }),

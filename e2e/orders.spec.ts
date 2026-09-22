@@ -101,7 +101,7 @@ test("orders screen imports open orders and lists them", async ({ page }) => {
 
 /**
  * The waiting-on column on the orders index: the team holding each open
- * order, read from the same `readyWhere` the worker queue runs on.
+ * order, read from the same `readyWhere` the member's run list runs on.
  */
 test("the orders index names the team an open order is waiting on", async ({
   page,

@@ -401,11 +401,11 @@ const memberCallableEffect =
  * be correct under it. `OrderLineItem.matchedWorkflowIds` is the other half:
  * the workflows whose tags matched at the last reconcile, from which
  * "ambiguous" (two or more, no live run) is derived at read time. `status` is denormalized from the steps for
- * the queue and the definitions badge; every step write recomputes it in the
- * same transaction. `(teamId, completedAt)` serves the member queue, which
+ * the run list and the definitions badge; every step write recomputes it in
+ * the same transaction. `(teamId, completedAt)` serves the member's run list, which
  * asks for open steps by team. `WorkflowRunStep.teamId` is nullable for the
  * same reason as `WorkflowStep.teamId`: a team delete nulls it on open steps
- * (unassigned, in nobody's queue until a person assigns a team) and leaves
+ * (unassigned, on nobody's list until a person assigns a team) and leaves
  * finished steps alone, whose `teamName` snapshot is all history needs.
  * `startedByEmail` / `completedByEmail` snapshot the actor the same way, so
  * a member delete never leaves history resolving to nobody. A run step is
@@ -1088,10 +1088,10 @@ type PublishScope = "all" | readonly string[];
 type PublishTeams = "all" | readonly string[];
 
 /**
- * The teams whose queues a write to this order could have changed, as a value
+ * The teams whose run lists a write to this order could have changed, as a value
  * a caller can read on both sides of the write. A failed read answers `"all"`,
  * never `[]`: an over-broad publish costs each member one refetch, while an
- * under-broad one leaves a queue that silently stops updating until the tab's
+ * under-broad one leaves a list that silently stops updating until the tab's
  * next subscribe, and the read failing is no reason to guess narrow. The write
  * that triggered it is never failed by it.
  */
@@ -1412,13 +1412,13 @@ export class ShopAgent extends Agent {
    * publish `"all"`.
    *
    * `teams` is the same idea for the other population. A member's subscription
-   * is their queue, which is scoped by team rather than by order, so an order
+   * is their run list, which is scoped by team rather than by order, so an order
    * GID says nothing about whether their view changed. The five member
    * mutations name the teams their write could have affected — every team
    * owning a step on any run of that order, because readiness crosses runs
    * (`WorkflowRunRepository.listOrderTeamIds`) — and everything else publishes
    * `"all"`, which reaches every member. Over-broad costs a refetch;
-   * under-broad costs a queue that silently stops updating, so `"all"` is the
+   * under-broad costs a list that silently stops updating, so `"all"` is the
    * right default for a writer that cannot name them.
    */
   private publish(touched: PublishScope, teams: PublishTeams = "all") {
@@ -3236,7 +3236,7 @@ export class ShopAgent extends Agent {
   /**
    * Member-area methods. Two idioms, split by whether the call has a socket:
    *
-   * `listQueue` stays plain RPC, not `@callable()`. It is the queue page's
+   * `listRuns` stays plain RPC, not `@callable()`. It is the run list's
    * loader read and paints during SSR, where there is no connection to carry
    * an identity, so `teamIds` arrives from `requireMember` through
    * `ShopAgentClient` exactly as before. Decoded lax: the caller is the
@@ -3252,7 +3252,7 @@ export class ShopAgent extends Agent {
    */
   /**
    * A publish scoped to the teams a member's write could have changed the
-   * queue of — see `publish`. The read is one indexed query against the
+   * run list of — see `publish`. The read is one indexed query against the
    * object's own SQLite, and it runs after the write so a step that just
    * became ready for another team is included.
    */
@@ -3269,8 +3269,8 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * No D1 read: `startedByEmail` is a snapshot on the row, so the queue reads
-   * the same after the member is deleted. Every half of `Domain.QueueView`
+   * No D1 read: `startedByEmail` is a snapshot on the row, so the list reads
+   * the same after the member is deleted. Every half of `Domain.RunListView`
    * comes from one call so the loader and the socket paint one snapshot: the
    * strip and the list under it are never two reads that can disagree.
    *
@@ -3283,16 +3283,16 @@ export class ShopAgent extends Agent {
    * repository gives for the tiers, reached here because `listDone` takes the
    * team list already narrowed.
    */
-  private readQueue(
+  private readRuns(
     teamIds: readonly Domain.TeamId[],
     memberEmail: Domain.Email,
-    query: Domain.QueueQuery,
+    query: Domain.RunQuery,
   ) {
     const shop = this.name;
     return Effect.gen(function* () {
       const repository = yield* WorkflowRunRepository;
       const started = yield* Clock.currentTimeMillis;
-      const { counts, items } = yield* repository.listQueue({
+      const { counts, items } = yield* repository.listRuns({
         teamIds,
         memberEmail,
         query,
@@ -3315,7 +3315,7 @@ export class ShopAgent extends Agent {
       const team = query.team ?? "all";
       const ms = (yield* Clock.currentTimeMillis) - started;
       yield* Effect.logInfo(
-        `ShopAgent.readQueue: shop=${shop} teams=${String(teamIds.length)} team=${team} tab=${query.tab} rows=${String(rows)} ms=${String(ms)}`,
+        `ShopAgent.readRuns: shop=${shop} teams=${String(teamIds.length)} team=${team} tab=${query.tab} rows=${String(rows)} ms=${String(ms)}`,
       ).pipe(
         Effect.annotateLogs({
           shop,
@@ -3330,34 +3330,34 @@ export class ShopAgent extends Agent {
         counts: { ...counts, done: done.total },
         items,
         done: done.items,
-      } satisfies Domain.QueueView;
+      } satisfies Domain.RunListView;
     });
   }
 
-  listQueue(
-    input: typeof Domain.ListQueueInput.Encoded,
-  ): Promise<Domain.QueueView> {
-    const readQueue = (
+  listRuns(
+    input: typeof Domain.ListRunsInput.Encoded,
+  ): Promise<Domain.RunListView> {
+    const readRuns = (
       teamIds: readonly Domain.TeamId[],
       memberEmail: Domain.Email,
-      query: Domain.QueueQuery,
-    ) => this.readQueue(teamIds, memberEmail, query);
+      query: Domain.RunQuery,
+    ) => this.readRuns(teamIds, memberEmail, query);
     return this.runEffect(
-      callableEffect("ShopAgent.listQueue", Domain.ListQueueInput, {
+      callableEffect("ShopAgent.listRuns", Domain.ListRunsInput, {
         role: "rpc",
       })(({ teamIds, memberEmail, query }) =>
-        readQueue(teamIds, memberEmail, query),
+        readRuns(teamIds, memberEmail, query),
       )(input),
     );
   }
 
   /**
-   * The socket twin of {@link listQueue}: the same read, plus the calling
+   * The socket twin of {@link listRuns}: the same read, plus the calling
    * connection's subscription, in one round trip so a write landing between
    * two separate calls cannot be missed. The subscribe pattern end to end is
    * on `Domain.Subscription`.
    *
-   * `teamIds` comes from the connection, not the message, so a member's queue
+   * `teamIds` comes from the connection, not the message, so a member's list
    * is scoped by the membership the Worker's gate resolved — the same value
    * the loader's `requireMember` produced, arriving by the other route.
    *
@@ -3365,25 +3365,25 @@ export class ShopAgent extends Agent {
    * and `publish` reads the role to decide which of the two scopes applies.
    */
   @callable()
-  subscribeQueue(
-    input: typeof Domain.SubscribeQueueInput.Encoded,
-  ): Promise<Domain.QueueView> {
-    const readQueue = (
+  subscribeRuns(
+    input: typeof Domain.SubscribeRunsInput.Encoded,
+  ): Promise<Domain.RunListView> {
+    const readRuns = (
       teamIds: readonly Domain.TeamId[],
       memberEmail: Domain.Email,
-      query: Domain.QueueQuery,
-    ) => this.readQueue(teamIds, memberEmail, query);
+      query: Domain.RunQuery,
+    ) => this.readRuns(teamIds, memberEmail, query);
     return this.runEffect(
       memberCallableEffect(
-        "ShopAgent.subscribeQueue",
-        Domain.SubscribeQueueInput,
+        "ShopAgent.subscribeRuns",
+        Domain.SubscribeRunsInput,
         { onExcessProperty: "error" },
       )(({ subscriberId, query }, { teamIds, memberEmail }) =>
         Effect.gen(function* () {
           const { connection } = getCurrentAgent<ShopAgent>();
           if (connection)
             setSubscription(connection, { subscriberId, orderId: null });
-          return yield* readQueue(teamIds, memberEmail, query);
+          return yield* readRuns(teamIds, memberEmail, query);
         }),
       )(input),
     );
@@ -3566,7 +3566,7 @@ export class ShopAgent extends Agent {
     );
   }
 
-  /** The work page's loader read; plain RPC for the same reason as {@link listQueue}. */
+  /** The work page's loader read; plain RPC for the same reason as {@link listRuns}. */
   getRunForMember(
     input: typeof Domain.GetRunForMemberInput.Encoded,
   ): Promise<Domain.RunView | null> {
@@ -3580,8 +3580,8 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * The socket twin of {@link getRunForMember}, as `subscribeQueue` is of
-   * `listQueue`. The subscription is the same team-scoped one the queue
+   * The socket twin of {@link getRunForMember}, as `subscribeRuns` is of
+   * `listRuns`. The subscription is the same team-scoped one the run list
    * registers (`orderId: null`): a member's pushes are decided by team, so
    * any write touching one of their teams' orders refetches this run too.
    * Over-broad by an order or two; the read is one run.
@@ -3928,7 +3928,7 @@ export class ShopAgent extends Agent {
           /**
            * Both sides of the move: the team losing the step is only nameable
            * before the write, and the team gaining it only after, so the
-           * queues that change are the union of the two reads.
+           * lists that change are the union of the two reads.
            */
           const before = yield* orderTeamIds({ runStepId });
           yield* (yield* WorkflowRunRepository).assignRunStepTeam({

@@ -9,7 +9,7 @@ import type * as Domain from "@/lib/Domain";
  * its count is in the strip whatever tab is open.
  *
  * Presentation only. Which tab a row is in, and how many of each the read
- * counts, are the object's (`Domain.tierOf`, `Domain.QueueQuery`): one read
+ * counts, are the object's (`Domain.tierOf`, `Domain.RunQuery`): one read
  * returns one tab's rows, so the page can no longer group rows it does not
  * hold.
  */
@@ -19,7 +19,7 @@ export const TABS = [
   "inProgress",
   "attention",
   "done",
-] as const satisfies readonly Domain.QueueTab[];
+] as const satisfies readonly Domain.RunTab[];
 
 /**
  * The `attention` tab holds every flag, but it reads **Blocked**: a held run
@@ -39,7 +39,7 @@ export const TABS = [
  * `Domain.DONE_WINDOW_MS` rather than a calendar day: the tab's empty state
  * says "in the last day", which is where that precision belongs.
  */
-export const TAB_LABEL: Record<Domain.QueueTab, string> = {
+export const TAB_LABEL: Record<Domain.RunTab, string> = {
   mine: "Mine",
   upNext: "Up next",
   inProgress: "Teammates",
@@ -49,8 +49,8 @@ export const TAB_LABEL: Record<Domain.QueueTab, string> = {
 
 /** What an empty tab says, and which tab it points at. */
 export const TAB_EMPTY: Record<
-  Domain.QueueTab,
-  { readonly text: string; readonly goTo: Domain.QueueTab | null }
+  Domain.RunTab,
+  { readonly text: string; readonly goTo: Domain.RunTab | null }
 > = {
   mine: { text: "Nothing in hand.", goTo: "upNext" },
   upNext: { text: "Nothing to start.", goTo: null },

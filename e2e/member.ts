@@ -77,7 +77,7 @@ const controlEnabled = (locator: Locator): Promise<boolean> =>
   });
 
 /**
- * Wait for a control to come alive without clicking it: on the queue that is
+ * Wait for a control to come alive without clicking it: on the run list that is
  * the member's socket identifying, which a spec needs before something *else*
  * happens to that socket, such as a revocation.
  */
@@ -101,8 +101,8 @@ export const awaitDisabled = async (locator: Locator): Promise<void> => {
  * Click a control once it is really clickable.
  *
  * On `/shop/$shop` this doubles as the wait for the `ShopAgent` socket: the
- * queue's buttons are disabled until the socket identifies, because the socket
- * is the only transport its actions have (`src/routes/shop.$shop.queue.tsx`).
+ * run list's buttons are disabled until the socket identifies, because the socket
+ * is the only transport its actions have (`src/routes/shop.$shop.index.tsx`).
  * Hydration is therefore not enough to click on — the document is interactive
  * while the connect and the `cf_agent_identity` handshake are still in
  * flight — and this poll is what closes that window.

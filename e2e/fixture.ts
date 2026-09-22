@@ -15,7 +15,7 @@ import type {
  * test data.
  *
  * Deliberately NOT adopted by the existing specs: each seeds the exact shape
- * its assertions compute (a queue with N cards, a team with M members). Pinning
+ * its assertions compute (a run list with N cards, a team with M members). Pinning
  * those to this shared fixture would make one edit here silently retune
  * unrelated assertions. `pnpm seed` and manual exploration are its consumers.
  *
@@ -28,12 +28,12 @@ import type {
  *
  * Logins, by role, so one browser profile per persona covers the product:
  *
- * - `lead@m.com` is on every team: one login that sees every queue. It is
+ * - `lead@m.com` is on every team: one login that sees every list. It is
  *   fixture data, not `ADMIN_EMAILS` — that env var grants the better-auth
  *   admin role and is deliberately not coupled to a reseed.
  * - `m1@m.com` is on two maker teams, Engraving and Finishing: the one
- *   login whose queue is grouped by team.
- * - `m2@m.com` is on Rush alone: the one persona whose queue is the
+ *   login whose run list is grouped by team.
+ * - `m2@m.com` is on Rush alone: the one persona whose run list is the
  *   cross-cutting workflow rather than a product's.
  *
  * Three, which is Basic's `maxMembers`, so a seeded shop holds a seat for
@@ -41,7 +41,7 @@ import type {
  * lead; a persona that needs its own team is added by the spec that needs it
  * (`seedMembers`), never by growing this list past the smallest plan.
  *
- * Every maker team owns steps in at least two workflows so no queue is
+ * Every maker team owns steps in at least two workflows so no list is
  * single-workflow, and every hand-off crosses a team boundary. Tags are the
  * workflow names in tag form, which is what the create dialog prefills.
  *
@@ -57,8 +57,8 @@ import type {
  * unassigned step cannot be on; the seed defaults it off.
  *
  * Orders are written straight into the shop's object, bypassing Shopify, so
- * every lifecycle state a queue or order page can show exists without tagging
- * sandbox products. A populated queue from *real* orders additionally needs
+ * every lifecycle state a run list or order page can show exists without tagging
+ * sandbox products. A populated run list from *real* orders additionally needs
  * the sandbox products tagged with the workflow tags by hand.
  *
  * Two order vocabularies the rows below lean on, both documented on
@@ -73,7 +73,7 @@ import type {
  * a merchant makes — "rush" was meant as an order label, not a workflow.
  *
  * The rows from `#2001` are generated rather than hand-written, and are always
- * seeded: the member queue and the orders index are only honest at a few
+ * seeded: the member's run list and the orders index are only honest at a few
  * hundred cards and more than one page, and a second flagless fixture would
  * only leave it unclear which one a screen was judged against.
  */
@@ -130,7 +130,7 @@ const TAG = {
 } as const;
 
 /**
- * Each workflow is a distinct shape so the editor, queue, and order page each
+ * Each workflow is a distinct shape so the editor, run list, and order page each
  * have one row per case to look at: linear, a parallel stage in the middle
  * with the first team returning, a parallel first stage, instructions with a
  * pending draft, and the off / unassigned / no-steps rows.
@@ -297,7 +297,7 @@ export const workflows: readonly SeedWorkflow[] = [
   {
     // on, and it starts runs: an empty team does not block a start, so the
     // second step lands on a team nobody is on — the order page names it
-    // under "waiting on" and no queue anywhere shows the card. Distinct from
+    // under "waiting on" and no run list anywhere shows the card. Distinct from
     // Pet tag, which is off because a step has no team at all.
     name: "Keychain (empty team step)",
     active: true,
@@ -335,7 +335,7 @@ const item = (
 });
 
 /**
- * Exactly 200 characters, which is a title long enough to wrap on a queue card
+ * Exactly 200 characters, which is a title long enough to wrap on a run's row
  * and on the order page, so neither is ever judged on short ones alone.
  */
 const LONG_TITLE =
@@ -362,7 +362,7 @@ const LONG_BLOCK_REASON =
  */
 const floorOrders: readonly SeedOrder[] = [
   {
-    // fresh: nothing started; Woodshop's queue has its first card
+    // fresh: nothing started; Woodshop's list has its first card
     n: 1001,
     lineItems: [
       item("Engraved cutting board", TAG.board, 1, {
@@ -502,7 +502,7 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // five items across five workflows, none started: five queues each hold
+    // five items across five workflows, none started: five lists each hold
     // one card from this order and the summary line reads "5 items"
     n: 1014,
     lineItems: [
@@ -646,7 +646,7 @@ const floorOrders: readonly SeedOrder[] = [
   },
   {
     // the cut is done and the next step belongs to a team with nobody on it:
-    // the order page names the team under "waiting on" and no queue shows it
+    // the order page names the team under "waiting on" and no run list shows it
     n: 1024,
     advance: 1,
     lineItems: [item("Keychain", TAG.keychain, 1, { Initials: "D.V." })],
@@ -664,7 +664,7 @@ const floorOrders: readonly SeedOrder[] = [
     lineItems: [item(LONG_TITLE, TAG.board, 1, { "Gift note": null })],
   },
   {
-    // a product that is only ever a rush job, so Rush has a queue of its own
+    // a product that is only ever a rush job, so Rush has a run list of its own
     // and `m9` is not looking at an empty page
     n: 1027,
     lineItems: [item("Rush gift wrap", TAG.rush, 1, { Note: "Same-day" })],
@@ -705,7 +705,7 @@ const productAt = (index: number) =>
 /**
  * The biggest single order the fixture holds: 25 items, every one
  * personalized differently so the cards are tellable apart, which is both the
- * longest order page and the largest "together with" group on a queue.
+ * longest order page and the largest "together with" group on a run list.
  */
 const bigOrder = (n: number): SeedOrder => ({
   n,
@@ -718,7 +718,7 @@ const bigOrder = (n: number): SeedOrder => ({
   }),
 });
 
-/** Cycled over the generated orders so every tier of the queue is populated, not only Up next. */
+/** Cycled over the generated orders so every tier of the run list is populated, not only Up next. */
 const SCALE_PROGRESS: readonly SeedProgress[] = [
   {},
   { advance: 1 },
@@ -728,7 +728,7 @@ const SCALE_PROGRESS: readonly SeedProgress[] = [
 ];
 
 /**
- * Volume, always seeded: the queue tiers are uncapped apart from Up next and
+ * Volume, always seeded: the run list's tiers are uncapped apart from Up next and
  * the orders index pages at 25, so neither can be judged at ten orders. Kept
  * to a few hundred runs — every one is a real reconcile and every round a real
  * write, and the reseed has to stay quick enough that people still run it.

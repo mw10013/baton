@@ -152,6 +152,40 @@ details[open] > .live-value-summary .live-value-preview {
 }
 
 /*
+ * The bar's link home (`MemberBar.tsx`). It wraps the mark and the shop
+ * domain for the touch target, but only the mark answers: a ring on the mark
+ * on hover and focus, the domain left as plain text beside it. `outline` on
+ * the `svg` rather than a border or a background so nothing in the bar moves
+ * when it appears, and `outline-offset` keeps it clear of the mark's own
+ * strokes. The whole link is the hit area either way — this is which part of
+ * it says so.
+ *
+ * `text-decoration` and `color` are here rather than inline on the `Link`
+ * because the hover and focus rules need a class anyway, and a control's
+ * appearance said in two places is a control that drifts.
+ *
+ * The Polaris custom properties resolve inside Polaris's own elements and not
+ * on plain ones, so the fallback is what actually paints here — the same deal
+ * `.member-bar`'s border already has. The fallback is therefore chosen to
+ * stand on the bar's surface rather than to match a token nobody can read.
+ */
+.member-bar-home {
+  text-decoration: none;
+  color: inherit;
+}
+
+.member-bar-home:hover svg,
+.member-bar-home:focus-visible svg {
+  outline: 2px solid var(--s-color-border-emphasis, #4a4a4a);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.member-bar-home:focus-visible {
+  outline: none;
+}
+
+/*
  * The member work page prints as a job ticket: chrome and every button go.
  * `s-button` covers the page's own action slots too, so a control added
  * there needs no rule of its own.
@@ -164,7 +198,7 @@ details[open] > .live-value-summary .live-value-preview {
 }
 
 /*
- * The member queue (`shop.$shop.index.tsx`). Here rather than inline because
+ * The member's run list (`shop.$shop.index.tsx`). Here rather than inline because
  * the clamp needs three declarations React's `style` types deprecate, and
  * because the file already owns the member area's other plain-element rules.
  */
@@ -175,7 +209,7 @@ details[open] > .live-value-summary .live-value-preview {
  * wrapper is a plain div. The surface colour is repeated because a
  * transparent sticky element would let rows scroll through it.
  */
-.queue-strip {
+.run-strip {
   position: sticky;
   inset-block-start: 0;
   z-index: 1;
@@ -203,25 +237,25 @@ details[open] > .live-value-summary .live-value-preview {
  * is neither. `0.375rem` is Polaris's `small-300`, the gap the strip had
  * while it was a stack.
  */
-.queue-strip-tabs {
+.run-strip-tabs {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 0.375rem;
 }
 
 @media (max-width: 27rem) {
-  .queue-strip-tabs {
+  .run-strip-tabs {
     grid-template-columns: repeat(2, 1fr);
   }
 }
 
 /*
- * Line two of a queue row, cut to two lines with an ellipsis: a blocked reason
+ * Line two of a run row, cut to two lines with an ellipsis: a blocked reason
  * can be a paragraph, and the row is not where it is read — the work page the
  * row links to shows the whole thing in its banner. `-webkit-box` is still the
  * only clamp Safari honours.
  */
-.queue-detail-line {
+.run-detail-line {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
