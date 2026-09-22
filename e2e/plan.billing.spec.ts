@@ -36,13 +36,11 @@ import { seedConfig } from "./seed";
  * allowance are rendered in `<s-heading>`, whose text Polaris puts behind a
  * shadow slot.
  *
- * The second test is a *recording*, not an assertion. Whether Shopify defers a
- * paid-to-paid downgrade to the next cycle or applies it at once is Shopify's
- * behaviour, not Baton's, and the only way to learn it is to do it on a real
- * contract and read what the Partner API then reports. It reads the operator
- * console's cache fields into the Playwright report so the answer can be
- * transcribed rather than guessed, and asserts only what Baton owns: that the
- * fields are rendered and the usage outbox drains.
+ * The second test pins a Shopify rule Baton relies on: a paid-to-paid
+ * downgrade applies at once, not at the end of the cycle. App Pricing defers
+ * only a downgrade to a free plan, and Baton has none. Pro to Basic must reach
+ * the home page and the Partner API read on the redirect back, and the usage
+ * outbox must drain.
  */
 
 /** Must be listed in `ADMIN_EMAILS` before its first sign-in; same identity `admin.admin.spec.ts` uses. */
@@ -183,16 +181,15 @@ const ADMIN_FIELDS = [
   "Shopify metered quantity",
 ] as const;
 
-test("records what a paid-to-paid downgrade does to the plan cache, and that the usage outbox drains", async ({
+test("a paid-to-paid downgrade applies at once, and the usage outbox drains", async ({
   browser,
   page,
 }, testInfo) => {
   test.setTimeout(360_000);
   const start = await readPlan(await gotoApp(page));
   try {
-    /* Pro to Basic specifically: an upgrade is immediate by construction (the
-       merchant is paying more from now), so a downgrade is the only direction
-       whose timing is in question. */
+    /* Pro to Basic: `switchPlan` already asserts the home page reads Basic on
+       the redirect back. */
     if (start !== "pro") await switchPlan(page, "pro");
     await switchPlan(page, "basic");
 
@@ -204,18 +201,16 @@ test("records what a paid-to-paid downgrade does to the plan cache, and that the
       const admin = await context.newPage();
       await signIn(admin, ADMIN_EMAIL);
       await admin.goto(`/admin/shop/${seedConfig().shop}`);
-      /* Refresh plan, not the cached row: the switch just happened, and what
-         this records is what the Partner API reports about it right now. */
+      /* Refresh plan, not the cached row: the Partner API itself must report
+         Basic now. */
       await admin.getByRole("button", { name: "Refresh plan" }).click();
       const fields = await readAdminFields(admin, ADMIN_FIELDS);
       await testInfo.attach("plan cache after Pro to Basic", {
         body: JSON.stringify(fields, null, 2),
         contentType: "application/json",
       });
-      /* The only assertions this test owns: Baton rendered the fields and the
-         outbox is empty. What Shopify did to the cache is the recording. */
+      expect(fields["Cached plan"]).toContain("baton-basic");
       expect(fields["Usage events pending"]).toBe("0");
-      expect(fields["Cached plan"]).not.toBe("");
     } finally {
       await context.close();
     }

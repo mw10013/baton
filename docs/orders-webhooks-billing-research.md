@@ -212,6 +212,8 @@ dead events, outbox flush) is unaffected.
 
 ### Downgrade timing
 
+Superseded by `docs/plan-change-timing-research.md`: every plan change applies at once.
+
 Settled: support both. Two dated measurements disagree (`PlanStatus`
 JSDoc, 2026-09-19: immediate on the $0 dev store; your e2e recollection:
 scheduled), a $0 store has nothing to prorate, and the docs do not say.

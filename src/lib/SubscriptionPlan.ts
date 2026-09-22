@@ -34,9 +34,9 @@ export class SubscriptionPlanError extends Schema.TaggedError<SubscriptionPlanEr
  * How long a cached plan handle stays fresh when no contract boundary falls
  * sooner.
  *
- * This is a ceiling on ignorance, not a refresh interval. Scheduled changes are
- * caught by the boundary clamp in {@link planHandleExpiresAt} and by the
- * billing redirect forcing a revalidation, so this value only governs the
+ * This is a ceiling on ignorance, not a refresh interval. Plan changes are
+ * caught by the billing redirect forcing a revalidation, and cycle rolls by
+ * the boundary clamp in {@link planHandleExpiresAt}, so this value only governs the
  * transitions Shopify never announces: a freeze on payment failure, an
  * immediate cancellation, an expiration. App Pricing sends no webhooks — it
  * explicitly directs apps to poll the Partner API for exactly those cases — so
@@ -89,12 +89,12 @@ const PLAN_HANDLE_MANAGE_WINDOW_MS = 15 * 60 * 1000;
 /**
  * The freshness deadline for a revalidation performed at `now`.
  *
- * The boundary clamp is applied unconditionally rather than only when Shopify
- * reports a pending change, and that is what makes it robust: a merchant who
- * schedules a change minutes before their cycle ends — long after our last
- * revalidation — is still caught, because that earlier revalidation already
- * pinned the deadline to the boundary. The boundary does not move within a
- * cycle, so every revalidation re-pins to the same instant.
+ * The deadline is clamped to the contract boundary because the contract
+ * changes there with no plan change and no redirect: the billing cycle rolls,
+ * or a trial ends and the first cycle begins. The revalidation after it reads
+ * the new cycle and pushes it to `ShopAgent.setBillingCycle`, which restarts
+ * order counting. The boundary does not move within a cycle, so every
+ * revalidation re-pins to the same instant.
  *
  * A boundary already in the past is ignored. Honoring it would write a deadline
  * behind `now`, making the entry permanently stale and turning every subsequent

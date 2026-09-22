@@ -132,10 +132,11 @@ export const MAX_ENTITLEMENTS: Entitlements = ENTITLEMENTS.pro;
 export const USAGE_METER_ORDER = "orders-synced";
 
 /**
- * What the shop's contract grants right now. Nothing scheduled: a plan change
- * may apply at once or at the next boundary, and the cache is right either way,
- * because a handle change lands on the next revalidation and the deadline is
- * clamped to the boundary.
+ * What the shop's contract grants right now. Nothing is scheduled: a plan
+ * change on Shopify's pricing page applies at once, up or down, and lands on
+ * the revalidation the billing redirect forces. App Pricing defers only a
+ * downgrade to a free plan, and Baton has none
+ * (https://shopify.dev/docs/apps/launch/billing/shopify-app-pricing/subscription-billing/setup-subscription-charges#proration-logic).
  */
 export const PlanStatus = Schema.Union([
   Schema.Struct({
@@ -2226,7 +2227,7 @@ export type AdminShopLoaderData =
 /**
  * `/app` home (`app.index`).
  *
- * The scheduled-change fields come from the resolved {@link PlanStatus} rather
+ * The entitlements and the boundary come from the resolved {@link PlanStatus} rather
  * than from route context for the reason `resolveEntitlements` documents: this
  * loader is isomorphic, and taking the tier from context would mean the browser
  * naming it on every in-app navigation.
