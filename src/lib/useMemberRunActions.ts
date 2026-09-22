@@ -24,8 +24,9 @@ export const runResultMessage = Match.typeTags<
   /* Only the reason editor can reach this: somebody unblocked the run while
      it was open, so the edit has nothing to write on. */
   NotBlocked: () => "This work is no longer blocked.",
+  /* Also a Put back on a step someone else put back or finished just now. */
   NotReady: () =>
-    "Someone finished an earlier step just now, or this step is waiting on another team. Refresh.",
+    "This step or an earlier one changed just now, or this step is waiting on another team. Refresh.",
   Terminal: () => "This workflow is already finished or cancelled.",
   /* The page hides Start and Done behind the flag; a flag that landed after
      the render is the only way here. */
@@ -95,6 +96,10 @@ export const useMemberRunActions = ({
     mutationFn: (runStepId: string) =>
       call((stub) => stub.uncompleteStep({ runStepId })).then(settle),
   });
+  const unstart = useMutation({
+    mutationFn: (runStepId: string) =>
+      call((stub) => stub.unstartStep({ runStepId })).then(settle),
+  });
   const note = useMutation({
     mutationFn: ({ runStepId, note }: { runStepId: string; note: string }) =>
       call((stub) =>
@@ -121,6 +126,7 @@ export const useMemberRunActions = ({
     start,
     complete,
     uncomplete,
+    unstart,
     note,
     block,
     setBlockReason,
@@ -144,6 +150,7 @@ export const useMemberRunActions = ({
     start,
     complete,
     uncomplete,
+    unstart,
     note,
     block,
     setBlockReason,

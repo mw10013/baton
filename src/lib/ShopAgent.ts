@@ -3105,6 +3105,33 @@ export class ShopAgent extends Agent {
     );
   }
 
+  /** Put back from the order page; the rule is on `WorkflowRunRepository.unstartStep`. */
+  @callable()
+  merchantUnstartStep(
+    input: typeof Domain.UnstartStepInput.Encoded,
+  ): Promise<Domain.RunResult> {
+    const shop = this.name;
+    const publish = (runStepId: string) => this.publishToTeams({ runStepId });
+    return this.runEffect(
+      callableEffect("ShopAgent.merchantUnstartStep", Domain.UnstartStepInput, {
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
+      })(({ runStepId }) =>
+        runResult(
+          Effect.gen(function* () {
+            yield* (yield* WorkflowRunRepository).unstartStep({
+              runStepId,
+              actor: { role: "merchant" },
+            } satisfies Domain.UnstartStepCommand);
+            yield* Effect.logInfo(
+              `ShopAgent.merchantUnstartStep: shop=${shop} step=${runStepId}`,
+            ).pipe(Effect.annotateLogs({ shop, step: runStepId }));
+          }),
+        ).pipe(Effect.tap(() => publish(runStepId))),
+      )(input),
+    );
+  }
+
   /** The note itself never reaches the log line, as on the member's {@link setStepNote}. */
   @callable()
   merchantSetStepNote(
@@ -3387,6 +3414,33 @@ export class ShopAgent extends Agent {
             } satisfies Domain.StartStepCommand);
             yield* Effect.logInfo(
               `ShopAgent.startStep: shop=${shop} step=${runStepId} memberId=${memberId}`,
+            ).pipe(Effect.annotateLogs({ shop, step: runStepId, memberId }));
+          }),
+        ).pipe(Effect.tap(() => publish(runStepId))),
+      )(input),
+    );
+  }
+
+  /** Put back; the rule is on `WorkflowRunRepository.unstartStep`. */
+  @callable()
+  unstartStep(
+    input: typeof Domain.UnstartStepInput.Encoded,
+  ): Promise<Domain.RunResult> {
+    const shop = this.name;
+    const publish = (runStepId: string) => this.publishToTeams({ runStepId });
+    return this.runEffect(
+      memberCallableEffect("ShopAgent.unstartStep", Domain.UnstartStepInput, {
+        onExcessProperty: "error",
+      })(({ runStepId }, { memberId, memberEmail, teamIds }) =>
+        runResult(
+          Effect.gen(function* () {
+            yield* (yield* WorkflowRunRepository).unstartStep({
+              runStepId,
+              actor: { role: "member", memberId, email: memberEmail },
+              teamIds,
+            } satisfies Domain.UnstartStepCommand);
+            yield* Effect.logInfo(
+              `ShopAgent.unstartStep: shop=${shop} step=${runStepId} memberId=${memberId}`,
             ).pipe(Effect.annotateLogs({ shop, step: runStepId, memberId }));
           }),
         ).pipe(Effect.tap(() => publish(runStepId))),

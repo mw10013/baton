@@ -979,10 +979,11 @@ test("a value the search schema cannot read falls back to the default", async ({
 
 /**
  * Done today and Undo. The finished step leaves the list for the Done tab;
- * Undo puts it back, and because Undo keeps the original starter the card
- * returns to "Mine", not "Up next".
+ * Undo puts it back, and because Undo returns the step to Ready
+ * (`WorkflowRunRepository.uncompleteStep`) the card lands in "Up next", not
+ * "Mine".
  */
-test("undo puts a finished step back in progress", async ({ browser }) => {
+test("undo puts a finished step back to Ready", async ({ browser }) => {
   const config = seedConfig();
   await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
   const page = await openRuns(browser, config, makerState, "upNext");
@@ -1006,12 +1007,75 @@ test("undo puts a finished step back in progress", async ({ browser }) => {
 
   await rowAction(page, RING_ORDER, "Undo");
   await expect(page.getByText(EMPTY_DONE)).toBeVisible();
-  await expect(page.getByRole("button", { name: `${MINE} · 1` })).toBeVisible();
-  /* Back under Mine, where a row says where it is in the run rather than that
-     it is the reader's own; a row that arrives after the first paint stays
-     collapsed. */
-  await selectTab(page, "mine", MINE);
-  await expect(page.getByText(MINE_STATE)).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: `${MINE} · 0`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: `${UP_NEXT} · 1`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await selectTab(page, "upNext", UP_NEXT);
+  await expect(rowLink(page, RING_ORDER)).toBeVisible();
+});
+
+/**
+ * Put back, the inverse of Start (`WorkflowRunRepository.unstartStep`). The
+ * row leaves the starter's Mine and returns to Up next for everyone on the
+ * team: the mate, who saw it under Teammates, sees it under Up next again.
+ */
+test("put back returns a started step to Up next for everyone", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
+  const maker = await openRuns(browser, config, makerState, "upNext");
+  await rowAction(maker, RING_ORDER, "Start");
+  await selectTab(maker, "mine", MINE);
+  await expect(maker.getByText(MINE_STATE)).toBeVisible();
+
+  /* The mate is on Cut and Pack: the box order stays in their Up next, the
+     ring order is a teammate's while the maker has it. */
+  const mate = await openRuns(browser, config, mateState, "upNext");
+  await expect(
+    mate.getByRole("button", {
+      name: `${UP_NEXT} · 1`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    mate.getByRole("button", {
+      name: `${TEAMMATES} · 1`,
+      exact: true,
+    }),
+  ).toBeVisible();
+
+  await rowAction(maker, RING_ORDER, "Put back");
+  await expect(maker.getByText(EMPTY_MINE)).toBeVisible();
+  await expect(
+    maker.getByRole("button", {
+      name: `${UP_NEXT} · 1`,
+      exact: true,
+    }),
+  ).toBeVisible();
+
+  await expect(
+    mate.getByRole("button", {
+      name: `${UP_NEXT} · 2`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    mate.getByRole("button", {
+      name: `${TEAMMATES} · 0`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(rowLink(mate, RING_ORDER)).toBeVisible();
 });
 
 /**
@@ -1042,7 +1106,12 @@ test("a done run's work page offers Undo on its last step", async ({
 
   await clickWhenEnabled(page.getByRole("button", { name: "Undo" }));
   await expect(page.getByText(`Reopened by ${MAKER}`)).toBeVisible();
-  await expect(page.getByText(STARTED)).toBeVisible();
+  /* Undo returns the step to Ready: no starter, so Start is back. */
+  await expect(page.locator('s-badge:has-text("Ready")')).toBeVisible();
+  await expect(page.getByText(STARTED)).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Start", exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Done", exact: true }),
   ).toBeVisible();
@@ -1358,8 +1427,9 @@ test("a merchant's completion reads as Merchant on the run list and the work pag
 
   /* The maker takes it back: the same line the merchant's reopen writes, with
      the member in the slot, and Cut is ready again. Start is offered because
-     undo clears the merchant's backfilled start — the step is nobody's, not
-     "in progress by Merchant". */
+     Undo returns the step to Ready (`WorkflowRunRepository.uncompleteStep`),
+     clearing the merchant's backfilled start along with everything else — the
+     step is nobody's, not "in progress by Merchant". */
   await clickWhenEnabled(page.getByRole("button", { name: "Undo" }));
   await expect(page.getByText(`Reopened by ${MAKER}`)).toBeVisible();
   await expect(page.getByRole("button", { name: "Start" })).toBeVisible();

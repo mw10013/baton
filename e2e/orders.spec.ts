@@ -278,6 +278,7 @@ test("the merchant marks a step done, reopens it, and blocks the run", async ({
   await frame.getByRole("button", { name: "Reopen" }).click();
   await expect(frame.getByText("Reopened by Merchant")).toBeVisible();
   await expect(frame.getByText("Done by Merchant")).toBeHidden();
+  await expect(frame.getByText("Ready", { exact: true })).toBeVisible();
 
   /* Both stages done takes the run to `done`. The card's badge says it in
      merchant words, not `WorkflowRun.status`. */
@@ -285,6 +286,47 @@ test("the merchant marks a step done, reopens it, and blocks the run", async ({
   await expect(frame.getByText("Done by Merchant")).toBeVisible();
   await frame.getByRole("button", { name: "Mark done" }).first().click();
   await expect(frame.getByText("Done", { exact: true })).toBeVisible();
+});
+
+/**
+ * Put back from Manage, the merchant's inverse of a worker's Start
+ * (`WorkflowRunRepository.unstartStep`). There is no merchant Start, so the
+ * seed has the member start the step; Put back returns it to Ready.
+ */
+test("the merchant puts back a step a member started", async ({ page }) => {
+  test.setTimeout(120_000);
+
+  const MEMBER = "e2e.putback@example.com";
+  const CUT_TEAM = "E2E Put Back Cut";
+  await seedMembers(
+    seedConfig(),
+    [MEMBER],
+    [{ name: CUT_TEAM, members: [MEMBER] }],
+    [
+      {
+        name: "E2E Put Back Cuff",
+        tag: "e2e-putback",
+        steps: [{ name: "Cut", team: CUT_TEAM }],
+      },
+    ],
+    [
+      {
+        n: 9304,
+        started: true,
+        lineItems: [{ title: "E2E Cuff", quantity: 1, tags: ["e2e-putback"] }],
+      },
+    ],
+  );
+
+  const frame = await gotoApp(page);
+  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await frame.getByRole("link", { name: "#9304" }).click();
+  await frame.getByRole("button", { name: "Manage" }).click();
+
+  await expect(frame.getByText(/^In progress since/u)).toBeVisible();
+  await frame.getByRole("button", { name: "Put back" }).click();
+  await expect(frame.getByText("Ready", { exact: true })).toBeVisible();
+  await expect(frame.getByRole("button", { name: "Put back" })).toHaveCount(0);
 });
 
 /**
@@ -338,7 +380,7 @@ test("the merchant cannot reopen a step whose next stage is done", async ({
 
   await expect(
     frame.getByText(
-      `Can’t reopen: Polish (${POLISH_TEAM}) already started — reopen it first`,
+      `Can’t reopen: Polish (${POLISH_TEAM}) already started — put it back or reopen it first`,
     ),
   ).toBeVisible();
   /* Polish itself is the last stage, so exactly one Reopen is on the page. */

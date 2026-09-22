@@ -306,7 +306,7 @@ function RouteComponent() {
     /**
      * A row you started says where it is in the run, not "In progress · you".
      * Starting a step is what puts the row in Mine ({@link Domain.tierOf}),
-     * so those words are true of every row under that pressed tab and so
+     * and Put back is the inverse that takes it out again, so those words are true of every row under that pressed tab and so
      * distinguish none of them. A row a teammate started says who instead,
      * which is the whole of what the Teammates tab is for. The test is the
      * starter rather than the open tab because a run can have several ready
@@ -340,6 +340,12 @@ function RouteComponent() {
      * A single ready step gives the bare verb: the step is named on line one
      * of the row this menu belongs to. Several give one item each, because a
      * single verb would act on the first and say nothing about the rest.
+     *
+     * A started step also gets Put back, the one-press fix for a Start
+     * pressed by mistake. It follows {@link Domain.stepActions}: wherever Done
+     * is, on a started step, for the whole team, so a row a teammate started
+     * offers it too. Every row here is open, ready and on the member's teams,
+     * and a flagged row returned above.
      */
     const menuItems = () => {
       if (flagged)
@@ -354,7 +360,7 @@ function RouteComponent() {
           </s-button>,
         ];
       if (rest.length > 0)
-        return steps.map((each) =>
+        return steps.flatMap((each) =>
           each.startedAt === null ? (
             <s-button
               key={each.id}
@@ -365,37 +371,55 @@ function RouteComponent() {
               {`Start · ${each.name}`}
             </s-button>
           ) : (
-            <s-button
-              key={each.id}
-              onClick={() => {
-                actions.complete.mutate(each.id);
-              }}
-            >
-              {`Done · ${each.name}`}
-            </s-button>
+            [
+              <s-button
+                key={each.id}
+                onClick={() => {
+                  actions.complete.mutate(each.id);
+                }}
+              >
+                {`Done · ${each.name}`}
+              </s-button>,
+              <s-button
+                key={`${each.id}-put-back`}
+                onClick={() => {
+                  actions.unstart.mutate(each.id);
+                }}
+              >
+                {`Put back · ${each.name}`}
+              </s-button>,
+            ]
           ),
         );
-      return [
-        started ? (
-          <s-button
-            key={step.id}
-            onClick={() => {
-              actions.complete.mutate(step.id);
-            }}
-          >
-            Done
-          </s-button>
-        ) : (
-          <s-button
-            key={step.id}
-            onClick={() => {
-              actions.start.mutate(step.id);
-            }}
-          >
-            Start
-          </s-button>
-        ),
-      ];
+      return started
+        ? [
+            <s-button
+              key={step.id}
+              onClick={() => {
+                actions.complete.mutate(step.id);
+              }}
+            >
+              Done
+            </s-button>,
+            <s-button
+              key={`${step.id}-put-back`}
+              onClick={() => {
+                actions.unstart.mutate(step.id);
+              }}
+            >
+              Put back
+            </s-button>,
+          ]
+        : [
+            <s-button
+              key={step.id}
+              onClick={() => {
+                actions.start.mutate(step.id);
+              }}
+            >
+              Start
+            </s-button>,
+          ];
     };
     return (
       /* The separator above every row but the list's first, and nothing else.

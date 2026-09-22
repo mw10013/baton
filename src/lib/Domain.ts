@@ -2589,6 +2589,7 @@ export type RunSource = typeof RunSource.Type;
  * | Start, Done                     | {@link runIsOpen}, and the step ready |
  * | note on a step                  | {@link runIsLive}: a note is a record, not work |
  * | Block                           | {@link runIsOpen}, and a ready step   |
+ * | Put back (clear a step's Start) | {@link runIsOpen}, and the step started and ready |
  * | assign a step's team            | {@link runIsOpen}, and the step open  |
  * | Cancel                          | {@link runIsOpen}                     |
  * | Undo (reopen a finished step)   | {@link runIsLive}, see {@link undoBlockedBy} |
@@ -2680,7 +2681,7 @@ export const runIsLive = (run: { readonly status: RunStatus }) =>
  *
  * | rule                                      | predicate / enforcer                        |
  * | ----------------------------------------- | ------------------------------------------- |
- * | Start and Done are refused; Undo and the note are not | {@link runIsFlagged}, `RunFlaggedError` |
+ * | Start, Done and Put back are refused; Undo and the note are not | {@link runIsFlagged}, `RunFlaggedError` |
  * | the flag's one action is Unblock or Dismiss | {@link runIsBlocked} picks the word       |
  * | the block reason is editable              | {@link runIsBlocked}, `setBlockReason`      |
  * | a blocked run holds no team ("waiting on") and shows no Now line | {@link runIsBlocked} |
@@ -2700,10 +2701,11 @@ export const RunFlag = Schema.Literals([
 export type RunFlag = typeof RunFlag.Type;
 
 /**
- * A flag means stop: Start and Done are refused (`RunFlaggedError`) and the
- * pages hide them. Undo and the note are not stopped — Undo takes work back
- * rather than doing more, and a held step is the one somebody needs to write
- * on. The one action a flag itself allows is lifting it: Unblock for
+ * A flag means stop: Start, Done and Put back are refused (`RunFlaggedError`)
+ * and the pages hide them. Undo and the note are not stopped — Undo takes
+ * work back rather than doing more, and a held step is the one somebody needs
+ * to write on. Put back is refused for the reason on
+ * `WorkflowRunRepository.unstartStep`. The one action a flag itself allows is lifting it: Unblock for
  * {@link runIsBlocked}, Dismiss for a reconcile flag ({@link flagIsReconcile}).
  */
 export const runIsFlagged = (run: { readonly flag: RunFlag | null }) =>
@@ -2819,8 +2821,11 @@ export type WorkflowRun = typeof WorkflowRun.Type;
  *
  * `reopened*` is a *last-actor slot*, not a history: it records the most
  * recent Undo and the next `completeStep` clears it, so the line only shows
- * while the step is genuinely back in progress. There is no `reopenedBy` id
- * column — the reopener is only ever displayed, never joined.
+ * while the step is genuinely back open. There is no `reopenedBy` id
+ * column — the reopener is only ever displayed, never joined. Undo also
+ * clears the whole Start slot, so a reopened step reads Ready. Put back
+ * clears the Start slot with no slot of its own: a put-back step is plain
+ * Ready and the next Start writes a fresh record.
  *
  * A step is *ready* when it is open and nothing in an earlier stage is still
  * open; several steps of one run can be ready at once. `startedAt` is set by
@@ -3047,6 +3052,9 @@ export const DEFAULT_RUN_TAB: RunTab = "mine";
  * snapshot the migration calls the durable one — keeps matching. A merchant's
  * step has no email at all and so is nobody's, which is right: `Merchant` is
  * not a member of this shop.
+ *
+ * Put back and Undo both clear `startedByEmail`, so they are the two ways a
+ * run leaves Mine without being finished.
  *
  * Here rather than beside the route's labels because the object tiers the
  * rows now: one read counts every tier and returns one of them, so the
@@ -3304,12 +3312,16 @@ export type RunStepView = typeof RunStepView.Type;
 /**
  * What a member may do to a step, in one place for the work page and the
  * run list's Done tier so the buttons and the writes cannot disagree. Rules: the
- * {@link RunStatus} table for status (Start and Done need {@link runIsOpen};
- * Undo and the note need {@link runIsLive}); the step's team must be one of
- * `teamIds`, as `WorkflowRunRepository.requireActionable` requires; a flag
- * stops Start and Done but not Undo or the note ({@link runIsFlagged}); Undo
- * is offered on a finished step and carries its downstream blocker
- * ({@link undoBlockedBy}) when there is one.
+ * {@link RunStatus} table for status (Start, Done and Put back need
+ * {@link runIsOpen}; Undo and the note need {@link runIsLive}); the step's
+ * team must be one of `teamIds`, as `WorkflowRunRepository.requireActionable`
+ * requires; a flag stops Start, Done and Put back but not Undo or the note
+ * ({@link runIsFlagged}); Undo is offered on a finished step and carries its
+ * downstream blocker ({@link undoBlockedBy}) when there is one.
+ *
+ * Put back is offered wherever Done is, and only on a started step
+ * (`WorkflowRunRepository.unstartStep`). It shares Done's team gate, so every
+ * member of the step's team sees it, not only the starter.
  *
  * **Nothing on a member screen renders that blocker.** The run list drops the
  * row's menu and the work page lists the whole run, so the started step
@@ -3329,6 +3341,7 @@ export const stepActions = (
 ): {
   readonly start: boolean;
   readonly done: boolean;
+  readonly putBack: boolean;
   /** `null` when Undo is not offered; otherwise the blocker, `null` meaning the button. */
   readonly undo: { readonly blockedBy: UndoBlocker | null } | null;
   readonly note: boolean;
@@ -3344,6 +3357,7 @@ export const stepActions = (
   return {
     start: ready && step.startedAt === null,
     done: ready,
+    putBack: ready && step.startedAt !== null,
     undo:
       live && step.completedAt !== null
         ? { blockedBy: step.undoBlockedBy }
@@ -3472,6 +3486,10 @@ export type StartStepInput = typeof StartStepInput.Type;
 export const UncompleteStepInput = CompleteStepInput;
 export type UncompleteStepInput = typeof UncompleteStepInput.Type;
 
+/** Put back: clears a started step's Start record. Same shape; the rule is on `WorkflowRunRepository.unstartStep`. */
+export const UnstartStepInput = CompleteStepInput;
+export type UnstartStepInput = typeof UnstartStepInput.Type;
+
 /** `note: null` clears. */
 export const SetStepNoteInput = Schema.Struct({
   runStepId: BoundedId,
@@ -3567,6 +3585,17 @@ export interface UncompleteStepCommand {
 }
 
 /**
+ * No slot records the actor: the step is plain Ready again
+ * ({@link WorkflowRunStep}). `actor` is taken for the log line and for
+ * symmetry with the other step commands.
+ */
+export interface UnstartStepCommand {
+  readonly runStepId: string;
+  readonly actor: Actor;
+  readonly teamIds?: readonly string[] | undefined;
+}
+
+/**
  * `WorkflowCannotStart` = off, zero steps, or an unassigned step (see
  * {@link Workflow}).
  *
@@ -3599,7 +3628,7 @@ export type AttachResult = typeof AttachResult.Type;
 /**
  * `NotAllowed` = the step's team is not among the caller's; `NotReady` = a
  * step in an earlier stage is still open (or this one is already done; for
- * undo, not yet done); `Terminal` = the run's status refuses the action,
+ * undo, not yet done; for put back, not yet started or already done); `Terminal` = the run's status refuses the action,
  * see the table on {@link RunStatus} (or, for un-cancel, the run is not
  * cancelled); `UndoBlocked` = someone downstream has
  * started, and names them ({@link UndoBlocker}).

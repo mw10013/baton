@@ -125,11 +125,11 @@ principles follow, and each one is already visible in the code:
 
 Against those, the three candidate designs from the question:
 
-| design                                                           | verdict                                                                                                                   |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| self-unassign only                                               | first lock in the system, and a stuck step when the starter is gone (seat lost, member deleted, on holiday). Rejected.    |
-| any teammate may put back                                        | matches how Done, Undo and notes already work. Recommended.                                                               |
-| any teammate may take over (replace `startedBy` with themselves) | a second verb for the same fix. Put back then Start is two presses and reads the same. Not worth its own button; see 6.2. |
+| design                                                           | verdict                                                                                                                |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| self-unassign only                                               | first lock in the system, and a stuck step when the starter is gone (seat lost, member deleted, on holiday). Rejected. |
+| any teammate may put back                                        | matches how Done, Undo and notes already work. Recommended.                                                            |
+| any teammate may take over (replace `startedBy` with themselves) | a second verb for the same fix. Put back then Start is two presses and reads the same. Not worth its own button (4.4). |
 
 ## 3. What Route to Ship and the other refs do
 
@@ -211,7 +211,7 @@ not. Kanbanify is the model closer to Baton's stated constraints.
 
 Wording: `Put back`, not `Unassign` (there is no assignment to undo, and the
 merchant page uses assign for teams) and not `Release` or `Give up`. `Put
-back` says where the step goes: back on the shelf. Alternatives are in 6.1.
+back` says where the step goes: back on the shelf. Alternatives considered: `Unstart`, `Release`, `Not started`, `Hand back` (decision 6.1).
 
 ### 4.2 Undo returns a step to Ready, not to In progress
 

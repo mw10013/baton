@@ -74,7 +74,9 @@ const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
   /* No merchant button sets a block reason yet (`merchantSetBlockReason` has
      no surface); the tag is here because the union is one union. */
   NotBlocked: () => "That workflow run is no longer blocked.",
-  NotReady: () => "A step in an earlier stage is still open.",
+  /* Also Put back on a step a worker finished or put back just now. */
+  NotReady: () =>
+    "That step changed just now, or a step in an earlier stage is still open.",
   /* Every merchant control on a done run is a note or Reopen, and both are
      allowed there (`Domain.RunStatus`); the page offers nothing on a
      cancelled run but Undo cancel. So a Terminal here is a cancel that landed
@@ -111,6 +113,11 @@ type Intervention =
     }
   | {
       readonly kind: "reopen";
+      readonly runStepId: string;
+      readonly toast: string;
+    }
+  | {
+      readonly kind: "putBack";
       readonly runStepId: string;
       readonly toast: string;
     }
@@ -641,6 +648,7 @@ function RouteComponent() {
               stub.merchantCompleteStep({ runStepId }),
             reopen: ({ runStepId }) =>
               stub.merchantUncompleteStep({ runStepId }),
+            putBack: ({ runStepId }) => stub.merchantUnstartStep({ runStepId }),
             note: ({ runStepId, note }) =>
               stub.merchantSetStepNote({ runStepId, note }),
             block: ({ runId, reason }) =>
@@ -1099,6 +1107,26 @@ function RouteComponent() {
                         Mark done
                       </s-button>
                     )}
+                    {/* Put back, the inverse of a worker's Start; refused
+                        under a flag for the reason on
+                        `WorkflowRunRepository.unstartStep`. */}
+                    {ready &&
+                      step.startedAt !== null &&
+                      !Domain.runIsFlagged(run) && (
+                        <s-button
+                          variant="secondary"
+                          disabled={!identified || busy}
+                          onClick={() => {
+                            intervene({
+                              kind: "putBack",
+                              runStepId: step.id,
+                              toast: `${step.name} put back`,
+                            });
+                          }}
+                        >
+                          Put back
+                        </s-button>
+                      )}
                     {step.completedAt !== null &&
                       (blocker === null ? (
                         <s-button
@@ -1128,9 +1156,13 @@ function RouteComponent() {
                            "Finishing started Fit movement" — garden-paths,
                            because a reader who does not already know the
                            team names takes the first word as the subject
-                           and the second as a verb. */
+                           and the second as a verb.
+
+                           Reopen only clears a finished blocker; an
+                           in-progress one is cleared with Put back on its
+                           own row, hence both verbs. */
                         <s-text color="subdued">
-                          {`Can\u2019t reopen: ${blocker.stepName} (${blocker.teamName}) already started \u2014 reopen it first`}
+                          {`Can\u2019t reopen: ${blocker.stepName} (${blocker.teamName}) already started \u2014 put it back or reopen it first`}
                         </s-text>
                       ))}
                     {noteButton}

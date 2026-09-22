@@ -1891,7 +1891,7 @@ describe("WorkflowRunRepository steps, run list, flags, delete", () => {
       }),
     ));
 
-  it("uncompleteStep re-opens a step, keeps its starter, un-readies the next stage, and is refused once downstream started", () =>
+  it("Undo returns a step to Ready, un-readies the next stage, and is refused once downstream started", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedStaged;
@@ -1938,7 +1938,10 @@ describe("WorkflowRunRepository steps, run list, flags, delete", () => {
         );
         strictEqual(undone.steps[0]?.completedAt, null);
         strictEqual(undone.steps[0]?.completedBy, null);
-        strictEqual(undone.steps[0]?.startedBy, "member-1");
+        strictEqual(undone.steps[0]?.startedAt, null);
+        strictEqual(undone.steps[0]?.startedBy, null);
+        strictEqual(undone.steps[0]?.startedByEmail, null);
+        strictEqual(undone.steps[0]?.startedByRole, null);
         strictEqual(undone.run.status, "active");
         // Produce left Team C's list: stage 1 is open again.
         strictEqual((yield* runListRows({ teamIds: [TEAM_C.id] })).length, 0);
@@ -1998,6 +2001,126 @@ describe("WorkflowRunRepository steps, run list, flags, delete", () => {
             .pipe(Effect.flip))._tag,
           "RunTerminalError",
         );
+      }),
+    ));
+
+  it("Put back clears the Start record of an in-progress step", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seedStaged;
+        const runs = yield* WorkflowRunRepository;
+        const detail = yield* stagedRun();
+        const artwork = detail.steps[0]?.id ?? "";
+        yield* runs.startStep({
+          runStepId: artwork,
+          actor: memberActor("m1"),
+          teamIds: [TEAM_A.id],
+        });
+        strictEqual(
+          Option.getOrThrow(yield* runs.getRun({ runId: detail.run.id })).run
+            .status,
+          "active",
+        );
+        // Anyone on the step's team, not only the starter.
+        yield* runs.unstartStep({
+          runStepId: artwork,
+          actor: memberActor("m2"),
+          teamIds: [TEAM_A.id],
+        });
+        const after = Option.getOrThrow(
+          yield* runs.getRun({ runId: detail.run.id }),
+        );
+        const step = after.steps[0];
+        strictEqual(step?.startedAt, null);
+        strictEqual(step?.startedBy, null);
+        strictEqual(step?.startedByEmail, null);
+        strictEqual(step?.startedByRole, null);
+        strictEqual(step?.reopenedAt, null);
+        // The only started step put back: the run is untouched again.
+        strictEqual(after.run.status, "pending");
+        // Ready again: it is on Team A's list as a Start.
+        const view = Option.getOrThrow(
+          yield* runs.getRunView({
+            runId: detail.run.id,
+            teamIds: [TEAM_A.id],
+          }),
+        );
+        strictEqual(
+          view.steps.find((each) => each.id === artwork)?.ready,
+          true,
+        );
+      }),
+    ));
+
+  it("Put back is refused on an unstarted step, a finished step, a flagged run, another team's step, and a cancelled run", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seedStaged;
+        const runs = yield* WorkflowRunRepository;
+        const detail = yield* stagedRun();
+        const artwork = detail.steps[0]?.id ?? "";
+        const materials = detail.steps[1]?.id ?? "";
+        const unstart = (runStepId: string, teamIds: readonly string[]) =>
+          runs
+            .unstartStep({ runStepId, actor: memberActor("m1"), teamIds })
+            .pipe(
+              Effect.flip,
+              Effect.map((error) => error._tag),
+            );
+
+        strictEqual(yield* unstart(artwork, [TEAM_A.id]), "StepNotReadyError");
+
+        yield* complete(detail, 2, [TEAM_B.id]);
+        strictEqual(
+          yield* unstart(materials, [TEAM_B.id]),
+          "StepNotReadyError",
+        );
+
+        yield* runs.startStep({
+          runStepId: artwork,
+          actor: memberActor("m1"),
+          teamIds: [TEAM_A.id],
+        });
+        strictEqual(yield* unstart(artwork, [TEAM_B.id]), "RunNotAllowedError");
+
+        yield* runs.blockRun({
+          runId: detail.run.id,
+          actor: memberActor("m1"),
+          teamIds: [TEAM_A.id],
+          reason: null,
+        });
+        strictEqual(yield* unstart(artwork, [TEAM_A.id]), "RunFlaggedError");
+        // The merchant is held by the flag too.
+        strictEqual(
+          (yield* runs
+            .unstartStep({ runStepId: artwork, actor: MERCHANT })
+            .pipe(Effect.flip))._tag,
+          "RunFlaggedError",
+        );
+
+        yield* runs.cancelRun({ runId: detail.run.id });
+        strictEqual(yield* unstart(artwork, [TEAM_A.id]), "RunTerminalError");
+      }),
+    ));
+
+  it("the merchant puts back a member's Start", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seedStaged;
+        const runs = yield* WorkflowRunRepository;
+        const detail = yield* stagedRun();
+        const artwork = detail.steps[0]?.id ?? "";
+        yield* runs.startStep({
+          runStepId: artwork,
+          actor: memberActor("m1"),
+          teamIds: [TEAM_A.id],
+        });
+        yield* runs.unstartStep({ runStepId: artwork, actor: MERCHANT });
+        const step = Option.getOrThrow(
+          yield* runs.getRun({ runId: detail.run.id }),
+        ).steps[0];
+        strictEqual(step?.startedAt, null);
+        strictEqual(step?.startedByRole, null);
       }),
     ));
 
@@ -2409,7 +2532,7 @@ describe("WorkflowRunRepository steps, run list, flags, delete", () => {
       }),
     ));
 
-  it("merchant undo of a merchant Done clears the backfilled start, so a member can Start; a member's start survives undo", () =>
+  it("Undo returns a step to Ready whoever started it, member or merchant", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedStaged;
@@ -2441,10 +2564,13 @@ describe("WorkflowRunRepository steps, run list, flags, delete", () => {
 
         yield* runs.completeStep({ runStepId: artwork, actor: MERCHANT });
         yield* runs.uncompleteStep({ runStepId: artwork, actor: MERCHANT });
-        const backToMember = yield* stepNow();
-        strictEqual(backToMember.startedByRole, "member");
-        strictEqual(backToMember.startedByEmail, "m1@example.com");
-        strictEqual(backToMember.completedAt, null);
+        const ready = yield* stepNow();
+        strictEqual(ready.startedAt, null);
+        strictEqual(ready.startedBy, null);
+        strictEqual(ready.startedByEmail, null);
+        strictEqual(ready.startedByRole, null);
+        strictEqual(ready.completedAt, null);
+        strictEqual(ready.reopenedByRole, "merchant");
       }),
     ));
 

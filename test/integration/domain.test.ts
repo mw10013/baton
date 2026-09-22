@@ -567,7 +567,13 @@ const stepView = (
   ...overrides,
 });
 
-const NOTHING = { start: false, done: false, undo: null, note: false };
+const NOTHING = {
+  start: false,
+  done: false,
+  putBack: false,
+  undo: null,
+  note: false,
+};
 
 describe("Domain.stepActions", () => {
   it("a done run's last step is undoable while nothing downstream started, and still takes a note", () => {
@@ -650,6 +656,7 @@ describe("Domain.stepActions", () => {
       {
         start: true,
         done: true,
+        putBack: false,
         undo: null,
         note: true,
       },
@@ -658,13 +665,65 @@ describe("Domain.stepActions", () => {
       Domain.stepActions(run("active", null), stepView({ startedAt: 1 }), [
         TEAM,
       ]),
-      { start: false, done: true, undo: null, note: true },
+      { start: false, done: true, putBack: true, undo: null, note: true },
     );
     deepStrictEqual(
       Domain.stepActions(run("active", null), stepView({ ready: false }), [
         TEAM,
       ]),
       { ...NOTHING, note: true },
+    );
+  });
+});
+
+describe("Domain.stepActions Put back", () => {
+  it("Put back is offered wherever Done is, and only on a started step", () => {
+    strictEqual(
+      Domain.stepActions(run("active", null), stepView({ startedAt: 1 }), [
+        TEAM,
+      ]).putBack,
+      true,
+    );
+    strictEqual(
+      Domain.stepActions(run("pending", null), stepView(), [TEAM]).putBack,
+      false,
+    );
+    strictEqual(
+      Domain.stepActions(
+        run("active", null),
+        stepView({ ready: false, startedAt: 1 }),
+        [TEAM],
+      ).putBack,
+      false,
+    );
+  });
+
+  it("a flag hides Put back", () => {
+    strictEqual(
+      Domain.stepActions(run("active", "blocked"), stepView({ startedAt: 1 }), [
+        TEAM,
+      ]).putBack,
+      false,
+    );
+  });
+
+  it("a started step on another team offers no Put back", () => {
+    strictEqual(
+      Domain.stepActions(run("active", null), stepView({ startedAt: 1 }), [
+        OTHER_TEAM,
+      ]).putBack,
+      false,
+    );
+  });
+
+  it("a finished step offers no Put back", () => {
+    strictEqual(
+      Domain.stepActions(
+        run("active", null),
+        stepView({ ready: false, startedAt: 1, completedAt: 2 }),
+        [TEAM],
+      ).putBack,
+      false,
     );
   });
 });

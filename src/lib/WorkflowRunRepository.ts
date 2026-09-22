@@ -97,7 +97,7 @@ export class RunNotBlockedError extends Schema.TaggedError<RunNotBlockedError>()
   { runId: Schema.String },
 ) {}
 
-/** A step in an earlier stage is still open, or this step is already completed — or, for undo, not yet completed. */
+/** A step in an earlier stage is still open, or this step is already completed — or, for undo, not yet completed; for put back, not yet started or already completed. */
 export class StepNotReadyError extends Schema.TaggedError<StepNotReadyError>()(
   "StepNotReadyError",
   { runStepId: Schema.String },
@@ -426,12 +426,15 @@ export class WorkflowRunRepository extends Context.Service<
       SqlError.SqlError | WorkflowRunRepositoryError
     >;
     /**
-     * Undo: clears the completed slot (all four columns) and recomputes the
-     * run's status; a member's `startedAt` / `startedBy` stay, so the step
-     * returns to "in progress" under its original starter, while a
-     * merchant's started slot (only ever Done's backfill) is cleared so the
-     * step is Ready for a worker to Start. `reopenedAt` /
-     * `reopenedByRole` / `reopenedByEmail` record who sent it back. Allowed
+     * Undo returns a step to Ready: it clears the completed slot and every
+     * Start column, member or merchant, and writes the `reopened*` slot
+     * (`reopenedAt` / `reopenedByRole` / `reopenedByEmail`) with who sent it
+     * back, then recomputes the run's status. The step is Ready for a worker
+     * to Start. Keeping a member's Start would leave the step "In progress by
+     * A since <original time>": a claim A no longer makes and a time that is
+     * no longer true, and it would take Undo then Put back to reach Ready
+     * from a single Done. The `reopened*` slot already says who and when, so
+     * nothing is lost. Allowed
      * for the step's team while nothing downstream has started
      * (`StepUndoBlockedError` otherwise, naming the blocker). Gate:
      * {@link Domain.runIsLive}, not `runIsOpen` — undoing a `done` run's last
@@ -448,6 +451,35 @@ export class WorkflowRunRepository extends Context.Service<
       | RunTerminalError
       | StepNotReadyError
       | StepUndoBlockedError
+    >;
+    /**
+     * Put back clears the Start record of an in-progress step, and the run's
+     * status is recomputed (a run whose only started step is put back is
+     * `pending` again). Refused on a finished step or an unstarted step
+     * (`StepNotReadyError`), a run that is not {@link Domain.runIsOpen}
+     * (`RunTerminalError`), a flagged run (`RunFlaggedError`), or, for a
+     * member, a step not on one of their teams (`RunNotAllowedError`).
+     *
+     * Offered to the whole team, not only the starter: Start is a record, not
+     * a lock, and the inverse of a verb is as open as the verb. No slot
+     * records who put it back; the step is plain Ready and the next Start
+     * writes a fresh record.
+     *
+     * Undo is allowed under a flag because it takes work back; Put back is
+     * refused, because a held step is the one someone needs to write on, and
+     * clearing who has it under a hold loses the one name the merchant needs.
+     */
+    readonly unstartStep: (
+      input: Domain.UnstartStepCommand,
+    ) => Effect.Effect<
+      void,
+      | SqlError.SqlError
+      | WorkflowRunRepositoryError
+      | RunNotFoundError
+      | RunNotAllowedError
+      | StepNotReadyError
+      | RunTerminalError
+      | RunFlaggedError
     >;
     /**
      * The work page's read: the run with every step decorated by readiness
@@ -1711,17 +1743,15 @@ export class WorkflowRunRepository extends Context.Service<
                   yield* new StepUndoBlockedError({ runStepId, ...blocker });
                 const now = yield* Clock.currentTimeMillis;
                 const by = actorColumns(actor);
-                // A merchant "start" is only ever the backfill Done writes
-                // (there is no merchant Start), so keeping it would leave
-                // the step "In progress by Merchant" with the worker's Start
-                // hidden. Clear it and the step is plain Ready again; a
-                // member's start is real work and stays.
+                // Undo returns the step to Ready. Who reopened it is the
+                // `reopened*` slot; the old Start is a claim the starter no
+                // longer makes and a time that is no longer true.
                 yield* sql`
                   update WorkflowRunStep
                   set completedAt = null, completedBy = null,
                       completedByEmail = null, completedByRole = null,
-                      startedAt = case when startedByRole = 'merchant' then null else startedAt end,
-                      startedByRole = case when startedByRole = 'merchant' then null else startedByRole end,
+                      startedAt = null, startedBy = null,
+                      startedByEmail = null, startedByRole = null,
                       reopenedAt = ${now}, reopenedByRole = ${by.role},
                       reopenedByEmail = ${by.email}
                   where id = ${runStepId}
@@ -1731,6 +1761,37 @@ export class WorkflowRunRepository extends Context.Service<
             );
           },
         ),
+
+        unstartStep: Effect.fn("WorkflowRunRepository.unstartStep")(function* ({
+          runStepId,
+          teamIds,
+        }: Domain.UnstartStepCommand) {
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              const { step, run } = yield* requireActionable({
+                runStepId,
+                teamIds,
+              });
+              if (run.flag !== null)
+                yield* new RunFlaggedError({ runId: run.id, flag: run.flag });
+              if (step.startedAt === null || step.completedAt !== null)
+                yield* new StepNotReadyError({ runStepId });
+              // A started step is ready by construction (Start required it,
+              // and nothing behind it can reopen while it is started); the
+              // check keeps the four step writes reading alike.
+              if (!(yield* isReady(runStepId)))
+                yield* new StepNotReadyError({ runStepId });
+              const now = yield* Clock.currentTimeMillis;
+              yield* sql`
+                update WorkflowRunStep
+                set startedAt = null, startedBy = null,
+                    startedByEmail = null, startedByRole = null
+                where id = ${runStepId}
+              `;
+              yield* recomputeStatus(run.id, now);
+            }),
+          );
+        }),
 
         getRunView: Effect.fn("WorkflowRunRepository.getRunView")(function* ({
           runId,

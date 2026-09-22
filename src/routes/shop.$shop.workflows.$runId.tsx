@@ -271,15 +271,16 @@ function RouteComponent() {
     const editingNote = noteDraft?.runStepId === step.id;
     /**
      * The buttons follow {@link Domain.stepActions}; the banner carries the
-     * only action a flag allows. Undo is offered where it is allowed and
-     * nowhere else: a blocked undo draws no disabled button and no sentence
+     * only action a flag allows. Undo and Put back are offered where they are
+     * allowed and nowhere else: a blocked undo draws no disabled button and no sentence
      * explaining itself, because the step standing in the way is on this same
      * page with an `In progress` badge on it.
      */
     const can = Domain.stepActions(view.run, step, teamIds);
     /** Not while this card's own editor is open ({@link editor}). */
     const anyAction =
-      (can.done || can.undo?.blockedBy === null || can.note) && !editingNote;
+      (can.done || can.putBack || can.undo?.blockedBy === null || can.note) &&
+      !editingNote;
     return (
       <s-box
         key={step.id}
@@ -351,6 +352,17 @@ function RouteComponent() {
                   }}
                 >
                   Done
+                </s-button>
+              )}
+              {can.putBack && (
+                <s-button
+                  variant="secondary"
+                  disabled={actions.pending}
+                  onClick={() => {
+                    actions.unstart.mutate(step.id);
+                  }}
+                >
+                  Put back
                 </s-button>
               )}
               {can.undo?.blockedBy === null && (
