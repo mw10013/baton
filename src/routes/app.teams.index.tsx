@@ -283,7 +283,10 @@ function RouteComponent() {
       <s-modal
         id={CREATE_MODAL}
         heading="Create team"
-        onShow={() => {
+        /* Reset on the way out, not on the way in: `show` can fire after a field
+           has already taken input, and a reset there wipes what was typed
+           (the Add member dialog in `app.members.tsx` did exactly that). */
+        onAfterHide={() => {
           form.reset();
           setNameError(null);
         }}

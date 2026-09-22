@@ -229,8 +229,8 @@ function RouteComponent() {
     mutationFn: (name: string) =>
       renameTeam({ data: { teamId: team.id, name } }),
     onSuccess: async () => {
-      await shopify.modal.hide(RENAME_MODAL);
       await router.invalidate({ sync: true });
+      await shopify.modal.hide(RENAME_MODAL);
     },
     onError: (error: Error) => {
       const message = mutationErrorMessage(error, "Could not rename the team.");
@@ -483,7 +483,13 @@ function RouteComponent() {
       <s-modal
         id={RENAME_MODAL}
         heading="Rename team"
-        onShow={() => {
+        /* The form's defaults are the current name, so a first open needs no
+           seeding. Reset on the way out, not on the way in: `show` can fire
+           after the field has already taken input, and a reset there wipes
+           what was typed (the Add member dialog in `app.members.tsx` did
+           exactly that). Rename invalidates before it hides so this reseed
+           reads the new name. */
+        onAfterHide={() => {
           form.reset({ name: team.name });
           setNameError(null);
         }}
@@ -602,7 +608,10 @@ function RouteComponent() {
       <s-modal
         id={ADD_MODAL}
         heading={`Add members to ${team.name}`}
-        onShow={() => {
+        /* Cleared on the way out, not on the way in: `show` can fire after a
+           search was typed or a box checked, and clearing there loses it
+           (the Add member dialog in `app.members.tsx` did exactly that). */
+        onAfterHide={() => {
           setAddQuery("");
           setSelected([]);
         }}

@@ -106,6 +106,15 @@ export const Route = createFileRoute("/app/workflows/$workflowId")({
  * inactive workflow has a draft (what would be turned on is not what the
  * editor is holding).
  */
+/**
+ * The copy dialog's starting values: the suggested name and, mirroring it
+ * until the first keystroke in the tag field, its tag ({@link copyName}).
+ */
+const suggestedCopy = (detail: Domain.WorkflowLoaderData) => {
+  const suggested = copyName(detail?.workflow.name ?? "");
+  return { name: suggested, tag: suggested.trim().toLowerCase(), dirty: false };
+};
+
 function RouteComponent() {
   const { workflowId } = Route.useParams();
   const detail: Domain.WorkflowLoaderData = Route.useLoaderData();
@@ -115,7 +124,7 @@ function RouteComponent() {
   const { agent, identified } = useShopAgent();
   const [banner, setBanner] = React.useState<string | null>(null);
   const [name, setName] = React.useState(detail?.workflow.name ?? "");
-  const [copy, setCopy] = React.useState({ name: "", tag: "", dirty: false });
+  const [copy, setCopy] = React.useState(() => suggestedCopy(detail));
   const [copyTagError, setCopyTagError] = React.useState<string | null>(null);
   const [copyTagHolder, setCopyTagHolder] = React.useState<TagHolder>(null);
 
@@ -200,12 +209,7 @@ function RouteComponent() {
    * boundary, so what they see is what will be stored.
    */
   const seedDuplicateForm = () => {
-    const suggested = copyName(detail?.workflow.name ?? "");
-    setCopy({
-      name: suggested,
-      tag: suggested.trim().toLowerCase(),
-      dirty: false,
-    });
+    setCopy(suggestedCopy(detail));
     setCopyTagError(null);
     setCopyTagHolder(null);
   };
@@ -241,6 +245,7 @@ function RouteComponent() {
   if (loadedName !== undefined && loadedName !== seededName) {
     setSeededName(loadedName);
     setName(loadedName);
+    setCopy(suggestedCopy(detail));
   }
 
   if (detail === null)
@@ -437,7 +442,12 @@ function RouteComponent() {
       <s-modal
         id={DUPLICATE_MODAL}
         heading="Duplicate workflow"
-        onShow={seedDuplicateForm}
+        /* Seeded from the workflow on first render and again on rename
+           (`loadedName`), so opening needs no seeding. Reseed on the way out,
+           not on the way in: `show` can fire after a field has already taken
+           input, and a seed there wipes what was typed (the Add member dialog
+           in `app.members.tsx` did exactly that). */
+        onAfterHide={seedDuplicateForm}
       >
         <s-stack gap="base">
           <s-text-field
