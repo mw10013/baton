@@ -465,7 +465,10 @@ function RouteComponent() {
       <s-modal
         id={ADD_MODAL}
         heading="Add member"
-        onShow={() => {
+        /* Reset on the way out, not on the way in: `show` can fire after the
+           field has already taken input, and a reset there wipes what was
+           typed, so Add submits an empty email. */
+        onAfterHide={() => {
           form.reset();
         }}
       >

@@ -90,13 +90,20 @@ function RootDocument({ children }: { children: React.ReactNode }) {
     <html lang="en" suppressHydrationWarning>
       <head>
         <HeadContent />
+        {/* Polaris loads in <head>, before the body is parsed, so every
+            `s-*` element upgrades as the parser reaches it: a parent before
+            its children. Loaded at body-end instead, it defines its elements
+            into a finished document, and existing elements upgrade in
+            *define* order, which puts `s-table-row` before `s-table` (checked
+            2026-09-22 against the CDN `polaris.js`). A server-rendered row
+            then finds no table, takes the default list variant with no
+            headers, renders empty, and never recovers. After <HeadContent />
+            because App Bridge renders there via the /app route's head option
+            and must stay the document's first script tag. */}
+        <script src={POLARIS_URL} />
       </head>
       <body inert={!hydrated} data-hydrated={hydrated ? "true" : undefined}>
         {children}
-        {/* App Bridge renders in <head> via the /app route's head option and
-            must stay the document's first script tag; Polaris loads after it
-            here at body-end. */}
-        <script src={POLARIS_URL} />
         <Scripts />
       </body>
     </html>
