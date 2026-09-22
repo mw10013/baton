@@ -65,9 +65,6 @@ export const Route = createFileRoute("/app/")({
   component: RouteComponent,
 });
 
-/** Seats used past this share of the plan's grant earn the "almost full" badge. Orders have no equivalent: passing the included allowance is billed, not blocked, so there is nothing to warn about on the way up. */
-const MEMBER_WARNING_RATIO = 0.8;
-
 /**
  * One dimension of the plan: what the tier grants as the denominator, what the
  * shop has as the numerator, and a line saying what passing the denominator
@@ -87,7 +84,6 @@ const MEMBER_WARNING_RATIO = 0.8;
 function CapacityTile({
   heading,
   href,
-  badge,
   headline,
   count,
   limit,
@@ -95,7 +91,6 @@ function CapacityTile({
 }: {
   readonly heading: string;
   readonly href: string;
-  readonly badge?: ReactNode;
   readonly headline: string;
   readonly count: number;
   readonly limit: number;
@@ -104,10 +99,7 @@ function CapacityTile({
   return (
     <s-clickable href={href} padding="base" border="base" borderRadius="base">
       <s-grid gap="small-200">
-        <s-stack direction="inline" alignItems="center" gap="small">
-          <s-heading>{heading}</s-heading>
-          {badge}
-        </s-stack>
+        <s-heading>{heading}</s-heading>
         <s-heading>{headline}</s-heading>
         <progress
           className="capacity-meter"
@@ -144,24 +136,6 @@ function RouteComponent() {
 
   const seatless = memberCount - entitlements.maxMembers;
   const ordersOverBy = usage.ordersThisCycle - entitlements.ordersPerCycle;
-
-  /* Orders earn a badge only where the meter alone would mislead: a full bar
-     means "billed from here on", not "stopped", and the two are one badge
-     apart. `ordersLimitedAt` is the only state where orders really did stop. */
-  let ordersBadge: ReactNode = null;
-  if (usage.ordersLimitedAt !== null)
-    ordersBadge = <s-badge tone="critical">Syncing paused</s-badge>;
-  else if (ordersOverBy > 0)
-    ordersBadge = <s-badge tone="warning">Billing overage</s-badge>;
-
-  /* Seats are a wall, so the ladder runs all the way up: over it (only a
-     downgrade puts a shop here), against it, and approaching it. */
-  let memberBadge: ReactNode = null;
-  if (seatless > 0) memberBadge = <s-badge tone="critical">Over limit</s-badge>;
-  else if (memberCount === entitlements.maxMembers)
-    memberBadge = <s-badge tone="warning">No seats left</s-badge>;
-  else if (memberCount / entitlements.maxMembers >= MEMBER_WARNING_RATIO)
-    memberBadge = <s-badge tone="warning">Almost full</s-badge>;
 
   /* A cycle the object has not been told about yet has no end to name. */
   const ordersReset = usage.cycleEndAt !== null && (
@@ -201,7 +175,6 @@ function RouteComponent() {
             <CapacityTile
               heading="Orders this billing period"
               href="/app/orders"
-              badge={ordersBadge}
               headline={`${formatNumber(usage.ordersThisCycle)} of ${formatNumber(entitlements.ordersPerCycle)} included`}
               count={usage.ordersThisCycle}
               limit={entitlements.ordersPerCycle}
@@ -217,7 +190,6 @@ function RouteComponent() {
             <CapacityTile
               heading="Members"
               href="/app/members"
-              badge={memberBadge}
               headline={`${formatNumber(memberCount)} of ${formatNumber(entitlements.maxMembers)} seats used`}
               count={memberCount}
               limit={entitlements.maxMembers}
