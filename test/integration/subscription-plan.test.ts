@@ -32,12 +32,7 @@ const shopGid = Schema.decodeUnknownSync(Domain.ShopGid)(
 
 const shopSession = (): Omit<
   Domain.ShopSession,
-  | "planHandle"
-  | "planHandleExpiresAt"
-  | "pendingPlanHandle"
-  | "planBoundaryAt"
-  | "planCycleStartAt"
-  | "planCancelAtEndOfCycle"
+  "planHandle" | "planHandleExpiresAt" | "planBoundaryAt" | "planCycleStartAt"
 > => ({
   shop,
   shopGid,
@@ -52,11 +47,9 @@ const shopSession = (): Omit<
 const seedShopSession = (
   planHandle: string | null,
   expiresAt: number | null,
-  scheduled: {
-    readonly pendingPlanHandle?: string | null;
+  cached: {
     readonly planBoundaryAt?: number | null;
     readonly planCycleStartAt?: number | null;
-    readonly planCancelAtEndOfCycle?: boolean;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -66,14 +59,12 @@ const seedShopSession = (
       shop,
       planHandle,
       planHandleExpiresAt: expiresAt,
-      pendingPlanHandle: scheduled.pendingPlanHandle ?? null,
-      planBoundaryAt: scheduled.planBoundaryAt ?? null,
-      planCycleStartAt: scheduled.planCycleStartAt ?? null,
-      planCancelAtEndOfCycle: scheduled.planCancelAtEndOfCycle ?? false,
+      planBoundaryAt: cached.planBoundaryAt ?? null,
+      planCycleStartAt: cached.planCycleStartAt ?? null,
     });
   });
 
-/** A contract with nothing scheduled and no meter, which is what most cases are about. */
+/** A contract with no boundary and no meter, which is what most cases are about. */
 const contract = (
   overrides: Partial<Domain.ActiveSubscription> & {
     readonly handle: Domain.PlanHandle;
@@ -81,13 +72,11 @@ const contract = (
 ): Domain.ActiveSubscription => ({
   boundaryAt: null,
   cycleStartAt: null,
-  pendingHandle: null,
-  cancelAtEndOfCycle: false,
   usageQuantity: null,
   ...overrides,
 });
 
-/** The `Subscribed` status a contract with nothing scheduled resolves to. */
+/** The `Subscribed` status such a contract resolves to. */
 const subscribedTo = (
   handle: Domain.PlanHandle,
   overrides: Partial<Extract<Domain.PlanStatus, { _tag: "Subscribed" }>> = {},
@@ -96,7 +85,6 @@ const subscribedTo = (
   handle,
   plan: Domain.planOfHandle(handle),
   boundaryAt: null,
-  cancelAtEndOfCycle: false,
   ...overrides,
 });
 
@@ -323,7 +311,7 @@ describe("SubscriptionPlan", () => {
     }),
   );
 
-  it.effect("caches the scheduled plan change and the boundary", () =>
+  it.effect("caches the boundary and the cycle it names", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(1000);
       const pushes = yield* makePushes;
@@ -335,8 +323,6 @@ describe("SubscriptionPlan", () => {
                 handle: "baton-pro",
                 boundaryAt: 601_000,
                 cycleStartAt: 500,
-                pendingHandle: "baton-basic",
-                cancelAtEndOfCycle: true,
               }),
             ),
           ),
@@ -344,86 +330,40 @@ describe("SubscriptionPlan", () => {
           yield* seedShopSession("baton-pro", 500);
           assert.deepStrictEqual(
             yield* (yield* SubscriptionPlan).resolve(shop),
-            subscribedTo("baton-pro", {
-              boundaryAt: 601_000,
-              cancelAtEndOfCycle: true,
-            }),
+            subscribedTo("baton-pro", { boundaryAt: 601_000 }),
           );
           const stored = Option.getOrThrow(
             yield* (yield* Repository).findShopSession(shop),
           );
-          assert.strictEqual(stored.pendingPlanHandle, "baton-basic");
           assert.strictEqual(stored.planBoundaryAt, 601_000);
           assert.strictEqual(stored.planCycleStartAt, 500);
-          assert.strictEqual(stored.planCancelAtEndOfCycle, true);
         }),
         { pushes },
       );
     }),
   );
 
-  it.effect(
-    "serves the scheduled change from the cache without revalidating",
-    () =>
-      Effect.gen(function* () {
-        yield* TestClock.setTime(1000);
-        const calls = yield* Ref.make(0);
-        yield* run(
-          () =>
-            Ref.update(calls, (count) => count + 1).pipe(
-              Effect.as(Option.none<Domain.ActiveSubscription>()),
-            ),
-          Effect.gen(function* () {
-            yield* seedShopSession("baton-pro", 2000, {
-              pendingPlanHandle: "baton-basic",
-              planBoundaryAt: 601_000,
-              planCancelAtEndOfCycle: true,
-            });
-            assert.deepStrictEqual(
-              yield* (yield* SubscriptionPlan).resolve(shop),
-              subscribedTo("baton-pro", {
-                boundaryAt: 601_000,
-                cancelAtEndOfCycle: true,
-              }),
-            );
-          }),
-        );
-        assert.strictEqual(yield* Ref.get(calls), 0);
-      }),
-  );
-
-  it.effect(
-    "an unrecognized pending handle is cached raw and changes nothing",
-    () =>
-      Effect.gen(function* () {
-        yield* TestClock.setTime(1000);
-        yield* run(
-          () =>
-            Effect.succeed(
-              Option.some(
-                contract({
-                  handle: "baton-pro",
-                  // Shopify may well report a handle this build does not know.
-                  // It is cached verbatim for the operator console and the
-                  // current plan must survive it.
-                  pendingHandle: "baton-retired" as Domain.PlanHandle,
-                }),
-              ),
-            ),
-          Effect.gen(function* () {
-            yield* seedShopSession("baton-pro", 500);
-            assert.deepStrictEqual(
-              yield* (yield* SubscriptionPlan).resolve(shop),
-              subscribedTo("baton-pro"),
-            );
-            const stored = Option.getOrThrow(
-              yield* (yield* Repository).findShopSession(shop),
-            );
-            assert.strictEqual(stored.planHandle, "baton-pro");
-            assert.strictEqual(stored.pendingPlanHandle, "baton-retired");
-          }),
-        );
-      }),
+  it.effect("serves the cached boundary without revalidating", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1000);
+      const calls = yield* Ref.make(0);
+      yield* run(
+        () =>
+          Ref.update(calls, (count) => count + 1).pipe(
+            Effect.as(Option.none<Domain.ActiveSubscription>()),
+          ),
+        Effect.gen(function* () {
+          yield* seedShopSession("baton-pro", 2000, {
+            planBoundaryAt: 601_000,
+          });
+          assert.deepStrictEqual(
+            yield* (yield* SubscriptionPlan).resolve(shop),
+            subscribedTo("baton-pro", { boundaryAt: 601_000 }),
+          );
+        }),
+      );
+      assert.strictEqual(yield* Ref.get(calls), 0);
+    }),
   );
 
   it.effect(

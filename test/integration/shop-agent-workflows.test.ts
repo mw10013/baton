@@ -558,8 +558,6 @@ const seedOrder = (
                 sku: null,
                 quantity: 1,
                 currentQuantity: 1,
-                unfulfilledQuantity: 1,
-                nonFulfillableQuantity: 0,
                 productTags: [...productTags],
                 matchedWorkflowIds: [],
                 customAttributes: [],
@@ -1315,7 +1313,7 @@ describe("ShopAgent seed callables", () => {
         {
           n: 2,
           advance: 1,
-          after: { lineItems: [{ position: 1, unfulfilledQuantity: 1 }] },
+          after: { lineItems: [{ position: 1, currentQuantity: 1 }] },
           lineItems: [{ title: "Board", quantity: 2, tags: ["board"] }],
         },
       ],
@@ -1330,8 +1328,13 @@ describe("ShopAgent seed callables", () => {
 
   it("seedOrders leaves the usage counter at one seed's worth however often it is reseeded", async () => {
     const shop = "seed-usage.myshopify.com";
-    await seedTeam(shop, "Bench");
+    const team = await seedTeam(shop, "Bench");
     const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    // The meter counts an order when its first run is created, so the seed
+    // needs a workflow for its orders to match.
+    await agent.seedWorkflows({
+      workflows: [twoStep("Board", "board", team.id)],
+    });
     const orders = [
       { n: 1, lineItems: [{ title: "Board", quantity: 1, tags: ["board"] }] },
       { n: 2, lineItems: [{ title: "Board", quantity: 1, tags: ["board"] }] },
@@ -1373,18 +1376,17 @@ describe("ShopAgent seed callables", () => {
         `insert or replace into ShopOrder
            (id, legacyId, name, processedAt, updatedAt, cancelledAt, closedAt,
             financialStatus, fulfillmentStatus, fullyPaid, note,
-            customAttributes, lineItemsTruncated, syncedAt, syncSource,
-            firstCycleStartAt)
+            customAttributes, lineItemsTruncated, syncedAt, syncSource)
          values ('gid://shopify/Order/synced-1', 'synced-1', '#5001', 1, 1, null, null,
-                 'PAID', 'UNFULFILLED', 1, null, '[]', 0, 1, 'webhook', 0)`,
+                 'PAID', 'UNFULFILLED', 1, null, '[]', 0, 1, 'webhook')`,
       );
       sql.exec(
         `insert or replace into OrderLineItem
            (id, orderId, productId, variantId, title, variantTitle, sku, quantity,
-            currentQuantity, unfulfilledQuantity, nonFulfillableQuantity, productTags,
+            currentQuantity, productTags,
             matchedWorkflowIds, customAttributes, requiresShipping)
          values ('gid://shopify/Order/synced-1/line-1', 'gid://shopify/Order/synced-1',
-                 null, null, 'Board', null, null, 1, 1, 1, 0, '["board"]',
+                 null, null, 'Board', null, null, 1, 1, '["board"]',
                  '["a-workflow-this-seed-deletes"]', '[]', 1)`,
       );
     });

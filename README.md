@@ -47,7 +47,7 @@ seats must match `ENTITLEMENTS` in `src/lib/Domain.ts`. All numbers are provisio
 | Free trial          | 14 days                                              | none                                                 |
 | Welcome link        | `/app`                                               | `/app`                                               |
 | Top features        | See below — one line per feature, 40 characters each | See below — one line per feature, 40 characters each |
-| Usage meter: name   | Orders synced                                        | Orders synced                                        |
+| Usage meter: name   | Orders in production                                 | Orders in production                                 |
 | Usage meter: handle | `orders-synced`                                      | `orders-synced`                                      |
 | Pricing model       | Tiered, graduated                                    | Tiered, graduated                                    |
 | Charge as           | Cost per unit                                        | Cost per unit                                        |
@@ -63,20 +63,24 @@ lines are written to the limit. Enter them in this order:
 | 1   | `250 orders included, then $0.15 each` | `1,000 orders included, then $0.10 each` |
 | 2   | `3 team members`                       | `10 team members`                        |
 | 3   | `Unlimited workflows and teams`        | `Unlimited workflows and teams`          |
-| 4   | `Cancel in the same period, no charge` | `Cancel in the same period, no charge`   |
+| 4   | `Billed once work starts on an order`  | `Billed once work starts on an order`    |
 
 Line 1 must agree with `ordersPerCycle` in `ENTITLEMENTS` and with the meter's tier 2 price;
-line 2 with `maxMembers`. Line 4 states the reversal rule (`OrderRepository.countOrder`): an
-order cancelled inside the period it was counted in gives its charge back, and one cancelled
-later does not. Avoid "up to N orders" — it reads as a hard cap, and orders past the included
-allowance keep syncing and bill at the plan's rate. Avoid "a month" — the period is the billing
-cycle, which is what every other surface now says.
+line 2 with `maxMembers`. Line 4 states the metering rule (`OrderRepository.countOrder`): an
+order is counted once, when Baton creates its first run, and never reversed — an order that is
+only displayed, or that no workflow matches, costs the merchant nothing. Avoid "up to N orders"
+— it reads as a hard cap, and orders past the included allowance keep syncing and bill at the
+plan's rate. Avoid "a month" — the period is the billing cycle, which is what every other
+surface now says.
 
-- The meter counts orders synced into Baton. The app posts one event per counted order to the
-  App Events API under the meter handle, and a reversal for an order cancelled inside the same
-  billing period. The $0.00 first tier is the included allowance: Flat rate has no included
-  units field, and graduated tiers price each unit by the tier it falls in, so the 251st order
-  is the first one billed. Tier 1's size must equal `ordersPerCycle` in `ENTITLEMENTS`.
+- The meter counts orders Baton started work on. The app posts one event per counted order to
+  the App Events API under the meter handle, and never a reversal. The $0.00 first tier is the
+  included allowance: Flat rate has no included units field, and graduated tiers price each unit
+  by the tier it falls in, so the 251st order is the first one billed. Tier 1's size must equal
+  `ordersPerCycle` in `ENTITLEMENTS`.
+- The meter's **handle stays `orders-synced`** — a handle is part of the App Pricing contract
+  and re-handling it needs a migration (below) — while its display name is "Orders in
+  production". Change the display name in the Partner Dashboard; nothing in code reads it.
 - **Do not add or re-handle a meter on a live plan without a migration.** An App Pricing
   contract carries the item set it was created with, so existing subscribers keep a contract
   with no meter item: their events are accepted but the contract never reports a usage quantity,

@@ -156,6 +156,10 @@ test("switching plans on Shopify's pricing page moves the ceiling on the Plan ca
  * read. A row's text begins with its own label, so `^` disambiguates. Labels
  * here are plain words; one containing a regex metacharacter would need
  * escaping.
+ *
+ * The only way to read these fields: the operator console renders them inside
+ * shadow DOM, so `innerText` on the page body never sees them and a bare
+ * `getByText` finds nothing.
  */
 const readAdminFields = async (page: Page, labels: readonly string[]) => {
   const rows: Record<string, string> = {};
@@ -172,7 +176,6 @@ const readAdminFields = async (page: Page, labels: readonly string[]) => {
 
 const ADMIN_FIELDS = [
   "Cached plan",
-  "Scheduled change",
   "Plan boundary",
   "Billing period",
   "Orders this billing period",
@@ -180,7 +183,7 @@ const ADMIN_FIELDS = [
   "Shopify metered quantity",
 ] as const;
 
-test("records what a paid-to-paid downgrade schedules, and that the usage outbox drains", async ({
+test("records what a paid-to-paid downgrade does to the plan cache, and that the usage outbox drains", async ({
   browser,
   page,
 }, testInfo) => {
@@ -210,7 +213,7 @@ test("records what a paid-to-paid downgrade schedules, and that the usage outbox
         contentType: "application/json",
       });
       /* The only assertions this test owns: Baton rendered the fields and the
-         outbox is empty. What Shopify scheduled is the recording. */
+         outbox is empty. What Shopify did to the cache is the recording. */
       expect(fields["Usage events pending"]).toBe("0");
       expect(fields["Cached plan"]).not.toBe("");
     } finally {

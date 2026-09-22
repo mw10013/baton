@@ -21,7 +21,7 @@ const sessionProps = (shop: string) =>
     state: "",
     isOnline: false,
     accessToken: "shpat_test",
-    scope: "write_orders,read_products",
+    scope: "read_orders,read_products",
   }).toPropertyArray(true);
 
 const completedOperation: Domain.BulkOperation = {

@@ -64,12 +64,11 @@ function RouteComponent() {
         </s-paragraph>
         <PolicyList items={collectItems} />
         <s-paragraph>
-          Baton requests two Shopify Admin API access scopes. Order access is
-          held under write_orders, which Baton uses to read the orders and line
-          items it runs production for; Baton does not currently write to
-          orders. read_products is used to read the product tags that decide
-          which workflow an item follows. Baton does not request access to
-          customers, payment details, or checkout data.
+          Baton requests two Shopify Admin API access scopes. read_orders is
+          used to read the orders and line items Baton runs production for.
+          read_products is used to read the product tags that decide which
+          workflow an item follows. Baton does not request access to customers,
+          payment details, or checkout data.
         </s-paragraph>
       </PolicySection>
       <PolicySection heading="Information We Do Not Collect">

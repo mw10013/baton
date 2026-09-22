@@ -318,10 +318,7 @@ const item = (
   quantity: number,
   personalization: Record<string, string | null> = {},
   extra: Partial<
-    Pick<
-      SeedLineItem,
-      "currentQuantity" | "unfulfilledQuantity" | "progress" | "workflow"
-    >
+    Pick<SeedLineItem, "currentQuantity" | "progress" | "workflow">
   > = {},
 ): SeedLineItem => ({
   title,
@@ -428,7 +425,7 @@ const floorOrders: readonly SeedOrder[] = [
     lineItems: [item("Signet ring", TAG.ring, 1, { Size: "7", Metal: "Gold" })],
   },
   {
-    // one of two units refunded after ordering (`unfulfilledQuantity` below
+    // one of two units refunded after ordering (`currentQuantity` below
     // `quantity`), so the run and the order page read "×1 to make"
     n: 1007,
     note: "Customer cancelled one board after ordering.",
@@ -438,7 +435,7 @@ const floorOrders: readonly SeedOrder[] = [
         TAG.board,
         2,
         { Engraving: "Home Sweet Home" },
-        { unfulfilledQuantity: 1 },
+        { currentQuantity: 1 },
       ),
     ],
   },
@@ -572,7 +569,7 @@ const floorOrders: readonly SeedOrder[] = [
         TAG.board,
         1,
         { Engraving: "Kitchen 3" },
-        { currentQuantity: 0, unfulfilledQuantity: 0 },
+        { currentQuantity: 0 },
       ),
     ],
   },
@@ -615,7 +612,7 @@ const floorOrders: readonly SeedOrder[] = [
     // ×2 it snapshotted and the order now says ×1 — "Quantity changed"
     n: 1021,
     started: true,
-    after: { lineItems: [{ position: 1, unfulfilledQuantity: 1 }] },
+    after: { lineItems: [{ position: 1, currentQuantity: 1 }] },
     lineItems: [
       item("Engraved cutting board", TAG.board, 2, {
         Engraving: "Two of a kind",

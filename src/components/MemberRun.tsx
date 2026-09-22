@@ -29,7 +29,6 @@ export const flagHeading = (run: { readonly flag: Domain.RunFlag | null }) =>
         Match.when("item_removed", () => "No longer needed"),
         Match.when("quantity_changed", () => "Quantity changed"),
         Match.when("order_cancelled", () => "Order cancelled"),
-        Match.when("order_deleted", () => "Order deleted"),
         Match.when("order_fulfilled", () => "Already shipped"),
         Match.when("blocked", () => "Blocked"),
         Match.exhaustive,
@@ -49,19 +48,16 @@ export const flagBody = (run: {
     ? null
     : Match.value(run.flag).pipe(
         Match.withReturnType<string | null>(),
-        // Also covers a full refund and a line shipped ahead: all three zero
-        // the units to make, and the maker's response is the same.
-        Match.when(
-          "item_removed",
-          () => "Removed, refunded, or shipped in Shopify.",
-        ),
+        // An edit that dropped the line or a full refund: both zero the units
+        // to make ({@link Domain.unitsToMake}), and the maker's response is
+        // the same. Shipping never sets this.
+        Match.when("item_removed", () => "Removed or refunded in Shopify."),
         Match.when(
           "quantity_changed",
           () =>
             `From ${formatNumber(run.flagDetail?.from ?? 0)} to ${formatNumber(run.flagDetail?.to ?? run.quantity)}.`,
         ),
         Match.when("order_cancelled", () => null),
-        Match.when("order_deleted", () => null),
         Match.when("order_fulfilled", () => "Fulfilled in Shopify."),
         Match.when("blocked", () => run.flagDetail?.reason ?? null),
         Match.exhaustive,
@@ -69,8 +65,8 @@ export const flagBody = (run: {
 
 /**
  * `critical` where the work must stop and someone outside the bench has to
- * act (a hold, a cancelled or deleted order); `warning` where the work has
- * merely changed under the maker and the response is to read and acknowledge.
+ * act (a hold, a cancelled order); `warning` where the work has merely changed
+ * under the maker and the response is to read and acknowledge.
  */
 export const flagTone = (run: { readonly flag: Domain.RunFlag | null }) =>
   run.flag === null
@@ -79,7 +75,6 @@ export const flagTone = (run: { readonly flag: Domain.RunFlag | null }) =>
         Match.withReturnType<"critical" | "warning">(),
         Match.when("blocked", () => "critical" as const),
         Match.when("order_cancelled", () => "critical" as const),
-        Match.when("order_deleted", () => "critical" as const),
         Match.when("item_removed", () => "warning" as const),
         Match.when("quantity_changed", () => "warning" as const),
         Match.when("order_fulfilled", () => "warning" as const),

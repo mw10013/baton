@@ -64,12 +64,11 @@ export interface SeedProgress {
   readonly byMerchant?: boolean;
 }
 
-/** A line item of a seeded order; `tags` are the product tags a workflow matches on. Quantities default down the chain `quantity` → `currentQuantity` → `unfulfilledQuantity`. */
+/** A line item of a seeded order; `tags` are the product tags a workflow matches on. `currentQuantity` defaults to `quantity`. */
 export interface SeedLineItem {
   readonly title: string;
   readonly quantity: number;
   readonly currentQuantity?: number;
-  readonly unfulfilledQuantity?: number;
   readonly tags: readonly string[];
   readonly customAttributes?: readonly {
     readonly key: string;
@@ -99,7 +98,6 @@ export interface SeedOrderChange {
   readonly lineItems?: readonly {
     readonly position: number;
     readonly currentQuantity?: number;
-    readonly unfulfilledQuantity?: number;
   }[];
 }
 

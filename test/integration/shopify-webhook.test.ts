@@ -4,6 +4,7 @@ import {
   assertInstanceOf,
   assertNone,
   deepStrictEqual,
+  notDeepStrictEqual,
   strictEqual,
 } from "@effect/vitest/utils";
 import * as ShopifyApi from "@shopify/shopify-api";
@@ -11,6 +12,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { exports as workerExports } from "cloudflare:workers";
 import { env as workerEnv } from "cloudflare:workers";
 import { Effect, Layer, Option, Schema } from "effect";
+import { SqlClient } from "effect/unstable/sql";
 
 import { CurrentRequest } from "@/lib/CurrentRequest";
 import * as Domain from "@/lib/Domain";
@@ -384,7 +386,6 @@ const seedOrder = (updatedAt: number) =>
     inShopAgent(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
-        yield* repository.deleteOrder({ orderId: ORDER_ID, now: 0 });
         yield* repository.upsertOrder({
           order: storedOrder(updatedAt),
           lineItems: [],
@@ -422,25 +423,62 @@ const orderWebhookRequest = ({
     },
   });
 
+const readWebhookDelivery = (webhookId: string) =>
+  Effect.promise(() =>
+    runInDurableObject(
+      workerEnv.SHOP_AGENT.getByName(SHOP),
+      (_instance, state) =>
+        Effect.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            const rows =
+              yield* sql`select orderId from WebhookDelivery where webhookId = ${webhookId}`;
+            return rows;
+          }).pipe(
+            Effect.provide(SqliteClient.layer({ storage: state.storage })),
+          ),
+        ),
+    ),
+  );
+
+const tomlBlocks = (uri: string) =>
+  appToml
+    .split("[[webhooks.subscriptions]]")
+    .filter((section) => section.includes(`uri = "${uri}"`));
+
 describe("orders webhooks", () => {
   /**
-   * `orders/updated` fires for every change the app acts on (paid, cancelled,
-   * edited, refunded, fulfilled); the topic-specific ones re-delivered the same
-   * change with the same `updated_at`. Read from the toml so re-adding one is
-   * a conscious edit here too.
+   * Baton reads orders and never writes them, so `read_orders` is the whole of
+   * its order access. Read from the toml so widening it is a conscious edit
+   * here too — a scope Baton cannot justify is a scope a merchant is asked to
+   * grant for nothing.
    */
-  it("subscribes to create, updated, and delete only", () => {
-    const block = appToml
-      .split("[[webhooks.subscriptions]]")
-      .find((section) => section.includes('uri = "/webhooks/orders"'));
-    const topics = [
-      ...(block ?? "").matchAll(/"(?<topic>orders\/[a-z_]+)"/gu),
-    ].map((match) => match.groups?.topic);
-    deepStrictEqual(topics, [
-      "orders/create",
-      "orders/updated",
-      "orders/delete",
-    ]);
+  it("requests read_orders and read_products only", () => {
+    const scopes = /scopes = "(?<scopes>[^"]*)"/u.exec(appToml)?.groups?.scopes;
+    deepStrictEqual(scopes?.split(","), ["read_orders", "read_products"]);
+  });
+
+  /**
+   * `orders/updated` is not subscribed: it fires on every save of the order,
+   * and every change Baton acts on has its own topic. Read from the toml so
+   * re-adding one is a conscious edit here too.
+   */
+  it("subscribes to create, paid, edited, cancelled, and fulfilled only", () => {
+    const topics = tomlBlocks("/webhooks/orders").flatMap((block) =>
+      [...block.matchAll(/"(?<topic>orders\/[a-z_]+)"/gu)].map(
+        (match) => match.groups?.topic,
+      ),
+    );
+    deepStrictEqual(
+      topics.toSorted((a, b) => (a ?? "").localeCompare(b ?? "")),
+      [
+        "orders/cancelled",
+        "orders/create",
+        "orders/edited",
+        "orders/fulfilled",
+        "orders/paid",
+      ],
+    );
   });
 
   /**
@@ -453,7 +491,7 @@ describe("orders webhooks", () => {
       yield* seedOrder(Date.parse("2026-09-02T12:00:00Z"));
       const response = yield* fetchWebhook(
         yield* orderWebhookRequest({
-          topic: "orders/updated",
+          topic: "orders/paid",
           updatedAt: "2026-09-02T11:00:00Z",
           webhookId: "wh-stale",
         }),
@@ -472,7 +510,7 @@ describe("orders webhooks", () => {
         Effect.gen(function* () {
           return yield* fetchWebhook(
             yield* orderWebhookRequest({
-              topic: "orders/updated",
+              topic: "orders/paid",
               updatedAt: "2026-09-02T11:00:00Z",
               webhookId: "wh-duplicate",
             }),
@@ -485,20 +523,34 @@ describe("orders webhooks", () => {
     }).pipe(Effect.provide(shopifyTestLayer())),
   );
 
-  /** `orders/delete` carries `{ id }` only — nothing to fetch, just remove it. */
-  it.effect("orders/delete removes the stored order", () =>
-    Effect.gen(function* () {
-      yield* seedOrder(Date.parse("2026-09-02T12:00:00Z"));
-      const response = yield* fetchWebhook(
-        yield* webhookRequest({
-          path: "/webhooks/orders",
-          topic: "orders/delete",
-          webhookId: "wh-delete",
-          payload: { id: 1001 },
-        }),
-      );
-      strictEqual(response.status, 200);
-      assertNone(yield* readOrder());
-    }).pipe(Effect.provide(shopifyTestLayer())),
+  /**
+   * The edit payload reports what the edit changed, not the order's new state,
+   * so it carries `order_edit.order_id` and no `updated_at` — which is exactly
+   * why it must always fetch. Reaching the fetch is what the non-200 records:
+   * the Admin API is not stubbed in this suite, so a delivery that short-
+   * circuited on the stale guard would have answered 200 as the case above
+   * does, and only one that resolved the GID and went on to fetch can fail.
+   */
+  it.effect(
+    "an orders/edited delivery resolves the order from order_edit.order_id and always fetches",
+    () =>
+      Effect.gen(function* () {
+        yield* seedOrder(Date.parse("2026-09-02T12:00:00Z"));
+        const response = yield* fetchWebhook(
+          yield* webhookRequest({
+            path: "/webhooks/orders",
+            topic: "orders/edited",
+            webhookId: "wh-edited",
+            payload: { order_edit: { order_id: 1001 } },
+          }),
+        );
+        // Nothing in `test/` stubs the Admin API, so the fetch fails and a
+        // success is not observable; a 200 here could only mean the stale
+        // guard short-circuited, which the delivery row below rules out too.
+        notDeepStrictEqual(response.status, 200);
+        deepStrictEqual(yield* readWebhookDelivery("wh-edited"), [
+          { orderId: ORDER_ID },
+        ]);
+      }).pipe(Effect.provide(shopifyTestLayer())),
   );
 });

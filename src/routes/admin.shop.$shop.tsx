@@ -215,19 +215,6 @@ const shopContent = ({
     }),
   );
 
-/**
- * What the cache says is coming at the boundary, as one line. A cancellation
- * outranks a pending handle because it is what actually ends: Shopify can
- * report both, and a merchant who has cancelled is not switching tiers.
- */
-const scheduledChange = ({
-  pendingPlanHandle,
-  planCancelAtEndOfCycle,
-}: Domain.ShopSessionRedacted) => {
-  if (planCancelAtEndOfCycle) return "cancels at period end";
-  return pendingPlanHandle;
-};
-
 function FoundShop({
   data: {
     shopSession,
@@ -292,10 +279,6 @@ function FoundShop({
                   </>
                 )
               }
-            />
-            <Field
-              label="Scheduled change"
-              value={scheduledChange(shopSession)}
             />
             <Field
               label="Plan boundary"

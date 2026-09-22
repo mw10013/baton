@@ -40,8 +40,6 @@ export const LineItemNode = Schema.Struct({
   sku: Schema.NullOr(Schema.String),
   quantity: Schema.Number,
   currentQuantity: Schema.Number,
-  unfulfilledQuantity: Schema.Number,
-  nonFulfillableQuantity: Schema.Number,
   requiresShipping: Schema.Boolean,
   customAttributes: Schema.Array(Domain.OrderAttribute),
   variant: Schema.NullOr(Schema.Struct({ id: Schema.String })),
@@ -99,8 +97,6 @@ export const toOrderLineItem = (
   sku: node.sku,
   quantity: node.quantity,
   currentQuantity: node.currentQuantity,
-  unfulfilledQuantity: node.unfulfilledQuantity,
-  nonFulfillableQuantity: node.nonFulfillableQuantity,
   productTags: node.product?.tags ?? [],
   /** Reconcile owns this column; the sync writes the empty set and `afterWrite` fills it. */
   matchedWorkflowIds: [],
@@ -146,8 +142,6 @@ export const orderSyncQuery = `#graphql
           sku
           quantity
           currentQuantity
-          unfulfilledQuantity
-          nonFulfillableQuantity
           requiresShipping
           customAttributes { key value }
           variant { id }

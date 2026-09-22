@@ -32,10 +32,8 @@ const setPlan = (shop: Domain.Shop, planHandle: string | null) =>
       shop,
       planHandle,
       planHandleExpiresAt: Date.now() + 60 * 60 * 1000,
-      pendingPlanHandle: null,
       planBoundaryAt: null,
       planCycleStartAt: null,
-      planCancelAtEndOfCycle: false,
     });
   });
 
@@ -334,10 +332,8 @@ describe("member run list", () => {
           shop: SHOP,
           planHandle: null,
           planHandleExpiresAt: Date.now() + 60 * 60 * 1000,
-          pendingPlanHandle: null,
           planBoundaryAt: null,
           planCycleStartAt: null,
-          planCancelAtEndOfCycle: false,
         });
         yield* repository.addMember({
           shop: SHOP,

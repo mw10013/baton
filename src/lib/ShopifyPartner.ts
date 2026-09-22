@@ -50,10 +50,6 @@ const activeSubscriptionQuery = `query ActiveSubscription($appId: ID!, $shopId: 
       endTime
     }
     trialEndsAt
-    cancelAtEndOfCycle
-    pendingUpdate {
-      items { handle }
-    }
   }
 }`;
 
@@ -86,12 +82,6 @@ const ActiveSubscriptionResponse = Schema.Struct({
             }),
           ),
           trialEndsAt: Schema.NullOr(Schema.String),
-          cancelAtEndOfCycle: Schema.optional(Schema.NullOr(Schema.Boolean)),
-          pendingUpdate: Schema.optional(
-            Schema.NullOr(
-              Schema.Struct({ items: Schema.Array(SubscriptionItem) }),
-            ),
-          ),
         }),
       ),
     }),
@@ -118,12 +108,9 @@ const parseBoundary = (value: string | null | undefined): number | null => {
  * change) and more than one (a contract shape this app does not model) are both
  * `Option.none()` rather than a guess, and both log — allowlist drift is
  * operationally interesting even where the response to it is simply no answer.
- * `where` names which array was being read so a warning says whether the
- * current contract or a scheduled change drifted.
  */
 const matchPlanHandle = Effect.fn("ShopifyPartner.matchPlanHandle")(function* (
   shopGid: Domain.ShopGid,
-  where: "items" | "pendingUpdate",
   items: readonly { readonly handle: string | null }[],
 ) {
   const handles = items.flatMap((item) =>
@@ -132,11 +119,10 @@ const matchPlanHandle = Effect.fn("ShopifyPartner.matchPlanHandle")(function* (
   const [handle] = handles;
   if (handle === undefined || handles.length > 1) {
     yield* Effect.logWarning(
-      `ShopifyPartner.activeSubscription: shopGid=${shopGid} where=${where} matches=${String(handles.length)}: contract carries no single known plan handle`,
+      `ShopifyPartner.activeSubscription: shopGid=${shopGid} matches=${String(handles.length)}: contract carries no single known plan handle`,
     ).pipe(
       Effect.annotateLogs({
         shopGid,
-        where,
         handles: items.map((item) => item.handle),
       }),
     );
@@ -173,8 +159,8 @@ export class ShopifyPartner extends Context.Service<
      * value and must not confuse "could not check" with "not subscribed".
      *
      * The plan is identified by {@link matchPlanHandle}, never by position.
-     * Everything else on the returned value — the scheduled change, the cycle,
-     * the metered quantity — is display or bookkeeping and never gates access:
+     * Everything else on the returned value — the boundary, the cycle, the
+     * metered quantity — is display or bookkeeping and never gates access:
      * a contract with a plan handle grants that plan's entitlements even if
      * every other field is missing.
      *
@@ -244,22 +230,8 @@ export class ShopifyPartner extends Context.Service<
           }
           const subscription = data?.activeSubscription;
           if (!subscription) return Option.none();
-          const handle = yield* matchPlanHandle(
-            shopGid,
-            "items",
-            subscription.items,
-          );
+          const handle = yield* matchPlanHandle(shopGid, subscription.items);
           if (Option.isNone(handle)) return Option.none();
-          // The scheduled change is display-only, so allowlist drift inside
-          // `pendingUpdate` degrades to "nothing scheduled" — it must never
-          // cost the merchant the plan they are currently paying for.
-          const pendingHandle = subscription.pendingUpdate
-            ? yield* matchPlanHandle(
-                shopGid,
-                "pendingUpdate",
-                subscription.pendingUpdate.items,
-              )
-            : Option.none();
           return Option.some({
             handle: handle.value,
             boundaryAt: parseBoundary(
@@ -269,8 +241,6 @@ export class ShopifyPartner extends Context.Service<
             cycleStartAt: parseBoundary(
               subscription.currentBillingCycle?.startTime ?? null,
             ),
-            pendingHandle: Option.getOrNull(pendingHandle),
-            cancelAtEndOfCycle: subscription.cancelAtEndOfCycle ?? false,
             usageQuantity: meterQuantity(subscription.items),
           } satisfies Domain.ActiveSubscription);
         },

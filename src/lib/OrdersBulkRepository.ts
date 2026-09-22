@@ -63,8 +63,6 @@ query BulkOrdersQuery {
               sku
               quantity
               currentQuantity
-              unfulfilledQuantity
-              nonFulfillableQuantity
               requiresShipping
               customAttributes { key value }
               variant { id }

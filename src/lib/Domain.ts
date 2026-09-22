@@ -72,7 +72,7 @@ export const planOfHandle = (handle: PlanHandle): Plan =>
   handle === "baton-pro" ? "pro" : "basic";
 
 export interface Entitlements {
-  /** Orders included per billing cycle. Past this the usage meter bills; nothing blocks until {@link ShopLimits.maxOrdersPerCycle}. */
+  /** Orders ({@link ShopUsage.ordersThisCycle}) included per billing cycle. Past this the usage meter bills; nothing blocks until {@link ShopLimits.maxOrdersPerCycle}. */
   readonly ordersPerCycle: number;
   /** Seats. Members past this many, ordered by `createdAt` then `email`, are refused by `requireMember`; see {@link memberHasSeat}. */
   readonly maxMembers: number;
@@ -132,23 +132,10 @@ export const MAX_ENTITLEMENTS: Entitlements = ENTITLEMENTS.pro;
 export const USAGE_METER_ORDER = "orders-synced";
 
 /**
- * What the shop's contract grants right now, plus what is scheduled to happen
- * to it at the next boundary.
- *
- * `cancelAtEndOfCycle` is display-only and deliberately so: nothing enforces a
- * change before it lands, because the merchant is still paying for the plan in
- * force. It is the one scheduled fact a merchant is shown — the home page dates
- * the end of a cancelled subscription.
- *
- * A *pending tier* is deliberately absent from this type. Shopify usually
- * applies a switch at once (on a $0 development store a paid-to-paid downgrade
- * moved the handle immediately with `pendingUpdate: null`, measured
- * 2026-09-19), in which case the entitlements here are already the new ones and
- * there is nothing to announce; and naming the tier it would switch to means
- * hardcoding a Partner Dashboard label that changes without a deploy. The raw
- * handle is still cached — `ShopSession.pendingPlanHandle`, written by
- * `updateShopSessionPlan` and read by the operator console, which is allowed to
- * show Shopify's own strings.
+ * What the shop's contract grants right now. Nothing scheduled: a plan change
+ * may apply at once or at the next boundary, and the cache is right either way,
+ * because a handle change lands on the next revalidation and the deadline is
+ * clamped to the boundary.
  */
 export const PlanStatus = Schema.Union([
   Schema.Struct({
@@ -157,8 +144,6 @@ export const PlanStatus = Schema.Union([
     plan: Plan,
     /** The next contract boundary as epoch milliseconds: cycle end, or trial end during a trial. */
     boundaryAt: Schema.NullOr(Schema.Number),
-    /** The merchant has cancelled; the contract ends at {@link boundaryAt} rather than renewing. */
-    cancelAtEndOfCycle: Schema.Boolean,
   }),
   Schema.Struct({ _tag: Schema.Literal("Unsubscribed") }),
 ]);
@@ -166,8 +151,7 @@ export type PlanStatus = typeof PlanStatus.Type;
 
 /**
  * A resolved App Pricing contract: the one allowlisted plan handle it carries,
- * the scheduled change if there is one, the cycle it is in, and what Shopify
- * has metered this cycle.
+ * the cycle it is in, and what Shopify has metered this cycle.
  *
  * `boundaryAt` collapses two Shopify fields that never coexist —
  * `currentBillingCycle.endTime` is null during a trial, where `trialEndsAt`
@@ -180,9 +164,6 @@ export const ActiveSubscription = Schema.Struct({
   boundaryAt: Schema.NullOr(Schema.Number),
   /** `currentBillingCycle.startTime`; null during a trial, which has no cycle. */
   cycleStartAt: Schema.NullOr(Schema.Number),
-  /** The allowlisted handle in `pendingUpdate`, if a plan change is scheduled for the boundary. */
-  pendingHandle: Schema.NullOr(PlanHandle),
-  cancelAtEndOfCycle: Schema.Boolean,
   /** Shopify's own count for {@link USAGE_METER_ORDER} this cycle, when the contract carries the meter; the figure local counting is reconciled against. */
   usageQuantity: Schema.NullOr(Schema.Number),
 });
@@ -215,26 +196,14 @@ export const ShopSession = Schema.Struct({
   planHandle: Schema.NullOr(Schema.String),
   planHandleExpiresAt: Schema.NullOr(Schema.Number),
   /**
-   * The scheduled change and the period it lands in, cached beside the handle
-   * and written only by `Repository.updateShopSessionPlan`, so a cache hit
-   * answers "what is coming" without a second Partner call.
-   *
-   * `pendingPlanHandle` is `Schema.String` for the same reason `planHandle` is:
-   * a handle outside the allowlist must degrade to "no scheduled change", never
-   * take the authentication path down. Null on all three means none or unknown,
-   * and they are only meaningful while `planHandleExpiresAt` is in the future —
-   * a stale row's scheduled change is as untrustworthy as its handle.
+   * The contract's boundary and period, cached beside the handle and written
+   * only by `Repository.updateShopSessionPlan`, so a cache hit answers "when
+   * does this expire" without a second Partner call. Null means none or
+   * unknown, and both are only meaningful while `planHandleExpiresAt` is in the
+   * future — a stale row's dates are as untrustworthy as its handle.
    */
-  pendingPlanHandle: Schema.NullOr(Schema.String),
   planBoundaryAt: Schema.NullOr(Schema.Number),
   planCycleStartAt: Schema.NullOr(Schema.Number),
-  /**
-   * `not null default 0` rather than nullable, so a row that has never been
-   * revalidated decodes as "not cancelled" instead of as an unknown the home
-   * page would have to render a third way. It is a scheduled-change fact like
-   * the two above and is only meaningful inside the cache deadline.
-   */
-  planCancelAtEndOfCycle: SqliteBoolean,
 });
 export type ShopSession = typeof ShopSession.Type;
 
@@ -251,10 +220,8 @@ export const ShopSessionUpsert = Schema.Struct(
   Struct.omit(ShopSession.fields, [
     "planHandle",
     "planHandleExpiresAt",
-    "pendingPlanHandle",
     "planBoundaryAt",
     "planCycleStartAt",
-    "planCancelAtEndOfCycle",
   ]),
 );
 export type ShopSessionUpsert = typeof ShopSessionUpsert.Type;
@@ -540,7 +507,7 @@ export const ShopLimits = {
   maxTeams: 25,
   /** `WorkflowRun` rows that are {@link runIsOpen} per shop; a safety valve, not a product limit. "Open", not "live": a `done` run is live for its line item but frees this slot. */
   maxOpenRuns: 5000,
-  /** Orders counted per billing cycle before syncing of *new* orders stops for the rest of the cycle. Provisional; enterprise fencing, not a tier — see {@link cycleAtOrderCeiling}. */
+  /** {@link ShopUsage.ordersThisCycle} at which syncing of *new* orders stops for the rest of the cycle. Provisional; enterprise fencing, not a tier — see {@link cycleAtOrderCeiling}. */
   maxOrdersPerCycle: 10_000,
   /** Line items kept per order on the bulk path; the rest are dropped and the order flagged. */
   maxLineItemsPerOrder: 250,
@@ -579,19 +546,29 @@ export const ShopLimits = {
  * The count is keyed by *billing cycle*, not by calendar month, because the
  * same count is what the merchant is billed for: the home page and the Shopify
  * invoice have to agree about which orders fall in a period, and only Shopify
- * knows where the period starts. {@link orderCountsTowardCycle} is the rule;
- * `countedAt` on `ShopOrder` is the per-order marker that makes a reversal fire
+ * knows where the period starts. `OrderRepository.countOrder` is the rule —
+ * one unit the first time Baton creates a run for an order, never reversed —
+ * and `countedAt` on `ShopOrder` is the per-order marker that makes it fire
  * once.
  */
 export const ShopUsage = Schema.Struct({
   /**
    * The billing cycle the count belongs to. Both null until the Worker has
-   * pushed one ({@link BillingCycleInput}), in which case the object counts
-   * from the first order it sees and rolls forward on its own — a shop must
-   * keep metering before its first plan revalidation, not after.
+   * pushed one ({@link BillingCycleInput}), in which case the object opens a
+   * cycle at the first order it stores and rolls forward on its own — a shop
+   * must keep metering before its first plan revalidation, not after.
    */
   cycleStartAt: Schema.NullOr(Schema.Number),
   cycleEndAt: Schema.NullOr(Schema.Number),
+  /**
+   * Orders Baton created a run for this cycle, and nothing else:
+   * `OrderRepository.countOrder` is the rule. Not orders stored — a shop can
+   * hold any number of orders no workflow matches and this stays at zero —
+   * and never decremented, because the count is what the merchant is billed
+   * for and the bill is never reversed. It is also what
+   * {@link cycleAtOrderCeiling} reads, so the ceiling bounds work started,
+   * which is the billable quantity, rather than rows.
+   */
   ordersThisCycle: Schema.Number,
   /** Set when a new order was refused because of {@link ShopLimits.maxOrdersPerCycle}; null once the cycle rolls. */
   ordersLimitedAt: Schema.NullOr(Schema.Number),
@@ -641,10 +618,10 @@ export type BillingCycleInput = typeof BillingCycleInput.Type;
  * The cycle a shop counts against before the Worker has ever pushed a real
  * billing period: the first instant of `now`'s UTC month.
  *
- * A shop starts metering at its first order, which can land before its first
+ * A shop opens its cycle at its first order, which can land before its first
  * plan revalidation — a webhook arrives on the install's heels, and the
  * revalidation is a separate request that may be minutes behind. Opening a
- * provisional cycle is what keeps that order counted; `setBillingCycle`
+ * provisional cycle is what lets a run started then count; `setBillingCycle`
  * replaces it with Shopify's period as soon as one is known.
  *
  * UTC, not the shop's timezone: the object has no locale, and a boundary that
@@ -662,13 +639,11 @@ export const ReconcileUsageInput = Schema.Struct({
 export type ReconcileUsageInput = typeof ReconcileUsageInput.Type;
 
 /**
- * One App Events billing event: a counted order, or its reversal.
+ * One App Events billing event: one counted order.
  *
- * `value` is `1` or `-1` and must never be zero — Shopify rejects a zero value
- * outright. `idempotencyKey` is permanent at Shopify and capped at 64
- * characters, which is why it is derived from the order id and the reason
- * rather than from a clock: replaying a flush must not bill twice, and a
- * reversal must not collide with the count it reverses.
+ * `idempotencyKey` is permanent at Shopify and capped at 64 characters, which
+ * is why it is derived from the order id rather than from a clock: replaying a
+ * flush must not bill twice.
  */
 export const UsageEvent = Schema.Struct({
   shopGid: ShopGid,
@@ -676,44 +651,15 @@ export const UsageEvent = Schema.Struct({
   /** When the order was counted, not when the event is sent: Shopify rejects a timestamp outside the merchant's current cycle. */
   occurredAt: Schema.Number,
   idempotencyKey: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
-  value: Schema.Number,
+  /**
+   * One order, one unit. A `Literal(1)` rather than a number because the meter
+   * only ever counts up: an order is billed the first time Baton creates a run
+   * for it (`OrderRepository.countOrder`) and nothing afterwards gives that
+   * back, so a negative or a plural value could only be a bug.
+   */
+  value: Schema.Literal(1),
 });
 export type UsageEvent = typeof UsageEvent.Type;
-
-/**
- * An order counts toward the cycle — and bills one unit of
- * {@link USAGE_METER_ORDER} — when it is paid, not cancelled, and placed no
- * earlier than the cycle it was first stored in (`firstCycleStartAt`).
- *
- * Each term is load-bearing. **Paid**, because an abandoned unpaid order is not
- * work the merchant asked Baton to carry, and {@link canStartRuns} already
- * refuses to start runs on it. **Not cancelled**, for the same reason; a
- * cancellation that arrives *later*, inside the cycle the order was counted in,
- * is reversed instead (`OrderRepository.upsertOrder`), which is why this
- * predicate says nothing about it. **Placed no earlier than its first cycle**,
- * which is what exempts the backfill on install: a shop signing up two days
- * before its cycle ends must not burn the period's allowance on orders placed
- * before it had the app, and that stays true when such an order is paid later.
- *
- * The rule is evaluated whenever the answer can change — on first store, and
- * again when a stored order becomes paid — and it counts in the cycle of
- * *that* moment. An order placed in one period and paid in the next bills in
- * the next: the meter charges for work carried, a made-to-order shop that
- * invoices on delivery carries the work before it is paid, and Shopify only
- * accepts an event dated inside the open period anyway. `countedAt` on the
- * order is what makes each order count at most once across both moments.
- *
- * Freshness is not a term here because it is not a property of the order: the
- * caller knows whether the row already existed and what it said before, and a
- * webhook storm on one order is one order.
- */
-export const orderCountsTowardCycle = (
-  order: Pick<ShopOrder, "fullyPaid" | "cancelledAt" | "processedAt">,
-  firstCycleStartAt: number,
-) =>
-  order.fullyPaid &&
-  order.cancelledAt === null &&
-  order.processedAt >= firstCycleStartAt;
 
 /**
  * A queued usage event is dead once the cycle that dated it has ended: Shopify
@@ -727,7 +673,8 @@ export const usageEventIsDead = (occurredAt: number, cycleStartAt: number) =>
   occurredAt < cycleStartAt;
 
 /**
- * The cycle is at its ceiling when the count has reached
+ * The cycle is at its ceiling when {@link ShopUsage.ordersThisCycle} — orders
+ * Baton started work on, not orders stored — has reached
  * {@link ShopLimits.maxOrdersPerCycle}, past which no *new* order is stored for
  * the rest of the cycle.
  *
@@ -1534,11 +1481,11 @@ export type ShopOrder = typeof ShopOrder.Type;
  * resync overwrites it. A run copies the definition it started from, so a
  * merchant retagging a product cannot silently rewrite history.
  *
- * `unfulfilledQuantity` is the number of units still to be made
- * ({@link unitsToMake}): Shopify lowers it when a unit ships **or is
- * refunded** while leaving `currentQuantity` alone for a refund, so it is the
- * one count a maker should never overshoot. `currentQuantity` stays as
- * "ordered" for display.
+ * `currentQuantity` is the number of units still to be made
+ * ({@link unitsToMake}): Shopify lowers it on a merchant edit and on a refund,
+ * and on nothing else. Fulfillment does not move it, which is why a line
+ * shipped early still reads as work until the whole order is `FULFILLED`
+ * ({@link isFulfilled}). `quantity` stays as "ordered" for display.
  *
  * `matchedWorkflowIds` is the active, startable workflows whose tag matched
  * this item at the last reconcile, whether or not a run was started. Two or
@@ -1557,8 +1504,6 @@ export const OrderLineItem = Schema.Struct({
   sku: Schema.NullOr(Schema.String),
   quantity: Schema.Number,
   currentQuantity: Schema.Number,
-  unfulfilledQuantity: Schema.Number,
-  nonFulfillableQuantity: Schema.Number,
   productTags: Schema.fromJsonString(Schema.Array(Schema.String)),
   matchedWorkflowIds: Schema.fromJsonString(Schema.Array(WorkflowId)),
   customAttributes: Schema.fromJsonString(Schema.Array(OrderAttribute)),
@@ -1593,18 +1538,23 @@ export const isFulfilled = (order: ShopOrder) =>
  * reconcile would only cancel or flag the run on its next pass. Unpaid is
  * deliberately allowed: the merchant may start work on a deposit, which is
  * the same judgement {@link canStartRuns} withholds from *automatic* starts.
+ * Attaching is starting work, so it bills the order like any first run
+ * (`OrderRepository.countOrder`) — the one way an order Shopify has not been
+ * paid for is metered, and the merchant chose it.
  */
 export const canAttachRun = (order: ShopOrder) =>
   !isCancelled(order) && !isFulfilled(order);
 
 /**
- * Units a maker should see and a run should snapshot. `unfulfilledQuantity`,
- * not `currentQuantity`: a refund lowers the former and leaves the latter, so
- * counting `currentQuantity` would have a maker build a unit nobody will
- * receive. `currentQuantity > 0` is implied.
+ * Units a maker should see and a run should snapshot. `currentQuantity`, not
+ * `quantity`: an edit or a refund lowers it, and neither leaves work a maker
+ * should still do. Fulfillment is deliberately not in it — Shopify leaves
+ * `currentQuantity` alone when a unit ships, so a line shipped ahead of the
+ * rest of the order stays open work until the order reaches `FULFILLED`, which
+ * is the one fulfillment state Baton acts on ({@link isFulfilled}).
  */
 export const unitsToMake = (lineItem: OrderLineItem) =>
-  lineItem.unfulfilledQuantity;
+  lineItem.currentQuantity;
 
 export const OrderDetail = Schema.Struct({
   order: ShopOrder,
@@ -1689,7 +1639,6 @@ export const SeedOrderChange = Schema.Struct({
       Schema.Struct({
         position: Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0)),
         currentQuantity: Schema.optionalKey(Schema.Number),
-        unfulfilledQuantity: Schema.optionalKey(Schema.Number),
       }),
     ),
   ),
@@ -1698,9 +1647,8 @@ export type SeedOrderChange = typeof SeedOrderChange.Type;
 
 /**
  * Local-only order fixture, written through the ordinary upsert-and-reconcile
- * path so runs start exactly as they would for a webhook. `unfulfilledQuantity`
- * defaults to `currentQuantity`, which defaults to `quantity`; lowering one
- * seeds a refund or a partial shipment.
+ * path so runs start exactly as they would for a webhook. `currentQuantity`
+ * defaults to `quantity`; lowering it seeds an edit or a refund.
  *
  * Each order is written in four phases, in this order, and the order is what
  * makes the interesting states reachable: upsert + reconcile, then each item's
@@ -1726,7 +1674,6 @@ export const SeedOrdersInput = Schema.Struct({
           title: Schema.String,
           quantity: Schema.Number,
           currentQuantity: Schema.optionalKey(Schema.Number),
-          unfulfilledQuantity: Schema.optionalKey(Schema.Number),
           tags: Schema.Array(Schema.String),
           customAttributes: Schema.optionalKey(Schema.Array(OrderAttribute)),
           /** This item's run alone; the order's own progress keys are ignored for it. */
@@ -1786,7 +1733,7 @@ export type OrdersSyncStatus = typeof OrdersSyncStatus.Type;
 /**
  * Never stored: computed from the order row and its run counts on every read,
  * which is what makes the packer's round trip automatic — fulfil in Shopify,
- * `orders/updated` stores `FULFILLED`, the next read says `shipped`, and the
+ * `orders/fulfilled` stores `FULFILLED`, the next read says `shipped`, and the
  * order leaves the Ready-to-ship list without anyone touching Baton.
  *
  * The rule is a function, not a table: {@link productionState} is the one
@@ -2289,9 +2236,8 @@ export interface AppIndexLoaderData {
   readonly usage: ShopUsage;
   /** `Member` rows in D1, against `Entitlements.maxMembers`. */
   readonly memberCount: number;
-  /** The next contract boundary, rendered only as the date a cancelled subscription ends. */
+  /** The next contract boundary. */
   readonly planBoundaryAt: number | null;
-  readonly cancelAtEndOfCycle: boolean;
 }
 
 /** `/login` (`login`). */
@@ -2705,8 +2651,9 @@ export const runIsLive = (run: { readonly status: RunStatus }) =>
  * and ordinary quantity handling applies. Nothing else touches a `done` run:
  * it is not resized, not cancelled, and no second run is ever created for a
  * line item that already has one, `done` included. A line whose units reach
- * zero under a `done` run is the ordinary end of that work — the unit shipped
- * or was refunded — so it is left alone rather than read as `item_removed`.
+ * zero under a `done` run is the ordinary end of that work — the line was
+ * edited away or refunded — so it is left alone rather than read as
+ * `item_removed`.
  *
  * Dismissing that flag **accepts** the change ({@link dismissAcceptsQuantity}):
  * the run's `quantity` becomes the units the flag reported, so the next
@@ -2722,8 +2669,11 @@ export const runIsLive = (run: { readonly status: RunStatus }) =>
  *
  * `order_fulfilled` is set by reconcile alone when the stored order reaches
  * exactly `FULFILLED` while runs are open: active runs get it, pending runs
- * are cancelled instead. A partial fulfilment never sets it — the shipped
- * line's `unfulfilledQuantity` hits zero and reads as `item_removed`.
+ * are cancelled instead. A partial fulfilment sets nothing at all: shipping a
+ * line does not move its {@link unitsToMake}, so no run sees a change.
+ *
+ * `item_removed` is set when a line's `currentQuantity` reaches zero — an edit
+ * that dropped the line, or a full refund.
  *
  * What a flag changes. Every site reads a predicate, never the literal.
  *
@@ -2743,7 +2693,6 @@ export const RunFlag = Schema.Literals([
   "item_removed",
   "quantity_changed",
   "order_cancelled",
-  "order_deleted",
   "blocked",
   "order_fulfilled",
 ]);

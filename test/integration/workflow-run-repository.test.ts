@@ -35,13 +35,14 @@ const runInRepository = <A, E>(
           return yield* program;
         }).pipe(
           Effect.provide(
-            Layer.provideMerge(
-              Layer.mergeAll(
-                OrderRepository.layer,
-                WorkflowRepository.layer,
-                WorkflowRunRepository.layer,
+            Layer.mergeAll(
+              WorkflowRepository.layer,
+              WorkflowRunRepository.layer,
+            ).pipe(
+              Layer.provideMerge(OrderRepository.layer),
+              Layer.provideMerge(
+                SqliteClient.layer({ storage: state.storage }),
               ),
-              SqliteClient.layer({ storage: state.storage }),
             ),
           ),
         ),
@@ -155,8 +156,6 @@ const lineItem = (
   sku: null,
   quantity: 2,
   currentQuantity: 2,
-  unfulfilledQuantity: 2,
-  nonFulfillableQuantity: 0,
   productTags,
   matchedWorkflowIds: [],
   customAttributes: [{ key: "Engraving", value: `Hello ${String(n)}` }],
@@ -845,12 +844,12 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
       }),
     ));
 
-  it("skips fully fulfilled line items", () =>
+  it("skips line items with no units to make", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
         const counts = yield* upsertAndReconcile(order(), [
-          lineItem(1, ["a"], { unfulfilledQuantity: 0 }),
+          lineItem(1, ["a"], { currentQuantity: 0 }),
         ]);
         strictEqual(counts.created, 0);
       }),
@@ -870,8 +869,8 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         const zeroed = yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 1 }),
           [
-            lineItem(1, ["a"], { currentQuantity: 0, unfulfilledQuantity: 0 }),
-            lineItem(2, ["b"], { currentQuantity: 0, unfulfilledQuantity: 0 }),
+            lineItem(1, ["a"], { currentQuantity: 0 }),
+            lineItem(2, ["b"], { currentQuantity: 0 }),
           ],
         );
         deepStrictEqual(zeroed, {
@@ -924,8 +923,8 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         const counts = yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 1 }),
           [
-            lineItem(1, ["a"], { currentQuantity: 3, unfulfilledQuantity: 3 }),
-            lineItem(2, ["b"], { currentQuantity: 3, unfulfilledQuantity: 3 }),
+            lineItem(1, ["a"], { currentQuantity: 3 }),
+            lineItem(2, ["b"], { currentQuantity: 3 }),
           ],
         );
         deepStrictEqual(counts, {
@@ -963,7 +962,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
 
         const counts = yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 1 }),
-          [lineItem(1, ["a"], { currentQuantity: 5, unfulfilledQuantity: 5 })],
+          [lineItem(1, ["a"], { currentQuantity: 5 })],
         );
         deepStrictEqual(counts, {
           created: 0,
@@ -979,12 +978,13 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         strictEqual(flagged?.steps.length, 2);
 
         // The units reaching zero is the ordinary end of a done run — the
-        // work shipped — so it is not a second change to report.
-        const shipped = yield* upsertAndReconcile(
+        // line was edited away or refunded — so it is not a second change to
+        // report.
+        const zeroed = yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 2 }),
-          [lineItem(1, ["a"], { currentQuantity: 5, unfulfilledQuantity: 0 })],
+          [lineItem(1, ["a"], { currentQuantity: 0 })],
         );
-        deepStrictEqual(shipped, {
+        deepStrictEqual(zeroed, {
           created: 0,
           cancelled: 0,
           flagged: 0,
@@ -1005,9 +1005,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         if (run === undefined) throw new Error("expected one run");
         yield* complete(run, 1, [TEAM_A.id]);
         yield* complete(run, 2, [TEAM_B.id]);
-        const changed = [
-          lineItem(1, ["a"], { currentQuantity: 5, unfulfilledQuantity: 5 }),
-        ];
+        const changed = [lineItem(1, ["a"], { currentQuantity: 5 })];
         yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 1 }),
           changed,
@@ -1129,14 +1127,8 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
               financialStatus: "PARTIALLY_REFUNDED",
             }),
             [
-              lineItem(1, ["a"], {
-                currentQuantity: 0,
-                unfulfilledQuantity: 0,
-              }),
-              lineItem(2, ["b"], {
-                currentQuantity: 0,
-                unfulfilledQuantity: 0,
-              }),
+              lineItem(1, ["a"], { currentQuantity: 0 }),
+              lineItem(2, ["b"], { currentQuantity: 0 }),
             ],
           );
           deepStrictEqual(counts, {
@@ -1159,7 +1151,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
   });
 
   describe("units to make", () => {
-    it("a refund that lowers unfulfilledQuantity alone updates pending silently and flags active", () =>
+    it("a refund that lowers currentQuantity alone updates pending silently and flags active", () =>
       runInRepository(
         Effect.gen(function* () {
           yield* seed;
@@ -1175,14 +1167,8 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           const counts = yield* upsertAndReconcile(
             order({ updatedAt: PROCESSED_AT + 1 }),
             [
-              lineItem(1, ["a"], {
-                unfulfilledQuantity: 1,
-                nonFulfillableQuantity: 1,
-              }),
-              lineItem(2, ["b"], {
-                unfulfilledQuantity: 1,
-                nonFulfillableQuantity: 1,
-              }),
+              lineItem(1, ["a"], { currentQuantity: 1 }),
+              lineItem(2, ["b"], { currentQuantity: 1 }),
             ],
           );
           deepStrictEqual(counts, {
@@ -1202,7 +1188,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         }),
       ));
 
-    it("a full refund with currentQuantity intact cancels pending and flags active item_removed", () =>
+    it("a full refund cancels pending and flags active item_removed", () =>
       runInRepository(
         Effect.gen(function* () {
           yield* seed;
@@ -1217,14 +1203,8 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           const counts = yield* upsertAndReconcile(
             order({ updatedAt: PROCESSED_AT + 1 }),
             [
-              lineItem(1, ["a"], {
-                unfulfilledQuantity: 0,
-                nonFulfillableQuantity: 2,
-              }),
-              lineItem(2, ["b"], {
-                unfulfilledQuantity: 0,
-                nonFulfillableQuantity: 2,
-              }),
+              lineItem(1, ["a"], { currentQuantity: 0 }),
+              lineItem(2, ["b"], { currentQuantity: 0 }),
             ],
           );
           deepStrictEqual(counts, {
@@ -1245,16 +1225,12 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         }),
       ));
 
-    it("inserts snapshot unfulfilledQuantity, not the ordered quantity", () =>
+    it("inserts snapshot currentQuantity, not the ordered quantity", () =>
       runInRepository(
         Effect.gen(function* () {
           yield* seed;
           yield* upsertAndReconcile(order(), [
-            lineItem(1, ["a"], {
-              currentQuantity: 3,
-              unfulfilledQuantity: 2,
-              nonFulfillableQuantity: 1,
-            }),
+            lineItem(1, ["a"], { quantity: 3, currentQuantity: 2 }),
           ]);
           const [first] = yield* runsForOrder();
           strictEqual(first?.run.quantity, 2);
@@ -1297,11 +1273,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
               updatedAt: PROCESSED_AT + 1,
               fulfillmentStatus: "FULFILLED",
             }),
-            [
-              lineItem(1, ["a"], { unfulfilledQuantity: 0 }),
-              lineItem(2, ["b"], { unfulfilledQuantity: 0 }),
-              lineItem(3, [], { unfulfilledQuantity: 0 }),
-            ],
+            [lineItem(1, ["a"]), lineItem(2, ["b"]), lineItem(3, [])],
           );
           deepStrictEqual(counts, {
             created: 0,
@@ -1325,7 +1297,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         }),
       ));
 
-    it("PARTIALLY_FULFILLED touches only the shipped line, via item_removed", () =>
+    it("partial fulfillment changes no run", () =>
       runInRepository(
         Effect.gen(function* () {
           yield* seed;
@@ -1337,27 +1309,25 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           if (shippedRun === undefined || otherRun === undefined)
             throw new Error("expected two runs");
           yield* complete(shippedRun, 1, [TEAM_A.id]);
+          // Shipping one line leaves every `currentQuantity` where it was,
+          // which is the whole reason nothing here moves.
           const counts = yield* upsertAndReconcile(
             order({
               updatedAt: PROCESSED_AT + 1,
               fulfillmentStatus: "PARTIALLY_FULFILLED",
             }),
-            [
-              lineItem(1, ["a"], { unfulfilledQuantity: 0 }),
-              lineItem(2, ["b"]),
-            ],
+            [lineItem(1, ["a"]), lineItem(2, ["b"])],
           );
           deepStrictEqual(counts, {
             created: 0,
             cancelled: 0,
-            flagged: 1,
+            flagged: 0,
             ambiguous: 0,
           });
           const after = yield* runsForOrder();
-          strictEqual(
-            after.find((d) => d.run.id === shippedRun.run.id)?.run.flag,
-            "item_removed",
-          );
+          const shipped = after.find((d) => d.run.id === shippedRun.run.id);
+          strictEqual(shipped?.run.status, "active");
+          strictEqual(shipped?.run.flag, null);
           const other = after.find((d) => d.run.id === otherRun.run.id);
           strictEqual(other?.run.status, "pending");
           strictEqual(other?.run.flag, null);
@@ -1607,54 +1577,6 @@ describe("WorkflowRunRepository steps, run list, flags, delete", () => {
         );
         strictEqual(cleared.run.flag, null);
         strictEqual(cleared.run.flagDetail, null);
-      }),
-    ));
-
-  it("markOrderDeleted cancels pending, flags active, leaves done; runs survive deleteOrder", () =>
-    runInRepository(
-      Effect.gen(function* () {
-        yield* seed;
-        const runs = yield* WorkflowRunRepository;
-        const orders = yield* OrderRepository;
-        yield* upsertAndReconcile(order(), [
-          lineItem(1, ["a"]),
-          lineItem(2, ["b"]),
-          lineItem(3, ["a"]),
-        ]);
-        const [pendingRun, activeRun, doneRun] = yield* runsForOrder();
-        if (
-          pendingRun === undefined ||
-          activeRun === undefined ||
-          doneRun === undefined
-        )
-          throw new Error("expected three runs");
-        yield* complete(activeRun, 1, [TEAM_A.id]);
-        yield* complete(doneRun, 1, [TEAM_A.id]);
-        yield* complete(doneRun, 2, [TEAM_B.id]);
-
-        yield* runs.markOrderDeleted({ orderId: ORDER_ID });
-        yield* orders.deleteOrder({ orderId: ORDER_ID, now: 0 });
-        strictEqual(Option.isNone(yield* orders.getOrder(ORDER_ID)), true);
-
-        const after = yield* runsForOrder();
-        strictEqual(after.length, 3);
-        strictEqual(
-          after.find((d) => d.run.id === pendingRun.run.id)?.run.status,
-          "cancelled",
-        );
-        strictEqual(
-          after.find((d) => d.run.id === activeRun.run.id)?.run.flag,
-          "order_deleted",
-        );
-        const done = after.find((d) => d.run.id === doneRun.run.id);
-        strictEqual(done?.run.status, "done");
-        strictEqual(done?.run.flag, null);
-
-        const rows = yield* runListRows({ teamIds: [TEAM_B.id] });
-        deepStrictEqual(
-          rows.map((item) => item.run.id),
-          [activeRun.run.id],
-        );
       }),
     ));
 
@@ -2339,7 +2261,7 @@ describe("WorkflowRunRepository steps, run list, flags, delete", () => {
         );
         const counts = yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 1 }),
-          [lineItem(1, ["s"], { currentQuantity: 0, unfulfilledQuantity: 0 })],
+          [lineItem(1, ["s"], { currentQuantity: 0 })],
         );
         deepStrictEqual(counts, {
           created: 0,
@@ -3159,5 +3081,109 @@ describe("WorkflowRunRepository open-run ceiling", () => {
           strictEqual(refused._tag, "WorkflowRunLimitError");
         }),
       ),
+    ));
+});
+
+/** The outbox as the meter left it: one row per order billed, newest last. */
+const usageEvents = () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    return yield* sql`select idempotencyKey, value from UsageEvent order by rowid`;
+  });
+
+const usage = () =>
+  OrderRepository.pipe(Effect.flatMap((orders) => orders.getUsage()));
+
+describe("WorkflowRunRepository metering", () => {
+  it("an order is counted once, when its first run is created", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seed;
+        // Two matched lines, so two runs are created in the one reconcile —
+        // and the order is still one order.
+        const counts = yield* upsertAndReconcile(order(), [
+          lineItem(1, ["a"]),
+          lineItem(2, ["b"]),
+        ]);
+        strictEqual(counts.created, 2);
+        strictEqual((yield* usage()).ordersThisCycle, 1);
+        deepStrictEqual(yield* usageEvents(), [
+          { idempotencyKey: `${ORDER_ID}#count`, value: 1 },
+        ]);
+
+        // A second knock re-reconciles and creates nothing; `countedAt` is
+        // what keeps it from billing again.
+        yield* upsertAndReconcile(order({ updatedAt: PROCESSED_AT + 1 }), [
+          lineItem(1, ["a"]),
+          lineItem(2, ["b"]),
+        ]);
+        strictEqual((yield* usage()).ordersThisCycle, 1);
+        strictEqual((yield* usageEvents()).length, 1);
+      }),
+    ));
+
+  it("a paid order with no matching line is not counted", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seed;
+        // Paid, stored, displayed — and no tag any workflow claims, so Baton
+        // never carried the work and the merchant is not billed for it.
+        const counts = yield* upsertAndReconcile(order(), [lineItem(1, [])]);
+        strictEqual(counts.created, 0);
+        strictEqual((yield* usage()).ordersThisCycle, 0);
+        deepStrictEqual(yield* usageEvents(), []);
+      }),
+    ));
+
+  it("a manual run start counts the order if nothing has yet", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { a } = yield* seed;
+        const runs = yield* WorkflowRunRepository;
+        const orders = yield* OrderRepository;
+        // Unpaid, so reconcile starts nothing and counts nothing; the
+        // merchant attaches a workflow by hand.
+        yield* upsertAndReconcile(order({ fullyPaid: false }), [
+          lineItem(1, []),
+        ]);
+        strictEqual((yield* usage()).ordersThisCycle, 0);
+        const stored = Option.getOrThrow(
+          yield* orders.getLineItem("gid://shopify/LineItem/1"),
+        );
+        yield* runs.setRun({
+          workflow: yield* savedDetail(a.id),
+          teams: TEAMS,
+          order: stored.order,
+          lineItem: stored.lineItem,
+          source: "manual",
+        });
+        strictEqual((yield* usage()).ordersThisCycle, 1);
+        deepStrictEqual(yield* usageEvents(), [
+          { idempotencyKey: `${ORDER_ID}#count`, value: 1 },
+        ]);
+      }),
+    ));
+
+  it("cancelling an order after its run was created queues nothing", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seed;
+        yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
+        strictEqual((yield* usage()).ordersThisCycle, 1);
+        const counts = yield* upsertAndReconcile(
+          order({
+            updatedAt: PROCESSED_AT + 1,
+            cancelledAt: PROCESSED_AT + 1,
+          }),
+          [lineItem(1, ["a"])],
+        );
+        strictEqual(counts.cancelled, 1);
+        // The count is never given back: the shop carried the work up to the
+        // moment the merchant stopped it.
+        strictEqual((yield* usage()).ordersThisCycle, 1);
+        deepStrictEqual(yield* usageEvents(), [
+          { idempotencyKey: `${ORDER_ID}#count`, value: 1 },
+        ]);
+      }),
     ));
 });

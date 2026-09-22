@@ -116,22 +116,17 @@ const decodePlanHandle = Schema.decodeUnknownOption(Domain.PlanHandle);
 
 /**
  * The one place a `Subscribed` status is built, so the cached path and the
- * revalidated path cannot drift about what a contract is. A scheduled *tier*
- * is not part of it — see {@link Domain.PlanStatus} — but `pendingPlanHandle`
- * is still cached for the operator console by the revalidating path, straight
- * from the contract and without passing through here.
+ * revalidated path cannot drift about what a contract is.
  */
 const subscribed = (input: {
   readonly handle: Domain.PlanHandle;
   readonly boundaryAt: number | null;
-  readonly cancelAtEndOfCycle: boolean;
 }) =>
   ({
     _tag: "Subscribed",
     handle: input.handle,
     plan: Domain.planOfHandle(input.handle),
     boundaryAt: input.boundaryAt,
-    cancelAtEndOfCycle: input.cancelAtEndOfCycle,
   }) as const satisfies Domain.PlanStatus;
 
 /**
@@ -156,11 +151,7 @@ const cachedStatus = (
   return shopSession.planHandle === null
     ? Option.some(Unsubscribed)
     : Option.map(decodePlanHandle(shopSession.planHandle), (handle) =>
-        subscribed({
-          handle,
-          boundaryAt: shopSession.planBoundaryAt,
-          cancelAtEndOfCycle: shopSession.planCancelAtEndOfCycle,
-        }),
+        subscribed({ handle, boundaryAt: shopSession.planBoundaryAt }),
       );
 };
 
@@ -244,10 +235,8 @@ export class SubscriptionPlan extends Context.Service<
               now,
               contract?.boundaryAt ?? null,
             ),
-            pendingPlanHandle: contract?.pendingHandle ?? null,
             planBoundaryAt: contract?.boundaryAt ?? null,
             planCycleStartAt: contract?.cycleStartAt ?? null,
-            planCancelAtEndOfCycle: contract?.cancelAtEndOfCycle ?? false,
           })
           .pipe(
             Effect.mapError(
@@ -313,7 +302,6 @@ export class SubscriptionPlan extends Context.Service<
         return subscribed({
           handle: contract.handle,
           boundaryAt: contract.boundaryAt,
-          cancelAtEndOfCycle: contract.cancelAtEndOfCycle,
         });
       });
 
@@ -401,7 +389,7 @@ export const resolveEntitlements = Effect.fn("resolveEntitlements")(function* (
 /**
  * The `Unsubscribed` arm of {@link resolveEntitlements}, split out so a loader
  * that already holds the resolved status for another reason (the home page
- * reads the scheduled change off it) can take the entitlements from the same
+ * reads the boundary off it) can take the entitlements from the same
  * read instead of resolving twice. The redirect lives here once.
  */
 export const entitlementsOfStatus = Effect.fn("entitlementsOfStatus")(

@@ -322,8 +322,8 @@ const memberCallableEffect =
  * ceilings last refused something, when retention last swept, and Shopify's own
  * meter reading at the last revalidation. The cycle columns are seeded null —
  * the Worker pushes the real period (`setBillingCycle`), and until it has, the
- * object opens a cycle at its first counted order and rolls it forward on its
- * own, so a shop meters from its first webhook rather than from its first plan
+ * object opens a cycle at its first stored order and rolls it forward on its
+ * own, so a shop meters from its first run rather than from its first plan
  * revalidation. `shopGid` is here rather than derived because addressing a
  * usage event at Shopify needs it and the object has no other source.
  *
@@ -334,8 +334,9 @@ const memberCallableEffect =
  * operator to read. `idempotencyKey` is the primary key because Shopify enforces
  * billing idempotency keys permanently — a replayed flush must not bill twice,
  * and re-queuing a key already stored is a no-op by construction.
- * `ShopOrder.countedAt` is its per-order counterpart: null means never counted,
- * which is what makes a cancellation reverse exactly once.
+ * `ShopOrder.countedAt` is its per-order counterpart: null means Baton has
+ * never created a run for the order, which is what makes it bill exactly once
+ * (`OrderRepository.countOrder`).
  *
  * The `(processedAt desc, id desc)` index is the keyset the orders page pages
  * on; `id desc` is in it so the tiebreak is index-ordered too, since a shop
@@ -441,8 +442,7 @@ const initializeSchema = Effect.gen(function* () {
       lineItemsTruncated integer not null default 0,
       syncedAt integer not null,
       syncSource text not null,
-      countedAt integer,
-      firstCycleStartAt integer not null
+      countedAt integer
     );
     -- Serves the index page's keyset and the retention sweep's range scan
     -- alike; a descending index reads a range as readily as an ascending one,
@@ -462,8 +462,6 @@ const initializeSchema = Effect.gen(function* () {
       sku text,
       quantity integer not null,
       currentQuantity integer not null,
-      unfulfilledQuantity integer not null,
-      nonFulfillableQuantity integer not null,
       productTags text not null,
       matchedWorkflowIds text not null default '[]',
       customAttributes text not null,
@@ -555,7 +553,7 @@ const initializeSchema = Effect.gen(function* () {
       customAttributes text not null,
       source text not null check (source in ('tag', 'manual')),
       status text not null check (status in ('pending', 'active', 'done', 'cancelled')),
-      flag text check (flag in ('item_removed', 'quantity_changed', 'order_cancelled', 'order_deleted', 'blocked', 'order_fulfilled')),
+      flag text check (flag in ('item_removed', 'quantity_changed', 'order_cancelled', 'blocked', 'order_fulfilled')),
       flagAt integer,
       flagDetail text,
       createdAt integer not null,
@@ -635,10 +633,12 @@ const makeRunEffect = (env: Env, storage: DurableObjectStorage) => {
   );
   const shopifyLayer = Layer.provideMerge(Shopify.layerNoDeps, repositoryLayer);
   const durableRepositoryLayer = Layer.mergeAll(
-    OrderRepository.layer,
     WorkflowRepository.layer,
     WorkflowRunRepository.layer,
-  ).pipe(Layer.provideMerge(SqliteClient.layer({ storage })));
+  ).pipe(
+    Layer.provideMerge(OrderRepository.layer),
+    Layer.provideMerge(SqliteClient.layer({ storage })),
+  );
   const layer = Layer.mergeAll(
     makeLoggerLayer(env),
     repositoryLayer,
@@ -1046,10 +1046,10 @@ const isWorkflowInstanceNotFoundError = (cause: unknown) =>
 const IMPORT_STALE_MS = 10 * 60 * 1000;
 
 /**
- * The webhook payload after `include_fields` trimming. Decoded laxly and
- * defensively: Shopify may widen the payload at any time, `admin_graphql_api_id`
- * is absent from the `orders/delete` body, and the numeric `id` is only used to
- * build a GID when the graphql one is missing.
+ * What `/webhooks/orders` resolved a delivery down to: the order it names, the
+ * topic for the log line, the delivery id the dedupe log keys on, and the
+ * `updated_at` the stale guard reads — `null` for `orders/edited`, whose
+ * payload has none, which is what makes an edit always fetch.
  */
 export const OrderWebhookInput = Schema.Struct({
   orderId: Schema.NonEmptyString,
@@ -1835,12 +1835,14 @@ export class ShopAgent extends Agent {
    * `/webhooks/orders`, after HMAC validation.
    *
    * Two guards make an unordered, retried, at-least-once delivery channel
-   * idempotent *on this path only* — `deleteOrder` records no delivery and
-   * needs none, since deleting an order twice is deleting it once: the
-   * `X-Shopify-Webhook-Id` log rejects a redelivery outright,
+   * idempotent: the `X-Shopify-Webhook-Id` log rejects a redelivery outright,
    * and the payload's `updated_at` skips a fetch that could only produce an
    * older view than the one already stored. The upsert's own guard is the
    * third, and the only one that survives two paths writing at once.
+   *
+   * The topic is a log field and nothing else: `reconcileOrder` works from the
+   * fetched order, not from what knocked, which is why every subscribed topic
+   * arrives here and why an out-of-order delivery is still correct.
    */
   syncOrder(input: OrderWebhookInput): Promise<void> {
     const shop = this.name;
@@ -2108,29 +2110,6 @@ export class ShopAgent extends Agent {
       })(({ orderId }) =>
         Effect.gen(function* () {
           yield* fetchAndUpsert(orderId);
-          yield* publish([orderId]);
-        }),
-      )(input),
-    );
-  }
-
-  /** `orders/delete` carries `{ id }` only — there is nothing to fetch. */
-  deleteOrder(input: Domain.ResyncOrderInput): Promise<void> {
-    const shop = this.name;
-    const publish = (touched: PublishScope) => this.publish(touched);
-    return this.runEffect(
-      callableEffect("ShopAgent.deleteOrder", Domain.ResyncOrderInput, {
-        role: "rpc",
-      })(({ orderId }) =>
-        Effect.gen(function* () {
-          yield* (yield* WorkflowRunRepository).markOrderDeleted({ orderId });
-          yield* (yield* OrderRepository).deleteOrder({
-            orderId,
-            now: yield* Clock.currentTimeMillis,
-          });
-          yield* Effect.logInfo(
-            `ShopAgent.deleteOrder: shop=${shop} orderId=${orderId}`,
-          ).pipe(Effect.annotateLogs({ shop, orderId }));
           yield* publish([orderId]);
         }),
       )(input),
@@ -4263,11 +4242,6 @@ export class ShopAgent extends Agent {
                   sku: null,
                   quantity: item.quantity,
                   currentQuantity,
-                  unfulfilledQuantity:
-                    override?.unfulfilledQuantity ??
-                    item.unfulfilledQuantity ??
-                    currentQuantity,
-                  nonFulfillableQuantity: 0,
                   productTags: item.tags,
                   matchedWorkflowIds: [],
                   customAttributes: item.customAttributes ?? [],

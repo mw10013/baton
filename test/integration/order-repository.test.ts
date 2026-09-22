@@ -1,10 +1,5 @@
 import { SqliteClient } from "@effect/sql-sqlite-do";
-import {
-  assertNone,
-  assertSome,
-  deepStrictEqual,
-  strictEqual,
-} from "@effect/vitest/utils";
+import { assertSome, deepStrictEqual, strictEqual } from "@effect/vitest/utils";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { Effect, Layer, Option, Schema } from "effect";
@@ -85,8 +80,6 @@ const aLineItem = (
   sku: `SKU-${String(n)}`,
   quantity: 1,
   currentQuantity: 1,
-  unfulfilledQuantity: 1,
-  nonFulfillableQuantity: 0,
   productTags: ["engraved"],
   matchedWorkflowIds: [],
   customAttributes: [{ key: "text", value: "Hello" }],
@@ -230,22 +223,6 @@ describe("OrderRepository.upsertOrder", () => {
     strictEqual(order.name, "#TIE");
     strictEqual(lineItems.length, 1);
     strictEqual(lineItems[0]?.id, lineItemId(2));
-  });
-
-  it("deletes the order and its line items together", async () => {
-    const [detail, updatedAt] = await runInRepository(
-      Effect.gen(function* () {
-        const repository = yield* OrderRepository;
-        yield* upsert(repository, anOrder(), [aLineItem(1)]);
-        yield* repository.deleteOrder({ orderId: orderId(1), now: 0 });
-        return [
-          yield* repository.getOrder(orderId(1)),
-          yield* repository.getOrderUpdatedAt(orderId(1)),
-        ] as const;
-      }),
-    );
-    assertNone(detail);
-    assertNone(updatedAt);
   });
 });
 
@@ -934,7 +911,7 @@ describe("OrderRepository.recordWebhookDelivery", () => {
         const repository = yield* OrderRepository;
         const delivery = {
           webhookId: "wh-1",
-          topic: "orders/updated",
+          topic: "orders/paid",
           orderId: orderId(1),
           triggeredAt: 10,
           receivedAt: 11,
@@ -957,7 +934,7 @@ describe("OrderRepository.recordWebhookDelivery", () => {
         const now = 30 * 86_400_000;
         yield* repository.recordWebhookDelivery({
           webhookId: "wh-old",
-          topic: "orders/updated",
+          topic: "orders/paid",
           orderId: orderId(1),
           triggeredAt: 0,
           receivedAt:
@@ -966,7 +943,7 @@ describe("OrderRepository.recordWebhookDelivery", () => {
         });
         yield* repository.recordWebhookDelivery({
           webhookId: "wh-new",
-          topic: "orders/updated",
+          topic: "orders/paid",
           orderId: orderId(1),
           triggeredAt: now,
           receivedAt: now,
@@ -1006,22 +983,29 @@ describe("OrderRepository usage", () => {
       cycleEndAt: CYCLE_END,
     });
 
+  /**
+   * What `WorkflowRunRepository.insertRun` does after it creates the order's
+   * first run. Called directly here so the meter is tested as the rule it is,
+   * rather than through a reconcile that would have to be staged first;
+   * `workflow-run-repository.test.ts` owns the other half — that a run is what
+   * fires it, and that a second run does not.
+   */
+  const count = (
+    repository: typeof OrderRepository.Service,
+    n: number,
+    now = CYCLE_START,
+  ) => repository.countOrder(orderId(n), now);
+
   it("counts an order against the pushed billing cycle", async () => {
     const usage = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
         yield* openCycle(repository);
-        yield* upsert(repository, paid(1), []);
-        yield* upsert(repository, paid(2), []);
-        // Placed before the period began: the backfill an install pulls in.
-        yield* upsert(
-          repository,
-          paid(3, { processedAt: CYCLE_START - 1 }),
-          [],
-        );
-        // Unpaid, and cancelled on arrival: neither is work the meter bills.
-        yield* upsert(repository, paid(4, { fullyPaid: false }), []);
-        yield* upsert(repository, paid(5, { cancelledAt: CYCLE_START }), []);
+        // Five orders stored; two of them reached run creation. Storing an
+        // order is not what the merchant is billed for.
+        for (const n of [1, 2, 3, 4, 5]) yield* upsert(repository, paid(n), []);
+        yield* count(repository, 1);
+        yield* count(repository, 2);
         return yield* repository.getUsage();
       }),
     );
@@ -1035,6 +1019,7 @@ describe("OrderRepository usage", () => {
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
         yield* upsert(repository, paid(1), []);
+        yield* count(repository, 1);
         return yield* repository.getUsage();
       }),
     );
@@ -1049,7 +1034,10 @@ describe("OrderRepository usage", () => {
         const repository = yield* OrderRepository;
         yield* openCycle(repository);
         yield* upsert(repository, paid(1), []);
+        yield* count(repository, 1);
         const before = yield* repository.getUsage();
+        // The upsert resolves the cycle; the count that follows lands in the
+        // period it opened.
         yield* upsert(
           repository,
           paid(2, {
@@ -1059,6 +1047,7 @@ describe("OrderRepository usage", () => {
           }),
           [],
         );
+        yield* count(repository, 2, CYCLE_END);
         return { before, after: yield* repository.getUsage() };
       }),
     );
@@ -1068,6 +1057,24 @@ describe("OrderRepository usage", () => {
     strictEqual(after.cycleEndAt, null);
   });
 
+  it("a manual run start past the cycle end counts into the new cycle", async () => {
+    const usage = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        yield* openCycle(repository);
+        yield* upsert(repository, paid(1), []);
+        yield* count(repository, 1);
+        yield* upsert(repository, paid(2), []);
+        // No upsert lands past the end: the count itself rolls the cycle.
+        yield* count(repository, 2, CYCLE_END + 1);
+        return yield* repository.getUsage();
+      }),
+    );
+    strictEqual(usage.ordersThisCycle, 1);
+    strictEqual(usage.cycleStartAt, CYCLE_END);
+    strictEqual(usage.cycleEndAt, null);
+  });
+
   it("recounts the cycle from the orders when a new period is pushed", async () => {
     const usage = await runInRepository(
       Effect.gen(function* () {
@@ -1075,6 +1082,8 @@ describe("OrderRepository usage", () => {
         yield* openCycle(repository);
         yield* upsert(repository, paid(1), []);
         yield* upsert(repository, paid(2), []);
+        yield* count(repository, 1);
+        yield* count(repository, 2);
         // The next period: the two above fall outside it and drop out.
         yield* repository.setBillingCycle({
           shopGid,
@@ -1093,6 +1102,7 @@ describe("OrderRepository usage", () => {
         const repository = yield* OrderRepository;
         yield* openCycle(repository);
         yield* upsert(repository, paid(1), []);
+        yield* count(repository, 1);
         return yield* usageEvents();
       }),
     );
@@ -1111,6 +1121,10 @@ describe("OrderRepository usage", () => {
           paid(1, { id: `${Domain.SEED_ORDER_ID_PREFIX}1` }),
           [],
         );
+        yield* repository.countOrder(
+          `${Domain.SEED_ORDER_ID_PREFIX}1`,
+          CYCLE_START,
+        );
         return {
           usage: yield* repository.getUsage(),
           events: yield* usageEvents(),
@@ -1127,7 +1141,9 @@ describe("OrderRepository usage", () => {
         const repository = yield* OrderRepository;
         yield* openCycle(repository);
         yield* upsert(repository, paid(1), []);
+        yield* count(repository, 1);
         yield* upsert(repository, paid(1, { updatedAt: CYCLE_START + 1 }), []);
+        yield* count(repository, 1, CYCLE_START + 1);
         return {
           usage: yield* repository.getUsage(),
           events: yield* usageEvents(),
@@ -1138,230 +1154,13 @@ describe("OrderRepository usage", () => {
     strictEqual(events.length, 1);
   });
 
-  it("cancelling a counted order inside the cycle queues a reversal and gives the count back", async () => {
-    const { usage, events } = await runInRepository(
-      Effect.gen(function* () {
-        const repository = yield* OrderRepository;
-        yield* openCycle(repository);
-        yield* upsert(repository, paid(1), []);
-        yield* upsert(
-          repository,
-          paid(1, {
-            updatedAt: CYCLE_START + 1,
-            syncedAt: CYCLE_START + 1,
-            cancelledAt: CYCLE_START + 1,
-          }),
-          [],
-        );
-        return {
-          usage: yield* repository.getUsage(),
-          events: yield* usageEvents(),
-        };
-      }),
-    );
-    strictEqual(usage.ordersThisCycle, 0);
-    deepStrictEqual(events, [
-      { idempotencyKey: `${orderId(1)}#count`, value: 1 },
-      { idempotencyKey: `${orderId(1)}#reverse`, value: -1 },
-    ]);
-  });
-
-  it("cancelling in a later cycle queues nothing", async () => {
-    const { usage, events } = await runInRepository(
-      Effect.gen(function* () {
-        const repository = yield* OrderRepository;
-        yield* openCycle(repository);
-        yield* upsert(repository, paid(1), []);
-        yield* flushed();
-        // The next period opens; the cancellation lands inside it, where
-        // Shopify has closed the period the order was billed in.
-        yield* repository.setBillingCycle({
-          shopGid,
-          cycleStartAt: CYCLE_END,
-          cycleEndAt: null,
-        });
-        yield* upsert(
-          repository,
-          paid(1, {
-            updatedAt: CYCLE_END + 1,
-            syncedAt: CYCLE_END + 1,
-            cancelledAt: CYCLE_END + 1,
-          }),
-          [],
-        );
-        return {
-          usage: yield* repository.getUsage(),
-          events: yield* usageEvents(),
-        };
-      }),
-    );
-    strictEqual(usage.ordersThisCycle, 0);
-    deepStrictEqual(events, []);
-  });
-
-  it("an order that arrives unpaid and is paid later counts in the payment's cycle", async () => {
-    const { usage, events } = await runInRepository(
-      Effect.gen(function* () {
-        const repository = yield* OrderRepository;
-        yield* openCycle(repository);
-        // Placed and stored in this period, unpaid: a deposit, a trade
-        // account, COD. The work is carried before the money arrives.
-        yield* upsert(repository, paid(1, { fullyPaid: false }), []);
-        const unpaid = yield* repository.getUsage();
-        // The next period opens; the payment lands inside it.
-        yield* repository.setBillingCycle({
-          shopGid,
-          cycleStartAt: CYCLE_END,
-          cycleEndAt: null,
-        });
-        yield* upsert(
-          repository,
-          paid(1, { updatedAt: CYCLE_END + 1, syncedAt: CYCLE_END + 1 }),
-          [],
-        );
-        // A further update of the paid order is not a second payment.
-        yield* upsert(
-          repository,
-          paid(1, { updatedAt: CYCLE_END + 2, syncedAt: CYCLE_END + 2 }),
-          [],
-        );
-        return {
-          unpaid: unpaid.ordersThisCycle,
-          usage: yield* repository.getUsage(),
-          events: yield* usageEvents(),
-        };
-      }).pipe(
-        Effect.map(({ unpaid, usage, events }) => {
-          strictEqual(unpaid, 0);
-          return { usage, events };
-        }),
-      ),
-    );
-    strictEqual(usage.ordersThisCycle, 1);
-    strictEqual(usage.cycleStartAt, CYCLE_END);
-    deepStrictEqual(events, [
-      { idempotencyKey: `${orderId(1)}#count`, value: 1 },
-    ]);
-  });
-
-  it("a backfilled order paid after install does not count", async () => {
-    const { usage, events } = await runInRepository(
-      Effect.gen(function* () {
-        const repository = yield* OrderRepository;
-        yield* openCycle(repository);
-        // Placed before the period the install stored it in; paid now.
-        yield* upsert(
-          repository,
-          paid(1, { processedAt: CYCLE_START - 1, fullyPaid: false }),
-          [],
-        );
-        yield* upsert(
-          repository,
-          paid(1, {
-            processedAt: CYCLE_START - 1,
-            updatedAt: CYCLE_START + 1,
-            syncedAt: CYCLE_START + 1,
-          }),
-          [],
-        );
-        return {
-          usage: yield* repository.getUsage(),
-          events: yield* usageEvents(),
-        };
-      }),
-    );
-    strictEqual(usage.ordersThisCycle, 0);
-    deepStrictEqual(events, []);
-  });
-
-  it("a reversed order paid again does not bill twice", async () => {
-    const { usage, events } = await runInRepository(
-      Effect.gen(function* () {
-        const repository = yield* OrderRepository;
-        yield* openCycle(repository);
-        yield* upsert(repository, paid(1), []);
-        yield* upsert(
-          repository,
-          paid(1, {
-            updatedAt: CYCLE_START + 1,
-            syncedAt: CYCLE_START + 1,
-            cancelledAt: CYCLE_START + 1,
-            fullyPaid: false,
-          }),
-          [],
-        );
-        yield* upsert(
-          repository,
-          paid(1, {
-            updatedAt: CYCLE_START + 2,
-            syncedAt: CYCLE_START + 2,
-            cancelledAt: CYCLE_START + 1,
-          }),
-          [],
-        );
-        return {
-          usage: yield* repository.getUsage(),
-          events: yield* usageEvents(),
-        };
-      }),
-    );
-    strictEqual(usage.ordersThisCycle, 0);
-    deepStrictEqual(events, [
-      { idempotencyKey: `${orderId(1)}#count`, value: 1 },
-      { idempotencyKey: `${orderId(1)}#reverse`, value: -1 },
-    ]);
-  });
-
-  it("deleting a counted order inside the cycle reverses it, and in a later cycle does not", async () => {
-    const { inside, later } = await runInRepository(
-      Effect.gen(function* () {
-        const repository = yield* OrderRepository;
-        yield* openCycle(repository);
-        yield* upsert(repository, paid(1), []);
-        yield* upsert(repository, paid(2), []);
-        yield* repository.deleteOrder({
-          orderId: orderId(1),
-          now: CYCLE_START + 1,
-        });
-        const inside = {
-          usage: yield* repository.getUsage(),
-          events: yield* usageEvents(),
-        };
-        yield* flushed();
-        yield* repository.setBillingCycle({
-          shopGid,
-          cycleStartAt: CYCLE_END,
-          cycleEndAt: null,
-        });
-        yield* repository.deleteOrder({
-          orderId: orderId(2),
-          now: CYCLE_END + 1,
-        });
-        return {
-          inside,
-          later: {
-            usage: yield* repository.getUsage(),
-            events: yield* usageEvents(),
-          },
-        };
-      }),
-    );
-    strictEqual(inside.usage.ordersThisCycle, 1);
-    deepStrictEqual(inside.events, [
-      { idempotencyKey: `${orderId(1)}#count`, value: 1 },
-      { idempotencyKey: `${orderId(2)}#count`, value: 1 },
-      { idempotencyKey: `${orderId(1)}#reverse`, value: -1 },
-    ]);
-    strictEqual(later.usage.ordersThisCycle, 0);
-    deepStrictEqual(later.events, []);
-  });
-
   it("a queued event is dead once the cycle that dated it has ended: skipped by the flush and reported apart", async () => {
     const { flush, usage, events } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
         yield* openCycle(repository);
         yield* upsert(repository, paid(1), []);
+        yield* count(repository, 1);
         // Refused through the end of the period, then the period rolls.
         yield* repository
           .flushUsageEvents("shop.myshopify.com")
@@ -1380,6 +1179,7 @@ describe("OrderRepository usage", () => {
           }),
           [],
         );
+        yield* count(repository, 2, CYCLE_END);
         const flush = yield* flushed();
         return {
           flush,
@@ -1405,6 +1205,8 @@ describe("OrderRepository usage", () => {
         // sent because nothing has named the shop.
         yield* upsert(repository, paid(1), []);
         yield* upsert(repository, paid(2), []);
+        yield* count(repository, 1);
+        yield* count(repository, 2);
         // The trial ends and the first real period starts after both.
         yield* repository.setBillingCycle({
           shopGid,
@@ -1423,26 +1225,41 @@ describe("OrderRepository usage", () => {
     deepStrictEqual(events, []);
   });
 
-  it("refuses a new order at the ceiling and still updates a stored one", async () => {
+  it("the ceiling counts orders work started on, not orders stored: a new order is refused at it and a stored one still updates", async () => {
     const limits = Domain.ShopLimits as { maxOrdersPerCycle: number };
     const original = limits.maxOrdersPerCycle;
     limits.maxOrdersPerCycle = 1;
     try {
-      const { first, second, third, usage } = await runInRepository(
+      const { first, uncounted, second, third, usage } = await runInRepository(
         Effect.gen(function* () {
           const repository = yield* OrderRepository;
           yield* openCycle(repository);
           const first = yield* upsert(repository, paid(1), []);
-          const second = yield* upsert(repository, paid(2), []);
+          // Stored, uncounted: the ceiling is the metered count, so storage
+          // alone does not approach it ({@link OrderRepository.countOrder}).
+          const uncounted = yield* upsert(repository, paid(2), []);
+          yield* count(repository, 1);
+          const second = yield* upsert(repository, paid(3), []);
           const third = yield* upsert(
             repository,
             paid(1, { updatedAt: CYCLE_START + 1, note: "still flows" }),
             [],
           );
-          return { first, second, third, usage: yield* repository.getUsage() };
+          return {
+            first,
+            uncounted,
+            second,
+            third,
+            usage: yield* repository.getUsage(),
+          };
         }),
       );
       deepStrictEqual(first, { written: true, fresh: true, refused: false });
+      deepStrictEqual(uncounted, {
+        written: true,
+        fresh: true,
+        refused: false,
+      });
       deepStrictEqual(second, { written: false, fresh: false, refused: true });
       deepStrictEqual(third, { written: true, fresh: false, refused: false });
       strictEqual(usage.ordersThisCycle, 1);
@@ -1458,6 +1275,7 @@ describe("OrderRepository usage", () => {
         const repository = yield* OrderRepository;
         yield* openCycle(repository);
         yield* upsert(repository, paid(1), []);
+        yield* count(repository, 1);
         const first = yield* repository
           .flushUsageEvents("shop.myshopify.com")
           .pipe(Effect.provide(refusingAppEvents));
@@ -1476,6 +1294,7 @@ describe("OrderRepository usage", () => {
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
         yield* upsert(repository, paid(1), []);
+        yield* count(repository, 1);
         return yield* repository
           .flushUsageEvents("shop.myshopify.com")
           .pipe(Effect.provide(acceptingAppEvents));
@@ -1575,7 +1394,7 @@ describe("OrderRepository.sweepExpiredOrders", () => {
           }),
           [],
         );
-        // A run whose order was deleted by `orders/delete`, long ago.
+        // A run whose order is no longer stored, last touched long ago.
         yield* runWith("gid://shopify/Order/999", "done", EXPIRED)(sql);
         const swept = yield* repository.sweepExpiredOrders({ now: NOW });
         const orders = (yield* sql`select id from ShopOrder order by id`

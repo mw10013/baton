@@ -246,10 +246,8 @@ describe("ShopAgent connect gate", () => {
           shop,
           planHandle: null,
           planHandleExpiresAt: Date.now() + 60 * 60 * 1000,
-          pendingPlanHandle: null,
           planBoundaryAt: null,
           planCycleStartAt: null,
-          planCancelAtEndOfCycle: false,
         });
         yield* repository.addMember({
           shop,
@@ -283,10 +281,8 @@ describe("ShopAgent connect gate", () => {
           shop,
           planHandle: "baton-basic",
           planHandleExpiresAt: Date.now() + 60 * 60 * 1000,
-          pendingPlanHandle: null,
           planBoundaryAt: null,
           planCycleStartAt: null,
-          planCancelAtEndOfCycle: false,
         });
         const seats = Domain.entitlementsOfPlan("basic").maxMembers;
         // Sorted before MEMBER so the tiebreak on email is unambiguous when every

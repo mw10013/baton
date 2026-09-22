@@ -9,10 +9,8 @@ create table if not exists ShopSession (
   refreshTokenExpiresAt integer,
   planHandle text,
   planHandleExpiresAt integer,
-  pendingPlanHandle text,
   planBoundaryAt integer,
-  planCycleStartAt integer,
-  planCancelAtEndOfCycle integer not null default 0
+  planCycleStartAt integer
 );
 
 -- A row is access and membership, nothing more: deleting it cascades

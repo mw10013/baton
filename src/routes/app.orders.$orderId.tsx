@@ -146,7 +146,6 @@ const RUN_FLAG_LABEL = {
   item_removed: "Item removed",
   quantity_changed: "Quantity changed",
   order_cancelled: "Order cancelled",
-  order_deleted: "Order deleted",
   blocked: "Blocked",
   order_fulfilled: "Already shipped in Shopify",
 } as const satisfies Record<Domain.RunFlag, string>;
@@ -1480,10 +1479,10 @@ function RouteComponent() {
      * two did; beside a running workflow's name they are noise next to the SKU.
      */
     const facts = [
-      /* Ordered vs. to make differ after a refund or partial shipment. */
-      toMake === item.currentQuantity
-        ? `\u00D7 ${formatNumber(item.currentQuantity)}`
-        : `\u00D7 ${formatNumber(toMake)} to make (${formatNumber(item.currentQuantity)} ordered)`,
+      /* Ordered vs. to make differ after an edit or a refund; shipping does not move it ({@link Domain.unitsToMake}). */
+      toMake === item.quantity
+        ? `\u00D7 ${formatNumber(item.quantity)}`
+        : `\u00D7 ${formatNumber(toMake)} to make (${formatNumber(item.quantity)} ordered)`,
       ...(item.sku === null ? [] : [`SKU ${item.sku}`]),
       ...(live === undefined && item.productTags.length > 0
         ? [`tags: ${item.productTags.join(", ")}`]

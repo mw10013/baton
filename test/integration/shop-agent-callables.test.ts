@@ -142,7 +142,6 @@ describe("ShopAgent callable role gate", () => {
       "reconcileUsage",
       "flushUsageEvents",
       "revokeAllConnections",
-      "deleteOrder",
       "onOrdersStream",
     ])
       expect(callables, `${name} must not be @callable()`).not.toContain(name);

@@ -8,7 +8,7 @@ handle = "baton-local"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_orders,read_products"
+scopes = "read_orders,read_products"
 
 [auth]
 redirect_urls = ["https://example.com/api/auth"]
@@ -34,13 +34,26 @@ topics = ["app/uninstalled"]
 
 [[webhooks.subscriptions]]
 uri = "/webhooks/orders"
-# `orders/updated` already fires for paid, cancelled, edited, refunded, and
-# fulfilled; the topic-specific ones delivered the same change twice with the
-# same `updated_at`, which the stale guard only catches after the first fetch.
-topics = ["orders/create", "orders/updated", "orders/delete"]
+# `orders/updated` is not subscribed: it fires on every save of the order, for
+# any reason, and every change Baton acts on already has its own topic here.
+topics = [
+  "orders/create",
+  "orders/paid",
+  "orders/cancelled",
+  "orders/fulfilled",
+]
 # `updated_at` is load-bearing, not informational: Shopify debounces consecutive
 # identical trimmed payloads, so a subscription whose fields never change would
 # silently drop updates.
 include_fields = ["id", "admin_graphql_api_id", "updated_at"]
+
+[[webhooks.subscriptions]]
+uri = "/webhooks/orders"
+# `orders/edited` carries an `order_edit` object: `order_id`, no `updated_at`,
+# so the stale guard cannot apply and it always fetches. No `include_fields`:
+# the payload differs per edit, so Shopify's identical-payload debounce is not
+# a concern.
+topics = ["orders/edited"]
+
 [build]
 automatically_update_urls_on_dev = true

@@ -175,7 +175,7 @@ describe("Domain.runCounts", () => {
 const lineItem = (
   id: string,
   matchedWorkflowIds: readonly string[],
-  unfulfilledQuantity = 1,
+  currentQuantity = 1,
 ): Domain.OrderLineItem => ({
   id,
   orderId: "o",
@@ -185,9 +185,7 @@ const lineItem = (
   variantTitle: null,
   sku: null,
   quantity: 1,
-  currentQuantity: 1,
-  unfulfilledQuantity,
-  nonFulfillableQuantity: 0,
+  currentQuantity,
   productTags: [],
   matchedWorkflowIds: matchedWorkflowIds.map((id) =>
     Schema.decodeUnknownSync(Domain.WorkflowId)(id),
@@ -312,11 +310,10 @@ describe("flagHeading / flagBody / flagTone", () => {
     [
       "item_removed",
       "No longer needed",
-      "Removed, refunded, or shipped in Shopify.",
+      "Removed or refunded in Shopify.",
       "warning",
     ],
     ["order_cancelled", "Order cancelled", null, "critical"],
-    ["order_deleted", "Order deleted", null, "critical"],
     ["order_fulfilled", "Already shipped", "Fulfilled in Shopify.", "warning"],
   ];
   for (const [flag, heading, body, tone] of cases)
@@ -767,33 +764,6 @@ describe("Domain.memberHasSeat", () => {
     );
     strictEqual(
       Domain.memberHasSeat(rank, Domain.entitlementsOfPlan("basic").maxMembers),
-      false,
-    );
-  });
-});
-
-describe("Domain.orderCountsTowardCycle", () => {
-  const CYCLE = 1000;
-  const countable = { fullyPaid: true, cancelledAt: null, processedAt: CYCLE };
-
-  it("an order counts toward the cycle when it is paid, not cancelled, and placed no earlier than the cycle it was first stored in", () => {
-    strictEqual(Domain.orderCountsTowardCycle(countable, CYCLE), true);
-    strictEqual(
-      Domain.orderCountsTowardCycle({ ...countable, fullyPaid: false }, CYCLE),
-      false,
-    );
-    strictEqual(
-      Domain.orderCountsTowardCycle(
-        { ...countable, cancelledAt: CYCLE },
-        CYCLE,
-      ),
-      false,
-    );
-    strictEqual(
-      Domain.orderCountsTowardCycle(
-        { ...countable, processedAt: CYCLE - 1 },
-        CYCLE,
-      ),
       false,
     );
   });

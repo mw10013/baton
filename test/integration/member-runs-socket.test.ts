@@ -80,8 +80,6 @@ const seedOrder = (shop: string) =>
                 sku: null,
                 quantity: 1,
                 currentQuantity: 1,
-                unfulfilledQuantity: 1,
-                nonFulfillableQuantity: 0,
                 productTags: [],
                 matchedWorkflowIds: [],
                 customAttributes: [],

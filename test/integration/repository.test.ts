@@ -47,10 +47,8 @@ const makeShopSession = (
   refreshTokenExpiresAt: 2000,
   planHandle: null,
   planHandleExpiresAt: null,
-  pendingPlanHandle: null,
   planBoundaryAt: null,
   planCycleStartAt: null,
-  planCancelAtEndOfCycle: false,
   ...overrides,
 });
 
@@ -176,10 +174,8 @@ describe("Repository SQL (D1 ShopSession)", () => {
             shop,
             planHandle: "baton-pro",
             planHandleExpiresAt: 3000,
-            pendingPlanHandle: null,
             planBoundaryAt: null,
             planCycleStartAt: null,
-            planCancelAtEndOfCycle: false,
           });
           yield* repo.shortenShopSessionPlanExpiry({ shop, notAfter: 4000 });
           strictEqual(yield* deadline(), 3000);
@@ -199,10 +195,8 @@ describe("Repository SQL (D1 ShopSession)", () => {
           shop,
           planHandle: "baton-pro",
           planHandleExpiresAt: 3000,
-          pendingPlanHandle: null,
           planBoundaryAt: null,
           planCycleStartAt: null,
-          planCancelAtEndOfCycle: false,
         });
         const shopSession = Option.getOrThrow(
           yield* repo.findShopSession(shop),

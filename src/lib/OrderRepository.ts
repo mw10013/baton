@@ -1,14 +1,6 @@
 import type { SqlError } from "effect/unstable/sql";
 
-import {
-  Context,
-  Effect,
-  Layer,
-  Match,
-  Option,
-  Schema,
-  SchemaGetter,
-} from "effect";
+import { Context, Effect, Layer, Match, Option, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 
 import * as Domain from "@/lib/Domain";
@@ -71,40 +63,19 @@ const ShopUsageCycle = Schema.Struct({
   ordersThisCycle: Schema.Number,
 });
 
-const SqliteBoolean = Schema.Number.pipe(
-  Schema.decodeTo(Schema.Boolean, {
-    decode: SchemaGetter.transform((n) => n === 1),
-    encode: SchemaGetter.transform((b) => (b ? 1 : 0)),
-  }),
-);
-
 /**
- * The stored order's counting state, probed before the upsert overwrites it:
- * the two transitions the meter reacts to (unpaid to paid, live to cancelled)
- * are only visible while the row still says what the order *was*.
- */
-const StoredOrderCounting = Schema.Struct({
-  countedAt: Schema.NullOr(Schema.Number),
-  cancelledAt: Schema.NullOr(Schema.Number),
-  fullyPaid: SqliteBoolean,
-  firstCycleStartAt: Schema.Number,
-});
-
-/**
- * The idempotency keys for an order's two possible billing events, permanent at
- * Shopify and capped at 64 characters. Derived from the order id and the
- * direction, never from a clock: replaying a flush must bill once, and a
- * reversal must not collide with the count it reverses. A Shopify order GID is
- * around 30 characters, so both stay well inside the cap.
+ * The order's one billing idempotency key, permanent at Shopify and capped at
+ * 64 characters. Derived from the order id alone, never from a clock: an order
+ * is billed once and a replayed flush must not bill it again. A Shopify order
+ * GID is around 30 characters, so this stays well inside the cap.
  */
 const countKey = (orderId: string) => `${orderId}#count`;
-const reverseKey = (orderId: string) => `${orderId}#reverse`;
 
-/** One usage-event row waiting in the outbox. */
+/** One usage-event row waiting in the outbox; `value` is {@link Domain.UsageEvent}'s. */
 export const UsageEventRow = Schema.Struct({
   idempotencyKey: Schema.String,
   orderId: Schema.String,
-  value: Schema.Number,
+  value: Schema.Literal(1),
   occurredAt: Schema.Number,
   attempts: Schema.Number,
 });
@@ -174,7 +145,7 @@ const DONE_RUN = `select 1 from WorkflowRun r
 const LIVE_RUN_FOR_ITEM = `select 1 from WorkflowRun r
   where r.lineItemId = li.id and r.status <> 'cancelled'`;
 const AMBIGUOUS_ITEM = `select 1 from OrderLineItem li
-  where li.orderId = ShopOrder.id and li.unfulfilledQuantity > 0
+  where li.orderId = ShopOrder.id and li.currentQuantity > 0
     and json_array_length(li.matchedWorkflowIds) >= 2
     and not exists (${LIVE_RUN_FOR_ITEM})`;
 /**
@@ -251,16 +222,37 @@ export class OrderRepository extends Context.Service<
       SqlError.SqlError | OrderRepositoryError | E
     >;
     /**
-     * `orders/delete`. A deletion inside the cycle the order was counted in is
-     * reversed exactly as a cancellation is — the merchant never carried the
-     * work — and then the row goes. A deleted order cannot be re-fetched, so
-     * the row is not kept for the reversal marker's sake.
+     * The billing meter, and the whole of it: an order is worth one unit the
+     * first time Baton creates a run for it, and nothing ever gives that back.
+     *
+     * Called by `WorkflowRunRepository.insertRun` — the single door through
+     * which a run is created — so the predicate is "Baton started work on this
+     * order", not "the order looks billable". That is deliberately narrower
+     * than paid: a paid order no workflow matches costs the merchant nothing,
+     * and an order Baton only ever displayed was never work it carried.
+     *
+     * `countedAt is null` in the `update` is the entire idempotency story. A
+     * second run on the same order changes no row, so no counter moves and no
+     * event is queued; the same holds for a reconcile that re-creates runs
+     * after a cancellation. The `#count` key is permanent at Shopify, so even
+     * a queue that slipped through would bill once.
+     *
+     * Runs inside the caller's transaction — Durable Object SQLite refuses
+     * nested ones — so the marker, the counter and the outbox row cannot come
+     * apart. `now` is the caller's clock, and it dates the usage event, which
+     * Shopify accepts only inside the merchant's open period.
+     *
+     * Resolves the cycle before it increments, exactly as `upsertOrder` does,
+     * so a run started by hand on a quiet shop past its cycle end counts into
+     * the new period rather than the outgoing one. On the reconcile path the
+     * upsert has already rolled it and this is a re-read. A missing
+     * `ShopUsage` row is a defect in the schema, not a billing condition, and
+     * is a die rather than an error the run paths would have to carry.
      */
-    readonly deleteOrder: (input: {
-      readonly orderId: string;
-      /** The caller's clock, as `syncedAt` is on an upsert: the cycle to reverse against is the one this write lands in. */
-      readonly now: number;
-    }) => Effect.Effect<void, SqlError.SqlError | OrderRepositoryError>;
+    readonly countOrder: (
+      orderId: string,
+      now: number,
+    ) => Effect.Effect<void, SqlError.SqlError>;
     readonly getLineItem: (lineItemId: string) => Effect.Effect<
       Option.Option<{
         readonly order: Domain.ShopOrder;
@@ -400,28 +392,28 @@ export class OrderRepository extends Context.Service<
     /**
      * Seed only: delete every order under `SEED_ORDER_ID_PREFIX`, its line
      * items, its runs, its share of `ordersThisCycle`, and any usage event it
-     * queued that has not gone out yet. Each departs from
-     * `deleteOrder` on purpose. Runs: an `orders/delete` webhook flags them
-     * rather than dropping the trail of work, but a fixture row being replaced
-     * has no trail worth keeping, and a run outliving its order carries its
-     * own snapshot of the order name and item, so it would sit on a queue as a
-     * card nothing can clear. Usage: the quota counts orders carried, not
-     * orders still stored, so `deleteOrder` never gives the count back; a
-     * reseed would then climb by a fixture's worth every time until the quota
-     * banner appeared over a shop holding one seed's orders. Only the seed
-     * knows the whole set is being replaced, so only it may subtract — and it
-     * subtracts rather than zeroes so synced orders keep their share. It
-     * subtracts by `countedAt`, the per-order marker the meter writes, so the
-     * subtraction matches exactly what was added however the order later
-     * changed. The queued events go with the rows because a fixture must not
-     * bill a development store; events already accepted by Shopify are gone
-     * from the table and are the seed's own to answer for.
+     * queued that has not gone out yet. This is the one path that removes a
+     * stored order outside retention, and the only one that may give a count
+     * back. Runs go with the order because a fixture row being replaced has no
+     * trail worth keeping, and a run outliving its order carries its own
+     * snapshot of the order name and item, so it would sit on a queue as a card
+     * nothing can clear. Usage: the meter counts orders Baton started work on
+     * and never reverses ({@link Domain.ShopUsage}), so a reseed would climb by
+     * a fixture's worth every time until the quota banner appeared over a shop
+     * holding one seed's orders. Only the seed knows the whole set is being
+     * replaced, so only it may subtract — and it subtracts rather than zeroes
+     * so synced orders keep their share. It subtracts by `countedAt`, the
+     * per-order marker the meter writes, so the subtraction matches exactly
+     * what was added however the order later changed. The queued events go with
+     * the rows because a fixture must not bill a development store; events
+     * already accepted by Shopify are gone from the table and are the seed's
+     * own to answer for.
      */
     readonly deleteSeedOrders: () => Effect.Effect<void, SqlError.SqlError>;
     /**
      * One retention pass: at most `ShopLimits.sweepBatch` orders older than
      * `ShopLimits.orderRetentionDays` — open or closed, with runs or without —
-     * plus a batch of runs orphaned by an `orders/delete`. Deliberately
+     * plus a batch of runs whose order is no longer stored. Deliberately
      * batched and deliberately carried by a request that was already doing
      * heavy work — there is no alarm and no cron — so a shop with years of
      * history drains over several passes instead of one request paying for
@@ -523,14 +515,12 @@ export class OrderRepository extends Context.Service<
           (item) => sql`
             insert into OrderLineItem (
               id, orderId, productId, variantId, title, variantTitle, sku,
-              quantity, currentQuantity, unfulfilledQuantity,
-              nonFulfillableQuantity, productTags, matchedWorkflowIds,
+              quantity, currentQuantity, productTags, matchedWorkflowIds,
               customAttributes, requiresShipping
             ) values (
               ${item.id}, ${item.orderId}, ${item.productId}, ${item.variantId},
               ${item.title}, ${item.variantTitle}, ${item.sku},
               ${item.quantity}, ${item.currentQuantity},
-              ${item.unfulfilledQuantity}, ${item.nonFulfillableQuantity},
               ${json(item.productTags)}, ${json(item.matchedWorkflowIds)},
               ${json(item.customAttributes)}, ${bit(item.requiresShipping)}
             )
@@ -543,8 +533,6 @@ export class OrderRepository extends Context.Service<
               sku = excluded.sku,
               quantity = excluded.quantity,
               currentQuantity = excluded.currentQuantity,
-              unfulfilledQuantity = excluded.unfulfilledQuantity,
-              nonFulfillableQuantity = excluded.nonFulfillableQuantity,
               productTags = excluded.productTags,
               customAttributes = excluded.customAttributes,
               requiresShipping = excluded.requiresShipping
@@ -639,97 +627,28 @@ export class OrderRepository extends Context.Service<
         };
       });
 
-      /**
-       * Gives a counted order back: the count, and a `-1` against the `+1` it
-       * queued. Shared by the cancellation transition in {@link countOrder} and
-       * by `deleteOrder`, which is a cancellation Shopify did not bother to
-       * word as one. Only meaningful inside the cycle the order was counted in
-       * — Shopify has closed any earlier period and would refuse the event,
-       * and the local count has already reset — so the caller checks
-       * `countedAt` against the cycle first.
-       */
-      const reverseOrder = (orderId: string, now: number) =>
-        Effect.gen(function* () {
-          yield* sql`update ShopOrder set countedAt = null where id = ${orderId}`;
-          yield* sql`
-            update ShopUsage
-            set ordersThisCycle = max(0, ordersThisCycle - 1)
-            where id = 1
-          `;
-          yield* queueUsageEvent({
-            idempotencyKey: reverseKey(orderId),
-            orderId,
-            value: -1,
-            occurredAt: now,
-          });
+      /** Rule and reasoning on {@link OrderRepository.countOrder}. */
+      const countOrder = Effect.fn("OrderRepository.countOrder")(function* (
+        orderId: string,
+        now: number,
+      ) {
+        // The cycle is resolved before the marker is written: a roll-forward
+        // recounts from `countedAt`, so a marker written first would be
+        // counted by the recount and again by the increment below.
+        yield* currentCycle(now).pipe(
+          Effect.catchTag("OrderRepositoryError", (error) => Effect.die(error)),
+        );
+        const counted =
+          yield* sql`update ShopOrder set countedAt = ${now} where id = ${orderId} and countedAt is null returning id`;
+        if (counted.length === 0) return;
+        yield* sql`update ShopUsage set ordersThisCycle = ordersThisCycle + 1 where id = 1`;
+        yield* queueUsageEvent({
+          idempotencyKey: countKey(orderId),
+          orderId,
+          value: 1,
+          occurredAt: now,
         });
-
-      /**
-       * The billing meter, inside the upsert's transaction so a counted order,
-       * its count, and the event that bills for it cannot come apart.
-       *
-       * Three transitions, and only three. **Counted on arrival**: a freshly
-       * stored order that satisfies {@link Domain.orderCountsTowardCycle}
-       * takes a `countedAt`, increments the cycle, and queues one `+1` event.
-       * **Counted on payment**: a stored order that was never counted, is not
-       * cancelled, and arrives paid for the first time does the same, in the
-       * cycle of *this* write — the shop carried the work and is now paid for
-       * it. The placement term is judged against the cycle the order was
-       * first stored in (`firstCycleStartAt`), so a backfilled order paid
-       * after install still never bills. **Reversed**: an order that was
-       * counted inside the current cycle and arrives cancelled for the first
-       * time gives the count back and queues one `-1`. A merchant who never
-       * made the thing should not pay for it; a refund is not a cancellation
-       * and is not reversed, because the work was done.
-       *
-       * Freshness and the paid/cancelled transitions are this function's
-       * business rather than the predicate's because they are properties of
-       * the write, not of the order — a webhook storm on one order is one
-       * order. `countedAt` is what makes each transition fire exactly once,
-       * and a reversed order stays reversed: Shopify never reopens a
-       * cancelled order, and the `#count` key is permanent at Shopify, so
-       * counting it again could only ever diverge the local number from the
-       * bill.
-       */
-      const countOrder = (
-        order: Domain.ShopOrder,
-        cycleStartAt: number,
-        stored: typeof StoredOrderCounting.Type | null,
-      ) =>
-        Effect.gen(function* () {
-          const count = () =>
-            Effect.gen(function* () {
-              yield* sql`update ShopOrder set countedAt = ${order.syncedAt} where id = ${order.id}`;
-              yield* sql`update ShopUsage set ordersThisCycle = ordersThisCycle + 1 where id = 1`;
-              yield* queueUsageEvent({
-                idempotencyKey: countKey(order.id),
-                orderId: order.id,
-                value: 1,
-                occurredAt: order.syncedAt,
-              });
-            });
-          if (stored === null) {
-            if (Domain.orderCountsTowardCycle(order, cycleStartAt))
-              yield* count();
-            return;
-          }
-          if (
-            stored.countedAt === null &&
-            stored.cancelledAt === null &&
-            !stored.fullyPaid &&
-            Domain.orderCountsTowardCycle(order, stored.firstCycleStartAt)
-          ) {
-            yield* count();
-            return;
-          }
-          if (
-            stored.countedAt !== null &&
-            stored.countedAt >= cycleStartAt &&
-            stored.cancelledAt === null &&
-            order.cancelledAt !== null
-          )
-            yield* reverseOrder(order.id, order.syncedAt);
-        });
+      });
 
       /**
        * `or ignore`, so re-queuing a key Shopify has already been told about is
@@ -798,22 +717,13 @@ export class OrderRepository extends Context.Service<
               Effect.gen(function* () {
                 // One primary-key probe, before the upsert makes the answer
                 // unknowable: `returning id` cannot distinguish an insert from
-                // an update, and the meter counts orders, not writes. The
-                // probe also carries the stored counting state, because a
-                // cancellation is a *transition* — it is only reversible while
-                // the row still says the order was counted and not yet
-                // cancelled, and the upsert is about to overwrite both.
-                const [existing] = yield* decode(
-                  Schema.Array(StoredOrderCounting),
-                  "Invalid ShopOrder counting row",
-                )(
-                  yield* sql`select countedAt, cancelledAt, fullyPaid, firstCycleStartAt from ShopOrder where id = ${order.id} limit 1`,
-                );
-                const fresh = existing === undefined;
-                // The cycle is resolved before the insert, because the row
-                // remembers the cycle it was first stored in, and because
-                // the ceiling below is a fact about the cycle this write
-                // lands in, after any roll-forward.
+                // an update, and `fresh` is what the bulk stream reports and
+                // what the ceiling below gates on.
+                const existing =
+                  yield* sql`select 1 from ShopOrder where id = ${order.id} limit 1`;
+                const fresh = existing.length === 0;
+                // Resolved before the insert because the ceiling is a fact
+                // about the cycle this write lands in, after any roll-forward.
                 const cycle = yield* currentCycle(order.syncedAt);
                 if (
                   fresh &&
@@ -827,7 +737,7 @@ export class OrderRepository extends Context.Service<
                   id, legacyId, name, processedAt, updatedAt,
                   cancelledAt, closedAt, financialStatus, fulfillmentStatus,
                   fullyPaid, note, customAttributes,
-                  lineItemsTruncated, syncedAt, syncSource, firstCycleStartAt
+                  lineItemsTruncated, syncedAt, syncSource
                 ) values (
                   ${order.id}, ${order.legacyId}, ${order.name},
                   ${order.processedAt}, ${order.updatedAt},
@@ -836,7 +746,7 @@ export class OrderRepository extends Context.Service<
                   ${bit(order.fullyPaid)}, ${order.note},
                   ${json(order.customAttributes)},
                   ${bit(order.lineItemsTruncated)}, ${order.syncedAt},
-                  ${order.syncSource}, ${cycle.cycleStartAt}
+                  ${order.syncSource}
                 )
                 on conflict(id) do update set
                   legacyId = excluded.legacyId,
@@ -860,41 +770,13 @@ export class OrderRepository extends Context.Service<
                   return { written: false, fresh: false, refused: false };
                 yield* sql`delete from OrderLineItem where orderId = ${order.id}`;
                 yield* insertLineItems(lineItems);
-                yield* countOrder(order, cycle.cycleStartAt, existing ?? null);
                 if (afterWrite !== undefined) yield* afterWrite;
                 return { written: true, fresh, refused: false };
               }),
             )
             .pipe(Effect.withSpan("OrderRepository.upsertOrder")),
 
-        deleteOrder: Effect.fn("OrderRepository.deleteOrder")(function* ({
-          orderId,
-          now,
-        }: {
-          readonly orderId: string;
-          readonly now: number;
-        }) {
-          yield* sql.withTransaction(
-            Effect.gen(function* () {
-              const [stored] = yield* decode(
-                Schema.Array(StoredOrderCounting),
-                "Invalid ShopOrder counting row",
-              )(
-                yield* sql`select countedAt, cancelledAt, fullyPaid, firstCycleStartAt from ShopOrder where id = ${orderId} limit 1`,
-              );
-              if (
-                stored?.countedAt !== null &&
-                stored?.countedAt !== undefined
-              ) {
-                const { cycleStartAt } = yield* currentCycle(now);
-                if (stored.countedAt >= cycleStartAt)
-                  yield* reverseOrder(orderId, now);
-              }
-              yield* sql`delete from OrderLineItem where orderId = ${orderId}`;
-              yield* sql`delete from ShopOrder where id = ${orderId}`;
-            }),
-          );
-        }),
+        countOrder,
 
         getLineItem: Effect.fn("OrderRepository.getLineItem")(function* (
           lineItemId: string,
@@ -1147,7 +1029,7 @@ export class OrderRepository extends Context.Service<
                   select li.orderId, count(*)
                   from OrderLineItem li
                   where ${sql.in("li.orderId", ids)}
-                    and li.unfulfilledQuantity > 0
+                    and li.currentQuantity > 0
                     and json_array_length(li.matchedWorkflowIds) >= 2
                     and not exists (${sql.literal(LIVE_RUN_FOR_ITEM)})
                   group by li.orderId
@@ -1573,12 +1455,11 @@ export class OrderRepository extends Context.Service<
                   for (let at = 0; at < ids.length; at += 90) {
                     const chunk = ids.slice(at, at + 90);
                     /**
-                     * The runs go with the order, live ones included. Nothing
-                     * is flagged on the way out, unlike
-                     * `WorkflowRunRepository.markOrderDeleted`: that flag
-                     * exists so a member reads why their work stopped, and a
-                     * row deleted by the next statement of the same
-                     * transaction is read by nobody.
+                     * The runs go with the order, live ones included, and
+                     * nothing is flagged on the way out: a flag exists so a
+                     * member reads why their work stopped, and a row deleted
+                     * by the next statement of the same transaction is read
+                     * by nobody.
                      */
                     const deletedRuns =
                       yield* sql`delete from WorkflowRun where ${sql.in("orderId", chunk)} returning id`;
@@ -1589,12 +1470,14 @@ export class OrderRepository extends Context.Service<
                   }
                 }
                 /**
-                 * Runs whose order is already gone: `markOrderDeleted` flags
-                 * them rather than deleting so a member sees why their work
-                 * stopped, and they age out here on their own `updatedAt`,
-                 * the order's being unavailable. The same window, counted
-                 * from a different clock on purpose — the order they belong
-                 * to no longer has one.
+                 * Runs whose order is no longer stored. No live path leaves
+                 * one — every delete above takes the runs with it, as does
+                 * `deleteSeedOrders` — so this is a floor, not a workflow:
+                 * one indexed statement per sweep that keeps a row nothing
+                 * can render from sitting on a member's queue forever. It
+                 * ages on the run's own `updatedAt`, counted from a different
+                 * clock on purpose, because the order it belongs to no longer
+                 * has one.
                  */
                 const orphaned = yield* sql`
                   delete from WorkflowRun

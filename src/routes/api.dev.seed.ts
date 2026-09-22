@@ -32,7 +32,6 @@ const SeedOrderByWorkflowName = Schema.Struct({
       title: Schema.String,
       quantity: Schema.Number,
       currentQuantity: Schema.optionalKey(Schema.Number),
-      unfulfilledQuantity: Schema.optionalKey(Schema.Number),
       tags: Schema.Array(Schema.String),
       customAttributes: Schema.optionalKey(Schema.Array(Domain.OrderAttribute)),
       progress: Schema.optionalKey(Domain.SeedProgress),

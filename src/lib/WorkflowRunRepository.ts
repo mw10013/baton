@@ -4,6 +4,7 @@ import { Clock, Context, Effect, Layer, Option, Schema, Struct } from "effect";
 import { SqlClient, type Statement } from "effect/unstable/sql";
 
 import * as Domain from "@/lib/Domain";
+import { OrderRepository } from "@/lib/OrderRepository";
 import * as ReadyWhere from "@/lib/readyWhere";
 
 /**
@@ -206,9 +207,9 @@ export const placedSince = (
 /** The tag test alone, with units still to make; what the Turn on dialog's count uses, since it asks "would match if the date allowed". */
 export const matchesTag = (
   { workflow }: Domain.WorkflowDetail,
-  lineItem: Pick<Domain.OrderLineItem, "productTags" | "unfulfilledQuantity">,
+  lineItem: Pick<Domain.OrderLineItem, "productTags" | "currentQuantity">,
 ) =>
-  lineItem.unfulfilledQuantity > 0 &&
+  lineItem.currentQuantity > 0 &&
   lineItem.productTags.some((tag) => workflow.tag === tag.trim().toLowerCase());
 
 const json = (value: unknown) => JSON.stringify(value);
@@ -340,9 +341,6 @@ export class WorkflowRunRepository extends Context.Service<
       | WorkflowRunLimitError
       | RunFinishedError
     >;
-    readonly markOrderDeleted: (input: {
-      readonly orderId: string;
-    }) => Effect.Effect<void, SqlError.SqlError>;
     readonly listRunsForOrder: (input: {
       readonly orderId: string;
     }) => Effect.Effect<
@@ -611,14 +609,22 @@ export class WorkflowRunRepository extends Context.Service<
     >;
   }
 >()("WorkflowRunRepository") {
+  /**
+   * Depends on {@link OrderRepository} because {@link insertRun} is where the
+   * billing meter fires (`OrderRepository.countOrder`). The direction is one
+   * way on purpose: `OrderRepository` knows nothing about runs — it takes
+   * `afterWrite` as a parameter rather than calling reconcile itself — so
+   * nothing here closes a cycle.
+   */
   static readonly layer: Layer.Layer<
     WorkflowRunRepository,
     never,
-    SqlClient.SqlClient
+    SqlClient.SqlClient | OrderRepository
   > = Layer.effect(
     WorkflowRunRepository,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
+      const orderRepository = yield* OrderRepository;
 
       const decode =
         <A>(schema: Schema.ConstraintDecoder<A>, message: string) =>
@@ -1030,6 +1036,10 @@ export class WorkflowRunRepository extends Context.Service<
             `,
           );
           if (run === undefined) return Option.none();
+          // The meter, and the only place it fires. Inside the caller's
+          // transaction, which for the reconcile path is the upsert's:
+          // `OrderRepository.countOrder` carries the rule.
+          yield* orderRepository.countOrder(order.id, now);
           yield* Effect.forEach(
             steps,
             (step) => sql`
@@ -1106,9 +1116,9 @@ export class WorkflowRunRepository extends Context.Service<
           /**
            * Nothing left to make. Pending runs go silently (no one started
            * them); active runs are flagged because their premise cannot be
-           * restored. `PARTIALLY_FULFILLED` never lands here: the shipped
-           * line's `unfulfilledQuantity` is 0 and `adjust` handles it per
-           * line.
+           * restored. Partial fulfillment changes nothing anywhere: shipping
+           * a line leaves its `currentQuantity` alone, so neither this branch
+           * nor `adjust` below sees a difference ({@link Domain.unitsToMake}).
            */
           if (Domain.isFulfilled(order)) {
             yield* earlyExit("fulfilled");
@@ -1243,8 +1253,8 @@ export class WorkflowRunRepository extends Context.Service<
           ).pipe(Effect.map((results) => results.filter(Option.isSome)));
           const created = inserted.length;
           /**
-           * Tracks `Domain.unitsToMake`, so a refund that zeroes or lowers
-           * `unfulfilledQuantity` reads exactly like a removal or an edit.
+           * Tracks `Domain.unitsToMake`, so a refund that lowers
+           * `currentQuantity` reads exactly like a merchant edit.
            *
            * Runs over every live run, `done` included, because a quantity
            * change on a finished line is exactly the case nobody is watching
@@ -1357,18 +1367,18 @@ export class WorkflowRunRepository extends Context.Service<
               Schema.Struct({
                 orderId: Schema.String,
                 processedAt: Schema.Number,
-                unfulfilledQuantity: Schema.Number,
+                currentQuantity: Schema.Number,
                 productTags: Schema.fromJsonString(Schema.Array(Schema.String)),
               }),
             ),
             "Invalid waiting line item row",
           )(
             yield* sql`
-              select li.orderId, o.processedAt, li.unfulfilledQuantity, li.productTags
+              select li.orderId, o.processedAt, li.currentQuantity, li.productTags
               from OrderLineItem li
               join ShopOrder o on o.id = li.orderId
               where o.cancelledAt is null and o.fulfillmentStatus <> 'FULFILLED'
-                and li.unfulfilledQuantity > 0
+                and li.currentQuantity > 0
                 and not exists (
                   select 1 from WorkflowRun r
                   where r.lineItemId = li.id and r.status <> 'cancelled'
@@ -1459,19 +1469,6 @@ export class WorkflowRunRepository extends Context.Service<
                   : Option.some({ run: inserted.value, replaced });
               }),
             ),
-        ),
-
-        markOrderDeleted: Effect.fn("WorkflowRunRepository.markOrderDeleted")(
-          function* ({ orderId }: { readonly orderId: string }) {
-            const now = yield* Clock.currentTimeMillis;
-            yield* cancelPending(orderId, now);
-            yield* flagActive(
-              sql`orderId = ${orderId}`,
-              "order_deleted",
-              {},
-              now,
-            );
-          },
         ),
 
         listRunsForOrder: Effect.fn("WorkflowRunRepository.listRunsForOrder")(

@@ -85,10 +85,8 @@ const decodeRepository =
 type PlanCacheColumn =
   | "planHandle"
   | "planHandleExpiresAt"
-  | "pendingPlanHandle"
   | "planBoundaryAt"
-  | "planCycleStartAt"
-  | "planCancelAtEndOfCycle";
+  | "planCycleStartAt";
 
 export class Repository extends Context.Service<
   Repository,
@@ -420,10 +418,8 @@ export class Repository extends Context.Service<
             update ShopSession set
               planHandle = ${shopSession.planHandle},
               planHandleExpiresAt = ${shopSession.planHandleExpiresAt},
-              pendingPlanHandle = ${shopSession.pendingPlanHandle},
               planBoundaryAt = ${shopSession.planBoundaryAt},
-              planCycleStartAt = ${shopSession.planCycleStartAt},
-              planCancelAtEndOfCycle = ${shopSession.planCancelAtEndOfCycle ? 1 : 0}
+              planCycleStartAt = ${shopSession.planCycleStartAt}
             where shop = ${shopSession.shop}
           `;
       });
@@ -461,8 +457,7 @@ export class Repository extends Context.Service<
       )(function* (shop: Domain.ShopSession["shop"]) {
         const rows = yield* sql`
           select shop, shopGid, shopAgentId, scope, accessTokenExpiresAt, refreshTokenExpiresAt,
-            planHandle, planHandleExpiresAt, pendingPlanHandle, planBoundaryAt, planCycleStartAt,
-            planCancelAtEndOfCycle,
+            planHandle, planHandleExpiresAt, planBoundaryAt, planCycleStartAt,
             (accessToken is not null) as hasAccessToken,
             (refreshToken is not null) as hasRefreshToken
           from ShopSession
@@ -504,8 +499,7 @@ export class Repository extends Context.Service<
         ];
         const rows = yield* sql`
           select shop, shopGid, shopAgentId, scope, accessTokenExpiresAt, refreshTokenExpiresAt,
-            planHandle, planHandleExpiresAt, pendingPlanHandle, planBoundaryAt, planCycleStartAt,
-            planCancelAtEndOfCycle,
+            planHandle, planHandleExpiresAt, planBoundaryAt, planCycleStartAt,
             (accessToken is not null) as hasAccessToken,
             (refreshToken is not null) as hasRefreshToken
           from ShopSession

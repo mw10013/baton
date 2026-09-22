@@ -29,8 +29,8 @@ import { entitlementsOfStatus, SubscriptionPlan } from "@/lib/SubscriptionPlan";
  * even though `beforeLoad` already has it: this loader is isomorphic and runs
  * in the browser on every in-app navigation, so taking it from context would
  * mean the browser supplying its own tier on most page views. The status is
- * resolved once here and both the entitlements and the scheduled change come
- * off it through `entitlementsOfStatus`, rather than paying
+ * resolved once here and both the entitlements and the boundary come off it
+ * through `entitlementsOfStatus`, rather than paying
  * `resolveEntitlements` a second read of the same row.
  */
 const getLoaderData = createServerFn({ method: "GET" })
@@ -43,21 +43,15 @@ const getLoaderData = createServerFn({ method: "GET" })
         );
         const status = yield* (yield* SubscriptionPlan).resolve(shop);
         const entitlements = yield* entitlementsOfStatus(shop, status);
-        const scheduled = Match.value(status).pipe(
+        const planBoundaryAt = Match.value(status).pipe(
           Match.tagsExhaustive({
-            Subscribed: ({ boundaryAt, cancelAtEndOfCycle }) => ({
-              planBoundaryAt: boundaryAt,
-              cancelAtEndOfCycle,
-            }),
+            Subscribed: ({ boundaryAt }) => boundaryAt,
             // `entitlementsOfStatus` already redirected this arm away.
-            Unsubscribed: () => ({
-              planBoundaryAt: null,
-              cancelAtEndOfCycle: false,
-            }),
+            Unsubscribed: () => null,
           }),
         );
         return {
-          ...scheduled,
+          planBoundaryAt,
           entitlements,
           usage: yield* (yield* ShopAgentClient).getUsage(session.shop),
           memberCount: yield* (yield* Repository).countMembers(shop),
@@ -145,13 +139,7 @@ function CapacityTile({
  * nobody reads on the bad one.
  */
 function RouteComponent() {
-  const {
-    entitlements,
-    usage,
-    memberCount,
-    planBoundaryAt,
-    cancelAtEndOfCycle,
-  } = Route.useLoaderData();
+  const { entitlements, usage, memberCount } = Route.useLoaderData();
   const { managePlanUrl } = Route.useRouteContext();
 
   const seatless = memberCount - entitlements.maxMembers;
@@ -201,23 +189,6 @@ function RouteComponent() {
         accessibilityLabel="Orders and member capacity"
       >
         <s-stack gap="base">
-          {/* The one scheduled fact worth a merchant's attention, and the only
-              one Shopify reports that is unambiguously real: a cancellation
-              runs to the boundary and then access stops. A *pending plan* is
-              not rendered at all — Shopify applies most switches at once (see
-              `Domain.PlanStatus`), in which case the meters below already show
-              the new numbers and there is nothing to announce. */}
-          {cancelAtEndOfCycle && (
-            <s-paragraph>
-              {"Your subscription ends on "}
-              {planBoundaryAt === null ? (
-                "the next billing date"
-              ) : (
-                <LocalDateTime value={planBoundaryAt} />
-              )}
-              .
-            </s-paragraph>
-          )}
           {/* `auto-fit` down to 300px: two tiles side by side where the
               embedded pane is wide enough for both, one column where it is
               not, with no breakpoint to keep in sync. */}

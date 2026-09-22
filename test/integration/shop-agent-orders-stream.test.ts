@@ -85,8 +85,6 @@ const lineItemLine = (n: number, parent: number) => ({
   sku: `SKU-${String(n)}`,
   quantity: 1,
   currentQuantity: 1,
-  unfulfilledQuantity: 1,
-  nonFulfillableQuantity: 0,
   requiresShipping: true,
   customAttributes: [{ key: "text", value: "Hello" }],
   variant: { id: `gid://shopify/ProductVariant/${String(n)}` },
@@ -265,13 +263,14 @@ describe("runShopAgentOrdersStream with afterWrite", () => {
           }).pipe(
             Effect.provide(
               Layer.merge(
-                Layer.provideMerge(
-                  Layer.mergeAll(
-                    OrderRepository.layer,
-                    WorkflowRepository.layer,
-                    WorkflowRunRepository.layer,
+                Layer.mergeAll(
+                  WorkflowRepository.layer,
+                  WorkflowRunRepository.layer,
+                ).pipe(
+                  Layer.provideMerge(OrderRepository.layer),
+                  Layer.provideMerge(
+                    SqliteClient.layer({ storage: state.storage }),
                   ),
-                  SqliteClient.layer({ storage: state.storage }),
                 ),
                 httpClientLayer(body),
               ),
