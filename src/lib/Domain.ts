@@ -108,8 +108,8 @@ export interface Entitlements {
  * and {@link memberHasSeat} is where that is decided.
  */
 const ENTITLEMENTS = {
-  basic: { ordersPerCycle: 250, maxMembers: 3 },
-  pro: { ordersPerCycle: 1000, maxMembers: 10 },
+  basic: { ordersPerCycle: 20, maxMembers: 3 },
+  pro: { ordersPerCycle: 30, maxMembers: 10 },
 } as const satisfies Record<Plan, Entitlements>;
 
 export const entitlementsOfPlan = (plan: Plan): Entitlements =>
@@ -129,7 +129,7 @@ export const MAX_ENTITLEMENTS: Entitlements = ENTITLEMENTS.pro;
  * is then silently non-billable. It is one handle across tiers so the meter's
  * own graduated tiers — not the event — decide what an order costs.
  */
-export const USAGE_METER_ORDER = "orders-synced";
+export const USAGE_METER_ORDER = "production-orders";
 
 /**
  * What the shop's contract grants right now. Nothing is scheduled: a plan

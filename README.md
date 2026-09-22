@@ -34,39 +34,46 @@ in code; the app reads the merchant's plan handle through the Partner API
 
 ### Plans
 
-Two public plans, one per tier, each with one usage meter. Handles must match
-`Domain.PlanHandle` and `Domain.USAGE_METER_ORDER` exactly (case-sensitive); tier 1 sizes and
-seats must match `ENTITLEMENTS` in `src/lib/Domain.ts`. All numbers are provisional.
+Two public plans, one per tier, each with two usage meters. Handles must match
+`Domain.PlanHandle`, `Domain.USAGE_METER_ORDER`, and `Domain.USAGE_METER_MEMBER` exactly
+(case-sensitive); tier 1 sizes must match `ENTITLEMENTS` in `src/lib/Domain.ts`. All numbers
+are provisional.
 
-| Field               | Basic                                                | Pro                                                  |
-| ------------------- | ---------------------------------------------------- | ---------------------------------------------------- |
-| Handle              | `baton-basic`                                        | `baton-pro`                                          |
-| Display name        | Basic                                                | Pro                                                  |
-| Billing period      | Monthly                                              | Monthly                                              |
-| Monthly charge      | $29                                                  | $79                                                  |
-| Free trial          | 14 days                                              | none                                                 |
-| Welcome link        | `/app`                                               | `/app`                                               |
-| Top features        | See below — one line per feature, 40 characters each | See below — one line per feature, 40 characters each |
-| Usage meter: name   | Orders in production                                 | Orders in production                                 |
-| Usage meter: handle | `orders-synced`                                      | `orders-synced`                                      |
-| Pricing model       | Tiered, graduated                                    | Tiered, graduated                                    |
-| Charge as           | Cost per unit                                        | Cost per unit                                        |
-| Tier 1              | Units 1 to 250 at $0.00                              | Units 1 to 1,000 at $0.00                            |
-| Tier 2              | Units 251 and up at $0.15                            | Units 1,001 and up at $0.10                          |
+| Field                 | Basic                                                | Pro                                                  |
+| --------------------- | ---------------------------------------------------- | ---------------------------------------------------- |
+| Handle                | `baton-basic`                                        | `baton-pro`                                          |
+| Display name          | Basic                                                | Pro                                                  |
+| Billing period        | Monthly                                              | Monthly                                              |
+| Monthly charge        | $29                                                  | $79                                                  |
+| Free trial            | 14 days                                              | none                                                 |
+| Welcome link          | `/app`                                               | `/app`                                               |
+| Top features          | See below — one line per feature, 40 characters each | See below — one line per feature, 40 characters each |
+| Usage meter 1: name   | Production orders                                    | Production orders                                    |
+| Usage meter 1: handle | `production-orders`                                  | `production-orders`                                  |
+| Pricing model         | Tiered, graduated                                    | Tiered, graduated                                    |
+| Charge as             | Cost per unit                                        | Cost per unit                                        |
+| Tier 1                | Units 1 to 20 at $0.00                               | Units 1 to 30 at $0.00                               |
+| Tier 2                | Units 21 and up at $0.15                             | Units 31 and up at $0.10                             |
+| Usage meter 2: name   | Members                                              | Members                                              |
+| Usage meter 2: handle | `members`                                            | `members`                                            |
+| Pricing model         | Tiered, graduated                                    | Tiered, graduated                                    |
+| Charge as             | Cost per unit                                        | Cost per unit                                        |
+| Tier 1                | Units 1 to 3 at $0.00                                | Units 1 to 10 at $0.00                               |
+| Tier 2                | Units 4 and up at $15.00                             | Units 11 and up at $10.00                            |
 
 **Top features** is not one sentence: each feature is its own field, capped at **40 characters**,
 up to eight per plan. Copy that does not fit is copy the dashboard silently truncates, so the
 lines are written to the limit. Enter them in this order:
 
-| #   | Basic                                  | Pro                                      |
-| --- | -------------------------------------- | ---------------------------------------- |
-| 1   | `250 orders included, then $0.15 each` | `1,000 orders included, then $0.10 each` |
-| 2   | `3 team members`                       | `10 team members`                        |
-| 3   | `Unlimited workflows and teams`        | `Unlimited workflows and teams`          |
-| 4   | `Billed once work starts on an order`  | `Billed once work starts on an order`    |
+| #   | Basic                                 | Pro                                   |
+| --- | ------------------------------------- | ------------------------------------- |
+| 1   | `20 orders included, then $0.15 each` | `30 orders included, then $0.10 each` |
+| 2   | `3 members included, then $15 each`   | `10 members included, then $10 each`  |
+| 3   | `Unlimited workflows and teams`       | `Unlimited workflows and teams`       |
+| 4   | `Billed once work starts on an order` | `Billed once work starts on an order` |
 
 Line 1 must agree with `ordersPerCycle` in `ENTITLEMENTS` and with the meter's tier 2 price;
-line 2 with `maxMembers`. Line 4 states the metering rule (`OrderRepository.countOrder`): an
+line 2 with `membersIncluded` and the member meter's tier 2 price. Line 4 states the metering rule (`OrderRepository.countOrder`): an
 order is counted once, when Baton creates its first run, and never reversed — an order that is
 only displayed, or that no workflow matches, costs the merchant nothing. Avoid "up to N orders"
 — it reads as a hard cap, and orders past the included allowance keep syncing and bill at the
@@ -76,11 +83,19 @@ surface now says.
 - The meter counts orders Baton started work on. The app posts one event per counted order to
   the App Events API under the meter handle, and never a reversal. The $0.00 first tier is the
   included allowance: Flat rate has no included units field, and graduated tiers price each unit
-  by the tier it falls in, so the 251st order is the first one billed. Tier 1's size must equal
+  by the tier it falls in, so the 21st order is the first one billed. Tier 1's size must equal
   `ordersPerCycle` in `ENTITLEMENTS`.
-- The meter's **handle stays `orders-synced`** — a handle is part of the App Pricing contract
-  and re-handling it needs a migration (below) — while its display name is "Orders in
-  production". Change the display name in the Partner Dashboard; nothing in code reads it.
+- The member meter counts seats per billing cycle: the roster size at the start of each cycle,
+  plus one for each add that raises the cycle's high-water mark, never a reversal. The $0.00
+  first tier is the included seats and must equal `membersIncluded` in `ENTITLEMENTS`. A plan
+  change is a new contract with a new cycle and both meters at zero (measured 2026-09-22,
+  `Domain.ActiveSubscription`), so the roster is re-sent under the new plan's tiers.
+- Handles match display names (`production-orders` / "Production orders", `members` /
+  "Members"), so the Dev Dashboard billing log and the invoice use the same words. The name is
+  the invoice line and is capped at **18 characters**; the handle at 30. Neither can be changed
+  once saved. The
+  orders handle was `orders-synced` until 2026-09-22, renamed before launch because counting
+  moved from sync to first run; renaming after launch needs the migration below.
 - **Do not add or re-handle a meter on a live plan without a migration.** An App Pricing
   contract carries the item set it was created with, so existing subscribers keep a contract
   with no meter item: their events are accepted but the contract never reports a usage quantity,
@@ -129,7 +144,7 @@ inside the plan editor.
 - Verifying usage end to end needs a **paid order placed inside the current billing cycle**;
   orders placed before the cycle started are exempt by design. Confirm in the Dev Dashboard
   under Logs with type **App event**: a working event is logged `App billing event` /
-  `orders-synced` / `OK`. An event that reaches Shopify but matches no meter is logged
+  `production-orders` / `OK`. An event that reaches Shopify but matches no meter is logged
   non-billable, and the API answers `202` either way.
 
 ### Enabling an environment

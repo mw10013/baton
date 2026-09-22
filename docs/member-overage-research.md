@@ -1,6 +1,6 @@
 # Member overage instead of a member cap: research
 
-Date: 2026-09-22. Revision 2, all questions answered; next step is the probe in section 8.
+Date: 2026-09-22. Revision 3, probe run; results in section 9.
 
 Question: should Baton stop capping members per plan and instead let a shop go
 past the included seats for a charge, the way orders already work? What would
@@ -13,8 +13,8 @@ seat cap enforced at add time and at sign-in time.
 
 | Plan  | Monthly | Trial   | Orders included | Order overage | Seats |
 | ----- | ------- | ------- | --------------- | ------------- | ----- |
-| Basic | $29     | 14 days | 250             | $0.15         | 3     |
-| Pro   | $79     | none    | 1,000           | $0.10         | 10    |
+| Basic | $29     | 14 days | 20              | $0.15         | 3     |
+| Pro   | $79     | none    | 30              | $0.10         | 10    |
 
 Numbers are provisional (`ENTITLEMENTS` in `src/lib/Domain.ts`, `README.md`
 "Plans").
@@ -22,7 +22,7 @@ Numbers are provisional (`ENTITLEMENTS` in `src/lib/Domain.ts`, `README.md`
 How the two limits behave today:
 
 - **Orders** are metered. `ordersPerCycle` is the $0 band of a graduated meter
-  (`orders-synced`). An order is counted once when its first run is created and
+  (`production-orders`, `orders-synced` at the time of the probe). An order is counted once when its first run is created and
   never reversed. Nothing blocks until the hard ceiling
   `ShopLimits.maxOrdersPerCycle` (10,000), which is enterprise fencing, not a
   tier.
@@ -102,8 +102,9 @@ Cannot:
   `activeSubscription` docs say `usage` is "for the current billing cycle".
   Whether a paid-to-paid switch starts a new cycle, carries the old meter
   quantity into the new plan's tiers, or bills the old plan's usage at the
-  switch and starts the new plan's meter at zero, is undocumented. This is the
-  single fact the whole design hinges on, and it has to be measured, not read.
+  switch and starts the new plan's meter at zero, is undocumented. Measured
+  in section 9: a plan change starts a new contract and a new cycle, and the
+  old meter quantity is gone.
 - Events are permanently idempotent and must carry a timestamp inside the
   current cycle, so a seat event cannot be back-dated into a closed cycle.
 
@@ -193,11 +194,9 @@ Shopify sees 0 or 10 units on it.
 - If a plan change **closes the old cycle** and bills it: same as reset, plus
   the old plan's usage is invoiced early.
 
-The undocumented behavior decides which branch is right, and the wrong guess
-either double-bills or under-bills. Section 8 asks whether to measure it on
-the dev store before deciding anything else. Under the $0 dev-store contract
-the quantities are still reported (`usage.quantity`), so the measurement is
-possible even though no money moves.
+Section 9 measured the first branch: the meter resets. So the cycle-start
+event on the first revalidation after a handle change is the mechanism, and
+"treat a changed `cycleStartAt` as a roll" is the rule.
 
 Whichever branch, the merchant story is the same and it is a good one: "After
 you downgrade, members past the included count are billed per seat. Remove
@@ -284,18 +283,19 @@ ceiling stays.
 No open questions remain. Reviewed 2026-09-22; every recommendation accepted,
 with one pushback (no pricing copy in the app) and every number provisional.
 
-| Decision                | Outcome                                                                                                                                                 |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Measure first           | Yes. The probe below runs before any seat work and before further iteration on this doc; it answers most of what remains.                               |
-| Seat-counting rule      | A: roster size at cycle start plus one unit per add that raises the cycle's high-water mark. Never reversed.                                            |
-| Reverse on removal      | No.                                                                                                                                                     |
-| Add-on or usage         | Per-cycle usage. App Pricing has no add-on line item.                                                                                                   |
-| Seat price              | $15 on Basic, $10 on Pro. Provisional; later research builds a cost model and a CLI to run numbers.                                                     |
-| Hard ceiling            | `ShopLimits.maxMembers` at 50, every plan, message directs to support. Provisional.                                                                     |
-| Pro's included count    | Keep both: 3 and 10 included, cheaper seat rate on Pro.                                                                                                 |
-| Downgrade message       | Members page drops seats and lockout. Home page shows member counts, no prices. Plan page on Shopify carries the pricing. No warning at downgrade time. |
-| Trial                   | Seat events during a trial are sent like any other. Whether trial usage bills at trial end is measured in the same probe.                               |
-| Pricing copy in the app | None. Plan details are Partner Dashboard data; keeping in-app copies aligned is not worth the risk of getting them wrong.                               |
+| Decision                | Outcome                                                                                                                                                                                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Measure first           | Yes. The probe below runs before any seat work and before further iteration on this doc; it answers most of what remains.                                                                                                                                     |
+| Seat-counting rule      | A: roster size at cycle start plus one unit per add that raises the cycle's high-water mark. Never reversed.                                                                                                                                                  |
+| Reverse on removal      | No.                                                                                                                                                                                                                                                           |
+| Add-on or usage         | Per-cycle usage. App Pricing has no add-on line item.                                                                                                                                                                                                         |
+| Seat price              | $15 on Basic, $10 on Pro. Provisional; later research builds a cost model and a CLI to run numbers.                                                                                                                                                           |
+| Hard ceiling            | `ShopLimits.maxMembers` at 12, every plan, message directs to support. Provisional.                                                                                                                                                                           |
+| Prototype limits        | Sized around the dev seed (29 orders, most counted): orders included 20 and 30, `maxOrdersPerCycle` 35, `maxMembers` 12. A seed puts Basic over and Pro just under; a few real orders reach the ceiling. Real numbers go back in on both sides before launch. |
+| Pro's included count    | Keep both: 3 and 10 included, cheaper seat rate on Pro.                                                                                                                                                                                                       |
+| Downgrade message       | Members page drops seats and lockout. Home page shows member counts, no prices. Plan page on Shopify carries the pricing. No warning at downgrade time.                                                                                                       |
+| Trial                   | Seat events during a trial are sent like any other. Whether trial usage bills at trial end is measured in the same probe.                                                                                                                                     |
+| Pricing copy in the app | None. Plan details are Partner Dashboard data; keeping in-app copies aligned is not worth the risk of getting them wrong.                                                                                                                                     |
 
 ### The probe
 
@@ -318,3 +318,84 @@ hosted plan page and the operator console, and the Partner API
 
 The answers pick the branch in section 5 and settle the trial question. The
 orders meter benefits from the same answers today.
+
+## 9. Probe results
+
+Run 2026-09-22 21:52 to 21:56 UTC on `sandbox-shop-01` against the live
+Partner API (`activeSubscription` with `usage { quantity cost }`) and the live
+App Events API on the existing `orders-synced` meter, driven from a script in
+the scratchpad and the hosted plan page in Chrome. The store began on Basic,
+inside its 14-day trial (`trialEndsAt` 2026-10-02T19:50Z, `currentBillingCycle`
+null), and ends on Basic, inside the trial.
+
+| Step | Action                             | `trialEndsAt`     | `currentBillingCycle`                        | `orders-synced` usage |
+| ---- | ---------------------------------- | ----------------- | -------------------------------------------- | --------------------- |
+| 0    | Baseline, Basic in trial           | 2026-10-02 19:50Z | null                                         | null                  |
+| 1    | Send 3 units, wait 20 s            | unchanged         | null                                         | null                  |
+| 2    | Switch to Pro on the hosted page   | null              | 2026-09-22 21:53:57Z to 2026-10-22 21:53:57Z | quantity 0, cost 0    |
+| 3    | Send 5 units, wait 30 s            | null              | unchanged                                    | quantity 5, cost 0    |
+| 4    | Switch to Basic on the hosted page | 2026-10-02 21:55Z | null                                         | null                  |
+
+Every plan item on the dev store reports `amountPerUnit` 0.0 on both tiers,
+which is the "$0 effective price" contract the docs describe; the quantities
+are real and the costs are not.
+
+What it settles:
+
+1. **A plan change is a new contract, and the meter starts at zero.** The
+   five units sent under Pro were not visible after the switch to Basic, and
+   the three units sent under the Basic trial were not visible after the
+   switch to Pro. Nothing carries over. For seats, rule A's cycle-start event
+   is exactly what is needed: on the first revalidation after the handle
+   changes, send the roster size, and the new plan's $0 band absorbs its
+   included seats. The reset branch in section 5 is the real one.
+2. **A paid-to-paid change starts a new 30-day cycle at the switch moment**,
+   not at the old cycle's boundary. Step 2 opened a cycle at 21:53:57Z, the
+   time of the approval. `ShopAgent.setBillingCycle` already handles a pushed
+   period; a changed `cycleStartAt` must count as a roll for the seat event.
+3. **Usage during a trial is not reported and does not carry into the paid
+   cycle.** `usage` is null while `currentBillingCycle` is null, and stayed
+   null 20 s after a send. When the trial ended (by the switch to Pro), the
+   cycle opened at quantity 0. Whether Shopify recorded the trial event as
+   billable and discarded it, or rejected it, could not be confirmed: the Dev
+   Dashboard is the only place that shows it and it was not reachable from
+   the probe session. Either way, seat events sent during a trial do not
+   bill. The first paid cycle needs its own cycle-start event, which the roll
+   rule above sends.
+4. **Switching away from a trialing plan ends the trial; switching back
+   resumes the remaining days.** Step 2 cleared `trialEndsAt`; step 4 set it
+   to 2026-10-02 21:55Z, ten days out, which is the unused remainder of the
+   original 14, not a fresh 14. The hosted page's Basic card still said "14
+   trial days" before the switch. Baton tracks none of this and does not need
+   to: `boundaryAt` follows whichever of the two fields is set.
+5. **Usage lands within 30 s** of a `202`. Reconciliation against
+   `usage.quantity` can run on the next revalidation without a delay.
+
+Not measured, and why it does not block:
+
+- **Paid-to-paid with no trial in play.** Basic's trial got in the way: every
+  switch to Basic on this store lands in the trial remainder until 2026-10-02.
+  The Pro contract's behavior (new cycle at the switch, meter at zero) is the
+  paid case, and there is no documented reason a switch into a post-trial
+  Basic would differ. Re-run steps 2 to 4 after 2026-10-02 if a second data
+  point is wanted; the script is one command per step.
+- **Event billability during the trial.** Dev Dashboard only.
+
+What changes in the design: nothing in the decisions of section 8. The
+reset branch is confirmed, so the plan for the seat meter is the cycle-start
+event on every roll, including the roll a plan change causes, plus the
+mid-cycle high-water event. No true-up logic beyond that.
+
+**The takeaway goes into one short JSDoc, as part of any implementation
+plan.** This doc will be deleted. On `Domain.ActiveSubscription`, a few
+lines: a plan change is a new contract, a new cycle from the switch moment,
+and a meter at zero; trial usage is not reported and does not carry. Dated,
+measured on the dev store. Other sites `{@link}` it.
+
+One consequence for the **orders meter today**, already handled: an order
+counted under Pro is not re-billed under Basic after a downgrade, and the
+local count must start over with the new cycle. `OrderRepository.setBillingCycle`
+treats a changed `cycleStartAt` as a new cycle and recounts `ordersThisCycle`
+from the rows since that start, so the redirect revalidation after a plan
+change resets the local count to match Shopify's zero. The seat meter's
+cycle-start event hangs off the same `changed` branch.
