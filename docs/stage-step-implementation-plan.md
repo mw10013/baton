@@ -1,0 +1,171 @@
+# Stage → step, step → task: implementation plan
+
+Hand-off plan for the rename decided in `docs/stage-step-concept-research.md` (Decisions, 2026-09-23). Read that doc's "What a row is today" and "Decisions" sections first. This plan is self-contained otherwise.
+
+## The change in one paragraph
+
+Today a workflow has **steps** (`WorkflowStep` rows, each with a name and team) grouped by an integer **stage**; steps in one stage run in parallel and the next stage waits for all of them. After this change a workflow has numbered **steps** (today's `stage`) and each step has one or more named **tasks** (today's step rows). A step with one task is the linear case and prints as the task name alone; the word "task" appears in merchant or member text only when a step has more than one. Order "stage" on the orders page (`ProductionState`, `OpenStageCounts`, the stage strip) is a different concept and is **not** renamed.
+
+Rename table:
+
+| Today                                                                                                                                                                                                                                        | After                                                                                                                                                                                                            |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| column `stage` (all three tables)                                                                                                                                                                                                            | column `step`                                                                                                                                                                                                    |
+| table `WorkflowStep` / `WorkflowDraftStep` / `WorkflowRunStep`                                                                                                                                                                               | `WorkflowTask` / `WorkflowDraftTask` / `WorkflowRunTask`                                                                                                                                                         |
+| `WorkflowStepId`, `WorkflowRunStepId`                                                                                                                                                                                                        | `WorkflowTaskId`, `WorkflowRunTaskId` (brands too)                                                                                                                                                               |
+| `StepName`, `StepInstructions`                                                                                                                                                                                                               | `TaskName`, `TaskInstructions`                                                                                                                                                                                   |
+| `StepWithTeamName`, `RunListStep`, `RunStepView`, `DoneItem.step`                                                                                                                                                                            | `TaskWithTeamName`, `RunListTask`, `RunTaskView`, `DoneItem.task`                                                                                                                                                |
+| `RunListItem.steps`, `.stageCount`                                                                                                                                                                                                           | `.tasks`, `.stepCount`                                                                                                                                                                                           |
+| `WorkflowSummaryRow.stepCount` (count of rows)                                                                                                                                                                                               | `.stepCount` (now `max(step)`, the count of steps)                                                                                                                                                               |
+| `AddStepInput`, `AddParallelStepInput.stage`                                                                                                                                                                                                 | `AddStepInput` (new last step with one task), `AddTaskInput.step`                                                                                                                                                |
+| `UpdateStepInput`, `MoveStepInput`, `SeparateStepInput`, `JoinStepInput`, `StepIdInput`, `StepDirection`                                                                                                                                     | `UpdateTaskInput`, `MoveTaskInput`, `SeparateTaskInput`, `JoinTaskInput`, `TaskIdInput`, `TaskDirection`                                                                                                         |
+| `StepResult`, `NoSteps`, `StepUnassigned`, `StepFinished`                                                                                                                                                                                    | `TaskResult`, `NoTasks`, `TaskUnassigned`, `TaskFinished`                                                                                                                                                        |
+| `Start/Complete/Uncomplete/UnstartStepInput`, `*StepCommand`, `runStepId`                                                                                                                                                                    | `*TaskInput`, `*TaskCommand`, `runTaskId`                                                                                                                                                                        |
+| `AssignRunStepTeamInput/Result`                                                                                                                                                                                                              | `AssignRunTaskTeamInput/Result`                                                                                                                                                                                  |
+| `TeamDeleteCounts.workflowSteps/draftSteps/openRunSteps`, `TeamStepCounts`                                                                                                                                                                   | `.workflowTasks/draftTasks/openRunTasks`, `TeamTaskCounts`                                                                                                                                                       |
+| `stepStartedBy/CompletedBy/ReopenedBy`, `isRunStepUnassigned`, `stepIsOnTeams`, `readySteps`, `stepActions`                                                                                                                                  | `taskStartedBy/…`, `isRunTaskUnassigned`, `taskIsOnTeams`, `readyTasks`, `taskActions`                                                                                                                           |
+| `lowestOpenStage`                                                                                                                                                                                                                            | `lowestOpenStep`                                                                                                                                                                                                 |
+| `SeedWorkflowStep.stage`                                                                                                                                                                                                                     | `SeedWorkflowTask.step`                                                                                                                                                                                          |
+| `StepNotFoundError`, `StageNotFoundError`, `NoStepsError`, `StepUnassignedError`, `StepNotReadyError`, `StepUndoBlockedError`, `StepFinishedError`                                                                                           | `TaskNotFoundError`, `StepNotFoundError`, `NoTasksError`, `TaskUnassignedError`, `TaskNotReadyError`, `TaskUndoBlockedError`, `TaskFinishedError`                                                                |
+| `WorkflowLayout.Placed.stage`, `stagesOf`                                                                                                                                                                                                    | `.step`, `stepsOf`                                                                                                                                                                                               |
+| `src/components/WorkflowStages.tsx`, `StageFlow`, `StepCard`, `StepBody`, `renderStageFooter`                                                                                                                                                | `WorkflowSteps.tsx`, `StepFlow`, `TaskCard`, `TaskBody`, `renderStepFooter`                                                                                                                                      |
+| ShopAgent callables `addStep`, `addParallelStep`, `updateStep`, `moveStep`, `separateStep`, `joinStep`, `removeStep`, `startStep`, `completeStep`, `uncompleteStep`, `unstartStep`, `merchant*Step`, `assignRunStepTeam`, `countStepsByTeam` | `addStep`, `addTask`, `updateTask`, `moveTask`, `separateTask`, `joinTask`, `removeTask`, `startTask`, `completeTask`, `uncompleteTask`, `unstartTask`, `merchant*Task`, `assignRunTaskTeam`, `countTasksByTeam` |
+
+Keep `position` as is: it is still the dense order of task rows across the workflow. Keep `WorkflowLimits.maxSteps` but it now caps tasks; rename to `maxTasks`.
+
+Note the swap: today's `StepNotFoundError` (a task row) becomes `TaskNotFoundError`, and today's `StageNotFoundError` becomes `StepNotFoundError`. Do the errors first and let the type checker find every site.
+
+## Order of work
+
+Do the phases in order. Run `pnpm typecheck && pnpm lint && pnpm test` at the end of each phase. Phases 1 to 3 will not typecheck until phase 3 is done; that is expected, the compiler is the checklist.
+
+### Phase 1: schema and domain
+
+1. `src/lib/ShopAgent.ts`, `initializeSchema`: rename the three tables, their indexes (`WorkflowTask_teamId_idx` etc.), and the `stage` column to `step`. Edit the existing `"1_initialize schema"` entry in place. **Do not add a migration entry.** The user resets all local state (see "When to reset").
+2. `src/lib/Domain.ts`: apply the rename table. Move the normative concept doc to the `WorkflowTask` schema's JSDoc, replacing the current `stage` paragraph on `WorkflowStep`:
+
+   > A workflow is a sequence of numbered steps. Each step holds one or more tasks, and a task is the unit a team starts and finishes: it has a name, a team, and instructions. Along `position` the `step` values are dense `1..m` and non-decreasing (`1 1 2 3 3`), so every task belongs to exactly one step, and a step of one task is the plain linear case. Step k is ready when every task of step k-1 is done. The invariant is owned by `WorkflowLayout`, which recomputes the whole layout on every edit. The two nouns exist because parallel work needs a wait that is not a task; the member and merchant UI print "task" only when a step has more than one, so a linear shop reads steps alone.
+
+   Every other JSDoc that restates the stage invariant (`ShopAgent.ts` model overview at the top of the class, `WorkflowLayout.ts` module doc, `readyWhere.ts`, `RunResult`, `undoBlockedBy`, `readyTasks`) is cut down to `{@link WorkflowTask}` plus whatever is specific to that site. Read each of the JSDoc locations listed in the inventory below and rewrite the prose in the new nouns; a stale "stage" in a comment is a defect.
+
+3. `src/lib/WorkflowLayout.ts`: `Placed.step`, `byStepThenPosition`, `stepsOf`, `appendParallel(layout, step, id)` → rename to `appendTask`. Module doc rewritten.
+4. `src/lib/readyWhere.ts`: `p.step < alias.step`, table `WorkflowRunTask`.
+
+### Phase 2: repositories and agent
+
+5. `src/lib/WorkflowRepository.ts`: errors, service methods, internals (`decodeTasks`, `findDraftTask`, `requireDraftTask`, `insertDraftTaskRow`, `writeTasks`, `countDraftTasks`, `requireStartableTasks`), every SQL statement. `stepCount` in `listWorkflows` becomes `(select coalesce(max(t.step), 0) from WorkflowTask t where t.workflowId = w.id)`. The seed path's local `stage` function and "stages must be dense" error text.
+6. `src/lib/WorkflowRunRepository.ts`: errors, methods, `stepCount` = `max(step)`, the insert column list, `readyTasks`, `requireTask`, `tasksForRuns`, `withTasks`.
+7. `src/lib/OrderRepository.ts`: the `WorkflowRunStep` joins around lines 954–1148 and the `attentionStep` fragment → `attentionTask`. Leave the order-stage code alone.
+8. `src/lib/ShopAgent.ts`: callables per the table, helper names (`taskResult`, `merchantTaskCommand`, `seedReadyTasks`), log messages (`task=${runTaskId}`, `step=${step}` in addTask/separate/join, annotations to match), `publishToTeams({ runTaskId })`.
+9. `src/lib/ShopAgentClient.ts`, `src/lib/teams.ts`, `src/lib/workflowShared.ts`, `src/lib/useMemberRunActions.ts`: identifiers and the user-facing strings listed under "Text" below.
+10. `src/routes/api.dev.seed.ts`: `SeedTaskByTeamName { name, team, step?, instructions? }`, `resolveTasks`, error text `workflow X task Y references unseeded team`.
+
+### Phase 3: UI
+
+11. Rename `src/components/WorkflowStages.tsx` → `WorkflowSteps.tsx`. `StepFlow` draws one block per step with the subdued label `Step n`, task cards under it. Unchanged layout otherwise.
+12. `src/routes/app.workflows.$workflowId_.edit.tsx`: mutations and state per the table. Text per "Text" below. The aside heading is `Step` when the selected task is alone in its step and `Task` when it shares the step (`sharesStep`).
+13. `src/routes/app.workflows.$workflowId.tsx`, `app.workflows.index.tsx`, `app.teams.$teamId.tsx`, `app.teams.index.tsx`, `src/components/WorkflowSwitch.tsx`, `UsedByCard.tsx`: identifiers and text.
+14. `src/routes/app.orders.$orderId.tsx`: `stageCount` helper → `stepCount`; `Domain.readyTasks`, `lowestOpenStep`; text per below. The JSDoc at ~308 and ~357 ("The word is `Step` though the count is of stages") is deleted, since the word is now true.
+15. `src/routes/shop.$shop.index.tsx`: the member row becomes
+
+    ```
+    #1002  Leather journal                            ···
+    Stamp monogram · Engrave initials · Step 2 of 3 · Engraving
+    ```
+
+    Line 1: `run.orderName` subdued, then the item title strong. Line 2: every ready task's name in `position` order, then `Step ${task.step} of ${item.stepCount}`, then the team under today's `showTeam` rule when all listed tasks share one team. When the listed tasks are on different teams, print each team after its task in parentheses and omit the trailing team: `Stamp monogram (Engraving) · Engrave initials (Finishing) · Step 2 of 3`. Remove the `+n` element. The flag badge and detail-line rules (`flagBody`, "In progress · name") stay as they are; `stepLine` is the new line 2 without the task names, used where those rules substitute it. Rewrite the `renderItem` JSDoc for the new layout. Menu items: unchanged logic, one item per ready task.
+
+16. `src/routes/shop.$shop.workflows.$runId.tsx`: group `run.tasks` by `step` with `WorkflowLayout.stepsOf`. Each group gets a subdued `Step n` label, then one card per task headed by the task name alone (drop the `${stage} ·` prefix). The waiting line becomes `${teamName} · waiting on step ${task.step - 1}`. Section heading stays `Steps`.
+
+### Phase 4: tests, e2e, seed data
+
+17. `test/integration/workflow-layout.test.ts`, `workflow-repository.test.ts`, `workflow-run-repository.test.ts`, `domain.test.ts`, `shop-agent-workflows.test.ts`, `shop-agent-callables.test.ts`, `member-runs-socket.test.ts`, `order-repository.test.ts` (run-task part only), `agent-socket.ts`, `shop-agent-orders-stream.test.ts`: rename identifiers, raw SQL tables and columns, and helper names (`seedStaged` → `seedStepped`, `runStep(stage…)` → `runTask(step…)`). Retitle every test so the title states the rule in the new nouns, e.g. "a task is ready when open and nothing in an earlier step is open; every task of a step is ready at once". Add one test titled with the row rule from item 15: "a member row lists every ready task by name, then step k of n, and names a team per task only when they differ" (a render test if one exists for the row, else a Domain-level test on a pure helper that builds line 2; extract that helper into `Domain` or `format.ts` so it can be tested).
+18. `e2e/seed.ts`: `SeedWorkflowTask { name, team, step?, instructions? }`. `e2e/fixture.ts`: `{ stage: N }` literals → `{ step: N }`, the `step` helper renamed `task`, comments.
+19. `e2e/workflows.spec.ts`, `member-runs.member.spec.ts`, `orders.spec.ts`, `teams.spec.ts`: asserted strings per "Text", `MINE_STATE` stays `"Step 1 of 1"`, retitle tests.
+20. `AGENTS.md` project bullet: no change needed unless it mentions steps; `docs/baton-architecture.html` has one mention, update it.
+
+### Phase 5: format and verify
+
+21. `pnpm fmt` repo-wide, keep every file it touches.
+22. `pnpm typecheck && pnpm lint && pnpm test`.
+23. Reset and reseed (below), then `npm run test:e2e --`.
+24. Look at the four pages in a browser (below).
+
+## Text
+
+Every user-visible string that changes. Search for the old string; do not rely on this list being complete, a missing site is recorded under Deviations.
+
+| Where                                  | Today                                                                                                                                                                                                                                   | After                                                                     |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Editor and detail, `StepFlow`          | `Stage 1`                                                                                                                                                                                                                               | `Step 1`                                                                  |
+| Editor, canvas footer                  | `Add a step`, `Add the first step`, `New step`, `Add step`                                                                                                                                                                              | unchanged                                                                 |
+| Editor, step footer                    | `Add a step that runs at the same time`                                                                                                                                                                                                 | `Add a task to this step`                                                 |
+| Editor, add form title                 | `New step, at the same time`                                                                                                                                                                                                            | `New task in step ${n}`                                                   |
+| Editor, panel heading                  | `Step`                                                                                                                                                                                                                                  | `Step` when alone in its step, `Task` when shared                         |
+| Editor, panel buttons                  | `Run on its own`, `Run alongside the previous step`                                                                                                                                                                                     | `Move to its own step`, `Join the previous step`                          |
+| Editor, panel                          | `Move earlier`, `Move later`                                                                                                                                                                                                            | unchanged                                                                 |
+| Editor, result                         | `That step no longer exists. Reload the page.`                                                                                                                                                                                          | `That task no longer exists. Reload the page.`                            |
+| Editor, limit                          | `A workflow can have at most ${limit} steps.`                                                                                                                                                                                           | `A workflow can have at most ${limit} tasks.`                             |
+| Editor, blockers (`workflowShared.ts`) | `No team on ${list}. Assign one before you apply.`, `That step` / `Those steps`, `Runs already open keep the steps they started with.`                                                                                                  | same with `task` / `tasks`                                                |
+| Switch (`WorkflowSwitch.tsx`)          | `Your steps are applied at the same time.`                                                                                                                                                                                              | `Your tasks are applied at the same time.`                                |
+| Workflows index                        | header `Steps`, badge `No steps`, `You'll add the steps next.`                                                                                                                                                                          | unchanged (count is now steps)                                            |
+| Teams                                  | `A team is who can work a step; assign one to each step…`, `Nobody is on this team, so its steps sit unclaimed…`, `teams.ts` warning strings                                                                                            | replace `step` with `task` in each                                        |
+| Member row                             | `#1002 Stamp monogram +1` / `Leather journal · Step 2 of 3 · Engraving`                                                                                                                                                                 | see item 15                                                               |
+| Member run page                        | `2 · Stamp monogram`                                                                                                                                                                                                                    | `Step 2` label, then `Stamp monogram`                                     |
+| Member run page                        | `${team} · waiting on step ${n-1}`                                                                                                                                                                                                      | unchanged wording                                                         |
+| Member actions (`useMemberRunActions`) | `This step belongs to another team.`, `This step or an earlier one changed just now, or this step is waiting on another team. Refresh.`, `${team} already started ${stepName}. Ask them.`                                               | `task` for `step` in each                                                 |
+| Order page                             | `${stage} ${name} · ${team}`                                                                                                                                                                                                            | `Step ${n} · ${name} · ${team}`                                           |
+| Order page                             | `${team} · stage ${n}`                                                                                                                                                                                                                  | `${team} · step ${n}`                                                     |
+| Order page                             | `That step changed just now, or a step in an earlier stage is still open.`                                                                                                                                                              | `That task changed just now, or a task in an earlier step is still open.` |
+| Order page                             | `it is off, has no steps, or has an unassigned step`                                                                                                                                                                                    | `it is off, has no tasks, or has an unassigned task`                      |
+| Order page                             | `Reopen its last step to change it.`, `That step no longer exists.`, `That step is already done and keeps its team.`, `${team} already started ${name}.`, `Can't reopen: ${name} (${team}) already started…`, `${name}: assign a team.` | `task` for `step`                                                         |
+| Order page                             | `${done} of ${total} steps done`, `Done · N steps`, `Step ${lowest} of ${count}`                                                                                                                                                        | these count steps already; keep, verify the counts use `step` not rows    |
+
+## When to restart the dev server and reset state
+
+- **After phase 1 item 1** (the schema edit) and before any browser check: stop the dev server, run `pnpm d1:reset` (it deletes `.wrangler`, which holds the Durable Object SQLite as well as D1), start `pnpm app:dev`, open the app in the dev store so it reinstalls and the DO is recreated, then `pnpm seed`. The seed POSTs `e2e/fixture.ts` to `/api/dev/seed`, so phase 4 item 18 must be done before seeding.
+- **Any later edit to `initializeSchema`**: same reset. Nothing migrates an existing DO.
+- **Other edits**: the Vite dev server hot-reloads routes and the worker. If a callable rename does not take effect in the browser, restart `pnpm app:dev`.
+- The E2E suite resets and seeds by itself through the fixture; run it only after the schema reset above so the DO is on the new schema.
+
+## Browser checks
+
+Use `pnpm playwright-cli --session="$(pnpm port)-stepplan"` or the Chrome MCP. Wait for `data-app-interactive` on Baton pages before clicking. Member pages need a member session; the e2e `member` project fixture shows how it is obtained.
+
+1. `/app/workflows/<Leather journal>/edit`: `Step 2` label with two task cards under it; select one, panel heading reads `Task`; `Add a task to this step` under that step; select a solo task, heading reads `Step`.
+2. `/shop/<shop>`: rows for a run whose current step has two ready tasks show both names and no `+1`; `Step 2 of 3`; item title on line 1.
+3. `/shop/<shop>/workflows/<runId>`: `Step 2` label, two cards, each with its own Done; waiting cards say `waiting on step 1`.
+4. `/app/orders/<orderId>`: Manage rows read `Step 2 · Stamp monogram · Engraving`.
+
+Take a screenshot of each and compare with the mock in item 15.
+
+## Inventory (from a full search on 2026-09-23)
+
+Files with rename sites, with the identifiers the search found. Unrelated "step"/"stage" uses to leave alone: `ProductionState`, `OpenStageCounts`, `OrdersFilterState`, `app.orders.index.tsx` stage strip, `OrderRepository.ts` order-stage comments, `OrdersSyncWorkflow.ts` and `orders-sync-workflow.test.ts` (Cloudflare `step.do`), `Shopify.ts` auth stages, `workflowShared.ts:120` "in step with", `ShopAgent.ts` "sidesteps", `app.workflows.$workflowId.tsx` "in one step".
+
+- `src/lib/Domain.ts`: everything in the rename table; JSDoc at the file head (`{@link readySteps}`), team delete (~357, ~397), `Workflow` concept (~879–942), draft and invariant (~969–997), `~1131`, `~1191`, seed (~1211–1226), move/separate/join (~1254–1271), `SeedProgressFields` (~1657), orders "ready step" (~1911–1991), actor accessors (~2489), `RunStatus` table (~2644–2702), ready rule (~2873–2899), `stageCount` (~3071), undo and readiness (~3164–3216), `RunStepView` and `stepActions` (~3374–3406), `~3478`, `~3517`, `~3605`.
+- `src/lib/WorkflowLayout.ts`: all of it.
+- `src/lib/ShopAgent.ts`: schema (~509–599), model overview JSDoc (~346–414), `~1120`, `~3094`, callables (~3107–3182, ~3450–3637, ~3730–3912, ~3993, ~4446), seed internals.
+- `src/lib/WorkflowRepository.ts`, `WorkflowRunRepository.ts`, `readyWhere.ts`, `OrderRepository.ts` (~954–1148, ~1608), `Repository.ts:620`, `workflowShared.ts`, `useMemberRunActions.ts`, `ShopAgentClient.ts`, `teams.ts`.
+- `src/components/WorkflowStages.tsx`, `WorkflowSwitch.tsx`, `UsedByCard.tsx`.
+- `src/routes/app.workflows.$workflowId_.edit.tsx` (JSDoc ~132–140, ~366–378, ~561–564, ~772–775), `app.workflows.$workflowId.tsx` (~90–99), `app.workflows.index.tsx` (~54, ~105), `app.orders.$orderId.tsx` (~308, ~357–374, ~395, ~908–910, string at ~983), `shop.$shop.index.tsx` (~305, ~452), `shop.$shop.workflows.$runId.tsx` (~137, ~186, ~396), `app.teams.$teamId.tsx`, `app.teams.index.tsx` (~150, ~251), `app.members.tsx:157`, `api.dev.seed.ts`.
+- `test/integration/`: `workflow-layout`, `workflow-repository`, `workflow-run-repository`, `domain`, `shop-agent-workflows`, `shop-agent-callables`, `member-runs-socket`, `order-repository`, `shop-agent-orders-stream`, `agent-socket.ts`.
+- `e2e/`: `fixture.ts`, `seed.ts`, `workflows.spec.ts`, `member-runs.member.spec.ts`, `orders.spec.ts`, `teams.spec.ts`.
+- `migrations/0001_init.sql`: comments only (lines ~18, ~42, ~46). Update the words; no schema change.
+- `docs/baton-architecture.html`: one mention.
+
+## Rules and tests
+
+Per `AGENTS.md`, each rule has a test whose title is the rule, and predicates are `Domain` functions (`pnpm lint` runs `scripts/rules-lint.ts`). Rules touched by this change, each needing a title in the new nouns:
+
+1. Task readiness: a task is ready when open and no task of an earlier step is open; every task of a step is ready together.
+2. Layout invariant: `step` is dense from 1 and non-decreasing along `position`; a step of one task is the linear case.
+3. Undo: reopening a task is refused once any task in a later step has started, naming the blocker.
+4. Member row line 2: every ready task by name, then step k of n, team per task only when they differ.
+5. Workflow summary `stepCount` is the number of steps, not tasks.
+
+## Deviations and issues
+
+The implementing agent records here anything it did differently from this plan, anything it could not do, and anything it found that the plan did not anticipate. One bullet each: what, why, and where.
+
+- (none yet)

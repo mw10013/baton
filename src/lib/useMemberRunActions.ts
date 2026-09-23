@@ -14,6 +14,10 @@ export const textOrNull = (value: string) =>
 
 const CONNECTING = "Still connecting. Try again in a moment.";
 
+/** A rejected write's message, for a modal that shows it under its own field rather than in {@link useMemberRunActions}'s `banner`. */
+export const errorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : "Couldn't save. Try again.";
+
 export const runResultMessage = Match.typeTags<
   Domain.RunResult,
   string | null
@@ -101,10 +105,10 @@ export const useMemberRunActions = ({
       call((stub) => stub.unstartStep({ runStepId })).then(settle),
   });
   const note = useMutation({
-    mutationFn: ({ runStepId, note }: { runStepId: string; note: string }) =>
-      call((stub) =>
-        stub.setStepNote({ runStepId, note: textOrNull(note) }),
-      ).then(settle),
+    mutationFn: ({ runId, note }: { runId: string; note: string }) =>
+      call((stub) => stub.setRunNote({ runId, note: textOrNull(note) })).then(
+        settle,
+      ),
   });
   const block = useMutation({
     mutationFn: ({ runId, reason }: { runId: string; reason: string }) =>
@@ -140,9 +144,17 @@ export const useMemberRunActions = ({
    */
   const pending =
     mutations.some((mutation) => mutation.isPending) || !identified;
+  /**
+   * The refusal the page shows, from the one-tap actions only. The three
+   * text writes (note, block, reason) go through a modal that keeps its own
+   * refusal under the field the person is looking at; feeding them here too
+   * would print the same sentence twice, once behind the modal and again
+   * after it closes, until the next write cleared it.
+   */
+  const bannerMutations = [start, complete, uncomplete, unstart, dismiss];
   const banner =
-    mutations.find((mutation) => mutation.error)?.error?.message ??
-    mutations
+    bannerMutations.find((mutation) => mutation.error)?.error?.message ??
+    bannerMutations
       .map((mutation) => mutation.data && runResultMessage(mutation.data))
       .find((message) => typeof message === "string") ??
     null;

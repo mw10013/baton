@@ -543,9 +543,7 @@ function RouteComponent() {
                     value={entry.step.completedAt ?? 0}
                     format="time"
                   />
-                  {entry.step.note === null
-                    ? ""
-                    : ` · ${Domain.stepNoteLine(entry.step)}`}
+                  {entry.run.note === null ? "" : ` · Note: ${entry.run.note}`}
                 </s-text>
               </div>
             </s-stack>

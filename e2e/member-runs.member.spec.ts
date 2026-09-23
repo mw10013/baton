@@ -1174,8 +1174,8 @@ test("a blocked undo offers nothing and explains nothing, on the row or the work
 });
 
 /**
- * Two shapes the work page's step card holds to, neither of which any other
- * assertion here would catch.
+ * Two shapes the work page holds to, neither of which any other assertion
+ * here would catch.
  *
  * **The badge states the step's state and the line under it never repeats
  * the word.** A `Ready` badge over a line reading "Ready" printed the same
@@ -1184,13 +1184,13 @@ test("a blocked undo offers nothing and explains nothing, on the row or the work
  * names with only a weight between them, which reads as one noun phrase. The
  * team leads the subdued line instead and the header holds one name.
  *
- * **The note editor takes the card's button row with it.** Save note is a
- * primary; leaving Done mounted beside it put two primaries in one card and
- * asked the reader which one commits the typing. It is also what makes the
- * field's visible label load-bearing — the `Add note` button that named it is
- * one of the buttons the editor just replaced.
+ * **The note is the run's, and it opens in a modal.** One Note section under
+ * the item, with one `Add note`; the step cards carry no note button. The
+ * modal opens with the current text so appending is the easy path, and past
+ * `Domain.noteCountFrom(Domain.RUN_NOTE_MAX_LENGTH)` (1800) it counts down to
+ * the 2000 cap. Nothing says so below the threshold.
  */
-test("a step card says its state once and its note editor replaces the card's buttons", async ({
+test("the run note opens in a modal and the step cards carry no note button", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -1214,74 +1214,40 @@ test("a step card says its state once and its note editor replaces the card's bu
     page.locator("s-page").getByRole("link", { name: config.shop }),
   ).toHaveCount(0);
 
+  const steps = page.locator('s-section[accessibilityLabel="Steps"]');
+  await expect(steps.getByRole("button", { name: "Add note" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Add note" })).toHaveCount(1);
+
+  const noteModal = page.locator("s-modal#run-note");
   await clickWhenEnabled(page.getByRole("button", { name: "Add note" }));
-  await expect(
-    page.getByRole("button", { name: "Done", exact: true }),
-  ).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Start" })).toHaveCount(0);
+  await expect(noteModal.getByRole("textbox", { name: "Note" })).toBeVisible();
+  await noteModal.getByRole("textbox", { name: "Note" }).fill("x".repeat(1799));
+  await expect(noteModal.getByText("characters left")).toBeHidden();
+  await noteModal.getByRole("textbox", { name: "Note" }).fill("x".repeat(1800));
+  await expect(noteModal.getByText("200 characters left")).toBeVisible();
+  await noteModal
+    .getByRole("textbox", { name: "Note" })
+    .fill("Left edge is rough");
+  await clickWhenEnabled(
+    noteModal.getByRole("button", { name: "Save", exact: true }),
+  );
+  const note = page.locator('s-section[accessibilityLabel="Note"]');
+  await expect(note.getByText("Left edge is rough")).toBeVisible();
   await expect(page.getByRole("button", { name: "Add note" })).toHaveCount(0);
-  /* The label is the only thing naming the field now, so it is visible
-     rather than `exclusive` and the placeholder that restated the button is
-     gone. */
-  await expect(page.getByLabel("Note")).toBeVisible();
-  await expect(page.getByPlaceholder("Note about this step")).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Cancel" }).click();
-  await expect(page.getByRole("button", { name: "Start" })).toBeVisible();
-});
-
-/**
- * **An open editor takes its container's buttons with it** (`editor` in
- * `src/routes/shop.$shop.work.$runId.tsx`). The step card above proves the
- * note half; this is the other two containers.
- *
- * The banner's Unblock used to stay mounted beside Save reason, which put two
- * commits in one box a stride apart and asked the reader which one takes the
- * typing. Lifting a hold mid-edit now costs Cancel then Unblock, the same two
- * presses a step's Undo costs while its note editor is open.
- *
- * The second half is the reach, which stops at the container: the Block
- * editor belongs to the page header, so it takes the page's Block action and
- * leaves every step card below it working.
- */
-test("an open editor takes its container's buttons with it", async ({
-  browser,
-}) => {
-  const config = seedConfig();
-  await seedRuns(config, { cutMembers: [MAKER], keepIdentities: true });
-  const page = await openRuns(browser, config, makerState, "upNext");
-  await rowLink(page, RING_ORDER).click();
-  await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
-
+  /* Edit opens on the saved text, so appending is the path of least
+     resistance. */
+  await clickWhenEnabled(note.getByRole("button", { name: "Edit" }));
+  await expect(noteModal.getByRole("textbox", { name: "Note" })).toHaveValue(
+    "Left edge is rough",
+  );
+  await noteModal
+    .getByRole("textbox", { name: "Note" })
+    .fill("Left edge is rough\nSanded it — J");
   await clickWhenEnabled(
-    page.getByRole("button", { name: "Block", exact: true }),
+    noteModal.getByRole("button", { name: "Save", exact: true }),
   );
-  await expect(page.getByLabel("Reason")).toBeVisible();
-  /* The step card is a different container, so it kept its whole row. */
-  await expect(page.getByRole("button", { name: "Start" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Add note" })).toBeVisible();
-
-  await page.getByLabel("Reason").fill("Crest file missing");
-  await clickWhenEnabled(
-    page.getByRole("button", { name: "Block", exact: true }),
-  );
-  await expect(page.locator('s-banner[heading="Blocked"]')).toBeVisible();
-  await expect(page.getByRole("button", { name: "Unblock" })).toBeVisible();
-
-  /* The banner is the reason editor's container, so Unblock goes with Edit
-     reason and the hold offers Save reason and Cancel and nothing else. */
-  await clickWhenEnabled(page.getByRole("button", { name: "Edit reason" }));
-  await expect(page.getByRole("button", { name: "Unblock" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Edit reason" })).toHaveCount(
-    0,
-  );
-  await expect(page.getByRole("button", { name: "Save reason" })).toBeVisible();
-
-  /* Cancel hands the banner its buttons back and the hold never moved. */
-  await page.getByRole("button", { name: "Cancel" }).click();
-  await expect(page.getByRole("button", { name: "Unblock" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Edit reason" })).toBeVisible();
-  await expect(page.getByText("Crest file missing")).toBeVisible();
+  await expect(note.getByText("Sanded it — J")).toBeVisible();
 });
 
 /**
@@ -1307,37 +1273,53 @@ test("the work page shows the step history and takes a note, a block, and Done",
     page.getByText(`${PACK_TEAM} · waiting on step 1`),
   ).toBeVisible();
 
+  const noteModal = page.locator("s-modal#run-note");
   await clickWhenEnabled(page.getByRole("button", { name: "Add note" }));
-  /* The cap announces itself before the write refuses it: past
-     `Domain.NOTE_COUNT_FROM` (800) the field counts down to
-     `Domain.STEP_NOTE_MAX_LENGTH` (1000). Nothing says so below the
-     threshold, which is the other half of the rule. */
-  await page.getByLabel("Note").fill("x".repeat(799));
-  await expect(page.getByText("characters left")).toBeHidden();
-  await page.getByLabel("Note").fill("x".repeat(950));
-  await expect(page.getByText("50 characters left")).toBeVisible();
-  await page.getByLabel("Note").fill("Left edge is rough");
-  await clickWhenEnabled(page.getByRole("button", { name: "Save note" }));
-  await expect(page.getByText("Note: Left edge is rough")).toBeVisible();
+  await noteModal
+    .getByRole("textbox", { name: "Note" })
+    .fill("Left edge is rough");
+  await clickWhenEnabled(
+    noteModal.getByRole("button", { name: "Save", exact: true }),
+  );
+  await expect(page.getByText("Left edge is rough")).toBeVisible();
 
   /* The block, and what a block means: the banner heading names the flag, the
      body is the reason with no prefix, and Done is gone until the hold is
-     lifted. Edit reason rewrites the text in place — two lines, kept as
-     typed — without touching the hold. */
-  await clickWhenEnabled(page.getByRole("button", { name: "Block" }));
-  await page.getByLabel("Reason").fill("Waiting on stones");
-  await clickWhenEnabled(page.getByRole("button", { name: "Block" }));
+     lifted. Block and the reason edit share one modal: Edit reopens it under
+     "Block reason" on the text there now, and Save rewrites it — two lines,
+     kept as typed — without touching the hold. */
+  const blockModal = page.locator("s-modal#run-block");
+  await clickWhenEnabled(
+    page.getByRole("button", { name: "Block", exact: true }),
+  );
+  await expect(blockModal.getByText(`Block ${BAND_ORDER}?`)).toBeVisible();
+  await blockModal
+    .getByRole("textbox", { name: "Reason" })
+    .fill("Waiting on stones");
+  await clickWhenEnabled(
+    blockModal.getByRole("button", { name: "Block", exact: true }),
+  );
   await expect(page.locator('s-banner[heading="Blocked"]')).toBeVisible();
   await expect(page.getByText("Waiting on stones")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Done", exact: true }),
   ).toHaveCount(0);
 
-  await clickWhenEnabled(page.getByRole("button", { name: "Edit reason" }));
-  await page
-    .getByLabel("Reason")
+  await clickWhenEnabled(
+    page
+      .locator('s-banner[heading="Blocked"]')
+      .getByRole("button", { name: "Edit", exact: true }),
+  );
+  await expect(blockModal.getByText("Block reason")).toBeVisible();
+  await expect(blockModal.getByRole("textbox", { name: "Reason" })).toHaveValue(
+    "Waiting on stones",
+  );
+  await blockModal
+    .getByRole("textbox", { name: "Reason" })
     .fill("Waiting on stones\nCalled the supplier");
-  await clickWhenEnabled(page.getByRole("button", { name: "Save reason" }));
+  await clickWhenEnabled(
+    blockModal.getByRole("button", { name: "Save", exact: true }),
+  );
   await expect(page.getByText("Called the supplier")).toBeVisible();
   await expect(page.locator('s-banner[heading="Blocked"]')).toBeVisible();
 

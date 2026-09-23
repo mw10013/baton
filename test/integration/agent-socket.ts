@@ -204,8 +204,8 @@ export const memberActions = (socket: AgentSocket) => ({
     socket.call<Domain.RunResult>("startStep", input),
   completeStep: (input: typeof Domain.CompleteStepInput.Encoded) =>
     socket.call<Domain.RunResult>("completeStep", input),
-  setStepNote: (input: typeof Domain.SetStepNoteInput.Encoded) =>
-    socket.call<Domain.RunResult>("setStepNote", input),
+  setRunNote: (input: typeof Domain.SetRunNoteInput.Encoded) =>
+    socket.call<Domain.RunResult>("setRunNote", input),
   blockRun: (input: typeof Domain.BlockRunInput.Encoded) =>
     socket.call<Domain.RunResult>("blockRun", input),
   dismissFlag: (input: typeof Domain.DismissFlagInput.Encoded) =>
@@ -223,8 +223,8 @@ export const merchantActions = (socket: AgentSocket) => ({
     socket.call<Domain.RunResult>("merchantCompleteStep", input),
   uncompleteStep: (input: typeof Domain.UncompleteStepInput.Encoded) =>
     socket.call<Domain.RunResult>("merchantUncompleteStep", input),
-  setStepNote: (input: typeof Domain.SetStepNoteInput.Encoded) =>
-    socket.call<Domain.RunResult>("merchantSetStepNote", input),
+  setRunNote: (input: typeof Domain.SetRunNoteInput.Encoded) =>
+    socket.call<Domain.RunResult>("merchantSetRunNote", input),
   blockRun: (input: typeof Domain.BlockRunInput.Encoded) =>
     socket.call<Domain.RunResult>("merchantBlockRun", input),
   dismissFlag: (input: typeof Domain.RunIdInput.Encoded) =>

@@ -122,11 +122,9 @@ function CapacityTile({
  * without a string to keep in sync. Manage plan is one click from every one of
  * them.
  *
- * The banners above the section are the states that need a *remedy* named —
- * syncing stopped. The steady-state numbers are not
- * banners: the meters carry them, which is why `QuotaBanners` runs here with
- * its overage banner suppressed. It says the same thing the orders tile
- * already says, and a banner that is present on the ordinary day is a banner
+ * The banners above the section are the states that need a *remedy* named
+ * ({@link QuotaBanners}). The steady-state numbers are not banners: the meters
+ * carry them, and a banner that is present on the ordinary day is a banner
  * nobody reads on the bad one.
  */
 function RouteComponent() {
@@ -146,12 +144,7 @@ function RouteComponent() {
 
   return (
     <s-page heading="Baton" inlineSize="large">
-      <QuotaBanners
-        usage={usage}
-        ordersPerCycle={entitlements.ordersPerCycle}
-        action={<ManagePlanButton url={managePlanUrl} />}
-        suppressOverage
-      />
+      <QuotaBanners usage={usage} />
       <s-section
         heading="Usage and capacity"
         accessibilityLabel="Orders and member capacity"

@@ -32,6 +32,13 @@ export const formatTime = (value: string | number) =>
     minute: "2-digit",
   });
 
+/**
+ * A Shopify status enum as the admin prints it: `PARTIALLY_REFUNDED` →
+ * `Partially refunded`. Shopify's own UI never shows the raw constant.
+ */
+export const formatStatus = (value: string) =>
+  value.charAt(0) + value.slice(1).toLowerCase().replaceAll("_", " ");
+
 export const formatNumber = (value: number) =>
   value.toLocaleString("en-US", { maximumFractionDigits: 0 });
 

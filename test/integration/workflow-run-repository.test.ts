@@ -71,7 +71,8 @@ const TEAM_B = { id: teamId("team-b"), name: teamName("Team B") };
 const TEAM_C = { id: teamId("team-c"), name: teamName("Team C") };
 const TEAMS = [TEAM_A, TEAM_B, TEAM_C];
 const instructions = Schema.decodeUnknownSync(Domain.StepInstructions);
-const note = Schema.decodeUnknownSync(Domain.StepNote);
+const note = Schema.decodeUnknownSync(Domain.RunNote);
+const reason = Schema.decodeUnknownSync(Domain.BlockReason);
 
 /** Nobody's list in particular: a reader who has started nothing, so `tierOf` never answers "mine". */
 const VIEWER = emailOf("viewer@example.com");
@@ -1638,7 +1639,7 @@ describe("WorkflowRunRepository steps, run list, flags, delete", () => {
           runId: theirs.run.id,
           actor: maker,
           teamIds: [TEAM_A.id],
-          reason: note("Waiting on the customer"),
+          reason: reason("Waiting on the customer"),
         });
 
         // The counts come back whatever tab is asked for, so one read per
@@ -2226,37 +2227,27 @@ describe("WorkflowRunRepository steps, run list, flags, delete", () => {
       }),
     ));
 
-  it("setStepNote writes, overwrites, clears; allowed on a done step and on a done run; refused on a cancelled run", () =>
+  it("setRunNote writes, overwrites, clears; allowed on a done run; refused on a cancelled run", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedStaged;
         const runs = yield* WorkflowRunRepository;
         const detail = yield* stagedRun();
-        const artwork = detail.steps[0]?.id ?? "";
-        const set = (value: Domain.StepNote | null, teamIds = [TEAM_A.id]) =>
-          runs.setStepNote({
-            runStepId: artwork,
-            actor: memberActor("m1"),
-            teamIds,
-            note: value,
-          });
-        const stepNote = () =>
+        const set = (value: Domain.RunNote | null, teamIds = [TEAM_A.id]) =>
+          runs.setRunNote({ runId: detail.run.id, teamIds, note: value });
+        const runNote = () =>
           Effect.map(
             runs.getRun({ runId: detail.run.id }),
-            (run) => Option.getOrThrow(run).steps[0]?.note,
+            (run) => Option.getOrThrow(run).run.note,
           );
-        const wrongTeam = yield* set(note("x"), [TEAM_B.id]).pipe(Effect.flip);
-        strictEqual(wrongTeam._tag, "RunNotAllowedError");
         yield* set(note("first"));
-        strictEqual(yield* stepNote(), "first");
+        strictEqual(yield* runNote(), "first");
         yield* set(note("second"));
-        strictEqual(yield* stepNote(), "second");
-        yield* complete(detail, 1, [TEAM_A.id]);
-        yield* set(note("after done"));
-        strictEqual(yield* stepNote(), "after done");
+        strictEqual(yield* runNote(), "second");
         yield* set(null);
-        strictEqual(yield* stepNote(), null);
+        strictEqual(yield* runNote(), null);
         // The whole run done: a note is a record, not work, so it still lands.
+        yield* complete(detail, 1, [TEAM_A.id]);
         yield* complete(detail, 2, [TEAM_B.id]);
         yield* complete(detail, 3, [TEAM_C.id]);
         yield* complete(detail, 4, [TEAM_A.id]);
@@ -2266,7 +2257,7 @@ describe("WorkflowRunRepository steps, run list, flags, delete", () => {
           "done",
         );
         yield* set(note("noticed after the last Done"));
-        strictEqual(yield* stepNote(), "noticed after the last Done");
+        strictEqual(yield* runNote(), "noticed after the last Done");
         // A done run is not cancelled from here; undo the last step first.
         yield* runs.uncompleteStep({
           runStepId: detail.steps[3]?.id ?? "",
@@ -2276,6 +2267,34 @@ describe("WorkflowRunRepository steps, run list, flags, delete", () => {
         yield* runs.cancelRun({ runId: detail.run.id });
         const terminal = yield* set(note("nope")).pipe(Effect.flip);
         strictEqual(terminal._tag, "RunTerminalError");
+      }),
+    ));
+
+  it("setRunNote admits a member whose team has any step of the run, ready or not, and refuses one whose team has none", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seedStaged;
+        const runs = yield* WorkflowRunRepository;
+        const detail = yield* stagedRun();
+        // Team C's step is two stages out: nothing of theirs is ready.
+        yield* runs.setRunNote({
+          runId: detail.run.id,
+          teamIds: [TEAM_C.id],
+          note: note("heads up"),
+        });
+        strictEqual(
+          Option.getOrThrow(yield* runs.getRun({ runId: detail.run.id })).run
+            .note,
+          "heads up",
+        );
+        const outsider = yield* runs
+          .setRunNote({
+            runId: detail.run.id,
+            teamIds: [teamId("team-z")],
+            note: note("x"),
+          })
+          .pipe(Effect.flip);
+        strictEqual(outsider._tag, "RunNotAllowedError");
       }),
     ));
 
@@ -2304,9 +2323,8 @@ describe("WorkflowRunRepository steps, run list, flags, delete", () => {
         strictEqual(start._tag, "RunFlaggedError");
         const done = yield* complete(detail, 2, [TEAM_B.id]).pipe(Effect.flip);
         strictEqual(done._tag, "RunFlaggedError");
-        yield* runs.setStepNote({
-          runStepId: materials,
-          actor: memberActor("m2"),
+        yield* runs.setRunNote({
+          runId: detail.run.id,
           teamIds: [TEAM_B.id],
           note: note("waiting on stock"),
         });
@@ -2344,7 +2362,7 @@ describe("WorkflowRunRepository steps, run list, flags, delete", () => {
           runId: detail.run.id,
           actor: memberActor("m1"),
           teamIds: [TEAM_A.id],
-          reason: note("Out of chain"),
+          reason: reason("Out of chain"),
         });
         const blocked = Option.getOrThrow(
           yield* runs.getRun({ runId: detail.run.id }),
@@ -2421,7 +2439,7 @@ describe("WorkflowRunRepository steps, run list, flags, delete", () => {
           .setBlockReason({
             runId: detail.run.id,
             teamIds: [TEAM_B.id],
-            reason: note("too early"),
+            reason: reason("too early"),
           })
           .pipe(Effect.flip);
         // Its own tag: the caller's teams were fine, the hold was the thing
@@ -2432,7 +2450,7 @@ describe("WorkflowRunRepository steps, run list, flags, delete", () => {
           runId: detail.run.id,
           actor: memberActor("m1"),
           teamIds: [TEAM_A.id],
-          reason: note("Waiting on stones"),
+          reason: reason("Waiting on stones"),
         });
         const by = {
           role: "member",
@@ -2444,7 +2462,7 @@ describe("WorkflowRunRepository steps, run list, flags, delete", () => {
           .setBlockReason({
             runId: detail.run.id,
             teamIds: [TEAM_C.id],
-            reason: note("nope"),
+            reason: reason("nope"),
           })
           .pipe(Effect.flip);
         strictEqual(wrongTeam._tag, "RunNotAllowedError");
@@ -2453,7 +2471,7 @@ describe("WorkflowRunRepository steps, run list, flags, delete", () => {
         yield* runs.setBlockReason({
           runId: detail.run.id,
           teamIds: [TEAM_B.id],
-          reason: note("Waiting on stones\nCalled the supplier"),
+          reason: reason("Waiting on stones\nCalled the supplier"),
         });
         deepStrictEqual<unknown>(yield* flagDetail(), {
           reason: "Waiting on stones\nCalled the supplier",
@@ -2673,42 +2691,29 @@ describe("WorkflowRunRepository steps, run list, flags, delete", () => {
       }),
     ));
 
-  it("setStepNote records who wrote the note, and clearing it clears the attribution", () =>
+  it("setRunNote records no author: last write wins, the same rule as setBlockReason", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedStaged;
         const runs = yield* WorkflowRunRepository;
         const detail = yield* stagedRun();
-        const artwork = detail.steps[0]?.id ?? "";
-        const stepNow = () =>
-          Effect.map(runs.getRun({ runId: detail.run.id }), (run) => {
-            const [step] = Option.getOrThrow(run).steps;
-            if (step === undefined) throw new Error("no step");
-            return step;
-          });
-        yield* runs.setStepNote({
-          runStepId: artwork,
-          actor: memberActor("m1"),
+        yield* runs.setRunNote({
+          runId: detail.run.id,
           teamIds: [TEAM_A.id],
           note: note("scuffed"),
         });
-        strictEqual((yield* stepNow()).noteByRole, "member");
-        yield* runs.setStepNote({
-          runStepId: artwork,
-          actor: MERCHANT,
+        yield* runs.setRunNote({
+          runId: detail.run.id,
           note: note("customer approved"),
         });
-        const merchantNote = yield* stepNow();
-        strictEqual(merchantNote.noteByRole, "merchant");
-        strictEqual(merchantNote.note, "customer approved");
-        yield* runs.setStepNote({
-          runStepId: artwork,
-          actor: MERCHANT,
-          note: null,
-        });
-        const cleared = yield* stepNow();
-        strictEqual(cleared.note, null);
-        strictEqual(cleared.noteByRole, null);
+        const { run } = Option.getOrThrow(
+          yield* runs.getRun({ runId: detail.run.id }),
+        );
+        strictEqual(run.note, "customer approved");
+        deepStrictEqual(
+          Object.keys(run).filter((key) => key.startsWith("note")),
+          ["note"],
+        );
       }),
     ));
 
@@ -2721,7 +2726,7 @@ describe("WorkflowRunRepository steps, run list, flags, delete", () => {
         yield* runs.blockRun({
           runId: detail.run.id,
           actor: MERCHANT,
-          reason: note("waiting on the customer"),
+          reason: reason("waiting on the customer"),
         });
         const blocked = Option.getOrThrow(
           yield* runs.getRun({ runId: detail.run.id }),
@@ -2911,7 +2916,7 @@ describe("WorkflowRunRepository steps, run list, flags, delete", () => {
           runId: stillOpen.run.id,
           actor: memberActor("m1"),
           teamIds: [TEAM_C.id],
-          reason: note("waiting on stock"),
+          reason: reason("waiting on stock"),
         });
         yield* runs.cancelRun({ runId: stillOpen.run.id });
         strictEqual(

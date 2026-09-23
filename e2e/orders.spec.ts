@@ -388,13 +388,16 @@ test("the merchant cannot reopen a step whose next stage is done", async ({
 });
 
 /**
- * Block from the disclosure, unblock from the strip the block raises on the
- * card. The reason is merchant prose, so it renders as its own paragraph in
- * that strip rather than inside the badge, and the strip names the step the run
- * is stuck on. `Unblock` is offered in both places — the strip and the still-open
- * disclosure — so the click takes the first of the two.
+ * Block from the disclosure, edit the reason and unblock from the strip the
+ * block raises on the card. Block and the reason edit share one modal, keyed
+ * on whether the run is blocked. The reason is merchant prose, so it renders
+ * as its own paragraph in that strip rather than inside the badge, and the
+ * strip names the step the run is stuck on. `Unblock` is offered in both
+ * places — the strip and the still-open disclosure — so the click takes the
+ * first of the two. The run note is added from the disclosure and shows on
+ * the card.
  */
-test("the merchant blocks a run with a reason and unblocks it", async ({
+test("the merchant blocks a run with a reason, edits it, notes the run, and unblocks it", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -424,18 +427,50 @@ test("the merchant blocks a run with a reason and unblocks it", async ({
   await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
   await frame.getByRole("link", { name: "#9303" }).click();
   await frame.getByRole("button", { name: "Manage" }).click();
+  /* No reason field on the card: the only one is in the closed modal. */
+  await expect(frame.getByRole("textbox", { name: "Reason" })).toBeHidden();
 
-  await frame.getByLabel("Reason").fill("Out of walnut stock");
-  await frame.getByRole("button", { name: "Block" }).click();
+  const blockModal = frame.locator("s-modal#run-block");
+  await frame.getByRole("button", { name: "Block", exact: true }).click();
+  await expect(blockModal.getByText("Block #9303?")).toBeVisible();
+  await blockModal
+    .getByRole("textbox", { name: "Reason" })
+    .fill("Out of walnut stock");
+  await blockModal.getByRole("button", { name: "Block", exact: true }).click();
   await expect(
     frame.getByText("Blocked \u00B7 Cut", { exact: true }),
   ).toBeVisible();
   await expect(frame.getByText("Out of walnut stock")).toBeVisible();
   await expect(frame.getByText("Blocked by Merchant")).toBeVisible();
 
+  await frame.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(blockModal.getByText("Block reason")).toBeVisible();
+  await expect(blockModal.getByRole("textbox", { name: "Reason" })).toHaveValue(
+    "Out of walnut stock",
+  );
+  await blockModal
+    .getByRole("textbox", { name: "Reason" })
+    .fill("Walnut arrives Friday");
+  await blockModal.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(frame.getByText("Walnut arrives Friday")).toBeVisible();
+  await expect(frame.getByText("Blocked by Merchant")).toBeVisible();
+
+  const noteModal = frame.locator("s-modal#run-note");
+  await frame.getByRole("button", { name: "Add note", exact: true }).click();
+  await noteModal
+    .getByRole("textbox", { name: "Note" })
+    .fill("Customer asked for gift wrap");
+  await noteModal.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(frame.getByText("Customer asked for gift wrap")).toBeVisible();
+  await expect(
+    frame.getByRole("button", { name: "Add note", exact: true }),
+  ).toHaveCount(0);
+
   await frame.getByRole("button", { name: "Unblock" }).first().click();
   await expect(frame.getByText("Blocked by Merchant")).toBeHidden();
-  await expect(frame.getByRole("button", { name: "Block" })).toBeVisible();
+  await expect(
+    frame.getByRole("button", { name: "Block", exact: true }),
+  ).toBeVisible();
 });
 
 /**

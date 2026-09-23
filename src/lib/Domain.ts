@@ -814,25 +814,35 @@ export const StepInstructions = trimmedText("StepInstructions", 2000);
 export type StepInstructions = typeof StepInstructions.Type;
 
 /**
- * The cap {@link StepNote} enforces, exported so a field can count down to it.
- * A decode failure mid-paragraph is the failure mode: the merchant has typed a
- * thousand characters before anything refuses them.
+ * The caps {@link RunNote} and {@link BlockReason} enforce, exported so a
+ * field can count down to them. A decode failure mid-paragraph is the failure
+ * mode: the writer has typed a page before anything refuses it. The run note
+ * gets twice the room because it accumulates: people append to it over the
+ * life of the job, where a block reason describes one hold.
  */
-export const STEP_NOTE_MAX_LENGTH = 1000;
+export const RUN_NOTE_MAX_LENGTH = 2000;
+export const BLOCK_REASON_MAX_LENGTH = 1000;
 
 /**
- * Where a note or reason field starts counting down to
- * {@link STEP_NOTE_MAX_LENGTH}. Late, because a counter on an empty field is a
- * rule nobody asked about; early enough that the cap announces itself while
- * there is still a paragraph's room to land in. Shared by the merchant's step
- * notes and the member's notes and block reasons so one number governs every
- * field the same text can be typed into.
+ * Where a note or reason field starts counting down to its cap: 200
+ * characters before it. Late, because a counter on an empty field is a rule
+ * nobody asked about; early enough that the cap announces itself while there
+ * is still a paragraph's room to land in. One rule for every free-text field,
+ * whatever its cap.
  */
-export const NOTE_COUNT_FROM = 800;
+export const noteCountFrom = (maxLength: number) => maxLength - 200;
 
-/** Worker-written text about one run's step (or a block reason). Same trimming; `null` clears. */
-export const StepNote = trimmedText("StepNote", STEP_NOTE_MAX_LENGTH);
-export type StepNote = typeof StepNote.Type;
+/**
+ * The run's free-text note: one field per run, anyone with access may write
+ * it, appended to by convention. Trimmed like {@link StepName}; `null` clears.
+ * The write rule is on {@link SetRunNoteCommand}.
+ */
+export const RunNote = trimmedText("RunNote", RUN_NOTE_MAX_LENGTH);
+export type RunNote = typeof RunNote.Type;
+
+/** Why a run is blocked, in `RunFlagDetail.reason`. Same trimming; `null` blocks without one. */
+export const BlockReason = trimmedText("BlockReason", BLOCK_REASON_MAX_LENGTH);
+export type BlockReason = typeof BlockReason.Type;
 
 /**
  * The workflow's one tag: its identity in a form a product can carry. Every
@@ -1668,7 +1678,7 @@ const SeedProgressFields = {
    */
   byMerchant: Schema.optionalKey(Schema.Boolean),
   /** After `advance`, flag the run `blocked` with this reason, the state a worker's Block leaves. */
-  blocked: Schema.optionalKey(StepNote),
+  blocked: Schema.optionalKey(BlockReason),
 } as const;
 
 /**
@@ -2312,19 +2322,17 @@ export interface LoginLoaderData {
 }
 
 /**
- * `/app/orders` (`app.orders.index`): the first page, plus the quota context
- * the page's banners need.
+ * `/app/orders` (`app.orders.index`): the first page, plus the usage the
+ * page's limit banners need.
  *
- * `view` is what the socket replaces on every order push; `usage` and
- * `ordersPerCycle` are loader-only and deliberately do not move under the
- * socket. A quota is a billing-period fact and a plan an even slower one —
- * refreshing either on every webhook would be a read per push for a number that
- * changes on a scale of days.
+ * `view` is what the socket replaces on every order push; `usage` is
+ * loader-only and deliberately does not move under the socket. It is a
+ * billing-period fact, and refreshing it on every webhook would be a read per
+ * push for a number that changes on a scale of days.
  */
 export interface OrdersIndexLoaderData {
   readonly view: OrdersView;
   readonly usage: ShopUsage;
-  readonly ordersPerCycle: number;
 }
 
 /** `/app/orders/$orderId` (`app.orders.$orderId`); `null` is not stored. */
@@ -2646,7 +2654,7 @@ export type RunSource = typeof RunSource.Type;
  * | action                          | gate                                  |
  * | ------------------------------- | ------------------------------------- |
  * | Start, Done                     | {@link runIsOpen}, and the step ready |
- * | note on a step                  | {@link runIsLive}: a note is a record, not work |
+ * | note on the run                 | {@link runIsLive}: a note is a record, not work |
  * | Block                           | {@link runIsOpen}, and a ready step   |
  * | Put back (clear a step's Start) | {@link runIsOpen}, and the step started and ready |
  * | assign a step's team            | {@link runIsOpen}, and the step open  |
@@ -2681,7 +2689,7 @@ export type RunStatus = typeof RunStatus.Type;
 export const runIsUnstarted = (run: { readonly status: RunStatus }) =>
   run.status === "pending";
 
-/** Work can still be recorded: Start, Done, notes, Block, team assignment, cancel. */
+/** Work can still be recorded: Start, Done, Block, team assignment, cancel. */
 export const runIsOpen = (run: { readonly status: RunStatus }) =>
   run.status === "pending" || run.status === "active";
 
@@ -2762,7 +2770,7 @@ export type RunFlag = typeof RunFlag.Type;
 /**
  * A flag means stop: Start, Done and Put back are refused (`RunFlaggedError`)
  * and the pages hide them. Undo and the note are not stopped — Undo takes
- * work back rather than doing more, and a held step is the one somebody needs
+ * work back rather than doing more, and a held run is the one somebody needs
  * to write on. Put back is refused for the reason on
  * `WorkflowRunRepository.unstartStep`. The one action a flag itself allows is lifting it: Unblock for
  * {@link runIsBlocked}, Dismiss for a reconcile flag ({@link flagIsReconcile}).
@@ -2806,7 +2814,7 @@ export const flagIsReconcile = (flag: RunFlag) => flag !== "blocked";
 export const RunFlagDetail = Schema.Struct({
   from: Schema.optionalKey(Schema.Number),
   to: Schema.optionalKey(Schema.Number),
-  reason: Schema.optionalKey(StepNote),
+  reason: Schema.optionalKey(BlockReason),
   /**
    * Who blocked the run. Snapshotted like the step actors, so a deleted
    * member still reads as who; absent on reconcile flags, which have nobody.
@@ -2854,6 +2862,7 @@ export const WorkflowRun = Schema.Struct({
   flag: Schema.NullOr(RunFlag),
   flagAt: Schema.NullOr(Schema.Number),
   flagDetail: Schema.NullOr(Schema.fromJsonString(RunFlagDetail)),
+  note: Schema.NullOr(RunNote),
   createdAt: Schema.Number,
   updatedAt: Schema.Number,
   cancelledAt: Schema.NullOr(Schema.Number),
@@ -2905,13 +2914,11 @@ export const WorkflowRunStep = Schema.Struct({
   completedAt: Schema.NullOr(Schema.Number),
   completedBy: Schema.NullOr(MemberId),
   completedByEmail: Schema.NullOr(Email),
-  note: Schema.NullOr(StepNote),
   startedByRole: Schema.NullOr(ConnectionRole),
   completedByRole: Schema.NullOr(ConnectionRole),
   reopenedAt: Schema.NullOr(Schema.Number),
   reopenedByRole: Schema.NullOr(ConnectionRole),
   reopenedByEmail: Schema.NullOr(Email),
-  noteByRole: Schema.NullOr(ConnectionRole),
 });
 export type WorkflowRunStep = typeof WorkflowRunStep.Type;
 
@@ -2961,19 +2968,6 @@ export const stepReopenedBy = (
     : { role: "member", email: step.reopenedByEmail };
 };
 
-/**
- * A step's note as every screen prints it. The merchant is named because a
- * worker did not expect them; a member's note is unprefixed, since on the
- * run list and the work page the author is a teammate by default and
- * "Note (Member)" would say nothing a reader did not assume.
- */
-export const stepNoteLine = (
-  step: Pick<WorkflowRunStep, "noteByRole" | "note">,
-) =>
-  step.noteByRole === "merchant"
-    ? `Note (Merchant): ${step.note ?? ""}`
-    : `Note: ${step.note ?? ""}`;
-
 /** An open run step whose team is gone: `teamId` null, or an id the roster no longer carries. */
 export const isRunStepUnassigned = (
   step: WorkflowRunStep,
@@ -2981,6 +2975,29 @@ export const isRunStepUnassigned = (
 ) =>
   step.completedAt === null &&
   (step.teamId === null || !teams.some((team) => team.id === step.teamId));
+
+/**
+ * The step is on one of the caller's teams. An unassigned step (`teamId`
+ * null) is on nobody's list, so no member's teams match it. The merchant
+ * never asks: their `teamIds` is undefined and every guard skips this.
+ */
+export const stepIsOnTeams = (
+  step: { readonly teamId: string | null },
+  teamIds: readonly string[],
+) => step.teamId !== null && teamIds.includes(step.teamId);
+
+/**
+ * **A member's access to a run is any step of it on one of their teams**,
+ * ready or not, done or not. It is what shows them the run page
+ * (`WorkflowRunRepository.getRunView`) and what lets them write the run's
+ * note (`setRunNote`), the one write that is not about a particular step.
+ * Acting on a step needs that step's team ({@link stepIsOnTeams}); Block
+ * needs a ready one, because a hold is placed by whoever is stuck.
+ */
+export const runIsVisibleTo = (
+  steps: readonly { readonly teamId: string | null }[],
+  teamIds: readonly string[],
+) => steps.some((step) => stepIsOnTeams(step, teamIds));
 
 /** A run is complete in itself: its steps are copies, and nothing here refers back to the definition. */
 export const WorkflowRunDetail = Schema.Struct({
@@ -2998,8 +3015,8 @@ export type WorkflowRunDetail = typeof WorkflowRunDetail.Type;
  * Two groups of columns are omitted rather than carried as nulls. The four
  * `completed*` ones can never say anything here: readiness is `completedAt is
  * null` (`readyWhere`) and Undo clears the whole slot, so on a list step
- * every one of them is null by construction. The rest — instructions, the
- * note and its role, the reopened slot — say something, but only on the work
+ * every one of them is null by construction. The rest — instructions and the
+ * reopened slot — say something, but only on the work
  * page: a row shows the step's name and one state clause, and everything
  * behind that is one tap away. Either way they are fields per step on every
  * SSR paint and every refetch.
@@ -3014,8 +3031,6 @@ export const RunListStep = Schema.Struct(
     "completedByEmail",
     "completedByRole",
     "instructions",
-    "note",
-    "noteByRole",
     "reopenedAt",
     "reopenedByRole",
     "reopenedByEmail",
@@ -3033,7 +3048,8 @@ export type RunListStep = typeof RunListStep.Type;
  * What goes is everything only the work page reads — the workflow's name,
  * the order id, the variant, the SKU, the timestamps, and
  * `customAttributes`, which is the one that matters: a JSON blob on every row
- * of every read, parsed on arrival, to render nothing.
+ * of every read, parsed on arrival, to render nothing. The run `note` stays:
+ * the row prints it.
  */
 export const RunListRun = Schema.Struct(
   Struct.omit(WorkflowRun.fields, [
@@ -3372,9 +3388,9 @@ export type RunStepView = typeof RunStepView.Type;
  * What a member may do to a step, in one place for the work page and the
  * run list's Done tier so the buttons and the writes cannot disagree. Rules: the
  * {@link RunStatus} table for status (Start, Done and Put back need
- * {@link runIsOpen}; Undo and the note need {@link runIsLive}); the step's
+ * {@link runIsOpen}; Undo needs {@link runIsLive}); the step's
  * team must be one of `teamIds`, as `WorkflowRunRepository.requireActionable`
- * requires; a flag stops Start, Done and Put back but not Undo or the note
+ * requires; a flag stops Start, Done and Put back but not Undo
  * ({@link runIsFlagged}); Undo is offered on a finished step and carries its
  * downstream blocker ({@link undoBlockedBy}) when there is one.
  *
@@ -3403,9 +3419,8 @@ export const stepActions = (
   readonly putBack: boolean;
   /** `null` when Undo is not offered; otherwise the blocker, `null` meaning the button. */
   readonly undo: { readonly blockedBy: UndoBlocker | null } | null;
-  readonly note: boolean;
 } => {
-  const mine = step.teamId !== null && teamIds.includes(step.teamId);
+  const mine = stepIsOnTeams(step, teamIds);
   const live = mine && runIsLive(run);
   const ready =
     live &&
@@ -3421,7 +3436,6 @@ export const stepActions = (
       live && step.completedAt !== null
         ? { blockedBy: step.undoBlockedBy }
         : null,
-    note: live,
   };
 };
 
@@ -3438,7 +3452,8 @@ export const stepActions = (
 export const RunView = Schema.Struct({
   run: WorkflowRun,
   steps: Schema.Array(RunStepView),
-  note: Schema.NullOr(Schema.String),
+  /** Shopify's order note, read-only here; the run's own note is `run.note`. */
+  orderNote: Schema.NullOr(Schema.String),
 });
 export type RunView = typeof RunView.Type;
 
@@ -3549,17 +3564,17 @@ export type UncompleteStepInput = typeof UncompleteStepInput.Type;
 export const UnstartStepInput = CompleteStepInput;
 export type UnstartStepInput = typeof UnstartStepInput.Type;
 
-/** `note: null` clears. */
-export const SetStepNoteInput = Schema.Struct({
-  runStepId: BoundedId,
-  note: Schema.NullOr(StepNote),
+/** `note: null` clears. The rule is on {@link SetRunNoteCommand}. */
+export const SetRunNoteInput = Schema.Struct({
+  runId: BoundedId,
+  note: Schema.NullOr(RunNote),
 });
-export type SetStepNoteInput = typeof SetStepNoteInput.Type;
+export type SetRunNoteInput = typeof SetRunNoteInput.Type;
 
 /** `reason: null` blocks without a reason. */
 export const BlockRunInput = Schema.Struct({
   runId: BoundedId,
-  reason: Schema.NullOr(StepNote),
+  reason: Schema.NullOr(BlockReason),
 });
 export type BlockRunInput = typeof BlockRunInput.Type;
 
@@ -3573,7 +3588,7 @@ export type BlockRunInput = typeof BlockRunInput.Type;
  */
 export const SetBlockReasonInput = Schema.Struct({
   runId: BoundedId,
-  reason: Schema.NullOr(StepNote),
+  reason: Schema.NullOr(BlockReason),
 });
 export type SetBlockReasonInput = typeof SetBlockReasonInput.Type;
 
@@ -3605,18 +3620,24 @@ export interface CompleteStepCommand {
   readonly teamIds?: readonly string[] | undefined;
 }
 
-export interface SetStepNoteCommand {
-  readonly runStepId: string;
-  readonly actor: Actor;
+/**
+ * No `actor`: the run note is one field anyone with access may write, last
+ * write wins, and nothing records who wrote it. Recording the editor would be
+ * an attribution the UI never shows; people who want their lines attributed
+ * sign them, which is enough for a shop where everyone knows everyone. Every
+ * free-text field on a run follows this rule ({@link SetBlockReasonCommand}).
+ */
+export interface SetRunNoteCommand {
+  readonly runId: string;
   readonly teamIds?: readonly string[] | undefined;
-  readonly note: StepNote | null;
+  readonly note: RunNote | null;
 }
 
 export interface BlockRunCommand {
   readonly runId: string;
   readonly actor: Actor;
   readonly teamIds?: readonly string[] | undefined;
-  readonly reason: StepNote | null;
+  readonly reason: BlockReason | null;
 }
 
 export interface DismissFlagCommand {
@@ -3625,15 +3646,13 @@ export interface DismissFlagCommand {
 }
 
 /**
- * No `actor`: the reason is one field anyone with access may write, last
- * write wins, and `flagDetail.by` stays whoever set the hold. Recording the
- * editor would be an attribution the UI never shows and a second person to
- * explain on a card with no room for one.
+ * No `actor`, by the rule on {@link SetRunNoteCommand}. `flagDetail.by` stays
+ * whoever set the hold.
  */
 export interface SetBlockReasonCommand {
   readonly runId: string;
   readonly teamIds?: readonly string[] | undefined;
-  readonly reason: StepNote | null;
+  readonly reason: BlockReason | null;
 }
 
 /** The actor lands in the step's `reopened` slot: undo is a fact worth showing, and the next Done clears it. */

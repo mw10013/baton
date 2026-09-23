@@ -7,14 +7,16 @@ import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
+import { BlockModal, RunNoteModal } from "@/components/RunTextModals";
 import * as Domain from "@/lib/Domain";
-import { formatNumber } from "@/lib/format";
+import { formatNumber, formatStatus } from "@/lib/format";
 import { adminOrderUrl, useResourceLinkTarget } from "@/lib/orderLinks";
 import { hideModal, showModal } from "@/lib/polarisModal";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
+import { errorMessage } from "@/lib/useMemberRunActions";
 import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
 
 const orderQueryKey = (shop: string, legacyId: string) =>
@@ -71,13 +73,12 @@ const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
   Ok: () => null,
   NotFound: () => "That workflow run no longer exists.",
   NotAllowed: () => "Not allowed.",
-  /* No merchant button sets a block reason yet (`merchantSetBlockReason` has
-     no surface); the tag is here because the union is one union. */
+  /* The reason editor, when a worker unblocked the run while it was open. */
   NotBlocked: () => "That workflow run is no longer blocked.",
   /* Also Put back on a step a worker finished or put back just now. */
   NotReady: () =>
     "That step changed just now, or a step in an earlier stage is still open.",
-  /* Every merchant control on a done run is a note or Reopen, and both are
+  /* Every merchant control on a done run is the note or Reopen, and both are
      allowed there (`Domain.RunStatus`); the page offers nothing on a
      cancelled run but Undo cancel. So a Terminal here is a cancel that landed
      between the render and the click. */
@@ -123,12 +124,18 @@ type Intervention =
     }
   | {
       readonly kind: "note";
-      readonly runStepId: string;
+      readonly runId: string;
       readonly note: string | null;
       readonly toast: string;
     }
   | {
       readonly kind: "block";
+      readonly runId: string;
+      readonly reason: string | null;
+      readonly toast: string;
+    }
+  | {
+      readonly kind: "blockReason";
       readonly runId: string;
       readonly reason: string | null;
       readonly toast: string;
@@ -157,11 +164,10 @@ const RUN_FLAG_LABEL = {
   order_fulfilled: "Already shipped in Shopify",
 } as const satisfies Record<Domain.RunFlag, string>;
 
-/** Teams named in the order summary before it collapses to "+N more", as the index's cell caps its own. */
-const WAITING_ON_LIMIT = 3;
-
 /** The one confirmation on this page: replacing a live run that has work on it. */
 const CHANGE_WORKFLOW_MODAL = "change-workflow";
+const NOTE_MODAL = "run-note";
+const BLOCK_MODAL = "run-block";
 
 /**
  * `Engraving, Rush and Gift`. Not `Intl.ListFormat`: every other sentence on
@@ -217,7 +223,7 @@ const changeWarning = (
 /**
  * A flag as a badge: a closed vocabulary plus, where the flag names a thing,
  * that thing. `blocked` is deliberately absent from the second branch — its
- * reason is merchant prose up to `Domain.StepNote`'s 1000 characters, and a
+ * reason is merchant prose up to `Domain.BLOCK_REASON_MAX_LENGTH` characters, and a
  * badge sized for one word stretches the row until the run's own controls
  * leave the viewport. The reason renders in `blockedStrip` instead.
  */
@@ -305,21 +311,22 @@ const stageCount = (steps: readonly Domain.WorkflowRunStep[]) =>
 
 /**
  * A run's blocked state as a wrapping block rather than a badge. The reason is
- * merchant prose up to `Domain.StepNote`'s 1000 characters; a badge is sized for
+ * merchant prose up to `Domain.BLOCK_REASON_MAX_LENGTH` characters; a badge is sized for
  * a closed vocabulary and a long reason there stretches the row until the run's
  * own controls leave the viewport. The ready step is named because `blocked` is
  * a run-level flag (`merchantBlockRun` takes a `runId`) and on a multi-stage run
  * "blocked" alone does not say what is stuck.
  *
- * `unblock` arrives as a node rather than a callback because the button needs
- * the page's `identified`, `busy` and mutation, none of which belong to a
- * module-level render helper — the same shape `stepTrail` uses for its picker.
- * It is offered here as well as inside Manage: a merchant who opened the
- * disclosure should not have to close it to unblock.
+ * `actions` (Edit, which opens the Block modal on the reason, and Unblock)
+ * arrive as a node rather than a callback because the buttons need the page's
+ * `identified`, `busy` and mutation, none of which belong to a module-level
+ * render helper — the same shape `stepTrail` uses for its picker. Unblock is
+ * offered here as well as inside Manage: a merchant who opened the disclosure
+ * should not have to close it to unblock.
  */
 const blockedStrip = (
   { run, steps }: Domain.WorkflowRunDetail,
-  unblock: React.ReactNode,
+  actions: React.ReactNode,
 ) => {
   const stuck = Domain.readySteps(run, steps)
     .map((step) => step.name)
@@ -339,7 +346,7 @@ const blockedStrip = (
         {reason !== undefined && <s-paragraph>{reason}</s-paragraph>}
         <s-stack direction="inline" gap="small-300" alignItems="center">
           <s-text color="subdued">{blockedLine(run)}</s-text>
-          {unblock}
+          {actions}
         </s-stack>
       </s-stack>
     </s-box>
@@ -558,15 +565,12 @@ function RouteComponent() {
   const [managing, setManaging] = React.useState<ReadonlySet<string>>(
     new Set(),
   );
-  /** Which step's note editor is open and its draft; one at a time, as on the work page. */
-  const [noteDraft, setNoteDraft] = React.useState<{
-    runStepId: string;
-    note: string;
-  } | null>(null);
-  /** The Block reason per run, kept while the disclosure is open. */
-  const [blockReason, setBlockReason] = React.useState<Record<string, string>>(
-    {},
-  );
+  /**
+   * The run the Note and Block modals are about. Each modal is one element at
+   * page level, as the Change confirmation is, so the click that opens one
+   * has to say which run it meant.
+   */
+  const [modalRunId, setModalRunId] = React.useState<string | null>(null);
 
   const {
     data: detail,
@@ -633,7 +637,7 @@ function RouteComponent() {
   });
 
   /**
-   * Every merchant write against a run, through one mutation: the five
+   * Every merchant write against a run, through one mutation: the
    * `merchant*` callables plus cancel and un-cancel, which the header used to
    * send on their own. A refused write raises no banner — the row should not
    * have offered it, so the honest answer is the toast plus the re-render the
@@ -649,10 +653,11 @@ function RouteComponent() {
             reopen: ({ runStepId }) =>
               stub.merchantUncompleteStep({ runStepId }),
             putBack: ({ runStepId }) => stub.merchantUnstartStep({ runStepId }),
-            note: ({ runStepId, note }) =>
-              stub.merchantSetStepNote({ runStepId, note }),
+            note: ({ runId, note }) => stub.merchantSetRunNote({ runId, note }),
             block: ({ runId, reason }) =>
               stub.merchantBlockRun({ runId, reason }),
+            blockReason: ({ runId, reason }) =>
+              stub.merchantSetBlockReason({ runId, reason }),
             unblock: ({ runId }) => stub.merchantDismissFlag({ runId }),
             cancel: ({ runId }) => stub.cancelRun({ runId }),
             uncancel: ({ runId }) => stub.uncancelRun({ runId }),
@@ -743,65 +748,6 @@ function RouteComponent() {
   /** See `changeOpen`: same read-through guard, for the same reason. */
   const changingRun = (run: Domain.WorkflowRun) =>
     changeOpen.has(run.id) && runs.some((other) => other.run.id === run.id);
-  /**
-   * The order in one line, above the cards: `3 items \u00B7 1 blocked \u00B7 1 made
-   * \u00B7 waiting on Engraving`. It earns its place only when the cards below
-   * cannot be taken in at a glance — more than one item, or something needing
-   * attention — because on a healthy one-item order it would restate the single
-   * card under it, which is what the deleted "<Workflow> started for N items"
-   * line did. Every clause drops at zero, so the line never pads itself with
-   * "0 blocked".
-   *
-   * `waiting on` is the orders index's own predicate restated over the runs in
-   * hand (`ReadyWhere.readyWhere`, which `OrderRepository` runs in SQL): the
-   * teams with a ready step on an open run. A team that no
-   * longer exists is an attention state, not somebody holding the order, so an
-   * unassigned step contributes nothing here — the card's own `Assign team`
-   * row is where that is answered. Nor does a blocked run: the team cannot
-   * move it, and `<B> blocked` is its clause.
-   */
-  const orderSummary = (() => {
-    const flagged = runs.some(({ run }) => Domain.runIsFlagged(run));
-    const unassigned = runs.some(
-      ({ run, steps }) =>
-        Domain.runIsOpen(run) &&
-        steps.some((step) => Domain.isRunStepUnassigned(step, teams)),
-    );
-    if (lineItems.length <= 1 && !flagged && !unassigned) return null;
-    const blocked = lineItems.filter((item) =>
-      runs.some(
-        ({ run }) => run.lineItemId === item.id && Domain.runIsBlocked(run),
-      ),
-    ).length;
-    const made = lineItems.filter((item) => {
-      const live = runs.filter(
-        ({ run }) => run.lineItemId === item.id && Domain.runIsLive(run),
-      );
-      return live.length > 0 && live.every(({ run }) => !Domain.runIsOpen(run));
-    }).length;
-    const waitingOn = [
-      ...new Set(
-        runs
-          .filter(({ run }) => !Domain.runIsBlocked(run))
-          .flatMap(({ run, steps }) =>
-            Domain.readySteps(run, steps)
-              .filter((step) => !Domain.isRunStepUnassigned(step, teams))
-              .map((step) => step.teamName),
-          ),
-      ),
-    ].toSorted((a, b) => a.localeCompare(b));
-    const extra = waitingOn.length - WAITING_ON_LIMIT;
-    return [
-      `${formatNumber(lineItems.length)} item${lineItems.length === 1 ? "" : "s"}`,
-      ...(blocked > 0 ? [`${formatNumber(blocked)} blocked`] : []),
-      ...(made > 0 ? [`${formatNumber(made)} made`] : []),
-      ...(waitingOn.length > 0
-        ? [
-            `waiting on ${waitingOn.slice(0, WAITING_ON_LIMIT).join(", ")}${extra > 0 ? ` +${formatNumber(extra)} more` : ""}`,
-          ]
-        : []),
-    ].join(" \u00B7 ");
-  })();
   const busy =
     attachMutation.isPending ||
     interveneMutation.isPending ||
@@ -809,6 +755,21 @@ function RouteComponent() {
   const intervene = (input: Intervention) => {
     interveneMutation.mutate(input);
   };
+  /** A modal's write: `null` closes it, a message stays under its field. */
+  const interveneFromModal = (input: Intervention) =>
+    interveneMutation
+      .mutateAsync(input)
+      .then((result) =>
+        result._tag === "Ok"
+          ? null
+          : (runResultMessage(result) ?? "Nothing changed."),
+      )
+      .catch(errorMessage);
+  const openModal = (modalId: string, run: Domain.WorkflowRun) => {
+    setModalRunId(run.id);
+    showModal(modalId);
+  };
+  const modalRun = runs.find(({ run }) => run.id === modalRunId)?.run ?? null;
 
   /**
    * A team picker and an Assign button for one open step, rendered both on the
@@ -875,74 +836,53 @@ function RouteComponent() {
     </s-button>
   );
 
-  /**
-   * The note editor for one Manage row. It opens with the step's current text
-   * already in the field, and that is the whole of the safeguard against a
-   * merchant overwriting a worker: a step has one note, anyone with access to
-   * the step may write it, and last write wins silently — so the only warning
-   * anybody gets is seeing what they are about to destroy. Never open this
-   * empty.
-   *
-   * The count appears late, at `Domain.NOTE_COUNT_FROM`, so the cap
-   * (`Domain.STEP_NOTE_MAX_LENGTH`) announces itself before the write refuses
-   * a paragraph that is already typed. The member's fields count from the same
-   * number: the same text is typed into both.
-   *
-   * The label is visible and there is no placeholder, matching the member's
-   * step note. `noteButton` is mounted only while this editor is closed, so
-   * the control that named the field is gone the moment the field appears; a
-   * hidden label would leave the placeholder as the field's only name, and a
-   * placeholder stops being a name at the first keystroke. "Note about this
-   * step" said nothing the button had not said anyway.
-   */
-  const noteEditor = (step: Domain.WorkflowRunStep, draft: string) => (
-    <s-stack gap="small-300">
-      <s-text-field
-        label="Note"
-        value={draft}
-        disabled={!identified || busy}
-        onInput={(event) => {
-          setNoteDraft({ runStepId: step.id, note: event.currentTarget.value });
-        }}
-      />
-      <s-stack direction="inline" gap="small-300" alignItems="center">
-        <s-button
-          variant="secondary"
-          disabled={!identified || busy}
-          onClick={() => {
-            interveneMutation.mutate(
-              {
-                kind: "note",
-                runStepId: step.id,
-                note: draft === "" ? null : draft,
-                toast: "Note saved",
-              },
-              {
-                onSuccess: (result) => {
-                  if (result._tag === "Ok") setNoteDraft(null);
-                },
-              },
-            );
-          }}
-        >
-          Save note
-        </s-button>
-        <s-button
-          variant="tertiary"
-          onClick={() => {
-            setNoteDraft(null);
-          }}
-        >
-          Cancel
-        </s-button>
-        {draft.length >= Domain.NOTE_COUNT_FROM && (
-          <s-text color="subdued">
-            {`${formatNumber(Domain.STEP_NOTE_MAX_LENGTH - draft.length)} characters left`}
-          </s-text>
-        )}
-      </s-stack>
-    </s-stack>
+  /** Opens the Block modal on the standing reason: the strip's Edit. */
+  const editReasonButton = (run: Domain.WorkflowRun) => (
+    <s-button
+      variant="secondary"
+      disabled={!identified || busy}
+      onClick={() => {
+        openModal(BLOCK_MODAL, run);
+      }}
+    >
+      Edit
+    </s-button>
   );
+
+  /**
+   * The run's note on its card, as a wrapping paragraph in a quiet block: it
+   * is up to `Domain.RUN_NOTE_MAX_LENGTH` characters of prose, and on one
+   * line it truncates or stretches the row. Shown at rest, not inside
+   * Manage, because it is what anyone opening the order should read; an
+   * empty note shows nothing here and is added from Manage.
+   */
+  const noteBlock = (run: Domain.WorkflowRun) =>
+    run.note === null || run.note.length === 0 ? null : (
+      <s-box background="subdued" borderRadius="base" padding="small-300">
+        <s-stack gap="small-300">
+          <s-stack
+            direction="inline"
+            justifyContent="space-between"
+            alignItems="center"
+            gap="small-300"
+          >
+            <s-text type="strong">Note</s-text>
+            {Domain.runIsLive(run) && (
+              <s-button
+                variant="tertiary"
+                disabled={!identified || busy}
+                onClick={() => {
+                  openModal(NOTE_MODAL, run);
+                }}
+              >
+                Edit
+              </s-button>
+            )}
+          </s-stack>
+          <s-paragraph>{run.note}</s-paragraph>
+        </s-stack>
+      </s-box>
+    );
 
   /**
    * The Manage disclosure: one row per step in position order, then the
@@ -958,7 +898,7 @@ function RouteComponent() {
    * object for a verdict per step would only send back what is already here.
    * There is no Start: the merchant records work, they do not claim it.
    *
-   * No action here is primary — not `Mark done`, not `Block`, not `Save note`.
+   * No action here is primary — not `Mark done`, not `Block`, not `Add note`.
    * Every write on this page is a merchant reaching past a worker — the bench
    * claims and completes steps on the work page — and a primary button is the
    * grammar of "this is what you came here to do", which is false here.
@@ -967,8 +907,12 @@ function RouteComponent() {
    *
    * A step with no state to change renders as one line rather than a bordered
    * box: on a three-stage run the boxes are most of the disclosure's height,
-   * and a step two stages out has nothing to offer but its note and its team.
-   * Both ride along on that line, so nothing this disclosure offered is lost.
+   * and a step two stages out has nothing to offer but its team, which rides
+   * along on that line.
+   *
+   * The note is the run's, not a step's: it shows on the card
+   * (`noteBlock`), and `Add note` joins the run-level row here while it is
+   * empty.
    */
   const manageRows = (
     { run, steps }: Domain.WorkflowRunDetail,
@@ -985,10 +929,12 @@ function RouteComponent() {
     } | null,
   ) => {
     const open = Domain.runIsOpen(run);
+    /** A note is a record, not work: a done run takes one (`Domain.RunStatus`). */
+    const addNote =
+      Domain.runIsLive(run) && (run.note === null || run.note.length === 0);
     const readyIds = new Set(
       Domain.readySteps(run, steps).map((step) => step.id),
     );
-    const reason = blockReason[run.id] ?? "";
     /* A subdued panel so the disclosure reads as a drawer the header's Manage
        button owns, not as more card. The step boxes inside invert the usual
        emphasis: the ready step is the one white box on grey, the rest blend. */
@@ -1002,39 +948,6 @@ function RouteComponent() {
                 ? null
                 : Domain.undoBlockedBy(step, steps);
             const reopenedBy = Domain.stepReopenedBy(step);
-            const draft =
-              noteDraft?.runStepId === step.id ? noteDraft.note : null;
-            /**
-             * The note as a wrapping paragraph in a quiet block, not an `s-text`
-             * beside the step's own name: it is up to
-             * `Domain.STEP_NOTE_MAX_LENGTH` characters of prose, and on one line
-             * it truncates or stretches the row.
-             */
-            const note = draft === null && step.note !== null && (
-              <s-box
-                background="subdued"
-                borderRadius="base"
-                padding="small-300"
-              >
-                <s-paragraph color="subdued">
-                  {Domain.stepNoteLine(step)}
-                </s-paragraph>
-              </s-box>
-            );
-            const noteButton = draft === null && (
-              <s-button
-                variant="tertiary"
-                disabled={!identified || busy}
-                onClick={() => {
-                  setNoteDraft({
-                    runStepId: step.id,
-                    note: step.note ?? "",
-                  });
-                }}
-              >
-                {step.note === null ? "Note" : "Edit note"}
-              </s-button>
-            );
             if (!ready && step.completedAt === null)
               return (
                 <s-stack key={step.id} gap="small-300">
@@ -1047,11 +960,8 @@ function RouteComponent() {
                       {`${String(step.stage)} ${step.name} \u00B7 ${step.teamName} \u00B7 `}
                       {manageStateLine(step, false)}
                     </s-text>
-                    {noteButton}
                     {open && assignTeam(step.id)}
                   </s-stack>
-                  {note}
-                  {draft !== null && noteEditor(step, draft)}
                 </s-stack>
               );
             return (
@@ -1085,8 +995,6 @@ function RouteComponent() {
                       />
                     </s-text>
                   )}
-                  {note}
-                  {draft !== null && noteEditor(step, draft)}
                   <s-stack direction="inline" gap="base" alignItems="center">
                     {/* A flag means stop, for the merchant too: the write
                         refuses Done on a flagged run (`Domain.runIsFlagged`),
@@ -1165,7 +1073,6 @@ function RouteComponent() {
                           {`Can\u2019t reopen: ${blocker.stepName} (${blocker.teamName}) already started \u2014 put it back or reopen it first`}
                         </s-text>
                       ))}
-                    {noteButton}
                   </s-stack>
                   {open && step.completedAt === null && assignTeam(step.id)}
                 </s-stack>
@@ -1173,80 +1080,62 @@ function RouteComponent() {
             );
           })}
           {/* The step list is one object and the run's own actions are another:
-            Block, Unblock and Cancel act on the whole run, and mixed into the
-            steps they read as a fourth button on the last one. A done run has
-            no run action, so it gets no rule either. */}
-          {(open || Domain.runIsBlocked(run)) && <s-divider />}
-          {open && (
+            Block, Unblock, Cancel and the note act on the whole run, and mixed
+            into the steps they read as a fourth button on the last one. */}
+          {(open || Domain.runIsBlocked(run) || addNote) && <s-divider />}
+          {(open || addNote) && (
             <s-stack gap="small-300">
-              {!Domain.runIsBlocked(run) && (
-                <s-text-field
-                  label="Reason"
-                  labelAccessibilityVisibility="exclusive"
-                  placeholder="What is stopping this? (optional)"
-                  value={reason}
-                  disabled={!identified || busy}
-                  onInput={(event) => {
-                    const next = event.currentTarget.value;
-                    setBlockReason((current) => ({
-                      ...current,
-                      [run.id]: next,
-                    }));
-                  }}
-                />
-              )}
               {/* One row for everything that acts on the whole run. Block (or
                 Unblock while blocked) leads because it is the intervention a
                 merchant reaches for most; Cancel and Change are the rare,
-                destructive ones and sit after it. */}
+                destructive ones and sit after it. Add note is last and is the
+                one run action a done run keeps. */}
               <s-stack direction="inline" gap="small-300">
-                {Domain.runIsBlocked(run) ? (
-                  unblockButton(run)
-                ) : (
+                {open &&
+                  (Domain.runIsBlocked(run) ? (
+                    unblockButton(run)
+                  ) : (
+                    <s-button
+                      variant="secondary"
+                      tone="critical"
+                      disabled={!identified || busy}
+                      onClick={() => {
+                        openModal(BLOCK_MODAL, run);
+                      }}
+                    >
+                      Block
+                    </s-button>
+                  ))}
+                {open && (
                   <s-button
                     variant="secondary"
                     tone="critical"
                     disabled={!identified || busy}
                     onClick={() => {
-                      interveneMutation.mutate(
-                        {
-                          kind: "block",
-                          runId: run.id,
-                          reason: reason === "" ? null : reason,
-                          toast: "Run blocked",
-                        },
-                        {
-                          onSuccess: (result) => {
-                            if (result._tag === "Ok")
-                              setBlockReason((current) => ({
-                                ...current,
-                                [run.id]: "",
-                              }));
-                          },
-                        },
-                      );
+                      intervene({
+                        kind: "cancel",
+                        runId: run.id,
+                        toast: "Run cancelled",
+                      });
                     }}
                   >
-                    Block
+                    Cancel run
                   </s-button>
                 )}
-                <s-button
-                  variant="secondary"
-                  tone="critical"
-                  disabled={!identified || busy}
-                  onClick={() => {
-                    intervene({
-                      kind: "cancel",
-                      runId: run.id,
-                      toast: "Run cancelled",
-                    });
-                  }}
-                >
-                  Cancel run
-                </s-button>
-                {change?.button}
+                {open && change?.button}
+                {addNote && (
+                  <s-button
+                    variant="secondary"
+                    disabled={!identified || busy}
+                    onClick={() => {
+                      openModal(NOTE_MODAL, run);
+                    }}
+                  >
+                    Add note
+                  </s-button>
+                )}
               </s-stack>
-              {change?.picker}
+              {open && change?.picker}
             </s-stack>
           )}
         </s-stack>
@@ -1316,8 +1205,16 @@ function RouteComponent() {
             </s-button>
           )}
         </s-stack>
-        {Domain.runIsBlocked(run) && blockedStrip(detail, unblockButton(run))}
+        {Domain.runIsBlocked(run) &&
+          blockedStrip(
+            detail,
+            <>
+              {editReasonButton(run)}
+              {unblockButton(run)}
+            </>,
+          )}
         {now !== null && <s-text>{now}</s-text>}
+        {noteBlock(run)}
         {attention}
         {!cancelled && managingRun(run) && manageRows(detail, change)}
       </s-stack>
@@ -1559,20 +1456,24 @@ function RouteComponent() {
        the title twice. The `s-heading` inside is the section's name. */
     return (
       <s-section key={item.id}>
-        <s-stack gap="base">
+        <s-stack gap="small-100">
           <s-stack
             direction="inline"
             justifyContent="space-between"
             alignItems="start"
             gap="base"
           >
-            <s-heading>{lineItemTitle(item)}</s-heading>
+            {/* The facts sit under the title as its subtitle, tight to it,
+                so the card opens with one block rather than a title and a
+                lone "× 1" a full gap apart. */}
+            <s-stack gap="small-500">
+              <s-heading>{lineItemTitle(item)}</s-heading>
+              <s-stack direction="inline" gap="small-300" alignItems="center">
+                <s-text color="subdued">{facts}</s-text>
+                {removed && <s-badge tone="critical">Removed</s-badge>}
+              </s-stack>
+            </s-stack>
             {manageButton}
-          </s-stack>
-
-          <s-stack direction="inline" gap="base" alignItems="center">
-            <s-text color="subdued">{facts}</s-text>
-            {removed && <s-badge tone="critical">Removed</s-badge>}
           </s-stack>
 
           {item.customAttributes.length > 0 && (
@@ -1590,7 +1491,7 @@ function RouteComponent() {
             </s-grid>
           )}
 
-          <s-stack gap="base">
+          <s-stack gap="small-100">
             {ambiguous && (
               <s-paragraph>{ambiguitySentence(matched)}</s-paragraph>
             )}
@@ -1621,16 +1522,21 @@ function RouteComponent() {
       <s-link slot="breadcrumb-actions" href="/app/orders">
         Orders
       </s-link>
+      {/* The primary action leaves for the Shopify order: payment,
+          fulfilment and the customer live there, and fulfilling is the next
+          step once the work here is done. Resync is secondary because webhooks
+          keep the order current; a primary Resync tells the merchant syncing
+          is their job. It stays for the rare order that looks stale. */}
       <s-button
-        slot="secondary-actions"
+        slot="primary-action"
+        variant="primary"
         href={adminOrderUrl(order)}
         target={resourceLinkTarget}
       >
         View in Shopify
       </s-button>
       <s-button
-        slot="primary-action"
-        variant="primary"
+        slot="secondary-actions"
         loading={resyncMutation.isPending}
         disabled={!identified || resyncMutation.isPending}
         onClick={() => {
@@ -1643,15 +1549,13 @@ function RouteComponent() {
       <SocketBanner />
       {(banner !== null ||
         order.lineItemsTruncated ||
-        state === "ready_to_ship" ||
-        orderSummary !== null) && (
+        state === "ready_to_ship") && (
         /* In the main column, not `slot="supplemental-start"`: that slot
            renders above the main column only, so anything in it pushes the
            first card below the top of the aside. Here the banners are the
            first thing in the column and the card under them still lines up
            with the aside's top edge. */
         <s-stack gap="base">
-          {orderSummary !== null && <s-text>{orderSummary}</s-text>}
           {state === "ready_to_ship" && (
             <s-banner tone="success">
               Every run is done.{" "}
@@ -1711,6 +1615,49 @@ function RouteComponent() {
         </s-button>
       </s-modal>
 
+      <RunNoteModal
+        id={NOTE_MODAL}
+        note={modalRun?.note ?? null}
+        pending={!identified || busy}
+        onSave={(note) =>
+          modalRun === null
+            ? Promise.resolve("That workflow run no longer exists.")
+            : interveneFromModal({
+                kind: "note",
+                runId: modalRun.id,
+                note: note.trim() === "" ? null : note,
+                toast: "Note saved",
+              })
+        }
+      />
+      <BlockModal
+        id={BLOCK_MODAL}
+        run={
+          modalRun ?? { orderName: order.name, flag: null, flagDetail: null }
+        }
+        pending={!identified || busy}
+        onBlock={(reason) =>
+          modalRun === null
+            ? Promise.resolve("That workflow run no longer exists.")
+            : interveneFromModal({
+                kind: "block",
+                runId: modalRun.id,
+                reason: reason.trim() === "" ? null : reason,
+                toast: "Run blocked",
+              })
+        }
+        onSaveReason={(reason) =>
+          modalRun === null
+            ? Promise.resolve("That workflow run no longer exists.")
+            : interveneFromModal({
+                kind: "blockReason",
+                runId: modalRun.id,
+                reason: reason.trim() === "" ? null : reason,
+                toast: "Reason saved",
+              })
+        }
+      />
+
       {order.note !== null && (
         <s-section slot="aside" heading="Order note">
           <s-paragraph>{order.note}</s-paragraph>
@@ -1723,32 +1670,18 @@ function RouteComponent() {
           gap="small-200 base"
           alignItems="center"
         >
-          {/* Only on a multi-item order, and never a per-item quantity: each
-              card already prints its own "×N", and a second copy in the aside
-              is two numbers to keep in agreement. `unitsToMake` is the card's
-              own count, so the total cannot disagree with the parts. */}
-          {lineItems.length > 1 &&
-            fact(
-              "Items",
-              `${formatNumber(lineItems.length)} items, ${formatNumber(
-                lineItems.reduce(
-                  (total, item) => total + Domain.unitsToMake(item),
-                  0,
-                ),
-              )} units`,
-            )}
           {fact("Placed", <LocalDateTime value={order.processedAt} />)}
           {fact(
             "Payment",
             order.financialStatus === null ? null : (
               <s-stack direction="inline">
                 <s-badge tone={order.fullyPaid ? "success" : "warning"}>
-                  {order.financialStatus}
+                  {formatStatus(order.financialStatus)}
                 </s-badge>
               </s-stack>
             ),
           )}
-          {fact("Fulfillment", order.fulfillmentStatus)}
+          {fact("Fulfillment", formatStatus(order.fulfillmentStatus))}
           {fact(
             "Cancelled",
             order.cancelledAt === null ? null : (
@@ -1766,12 +1699,6 @@ function RouteComponent() {
             order.customAttributes
               .map(({ key, value }) => `${key}: ${value ?? ""}`)
               .join(", "),
-          )}
-          {fact(
-            "Last synced",
-            <>
-              <LocalDateTime value={order.syncedAt} /> ({order.syncSource})
-            </>,
           )}
         </s-grid>
       </s-section>

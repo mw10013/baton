@@ -296,8 +296,8 @@ export const workflows: readonly SeedWorkflow[] = [
   },
   {
     // on, and it starts runs: an empty team does not block a start, so the
-    // second step lands on a team nobody is on — the order page names it
-    // under "waiting on" and no run list anywhere shows the card. Distinct from
+    // second step lands on a team nobody is on — the order page's card names it
+    // and no run list anywhere shows the card. Distinct from
     // Pet tag, which is off because a step has no team at all.
     name: "Keychain (empty team step)",
     active: true,
@@ -643,7 +643,7 @@ const floorOrders: readonly SeedOrder[] = [
   },
   {
     // the cut is done and the next step belongs to a team with nobody on it:
-    // the order page names the team under "waiting on" and no run list shows it
+    // the order page's card names the team and no run list shows it
     n: 1024,
     advance: 1,
     lineItems: [item("Keychain", TAG.keychain, 1, { Initials: "D.V." })],

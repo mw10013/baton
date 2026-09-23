@@ -6,17 +6,15 @@ import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Option, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
-import { ManagePlanButton } from "@/components/ManagePlanButton";
 import { QuotaBanners } from "@/components/QuotaBanners";
 import * as Domain from "@/lib/Domain";
-import { formatNumber } from "@/lib/format";
+import { formatNumber, formatStatus } from "@/lib/format";
 import { adminOrderUrl, useResourceLinkTarget } from "@/lib/orderLinks";
 import { ORDER_IMPORT_WINDOW_DAYS } from "@/lib/orderSyncConstants";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
-import { resolveEntitlements } from "@/lib/SubscriptionPlan";
 import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
 
 const ORDERS_PAGE_SIZE = 25;
@@ -24,6 +22,8 @@ const ORDERS_PAGE_SIZE = 25;
  * Raw field text to the branded search, or `None` for anything the schema
  * refuses: empty, blank, or past its 32 characters. `None` is "no search",
  * which is what an emptied field means, so the caller needs no second test.
+ * The field sets no `maxLength`: Polaris would draw a character counter, and
+ * no order number comes near the limit.
  */
 const decodeOrderSearch = Schema.decodeUnknownOption(Domain.OrderSearch);
 /** Caps the Waiting on cell, so a shop with many teams cannot widen the table without bound. */
@@ -278,9 +278,6 @@ const getLoaderData = createServerFn({ method: "GET" })
       runEffect(
         Effect.gen(function* () {
           const client = yield* ShopAgentClient;
-          const shop = yield* Schema.decodeUnknownEffect(Domain.Shop)(
-            session.shop,
-          );
           return {
             view: yield* client.listOrders(session.shop, {
               limit: ORDERS_PAGE_SIZE,
@@ -292,7 +289,6 @@ const getLoaderData = createServerFn({ method: "GET" })
               team,
             }),
             usage: yield* client.getUsage(session.shop),
-            ordersPerCycle: (yield* resolveEntitlements(shop)).ordersPerCycle,
           } satisfies Domain.OrdersIndexLoaderData;
         }),
       ),
@@ -324,7 +320,7 @@ export const Route = createFileRoute("/app/orders/")({
  * underneath it.
  */
 function RouteComponent() {
-  const { shop, managePlanUrl } = Route.useRouteContext();
+  const { shop } = Route.useRouteContext();
   const {
     q = null,
     state = null,
@@ -335,7 +331,7 @@ function RouteComponent() {
   const navigate = useNavigate({ from: Route.fullPath });
   const shopify = useAppBridge();
   const resourceLinkTarget = useResourceLinkTarget();
-  const { view: initialView, usage, ordersPerCycle } = Route.useLoaderData();
+  const { view: initialView, usage } = Route.useLoaderData();
   /**
    * The repository pages forward only (keyset on `processedAt, id`), so
    * "previous" is a stack of the cursors already visited: the top is the
@@ -645,7 +641,7 @@ function RouteComponent() {
               <s-table-cell>
                 {row.order.financialStatus !== null && (
                   <s-badge tone={row.order.fullyPaid ? "success" : "warning"}>
-                    {row.order.financialStatus}
+                    {formatStatus(row.order.financialStatus)}
                   </s-badge>
                 )}
               </s-table-cell>
@@ -740,17 +736,15 @@ function RouteComponent() {
   );
 
   const attentionCount = view?.page.openCounts.attention ?? 0;
+  const syncError = view?.syncState.lastError ?? null;
+  const syncStatus = syncStatusText(view, ordersQuery.isError);
 
   return (
     <s-page heading="Orders" inlineSize="large">
       <SocketBanner />
       {/* Above the sync button on purpose: the merchant who notices an order
           missing here is the one these two banners are for. */}
-      <QuotaBanners
-        usage={usage}
-        ordersPerCycle={ordersPerCycle}
-        action={<ManagePlanButton url={managePlanUrl} />}
-      />
+      <QuotaBanners usage={usage} />
       {/* Unconditional, empty list included: the resource-index template keeps
           the title-bar primary action and lets the empty state carry a second
           copy, so "sync is top right" holds on the visit where it matters most
@@ -759,32 +753,27 @@ function RouteComponent() {
       {syncButton(true)}
 
       <s-section padding="none" accessibilityLabel="Orders">
-        <s-box padding="base" paddingBlockEnd="none">
-          <s-stack gap="small-300">
-            {view?.syncState.lastError !== null &&
-              view?.syncState.lastError !== undefined && (
-                <s-banner tone="critical">{view.syncState.lastError}</s-banner>
+        {/* Rendered only with something in it: an empty box would still add
+            its padding above the filter box's own. */}
+        {(syncError !== null || syncStatus !== null) && (
+          <s-box padding="base" paddingBlockEnd="none">
+            <s-stack gap="small-300">
+              {syncError !== null && (
+                <s-banner tone="critical">{syncError}</s-banner>
               )}
-            {/* The import's terms, said once and in full: the button cannot
-                carry them, and a merchant who cannot see the filter reads the
-                result as the whole of their shop. */}
-            <s-paragraph color="subdued">
-              {`Imports open, unfulfilled orders from the last ${String(ORDER_IMPORT_WINDOW_DAYS)} days. Safe to run again.`}
-            </s-paragraph>
-            {syncStatusText(view, ordersQuery.isError) !== null && (
-              <s-paragraph color="subdued">
-                {syncStatusText(view, ordersQuery.isError)}
-              </s-paragraph>
-            )}
-          </s-stack>
-        </s-box>
+              {syncStatus !== null && (
+                <s-paragraph color="subdued">{syncStatus}</s-paragraph>
+              )}
+            </s-stack>
+          </s-box>
+        )}
         {/* One filter bar, gated on there being something to filter: see
             `neverStored`. The three rows share a grid so "Stage", "Payment"
             and "Waiting on" line up in a label column and their controls
             start at the same inline offset. */}
         {!neverStored && (
           <s-box padding="base">
-            <s-stack gap="small-300">
+            <s-stack gap="base">
               {/* Above the facet grid rather than inside it: a search is the
                   merchant arriving with an order in hand, not a facet crossed
                   with the others, and the placeholder is its own label. Width
@@ -801,7 +790,6 @@ function RouteComponent() {
                   labelAccessibilityVisibility="exclusive"
                   placeholder="Order number"
                   value={searchDraft}
-                  maxLength={32}
                   onInput={(event) => {
                     setSearchDraft(event.currentTarget.value);
                   }}

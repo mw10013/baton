@@ -963,7 +963,7 @@ describe("ShopAgent workflow run callables", () => {
    * `NotAllowed` for every action, and `listRuns` returns the snapshotted
    * `startedByEmail`.
    */
-  it("startStep / setStepNote / blockRun refuse another team's work; listRuns reads startedByEmail after the member is deleted", async () => {
+  it("startStep / setRunNote / blockRun refuse another team's work; listRuns reads startedByEmail after the member is deleted", async () => {
     const shop = "wf-start.myshopify.com";
     const team = await seedTeam(shop, "Engraving");
     await seedOrder(shop, Date.now());
@@ -1011,7 +1011,7 @@ describe("ShopAgent workflow run callables", () => {
     expect(await outsider.startStep({ runStepId })).toEqual({
       _tag: "NotAllowed",
     });
-    expect(await outsider.setStepNote({ runStepId, note: "hi" })).toEqual({
+    expect(await outsider.setRunNote({ runId, note: "hi" })).toEqual({
       _tag: "NotAllowed",
     });
     expect(await outsider.blockRun({ runId, reason: null })).toEqual({
@@ -1050,8 +1050,8 @@ describe("ShopAgent workflow run callables", () => {
     });
     strictEqual(deletedItem?.steps[0]?.startedByEmail, "w@example.com");
     expect(
-      await engraver.setStepNote({
-        runStepId,
+      await engraver.setRunNote({
+        runId,
         note: " spelling confirmed ",
       }),
     ).toEqual({ _tag: "Ok" });
@@ -1067,13 +1067,7 @@ describe("ShopAgent workflow run callables", () => {
       memberId,
       email: memberEmail,
     });
-    // The step note is the work page's read, not the row's: the row
-    // shows the step and one state clause and nothing else.
-    const runView = await agent.getRunForMember({ runId, teamIds: [team.id] });
-    strictEqual(
-      runView?.steps.find((step) => step.id === runStepId)?.note,
-      "spelling confirmed",
-    );
+    strictEqual(blocked?.run.note, "spelling confirmed");
   });
 
   it("assignRunStepTeam puts an unassigned open step on the new team's list; the order view lists the roster", async () => {

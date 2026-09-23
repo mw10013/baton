@@ -26,7 +26,7 @@ export class RunNotFoundError extends Schema.TaggedError<RunNotFoundError>()(
 
 /**
  * The run's status refuses the action. For Start, Done, Block and Cancel that
- * is `!Domain.runIsOpen`; for the note and Undo, `!Domain.runIsLive`; for
+ * is `!Domain.runIsOpen`; for the run note and Undo, `!Domain.runIsLive`; for
  * un-cancel, the inverse, `Domain.runIsLive`. The table on
  * {@link Domain.RunStatus} is the rule.
  */
@@ -38,8 +38,8 @@ export class RunTerminalError extends Schema.TaggedError<RunTerminalError>()(
 /**
  * Start or Done refused because the run carries a flag: a flag means stop,
  * whoever set it, until a person lifts it. Gate: `Domain.runIsFlagged`; see
- * {@link Domain.RunFlag}. Undo and the note are not gated by it — Undo takes
- * work back rather than doing more, and a held step is the one to write on.
+ * {@link Domain.RunFlag}. Undo and the run note are not gated by it — Undo
+ * takes work back rather than doing more, and a held run is the one to write on.
  */
 export class RunFlaggedError extends Schema.TaggedError<RunFlaggedError>()(
   "RunFlaggedError",
@@ -484,8 +484,9 @@ export class WorkflowRunRepository extends Context.Service<
     /**
      * The work page's read: the run with every step decorated by readiness
      * and the undo verdict, the order's live note and line items. `None`
-     * when the run does not exist or no step of it belongs to `teamIds` —
-     * one answer for both, so a member cannot probe run ids.
+     * when the run does not exist or the caller cannot see it
+     * ({@link Domain.runIsVisibleTo}) — one answer for both, so a member
+     * cannot probe run ids.
      */
     readonly getRunView: (input: {
       readonly runId: string;
@@ -533,14 +534,17 @@ export class WorkflowRunRepository extends Context.Service<
       | RunFlaggedError
     >;
     /**
-     * No readiness requirement — a note on a done step is allowed, and so is
-     * one on a done run: a note is a record, not work, and the thing noticed
-     * after the last Done is exactly what wants writing down. Gate:
-     * {@link Domain.runIsLive}; see {@link Domain.RunStatus}. `null` clears
-     * the note and its `noteByRole`.
+     * Writes the run's note; `null` clears it. No readiness requirement — a
+     * note on a done run is allowed: a note is a record, not work, and the
+     * thing noticed after the last Done is exactly what wants writing down.
+     * Gate: {@link Domain.runIsLive}; see {@link Domain.RunStatus}. A member
+     * needs to see the run ({@link Domain.runIsVisibleTo}), not to hold a
+     * ready step as Block does: a done run has no ready step and would
+     * refuse every member. Last write wins; see
+     * {@link Domain.SetRunNoteCommand}.
      */
-    readonly setStepNote: (
-      input: Domain.SetStepNoteCommand,
+    readonly setRunNote: (
+      input: Domain.SetRunNoteCommand,
     ) => Effect.Effect<
       void,
       | SqlError.SqlError
@@ -585,8 +589,7 @@ export class WorkflowRunRepository extends Context.Service<
      * `null` clears the text and leaves the hold standing. `by` and `flagAt`
      * are untouched — they record who set the hold and when, not who last
      * corrected its wording, and an edit is only text. Last write wins with
-     * no history, exactly as a step note does: one rule for every free-text
-     * field is what keeps the system learnable.
+     * no history, by the rule on {@link Domain.SetRunNoteCommand}.
      *
      * Fails `RunNotBlockedError` unless the flag is `blocked`. A reconcile
      * flag's body is generated from the run, so there is nothing to write,
@@ -744,9 +747,8 @@ export class WorkflowRunRepository extends Context.Service<
 
       /**
        * The guard every step action shares: step exists, the run passes
-       * `gate` ({@link Domain.runIsOpen} for Start, Done and Block;
-       * {@link Domain.runIsLive} for the note and Undo), step's team among
-       * the caller's.
+       * `gate` ({@link Domain.runIsOpen} for Start and Done;
+       * {@link Domain.runIsLive} for Undo), step's team among the caller's.
        *
        * `teamIds` undefined means the merchant, and then the team clause is
        * skipped whole — including the refusal for an unassigned step
@@ -768,12 +770,7 @@ export class WorkflowRunRepository extends Context.Service<
           const run = yield* requireRun(step.runId);
           if (!gate(run))
             yield* new RunTerminalError({ runId: run.id, status: run.status });
-          // An unassigned step (`teamId` null) is on nobody's list and
-          // no *member* may act on it until a team is assigned.
-          if (
-            teamIds !== undefined &&
-            (step.teamId === null || !teamIds.includes(step.teamId))
-          )
+          if (teamIds !== undefined && !Domain.stepIsOnTeams(step, teamIds))
             yield* new RunNotAllowedError({
               runId: run.id,
               teamId: step.teamId ?? "",
@@ -794,10 +791,7 @@ export class WorkflowRunRepository extends Context.Service<
           ? Effect.void
           : readySteps(runId).pipe(
               Effect.flatMap((ready) =>
-                ready.some(
-                  (step) =>
-                    step.teamId !== null && teamIds.includes(step.teamId),
-                )
+                Domain.runIsVisibleTo(ready, teamIds)
                   ? Effect.void
                   : Effect.fail(
                       new RunNotAllowedError({
@@ -816,6 +810,30 @@ export class WorkflowRunRepository extends Context.Service<
               where runId in (select value from json_each(${json(runIds)}))
               order by runId, position
             `.pipe(Effect.flatMap(decodeSteps));
+
+      /**
+       * `RunNotAllowedError` unless the caller can see the run
+       * ({@link Domain.runIsVisibleTo}). Undefined `teamIds` is the merchant
+       * and always passes.
+       */
+      const requireRunTeam = (
+        runId: string,
+        teamIds: readonly string[] | undefined,
+      ) =>
+        teamIds === undefined
+          ? Effect.void
+          : stepsForRuns([runId]).pipe(
+              Effect.flatMap((steps) =>
+                Domain.runIsVisibleTo(steps, teamIds)
+                  ? Effect.void
+                  : Effect.fail(
+                      new RunNotAllowedError({
+                        runId,
+                        teamId: steps[0]?.teamId ?? "",
+                      }),
+                    ),
+              ),
+            );
 
       /**
        * Every run list row the teams own, unsorted and uncapped: one
@@ -868,8 +886,7 @@ export class WorkflowRunRepository extends Context.Service<
                 .filter(
                   (step) =>
                     step.runId === run.id &&
-                    step.teamId !== null &&
-                    teamIds.includes(step.teamId),
+                    Domain.stepIsOnTeams(step, teamIds),
                 )
                 // Whatever the row does not render is dropped rather than
                 // nulled or carried: the shape is {@link Domain.RunListStep} and
@@ -881,8 +898,6 @@ export class WorkflowRunRepository extends Context.Service<
                     "completedByEmail",
                     "completedByRole",
                     "instructions",
-                    "note",
-                    "noteByRole",
                     "reopenedAt",
                     "reopenedByRole",
                     "reopenedByEmail",
@@ -1078,12 +1093,12 @@ export class WorkflowRunRepository extends Context.Service<
               insert into WorkflowRunStep
                 (id, runId, position, stage, name, teamId, teamName, instructions,
                  startedAt, startedBy, startedByEmail, completedAt, completedBy,
-                 completedByEmail, note)
+                 completedByEmail)
               values (
                 ${crypto.randomUUID()}, ${runId}, ${step.position}, ${step.stage},
                 ${step.name}, ${step.teamId},
                 ${teams.find((team) => team.id === step.teamId)?.name ?? ""},
-                ${step.instructions}, null, null, null, null, null, null, null
+                ${step.instructions}, null, null, null, null, null, null
               )
             `,
             { discard: true },
@@ -1804,12 +1819,7 @@ export class WorkflowRunRepository extends Context.Service<
           if (Option.isNone(found)) return Option.none();
           const run = found.value;
           const steps = yield* stepsForRuns([run.id]);
-          if (
-            !steps.some(
-              (step) => step.teamId !== null && teamIds.includes(step.teamId),
-            )
-          )
-            return Option.none();
+          if (!Domain.runIsVisibleTo(steps, teamIds)) return Option.none();
           const ready = yield* readySteps(run.id);
           const [noteRow] = yield* sql`
             select note from ShopOrder where id = ${run.orderId}
@@ -1824,7 +1834,7 @@ export class WorkflowRunRepository extends Context.Service<
                   ? null
                   : Domain.undoBlockedBy(step, steps),
             })),
-            note: typeof noteRow?.note === "string" ? noteRow.note : null,
+            orderNote: typeof noteRow?.note === "string" ? noteRow.note : null,
           } satisfies Domain.RunView);
         }),
 
@@ -1892,29 +1902,22 @@ export class WorkflowRunRepository extends Context.Service<
           },
         ),
 
-        setStepNote: Effect.fn("WorkflowRunRepository.setStepNote")(function* ({
-          runStepId,
-          actor,
+        setRunNote: Effect.fn("WorkflowRunRepository.setRunNote")(function* ({
+          runId,
           teamIds,
           note,
-        }: Domain.SetStepNoteCommand) {
+        }: Domain.SetRunNoteCommand) {
           yield* sql.withTransaction(
             Effect.gen(function* () {
-              const { run } = yield* requireActionable({
-                runStepId,
-                teamIds,
-                gate: Domain.runIsLive,
-              });
+              const run = yield* requireRun(runId);
+              if (!Domain.runIsLive(run))
+                yield* new RunTerminalError({ runId, status: run.status });
+              yield* requireRunTeam(runId, teamIds);
               const now = yield* Clock.currentTimeMillis;
-              // Clearing the note clears its attribution with it: `Note
-              // (Merchant):` beside no note would be a label for nothing.
-              const noteByRole = note === null ? null : actor.role;
               yield* sql`
-                update WorkflowRunStep
-                set note = ${note}, noteByRole = ${noteByRole}
-                where id = ${runStepId}
+                update WorkflowRun set note = ${note}, updatedAt = ${now}
+                where id = ${runId}
               `;
-              yield* sql`update WorkflowRun set updatedAt = ${now} where id = ${run.id}`;
             }),
           );
         }),

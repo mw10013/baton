@@ -12,14 +12,22 @@ import {
   Prose,
   RunItem,
 } from "@/components/MemberRun";
+import { BlockModal, RunNoteModal } from "@/components/RunTextModals";
 import * as Domain from "@/lib/Domain";
-import { formatNumber } from "@/lib/format";
 import { requireMember } from "@/lib/MemberAccess";
 import { memberServerFnMiddleware } from "@/lib/MemberServerFnMiddleware";
+import { showModal } from "@/lib/polarisModal";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { SocketBanner } from "@/lib/SocketBanner";
-import { useMemberRunActions } from "@/lib/useMemberRunActions";
+import {
+  errorMessage,
+  runResultMessage,
+  useMemberRunActions,
+} from "@/lib/useMemberRunActions";
 import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
+
+const NOTE_MODAL = "run-note";
+const BLOCK_MODAL = "run-block";
 
 const ParamsInput = Schema.Struct({
   shop: Schema.String,
@@ -130,21 +138,6 @@ const stepState = (
   };
 };
 
-/**
- * How much room is left, shown only past `Domain.NOTE_COUNT_FROM`. Without it
- * the cap is invisible until the write refuses a paragraph that is already
- * typed, and the refusal a member would read is the schema's own words.
- * Every field the same text goes into carries it, which {@link editor} is how.
- */
-function NoteCountdown({ draft }: { readonly draft: string }) {
-  if (draft.length < Domain.NOTE_COUNT_FROM) return null;
-  return (
-    <s-text color="subdued">
-      {`${formatNumber(Domain.STEP_NOTE_MAX_LENGTH - draft.length)} characters left`}
-    </s-text>
-  );
-}
-
 function RouteComponent() {
   const { shop, memberEmail, teams, view: initialView } = Route.useLoaderData();
   const { runId } = Route.useParams();
@@ -164,111 +157,13 @@ function RouteComponent() {
     identified,
     onSuccess: () => invalidate(),
   });
-  /** Which step's note editor is open and its draft; one at a time. */
-  const [noteDraft, setNoteDraft] = React.useState<{
-    runStepId: string;
-    note: string;
-  } | null>(null);
-  /**
-   * The reason a member is about to put a hold on with, or `null` when the
-   * Block editor is closed. Opening it is the page's Block action; the editor
-   * renders where the hold's banner will, so the field stands where its own
-   * result will stand.
-   */
-  const [blockDraft, setBlockDraft] = React.useState<string | null>(null);
-  /**
-   * The reason editor inside the banner, or `null` when closed. It opens
-   * holding the reason that is there now — never empty: one field, anyone may
-   * write it, last write wins silently, so seeing what you are about to
-   * replace is the only warning there is.
-   *
-   * Stamped with the `flagAt` of the hold it was opened on, and read back
-   * through {@link editingReason}, so a draft cannot outlive its hold. Unblock
-   * — this member's own, or a teammate's arriving over the socket — takes the
-   * banner away mid-edit; a bare string would sit in state and reappear,
-   * stale, inside the next block's banner. Every block writes a fresh
-   * `flagAt`, so the stamp of the one before it can never match.
-   */
-  const [reasonDraft, setReasonDraft] = React.useState<{
-    at: number | null;
-    text: string;
-  } | null>(null);
   const teamIds = teams.map((team) => team.id);
-
-  /**
-   * The one editor this page opens, whichever field is being written: a
-   * step's note, the reason a Block is about to be set with, and the rewrite
-   * of a reason already set. Same field, same countdown, same Cancel; only
-   * the label and the verb on the commit differ, so the three cannot drift
-   * into looking like different features.
-   *
-   * **An open editor takes its container's buttons with it.** The step card,
-   * the flag banner or the page header that held the button which opened it
-   * shows no buttons of its own until Save or Cancel: Save note beside Done,
-   * or Save reason beside Unblock, is two commits in one box, a stride apart,
-   * asking the reader which one takes the typing. The reach is that container
-   * and no further — an editor open in one step card leaves the other cards
-   * and the page's own Block action mounted, because neither of those is
-   * where the typing is.
-   *
-   * It is also what makes the label visible rather than `exclusive`: the
-   * button that named this field — Add note, Edit reason, Block — is one of
-   * the buttons the editor has just taken, so a hidden label would leave a
-   * bare box.
-   */
-  const editor = ({
-    label,
-    placeholder,
-    draft,
-    onInput,
-    onSubmit,
-    onCancel,
-    submitLabel,
-    critical,
-  }: {
-    readonly label: string;
-    readonly placeholder?: string;
-    readonly draft: string;
-    readonly onInput: (value: string) => void;
-    readonly onSubmit: () => void;
-    readonly onCancel: () => void;
-    readonly submitLabel: string;
-    readonly critical?: boolean;
-  }) => (
-    <s-stack gap="small-300">
-      <s-text-area
-        label={label}
-        {...(placeholder === undefined ? {} : { placeholder })}
-        rows={3}
-        value={draft}
-        disabled={actions.pending}
-        onInput={(event) => {
-          onInput(event.currentTarget.value);
-        }}
-      />
-      <s-stack direction="inline" gap="small-300" alignItems="center">
-        <s-button
-          variant="primary"
-          {...(critical === true ? { tone: "critical" as const } : {})}
-          disabled={actions.pending}
-          onClick={onSubmit}
-        >
-          {submitLabel}
-        </s-button>
-        <s-button variant="tertiary" onClick={onCancel}>
-          Cancel
-        </s-button>
-        <NoteCountdown draft={draft} />
-      </s-stack>
-    </s-stack>
-  );
 
   const renderStep = (step: Domain.RunStepView) => {
     if (view === null) return null;
     const state = stepState(step);
     /** Shown only while the slot is filled: the next Done clears it (`Domain.WorkflowRunStep`). */
     const reopenedBy = Domain.stepReopenedBy(step);
-    const editingNote = noteDraft?.runStepId === step.id;
     /**
      * The buttons follow {@link Domain.stepActions}; the banner carries the
      * only action a flag allows. Undo and Put back are offered where they are
@@ -277,10 +172,7 @@ function RouteComponent() {
      * page with an `In progress` badge on it.
      */
     const can = Domain.stepActions(view.run, step, teamIds);
-    /** Not while this card's own editor is open ({@link editor}). */
-    const anyAction =
-      (can.done || can.putBack || can.undo?.blockedBy === null || can.note) &&
-      !editingNote;
+    const anyAction = can.done || can.putBack || can.undo?.blockedBy === null;
     return (
       <s-box
         key={step.id}
@@ -305,31 +197,6 @@ function RouteComponent() {
             </s-text>
           )}
           {step.instructions !== null && <s-text>{step.instructions}</s-text>}
-          {!editingNote && step.note !== null && (
-            <Prose color="subdued">{Domain.stepNoteLine(step)}</Prose>
-          )}
-          {editingNote &&
-            editor({
-              label: "Note",
-              draft: noteDraft.note,
-              onInput: (note) => {
-                setNoteDraft({ runStepId: step.id, note });
-              },
-              onSubmit: () => {
-                actions.note.mutate(
-                  { runStepId: step.id, note: noteDraft.note },
-                  {
-                    onSuccess: (result) => {
-                      if (result._tag === "Ok") setNoteDraft(null);
-                    },
-                  },
-                );
-              },
-              onCancel: () => {
-                setNoteDraft(null);
-              },
-              submitLabel: "Save note",
-            })}
           {anyAction && (
             <s-stack direction="inline" gap="base" alignItems="center">
               {can.start && (
@@ -376,17 +243,6 @@ function RouteComponent() {
                   Undo
                 </s-button>
               )}
-              {can.note && (
-                <s-button
-                  variant="secondary"
-                  disabled={actions.pending}
-                  onClick={() => {
-                    setNoteDraft({ runStepId: step.id, note: step.note ?? "" });
-                  }}
-                >
-                  {step.note === null ? "Add note" : "Edit note"}
-                </s-button>
-              )}
             </s-stack>
           )}
         </s-stack>
@@ -409,57 +265,47 @@ function RouteComponent() {
     );
 
   const { run } = view;
-  /**
-   * The open draft, or `null`: a draft stamped with a `flagAt` other than the
-   * one on screen belongs to a hold that has since been lifted, and is dead.
-   */
-  const editingReason =
-    Domain.runIsBlocked(run) && reasonDraft?.at === run.flagAt
-      ? reasonDraft.text
-      : null;
   /** A member may put a hold on work that is running and not already flagged. */
   const canBlock = Domain.runIsOpen(run) && !Domain.runIsFlagged(run);
+  /**
+   * The note is the run's, not a step's, and a member who can see the page
+   * may write it while the run is live: `WorkflowRunRepository.setRunNote`.
+   */
+  const canNote = Domain.runIsLive(run);
   /**
    * Unblock lifts the hold and nothing else: the run goes back to the tier
    * and the steps it had, and whoever lifted it presses Done next if the work
    * is in fact done. Dismiss is the other word on purpose — a reconcile flag
    * is not a hold anybody set, and acknowledging it is all there is to do.
-   *
-   * Both go while the reason editor is open, because the banner is that
-   * editor's container ({@link editor}): a hold is lifted by Cancel and then
-   * Unblock, the same two presses a step's Undo costs while its note editor
-   * is open.
+   * Unblock takes one tap and no confirmation: Block undoes it.
    */
-  const flagActions =
-    Domain.runIsFlagged(run) && editingReason === null ? (
-      <>
+  const flagActions = Domain.runIsFlagged(run) ? (
+    <>
+      {Domain.runIsBlocked(run) && (
         <s-button
           slot="secondary-actions"
           variant="secondary"
           disabled={actions.pending}
           onClick={() => {
-            actions.dismiss.mutate(run.id);
+            showModal(BLOCK_MODAL);
           }}
         >
-          {liftFlagLabel(run)}
+          Edit
         </s-button>
-        {Domain.runIsBlocked(run) && (
-          <s-button
-            slot="secondary-actions"
-            variant="secondary"
-            disabled={actions.pending}
-            onClick={() => {
-              setReasonDraft({
-                at: run.flagAt,
-                text: run.flagDetail?.reason ?? "",
-              });
-            }}
-          >
-            Edit reason
-          </s-button>
-        )}
-      </>
-    ) : null;
+      )}
+      <s-button
+        slot="secondary-actions"
+        variant="secondary"
+        disabled={actions.pending}
+        onClick={() => {
+          actions.dismiss.mutate(run.id);
+        }}
+      >
+        {liftFlagLabel(run)}
+      </s-button>
+    </>
+  ) : null;
+  const hasNote = run.note !== null && run.note.length > 0;
 
   return (
     <>
@@ -471,18 +317,16 @@ function RouteComponent() {
           team and depth included, because this page's URL carries their
           context too (`MemberSearch` in `shop.$shop.tsx`). */}
       <s-page heading={run.orderName} inlineSize="small">
-        {/* Block is a page action rather than a section at the foot of the
-            page: a member holds work rarely, and a field mounted for it all
-            the time takes space on every visit that does not. Pressing it
-            opens the editor below, where the hold's own banner will be, and
-            takes this button with it ({@link editor}). */}
-        {canBlock && blockDraft === null && (
+        {/* Block stays a visible page action, not an overflow item: it says
+            the worker can stop the line. It opens a modal, so no field is
+            mounted for it on the visits that do not use it. */}
+        {canBlock && (
           <s-button
             slot="secondary-actions"
             variant="secondary"
             disabled={actions.pending}
             onClick={() => {
-              setBlockDraft("");
+              showModal(BLOCK_MODAL);
             }}
           >
             Block
@@ -511,65 +355,75 @@ function RouteComponent() {
             {actions.banner !== null && (
               <s-banner tone="critical">{actions.banner}</s-banner>
             )}
-            <FlagBanner run={run} actions={flagActions}>
-              {editingReason === null
-                ? undefined
-                : editor({
-                    label: "Reason",
-                    placeholder: "What is stopping this? Who needs to know?",
-                    draft: editingReason,
-                    onInput: (text) => {
-                      setReasonDraft({ at: run.flagAt, text });
-                    },
-                    onSubmit: () => {
-                      actions.setBlockReason.mutate(
-                        { runId: run.id, reason: editingReason },
-                        {
-                          onSuccess: (result) => {
-                            if (result._tag === "Ok") setReasonDraft(null);
-                          },
-                        },
-                      );
-                    },
-                    onCancel: () => {
-                      setReasonDraft(null);
-                    },
-                    submitLabel: "Save reason",
-                  })}
-            </FlagBanner>
-            {canBlock &&
-              blockDraft !== null &&
-              editor({
-                label: "Reason",
-                placeholder: "What is stopping this? Who needs to know?",
-                draft: blockDraft,
-                onInput: setBlockDraft,
-                onSubmit: () => {
-                  actions.block.mutate(
-                    { runId: run.id, reason: blockDraft },
-                    {
-                      onSuccess: (result) => {
-                        if (result._tag === "Ok") setBlockDraft(null);
-                      },
-                    },
-                  );
-                },
-                onCancel: () => {
-                  setBlockDraft(null);
-                },
-                submitLabel: "Block",
-                critical: true,
-              })}
+            <FlagBanner run={run} actions={flagActions} />
           </s-stack>
         </s-section>
+        {/* The run note second, above the steps: it is the one answer to
+            "anything I should know about this job", and a note under a step
+            that is already done is a note nobody reads. On a cancelled run it
+            is a record with no button. */}
+        {(hasNote || canNote) && (
+          <s-section accessibilityLabel="Note">
+            <s-stack gap="small-300">
+              <s-stack
+                direction="inline"
+                justifyContent="space-between"
+                alignItems="center"
+                gap="base"
+              >
+                <s-heading>Note</s-heading>
+                {canNote && (
+                  <s-button
+                    variant="secondary"
+                    disabled={actions.pending}
+                    onClick={() => {
+                      showModal(NOTE_MODAL);
+                    }}
+                  >
+                    {hasNote ? "Edit" : "Add note"}
+                  </s-button>
+                )}
+              </s-stack>
+              {hasNote && <Prose>{run.note}</Prose>}
+            </s-stack>
+          </s-section>
+        )}
+        {view.orderNote !== null && view.orderNote.length > 0 && (
+          <s-section heading="Order note" accessibilityLabel="Order note">
+            <Prose>{view.orderNote}</Prose>
+          </s-section>
+        )}
         <s-section heading="Steps" accessibilityLabel="Steps">
           <s-stack gap="small-300">{view.steps.map(renderStep)}</s-stack>
         </s-section>
-        {view.note !== null && view.note.length > 0 && (
-          <s-section heading="Order note" accessibilityLabel="Order note">
-            <Prose>{view.note}</Prose>
-          </s-section>
-        )}
+        <RunNoteModal
+          id={NOTE_MODAL}
+          note={run.note}
+          pending={actions.pending}
+          onSave={(note) =>
+            actions.note
+              .mutateAsync({ runId: run.id, note })
+              .then(runResultMessage)
+              .catch(errorMessage)
+          }
+        />
+        <BlockModal
+          id={BLOCK_MODAL}
+          run={run}
+          pending={actions.pending}
+          onBlock={(reason) =>
+            actions.block
+              .mutateAsync({ runId: run.id, reason })
+              .then(runResultMessage)
+              .catch(errorMessage)
+          }
+          onSaveReason={(reason) =>
+            actions.setBlockReason
+              .mutateAsync({ runId: run.id, reason })
+              .then(runResultMessage)
+              .catch(errorMessage)
+          }
+        />
       </s-page>
     </>
   );

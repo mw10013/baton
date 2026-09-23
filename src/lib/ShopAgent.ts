@@ -413,7 +413,8 @@ const memberCallableEffect =
  * *ready* when it is open and no step in an earlier `stage` of the same run
  * is still open, so several steps of one run can be ready at once;
  * `startedAt` / `startedBy` record Start and make the run `active` before
- * anything is completed; `note` is worker text about this particular item.
+ * anything is completed. `WorkflowRun.note` is free text about the whole
+ * item, one field per run with no author (`Domain.SetRunNoteCommand`).
  * `flag = 'blocked'` is the one flag a person sets (with an optional reason
  * and the actor under `by` in `flagDetail`) rather than reconcile.
  *
@@ -559,6 +560,7 @@ const initializeSchema = Effect.gen(function* () {
       flag text check (flag in ('item_removed', 'quantity_changed', 'order_cancelled', 'blocked', 'order_fulfilled')),
       flagAt integer,
       flagDetail text,
+      note text,
       createdAt integer not null,
       updatedAt integer not null,
       cancelledAt integer,
@@ -585,13 +587,11 @@ const initializeSchema = Effect.gen(function* () {
       completedAt integer,
       completedBy text,
       completedByEmail text,
-      note text,
       startedByRole text check (startedByRole in ('merchant', 'member')),
       completedByRole text check (completedByRole in ('merchant', 'member')),
       reopenedAt integer,
       reopenedByRole text check (reopenedByRole in ('merchant', 'member')),
       reopenedByEmail text,
-      noteByRole text check (noteByRole in ('merchant', 'member')),
       unique (runId, position)
     );
     create index if not exists WorkflowRunStep_teamId_idx
@@ -3184,30 +3184,29 @@ export class ShopAgent extends Agent {
     );
   }
 
-  /** The note itself never reaches the log line, as on the member's {@link setStepNote}. */
+  /** The note itself never reaches the log line, as on the member's {@link setRunNote}. */
   @callable()
-  merchantSetStepNote(
-    input: typeof Domain.SetStepNoteInput.Encoded,
+  merchantSetRunNote(
+    input: typeof Domain.SetRunNoteInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
-    const publish = (runStepId: string) => this.publishToTeams({ runStepId });
+    const publish = (runId: string) => this.publishToTeams({ runId });
     return this.runEffect(
-      callableEffect("ShopAgent.merchantSetStepNote", Domain.SetStepNoteInput, {
+      callableEffect("ShopAgent.merchantSetRunNote", Domain.SetRunNoteInput, {
         role: "merchant",
         parse: { onExcessProperty: "error" },
-      })(({ runStepId, note }) =>
+      })(({ runId, note }) =>
         runResult(
           Effect.gen(function* () {
-            yield* (yield* WorkflowRunRepository).setStepNote({
-              runStepId,
-              actor: { role: "merchant" },
+            yield* (yield* WorkflowRunRepository).setRunNote({
+              runId,
               note,
-            } satisfies Domain.SetStepNoteCommand);
+            } satisfies Domain.SetRunNoteCommand);
             yield* Effect.logInfo(
-              `ShopAgent.merchantSetStepNote: shop=${shop} step=${runStepId}`,
-            ).pipe(Effect.annotateLogs({ shop, step: runStepId }));
+              `ShopAgent.merchantSetRunNote: shop=${shop} runId=${runId}`,
+            ).pipe(Effect.annotateLogs({ shop, runId }));
           }),
-        ).pipe(Effect.tap(() => publish(runStepId))),
+        ).pipe(Effect.tap(() => publish(runId))),
       )(input),
     );
   }
@@ -3502,28 +3501,27 @@ export class ShopAgent extends Agent {
 
   /** The note itself never reaches the log line: worker text is unbounded and not ours to index. */
   @callable()
-  setStepNote(
-    input: typeof Domain.SetStepNoteInput.Encoded,
+  setRunNote(
+    input: typeof Domain.SetRunNoteInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
-    const publish = (runStepId: string) => this.publishToTeams({ runStepId });
+    const publish = (runId: string) => this.publishToTeams({ runId });
     return this.runEffect(
-      memberCallableEffect("ShopAgent.setStepNote", Domain.SetStepNoteInput, {
+      memberCallableEffect("ShopAgent.setRunNote", Domain.SetRunNoteInput, {
         onExcessProperty: "error",
-      })(({ runStepId, note }, { memberId, memberEmail, teamIds }) =>
+      })(({ runId, note }, { memberId, teamIds }) =>
         runResult(
           Effect.gen(function* () {
-            yield* (yield* WorkflowRunRepository).setStepNote({
-              runStepId,
-              actor: { role: "member", memberId, email: memberEmail },
+            yield* (yield* WorkflowRunRepository).setRunNote({
+              runId,
               teamIds,
               note,
-            } satisfies Domain.SetStepNoteCommand);
+            } satisfies Domain.SetRunNoteCommand);
             yield* Effect.logInfo(
-              `ShopAgent.setStepNote: shop=${shop} step=${runStepId} memberId=${memberId}`,
-            ).pipe(Effect.annotateLogs({ shop, step: runStepId, memberId }));
+              `ShopAgent.setRunNote: shop=${shop} runId=${runId} memberId=${memberId}`,
+            ).pipe(Effect.annotateLogs({ shop, runId, memberId }));
           }),
-        ).pipe(Effect.tap(() => publish(runStepId))),
+        ).pipe(Effect.tap(() => publish(runId))),
       )(input),
     );
   }
@@ -4219,7 +4217,7 @@ export class ShopAgent extends Agent {
             });
           const blockOneRun = (
             runId: string,
-            reason: Domain.StepNote,
+            reason: Domain.BlockReason,
             merchant: boolean,
           ) =>
             Effect.gen(function* () {

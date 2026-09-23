@@ -89,7 +89,7 @@ details[open] > .live-value-summary .live-value-preview {
 }
 
 /*
- * Free text a member typed: a step note, a block reason, an order note.
+ * Free text a person typed: a run note, a block reason, an order note.
  * Every one of them is one field, editable by anyone, last write wins and no
  * history — so the line breaks the writer put in are the only structure the
  * text has, and collapsing them (the HTML default) loses the dated, initialled

@@ -167,21 +167,19 @@ export function RunItem({ run }: { readonly run: Domain.WorkflowRun }) {
 /**
  * The one banner both screens show for a flagged run: heading is the flag
  * kind, body is the detail, and under both a subdued line naming who and
- * when. `children` replaces the body outright, which is how the work page
- * swaps in its reason editor without a second banner.
+ * when. The reason is never edited in here: the work page opens
+ * `BlockModal` for that, so the banner has one shape.
  *
  * `actions` are rendered as the banner's own children and the caller sets
- * `slot="secondary-actions"` on them; a button that lifts or acknowledges the
- * flag belongs inside the thing that states it.
+ * `slot="secondary-actions"` on them; a button that lifts, acknowledges or
+ * rewrites the flag belongs inside the thing that states it.
  */
 export function FlagBanner({
   run,
   actions,
-  children,
 }: {
   readonly run: Domain.WorkflowRun;
   readonly actions?: React.ReactNode;
-  readonly children?: React.ReactNode;
 }) {
   const heading = flagHeading(run);
   const tone = flagTone(run);
@@ -191,16 +189,12 @@ export function FlagBanner({
   return (
     <s-banner tone={tone} heading={heading}>
       <s-stack gap="small-500">
-        {children ?? (
-          <>
-            {body !== null && <Prose>{body}</Prose>}
-            {run.flagAt !== null && (
-              <s-text color="subdued">
-                {actor === null ? "" : `${actor} · `}
-                <LocalDateTime value={run.flagAt} format="relative" />
-              </s-text>
-            )}
-          </>
+        {body !== null && <Prose>{body}</Prose>}
+        {run.flagAt !== null && (
+          <s-text color="subdued">
+            {actor === null ? "" : `${actor} · `}
+            <LocalDateTime value={run.flagAt} format="relative" />
+          </s-text>
         )}
       </s-stack>
       {actions}

@@ -145,6 +145,7 @@ const run = (
   flag,
   flagAt: null,
   flagDetail: null,
+  note: null,
   createdAt: 0,
   updatedAt: 0,
   cancelledAt: null,
@@ -288,7 +289,7 @@ describe("flagHeading / flagBody / flagTone", () => {
     });
 
   it("a blocked run's body is the reason as typed, with no prefix; an unflagged run has no banner", () => {
-    const reason = Schema.decodeUnknownSync(Domain.StepNote)(
+    const reason = Schema.decodeUnknownSync(Domain.BlockReason)(
       "Crest file missing\nAsked the customer",
     );
     strictEqual(
@@ -535,18 +536,17 @@ const NOTHING = {
   done: false,
   putBack: false,
   undo: null,
-  note: false,
 };
 
 describe("Domain.stepActions", () => {
-  it("a done run's last step is undoable while nothing downstream started, and still takes a note", () => {
+  it("a done run's last step is undoable while nothing downstream started", () => {
     deepStrictEqual(
       Domain.stepActions(
         run("done", null),
         stepView({ ready: false, startedAt: 1, completedAt: 2 }),
         [TEAM],
       ),
-      { ...NOTHING, undo: { blockedBy: null }, note: true },
+      { ...NOTHING, undo: { blockedBy: null } },
     );
   });
 
@@ -566,7 +566,7 @@ describe("Domain.stepActions", () => {
         }),
         [TEAM],
       ),
-      { ...NOTHING, note: true, undo: { blockedBy: blocker } },
+      { ...NOTHING, undo: { blockedBy: blocker } },
     );
   });
 
@@ -585,10 +585,10 @@ describe("Domain.stepActions", () => {
     );
   });
 
-  it("a flag hides Start and Done but not Undo or the note", () => {
+  it("a flag hides Start and Done but not Undo", () => {
     deepStrictEqual(
       Domain.stepActions(run("active", "blocked"), stepView(), [TEAM]),
-      { ...NOTHING, note: true },
+      { ...NOTHING },
     );
     deepStrictEqual(
       Domain.stepActions(
@@ -596,7 +596,7 @@ describe("Domain.stepActions", () => {
         stepView({ ready: false, startedAt: 1, completedAt: 2 }),
         [TEAM],
       ),
-      { ...NOTHING, note: true, undo: { blockedBy: null } },
+      { ...NOTHING, undo: { blockedBy: null } },
     );
   });
 
@@ -621,20 +621,19 @@ describe("Domain.stepActions", () => {
         done: true,
         putBack: false,
         undo: null,
-        note: true,
       },
     );
     deepStrictEqual(
       Domain.stepActions(run("active", null), stepView({ startedAt: 1 }), [
         TEAM,
       ]),
-      { start: false, done: true, putBack: true, undo: null, note: true },
+      { start: false, done: true, putBack: true, undo: null },
     );
     deepStrictEqual(
       Domain.stepActions(run("active", null), stepView({ ready: false }), [
         TEAM,
       ]),
-      { ...NOTHING, note: true },
+      { ...NOTHING },
     );
   });
 });
@@ -730,8 +729,17 @@ const runStep = (
   reopenedAt: null,
   reopenedByRole: null,
   reopenedByEmail: null,
-  note: null,
-  noteByRole: null,
+});
+
+describe("Domain.runIsVisibleTo", () => {
+  it("a member's access to a run is any step of it on one of their teams, ready or not", () => {
+    const unassigned = { ...runStep(2, 2, false), teamId: null };
+    const steps = [runStep(1, 1, true), unassigned];
+    strictEqual(Domain.runIsVisibleTo(steps, [TEAM]), true);
+    strictEqual(Domain.runIsVisibleTo(steps, ["other"]), false);
+    // An unassigned step is on nobody's list.
+    strictEqual(Domain.runIsVisibleTo([unassigned], [TEAM]), false);
+  });
 });
 
 describe("Domain.readySteps", () => {
