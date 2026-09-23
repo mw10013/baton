@@ -118,7 +118,7 @@ test("the orders index names the team an open order is waiting on", async ({
       {
         name: "E2E Ring",
         tag: "e2e-ring",
-        steps: [{ name: "Cut", team: TEAM }],
+        tasks: [{ name: "Cut", team: TEAM }],
       },
     ],
     [
@@ -132,7 +132,7 @@ test("the orders index names the team an open order is waiting on", async ({
   const frame = await gotoApp(page);
   await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
 
-  /* The waiting-on column, on the way past: the seeded run's first step is on
+  /* The waiting-on column, on the way past: the seeded run's first task is on
      E2E Bench, so the row names the team that is holding the order. Located
      inside the row, because the filter control on the same page carries the
      same words. */
@@ -169,7 +169,7 @@ test("the orders index searches by order number and clears back to the list", as
       {
         name: "E2E Ring",
         tag: "e2e-ring",
-        steps: [{ name: "Cut", team: TEAM }],
+        tasks: [{ name: "Cut", team: TEAM }],
       },
     ],
     [
@@ -219,8 +219,8 @@ test("the orders index searches by order number and clears back to the list", as
 });
 
 /**
- * The merchant's interventions end to end, against a seeded two-stage run:
- * Manage opens, Mark done records the merchant on the step, Reopen takes it
+ * The merchant's interventions end to end, against a seeded two-step run:
+ * Manage opens, Mark done records the merchant on the task, Reopen takes it
  * back, and Block / Unblock move the run flag. Each assertion reads the row's
  * own attribution rather than a toast, because the row is what the next person
  * to look at this order will see.
@@ -228,7 +228,7 @@ test("the orders index searches by order number and clears back to the list", as
  * No extra admin sign-in: the `e2e` project reuses the setup project's storage
  * state, so this is one more page load on the session the file already has.
  */
-test("the merchant marks a step done, reopens it, and blocks the run", async ({
+test("the merchant marks a task done, reopens it, and blocks the run", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -247,7 +247,7 @@ test("the merchant marks a step done, reopens it, and blocks the run", async ({
       {
         name: "E2E Manage Cuff",
         tag: "e2e-manage",
-        steps: [
+        tasks: [
           { name: "Cut", team: CUT_TEAM },
           { name: "Polish", team: POLISH_TEAM },
         ],
@@ -280,7 +280,7 @@ test("the merchant marks a step done, reopens it, and blocks the run", async ({
   await expect(frame.getByText("Done by Merchant")).toBeHidden();
   await expect(frame.getByText("Ready", { exact: true })).toBeVisible();
 
-  /* Both stages done takes the run to `done`. The card's badge says it in
+  /* Both steps done takes the run to `done`. The card's badge says it in
      merchant words, not `WorkflowRun.status`. */
   await frame.getByRole("button", { name: "Mark done" }).first().click();
   await expect(frame.getByText("Done by Merchant")).toBeVisible();
@@ -290,10 +290,10 @@ test("the merchant marks a step done, reopens it, and blocks the run", async ({
 
 /**
  * Put back from Manage, the merchant's inverse of a worker's Start
- * (`WorkflowRunRepository.unstartStep`). There is no merchant Start, so the
- * seed has the member start the step; Put back returns it to Ready.
+ * (`WorkflowRunRepository.unstartTask`). There is no merchant Start, so the
+ * seed has the member start the task; Put back returns it to Ready.
  */
-test("the merchant puts back a step a member started", async ({ page }) => {
+test("the merchant puts back a task a member started", async ({ page }) => {
   test.setTimeout(120_000);
 
   const MEMBER = "e2e.putback@example.com";
@@ -306,7 +306,7 @@ test("the merchant puts back a step a member started", async ({ page }) => {
       {
         name: "E2E Put Back Cuff",
         tag: "e2e-putback",
-        steps: [{ name: "Cut", team: CUT_TEAM }],
+        tasks: [{ name: "Cut", team: CUT_TEAM }],
       },
     ],
     [
@@ -335,11 +335,11 @@ test("the merchant puts back a step a member started", async ({ page }) => {
  * that puts the blocker into words, because it is the only one that can act
  * on it. The assertion is the whole rendered sentence, which is what pins the
  * wording now that it lives inline in the route rather than in `Domain`:
- * step first, team parenthetical, and the verb supplied by the prefix. Both
- * stages are marked done from this page, so Polish is the blocker on Cut's
+ * task first, team parenthetical, and the verb supplied by the prefix. Both
+ * steps are marked done from this page, so Polish is the blocker on Cut's
  * row.
  */
-test("the merchant cannot reopen a step whose next stage is done", async ({
+test("the merchant cannot reopen a task whose next step is done", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -358,7 +358,7 @@ test("the merchant cannot reopen a step whose next stage is done", async ({
       {
         name: "E2E Reopen Cuff",
         tag: "e2e-reopen",
-        steps: [
+        tasks: [
           { name: "Cut", team: CUT_TEAM },
           { name: "Polish", team: POLISH_TEAM },
         ],
@@ -383,7 +383,7 @@ test("the merchant cannot reopen a step whose next stage is done", async ({
       `Can’t reopen: Polish (${POLISH_TEAM}) already started — put it back or reopen it first`,
     ),
   ).toBeVisible();
-  /* Polish itself is the last stage, so exactly one Reopen is on the page. */
+  /* Polish itself is the last step, so exactly one Reopen is on the page. */
   await expect(frame.getByRole("button", { name: "Reopen" })).toHaveCount(1);
 });
 
@@ -392,7 +392,7 @@ test("the merchant cannot reopen a step whose next stage is done", async ({
  * block raises on the card. Block and the reason edit share one modal, keyed
  * on whether the run is blocked. The reason is merchant prose, so it renders
  * as its own paragraph in that strip rather than inside the badge, and the
- * strip names the step the run is stuck on. `Unblock` is offered in both
+ * strip names the task the run is stuck on. `Unblock` is offered in both
  * places — the strip and the still-open disclosure — so the click takes the
  * first of the two. The run note is added from the disclosure and shows on
  * the card.
@@ -412,7 +412,7 @@ test("the merchant blocks a run with a reason, edits it, notes the run, and unbl
       {
         name: "E2E Block Cuff",
         tag: "e2e-block",
-        steps: [{ name: "Cut", team: TEAM }],
+        tasks: [{ name: "Cut", team: TEAM }],
       },
     ],
     [
@@ -505,12 +505,12 @@ test("an item matching two workflows waits for the merchant to choose, then chan
       {
         name: ENGRAVING,
         tag: "e2e-engraved",
-        steps: [{ name: "Engrave", team: TEAM }],
+        tasks: [{ name: "Engrave", team: TEAM }],
       },
       {
         name: RUSH,
         tag: "e2e-rush",
-        steps: [{ name: "Expedite", team: TEAM }],
+        tasks: [{ name: "Expedite", team: TEAM }],
       },
     ],
     [

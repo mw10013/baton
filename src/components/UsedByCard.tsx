@@ -2,7 +2,7 @@ import type * as Domain from "@/lib/Domain";
 
 /**
  * The aside card answering "where is this team used?": the workflows whose
- * steps point at the team, each a link to where those steps are edited.
+ * tasks point at the team, each a link to where those tasks are edited.
  *
  * It is a titled card in the page's aside rather than a sentence under the page
  * heading, because a bare paragraph is not something `s-page` lays out — it

@@ -934,8 +934,8 @@ export class OrderRepository extends Context.Service<
         }) {
           /**
            * `Domain.OrderRow.attention` in SQL, bound to the roster the
-           * caller read from D1: an open step is unassigned when its team id
-           * is null or not in the roster, and a ready step (`readyWhere`, the
+           * caller read from D1: an open task is unassigned when its team id
+           * is null or not in the roster, and a ready task (`readyWhere`, the
            * one definition the member's run list also runs on) on a team with no
            * members is stuck on nobody's list.
            */
@@ -951,15 +951,15 @@ export class OrderRepository extends Context.Service<
             emptyIds.length === 0
               ? sql.literal("1 = 0")
               : sql`(${sql.in("s.teamId", emptyIds)} and ${sql.literal(ReadyWhere.readyWhere("s"))})`;
-          const attentionStep = sql`exists (
-            select 1 from WorkflowRunStep s
+          const attentionTask = sql`exists (
+            select 1 from WorkflowRunTask s
             where s.runId = r.id and s.completedAt is null
               and ${sql.or([unassigned, emptyReady])}
           )`;
           const attentionRun = sql`exists (
             select 1 from WorkflowRun r
             where r.orderId = ShopOrder.id and r.status in ('pending', 'active')
-              and ${attentionStep}
+              and ${attentionTask}
           )`;
           const attentionFilter = attention
             ? attentionRun
@@ -975,7 +975,7 @@ export class OrderRepository extends Context.Service<
               ? sql.literal("1 = 1")
               : sql`exists (
                   select 1 from WorkflowRun wr
-                  join WorkflowRunStep s on s.runId = wr.id
+                  join WorkflowRunTask s on s.runId = wr.id
                   where wr.orderId = ShopOrder.id
                     and wr.status in ('pending', 'active')
                     and (wr.flag is null or wr.flag <> 'blocked')
@@ -1131,11 +1131,11 @@ export class OrderRepository extends Context.Service<
            * term on the page query, for the reason the comment above gives
            * for the other aggregates — the `ShopOrder` decoder wants exactly
            * its own columns, and this one returns several rows per order
-           * anyway. Gated on `liveIds` because a step pointing at a deleted
+           * anyway. Gated on `liveIds` because a task pointing at a deleted
            * team is `attention`, not somebody holding the order, and the
-           * outer run is aliased `wr`: `readyWhere` binds `r` for the step's
+           * outer run is aliased `wr`: `readyWhere` binds `r` for the task's
            * own run inside its subqueries (see its JSDoc). A blocked run is
-           * left out even though its step is ready: the team cannot move it,
+           * left out even though its task is ready: the team cannot move it,
            * so naming them here would send the merchant to the wrong desk —
            * `RunCounts.blocked` is that run's column. The run list still shows it
            * (last), because the worker who blocked it is the one who unblocks.
@@ -1145,7 +1145,7 @@ export class OrderRepository extends Context.Service<
               ? []
               : yield* sql`
                   select distinct wr.orderId, s.teamId
-                  from WorkflowRunStep s
+                  from WorkflowRunTask s
                   join WorkflowRun wr on wr.id = s.runId
                   where ${sql.in("wr.orderId", ids)}
                     and wr.status in ('pending', 'active')
@@ -1605,7 +1605,7 @@ export class OrderRepository extends Context.Service<
                     const deletedRuns =
                       yield* sql`delete from WorkflowRun where ${sql.in("orderId", chunk)} returning id`;
                     runs += deletedRuns.length;
-                    // `OrderLineItem` cascades; `WorkflowRunStep` cascaded
+                    // `OrderLineItem` cascades; `WorkflowRunTask` cascaded
                     // with the runs above.
                     yield* sql`delete from ShopOrder where ${sql.in("id", chunk)}`;
                   }

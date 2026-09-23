@@ -4,7 +4,7 @@
  *
  * - A rule is stated once, on the symbol that *is* the concept (a
  *   `Schema.Literals` such as {@link RunStatus}) or the function that
- *   enforces it ({@link undoBlockedBy}, {@link readySteps}). A concept with
+ *   enforces it ({@link undoBlockedBy}, {@link readyTasks}). A concept with
  *   more than one rule carries a table naming each rule's predicate.
  * - Every other site calls the predicate ({@link runIsOpen},
  *   {@link runIsFlagged}, {@link userIsAdmin}, ...) rather than comparing a
@@ -342,7 +342,7 @@ export type LoginInput = typeof LoginInput.Type;
 /**
  * Deliberately email-keyed with no userId: the owner grants access by adding an
  * email before any better-auth `User` row exists (there is no invite-accept
- * step), so a `User` FK cannot hold. Sign-in is magic-link-only, which makes the
+ * task), so a `User` FK cannot hold. Sign-in is magic-link-only, which makes the
  * email itself the identity; guards match the session user's email against this
  * table. No role column: membership is binary (a row = access) — member
  * management lives only in the embedded app behind Shopify auth, and the member
@@ -354,7 +354,7 @@ export type MemberId = typeof MemberId.Type;
 /**
  * Merchant copy: **delete a member and they leave their teams.**
  * `TeamMember` cascades; nothing else structural points here.
- * Run history survives the delete because `WorkflowRunStep` snapshots the
+ * Run history survives the delete because `WorkflowRunTask` snapshots the
  * actor's email (`startedByEmail` / `completedByEmail`, and the block flag's
  * `by`) at the moment of the action, so no live join is ever needed. The
  * bare `startedBy` / `completedBy` ids stay as text with no foreign key and
@@ -394,11 +394,11 @@ export type TeamName = typeof TeamName.Type;
 
 /**
  * A shop-scoped grouping of members. Merchant copy: **delete a team and
- * its steps become unassigned until you assign a team.**
- * Every `WorkflowStep`, `WorkflowDraftStep`, and *open* `WorkflowRunStep`
- * that pointed at the team gets `teamId = null`; finished run steps keep the
+ * its tasks become unassigned until you assign a team.**
+ * Every `WorkflowTask`, `WorkflowDraftTask`, and *open* `WorkflowRunTask`
+ * that pointed at the team gets `teamId = null`; finished run tasks keep the
  * id and their `teamName` snapshot, which is why history never needs the row.
- * A team with nobody on it is valid and shows **No members**: its steps can
+ * A team with nobody on it is valid and shows **No members**: its tasks can
  * still start runs, nobody can work them until someone joins, and adding one
  * member fixes everything with no data change.
  */
@@ -480,10 +480,10 @@ export const WorkflowId = Schema.NonEmptyString.pipe(
 );
 export type WorkflowId = typeof WorkflowId.Type;
 
-export const WorkflowStepId = Schema.NonEmptyString.pipe(
-  Schema.brand("WorkflowStepId"),
+export const WorkflowTaskId = Schema.NonEmptyString.pipe(
+  Schema.brand("WorkflowTaskId"),
 );
-export type WorkflowStepId = typeof WorkflowStepId.Type;
+export type WorkflowTaskId = typeof WorkflowTaskId.Type;
 
 /**
  * Arbitrary ceilings, enforced in the schemas below and re-checked by
@@ -493,7 +493,7 @@ export type WorkflowStepId = typeof WorkflowStepId.Type;
  */
 export const WorkflowLimits = {
   maxWorkflows: 50,
-  maxSteps: 20,
+  maxTasks: 20,
 } as const;
 
 /**
@@ -793,8 +793,8 @@ const trimmedName = <B extends string>(brand: B) =>
 export const WorkflowName = trimmedName("WorkflowName");
 export type WorkflowName = typeof WorkflowName.Type;
 
-export const StepName = trimmedName("StepName");
-export type StepName = typeof StepName.Type;
+export const TaskName = trimmedName("TaskName");
+export type TaskName = typeof TaskName.Type;
 
 const trimmedText = <B extends string>(brand: B, maxLength: number) =>
   Schema.String.pipe(
@@ -809,9 +809,9 @@ const trimmedText = <B extends string>(brand: B, maxLength: number) =>
     ),
   );
 
-/** Merchant-written how-to for a step, copied onto every run. Trimmed like {@link StepName}; a blank field is sent as `null`, never as an empty string. */
-export const StepInstructions = trimmedText("StepInstructions", 2000);
-export type StepInstructions = typeof StepInstructions.Type;
+/** Merchant-written how-to for a task, copied onto every run. Trimmed like {@link TaskName}; a blank field is sent as `null`, never as an empty string. */
+export const TaskInstructions = trimmedText("TaskInstructions", 2000);
+export type TaskInstructions = typeof TaskInstructions.Type;
 
 /**
  * The caps {@link RunNote} and {@link BlockReason} enforce, exported so a
@@ -834,7 +834,7 @@ export const noteCountFrom = (maxLength: number) => maxLength - 200;
 
 /**
  * The run's free-text note: one field per run, anyone with access may write
- * it, appended to by convention. Trimmed like {@link StepName}; `null` clears.
+ * it, appended to by convention. Trimmed like {@link TaskName}; `null` clears.
  * The write rule is on {@link SetRunNoteCommand}.
  */
 export const RunNote = trimmedText("RunNote", RUN_NOTE_MAX_LENGTH);
@@ -876,14 +876,14 @@ export type WorkflowTag = typeof WorkflowTag.Type;
  * Vocabulary. A workflow definition has two nouns and the merchant never
  * meets a third:
  *
- * - **Workflow**: name, type, tag, steps, Active / Off. This is what
+ * - **Workflow**: name, type, tag, tasks, Active / Off. This is what
  *   starts runs. Runs copy it wholesale and never look back at it.
- * - **Draft**: a private copy of the workflow's **steps**, created by
+ * - **Draft**: a private copy of the workflow's **tasks**, created by
  *   Edit and living until Apply or Discard. Every edit writes to the draft
  *   immediately; there is no unsaved state anywhere.
  *
  * Verbs: **Edit** creates the draft. **Apply changes** replaces the
- * workflow's steps with the draft's and deletes the draft.
+ * workflow's tasks with the draft's and deletes the draft.
  * **Discard changes** deletes the draft. **Turn on** / **Turn off** set and
  * clear `activatedAt`; the switch and the draft are unrelated.
  *
@@ -910,11 +910,11 @@ export type WorkflowTag = typeof WorkflowTag.Type;
  *
  * Merchant copy, the whole model in five sentences: **delete a
  * workflow and its runs stay on their orders**, open ones finish; **turn
- * off** stops new runs and open ones finish; **a workflow needs at least one step before it
- * can be applied or turned on**, so zero steps is the state before the first
- * Apply and only that; **any open step on a run can be assigned to another
- * team**, a finished step is history; **deleting configuration never deletes
- * work**. Delete removes the definition, its steps, and its draft, nothing
+ * off** stops new runs and open ones finish; **a workflow needs at least one task before it
+ * can be applied or turned on**, so zero tasks is the state before the first
+ * Apply and only that; **any open task on a run can be assigned to another
+ * team**, a finished task is history; **deleting configuration never deletes
+ * work**. Delete removes the definition, its tasks, and its draft, nothing
  * else — a run is self-sufficient, so it needs no confirm counts and the
  * dialog says only what survives. The id is identity, the tag is the one
  * unique key, and the name is a label two workflows may share — so everything
@@ -931,15 +931,15 @@ export type WorkflowTag = typeof WorkflowTag.Type;
  * if the order was placed (`ShopOrder.processedAt`) on or after
  * `activatedAt`, on every path — new-order webhook, edit webhook, sync,
  * resync — so an old order Baton meets late is never touched. A workflow can
- * start runs when `activatedAt is not null and it has steps and every step
+ * start runs when `activatedAt is not null and it has tasks and every task
  * is assigned to a team that exists`; `activatedAt` not null implies at
- * least one step, every one assigned at the moment of Turn on.
- * A step whose team was deleted is **unassigned** (`teamId` null, or an id
+ * least one task, every one assigned at the moment of Turn on.
+ * A task whose team was deleted is **unassigned** (`teamId` null, or an id
  * no D1 row carries — read as null everywhere). **Needs attention** is the
- * badge for a workflow, run, or team with an unassigned step or a team with
+ * badge for a workflow, run, or team with an unassigned task or a team with
  * no members; it is derived on every read, never stored, and the fix is
  * always **assign a team** or add a member. Unassigned refuses Apply and
- * Turn on; an empty team is a warning only. Steps change only through Apply,
+ * Turn on; an empty team is a warning only. Tasks change only through Apply,
  * so an order arriving between two edits sees a whole definition, never a
  * half one; the tag and the name are immediate, because runs snapshot both at
  * start. Encoded side is the Durable Object row
@@ -966,7 +966,7 @@ export type Workflow = typeof Workflow.Type;
 
 /**
  * The draft side of {@link Workflow}: at most one per workflow (`workflowId`
- * is the primary key), holding the steps being edited as `WorkflowDraftStep`
+ * is the primary key), holding the tasks being edited as `WorkflowDraftTask`
  * rows. The tag is not drafted; it lives on the workflow row. Nothing that
  * starts runs ever reads the draft.
  */
@@ -979,42 +979,47 @@ export type WorkflowDraft = typeof WorkflowDraft.Type;
 
 /**
  * `teamId` is a live pointer to a D1 `Team`, not a snapshot: renaming a team
- * renames every step it owns, and a step can only be *applied* against a
+ * renames every task it owns, and a task can only be *applied* against a
  * team that exists. `null` is **unassigned** — what a team delete leaves
  * behind — and an id no D1 row carries reads the same way. It carries no
  * `teamName`: the name is joined at read time, and only the eventual
  * instance rows snapshot it.
  *
- * Workflow steps and draft steps have the same shape but live in two tables
- * (`WorkflowStep`, `WorkflowDraftStep`), so a step-id write can never be
+ * Workflow tasks and draft tasks have the same shape but live in two tables
+ * (`WorkflowTask`, `WorkflowDraftTask`), so a task-id write can never be
  * ambiguous about which side it targets and `unique (workflowId, position)`
- * holds on each side independently. Only `applyDraft` writes `WorkflowStep`;
- * every editor write targets the draft. Apply carries draft step ids over to
- * the workflow; Edit copies workflow steps into the draft under new ids.
+ * holds on each side independently. Only `applyDraft` writes `WorkflowTask`;
+ * every editor write targets the draft. Apply carries draft task ids over to
+ * the workflow; Edit copies workflow tasks into the draft under new ids.
  *
- * `stage` groups steps that are ready together: along `position` the stages
- * are dense `1..m` and non-decreasing (`1 1 2 3 3`), so every step belongs to
- * exactly one stage and a stage of one step is the plain linear case. The
- * invariant lives in `WorkflowLayout`, which recomputes the whole layout for
- * every edit rather than patching rows.
+ * A workflow is a sequence of numbered steps. Each step holds one or more
+ * tasks, and a task is the unit a team starts and finishes: it has a name, a
+ * team, and instructions. Along `position` the `step` values are dense `1..m`
+ * and non-decreasing (`1 1 2 3 3`), so every task belongs to exactly one step,
+ * and a step of one task is the plain linear case. Step k is ready when every
+ * task of step k-1 is done. The invariant is owned by `WorkflowLayout`, which
+ * recomputes the whole layout on every edit. The two nouns exist because
+ * parallel work needs a wait that is not a task; the member and merchant UI
+ * print "task" only when a step has more than one, so a linear shop reads
+ * steps alone.
  */
-export const WorkflowStep = Schema.Struct({
-  id: WorkflowStepId,
+export const WorkflowTask = Schema.Struct({
+  id: WorkflowTaskId,
   workflowId: WorkflowId,
   position: Schema.Number,
-  stage: Schema.Number,
-  name: StepName,
+  step: Schema.Number,
+  name: TaskName,
   teamId: Schema.NullOr(TeamId),
-  instructions: Schema.NullOr(StepInstructions),
+  instructions: Schema.NullOr(TaskInstructions),
 });
-export type WorkflowStep = typeof WorkflowStep.Type;
+export type WorkflowTask = typeof WorkflowTask.Type;
 
-export const WorkflowDraftStep = WorkflowStep;
-export type WorkflowDraftStep = typeof WorkflowDraftStep.Type;
+export const WorkflowDraftTask = WorkflowTask;
+export type WorkflowDraftTask = typeof WorkflowDraftTask.Type;
 
 /**
  * List row. `tag` and `stepCount` describe the workflow. `needsAttention` is the
- * derived badge from {@link Workflow}: a step unassigned or on a team with no
+ * derived badge from {@link Workflow}: a task unassigned or on a team with no
  * members, computed against the live roster on every list read.
  */
 const WorkflowSummaryRowFields = {
@@ -1035,64 +1040,64 @@ export const WorkflowSummary = Schema.Struct({
 });
 export type WorkflowSummary = typeof WorkflowSummary.Type;
 
-/** The shape run creation reads: a workflow with its steps. Drafts never appear here. */
+/** The shape run creation reads: a workflow with its tasks. Drafts never appear here. */
 export const WorkflowDetail = Schema.Struct({
   workflow: Workflow,
-  steps: Schema.Array(WorkflowStep),
+  tasks: Schema.Array(WorkflowTask),
 });
 export type WorkflowDetail = typeof WorkflowDetail.Type;
 
-export const WorkflowDraftSteps = Schema.Struct({
+export const WorkflowDraftTasks = Schema.Struct({
   draft: WorkflowDraft,
-  steps: Schema.Array(WorkflowDraftStep),
+  tasks: Schema.Array(WorkflowDraftTask),
 });
-export type WorkflowDraftSteps = typeof WorkflowDraftSteps.Type;
+export type WorkflowDraftTasks = typeof WorkflowDraftTasks.Type;
 
-/** What `WorkflowRepository.getWorkflow` returns: the workflow with its steps, and the draft with its steps when one exists. */
+/** What `WorkflowRepository.getWorkflow` returns: the workflow with its tasks, and the draft with its tasks when one exists. */
 export const WorkflowWithDraft = Schema.Struct({
   ...WorkflowDetail.fields,
-  draft: Schema.NullOr(WorkflowDraftSteps),
+  draft: Schema.NullOr(WorkflowDraftTasks),
 });
 export type WorkflowWithDraft = typeof WorkflowWithDraft.Type;
 
 /**
  * What the detail page renders, in one socket round trip: the workflow
  * (read-only, what starts runs) and the draft (what the editor writes), each
- * with its steps. Both attention states are derived here against the live
- * roster and never stored: `teamName` is `null` when the step is unassigned
+ * with its tasks. Both attention states are derived here against the live
+ * roster and never stored: `teamName` is `null` when the task is unassigned
  * (`teamId` null, or an id no team carries) — a flag, not a block in the
- * editor; the step renders with an empty picker and everything else stays
+ * editor; the task renders with an empty picker and everything else stays
  * editable. `memberCount` is the team's live headcount (`null` when
  * unassigned) so the page can warn "No members on <team>". `teams` rides
  * along so the team picker needs no second call.
  */
-const StepWithTeamName = Schema.Struct({
-  ...WorkflowStep.fields,
+const TaskWithTeamName = Schema.Struct({
+  ...WorkflowTask.fields,
   teamName: Schema.NullOr(TeamName),
   memberCount: Schema.NullOr(Schema.Number),
 });
-export type StepWithTeamName = typeof StepWithTeamName.Type;
+export type TaskWithTeamName = typeof TaskWithTeamName.Type;
 
 export const WorkflowDraftView = Schema.Struct({
   draft: WorkflowDraft,
-  steps: Schema.Array(StepWithTeamName),
+  tasks: Schema.Array(TaskWithTeamName),
 });
 export type WorkflowDraftView = typeof WorkflowDraftView.Type;
 
 export const WorkflowDetailView = Schema.Struct({
   workflow: Workflow,
-  steps: Schema.Array(StepWithTeamName),
+  tasks: Schema.Array(TaskWithTeamName),
   draft: Schema.NullOr(WorkflowDraftView),
   teams: Schema.Array(TeamRoster),
 });
 export type WorkflowDetailView = typeof WorkflowDetailView.Type;
 
-/** A step is unassigned when its team is null or resolves to no team; the name is the tell after the roster join. */
-export const isUnassigned = (step: StepWithTeamName) => step.teamName === null;
+/** A task is unassigned when its team is null or resolves to no team; the name is the tell after the roster join. */
+export const isUnassigned = (task: TaskWithTeamName) => task.teamName === null;
 
 /** Assigned to a team nobody is on: a warning, never a blocker. */
-export const hasEmptyTeam = (step: StepWithTeamName) =>
-  step.teamName !== null && step.memberCount === 0;
+export const hasEmptyTeam = (task: TaskWithTeamName) =>
+  task.teamName !== null && task.memberCount === 0;
 
 const BoundedId = Schema.NonEmptyString.check(Schema.isMaxLength(128));
 
@@ -1128,7 +1133,7 @@ export type UpdateWorkflowTagInput = typeof UpdateWorkflowTagInput.Type;
 
 /**
  * The copy's name and tag are the merchant's, prefilled by the Duplicate
- * dialog; the repository copies steps and stages and leaves the copy off with
+ * dialog; the repository copies tasks and steps and leaves the copy off with
  * no draft ({@link WorkflowResult} carries the copy).
  */
 export const DuplicateWorkflowInput = Schema.Struct({
@@ -1162,7 +1167,7 @@ export type SetWorkflowActiveInput = typeof SetWorkflowActiveInput.Type;
 /**
  * The editor's Turn on for a workflow that has never been applied: one click
  * that promotes the draft and turns the switch on, so the merchant is not
- * asked to Apply steps that have never run and then turn on the thing they
+ * asked to Apply tasks that have never run and then turn on the thing they
  * just applied. `activatedAt` means what it means on
  * {@link SetWorkflowActiveInput}.
  */
@@ -1182,54 +1187,54 @@ export type SetWorkflowActivatedAtInput =
 
 export const AddStepInput = Schema.Struct({
   workflowId: BoundedId,
-  name: StepName,
+  name: TaskName,
   teamId: BoundedId,
-  instructions: Schema.optionalKey(StepInstructions),
+  instructions: Schema.optionalKey(TaskInstructions),
 });
 export type AddStepInput = typeof AddStepInput.Type;
 
-/** Same as {@link AddStepInput} but into an existing stage: the new step lands after that stage's last step and is ready together with it. */
-export const AddParallelStepInput = Schema.Struct({
+/** Same as {@link AddStepInput} but into an existing step: the new task lands after that step's last task and is ready together with it. */
+export const AddTaskInput = Schema.Struct({
   workflowId: BoundedId,
-  stage: Schema.Number,
-  name: StepName,
+  step: Schema.Number,
+  name: TaskName,
   teamId: BoundedId,
-  instructions: Schema.optionalKey(StepInstructions),
+  instructions: Schema.optionalKey(TaskInstructions),
 });
-export type AddParallelStepInput = typeof AddParallelStepInput.Type;
+export type AddTaskInput = typeof AddTaskInput.Type;
 
 /** `instructions: null` clears; the UI maps a blank field to `null` before sending. */
-export const UpdateStepInput = Schema.Struct({
-  stepId: BoundedId,
-  name: StepName,
+export const UpdateTaskInput = Schema.Struct({
+  taskId: BoundedId,
+  name: TaskName,
   teamId: BoundedId,
-  instructions: Schema.NullOr(StepInstructions),
+  instructions: Schema.NullOr(TaskInstructions),
 });
-export type UpdateStepInput = typeof UpdateStepInput.Type;
+export type UpdateTaskInput = typeof UpdateTaskInput.Type;
 
 /**
- * The whole workflow fixture for `ShopAgent.seedWorkflows`, steps inline: one
+ * The whole workflow fixture for `ShopAgent.seedWorkflows`, tasks inline: one
  * declarative payload written in one transaction, rather than a
- * `createWorkflow` + `addStep`-per-step conversation whose failure midway
+ * `createWorkflow` + `addStep`-per-task conversation whose failure midway
  * leaves a half-built definition. `position` is array order; `teamId` is a D1
  * `Team.id` the caller has already created, so the team check `AddStepInput`
  * exists to trigger has nothing left to catch — or `null`, which seeds the
- * step **unassigned** so the needs-attention state is visible after
- * `pnpm seed`. A step with no `stage` gets the previous step's stage + 1
- * (linear); the repository validates the stage invariant before writing.
+ * task **unassigned** so the needs-attention state is visible after
+ * `pnpm seed`. A task with no `step` gets the previous task's step + 1
+ * (linear); the repository validates the step invariant before writing.
  *
- * `steps` become the workflow's steps; a fixture with no steps and no
+ * `tasks` become the workflow's tasks; a fixture with no tasks and no
  * `draft` has no draft, the state the ordinary path produces for a fresh
  * workflow. `active` is the fixture's word for the switch and defaults to
- * `true` when the entry has steps and every step is assigned; the
+ * `true` when the entry has tasks and every task is assigned; the
  * repository stores it as `activatedAt = now`, so seeded orders qualify.
- * `draft` seeds a pending draft (steps) for fixtures that show the draft UI.
+ * `draft` seeds a pending draft (tasks) for fixtures that show the draft UI.
  */
-const SeedWorkflowStep = Schema.Struct({
-  name: StepName,
+const SeedWorkflowTask = Schema.Struct({
+  name: TaskName,
   teamId: Schema.NullOr(TeamId),
-  stage: Schema.optionalKey(Schema.Number),
-  instructions: Schema.optionalKey(StepInstructions),
+  step: Schema.optionalKey(Schema.Number),
+  instructions: Schema.optionalKey(TaskInstructions),
 });
 
 export const SeedWorkflowsInput = Schema.Struct({
@@ -1238,39 +1243,39 @@ export const SeedWorkflowsInput = Schema.Struct({
       name: WorkflowName,
       active: Schema.optionalKey(Schema.Boolean),
       tag: WorkflowTag,
-      steps: Schema.Array(SeedWorkflowStep),
+      tasks: Schema.Array(SeedWorkflowTask),
       draft: Schema.optionalKey(
-        Schema.Struct({ steps: Schema.Array(SeedWorkflowStep) }),
+        Schema.Struct({ tasks: Schema.Array(SeedWorkflowTask) }),
       ),
     }),
   ),
 });
 export type SeedWorkflowsInput = typeof SeedWorkflowsInput.Type;
 
-export const StepDirection = Schema.Literals(["up", "down"]);
-export type StepDirection = typeof StepDirection.Type;
+export const TaskDirection = Schema.Literals(["up", "down"]);
+export type TaskDirection = typeof TaskDirection.Type;
 
 /**
- * `moveStep`: the step takes a stage of its own past the neighbouring
- * boundary (`WorkflowLayout.move`). Reordering never makes a step parallel
- * with another; that is `joinStep`.
+ * `moveTask`: the task takes a step of its own past the neighbouring
+ * boundary (`WorkflowLayout.move`). Reordering never makes a task parallel
+ * with another; that is `joinTask`.
  */
-export const MoveStepInput = Schema.Struct({
-  stepId: BoundedId,
-  direction: StepDirection,
+export const MoveTaskInput = Schema.Struct({
+  taskId: BoundedId,
+  direction: TaskDirection,
 });
-export type MoveStepInput = typeof MoveStepInput.Type;
+export type MoveTaskInput = typeof MoveTaskInput.Type;
 
-export const StepIdInput = Schema.Struct({ stepId: BoundedId });
-export type StepIdInput = typeof StepIdInput.Type;
+export const TaskIdInput = Schema.Struct({ taskId: BoundedId });
+export type TaskIdInput = typeof TaskIdInput.Type;
 
-/** `separateStep`: the step leaves its stage into a new stage of its own immediately after it. */
-export const SeparateStepInput = StepIdInput;
-export type SeparateStepInput = typeof SeparateStepInput.Type;
+/** `separateTask`: the task leaves its step into a new step of its own immediately after it. */
+export const SeparateTaskInput = TaskIdInput;
+export type SeparateTaskInput = typeof SeparateTaskInput.Type;
 
-/** `joinStep`: the step merges into the previous stage, after that stage's last member. */
-export const JoinStepInput = StepIdInput;
-export type JoinStepInput = typeof JoinStepInput.Type;
+/** `joinTask`: the task merges into the previous step, after that step's last member. */
+export const JoinTaskInput = TaskIdInput;
+export type JoinTaskInput = typeof JoinTaskInput.Type;
 
 export const TeamIdInput = Schema.Struct({ teamId: BoundedId });
 export type TeamIdInput = typeof TeamIdInput.Type;
@@ -1299,20 +1304,20 @@ export const WorkflowResult = Schema.Union([
 ]);
 export type WorkflowResult = typeof WorkflowResult.Type;
 
-/** `StepUnassigned` names the offending steps so the page can say which to assign. Apply is about steps only; the tag never reaches it. */
+/** `TaskUnassigned` names the offending tasks so the page can say which to assign. Apply is about tasks only; the tag never reaches it. */
 export const ApplyResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok"), workflow: Workflow }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("NoDraft") }),
-  Schema.Struct({ _tag: Schema.Literal("NoSteps") }),
+  Schema.Struct({ _tag: Schema.Literal("NoTasks") }),
   Schema.Struct({
-    _tag: Schema.Literal("StepUnassigned"),
-    stepNames: Schema.Array(StepName),
+    _tag: Schema.Literal("TaskUnassigned"),
+    taskNames: Schema.Array(TaskName),
   }),
 ]);
 export type ApplyResult = typeof ApplyResult.Type;
 
-/** Discard is always allowed; on a never-applied workflow it leaves zero steps and no draft. */
+/** Discard is always allowed; on a never-applied workflow it leaves zero tasks and no draft. */
 export const DiscardResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok"), workflow: Workflow }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
@@ -1340,10 +1345,10 @@ export const ActivateResult = Schema.Union([
     started: Schema.Number,
   }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
-  Schema.Struct({ _tag: Schema.Literal("NoSteps") }),
+  Schema.Struct({ _tag: Schema.Literal("NoTasks") }),
   Schema.Struct({
-    _tag: Schema.Literal("StepUnassigned"),
-    stepNames: Schema.Array(StepName),
+    _tag: Schema.Literal("TaskUnassigned"),
+    taskNames: Schema.Array(TaskName),
   }),
 ]);
 export type ActivateResult = typeof ActivateResult.Type;
@@ -1375,17 +1380,17 @@ export type WaitingOrders = typeof WaitingOrders.Type;
 export const CountWaitingOrdersInput = WorkflowIdInput;
 export type CountWaitingOrdersInput = typeof CountWaitingOrdersInput.Type;
 
-export const StepResult = Schema.Union([
+export const TaskResult = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal("Ok"),
-    step: Schema.NullOr(WorkflowStep),
+    task: Schema.NullOr(WorkflowTask),
   }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("Limit"), limit: Schema.Number }),
   /** The picked team no longer exists in D1: it was deleted under the editor. */
   Schema.Struct({ _tag: Schema.Literal("TeamNotFound") }),
 ]);
-export type StepResult = typeof StepResult.Type;
+export type TaskResult = typeof TaskResult.Type;
 
 /** Delete a workflow and its runs stay on their orders. */
 export const DeleteWorkflowResult = Schema.Union([
@@ -1395,7 +1400,7 @@ export const DeleteWorkflowResult = Schema.Union([
 export type DeleteWorkflowResult = typeof DeleteWorkflowResult.Type;
 
 /**
- * Delete a team and its steps become unassigned; nothing refuses. `Deleted`
+ * Delete a team and its tasks become unassigned; nothing refuses. `Deleted`
  * is "the D1 row was removed in this call"; a retry after a partial failure
  * still nulls every pointer and reports `NotFound`.
  */
@@ -1410,24 +1415,24 @@ export type DeleteTeamInput = typeof DeleteTeamInput.Type;
 
 /**
  * What the team delete dialog states: every pointer the delete will null.
- * Workflow and draft steps are configuration; `openRunSteps` are work in
+ * Workflow and draft tasks are configuration; `openRunTasks` are work in
  * progress that will wait until someone assigns a team.
  */
 export const TeamDeleteCounts = Schema.Struct({
-  workflowSteps: Schema.Number,
-  draftSteps: Schema.Number,
-  openRunSteps: Schema.Number,
+  workflowTasks: Schema.Number,
+  draftTasks: Schema.Number,
+  openRunTasks: Schema.Number,
 });
 export type TeamDeleteCounts = typeof TeamDeleteCounts.Type;
 
 /** One row per team that owns anything; a team absent from the list owns nothing. */
-export const TeamStepCounts = Schema.Struct({
+export const TeamTaskCounts = Schema.Struct({
   teamId: TeamId,
   ...TeamDeleteCounts.fields,
 });
-export type TeamStepCounts = typeof TeamStepCounts.Type;
+export type TeamTaskCounts = typeof TeamTaskCounts.Type;
 
-/** A workflow that uses a team: a step of the workflow or of its draft points at it. The team pages' "Used by" lists. */
+/** A workflow that uses a team: a task of the workflow or of its draft points at it. The team pages' "Used by" lists. */
 export const TeamWorkflow = Schema.Struct({
   workflowId: WorkflowId,
   workflowName: WorkflowName,
@@ -1441,28 +1446,28 @@ export const TeamWorkflowByTeam = Schema.Struct({
 });
 export type TeamWorkflowByTeam = typeof TeamWorkflowByTeam.Type;
 
-/** Assign a team to any open run step: the remedy that makes team delete safe, and the merchant's way to move work between teams. */
-export const AssignRunStepTeamInput = Schema.Struct({
-  runStepId: BoundedId,
+/** Assign a team to any open run task: the remedy that makes team delete safe, and the merchant's way to move work between teams. */
+export const AssignRunTaskTeamInput = Schema.Struct({
+  runTaskId: BoundedId,
   teamId: BoundedId,
 });
-export type AssignRunStepTeamInput = typeof AssignRunStepTeamInput.Type;
+export type AssignRunTaskTeamInput = typeof AssignRunTaskTeamInput.Type;
 
 /**
- * Any open step reassigns, started or not: only `teamId` / `teamName` move,
+ * Any open task reassigns, started or not: only `teamId` / `teamName` move,
  * so `startedBy` / `startedByEmail` stay and history keeps whoever began it.
- * `StepFinished` refuses a completed step because the write would overwrite
+ * `TaskFinished` refuses a completed task because the write would overwrite
  * `teamName`, the record of which team completed it.
  */
-export const AssignRunStepTeamResult = Schema.Union([
+export const AssignRunTaskTeamResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Assigned") }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("TeamNotFound") }),
-  Schema.Struct({ _tag: Schema.Literal("StepFinished") }),
-  /** The step's run is not {@link runIsOpen}; see the {@link RunStatus} table. */
+  Schema.Struct({ _tag: Schema.Literal("TaskFinished") }),
+  /** The task's run is not {@link runIsOpen}; see the {@link RunStatus} table. */
   Schema.Struct({ _tag: Schema.Literal("RunNotOpen") }),
 ]);
-export type AssignRunStepTeamResult = typeof AssignRunStepTeamResult.Type;
+export type AssignRunTaskTeamResult = typeof AssignRunTaskTeamResult.Type;
 
 export const ShopSessionRedactedPage = Schema.Struct({
   shopSessions: Schema.Array(ShopSessionRedacted),
@@ -1654,15 +1659,15 @@ export const orderIsSeeded = (orderId: string) =>
   orderId.startsWith(SEED_ORDER_ID_PREFIX);
 
 /**
- * Progress for one seeded run: `done` completes every step; `advance`
- * completes that many rounds of ready steps; `started` then Starts what is
+ * Progress for one seeded run: `done` completes every task; `advance`
+ * completes that many rounds of ready tasks; `started` then Starts what is
  * ready; `blocked` flags the run.
  */
 const SeedProgressFields = {
   done: Schema.optionalKey(Schema.Boolean),
   /**
    * Rounds of progress before the run is left alone: each round completes
-   * every step that was *ready* when the round began, and what that makes
+   * every task that was *ready* when the round began, and what that makes
    * ready waits for the next. `advance: 1` on a three-step item is "step 1
    * done, step 2 up next". `done` is the limit of this.
    */
@@ -1908,10 +1913,10 @@ export const ListOrdersInput = Schema.Struct({
   /** `true` keeps only orders with an open run that needs attention (see `OrderRow.attention`). */
   attention: Schema.Boolean,
   /**
-   * `null` is any team; an id keeps only orders with a ready step on that
-   * team — "waiting on", the run list's own predicate, not "owns a step
+   * `null` is any team; an id keeps only orders with a ready task on that
+   * team — "waiting on", the run list's own predicate, not "owns a task
    * somewhere in the run". The looser reading pulls in orders the team
-   * finished days ago and orders it will not touch for two more stages, so
+   * finished days ago and orders it will not touch for two more steps, so
    * the label carries the predicate.
    *
    * Always send the key. `subscribeOrders` parses with
@@ -1969,26 +1974,26 @@ export const OrderRow = Schema.Struct({
   runs: RunCounts,
   /**
    * **Needs attention**, derived at read time against the live D1 roster and
-   * never stored: an open run has an open step that is unassigned (`teamId`
-   * null or no longer in the roster) or a ready step on a team with no
+   * never stored: an open run has an open task that is unassigned (`teamId`
+   * null or no longer in the roster) or a ready task on a team with no
    * members. The order page's "Assign team" picker and the members screen
    * are the remedies; either clears this with no further write.
    */
   attention: Schema.Boolean,
   /**
-   * Teams with a ready step on an open run of this order, distinct, as ids:
+   * Teams with a ready task on an open run of this order, distinct, as ids:
    * "who is holding it", answered at the altitude the list grows with — a
    * shop has a handful of teams, while its runs are a cross product of line
    * items and matching workflows.
    *
-   * Unassigned ready steps contribute nothing, and neither does a team that
+   * Unassigned ready tasks contribute nothing, and neither does a team that
    * has left the roster: both are `attention`, and rendering one fault in two
    * cells makes it look like two alarms. A blocked run contributes nothing
    * either: its team cannot move it, and `RunCounts.blocked` is its alarm. A
    * team still on the roster but with
    * no members does contribute: it is `attention` too, but the badge names
    * the team the merchant has to staff. So an order in production with an
-   * empty list is exactly an order whose every ready step is unassigned or
+   * empty list is exactly an order whose every ready task is unassigned or
    * on a deleted team, which is when the critical badge is showing.
    *
    * Ids, not names: the Durable Object has no team names. The route resolves
@@ -2369,7 +2374,7 @@ export interface TeamsIndexLoaderData {
 
 /**
  * `/app/teams/$teamId` (`app.teams.$teamId`; a param tail contributes its
- * noun, `Team`). `teamWorkflows` and `stepCounts` are Durable Object data joined
+ * noun, `Team`). `teamWorkflows` and `taskCounts` are Durable Object data joined
  * into a D1 page by the loader — see the loader-versus-socket rule on
  * `ShopAgentClient`. `memberTeams` is the hint the Add members
  * dialog shows beside each candidate: where they already work.
@@ -2377,7 +2382,7 @@ export interface TeamsIndexLoaderData {
 export interface TeamLoaderData extends TeamDetail {
   readonly memberTeams: readonly MemberTeam[];
   readonly teamWorkflows: readonly TeamWorkflow[];
-  readonly stepCounts: TeamDeleteCounts;
+  readonly taskCounts: TeamDeleteCounts;
 }
 
 /**
@@ -2486,14 +2491,14 @@ export const ConnectionRole = Schema.Literals(["merchant", "member"]);
 export type ConnectionRole = typeof ConnectionRole.Type;
 
 /**
- * Who did a step action, as a closed union rather than a set of nullable
+ * Who did a task action, as a closed union rather than a set of nullable
  * columns read together. The merchant has no member id and no email — they
  * act through the embedded admin, where identity is the Shopify session, not
  * a `Member` row — so inferring "merchant" from a null email would make every
  * reader re-derive the same rule and would collide with a member row whose
- * email columns are legitimately null (a step nobody has touched). The role
+ * email columns are legitimately null (a task nobody has touched). The role
  * discriminator is stored beside the id and email on the row, and the
- * accessors below ({@link stepStartedBy} and friends) are the only place the
+ * accessors below ({@link taskStartedBy} and friends) are the only place the
  * three columns are reassembled.
  */
 export const Actor = Schema.Union([
@@ -2511,7 +2516,7 @@ export type MemberActor = Extract<Actor, { readonly role: "member" }>;
 /**
  * The part of an {@link Actor} a page displays. Separate from `Actor` because
  * the `reopened` slot stores no member id and so cannot produce a full actor,
- * yet reads the same way on the page ({@link stepReopenedBy}).
+ * yet reads the same way on the page ({@link taskReopenedBy}).
  */
 export type ActorDisplay =
   | { readonly role: "merchant" }
@@ -2631,21 +2636,21 @@ export const WorkflowRunId = Schema.NonEmptyString.pipe(
 );
 export type WorkflowRunId = typeof WorkflowRunId.Type;
 
-export const WorkflowRunStepId = Schema.NonEmptyString.pipe(
-  Schema.brand("WorkflowRunStepId"),
+export const WorkflowRunTaskId = Schema.NonEmptyString.pipe(
+  Schema.brand("WorkflowRunTaskId"),
 );
-export type WorkflowRunStepId = typeof WorkflowRunStepId.Type;
+export type WorkflowRunTaskId = typeof WorkflowRunTaskId.Type;
 
 /** How a run came to exist: a tag match during an order upsert, or an admin attaching by hand. */
 export const RunSource = Schema.Literals(["tag", "manual"]);
 export type RunSource = typeof RunSource.Type;
 
 /**
- * Derived from the run's steps and stored for querying; every step write
- * recomputes it in the same transaction. `cancelled` is the one value steps
+ * Derived from the run's tasks and stored for querying; every task write
+ * recomputes it in the same transaction. `cancelled` is the one value tasks
  * cannot produce — reconcile sets it on a `pending` run whose work vanished,
  * a person sets it from anywhere but `done`, and un-cancel recomputes from
- * the steps again.
+ * the tasks again.
  *
  * What each status allows. The gate column is the rule; the enforcing write
  * refuses with `RunTerminalError` when it fails, and every page that offers
@@ -2653,13 +2658,13 @@ export type RunSource = typeof RunSource.Type;
  *
  * | action                          | gate                                  |
  * | ------------------------------- | ------------------------------------- |
- * | Start, Done                     | {@link runIsOpen}, and the step ready |
+ * | Start, Done                     | {@link runIsOpen}, and the task ready |
  * | note on the run                 | {@link runIsLive}: a note is a record, not work |
- * | Block                           | {@link runIsOpen}, and a ready step   |
- * | Put back (clear a step's Start) | {@link runIsOpen}, and the step started and ready |
- * | assign a step's team            | {@link runIsOpen}, and the step open  |
+ * | Block                           | {@link runIsOpen}, and a ready task   |
+ * | Put back (clear a task's Start) | {@link runIsOpen}, and the task started and ready |
+ * | assign a task's team            | {@link runIsOpen}, and the task open  |
  * | Cancel                          | {@link runIsOpen}                     |
- * | Undo (reopen a finished step)   | {@link runIsLive}, see {@link undoBlockedBy} |
+ * | Undo (reopen a finished task)   | {@link runIsLive}, see {@link undoBlockedBy} |
  * | Un-cancel                       | the inverse of {@link runIsLive}: only `cancelled` |
  * | reconcile adjusts the run       | {@link runIsOpen}; silently if {@link runIsUnstarted}, flagged otherwise |
  * | reconcile flags a quantity change | {@link runIsOpen} or {@link runIsDone}; a `done` run keeps its quantity |
@@ -2681,7 +2686,7 @@ export const RunStatus = Schema.Literals([
 export type RunStatus = typeof RunStatus.Type;
 
 /**
- * Nobody has touched it: no step started or finished. Reconcile treats such
+ * Nobody has touched it: no task started or finished. Reconcile treats such
  * a run as free to cancel or resize silently when the order moves under it,
  * where a started run is flagged instead, because "someone has started
  * work" is exactly what should protect a run from a silent cancel.
@@ -2693,13 +2698,13 @@ export const runIsUnstarted = (run: { readonly status: RunStatus }) =>
 export const runIsOpen = (run: { readonly status: RunStatus }) =>
   run.status === "pending" || run.status === "active";
 
-/** The last step's Done: no work is recorded on it again unless Undo reopens it. */
+/** The last task's Done: no work is recorded on it again unless Undo reopens it. */
 export const runIsDone = (run: { readonly status: RunStatus }) =>
   run.status === "done";
 
 /**
  * The run still stands for its line item. Only `cancelled` is out, because
- * only `cancelled` was chosen; `done` is the last step's Done and is undone
+ * only `cancelled` was chosen; `done` is the last task's Done and is undone
  * the same way. Undo and every "which run is this item's" lookup use this,
  * and `WorkflowRun_live_item_uidx` (partial over `status <> 'cancelled'`) is
  * the same rule as a database constraint.
@@ -2772,7 +2777,7 @@ export type RunFlag = typeof RunFlag.Type;
  * and the pages hide them. Undo and the note are not stopped — Undo takes
  * work back rather than doing more, and a held run is the one somebody needs
  * to write on. Put back is refused for the reason on
- * `WorkflowRunRepository.unstartStep`. The one action a flag itself allows is lifting it: Unblock for
+ * `WorkflowRunRepository.unstartTask`. The one action a flag itself allows is lifting it: Unblock for
  * {@link runIsBlocked}, Dismiss for a reconcile flag ({@link flagIsReconcile}).
  */
 export const runIsFlagged = (run: { readonly flag: RunFlag | null }) =>
@@ -2816,7 +2821,7 @@ export const RunFlagDetail = Schema.Struct({
   to: Schema.optionalKey(Schema.Number),
   reason: Schema.optionalKey(BlockReason),
   /**
-   * Who blocked the run. Snapshotted like the step actors, so a deleted
+   * Who blocked the run. Snapshotted like the task actors, so a deleted
    * member still reads as who; absent on reconcile flags, which have nobody.
    */
   by: Schema.optionalKey(Actor),
@@ -2870,11 +2875,11 @@ export const WorkflowRun = Schema.Struct({
 export type WorkflowRun = typeof WorkflowRun.Type;
 
 /**
- * A step copied from the definition at run creation. `teamName` is
+ * A task copied from the definition at run creation. `teamName` is
  * snapshotted alongside `teamId` so the run list never joins D1. `teamId` is
- * the live pointer that puts the step on a team's list; a team delete nulls
- * it on *open* steps only (**unassigned**: red on the order page, on nobody's
- * list, waiting for **assign a team**), while a finished step keeps both the
+ * the live pointer that puts the task on a team's list; a team delete nulls
+ * it on *open* tasks only (**unassigned**: red on the order page, on nobody's
+ * list, waiting for **assign a team**), while a finished task keeps both the
  * id and the name. `startedBy` / `completedBy` are D1 `Member.id`s,
  * cross-store and unreferenced; `startedByEmail` / `completedByEmail` are
  * the snapshots taken at the action that keep history readable after the
@@ -2883,31 +2888,31 @@ export type WorkflowRun = typeof WorkflowRun.Type;
  * Each of the three actor slots carries a `*ByRole` column, and that column
  * is the discriminator: the merchant leaves the id and email null (they have
  * no `Member` row), a member fills all three. Read them through
- * {@link stepStartedBy} / {@link stepCompletedBy} / {@link stepReopenedBy}
+ * {@link taskStartedBy} / {@link taskCompletedBy} / {@link taskReopenedBy}
  * rather than by hand, and see {@link Actor} for why the role is stored
  * rather than inferred from a null email.
  *
  * `reopened*` is a *last-actor slot*, not a history: it records the most
- * recent Undo and the next `completeStep` clears it, so the line only shows
- * while the step is genuinely back open. There is no `reopenedBy` id
+ * recent Undo and the next `completeTask` clears it, so the line only shows
+ * while the task is genuinely back open. There is no `reopenedBy` id
  * column — the reopener is only ever displayed, never joined. Undo also
- * clears the whole Start slot, so a reopened step reads Ready. Put back
- * clears the Start slot with no slot of its own: a put-back step is plain
+ * clears the whole Start slot, so a reopened task reads Ready. Put back
+ * clears the Start slot with no slot of its own: a put-back task is plain
  * Ready and the next Start writes a fresh record.
  *
- * A step is *ready* when it is open and nothing in an earlier stage is still
- * open; several steps of one run can be ready at once. `startedAt` is set by
- * Start (and backfilled by a Done without Start) and marks the run `active`.
+ * A task is *ready* by {@link readyTasks}; several tasks of one run can be
+ * ready at once. `startedAt` is set by Start (and backfilled by a Done without
+ * Start) and marks the run `active`.
  */
-export const WorkflowRunStep = Schema.Struct({
-  id: WorkflowRunStepId,
+export const WorkflowRunTask = Schema.Struct({
+  id: WorkflowRunTaskId,
   runId: WorkflowRunId,
   position: Schema.Number,
-  stage: Schema.Number,
-  name: StepName,
+  step: Schema.Number,
+  name: TaskName,
   teamId: Schema.NullOr(TeamId),
   teamName: TeamName,
-  instructions: Schema.NullOr(StepInstructions),
+  instructions: Schema.NullOr(TaskInstructions),
   startedAt: Schema.NullOr(Schema.Number),
   startedBy: Schema.NullOr(MemberId),
   startedByEmail: Schema.NullOr(Email),
@@ -2920,7 +2925,7 @@ export const WorkflowRunStep = Schema.Struct({
   reopenedByRole: Schema.NullOr(ConnectionRole),
   reopenedByEmail: Schema.NullOr(Email),
 });
-export type WorkflowRunStep = typeof WorkflowRunStep.Type;
+export type WorkflowRunTask = typeof WorkflowRunTask.Type;
 
 /**
  * The three actor slots, reassembled from their role column and its
@@ -2943,89 +2948,89 @@ const actorFrom = (
 
 /**
  * Each of these takes the slot it reads rather than a whole
- * {@link WorkflowRunStep}, so a {@link RunListStep} — which carries no
+ * {@link WorkflowRunTask}, so a {@link RunListTask} — which carries no
  * `completed*` slot at all — is as good an argument as a finished one.
  */
-export const stepStartedBy = (
-  step: Pick<WorkflowRunStep, "startedByRole" | "startedBy" | "startedByEmail">,
-) => actorFrom(step.startedByRole, step.startedBy, step.startedByEmail);
+export const taskStartedBy = (
+  task: Pick<WorkflowRunTask, "startedByRole" | "startedBy" | "startedByEmail">,
+) => actorFrom(task.startedByRole, task.startedBy, task.startedByEmail);
 
-export const stepCompletedBy = (step: WorkflowRunStep) =>
-  actorFrom(step.completedByRole, step.completedBy, step.completedByEmail);
+export const taskCompletedBy = (task: WorkflowRunTask) =>
+  actorFrom(task.completedByRole, task.completedBy, task.completedByEmail);
 
 /**
  * The reopener. Narrower than the other two: the `reopened` slot has no id
- * column (see {@link WorkflowRunStep}), so this is an {@link ActorDisplay} —
+ * column (see {@link WorkflowRunTask}), so this is an {@link ActorDisplay} —
  * enough for {@link actorLabel}, which is all anything does with it.
  */
-export const stepReopenedBy = (
-  step: Pick<WorkflowRunStep, "reopenedByRole" | "reopenedByEmail">,
+export const taskReopenedBy = (
+  task: Pick<WorkflowRunTask, "reopenedByRole" | "reopenedByEmail">,
 ): ActorDisplay | null => {
-  if (step.reopenedByRole === null) return null;
-  if (step.reopenedByRole === "merchant") return { role: "merchant" };
-  return step.reopenedByEmail === null
+  if (task.reopenedByRole === null) return null;
+  if (task.reopenedByRole === "merchant") return { role: "merchant" };
+  return task.reopenedByEmail === null
     ? null
-    : { role: "member", email: step.reopenedByEmail };
+    : { role: "member", email: task.reopenedByEmail };
 };
 
-/** An open run step whose team is gone: `teamId` null, or an id the roster no longer carries. */
-export const isRunStepUnassigned = (
-  step: WorkflowRunStep,
+/** An open run task whose team is gone: `teamId` null, or an id the roster no longer carries. */
+export const isRunTaskUnassigned = (
+  task: WorkflowRunTask,
   teams: readonly { readonly id: TeamId }[],
 ) =>
-  step.completedAt === null &&
-  (step.teamId === null || !teams.some((team) => team.id === step.teamId));
+  task.completedAt === null &&
+  (task.teamId === null || !teams.some((team) => team.id === task.teamId));
 
 /**
- * The step is on one of the caller's teams. An unassigned step (`teamId`
+ * The task is on one of the caller's teams. An unassigned task (`teamId`
  * null) is on nobody's list, so no member's teams match it. The merchant
  * never asks: their `teamIds` is undefined and every guard skips this.
  */
-export const stepIsOnTeams = (
-  step: { readonly teamId: string | null },
+export const taskIsOnTeams = (
+  task: { readonly teamId: string | null },
   teamIds: readonly string[],
-) => step.teamId !== null && teamIds.includes(step.teamId);
+) => task.teamId !== null && teamIds.includes(task.teamId);
 
 /**
- * **A member's access to a run is any step of it on one of their teams**,
+ * **A member's access to a run is any task of it on one of their teams**,
  * ready or not, done or not. It is what shows them the run page
  * (`WorkflowRunRepository.getRunView`) and what lets them write the run's
- * note (`setRunNote`), the one write that is not about a particular step.
- * Acting on a step needs that step's team ({@link stepIsOnTeams}); Block
+ * note (`setRunNote`), the one write that is not about a particular task.
+ * Acting on a task needs that task's team ({@link taskIsOnTeams}); Block
  * needs a ready one, because a hold is placed by whoever is stuck.
  */
 export const runIsVisibleTo = (
-  steps: readonly { readonly teamId: string | null }[],
+  tasks: readonly { readonly teamId: string | null }[],
   teamIds: readonly string[],
-) => steps.some((step) => stepIsOnTeams(step, teamIds));
+) => tasks.some((task) => taskIsOnTeams(task, teamIds));
 
-/** A run is complete in itself: its steps are copies, and nothing here refers back to the definition. */
+/** A run is complete in itself: its tasks are copies, and nothing here refers back to the definition. */
 export const WorkflowRunDetail = Schema.Struct({
   run: WorkflowRun,
-  steps: Schema.Array(WorkflowRunStep),
+  tasks: Schema.Array(WorkflowRunTask),
 });
 export type WorkflowRunDetail = typeof WorkflowRunDetail.Type;
 
 /**
- * One ready step the member may act on, cut to what a run's row renders.
+ * One ready task the member may act on, cut to what a run's row renders.
  * `startedByEmail` is read off the row — the snapshot taken at Start, never a
  * live join — and it is load-bearing beyond display: {@link tierOf} decides
  * "Mine" with it.
  *
  * Two groups of columns are omitted rather than carried as nulls. The four
  * `completed*` ones can never say anything here: readiness is `completedAt is
- * null` (`readyWhere`) and Undo clears the whole slot, so on a list step
+ * null` (`readyWhere`) and Undo clears the whole slot, so on a list task
  * every one of them is null by construction. The rest — instructions and the
  * reopened slot — say something, but only on the work
- * page: a row shows the step's name and one state clause, and everything
- * behind that is one tap away. Either way they are fields per step on every
+ * page: a row shows the task's name and one state clause, and everything
+ * behind that is one tap away. Either way they are fields per task on every
  * SSR paint and every refetch.
  *
- * A finished step is a {@link DoneItem}, which carries the whole
- * {@link WorkflowRunStep} because there the slot is the point.
+ * A finished task is a {@link DoneItem}, which carries the whole
+ * {@link WorkflowRunTask} because there the slot is the point.
  */
-export const RunListStep = Schema.Struct(
-  Struct.omit(WorkflowRunStep.fields, [
+export const RunListTask = Schema.Struct(
+  Struct.omit(WorkflowRunTask.fields, [
     "completedAt",
     "completedBy",
     "completedByEmail",
@@ -3036,7 +3041,7 @@ export const RunListStep = Schema.Struct(
     "reopenedByEmail",
   ]),
 );
-export type RunListStep = typeof RunListStep.Type;
+export type RunListTask = typeof RunListTask.Type;
 
 /**
  * The run behind a row, cut the same way. `orderProcessedAt` and
@@ -3068,26 +3073,59 @@ export const RunListRun = Schema.Struct(
 export type RunListRun = typeof RunListRun.Type;
 
 /**
- * One row of a member's run list: a run with every *ready* step — open, and
- * nothing in an earlier stage still open — that belongs to one of the
- * member's teams. `stageCount` is the run's last stage, for "step k of n".
+ * One row of a member's run list: a run with every *ready* task
+ * ({@link readyTasks}) that belongs to one of the member's teams. `stepCount` is the run's last step, for "Step k of n" ({@link runRowLine}).
  *
  * The order's live note is not here. It is the work page's, along with the
- * step instructions and the item's attributes: the row is a list entry that
+ * task instructions and the item's attributes: the row is a list entry that
  * names the piece and its state, and the page one tap behind it is where a
  * maker reads anything.
  */
 export const RunListItem = Schema.Struct({
   run: RunListRun,
-  steps: Schema.NonEmptyArray(RunListStep),
-  stageCount: Schema.Number,
+  tasks: Schema.NonEmptyArray(RunListTask),
+  stepCount: Schema.Number,
 });
 export type RunListItem = typeof RunListItem.Type;
 
 /**
+ * Line two of a member's run row, in two parts so the row can swap the second
+ * for a flag or "In progress" and keep the first. `names` is every ready task
+ * in `position` order, so a parallel step shows all of its tasks rather than
+ * one name and a count. `step` is `Step k of n`, where k is the step the ready
+ * tasks share and n is {@link RunListItem}'s `stepCount`.
+ *
+ * The team is printed only where it tells the reader something. When the
+ * listed tasks are on different teams each name carries its team in
+ * parentheses and `step` carries none. When they share one team it follows
+ * `step`, and only if `showTeam`: the row decides that from the member's team
+ * count and filter.
+ */
+export const runRowLine = (
+  { tasks, stepCount }: RunListItem,
+  showTeam: boolean,
+): { readonly names: string; readonly step: string } => {
+  const [first] = tasks;
+  const teams = new Set(tasks.map((task) => task.teamName));
+  const names = tasks
+    .map((task) =>
+      teams.size > 1 ? `${task.name} (${task.teamName})` : task.name,
+    )
+    .join(" · ");
+  const position = `Step ${String(first.step)} of ${String(stepCount)}`;
+  return {
+    names,
+    step:
+      showTeam && teams.size === 1
+        ? `${position} · ${first.teamName}`
+        : position,
+  };
+};
+
+/**
  * The four tiers a waiting row can fall in. Four of the five tabs
  * ({@link RunTab}) are these; `done` is not a tier because it is a window
- * over finished steps rather than a grouping of the list. The labels the
+ * over finished tasks rather than a grouping of the list. The labels the
  * member reads are the route's (`runTabs.ts`); the object only needs the
  * keys, because it is the side that groups, sorts, and caps.
  */
@@ -3102,7 +3140,7 @@ export type RunTier = typeof RunTier.Type;
 /**
  * The five screens of the member's run list, in strip order: what I am finishing,
  * what I can start, what a teammate is holding, what has stopped, what can be
- * undone. Four are the tiers of {@link tierOf}; `done` is the finished-steps
+ * undone. Four are the tiers of {@link tierOf}; `done` is the finished-tasks
  * window. The tab is the unit of a read: one read returns every tab's count
  * and one tab's rows.
  */
@@ -3117,15 +3155,15 @@ export type RunTab = typeof RunTab.Type;
 export const DEFAULT_RUN_TAB: RunTab = "mine";
 
 /**
- * Which tier a row belongs in: a flag wins; else a step the viewer
- * started; else any started step; else up next.
+ * Which tier a row belongs in: a flag wins; else a task the viewer
+ * started; else any started task; else up next.
  *
  * "Mine" is by `startedByEmail`, not by the `startedBy` member id. Removing a
  * member and re-adding the same address mints a **new** `Member.id`
  * (`migrations/0001_init.sql`), so the id on a row taken before that stops
  * matching the person still standing at the bench, while the email — the
  * snapshot the migration calls the durable one — keeps matching. A merchant's
- * step has no email at all and so is nobody's, which is right: `Merchant` is
+ * task has no email at all and so is nobody's, which is right: `Merchant` is
  * not a member of this shop.
  *
  * Put back and Undo both clear `startedByEmail`, so they are the two ways a
@@ -3136,12 +3174,12 @@ export const DEFAULT_RUN_TAB: RunTab = "mine";
  * grouping has to happen on the side that decides what leaves.
  */
 export const tierOf = (
-  { run, steps }: RunListItem,
+  { run, tasks }: RunListItem,
   memberEmail: Email,
 ): RunTier => {
   if (run.flag !== null) return "attention";
-  if (steps.some((step) => step.startedByEmail === memberEmail)) return "mine";
-  if (steps.some((step) => step.startedAt !== null)) return "inProgress";
+  if (tasks.some((task) => task.startedByEmail === memberEmail)) return "mine";
+  if (tasks.some((task) => task.startedAt !== null)) return "inProgress";
   return "upNext";
 };
 
@@ -3161,91 +3199,91 @@ export const byAge = (a: RunListItem, b: RunListItem) =>
   a.run.id.localeCompare(b.run.id);
 
 /**
- * What stands between a finished step and Undo: the first later step someone
- * has already started (or finished), in a later stage of the same run. Once
+ * What stands between a finished task and Undo ({@link undoBlockedBy}). Once
  * downstream has moved the fix is a conversation, so the page names who to
  * ask rather than offering a button that would pull work out from under them.
  */
 export const UndoBlocker = Schema.Struct({
-  stepName: StepName,
+  taskName: TaskName,
   teamName: TeamName,
 });
 export type UndoBlocker = typeof UndoBlocker.Type;
 
 /**
- * The lowest stage with an open step — where the run is — or `null` once
- * every step is done.
+ * The lowest step with an open task — where the run is — or `null` once
+ * every task is done.
  */
-export const lowestOpenStage = (steps: readonly WorkflowRunStep[]) =>
-  steps
-    .filter((step) => step.completedAt === null)
+export const lowestOpenStep = (tasks: readonly WorkflowRunTask[]) =>
+  tasks
+    .filter((task) => task.completedAt === null)
     .reduce<number | null>(
-      (lowest, step) =>
-        lowest === null ? step.stage : Math.min(lowest, step.stage),
+      (lowest, task) =>
+        lowest === null ? task.step : Math.min(lowest, task.step),
       null,
     );
 
 /**
- * The readiness rule on rows already in hand: a step is ready when its run
- * is {@link runIsOpen}, it is open, and nothing in an earlier stage of the
- * same run is still open. Several are ready at once on a parallel stage, so
- * this is a list and every caller copes with more than one. `readyWhere.ts`
- * is the same rule as SQL for the run list and the step guards; this is the one
- * TypeScript copy, for the merchant's order page (which holds every step of
- * the order) and the dev seeder (which walks runs a stage at a time), and the
+ * The readiness rule on rows already in hand: step k is ready when every task
+ * of step k-1 is done ({@link WorkflowTask}), so a task is ready when its run
+ * is {@link runIsOpen}, it is open, and its step is the lowest with an open
+ * task. Several are ready at once on a step of several tasks, so this is a
+ * list and every caller copes with more than one. `readyWhere.ts`
+ * is the same rule as SQL for the run list and the task guards; this is the one
+ * TypeScript copy, for the merchant's order page (which holds every task of
+ * the order) and the dev seeder (which walks runs a step at a time), and the
  * test on it pins that the two agree.
  */
-export const readySteps = (
+export const readyTasks = (
   run: { readonly status: RunStatus },
-  steps: readonly WorkflowRunStep[],
-): WorkflowRunStep[] => {
+  tasks: readonly WorkflowRunTask[],
+): WorkflowRunTask[] => {
   if (!runIsOpen(run)) return [];
-  const lowest = lowestOpenStage(steps);
-  return steps.filter(
-    (step) => step.completedAt === null && step.stage === lowest,
+  const lowest = lowestOpenStep(tasks);
+  return tasks.filter(
+    (task) => task.completedAt === null && task.step === lowest,
   );
 };
 
+const firstStarted = (tasks: readonly WorkflowRunTask[]) =>
+  tasks
+    .filter((other) => other.startedAt !== null)
+    .toSorted((a, b) => a.step - b.step || a.position - b.position)[0];
+
 /**
- * The undo rule, on rows already in hand: the first step in a later stage of
+ * The undo rule, on rows already in hand: the first task in a later step of
  * the same run that anyone has started. A `startedAt` test covers finished
- * steps too, because Done backfills `startedAt`.
+ * tasks too, because Done backfills `startedAt`.
  *
  * Pure and here rather than in `WorkflowRunRepository` so the three readers
  * cannot disagree: the repository's own write, the verdicts it precomputes for
- * the member pages, and the merchant's order page, which holds every step of
+ * the member pages, and the merchant's order page, which holds every task of
  * every run on the order and decides client-side whether to offer Reopen. A
  * browser cannot import the repository module — it carries the SQL service —
  * and a second copy of this rule is exactly the drift to avoid.
  */
-const firstStarted = (steps: readonly WorkflowRunStep[]) =>
-  steps
-    .filter((other) => other.startedAt !== null)
-    .toSorted((a, b) => a.stage - b.stage || a.position - b.position)[0];
-
 export const undoBlockedBy = (
-  step: WorkflowRunStep,
-  runSteps: readonly WorkflowRunStep[],
+  task: WorkflowRunTask,
+  runTasks: readonly WorkflowRunTask[],
 ): UndoBlocker | null => {
   const blocker = firstStarted(
-    runSteps.filter(
-      (other) => other.runId === step.runId && other.stage > step.stage,
+    runTasks.filter(
+      (other) => other.runId === task.runId && other.step > task.step,
     ),
   );
   return blocker === undefined
     ? null
-    : { stepName: blocker.name, teamName: blocker.teamName };
+    : { taskName: blocker.name, teamName: blocker.teamName };
 };
 
 /**
- * One entry of the run list's "Done today" tier: a step one of the member's
+ * One entry of the run list's "Done today" tier: a task one of the member's
  * teams completed inside the window, with its run for the card line and the
  * undo verdict precomputed by the object, which is the only side that can see
- * the downstream steps.
+ * the downstream tasks.
  */
 export const DoneItem = Schema.Struct({
   run: WorkflowRun,
-  step: WorkflowRunStep,
+  task: WorkflowRunTask,
   undoBlockedBy: Schema.NullOr(UndoBlocker),
 });
 export type DoneItem = typeof DoneItem.Type;
@@ -3371,45 +3409,45 @@ export type RunListView = typeof RunListView.Type;
 export const DONE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * A run step on the work page, decorated with what the page needs to offer
+ * A run task on the work page, decorated with what the page needs to offer
  * the right button: `ready` is the run list's readiness rule evaluated for this
- * step, and `undoBlockedBy` is the undo verdict for a finished one. Both are
- * facts about *other* rows (earlier and later stages of the run), which is
+ * task, and `undoBlockedBy` is the undo verdict for a finished one. Both are
+ * facts about *other* rows (earlier and later steps of the run), which is
  * why the object computes them rather than the page.
  */
-export const RunStepView = Schema.Struct({
-  ...WorkflowRunStep.fields,
+export const RunTaskView = Schema.Struct({
+  ...WorkflowRunTask.fields,
   ready: Schema.Boolean,
   undoBlockedBy: Schema.NullOr(UndoBlocker),
 });
-export type RunStepView = typeof RunStepView.Type;
+export type RunTaskView = typeof RunTaskView.Type;
 
 /**
- * What a member may do to a step, in one place for the work page and the
+ * What a member may do to a task, in one place for the work page and the
  * run list's Done tier so the buttons and the writes cannot disagree. Rules: the
  * {@link RunStatus} table for status (Start, Done and Put back need
- * {@link runIsOpen}; Undo needs {@link runIsLive}); the step's
+ * {@link runIsOpen}; Undo needs {@link runIsLive}); the task's
  * team must be one of `teamIds`, as `WorkflowRunRepository.requireActionable`
  * requires; a flag stops Start, Done and Put back but not Undo
- * ({@link runIsFlagged}); Undo is offered on a finished step and carries its
+ * ({@link runIsFlagged}); Undo is offered on a finished task and carries its
  * downstream blocker ({@link undoBlockedBy}) when there is one.
  *
- * Put back is offered wherever Done is, and only on a started step
- * (`WorkflowRunRepository.unstartStep`). It shares Done's team gate, so every
- * member of the step's team sees it, not only the starter.
+ * Put back is offered wherever Done is, and only on a started task
+ * (`WorkflowRunRepository.unstartTask`). It shares Done's team gate, so every
+ * member of the task's team sees it, not only the starter.
  *
  * **Nothing on a member screen renders that blocker.** The run list drops the
- * row's menu and the work page lists the whole run, so the started step
+ * row's menu and the work page lists the whole run, so the started task
  * standing in the way is already on screen wearing its own badge, and a
  * sentence naming it is the page arguing with itself. The merchant's order
  * page is the one screen that puts it in words, because it can reopen that
- * step and so has an instruction to give; the wording lives there, next to
+ * task and so has an instruction to give; the wording lives there, next to
  * the only thing that renders it.
  */
-export const stepActions = (
+export const taskActions = (
   run: { readonly status: RunStatus; readonly flag: RunFlag | null },
-  step: Pick<
-    RunStepView,
+  task: Pick<
+    RunTaskView,
     "teamId" | "ready" | "startedAt" | "completedAt" | "undoBlockedBy"
   >,
   teamIds: readonly string[],
@@ -3420,38 +3458,38 @@ export const stepActions = (
   /** `null` when Undo is not offered; otherwise the blocker, `null` meaning the button. */
   readonly undo: { readonly blockedBy: UndoBlocker | null } | null;
 } => {
-  const mine = stepIsOnTeams(step, teamIds);
+  const mine = taskIsOnTeams(task, teamIds);
   const live = mine && runIsLive(run);
   const ready =
     live &&
     runIsOpen(run) &&
     !runIsFlagged(run) &&
-    step.ready &&
-    step.completedAt === null;
+    task.ready &&
+    task.completedAt === null;
   return {
-    start: ready && step.startedAt === null,
+    start: ready && task.startedAt === null,
     done: ready,
-    putBack: ready && step.startedAt !== null,
+    putBack: ready && task.startedAt !== null,
     undo:
-      live && step.completedAt !== null
-        ? { blockedBy: step.undoBlockedBy }
+      live && task.completedAt !== null
+        ? { blockedBy: task.undoBlockedBy }
         : null,
   };
 };
 
 /**
- * Everything `/shop/$shop/workflows/$runId` renders: one run, its steps, and the
+ * Everything `/shop/$shop/workflows/$runId` renders: one run, its tasks, and the
  * order's live note.
  *
  * The other line items on the order are deliberately **not** here. A workflow
  * is attached to a product and runs once per matching line item
  * ({@link Workflow}), so a member's unit of work is the line item and its
- * steps. Nothing on this page acts on the order as a whole, and an order can
+ * tasks. Nothing on this page acts on the order as a whole, and an order can
  * carry an unbounded number of lines to render.
  */
 export const RunView = Schema.Struct({
   run: WorkflowRun,
-  steps: Schema.Array(RunStepView),
+  tasks: Schema.Array(RunTaskView),
   /** Shopify's order note, read-only here; the run's own note is `run.note`. */
   orderNote: Schema.NullOr(Schema.String),
 });
@@ -3475,12 +3513,12 @@ export const OrderDetailView = Schema.Struct({
   lineItems: Schema.Array(OrderLineItem),
   runs: Schema.Array(WorkflowRunDetail),
   /**
-   * Active workflows with at least one step — the manual-attach picker's
+   * Active workflows with at least one task — the manual-attach picker's
    * choices. Carried in the view rather than read by a second socket query so
    * the page has exactly one read, one key, and one push.
    */
   itemWorkflows: Schema.Array(Workflow),
-  /** The live roster: the "Assign team" picker's choices, and what decides which open steps are unassigned or on an empty team. */
+  /** The live roster: the "Assign team" picker's choices, and what decides which open tasks are unassigned or on an empty team. */
   teams: Schema.Array(TeamRoster),
 });
 export type OrderDetailView = typeof OrderDetailView.Type;
@@ -3514,8 +3552,8 @@ export type SubscribeRunsInput = typeof SubscribeRunsInput.Type;
 
 /**
  * The work page's loader read, Worker-resolved for the same reason as
- * {@link ListRunsInput}. The guard is "any step of the run on one of my
- * teams", not "a ready step": a member may open work they have finished.
+ * {@link ListRunsInput}. The guard is "any task of the run on one of my
+ * teams", not "a ready task": a member may open work they have finished.
  */
 export const GetRunForMemberInput = Schema.Struct({
   runId: BoundedId,
@@ -3543,26 +3581,26 @@ export type SubscribeRunInput = typeof SubscribeRunInput.Type;
  * `memberEmail` could sign someone else's name to it. The object pairs the two
  * halves into the `*Command` shapes below before touching the repository.
  */
-export const CompleteStepInput = Schema.Struct({
-  runStepId: BoundedId,
+export const CompleteTaskInput = Schema.Struct({
+  runTaskId: BoundedId,
 });
-export type CompleteStepInput = typeof CompleteStepInput.Type;
+export type CompleteTaskInput = typeof CompleteTaskInput.Type;
 
 export const DismissFlagInput = Schema.Struct({
   runId: BoundedId,
 });
 export type DismissFlagInput = typeof DismissFlagInput.Type;
 
-export const StartStepInput = CompleteStepInput;
-export type StartStepInput = typeof StartStepInput.Type;
+export const StartTaskInput = CompleteTaskInput;
+export type StartTaskInput = typeof StartTaskInput.Type;
 
-/** Undo: re-opens a finished step. Same shape; the rule is on `WorkflowRunRepository.uncompleteStep`. */
-export const UncompleteStepInput = CompleteStepInput;
-export type UncompleteStepInput = typeof UncompleteStepInput.Type;
+/** Undo: re-opens a finished task. Same shape; the rule is on `WorkflowRunRepository.uncompleteTask`. */
+export const UncompleteTaskInput = CompleteTaskInput;
+export type UncompleteTaskInput = typeof UncompleteTaskInput.Type;
 
-/** Put back: clears a started step's Start record. Same shape; the rule is on `WorkflowRunRepository.unstartStep`. */
-export const UnstartStepInput = CompleteStepInput;
-export type UnstartStepInput = typeof UnstartStepInput.Type;
+/** Put back: clears a started task's Start record. Same shape; the rule is on `WorkflowRunRepository.unstartTask`. */
+export const UnstartTaskInput = CompleteTaskInput;
+export type UnstartTaskInput = typeof UnstartTaskInput.Type;
 
 /** `note: null` clears. The rule is on {@link SetRunNoteCommand}. */
 export const SetRunNoteInput = Schema.Struct({
@@ -3602,20 +3640,20 @@ export type SetBlockReasonInput = typeof SetBlockReasonInput.Type;
  * Identity is one {@link Actor}, not a loose `memberId` / `memberEmail` pair,
  * because the merchant acts through these same commands from the order page
  * and has neither. `teamIds` is *optional* and that is the whole permission
- * difference: present, it is the member's membership and the step's team must
+ * difference: present, it is the member's membership and the task's team must
  * be in it; absent, the caller is the merchant and the team clause is skipped
- * entirely. Every other rule — stage order, terminal runs, the downstream
+ * entirely. Every other rule — step order, terminal runs, the downstream
  * undo guard — applies to both.
  */
-export interface StartStepCommand {
-  readonly runStepId: string;
+export interface StartTaskCommand {
+  readonly runTaskId: string;
   /** Member-only: there is no merchant Start — the merchant never claims work. */
   readonly actor: MemberActor;
   readonly teamIds?: readonly string[] | undefined;
 }
 
-export interface CompleteStepCommand {
-  readonly runStepId: string;
+export interface CompleteTaskCommand {
+  readonly runTaskId: string;
   readonly actor: Actor;
   readonly teamIds?: readonly string[] | undefined;
 }
@@ -3655,26 +3693,26 @@ export interface SetBlockReasonCommand {
   readonly reason: BlockReason | null;
 }
 
-/** The actor lands in the step's `reopened` slot: undo is a fact worth showing, and the next Done clears it. */
-export interface UncompleteStepCommand {
-  readonly runStepId: string;
+/** The actor lands in the task's `reopened` slot: undo is a fact worth showing, and the next Done clears it. */
+export interface UncompleteTaskCommand {
+  readonly runTaskId: string;
   readonly actor: Actor;
   readonly teamIds?: readonly string[] | undefined;
 }
 
 /**
- * No slot records the actor: the step is plain Ready again
- * ({@link WorkflowRunStep}). `actor` is taken for the log line and for
- * symmetry with the other step commands.
+ * No slot records the actor: the task is plain Ready again
+ * ({@link WorkflowRunTask}). `actor` is taken for the log line and for
+ * symmetry with the other task commands.
  */
-export interface UnstartStepCommand {
-  readonly runStepId: string;
+export interface UnstartTaskCommand {
+  readonly runTaskId: string;
   readonly actor: Actor;
   readonly teamIds?: readonly string[] | undefined;
 }
 
 /**
- * `WorkflowCannotStart` = off, zero steps, or an unassigned step (see
+ * `WorkflowCannotStart` = off, zero tasks, or an unassigned task (see
  * {@link Workflow}).
  *
  * `replaced` is the run that was cancelled to make room, or null. An item
@@ -3704,10 +3742,10 @@ export const AttachResult = Schema.Union([
 export type AttachResult = typeof AttachResult.Type;
 
 /**
- * `NotAllowed` = the step's team is not among the caller's; `NotReady` = a
- * step in an earlier stage is still open (or this one is already done; for
- * undo, not yet done; for put back, not yet started or already done); `Terminal` = the run's status refuses the action,
- * see the table on {@link RunStatus} (or, for un-cancel, the run is not
+ * `NotAllowed` = the task's team is not among the caller's; `NotReady` = the
+ * task is not ready ({@link readyTasks}) or is already done (for undo, not
+ * yet done; for put back, not yet started or already done); `Terminal` = the
+ * run's status refuses the action, see the table on {@link RunStatus} (or, for un-cancel, the run is not
  * cancelled); `UndoBlocked` = someone downstream has
  * started, and names them ({@link UndoBlocker}).
  *

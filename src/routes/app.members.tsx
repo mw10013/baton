@@ -154,7 +154,7 @@ const setMemberTeamsFn = createServerFn({ method: "POST" })
 /**
  * Delete a member and they leave their teams (vocabulary on `Domain.Member`).
  * There is no second store to clean — a member owns nothing in the Durable
- * Object, since run steps snapshot the actor's email — but there may be a live
+ * Object, since run tasks snapshot the actor's email — but there may be a live
  * socket carrying the membership this delete just removed, so the object is
  * told to close it. Without that, a member deleted mid-shift keeps working
  * until their connection next drops; the page guards catch them on the next

@@ -704,11 +704,11 @@ describe("OrderRepository.listOrders q", () => {
 describe("OrderRepository.listOrders attention", () => {
   /**
    * `Domain.OrderRow.attention` against a roster the test hands in: #3's
-   * active run has an open step on a deleted team, #4's pending run has a
-   * ready step on an empty team, #1's finished run keeps a stale pointer on
-   * a completed step and never counts, and #8 is healthy.
+   * active run has an open task on a deleted team, #4's pending run has a
+   * ready task on an empty team, #1's finished run keeps a stale pointer on
+   * a completed task and never counts, and #8 is healthy.
    */
-  it("keeps only orders with an unassigned or unstaffed open step, and counts them", async () => {
+  it("keeps only orders with an unassigned or unstaffed open task, and counts them", async () => {
     const teams = Schema.decodeUnknownSync(Schema.Array(Domain.TeamRoster))([
       { id: "team-cut", name: "Cut", memberCount: 1 },
       { id: "team-empty", name: "Polish", memberCount: 0 },
@@ -717,22 +717,22 @@ describe("OrderRepository.listOrders attention", () => {
       Effect.gen(function* () {
         const repository = yield* seedStates;
         const sql = yield* SqlClient.SqlClient;
-        const step = (
+        const task = (
           id: string,
           runId: string,
-          stage: number,
+          step: number,
           teamId: string | null,
           completedAt: number | null,
         ) => sql`
-          insert into WorkflowRunStep
-            (id, runId, position, stage, name, teamId, teamName, completedAt)
-          values (${id}, ${runId}, ${stage}, ${stage}, 'Step', ${teamId}, 'Team', ${completedAt})
+          insert into WorkflowRunTask
+            (id, runId, position, step, name, teamId, teamName, completedAt)
+          values (${id}, ${runId}, ${step}, ${step}, 'Task', ${teamId}, 'Team', ${completedAt})
         `;
-        yield* step("s3", "run-3-1", 1, "team-gone", null);
-        yield* step("s4a", "run-4-1", 1, "team-cut", 1);
-        yield* step("s4b", "run-4-1", 2, "team-empty", null);
-        yield* step("s1", "run-1-0", 1, "team-gone", 1);
-        yield* step("s8", "run-8-0", 1, "team-cut", 1);
+        yield* task("s3", "run-3-1", 1, "team-gone", null);
+        yield* task("s4a", "run-4-1", 1, "team-cut", 1);
+        yield* task("s4b", "run-4-1", 2, "team-empty", null);
+        yield* task("s1", "run-1-0", 1, "team-gone", 1);
+        yield* task("s8", "run-8-0", 1, "team-cut", 1);
         const list = (attention: boolean) =>
           repository.listOrders({
             limit: 20,
@@ -758,10 +758,10 @@ describe("OrderRepository.listOrders attention", () => {
 });
 
 /**
- * `Domain.OrderRow.waitingOn`: the teams with a ready step on an open run,
+ * `Domain.OrderRow.waitingOn`: the teams with a ready task on an open run,
  * through the same `readyWhere` the member's run list runs on, so the cell and the
  * filter are one fact rendered two ways. The fixture reuses `seedStates`'
- * runs and hangs steps off them; on #1003 and #1004, `run-N-0` is done and
+ * runs and hangs tasks off them; on #1003 and #1004, `run-N-0` is done and
  * `run-N-1` is open.
  */
 describe("OrderRepository.listOrders waitingOn", () => {
@@ -776,24 +776,24 @@ describe("OrderRepository.listOrders waitingOn", () => {
     const repository = yield* seedStates;
     const sql = yield* SqlClient.SqlClient;
     /* `position` is unique per run and only orders a list, so it comes off a
-       counter; `stage` is what readiness is about and every case names it. */
+       counter; `step` is what readiness is about and every case names it. */
     let position = 0;
-    const step = (
+    const task = (
       id: string,
       runId: string,
-      stage: number,
+      step: number,
       team: string,
       completedAt: number | null = null,
     ) => {
       position += 1;
       return sql`
-        insert into WorkflowRunStep
-          (id, runId, position, stage, name, teamId, teamName, completedAt)
-        values (${id}, ${runId}, ${position}, ${stage}, 'Step', ${team}, 'Team', ${completedAt})
+        insert into WorkflowRunTask
+          (id, runId, position, step, name, teamId, teamName, completedAt)
+        values (${id}, ${runId}, ${position}, ${step}, 'Task', ${team}, 'Team', ${completedAt})
       `;
     };
     /* #1003: two open item runs both ready on Cut, so the id is distinct
-       across runs; the done run's step is on Cut too, and a run that is over
+       across runs; the done run's task is on Cut too, and a run that is over
        holds nobody up. */
     yield* sql`
       insert into WorkflowRun (
@@ -807,13 +807,13 @@ describe("OrderRepository.listOrders waitingOn", () => {
         null, null, null, 0, 0, null
       )
     `;
-    yield* step("s3a", "run-3-1", 1, "team-cut");
-    yield* step("s3b", "run-3-0", 1, "team-cut");
-    yield* step("s3e", "run-3-2", 1, "team-cut");
-    /* #1004: ready on Cut, with a later stage on Anodize that is not ready.
+    yield* task("s3a", "run-3-1", 1, "team-cut");
+    yield* task("s3b", "run-3-0", 1, "team-cut");
+    yield* task("s3e", "run-3-2", 1, "team-cut");
+    /* #1004: ready on Cut, with a later step on Anodize that is not ready.
        Anodize sorts first by name, so it would show if it counted. */
-    yield* step("s4a", "run-4-1", 1, "team-cut");
-    yield* step("s4b", "run-4-1", 2, "team-polish");
+    yield* task("s4a", "run-4-1", 1, "team-cut");
+    yield* task("s4b", "run-4-1", 2, "team-polish");
     const list = (team: Domain.TeamId | null = null) =>
       repository.listOrders({
         limit: 20,
@@ -825,10 +825,10 @@ describe("OrderRepository.listOrders waitingOn", () => {
         team,
         teams,
       });
-    return { sql, step, list };
+    return { sql, task, list };
   });
 
-  it("names each team once, only for ready steps on open runs", async () => {
+  it("names each team once, only for ready tasks on open runs", async () => {
     const page = await runInRepository(
       Effect.gen(function* () {
         const { list } = yield* waitingFixture;
@@ -842,7 +842,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
   });
 
   /**
-   * A blocked run's ready step still satisfies `readyWhere` (the run list keeps
+   * A blocked run's ready task still satisfies `readyWhere` (the run list keeps
    * showing it), but the team cannot move it, so the cell and the filter both
    * leave the team out; `RunCounts.blocked` is where that run is counted.
    */
@@ -867,7 +867,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
     const page = await runInRepository(
       Effect.gen(function* () {
         const { sql, list } = yield* waitingFixture;
-        yield* sql`update WorkflowRunStep set teamId = 'team-gone' where id in ('s3a', 's3e')`;
+        yield* sql`update WorkflowRunTask set teamId = 'team-gone' where id in ('s3a', 's3e')`;
         return yield* list();
       }),
     );
@@ -887,7 +887,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
         return {
           all: yield* list(),
           cut: yield* list(aTeamId("team-cut")),
-          /* Anodize owns #1004's second stage, which is not ready yet. */
+          /* Anodize owns #1004's second step, which is not ready yet. */
           polish: yield* list(aTeamId("team-polish")),
           unknown: yield* list(aTeamId("team-nobody")),
         };
@@ -909,9 +909,9 @@ describe("OrderRepository.listOrders waitingOn", () => {
   it("sorts by team name, not by id", async () => {
     const page = await runInRepository(
       Effect.gen(function* () {
-        const { step, list } = yield* waitingFixture;
-        yield* step("s3c", "run-3-1", 1, "team-pack");
-        yield* step("s3d", "run-3-1", 1, "team-polish");
+        const { task, list } = yield* waitingFixture;
+        yield* task("s3c", "run-3-1", 1, "team-pack");
+        yield* task("s3d", "run-3-1", 1, "team-polish");
         return yield* list();
       }),
     );

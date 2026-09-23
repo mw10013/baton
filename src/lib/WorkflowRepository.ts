@@ -45,16 +45,16 @@ export class WorkflowTagTakenError extends Schema.TaggedError<WorkflowTagTakenEr
   },
 ) {}
 
-/** A step id the editor sent that neither the draft nor the workflow carries — a step some other tab already removed, or a stale id. */
-export class StepNotFoundError extends Schema.TaggedError<StepNotFoundError>()(
-  "StepNotFoundError",
-  { stepId: Schema.String },
+/** A task id the editor sent that neither the draft nor the workflow carries — a task some other tab already removed, or a stale id. */
+export class TaskNotFoundError extends Schema.TaggedError<TaskNotFoundError>()(
+  "TaskNotFoundError",
+  { taskId: Schema.String },
 ) {}
 
-/** `addParallelStep` named a stage no step of the draft is in. */
-export class StageNotFoundError extends Schema.TaggedError<StageNotFoundError>()(
-  "StageNotFoundError",
-  { workflowId: Schema.String, stage: Schema.Number },
+/** `addTask` named a step no task of the draft is in. */
+export class StepNotFoundError extends Schema.TaggedError<StepNotFoundError>()(
+  "StepNotFoundError",
+  { workflowId: Schema.String, step: Schema.Number },
 ) {}
 
 export class WorkflowLimitError extends Schema.TaggedError<WorkflowLimitError>()(
@@ -70,7 +70,7 @@ export class WorkflowOffError extends Schema.TaggedError<WorkflowOffError>()(
 
 /**
  * Apply or Discard without a draft: there is nothing to promote or throw
- * away. Step and tag writes never raise this — they create the draft they
+ * away. Task and tag writes never raise this — they create the draft they
  * need (see `ensureDraft`).
  */
 export class NoDraftError extends Schema.TaggedError<NoDraftError>()(
@@ -78,31 +78,31 @@ export class NoDraftError extends Schema.TaggedError<NoDraftError>()(
   { workflowId: Schema.String },
 ) {}
 
-export class NoStepsError extends Schema.TaggedError<NoStepsError>()(
-  "NoStepsError",
+export class NoTasksError extends Schema.TaggedError<NoTasksError>()(
+  "NoTasksError",
   { workflowId: Schema.String },
 ) {}
 
 /**
- * Apply or turn-on refused because these steps are unassigned: `teamId` null
+ * Apply or turn-on refused because these tasks are unassigned: `teamId` null
  * (a team delete nulled it) or an id the live roster does not carry (the
  * cross-store window, read as null). An empty team is deliberately not here —
  * that is a warning, never a refusal.
  */
-export class StepUnassignedError extends Schema.TaggedError<StepUnassignedError>()(
-  "StepUnassignedError",
-  { workflowId: Schema.String, stepNames: Schema.Array(Domain.StepName) },
+export class TaskUnassignedError extends Schema.TaggedError<TaskUnassignedError>()(
+  "TaskUnassignedError",
+  { workflowId: Schema.String, taskNames: Schema.Array(Domain.TaskName) },
 ) {}
 
-/** Seed fixtures carry positions and stages but no ids; the index stands in. */
+/** Seed fixtures carry positions and steps but no ids; the index stands in. */
 const validLayout = (
-  steps: readonly { readonly position: number; readonly stage: number }[],
+  tasks: readonly { readonly position: number; readonly step: number }[],
 ) =>
   WorkflowLayout.isValid(
-    steps.map((step, index) => ({
+    tasks.map((task, index) => ({
       id: String(index),
-      position: step.position,
-      stage: step.stage,
+      position: task.position,
+      step: task.step,
     })),
   );
 
@@ -116,21 +116,21 @@ type Teams = readonly {
 }[];
 
 /** Unassigned: `teamId` null, or an id no team in `teams` carries. */
-const isUnassigned = (step: Domain.WorkflowStep, teams: Teams) =>
-  step.teamId === null || !teams.some((team) => team.id === step.teamId);
+const isUnassigned = (task: Domain.WorkflowTask, teams: Teams) =>
+  task.teamId === null || !teams.some((team) => team.id === task.teamId);
 
-/** The names of the unassigned `steps`, in position order. */
-const unassignedStepNames = (
-  steps: readonly Domain.WorkflowStep[],
+/** The names of the unassigned `tasks`, in position order. */
+const unassignedTaskNames = (
+  tasks: readonly Domain.WorkflowTask[],
   teams: Teams,
-) => steps.filter((step) => isUnassigned(step, teams)).map((step) => step.name);
+) => tasks.filter((task) => isUnassigned(task, teams)).map((task) => task.name);
 
 export class WorkflowRepository extends Context.Service<
   WorkflowRepository,
   {
     /**
      * `teams` is the live roster: `needsAttention` is derived per row from
-     * the workflow's steps against it (unassigned, or on a team with no
+     * the workflow's tasks against it (unassigned, or on a team with no
      * members) and never stored.
      */
     readonly listWorkflows: (input: {
@@ -140,10 +140,10 @@ export class WorkflowRepository extends Context.Service<
       SqlError.SqlError | WorkflowRepositoryError
     >;
     /**
-     * Deletes the definition only: the workflow row, and its steps, draft,
-     * and draft steps by cascade. Every run stays, open
+     * Deletes the definition only: the workflow row, and its tasks, draft,
+     * and draft tasks by cascade. Every run stays, open
      * and finished, and keeps working — a run snapshots `workflowName`
-     * and each step's `name`, `stage`, `instructions`, and `teamName`, and
+     * and each task's `name`, `step`, `instructions`, and `teamName`, and
      * no read joins a run back to `Workflow`, so an orphan run renders,
      * lists, starts, completes, blocks, and cancels unchanged.
      * `WorkflowRun.workflowId` stays `not null` because it is the conflict
@@ -156,7 +156,7 @@ export class WorkflowRepository extends Context.Service<
       void,
       SqlError.SqlError | WorkflowRepositoryError | WorkflowNotFoundError
     >;
-    /** The workflow with its steps, and the draft with its steps when one exists. */
+    /** The workflow with its tasks, and the draft with its tasks when one exists. */
     readonly getWorkflow: (input: {
       readonly workflowId: string;
     }) => Effect.Effect<
@@ -164,7 +164,7 @@ export class WorkflowRepository extends Context.Service<
       SqlError.SqlError | WorkflowRepositoryError
     >;
     /**
-     * Every switched-on workflow with its steps, in two statements rather
+     * Every switched-on workflow with its tasks, in two statements rather
      * than one per workflow: this is what an order upsert
      * loads before starting runs for its line items, and a bulk stream loads
      * it once for thousands of orders. Drafts are invisible here by
@@ -197,7 +197,7 @@ export class WorkflowRepository extends Context.Service<
       SqlError.SqlError | WorkflowRepositoryError
     >;
     /**
-     * Inserts the workflow: off, no steps, carrying its tag, and **no draft**.
+     * Inserts the workflow: off, no tasks, carrying its tag, and **no draft**.
      * The draft is the editor's record of unsaved changes and is created by
      * the first change (`ensureDraft`), so a fresh workflow has none and the
      * editor opens without a Discard button for nothing. The tag is checked
@@ -213,7 +213,7 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowLimitError
     >;
     /**
-     * A copy of the workflow's steps, with their stages under new ids, under
+     * A copy of the workflow's tasks, with their steps under new ids, under
      * the name and tag the merchant chose in the Duplicate dialog; off, with
      * no draft. The tag is checked before the insert so the dialog can name
      * its holder.
@@ -254,7 +254,7 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowTagTakenError
     >;
     /**
-     * The on/off switch. On requires: at least one step, every step assigned
+     * The on/off switch. On requires: at least one task, every task assigned
      * to a team in `teams`; it writes `activatedAt = activatedAt ?? now`, the
      * coverage date every later reconcile compares orders against (the
      * caller passes an earlier date when the merchant chose to include
@@ -275,8 +275,8 @@ export class WorkflowRepository extends Context.Service<
       | SqlError.SqlError
       | WorkflowRepositoryError
       | WorkflowNotFoundError
-      | NoStepsError
-      | StepUnassignedError
+      | NoTasksError
+      | TaskUnassignedError
     >;
     /**
      * Moves the coverage date of an on workflow: the merchant's escape hatch
@@ -296,7 +296,7 @@ export class WorkflowRepository extends Context.Service<
     >;
     /**
      * The draft, made explicitly. Returns the existing one when there is one;
-     * otherwise inserts a draft with a copy of every workflow step under a
+     * otherwise inserts a draft with a copy of every workflow task under a
      * new id, in one transaction. The editor does not
      * call this — its writes create the draft themselves — so this is for a
      * caller that wants a draft without changing anything.
@@ -308,13 +308,13 @@ export class WorkflowRepository extends Context.Service<
       SqlError.SqlError | WorkflowRepositoryError | WorkflowNotFoundError
     >;
     /**
-     * Replaces the workflow's steps with the draft's and deletes the draft, in
+     * Replaces the workflow's tasks with the draft's and deletes the draft, in
      * one transaction: an order sees the old definition or the new one, never
      * a half-edit. Refused with no draft, an empty draft, or an unassigned
-     * step, on and off alike. The tag is not drafted, so Apply never reads or
+     * task, on and off alike. The tag is not drafted, so Apply never reads or
      * writes it. Does not touch `activatedAt`: the workflow stays responsible
      * for the orders it was responsible for, and the caller reconciles them
-     * against the new definition. Draft step ids carry over to the workflow.
+     * against the new definition. Draft task ids carry over to the workflow.
      */
     readonly applyDraft: (input: {
       readonly workflowId: string;
@@ -325,16 +325,16 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowRepositoryError
       | WorkflowNotFoundError
       | NoDraftError
-      | NoStepsError
-      | StepUnassignedError
+      | NoTasksError
+      | TaskUnassignedError
     >;
     /**
      * Apply and Turn on in one transaction, for the editor's Turn on on a
-     * workflow that has never been applied: promoting steps that have never
+     * workflow that has never been applied: promoting tasks that have never
      * run and then switching the workflow on are one decision, and doing them
      * as two calls leaves a window where the first succeeded and the second
      * did not. An absent draft is not a refusal here — there is simply nothing
-     * to promote, and the startable check on the workflow's own steps then
+     * to promote, and the startable check on the workflow's own tasks then
      * decides. Otherwise the same rules as {@link applyDraft} and
      * {@link setWorkflowActive}, including `activatedAt`.
      */
@@ -347,10 +347,10 @@ export class WorkflowRepository extends Context.Service<
       | SqlError.SqlError
       | WorkflowRepositoryError
       | WorkflowNotFoundError
-      | NoStepsError
-      | StepUnassignedError
+      | NoTasksError
+      | TaskUnassignedError
     >;
-    /** Deletes the draft (steps cascade). Always allowed; a never-applied workflow is left with zero steps. */
+    /** Deletes the draft (tasks cascade). Always allowed; a never-applied workflow is left with zero tasks. */
     readonly discardDraft: (input: {
       readonly workflowId: string;
     }) => Effect.Effect<
@@ -360,117 +360,117 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowNotFoundError
       | NoDraftError
     >;
-    /** New step in a new last stage of the draft, creating the draft if this is the first change. */
+    /** New task in a new last step of the draft, creating the draft if this is the first change. */
     readonly addStep: (input: {
       readonly workflowId: string;
-      readonly name: Domain.StepName;
+      readonly name: Domain.TaskName;
       readonly teamId: Domain.TeamId;
-      readonly instructions?: Domain.StepInstructions | null;
+      readonly instructions?: Domain.TaskInstructions | null;
     }) => Effect.Effect<
-      Domain.WorkflowDraftStep,
+      Domain.WorkflowDraftTask,
       | SqlError.SqlError
       | WorkflowRepositoryError
       | WorkflowNotFoundError
       | WorkflowLimitError
     >;
-    /** New step into an existing `stage` of the draft, after that stage's last step. */
-    readonly addParallelStep: (input: {
+    /** New task into an existing `step` of the draft, after that step's last task. */
+    readonly addTask: (input: {
       readonly workflowId: string;
-      readonly stage: number;
-      readonly name: Domain.StepName;
+      readonly step: number;
+      readonly name: Domain.TaskName;
       readonly teamId: Domain.TeamId;
-      readonly instructions?: Domain.StepInstructions | null;
+      readonly instructions?: Domain.TaskInstructions | null;
     }) => Effect.Effect<
-      Domain.WorkflowDraftStep,
+      Domain.WorkflowDraftTask,
       | SqlError.SqlError
       | WorkflowRepositoryError
       | WorkflowNotFoundError
       | WorkflowLimitError
-      | StageNotFoundError
+      | StepNotFoundError
     >;
     /**
-     * A step the editor can act on, with its workflow: the draft's row when
+     * A task the editor can act on, with its workflow: the draft's row when
      * there is a draft, otherwise the workflow's own — the same id either way
      * (`ensureDraft`). A read, so it creates nothing.
      */
-    readonly getStep: (input: { readonly stepId: string }) => Effect.Effect<
+    readonly getTask: (input: { readonly taskId: string }) => Effect.Effect<
       Option.Option<{
-        readonly step: Domain.WorkflowDraftStep;
+        readonly task: Domain.WorkflowDraftTask;
         readonly workflow: Domain.Workflow;
       }>,
       SqlError.SqlError | WorkflowRepositoryError
     >;
     /**
-     * The step-id writes below all land on the draft, creating it from the
-     * workflow when this is the first change (`requireEditableStep`).
+     * The task-id writes below all land on the draft, creating it from the
+     * workflow when this is the first change (`requireEditableTask`).
      * `instructions: null` clears.
      */
-    readonly updateStep: (input: {
-      readonly stepId: string;
-      readonly name: Domain.StepName;
+    readonly updateTask: (input: {
+      readonly taskId: string;
+      readonly name: Domain.TaskName;
       readonly teamId: Domain.TeamId;
-      readonly instructions: Domain.StepInstructions | null;
+      readonly instructions: Domain.TaskInstructions | null;
     }) => Effect.Effect<
-      Domain.WorkflowDraftStep,
+      Domain.WorkflowDraftTask,
       | SqlError.SqlError
       | WorkflowRepositoryError
       | WorkflowNotFoundError
-      | StepNotFoundError
+      | TaskNotFoundError
     >;
     /**
-     * The moved step always ends alone in its stage; other steps keep their
-     * stage-mates. A move past either edge is a no-op, not an error.
+     * The moved task always ends alone in its step; other tasks keep their
+     * step-mates. A move past either edge is a no-op, not an error.
      */
-    readonly moveStep: (input: {
-      readonly stepId: string;
-      readonly direction: Domain.StepDirection;
+    readonly moveTask: (input: {
+      readonly taskId: string;
+      readonly direction: Domain.TaskDirection;
     }) => Effect.Effect<
       void,
       | SqlError.SqlError
       | WorkflowRepositoryError
       | WorkflowNotFoundError
-      | StepNotFoundError
+      | TaskNotFoundError
     >;
-    /** The step leaves its stage into a new one of its own right after it; no-op when already alone. */
-    readonly separateStep: (input: {
-      readonly stepId: string;
+    /** The task leaves its step into a new one of its own right after it; no-op when already alone. */
+    readonly separateTask: (input: {
+      readonly taskId: string;
     }) => Effect.Effect<
       void,
       | SqlError.SqlError
       | WorkflowRepositoryError
       | WorkflowNotFoundError
-      | StepNotFoundError
+      | TaskNotFoundError
     >;
     /**
-     * The step joins the previous stage, last among its members; no-op in
-     * stage 1. Lands on the draft, creating it on first change, like every
-     * step-id write.
+     * The task joins the previous step, last among its members; no-op in
+     * step 1. Lands on the draft, creating it on first change, like every
+     * task-id write.
      */
-    readonly joinStep: (input: {
-      readonly stepId: string;
+    readonly joinTask: (input: {
+      readonly taskId: string;
     }) => Effect.Effect<
       void,
       | SqlError.SqlError
       | WorkflowRepositoryError
       | WorkflowNotFoundError
-      | StepNotFoundError
+      | TaskNotFoundError
     >;
-    readonly removeStep: (input: {
-      readonly stepId: string;
+    readonly removeTask: (input: {
+      readonly taskId: string;
     }) => Effect.Effect<
       void,
       | SqlError.SqlError
       | WorkflowRepositoryError
       | WorkflowNotFoundError
-      | StepNotFoundError
+      | TaskNotFoundError
     >;
     /**
-     * Every pointer a team delete would null, per team: workflow steps, draft
-     * steps, and open run steps. Feeds the delete dialogs, never a refusal.
+     * Every pointer a team delete would null, per team: workflow tasks, draft
+     * tasks, and open run tasks. Feeds the delete dialogs, never a refusal.
      * Teams that own nothing are absent.
      */
-    readonly countStepsByTeam: () => Effect.Effect<
-      readonly Domain.TeamStepCounts[],
+    readonly countTasksByTeam: () => Effect.Effect<
+      readonly Domain.TeamTaskCounts[],
       SqlError.SqlError | WorkflowRepositoryError
     >;
     readonly listTeamWorkflows: (input: {
@@ -485,11 +485,11 @@ export class WorkflowRepository extends Context.Service<
       SqlError.SqlError | WorkflowRepositoryError
     >;
     /**
-     * The object-side half of a team delete: every workflow step, draft step,
-     * and *open* run step that points at `teamId` becomes unassigned, in one
-     * transaction. Finished run steps keep the pointer and their `teamName`
+     * The object-side half of a team delete: every workflow task, draft task,
+     * and *open* run task that points at `teamId` becomes unassigned, in one
+     * transaction. Finished run tasks keep the pointer and their `teamName`
      * snapshot. Idempotent, so a retry after a failed first attempt (D1 row
-     * already gone) still cleans up. Touches `WorkflowRunStep` from here
+     * already gone) still cleans up. Touches `WorkflowRunTask` from here
      * rather than from the run repository because the three updates must
      * share one transaction and Durable Object SQLite refuses to nest.
      */
@@ -524,9 +524,9 @@ export class WorkflowRepository extends Context.Service<
         Schema.Array(Domain.WorkflowDraft),
         "Invalid WorkflowDraft row",
       );
-      const decodeSteps = decode(
-        Schema.Array(Domain.WorkflowStep),
-        "Invalid WorkflowStep row",
+      const decodeTasks = decode(
+        Schema.Array(Domain.WorkflowTask),
+        "Invalid WorkflowTask row",
       );
 
       const findWorkflow = (workflowId: string) =>
@@ -562,45 +562,45 @@ export class WorkflowRepository extends Context.Service<
           ),
         );
 
-      const findDraftStep = (stepId: string) =>
-        sql`select * from WorkflowDraftStep where id = ${stepId}`.pipe(
-          Effect.flatMap(decodeSteps),
-          Effect.map(([step]) => Option.fromUndefinedOr(step)),
+      const findDraftTask = (taskId: string) =>
+        sql`select * from WorkflowDraftTask where id = ${taskId}`.pipe(
+          Effect.flatMap(decodeTasks),
+          Effect.map(([task]) => Option.fromUndefinedOr(task)),
         );
 
-      const requireDraftStep = (stepId: string) =>
-        findDraftStep(stepId).pipe(
+      const requireDraftTask = (taskId: string) =>
+        findDraftTask(taskId).pipe(
           Effect.flatMap(
             Option.match({
-              onNone: () => Effect.fail(new StepNotFoundError({ stepId })),
+              onNone: () => Effect.fail(new TaskNotFoundError({ taskId })),
               onSome: Effect.succeed,
             }),
           ),
         );
 
-      const findWorkflowStep = (stepId: string) =>
-        sql`select * from WorkflowStep where id = ${stepId}`.pipe(
-          Effect.flatMap(decodeSteps),
-          Effect.map(([step]) => Option.fromUndefinedOr(step)),
+      const findWorkflowTask = (taskId: string) =>
+        sql`select * from WorkflowTask where id = ${taskId}`.pipe(
+          Effect.flatMap(decodeTasks),
+          Effect.map(([task]) => Option.fromUndefinedOr(task)),
         );
 
-      const workflowSteps = (workflowId: string) =>
+      const workflowTasks = (workflowId: string) =>
         sql`
-          select * from WorkflowStep
+          select * from WorkflowTask
           where workflowId = ${workflowId}
           order by position
-        `.pipe(Effect.flatMap(decodeSteps));
+        `.pipe(Effect.flatMap(decodeTasks));
 
-      const draftSteps = (workflowId: string) =>
+      const draftTasks = (workflowId: string) =>
         sql`
-          select * from WorkflowDraftStep
+          select * from WorkflowDraftTask
           where workflowId = ${workflowId}
           order by position
-        `.pipe(Effect.flatMap(decodeSteps));
+        `.pipe(Effect.flatMap(decodeTasks));
 
-      const countDraftSteps = (workflowId: string) =>
+      const countDraftTasks = (workflowId: string) =>
         count(
-          sql`select count(*) from WorkflowDraftStep where workflowId = ${workflowId}`,
+          sql`select count(*) from WorkflowDraftTask where workflowId = ${workflowId}`,
         );
 
       const insertDraft = ({
@@ -627,40 +627,40 @@ export class WorkflowRepository extends Context.Service<
           );
         });
 
-      const insertDraftStepRow = ({
+      const insertDraftTaskRow = ({
         id,
         workflowId,
         position,
-        stage,
+        step,
         name,
         teamId,
         instructions,
       }: {
-        /** The workflow step's id when the draft is copying it, so a step keeps one identity; a new one otherwise. */
+        /** The workflow task's id when the draft is copying it, so a task keeps one identity; a new one otherwise. */
         readonly id?: string;
         readonly workflowId: string;
         readonly position: Statement.Fragment;
-        readonly stage: Statement.Fragment;
-        readonly name: Domain.StepName;
+        readonly step: Statement.Fragment;
+        readonly name: Domain.TaskName;
         readonly teamId: Domain.TeamId | null;
-        readonly instructions: Domain.StepInstructions | null;
+        readonly instructions: Domain.TaskInstructions | null;
       }) =>
         Effect.gen(function* () {
-          const [step] = yield* decodeSteps(
+          const [task] = yield* decodeTasks(
             yield* sql`
-              insert into WorkflowDraftStep
-                (id, workflowId, position, stage, name, teamId, instructions)
+              insert into WorkflowDraftTask
+                (id, workflowId, position, step, name, teamId, instructions)
               values (
-                ${id ?? crypto.randomUUID()}, ${workflowId}, ${position}, ${stage},
+                ${id ?? crypto.randomUUID()}, ${workflowId}, ${position}, ${step},
                 ${name}, ${teamId}, ${instructions}
               )
               returning *
             `,
           );
           return (
-            step ??
+            task ??
             (yield* new WorkflowRepositoryError({
-              message: "WorkflowDraftStep insert returned no row",
+              message: "WorkflowDraftTask insert returned no row",
               cause: workflowId,
             }))
           );
@@ -673,13 +673,13 @@ export class WorkflowRepository extends Context.Service<
        * The draft every editor write lands on, created on demand. Opening the
        * editor is not an edit: nothing is written until the merchant changes
        * something, and by then the draft has to exist for the change to go
-       * anywhere. So step writes come through here instead of refusing with
+       * anywhere. So task writes come through here instead of refusing with
        * `NoDraftError`, and a draft that did not exist starts as a copy of
-       * the workflow's steps, each **under the step's own id**. The tag is
-       * not drafted. That identity is what lets the editor edit a step it
+       * the workflow's tasks, each **under the task's own id**. The tag is
+       * not drafted. That identity is what lets the editor edit a task it
        * is looking at before any draft exists: the id it sends names the
-       * workflow step now and the draft's copy of it a moment later, and
-       * Apply carries the same ids back (see `requireEditableStep`).
+       * workflow task now and the draft's copy of it a moment later, and
+       * Apply carries the same ids back (see `requireEditableTask`).
        * Apply and Discard still require a draft.
        *
        * No transaction of its own: every caller already opened one, and
@@ -695,16 +695,16 @@ export class WorkflowRepository extends Context.Service<
             now: yield* Clock.currentTimeMillis,
           });
           yield* Effect.forEach(
-            yield* workflowSteps(workflowId),
-            (step) =>
-              insertDraftStepRow({
-                id: step.id,
+            yield* workflowTasks(workflowId),
+            (task) =>
+              insertDraftTaskRow({
+                id: task.id,
                 workflowId,
-                position: sql`${step.position}`,
-                stage: sql`${step.stage}`,
-                name: step.name,
-                teamId: step.teamId,
-                instructions: step.instructions,
+                position: sql`${task.position}`,
+                step: sql`${task.step}`,
+                name: task.name,
+                teamId: task.teamId,
+                instructions: task.instructions,
               }),
             { discard: true },
           );
@@ -712,23 +712,23 @@ export class WorkflowRepository extends Context.Service<
         });
 
       /**
-       * The draft row a step-id write targets. Until a draft exists the
-       * editor is looking at the workflow's own steps, so the id it sends is
-       * a workflow step's: that write is the first change, and `ensureDraft`
-       * copies the steps under their own ids, so the same id names the
+       * The draft row a task-id write targets. Until a draft exists the
+       * editor is looking at the workflow's own tasks, so the id it sends is
+       * a workflow task's: that write is the first change, and `ensureDraft`
+       * copies the tasks under their own ids, so the same id names the
        * draft's copy immediately afterwards. An id neither table carries is
-       * `StepNotFoundError` as before — including a step this draft has
+       * `TaskNotFoundError` as before — including a task this draft has
        * already removed.
        */
-      const requireEditableStep = (stepId: string) =>
+      const requireEditableTask = (taskId: string) =>
         Effect.gen(function* () {
-          const drafted = yield* findDraftStep(stepId);
+          const drafted = yield* findDraftTask(taskId);
           if (Option.isSome(drafted)) return drafted.value;
-          const live = yield* findWorkflowStep(stepId);
+          const live = yield* findWorkflowTask(taskId);
           if (Option.isNone(live))
-            return yield* new StepNotFoundError({ stepId });
+            return yield* new TaskNotFoundError({ taskId });
           yield* ensureDraft(live.value.workflowId);
-          return yield* requireDraftStep(stepId);
+          return yield* requireDraftTask(taskId);
         });
 
       const touchDraft = (workflowId: string, now: number) =>
@@ -736,7 +736,7 @@ export class WorkflowRepository extends Context.Service<
 
       const layoutOf = (workflowId: string) =>
         sql`
-          select id, position, stage from WorkflowDraftStep
+          select id, position, step from WorkflowDraftTask
           where workflowId = ${workflowId}
           order by position
         `.pipe(
@@ -746,10 +746,10 @@ export class WorkflowRepository extends Context.Service<
                 Schema.Struct({
                   id: Schema.String,
                   position: Schema.Number,
-                  stage: Schema.Number,
+                  step: Schema.Number,
                 }),
               ),
-              "Invalid WorkflowDraftStep layout row",
+              "Invalid WorkflowDraftTask layout row",
             ),
           ),
         );
@@ -757,92 +757,92 @@ export class WorkflowRepository extends Context.Service<
       /**
        * Persists a whole draft layout. `unique (workflowId, position)`
        * forbids in-place renumbering (a +1 shift collides row by row), so
-       * every step first parks at `-position`, then takes its final position
-       * and stage. Plain statements, no transaction of its own: callers wrap
-       * it, and `removeStep` composes a delete in front of it, because
+       * every task first parks at `-position`, then takes its final position
+       * and step. Plain statements, no transaction of its own: callers wrap
+       * it, and `removeTask` composes a delete in front of it, because
        * `@effect/sql-sqlite-do` backs `withTransaction` with
        * `storage.transaction` and Durable Object SQLite refuses to nest.
        */
       const writeLayout = (workflowId: string, layout: WorkflowLayout.Layout) =>
         Effect.gen(function* () {
-          yield* sql`update WorkflowDraftStep set position = -position where workflowId = ${workflowId}`;
+          yield* sql`update WorkflowDraftTask set position = -position where workflowId = ${workflowId}`;
           yield* Effect.forEach(
             layout,
             (p) =>
-              sql`update WorkflowDraftStep set position = ${p.position}, stage = ${p.stage} where id = ${p.id}`,
+              sql`update WorkflowDraftTask set position = ${p.position}, step = ${p.step} where id = ${p.id}`,
             { discard: true },
           );
         });
 
-      /** Finds the draft step, then rewrites its draft's layout with `edit` applied, in one transaction. */
+      /** Finds the draft task, then rewrites its draft's layout with `edit` applied, in one transaction. */
       const relayout = (
-        stepId: string,
+        taskId: string,
         edit: (layout: WorkflowLayout.Layout) => WorkflowLayout.Layout,
       ) =>
         sql.withTransaction(
           Effect.gen(function* () {
-            const step = yield* requireEditableStep(stepId);
-            const layout = yield* layoutOf(step.workflowId);
-            yield* writeLayout(step.workflowId, edit(layout));
-            yield* touchDraft(step.workflowId, yield* Clock.currentTimeMillis);
+            const task = yield* requireEditableTask(taskId);
+            const layout = yield* layoutOf(task.workflowId);
+            yield* writeLayout(task.workflowId, edit(layout));
+            yield* touchDraft(task.workflowId, yield* Clock.currentTimeMillis);
           }),
         );
 
-      /** Shared by `addStep` and `addParallelStep`: the draft (created if this is the first change), the step ceiling, and the insert itself. */
-      const insertStep = ({
+      /** Shared by `addStep` and `addTask`: the draft (created if this is the first change), the task ceiling, and the insert itself. */
+      const insertTask = ({
         workflowId,
         position,
-        stage,
+        step,
         name,
         teamId,
         instructions,
       }: {
         readonly workflowId: string;
         readonly position: Statement.Fragment;
-        readonly stage: Statement.Fragment;
-        readonly name: Domain.StepName;
+        readonly step: Statement.Fragment;
+        readonly name: Domain.TaskName;
         readonly teamId: Domain.TeamId;
-        readonly instructions: Domain.StepInstructions | null;
+        readonly instructions: Domain.TaskInstructions | null;
       }) =>
         Effect.gen(function* () {
           yield* ensureDraft(workflowId);
           if (
-            (yield* countDraftSteps(workflowId)) >=
-            Domain.WorkflowLimits.maxSteps
+            (yield* countDraftTasks(workflowId)) >=
+            Domain.WorkflowLimits.maxTasks
           )
             return yield* new WorkflowLimitError({
-              limit: Domain.WorkflowLimits.maxSteps,
+              limit: Domain.WorkflowLimits.maxTasks,
             });
-          const step = yield* insertDraftStepRow({
+          const task = yield* insertDraftTaskRow({
             workflowId,
             position,
-            stage,
+            step,
             name,
             teamId,
             instructions,
           });
           yield* touchDraft(workflowId, yield* Clock.currentTimeMillis);
-          return step;
+          return task;
         });
 
-      /** Apply and turn-on share the content checks: at least one step, every step assigned. */
-      const requireStartableSteps = (
+      /** Apply and turn-on share the content checks: at least one task, every task assigned. */
+      const requireStartableTasks = (
         workflowId: string,
-        steps: readonly Domain.WorkflowStep[],
+        tasks: readonly Domain.WorkflowTask[],
         teams: Teams,
       ) =>
         Effect.gen(function* () {
-          if (steps.length === 0)
-            return yield* new NoStepsError({ workflowId });
-          const stepNames = unassignedStepNames(steps, teams);
-          if (stepNames.length > 0)
-            return yield* new StepUnassignedError({ workflowId, stepNames });
-          return steps;
+          if (tasks.length === 0)
+            return yield* new NoTasksError({ workflowId });
+          const taskNames = unassignedTaskNames(tasks, teams);
+          if (taskNames.length > 0)
+            return yield* new TaskUnassignedError({ workflowId, taskNames });
+          return tasks;
         });
 
       /**
        * The Apply write itself, with neither the transaction nor the question
-       * of whether a draft exists: the draft's steps replace the workflow's,
+       * of whether a draft exists: the draft's tasks replace the workflow's,
        * the draft goes, and `updatedAt` moves so "Last updated on" reflects
        * the Apply. Shared by `applyDraft` and `applyAndActivate`, which ask
        * that question differently — Apply refuses without a draft, while the
@@ -851,15 +851,15 @@ export class WorkflowRepository extends Context.Service<
        */
       const promoteDraft = (workflowId: string, teams: Teams) =>
         Effect.gen(function* () {
-          const steps = yield* draftSteps(workflowId);
-          yield* requireStartableSteps(workflowId, steps, teams);
+          const tasks = yield* draftTasks(workflowId);
+          yield* requireStartableTasks(workflowId, tasks, teams);
           const now = yield* Clock.currentTimeMillis;
-          yield* sql`delete from WorkflowStep where workflowId = ${workflowId}`;
+          yield* sql`delete from WorkflowTask where workflowId = ${workflowId}`;
           yield* sql`
-            insert into WorkflowStep
-              (id, workflowId, position, stage, name, teamId, instructions)
-            select id, workflowId, position, stage, name, teamId, instructions
-            from WorkflowDraftStep
+            insert into WorkflowTask
+              (id, workflowId, position, step, name, teamId, instructions)
+            select id, workflowId, position, step, name, teamId, instructions
+            from WorkflowDraftTask
             where workflowId = ${workflowId}
           `;
           const [workflow] = yield* decodeWorkflows(
@@ -927,27 +927,27 @@ export class WorkflowRepository extends Context.Service<
             )(
               yield* sql`
                 select w.*,
-                  (select count(*) from WorkflowStep s where s.workflowId = w.id) as stepCount
+                  (select coalesce(max(t.step), 0) from WorkflowTask t where t.workflowId = w.id) as stepCount
                 from Workflow w
                 order by w.name collate nocase
               `,
             );
             // Derived, never stored: the badge is computed from the workflow's
-            // steps against the roster on every list read, so assigning a
+            // tasks against the roster on every list read, so assigning a
             // team or adding a member clears it with no other write.
-            const steps = yield* decodeSteps(
-              yield* sql`select * from WorkflowStep order by workflowId, position`,
+            const tasks = yield* decodeTasks(
+              yield* sql`select * from WorkflowTask order by workflowId, position`,
             );
-            const emptyTeam = (step: Domain.WorkflowStep) =>
+            const emptyTeam = (task: Domain.WorkflowTask) =>
               teams.some(
-                (team) => team.id === step.teamId && team.memberCount === 0,
+                (team) => team.id === task.teamId && team.memberCount === 0,
               );
             return rows.map((row): Domain.WorkflowSummary => ({
               ...row,
-              needsAttention: steps.some(
-                (step) =>
-                  step.workflowId === row.id &&
-                  (isUnassigned(step, teams) || emptyTeam(step)),
+              needsAttention: tasks.some(
+                (task) =>
+                  task.workflowId === row.id &&
+                  (isUnassigned(task, teams) || emptyTeam(task)),
               ),
             }));
           },
@@ -974,10 +974,10 @@ export class WorkflowRepository extends Context.Service<
           const draft = yield* findDraft(workflowId);
           return Option.some({
             workflow: workflow.value,
-            steps: yield* workflowSteps(workflowId),
+            tasks: yield* workflowTasks(workflowId),
             draft: Option.isNone(draft)
               ? null
-              : { draft: draft.value, steps: yield* draftSteps(workflowId) },
+              : { draft: draft.value, tasks: yield* draftTasks(workflowId) },
           } satisfies Domain.WorkflowWithDraft);
         }),
 
@@ -991,9 +991,9 @@ export class WorkflowRepository extends Context.Service<
               order by name collate nocase
             `,
           );
-          const steps = yield* decodeSteps(
+          const tasks = yield* decodeTasks(
             yield* sql`
-              select s.* from WorkflowStep s
+              select s.* from WorkflowTask s
               join Workflow w on w.id = s.workflowId
               where w.activatedAt is not null
               order by s.workflowId, s.position
@@ -1001,14 +1001,14 @@ export class WorkflowRepository extends Context.Service<
           );
           return workflows.map((workflow): Domain.WorkflowDetail => ({
             workflow,
-            steps: steps.filter((step) => step.workflowId === workflow.id),
+            tasks: tasks.filter((task) => task.workflowId === workflow.id),
           }));
         }),
 
         /**
-         * A fixture's `steps` become the workflow's steps, switched on
+         * A fixture's `tasks` become the workflow's tasks, switched on
          * (`activatedAt = now`, so orders seeded afterwards qualify) unless
-         * `active: false` or a step is unassigned. A fixture with no steps and
+         * `active: false` or a task is unassigned. A fixture with no tasks and
          * no `draft` has no draft either, the state `createWorkflow` leaves a
          * fresh workflow in. `draft` seeds a pending draft beside the
          * workflow.
@@ -1020,25 +1020,25 @@ export class WorkflowRepository extends Context.Service<
         replaceWorkflows: Effect.fn("WorkflowRepository.replaceWorkflows")(
           function* ({ workflows }: Domain.SeedWorkflowsInput) {
             const now = yield* Clock.currentTimeMillis;
-            type SeedStep =
-              Domain.SeedWorkflowsInput["workflows"][number]["steps"][number];
-            // A step with no `stage` follows the previous one (linear); the
+            type SeedTask =
+              Domain.SeedWorkflowsInput["workflows"][number]["tasks"][number];
+            // A task with no `step` follows the previous one (linear); the
             // layout is checked before anything is written so a bad fixture
             // fails whole rather than half-seeding.
-            const stage = (steps: readonly SeedStep[]) =>
-              steps.reduce<
-                readonly (SeedStep & {
+            const step = (tasks: readonly SeedTask[]) =>
+              tasks.reduce<
+                readonly (SeedTask & {
                   readonly position: number;
-                  readonly stage: number;
+                  readonly step: number;
                 })[]
-              >((acc, step, index) => {
-                const previous = acc[index - 1]?.stage ?? 0;
+              >((acc, task, index) => {
+                const previous = acc[index - 1]?.step ?? 0;
                 return [
                   ...acc,
                   {
-                    ...step,
+                    ...task,
                     position: index + 1,
-                    stage: step.stage ?? previous + 1,
+                    step: task.step ?? previous + 1,
                   },
                 ];
               }, []);
@@ -1047,46 +1047,46 @@ export class WorkflowRepository extends Context.Service<
             ) =>
               workflow.draft === undefined
                 ? null
-                : { steps: stage(workflow.draft.steps) };
+                : { tasks: step(workflow.draft.tasks) };
             const staged = workflows.map((workflow) => ({
               ...workflow,
-              steps: stage(workflow.steps),
+              tasks: step(workflow.tasks),
               draft: draftOf(workflow),
               active:
                 workflow.active ??
-                (workflow.steps.length > 0 &&
-                  workflow.steps.every((step) => step.teamId !== null)),
+                (workflow.tasks.length > 0 &&
+                  workflow.tasks.every((task) => task.teamId !== null)),
             }));
             const invalid = staged.find(
               (workflow) =>
-                !validLayout(workflow.steps) ||
-                (workflow.draft !== null && !validLayout(workflow.draft.steps)),
+                !validLayout(workflow.tasks) ||
+                (workflow.draft !== null && !validLayout(workflow.draft.tasks)),
             );
             if (invalid !== undefined)
               return yield* new WorkflowRepositoryError({
-                message: `replaceWorkflows: workflow=${invalid.name}: stages must be dense from 1 and non-decreasing`,
-                cause: invalid.steps.map((step) => step.stage),
+                message: `replaceWorkflows: workflow=${invalid.name}: steps must be dense from 1 and non-decreasing`,
+                cause: invalid.tasks.map((task) => task.step),
               });
             // The invariants the ordinary write path enforces that a fixture
             // could otherwise silently break.
             const badActive = staged.find(
-              (workflow) => workflow.active && workflow.steps.length === 0,
+              (workflow) => workflow.active && workflow.tasks.length === 0,
             );
             if (badActive !== undefined)
               return yield* new WorkflowRepositoryError({
-                message: `replaceWorkflows: workflow=${badActive.name}: an active workflow needs steps`,
+                message: `replaceWorkflows: workflow=${badActive.name}: an active workflow needs tasks`,
                 cause: badActive.name,
               });
-            // Mirrors `ActivateResult.StepUnassigned`: on with a step nobody
+            // Mirrors `ActivateResult.TaskUnassigned`: on with a task nobody
             // owns is a workflow the list shows as Active that starts nothing.
             const unassignedActive = staged.find(
               (workflow) =>
                 workflow.active &&
-                workflow.steps.some((step) => step.teamId === null),
+                workflow.tasks.some((task) => task.teamId === null),
             );
             if (unassignedActive !== undefined)
               return yield* new WorkflowRepositoryError({
-                message: `replaceWorkflows: workflow=${unassignedActive.name}: an active workflow needs every step assigned`,
+                message: `replaceWorkflows: workflow=${unassignedActive.name}: an active workflow needs every task assigned`,
                 cause: unassignedActive.name,
               });
             if (staged.length > Domain.WorkflowLimits.maxWorkflows)
@@ -1094,16 +1094,16 @@ export class WorkflowRepository extends Context.Service<
                 message: `replaceWorkflows: workflows=${String(staged.length)}: at most ${String(Domain.WorkflowLimits.maxWorkflows)} workflows`,
                 cause: staged.length,
               });
-            const overSteps = staged.find(
+            const overTasks = staged.find(
               (workflow) =>
-                workflow.steps.length > Domain.WorkflowLimits.maxSteps ||
-                (workflow.draft?.steps.length ?? 0) >
-                  Domain.WorkflowLimits.maxSteps,
+                workflow.tasks.length > Domain.WorkflowLimits.maxTasks ||
+                (workflow.draft?.tasks.length ?? 0) >
+                  Domain.WorkflowLimits.maxTasks,
             );
-            if (overSteps !== undefined)
+            if (overTasks !== undefined)
               return yield* new WorkflowRepositoryError({
-                message: `replaceWorkflows: workflow=${overSteps.name}: at most ${String(Domain.WorkflowLimits.maxSteps)} steps`,
-                cause: overSteps.name,
+                message: `replaceWorkflows: workflow=${overTasks.name}: at most ${String(Domain.WorkflowLimits.maxTasks)} tasks`,
+                cause: overTasks.name,
               });
             // `Workflow.tag` is unique, so a fixture repeating a tag would
             // fail as a bare constraint error naming no workflow. Seeds are
@@ -1117,19 +1117,19 @@ export class WorkflowRepository extends Context.Service<
                 message: `replaceWorkflows: workflow=${duplicateTag.name} tag=${duplicateTag.tag}: two workflows cannot share a tag`,
                 cause: duplicateTag.tag,
               });
-            const writeSteps = (
+            const writeTasks = (
               table: Statement.Fragment,
               workflowId: string,
-              steps: ReturnType<typeof stage>,
+              tasks: ReturnType<typeof step>,
             ) =>
               Effect.forEach(
-                steps,
-                (step) =>
+                tasks,
+                (task) =>
                   sql`
                     insert into ${table}
-                      (id, workflowId, position, stage, name, teamId, instructions)
+                      (id, workflowId, position, step, name, teamId, instructions)
                     values
-                      (${crypto.randomUUID()}, ${workflowId}, ${step.position}, ${step.stage}, ${step.name}, ${step.teamId}, ${step.instructions ?? null})
+                      (${crypto.randomUUID()}, ${workflowId}, ${task.position}, ${task.step}, ${task.name}, ${task.teamId}, ${task.instructions ?? null})
                   `,
                 { discard: true },
               );
@@ -1147,17 +1147,17 @@ export class WorkflowRepository extends Context.Service<
                     values
                       (${workflowId}, ${workflow.name}, ${workflow.tag}, ${workflow.active ? now : null}, ${now}, ${now})
                   `;
-                  yield* writeSteps(
-                    sql.literal("WorkflowStep"),
+                  yield* writeTasks(
+                    sql.literal("WorkflowTask"),
                     workflowId,
-                    workflow.steps,
+                    workflow.tasks,
                   );
                   if (workflow.draft !== null) {
                     yield* insertDraft({ workflowId, now });
-                    yield* writeSteps(
-                      sql.literal("WorkflowDraftStep"),
+                    yield* writeTasks(
+                      sql.literal("WorkflowDraftTask"),
                       workflowId,
-                      workflow.draft.steps,
+                      workflow.draft.tasks,
                     );
                   }
                 }
@@ -1225,7 +1225,7 @@ export class WorkflowRepository extends Context.Service<
                     limit: Domain.WorkflowLimits.maxWorkflows,
                   });
                 yield* requireTagFree(tag, null);
-                const steps = yield* workflowSteps(workflowId);
+                const tasks = yield* workflowTasks(workflowId);
                 const now = yield* Clock.currentTimeMillis;
                 const [workflow] = yield* decodeWorkflows(
                   yield* sql`
@@ -1242,15 +1242,15 @@ export class WorkflowRepository extends Context.Service<
                     cause: name,
                   });
                 yield* Effect.forEach(
-                  steps,
-                  (step) =>
+                  tasks,
+                  (task) =>
                     sql`
-                      insert into WorkflowStep
-                        (id, workflowId, position, stage, name, teamId, instructions)
+                      insert into WorkflowTask
+                        (id, workflowId, position, step, name, teamId, instructions)
                       values (
-                        ${crypto.randomUUID()}, ${copyId}, ${step.position},
-                        ${step.stage}, ${step.name}, ${step.teamId},
-                        ${step.instructions}
+                        ${crypto.randomUUID()}, ${copyId}, ${task.position},
+                        ${task.step}, ${task.name}, ${task.teamId},
+                        ${task.instructions}
                       )
                     `,
                   { discard: true },
@@ -1341,9 +1341,9 @@ export class WorkflowRepository extends Context.Service<
           }) {
             yield* requireWorkflow(workflowId);
             if (active)
-              yield* requireStartableSteps(
+              yield* requireStartableTasks(
                 workflowId,
-                yield* workflowSteps(workflowId),
+                yield* workflowTasks(workflowId),
                 teams,
               );
             const now = yield* Clock.currentTimeMillis;
@@ -1429,9 +1429,9 @@ export class WorkflowRepository extends Context.Service<
                 const draft = yield* findDraft(workflowId);
                 if (Option.isSome(draft))
                   yield* promoteDraft(workflowId, teams);
-                yield* requireStartableSteps(
+                yield* requireStartableTasks(
                   workflowId,
-                  yield* workflowSteps(workflowId),
+                  yield* workflowTasks(workflowId),
                   teams,
                 );
                 const now = yield* Clock.currentTimeMillis;
@@ -1474,15 +1474,15 @@ export class WorkflowRepository extends Context.Service<
           instructions,
         }: {
           readonly workflowId: string;
-          readonly name: Domain.StepName;
+          readonly name: Domain.TaskName;
           readonly teamId: Domain.TeamId;
-          readonly instructions?: Domain.StepInstructions | null;
+          readonly instructions?: Domain.TaskInstructions | null;
         }) {
           return yield* sql.withTransaction(
-            insertStep({
+            insertTask({
               workflowId,
-              position: sql`(select coalesce(max(position), 0) + 1 from WorkflowDraftStep where workflowId = ${workflowId})`,
-              stage: sql`(select coalesce(max(stage), 0) + 1 from WorkflowDraftStep where workflowId = ${workflowId})`,
+              position: sql`(select coalesce(max(position), 0) + 1 from WorkflowDraftTask where workflowId = ${workflowId})`,
+              step: sql`(select coalesce(max(step), 0) + 1 from WorkflowDraftTask where workflowId = ${workflowId})`,
               name,
               teamId,
               instructions: instructions ?? null,
@@ -1491,183 +1491,181 @@ export class WorkflowRepository extends Context.Service<
         }),
 
         /**
-         * Inserted at a temporary last position in the target stage, then the
-         * whole layout is rewritten so the new step lands right after that
-         * stage's last member. Insert and relayout share one transaction, and
-         * the step is re-read afterwards so the caller sees its final
+         * Inserted at a temporary last position in the target step, then the
+         * whole layout is rewritten so the new task lands right after that
+         * step's last member. Insert and relayout share one transaction, and
+         * the task is re-read afterwards so the caller sees its final
          * position.
          */
-        addParallelStep: Effect.fn("WorkflowRepository.addParallelStep")(
-          function* ({
-            workflowId,
-            stage,
-            name,
-            teamId,
-            instructions,
-          }: {
-            readonly workflowId: string;
-            readonly stage: number;
-            readonly name: Domain.StepName;
-            readonly teamId: Domain.TeamId;
-            readonly instructions?: Domain.StepInstructions | null;
-          }) {
-            return yield* sql.withTransaction(
-              Effect.gen(function* () {
-                yield* ensureDraft(workflowId);
-                const before = yield* layoutOf(workflowId);
-                if (!before.some((p) => p.stage === stage))
-                  return yield* new StageNotFoundError({ workflowId, stage });
-                const inserted = yield* insertStep({
-                  workflowId,
-                  position: sql`${before.length + 1}`,
-                  stage: sql`${stage}`,
-                  name,
-                  teamId,
-                  instructions: instructions ?? null,
-                });
-                yield* writeLayout(
-                  workflowId,
-                  WorkflowLayout.appendParallel(before, stage, inserted.id),
-                );
-                const placed = yield* findDraftStep(inserted.id);
-                return Option.isSome(placed)
-                  ? placed.value
-                  : yield* new WorkflowRepositoryError({
-                      message: "WorkflowDraftStep vanished during relayout",
-                      cause: inserted.id,
-                    });
-              }),
-            );
-          },
-        ),
-
-        getStep: Effect.fn("WorkflowRepository.getStep")(function* ({
-          stepId,
-        }: {
-          readonly stepId: string;
-        }) {
-          const drafted = yield* findDraftStep(stepId);
-          const step = Option.isSome(drafted)
-            ? drafted
-            : yield* findWorkflowStep(stepId);
-          if (Option.isNone(step)) return Option.none();
-          const workflow = yield* findWorkflow(step.value.workflowId);
-          if (Option.isNone(workflow))
-            return yield* new WorkflowRepositoryError({
-              message: "Step.workflowId resolves to no Workflow",
-              cause: stepId,
-            });
-          return Option.some({ step: step.value, workflow: workflow.value });
-        }),
-
-        updateStep: Effect.fn("WorkflowRepository.updateStep")(function* ({
-          stepId,
+        addTask: Effect.fn("WorkflowRepository.addTask")(function* ({
+          workflowId,
+          step,
           name,
           teamId,
           instructions,
         }: {
-          readonly stepId: string;
-          readonly name: Domain.StepName;
+          readonly workflowId: string;
+          readonly step: number;
+          readonly name: Domain.TaskName;
           readonly teamId: Domain.TeamId;
-          readonly instructions: Domain.StepInstructions | null;
+          readonly instructions?: Domain.TaskInstructions | null;
         }) {
           return yield* sql.withTransaction(
             Effect.gen(function* () {
-              yield* requireEditableStep(stepId);
-              const [step] = yield* decodeSteps(
+              yield* ensureDraft(workflowId);
+              const before = yield* layoutOf(workflowId);
+              if (!before.some((p) => p.step === step))
+                return yield* new StepNotFoundError({ workflowId, step });
+              const inserted = yield* insertTask({
+                workflowId,
+                position: sql`${before.length + 1}`,
+                step: sql`${step}`,
+                name,
+                teamId,
+                instructions: instructions ?? null,
+              });
+              yield* writeLayout(
+                workflowId,
+                WorkflowLayout.appendTask(before, step, inserted.id),
+              );
+              const placed = yield* findDraftTask(inserted.id);
+              return Option.isSome(placed)
+                ? placed.value
+                : yield* new WorkflowRepositoryError({
+                    message: "WorkflowDraftTask vanished during relayout",
+                    cause: inserted.id,
+                  });
+            }),
+          );
+        }),
+
+        getTask: Effect.fn("WorkflowRepository.getTask")(function* ({
+          taskId,
+        }: {
+          readonly taskId: string;
+        }) {
+          const drafted = yield* findDraftTask(taskId);
+          const task = Option.isSome(drafted)
+            ? drafted
+            : yield* findWorkflowTask(taskId);
+          if (Option.isNone(task)) return Option.none();
+          const workflow = yield* findWorkflow(task.value.workflowId);
+          if (Option.isNone(workflow))
+            return yield* new WorkflowRepositoryError({
+              message: "Task.workflowId resolves to no Workflow",
+              cause: taskId,
+            });
+          return Option.some({ task: task.value, workflow: workflow.value });
+        }),
+
+        updateTask: Effect.fn("WorkflowRepository.updateTask")(function* ({
+          taskId,
+          name,
+          teamId,
+          instructions,
+        }: {
+          readonly taskId: string;
+          readonly name: Domain.TaskName;
+          readonly teamId: Domain.TeamId;
+          readonly instructions: Domain.TaskInstructions | null;
+        }) {
+          return yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* requireEditableTask(taskId);
+              const [task] = yield* decodeTasks(
                 yield* sql`
-                  update WorkflowDraftStep
+                  update WorkflowDraftTask
                   set name = ${name}, teamId = ${teamId}, instructions = ${instructions}
-                  where id = ${stepId}
+                  where id = ${taskId}
                   returning *
                 `,
               );
-              if (step === undefined)
-                return yield* new StepNotFoundError({ stepId });
+              if (task === undefined)
+                return yield* new TaskNotFoundError({ taskId });
               yield* touchDraft(
-                step.workflowId,
+                task.workflowId,
                 yield* Clock.currentTimeMillis,
               );
-              return step;
+              return task;
             }),
           );
         }),
 
-        moveStep: Effect.fn("WorkflowRepository.moveStep")(function* ({
-          stepId,
+        moveTask: Effect.fn("WorkflowRepository.moveTask")(function* ({
+          taskId,
           direction,
         }: {
-          readonly stepId: string;
-          readonly direction: Domain.StepDirection;
+          readonly taskId: string;
+          readonly direction: Domain.TaskDirection;
         }) {
-          yield* relayout(stepId, (layout) =>
-            WorkflowLayout.move(layout, stepId, direction),
+          yield* relayout(taskId, (layout) =>
+            WorkflowLayout.move(layout, taskId, direction),
           );
         }),
 
-        separateStep: Effect.fn("WorkflowRepository.separateStep")(function* ({
-          stepId,
+        separateTask: Effect.fn("WorkflowRepository.separateTask")(function* ({
+          taskId,
         }: {
-          readonly stepId: string;
+          readonly taskId: string;
         }) {
-          yield* relayout(stepId, (layout) =>
-            WorkflowLayout.separate(layout, stepId),
+          yield* relayout(taskId, (layout) =>
+            WorkflowLayout.separate(layout, taskId),
           );
         }),
 
-        joinStep: Effect.fn("WorkflowRepository.joinStep")(function* ({
-          stepId,
+        joinTask: Effect.fn("WorkflowRepository.joinTask")(function* ({
+          taskId,
         }: {
-          readonly stepId: string;
+          readonly taskId: string;
         }) {
-          yield* relayout(stepId, (layout) =>
-            WorkflowLayout.join(layout, stepId),
+          yield* relayout(taskId, (layout) =>
+            WorkflowLayout.join(layout, taskId),
           );
         }),
 
-        /** Deletes, then rewrites the layout so positions and stages stay dense from 1, in one transaction. */
-        removeStep: Effect.fn("WorkflowRepository.removeStep")(function* ({
-          stepId,
+        /** Deletes, then rewrites the layout so positions and steps stay dense from 1, in one transaction. */
+        removeTask: Effect.fn("WorkflowRepository.removeTask")(function* ({
+          taskId,
         }: {
-          readonly stepId: string;
+          readonly taskId: string;
         }) {
           yield* sql.withTransaction(
             Effect.gen(function* () {
-              const step = yield* requireEditableStep(stepId);
-              const layout = yield* layoutOf(step.workflowId);
-              yield* sql`delete from WorkflowDraftStep where id = ${stepId}`;
+              const task = yield* requireEditableTask(taskId);
+              const layout = yield* layoutOf(task.workflowId);
+              yield* sql`delete from WorkflowDraftTask where id = ${taskId}`;
               yield* writeLayout(
-                step.workflowId,
-                WorkflowLayout.remove(layout, stepId),
+                task.workflowId,
+                WorkflowLayout.remove(layout, taskId),
               );
               yield* touchDraft(
-                step.workflowId,
+                task.workflowId,
                 yield* Clock.currentTimeMillis,
               );
             }),
           );
         }),
 
-        countStepsByTeam: Effect.fn("WorkflowRepository.countStepsByTeam")(
+        countTasksByTeam: Effect.fn("WorkflowRepository.countTasksByTeam")(
           function* () {
             return yield* decode(
-              Schema.Array(Domain.TeamStepCounts),
-              "Invalid TeamStepCounts row",
+              Schema.Array(Domain.TeamTaskCounts),
+              "Invalid TeamTaskCounts row",
             )(
               yield* sql`
                 select teamId,
-                  sum(workflowSteps) as workflowSteps,
-                  sum(draftSteps) as draftSteps,
-                  sum(openRunSteps) as openRunSteps
+                  sum(workflowTasks) as workflowTasks,
+                  sum(draftTasks) as draftTasks,
+                  sum(openRunTasks) as openRunTasks
                 from (
-                  select teamId, 1 as workflowSteps, 0 as draftSteps, 0 as openRunSteps
-                  from WorkflowStep where teamId is not null
+                  select teamId, 1 as workflowTasks, 0 as draftTasks, 0 as openRunTasks
+                  from WorkflowTask where teamId is not null
                   union all
                   select teamId, 0, 1, 0
-                  from WorkflowDraftStep where teamId is not null
+                  from WorkflowDraftTask where teamId is not null
                   union all
                   select s.teamId, 0, 0, 1
-                  from WorkflowRunStep s
+                  from WorkflowRunTask s
                   join WorkflowRun r on r.id = s.runId
                   where s.teamId is not null and s.completedAt is null
                     and r.status in ('pending', 'active')
@@ -1689,9 +1687,9 @@ export class WorkflowRepository extends Context.Service<
                 select w.id as workflowId, w.name as workflowName
                 from Workflow w
                 where w.id in (
-                  select workflowId from WorkflowStep where teamId = ${teamId}
+                  select workflowId from WorkflowTask where teamId = ${teamId}
                   union
-                  select workflowId from WorkflowDraftStep where teamId = ${teamId}
+                  select workflowId from WorkflowDraftTask where teamId = ${teamId}
                 )
                 order by w.name collate nocase
               `,
@@ -1709,9 +1707,9 @@ export class WorkflowRepository extends Context.Service<
             yield* sql`
                 select u.teamId, w.id as workflowId, w.name as workflowName
                 from (
-                  select teamId, workflowId from WorkflowStep where teamId is not null
+                  select teamId, workflowId from WorkflowTask where teamId is not null
                   union
-                  select teamId, workflowId from WorkflowDraftStep where teamId is not null
+                  select teamId, workflowId from WorkflowDraftTask where teamId is not null
                 ) u
                 join Workflow w on w.id = u.workflowId
                 order by w.name collate nocase, u.teamId
@@ -1726,10 +1724,10 @@ export class WorkflowRepository extends Context.Service<
         }) {
           yield* sql.withTransaction(
             Effect.gen(function* () {
-              yield* sql`update WorkflowStep set teamId = null where teamId = ${teamId}`;
-              yield* sql`update WorkflowDraftStep set teamId = null where teamId = ${teamId}`;
+              yield* sql`update WorkflowTask set teamId = null where teamId = ${teamId}`;
+              yield* sql`update WorkflowDraftTask set teamId = null where teamId = ${teamId}`;
               yield* sql`
-                update WorkflowRunStep set teamId = null
+                update WorkflowRunTask set teamId = null
                 where teamId = ${teamId} and completedAt is null
               `;
             }),

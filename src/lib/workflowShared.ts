@@ -46,16 +46,16 @@ export const deleteWorkflowResultMessage = Match.typeTags<
 });
 
 /**
- * A workflow that has never been applied has no steps of its own: Apply is the
- * only writer of `WorkflowStep`, and a fresh workflow starts with none (the
- * JSDoc on `Domain.Workflow`). Zero steps after the first Apply is impossible,
- * since Apply refuses an empty draft (`NoStepsError`). So "no steps" and
+ * A workflow that has never been applied has no tasks of its own: Apply is the
+ * only writer of `WorkflowTask`, and a fresh workflow starts with none (the
+ * JSDoc on `Domain.Workflow`). Zero tasks after the first Apply is impossible,
+ * since Apply refuses an empty draft (`NoTasksError`). So "no tasks" and
  * "never applied" are the same fact, and the editor can offer Turn on instead
  * of Apply on the strength of it.
  */
 export const neverApplied = (detail: {
-  readonly steps: readonly unknown[];
-}): boolean => detail.steps.length === 0;
+  readonly tasks: readonly unknown[];
+}): boolean => detail.tasks.length === 0;
 
 /**
  * Every dialog string the detail page and the editor both show, in one place
@@ -64,7 +64,7 @@ export const neverApplied = (detail: {
  */
 export const APPLY_HEADING = "Apply changes?";
 export const APPLY_BODY =
-  "This workflow is turned on. Once you apply changes, they'll take effect immediately. Runs already open keep the steps they started with.";
+  "This workflow is turned on. Once you apply changes, they'll take effect immediately. Runs already open keep the tasks they started with.";
 export const DISCARD_HEADING = "Discard changes?";
 export const DISCARD_BODY = "Are you sure you want to discard these changes?";
 export const TURN_OFF_HEADING = "Turn off workflow?";
@@ -79,7 +79,7 @@ export const STATUS_INACTIVE = "Inactive";
 
 /**
  * The delete dialog's body, both surfaces. It names what survives rather than
- * only what goes: a delete removes the definition, its steps and its draft,
+ * only what goes: a delete removes the definition, its tasks and its draft,
  * and every run stays on its order (the merchant copy of `Domain.Workflow`).
  */
 export const DELETE_WORKFLOW_WARNING =
@@ -137,63 +137,63 @@ export const startedToast = (verb: string, started: number) => {
     : `${verb}. Started ${String(started)} ${started === 1 ? "run" : "runs"} on waiting orders.`;
 };
 
-const stepList = (steps: readonly Domain.StepWithTeamName[]) =>
-  steps.map((step) => step.name).join(", ");
+const taskList = (tasks: readonly Domain.TaskWithTeamName[]) =>
+  tasks.map((task) => task.name).join(", ");
 
 /**
- * Why Turn on would be refused, decided from the workflow's own steps — the
+ * Why Turn on would be refused, decided from the workflow's own tasks — the
  * same facts the object checks — so the button can be disabled with its
  * reason instead of failing after a round trip. An empty team is not a
  * blocker: the run starts and waits for a member.
  */
 export const turnOnBlocker = (
-  steps: readonly Domain.StepWithTeamName[],
+  tasks: readonly Domain.TaskWithTeamName[],
 ): Domain.ActivateResult | null => {
-  if (steps.length === 0) return { _tag: "NoSteps" };
-  const orphans = steps.filter(Domain.isUnassigned);
+  if (tasks.length === 0) return { _tag: "NoTasks" };
+  const orphans = tasks.filter(Domain.isUnassigned);
   if (orphans.length > 0)
     return {
-      _tag: "StepUnassigned",
-      stepNames: orphans.map((step) => step.name),
+      _tag: "TaskUnassigned",
+      taskNames: orphans.map((task) => task.name),
     };
   return null;
 };
 
-/** Why Apply would be refused, from the draft's steps; the same checks on and off. */
+/** Why Apply would be refused, from the draft's tasks; the same checks on and off. */
 export const applyBlocker = (
-  steps: readonly Domain.StepWithTeamName[],
+  tasks: readonly Domain.TaskWithTeamName[],
 ): Domain.ApplyResult | null => {
-  if (steps.length === 0) return { _tag: "NoSteps" };
-  const orphans = steps.filter(Domain.isUnassigned);
+  if (tasks.length === 0) return { _tag: "NoTasks" };
+  const orphans = tasks.filter(Domain.isUnassigned);
   if (orphans.length > 0)
     return {
-      _tag: "StepUnassigned",
-      stepNames: orphans.map((step) => step.name),
+      _tag: "TaskUnassigned",
+      taskNames: orphans.map((task) => task.name),
     };
   return null;
 };
 
 /**
- * What needs attention about these steps, one sentence each: a step nobody
- * owns, and a step owned by a team nobody is on. Empty when there is nothing
+ * What needs attention about these tasks, one sentence each: a task nobody
+ * owns, and a task owned by a team nobody is on. Empty when there is nothing
  * to say, so the caller renders no banner at all.
  */
 export const attentionLines = (
-  steps: readonly Domain.StepWithTeamName[],
+  tasks: readonly Domain.TaskWithTeamName[],
 ): readonly string[] => {
-  const orphans = steps.filter(Domain.isUnassigned);
-  const empty = steps.filter(Domain.hasEmptyTeam);
+  const orphans = tasks.filter(Domain.isUnassigned);
+  const empty = tasks.filter(Domain.hasEmptyTeam);
   const teamNames = [
-    ...new Set(empty.map((step) => step.teamName ?? "").filter(Boolean)),
+    ...new Set(empty.map((task) => task.teamName ?? "").filter(Boolean)),
   ];
   return [
     ...(orphans.length > 0
-      ? [`No team on ${stepList(orphans)}. Assign one before you apply.`]
+      ? [`No team on ${taskList(orphans)}. Assign one before you apply.`]
       : []),
     ...(teamNames.length > 0
       ? [
           `Nobody is on ${teamNames.join(", ")}. ${
-            empty.length === 1 ? "That step" : "Those steps"
+            empty.length === 1 ? "That task" : "Those tasks"
           } will sit unclaimed until someone joins.`,
         ]
       : []),

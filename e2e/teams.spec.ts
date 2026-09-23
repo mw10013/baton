@@ -137,7 +137,7 @@ test("teams screen creates, staffs, renames, and deletes a team", async ({
 
   await clickMenuItem(frame, "Delete");
   await expect(
-    frame.getByText("No workflow steps are assigned to it."),
+    frame.getByText("No workflow tasks are assigned to it."),
   ).toBeVisible();
   await frame
     .getByRole("button", { name: "Delete", exact: true })
@@ -172,7 +172,7 @@ test("the team page drills in to the orders waiting on that team", async ({
       {
         name: "E2E Drill Cuff",
         tag: "e2e-drill",
-        steps: [{ name: "Cut", team: DRILL_TEAM }],
+        tasks: [{ name: "Cut", team: DRILL_TEAM }],
       },
     ],
     [

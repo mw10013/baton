@@ -35,8 +35,8 @@ import {
  * The fan-out is the interesting part. A member's subscription is scoped by
  * their teams, not by an order, so `publish` cannot use the order GIDs that
  * scope a merchant's. The five member mutations name the teams instead — every
- * team owning a step on any run of the touched order, because completing the
- * last item step makes the *order* run ready for a different team
+ * team owning a task on any run of the touched order, because completing the
+ * last item task makes the *order* run ready for a different team
  * (`WorkflowRunRepository.listOrderTeamIds`). A team with no work on that order
  * hears nothing.
  */
@@ -99,7 +99,7 @@ const seedOrder = (shop: string) =>
   );
 
 /**
- * One shop with two teams, a member on each, an order, and a one-step item
+ * One shop with two teams, a member on each, an order, and a one-task item
  * workflow owned by the first team — the smallest arrangement in which a write
  * is on one team's list and not the other's.
  */
@@ -170,9 +170,9 @@ const seedShopWithWork = async (shopName: string) => {
   });
   if (attached._tag !== "Ok") throw new Error(attached._tag);
   const [detail] = await agent.listRunsForOrder({ orderId: ORDER_ID });
-  const runStepId = detail?.steps[0]?.id;
-  if (runStepId === undefined) throw new Error("no run step");
-  return { shop, runStepId, ...seeded };
+  const runTaskId = detail?.tasks[0]?.id;
+  if (runTaskId === undefined) throw new Error("no run task");
+  return { shop, runTaskId, ...seeded };
 };
 
 /** One page of Up next, every team: what every test here seeds a single row into. */
@@ -189,7 +189,7 @@ const subscribeView = (
 ) => socket.call<Domain.RunListView>("subscribeRuns", { subscriberId, query });
 
 /**
- * The ready rows of one tab. Every test here seeds a single untouched step on
+ * The ready rows of one tab. Every test here seeds a single untouched task on
  * one team, which is Up next for whoever reads it.
  */
 const subscribe = (
@@ -214,7 +214,7 @@ describe("member run list socket", () => {
     });
     const items = await subscribe(worker.socket, "sub-alice");
     expect(items).toHaveLength(1);
-    expect(items[0]?.steps[0]?.teamId).toBe(working.id);
+    expect(items[0]?.tasks[0]?.teamId).toBe(working.id);
     worker.close();
 
     // The same call on a connection scoped to a team with no work reads empty
@@ -262,8 +262,8 @@ describe("member run list socket", () => {
     worker.close();
   });
 
-  it("pushes a completed step to the team, and not to a team with no work on that order", async () => {
-    const { shop, working, idle, runStepId, alice, bob, carol } =
+  it("pushes a completed task to the team, and not to a team with no work on that order", async () => {
+    const { shop, working, idle, runTaskId, alice, bob, carol } =
       await seedShopWithWork("runs-push.myshopify.com");
     const acting = await openMemberSocket(shop, {
       memberId: alice,
@@ -284,7 +284,7 @@ describe("member run list socket", () => {
     await subscribe(teammate.socket, "sub-bob");
     await subscribe(elsewhere.socket, "sub-carol");
 
-    expect(await acting.completeStep({ runStepId })).toEqual({ _tag: "Ok" });
+    expect(await acting.completeTask({ runTaskId })).toEqual({ _tag: "Ok" });
 
     await teammate.socket.waitForMessage(isInvalidated);
     await expect(
@@ -296,14 +296,14 @@ describe("member run list socket", () => {
   });
 
   /**
-   * The merchant's half of the same fan-out. `merchantCompleteStep` carries no
+   * The merchant's half of the same fan-out. `merchantCompleteTask` carries no
    * identity and no `teamIds` — the order page has neither — yet lands on a
-   * step owned by a team it is not on, and the worker watching that team hears
+   * task owned by a team it is not on, and the worker watching that team hears
    * about it over their own socket. The rules the merchant is still held to are
    * the repository's and are tested there; this is the wire.
    */
-  it("completes a member's step over a merchant socket and pushes it to the team", async () => {
-    const { shop, working, runStepId, alice } = await seedShopWithWork(
+  it("completes a member's task over a merchant socket and pushes it to the team", async () => {
+    const { shop, working, runTaskId, alice } = await seedShopWithWork(
       "runs-merchant.myshopify.com",
     );
     const worker = await openMemberSocket(shop, {
@@ -314,7 +314,7 @@ describe("member run list socket", () => {
     await subscribe(worker.socket, "sub-alice");
 
     const merchant = await openMerchantSocket(shop);
-    expect(await merchant.completeStep({ runStepId })).toEqual({ _tag: "Ok" });
+    expect(await merchant.completeTask({ runTaskId })).toEqual({ _tag: "Ok" });
 
     await worker.socket.waitForMessage(isInvalidated);
     expect(await subscribe(worker.socket, "sub-alice")).toHaveLength(0);
@@ -327,8 +327,8 @@ describe("member run list socket", () => {
    * the Worker's gate, identity resolved from D1 and forwarded to the object,
    * and a mutation whose `memberId` / `teamIds` the browser never sent.
    */
-  it("completes a step over a socket opened with a real member cookie", async () => {
-    const { shop, runStepId } = await seedShopWithWork(
+  it("completes a task over a socket opened with a real member cookie", async () => {
+    const { shop, runTaskId } = await seedShopWithWork(
       "runs-cookie.myshopify.com",
     );
     const cookie = await Effect.runPromise(
@@ -344,7 +344,7 @@ describe("member run list socket", () => {
     await socket.waitForMessage((data) => data.includes("cf_agent_identity"));
     // Nothing here names Alice, her team, or her id: the gate put all three on
     // the connection, and the object read them from there.
-    expect(await memberActions(socket).completeStep({ runStepId })).toEqual({
+    expect(await memberActions(socket).completeTask({ runTaskId })).toEqual({
       _tag: "Ok",
     });
     socket.close();

@@ -139,10 +139,10 @@ const insideRow = (event: {
  * row written before the role column.
  */
 const doneActorLabel = (
-  step: Domain.WorkflowRunStep,
+  task: Domain.WorkflowRunTask,
   memberEmail: Domain.Email,
 ) => {
-  const actor = Domain.stepCompletedBy(step);
+  const actor = Domain.taskCompletedBy(task);
   if (actor === null) return "";
   return Domain.actorIsMember(actor, memberEmail)
     ? "you"
@@ -289,36 +289,37 @@ function RouteComponent() {
    * expanded row used to and the run history, the editors and a printable
    * ticket besides, for the same single tap.
    *
-   * Line one is the order, the step, how many more of the run's steps are
-   * ready, and the flag. Line two carries the item's title — here rather than
-   * beside the step name, where the two ran together with no separator — and
-   * then the one thing the reader needs and no more: why it stopped, who has
-   * it, or where it is in the run.
+   * Line one is the order, the item's title and the flag: what the row is.
+   * Line two is what to do on it ({@link Domain.runRowLine}): every ready task
+   * by name, then the one thing the reader needs and no more — why it
+   * stopped, who has it, or where it is in the run. Every name rather than
+   * the first and a `+n`, because a count says there is more work without
+   * saying what it is.
    */
   const renderItem = (item: Domain.RunListItem, first: boolean) => {
-    const { run, steps } = item;
+    const { run, tasks } = item;
     const flagged = Domain.runIsFlagged(run);
-    const [step, ...rest] = steps;
-    const started = step.startedAt !== null;
-    const startedBy = Domain.stepStartedBy(step);
+    const [task, ...rest] = tasks;
+    const started = task.startedAt !== null;
+    const startedBy = Domain.taskStartedBy(task);
     const menuId = `run-actions-${run.id}`;
-    const stepLine = `Step ${String(step.stage)} of ${String(item.stageCount)}${showTeam ? ` · ${step.teamName}` : ""}`;
+    const line = Domain.runRowLine(item, showTeam);
     /**
      * A row you started says where it is in the run, not "In progress · you".
-     * Starting a step is what puts the row in Mine ({@link Domain.tierOf}),
+     * Starting a task is what puts the row in Mine ({@link Domain.tierOf}),
      * and Put back is the inverse that takes it out again, so those words are true of every row under that pressed tab and so
      * distinguish none of them. A row a teammate started says who instead,
      * which is the whole of what the Teammates tab is for. The test is the
      * starter rather than the open tab because a run can have several ready
-     * steps on the member's teams and `steps[0]` is the lowest-positioned
+     * tasks on the member's teams and `tasks[0]` is the lowest-positioned
      * one, not necessarily theirs.
      */
     const detailLine = () => {
-      if (flagged) return flagBody(run) ?? stepLine;
-      if (!started) return stepLine;
+      if (flagged) return flagBody(run) ?? line.step;
+      if (!started) return line.step;
       if (startedBy === null) return "In progress";
       return Domain.actorIsMember(startedBy, memberEmail)
-        ? stepLine
+        ? line.step
         : `In progress · ${Domain.actorLabel(startedBy)}`;
     };
     /**
@@ -337,13 +338,13 @@ function RouteComponent() {
      * cancelled is the row arguing with itself. The fixer's extra step
      * (Unblock, then Done) is the price, and they are the rare reader.
      *
-     * A single ready step gives the bare verb: the step is named on line one
+     * A single ready task gives the bare verb: the task is named on line two
      * of the row this menu belongs to. Several give one item each, because a
      * single verb would act on the first and say nothing about the rest.
      *
-     * A started step also gets Put back, the one-press fix for a Start
-     * pressed by mistake. It follows {@link Domain.stepActions}: wherever Done
-     * is, on a started step, for the whole team, so a row a teammate started
+     * A started task also gets Put back, the one-press fix for a Start
+     * pressed by mistake. It follows {@link Domain.taskActions}: wherever Done
+     * is, on a started task, for the whole team, so a row a teammate started
      * offers it too. Every row here is open, ready and on the member's teams,
      * and a flagged row returned above.
      */
@@ -360,7 +361,7 @@ function RouteComponent() {
           </s-button>,
         ];
       if (rest.length > 0)
-        return steps.flatMap((each) =>
+        return tasks.flatMap((each) =>
           each.startedAt === null ? (
             <s-button
               key={each.id}
@@ -394,17 +395,17 @@ function RouteComponent() {
       return started
         ? [
             <s-button
-              key={step.id}
+              key={task.id}
               onClick={() => {
-                actions.complete.mutate(step.id);
+                actions.complete.mutate(task.id);
               }}
             >
               Done
             </s-button>,
             <s-button
-              key={`${step.id}-put-back`}
+              key={`${task.id}-put-back`}
               onClick={() => {
-                actions.unstart.mutate(step.id);
+                actions.unstart.mutate(task.id);
               }}
             >
               Put back
@@ -412,9 +413,9 @@ function RouteComponent() {
           ]
         : [
             <s-button
-              key={step.id}
+              key={task.id}
               onClick={() => {
-                actions.start.mutate(step.id);
+                actions.start.mutate(task.id);
               }}
             >
               Start
@@ -448,10 +449,7 @@ function RouteComponent() {
             <s-stack gap="small-500">
               <s-stack direction="inline" gap="small-300" alignItems="center">
                 <s-text color="subdued">{run.orderName}</s-text>
-                <s-text type="strong">{step.name}</s-text>
-                {rest.length > 0 && (
-                  <s-text color="subdued">{`+${String(rest.length)}`}</s-text>
-                )}
+                <s-text type="strong">{run.lineItemTitle}</s-text>
                 {/* Every flag but a hold. A held run's badge would read
                     "Blocked" under a pressed Blocked tab, beside an Unblock
                     item, above the reason as typed — one fact said four
@@ -466,7 +464,7 @@ function RouteComponent() {
               </s-stack>
               {/* `.run-detail-line` in `styles.css` cuts it to two lines. */}
               <div className="run-detail-line">
-                <s-text color="subdued">{`${run.lineItemTitle} · ${detailLine()}`}</s-text>
+                <s-text color="subdued">{`${line.names} · ${detailLine()}`}</s-text>
               </div>
             </s-stack>
             <s-button
@@ -486,16 +484,16 @@ function RouteComponent() {
     );
   };
 
-  /** The same rule as the work page's Undo, {@link Domain.stepActions}, on the tier's own row. */
+  /** The same rule as the work page's Undo, {@link Domain.taskActions}, on the tier's own row. */
   const doneUndo = (entry: Domain.DoneItem) =>
-    Domain.stepActions(
+    Domain.taskActions(
       entry.run,
-      { ...entry.step, ready: false, undoBlockedBy: entry.undoBlockedBy },
+      { ...entry.task, ready: false, undoBlockedBy: entry.undoBlockedBy },
       teams.map((team) => team.id),
     ).undo;
 
   /**
-   * A finished step's row, the same shape as a waiting one: the row is a link
+   * A finished task's row, the same shape as a waiting one: the row is a link
    * to the work page and a kebab beside it holds Undo.
    *
    * The kebab is there only while Undo is allowed. The rule used to be the
@@ -510,11 +508,11 @@ function RouteComponent() {
    * links to states it in full, for the reader who went looking.
    */
   const renderDone = (entry: Domain.DoneItem, first: boolean) => {
-    const menuId = `run-undo-${entry.step.id}`;
+    const menuId = `run-undo-${entry.task.id}`;
     const undoable = doneUndo(entry)?.blockedBy === null;
     return (
       <s-box
-        key={entry.step.id}
+        key={entry.task.id}
         borderWidth={first ? "none" : "base none none none"}
       >
         <s-clickable
@@ -534,13 +532,13 @@ function RouteComponent() {
             <s-stack gap="small-500">
               <s-stack direction="inline" gap="small-300" alignItems="center">
                 <s-text color="subdued">{entry.run.orderName}</s-text>
-                <s-text type="strong">{entry.step.name}</s-text>
+                <s-text type="strong">{entry.task.name}</s-text>
               </s-stack>
               <div className="run-detail-line">
                 <s-text color="subdued">
-                  {`${entry.run.lineItemTitle} · by ${doneActorLabel(entry.step, memberEmail)} at `}
+                  {`${entry.run.lineItemTitle} · by ${doneActorLabel(entry.task, memberEmail)} at `}
                   <LocalDateTime
-                    value={entry.step.completedAt ?? 0}
+                    value={entry.task.completedAt ?? 0}
                     format="time"
                   />
                   {entry.run.note === null ? "" : ` · Note: ${entry.run.note}`}
@@ -566,7 +564,7 @@ function RouteComponent() {
           >
             <s-button
               onClick={() => {
-                actions.uncomplete.mutate(entry.step.id);
+                actions.uncomplete.mutate(entry.task.id);
               }}
             >
               Undo

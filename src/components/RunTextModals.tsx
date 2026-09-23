@@ -23,7 +23,13 @@ const countdown = (draft: string, maxLength: number) =>
  *
  * The draft is `null` until the field takes input and is reset on the way out
  * (`onAfterHide`), not on the way in: `show` can fire after the field has
- * already taken input, and a reset there wipes what was typed.
+ * already taken input, and a reset there wipes what was typed. `afterhide`
+ * fires once the exit animation ends, which can be after the same modal has
+ * been shown again and typed into (Save, then Edit straight away), so the
+ * reset is skipped when a `show` has started since the `hide`; otherwise it
+ * wiped the new draft, the field fell back to the saved text, and Save
+ * stayed disabled as not dirty. `close` resets on its own because it is the
+ * one exit that knows the draft is finished with.
  */
 function TextModal({
   id,
@@ -56,6 +62,8 @@ function TextModal({
   readonly onSubmit: (text: string) => Promise<string | null>;
 }) {
   const field = React.useRef<HTMLElementTagNameMap["s-text-area"]>(null);
+  /** True from `show` to `hide`; a late `afterhide` must not reset a reopened modal. */
+  const showing = React.useRef(false);
   const [draft, setDraft] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   PolarisModal.useModalBackdropDismissGuard(id);
@@ -66,12 +74,20 @@ function TextModal({
   }, [id, dirty]);
   const close = () => {
     PolarisModal.setModalDirty(id, false);
+    setDraft(null);
+    setError(null);
     PolarisModal.hideModal(id);
   };
   return (
     <s-modal
       id={id}
       heading={heading}
+      onShow={() => {
+        showing.current = true;
+      }}
+      onHide={() => {
+        showing.current = false;
+      }}
       onAfterShow={() => {
         // Polaris focuses the first control but leaves the caret at the
         // start; the native textarea is inside the element's shadow root.
@@ -84,6 +100,7 @@ function TextModal({
         );
       }}
       onAfterHide={() => {
+        if (showing.current) return;
         setDraft(null);
         setError(null);
       }}

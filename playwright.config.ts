@@ -64,7 +64,10 @@ export default defineConfig({
      * a project of its own — no `setup` dependency (nothing here needs a
      * Shopify admin session, so a run never prompts for Keychain access) and no
      * `storageState`, because the whole point is that a member with zero
-     * Shopify cookies can sign in.
+     * Shopify cookies can sign in. It still seeds through the app, which
+     * needs a `ShopSession`: the `setup` project's "shopify app installed"
+     * test creates one, and runs first because Playwright takes the projects
+     * with no dependencies in config order under `workers: 1`.
      */
     {
       name: "member",

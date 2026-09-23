@@ -7,18 +7,18 @@ import { D1Primary } from "@/lib/D1Primary";
 import * as Domain from "@/lib/Domain";
 import { Repository } from "@/lib/Repository";
 
-/** `team: null` seeds the step unassigned, the state a team delete leaves behind. */
-const SeedStepByTeamName = Schema.Struct({
-  name: Domain.StepName,
+/** `team: null` seeds the task unassigned, the state a team delete leaves behind. */
+const SeedTaskByTeamName = Schema.Struct({
+  name: Domain.TaskName,
   team: Schema.NullOr(Domain.TeamName),
-  stage: Schema.optionalKey(Schema.Number),
-  instructions: Schema.optionalKey(Domain.StepInstructions),
+  step: Schema.optionalKey(Schema.Number),
+  instructions: Schema.optionalKey(Domain.TaskInstructions),
 });
 
 /**
  * The route's own order shape. Identical to `Domain.SeedOrdersInput`'s orders
  * except that a line item names the workflow it wants set on it, for the same
- * reason a step names its team: workflow ids are minted by this request
+ * reason a task names its team: workflow ids are minted by this request
  * moments earlier, so a caller could not know one.
  */
 const SeedOrderByWorkflowName = Schema.Struct({
@@ -55,7 +55,7 @@ const DevSeedInput = Schema.Struct({
     ),
   ),
   /**
-   * Steps name their team rather than carrying a `teamId`: team ids are
+   * Tasks name their team rather than carrying a `teamId`: team ids are
    * `crypto.randomUUID()` minted by the seed itself moments earlier, so a
    * caller could not know one, and the name is what makes the fixture readable
    * as data.
@@ -64,20 +64,20 @@ const DevSeedInput = Schema.Struct({
     Schema.Array(
       Schema.Struct({
         name: Domain.WorkflowName,
-        /** Defaults to on when the entry has steps and every step is assigned; see `Domain.SeedWorkflowsInput`. */
+        /** Defaults to on when the entry has tasks and every task is assigned; see `Domain.SeedWorkflowsInput`. */
         active: Schema.optionalKey(Schema.Boolean),
         tag: Domain.WorkflowTag,
-        steps: Schema.Array(SeedStepByTeamName),
-        /** A pending draft beside the workflow's `steps`; the tag is not drafted. */
+        tasks: Schema.Array(SeedTaskByTeamName),
+        /** A pending draft beside the workflow's `tasks`; the tag is not drafted. */
         draft: Schema.optionalKey(
-          Schema.Struct({ steps: Schema.Array(SeedStepByTeamName) }),
+          Schema.Struct({ tasks: Schema.Array(SeedTaskByTeamName) }),
         ),
       }),
     ),
   ),
   /**
    * Seeded after workflows so they route. `done` orders are completed as the
-   * first listed member, so every finished step names a real member.
+   * first listed member, so every finished task names a real member.
    */
   orders: Schema.optionalKey(Schema.Array(SeedOrderByWorkflowName)),
   /**
@@ -129,7 +129,7 @@ const DevSeedInput = Schema.Struct({
  * `migrations/0001_init.sql` — a migration runs before any install exists.
  *
  * Workflows go to the shop's Durable Object last, once teams have ids to point
- * at: `WorkflowStep.teamId` is a D1 `Team.id` with no foreign key, because
+ * at: `WorkflowTask.teamId` is a D1 `Team.id` with no foreign key, because
  * SQLite keys do not cross databases. The stub is called directly rather than
  * through `ShopAgentClient`, which exists to decode RPC results against a
  * schema — there is no result here to decode.
@@ -214,59 +214,59 @@ export const Route = createFileRoute("/api/dev/seed")({
                   });
                 }
               }
-              type SeedStep =
-                (typeof Domain.SeedWorkflowsInput.Encoded)["workflows"][number]["steps"][number];
+              type SeedTask =
+                (typeof Domain.SeedWorkflowsInput.Encoded)["workflows"][number]["tasks"][number];
               const seedWorkflows: {
                 name: string;
                 active?: boolean;
                 tag: string;
-                steps: SeedStep[];
-                draft?: { steps: SeedStep[] };
+                tasks: SeedTask[];
+                draft?: { tasks: SeedTask[] };
               }[] = [];
-              /** Team names → ids; the first step naming an unseeded team is the whole error. */
-              const resolveSteps = (
+              /** Team names → ids; the first task naming an unseeded team is the whole error. */
+              const resolveTasks = (
                 workflowName: string,
-                steps: readonly (typeof SeedStepByTeamName.Type)[],
-              ): SeedStep[] | Response => {
-                const resolved: SeedStep[] = [];
-                for (const step of steps) {
+                tasks: readonly (typeof SeedTaskByTeamName.Type)[],
+              ): SeedTask[] | Response => {
+                const resolved: SeedTask[] = [];
+                for (const task of tasks) {
                   const teamId =
-                    step.team === null ? null : teamIds.get(step.team);
+                    task.team === null ? null : teamIds.get(task.team);
                   if (teamId === undefined)
                     return new Response(
-                      `workflow ${workflowName} step ${step.name} references unseeded team ${step.team ?? ""}`,
+                      `workflow ${workflowName} task ${task.name} references unseeded team ${task.team ?? ""}`,
                       { status: 400 },
                     );
                   resolved.push({
-                    name: step.name,
+                    name: task.name,
                     teamId,
-                    ...(step.stage === undefined ? {} : { stage: step.stage }),
-                    ...(step.instructions === undefined
+                    ...(task.step === undefined ? {} : { step: task.step }),
+                    ...(task.instructions === undefined
                       ? {}
-                      : { instructions: step.instructions }),
+                      : { instructions: task.instructions }),
                   });
                 }
                 return resolved;
               };
               for (const workflow of workflows ?? []) {
-                const steps = resolveSteps(workflow.name, workflow.steps);
-                if (steps instanceof Response) return steps;
-                const draftSteps =
+                const tasks = resolveTasks(workflow.name, workflow.tasks);
+                if (tasks instanceof Response) return tasks;
+                const draftTasks =
                   workflow.draft === undefined
                     ? undefined
-                    : resolveSteps(workflow.name, workflow.draft.steps);
-                if (draftSteps instanceof Response) return draftSteps;
+                    : resolveTasks(workflow.name, workflow.draft.tasks);
+                if (draftTasks instanceof Response) return draftTasks;
                 const draft =
-                  workflow.draft === undefined || draftSteps === undefined
+                  workflow.draft === undefined || draftTasks === undefined
                     ? undefined
-                    : { steps: draftSteps };
+                    : { tasks: draftTasks };
                 seedWorkflows.push({
                   name: workflow.name,
                   ...(workflow.active === undefined
                     ? {}
                     : { active: workflow.active }),
                   tag: workflow.tag,
-                  steps,
+                  tasks,
                   ...(draft === undefined ? {} : { draft }),
                 });
               }

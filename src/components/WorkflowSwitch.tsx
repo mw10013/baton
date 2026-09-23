@@ -61,9 +61,9 @@ export const activateResultMessage = Match.typeTags<
 >()({
   Ok: () => null,
   NotFound: () => "That workflow no longer exists.",
-  NoSteps: () => "Add a step to this workflow.",
-  StepUnassigned: ({ stepNames }) =>
-    `Assign a team to ${stepNames.join(", ")}.`,
+  NoTasks: () => "Add a step to this workflow.",
+  TaskUnassigned: ({ taskNames }) =>
+    `Assign a team to ${taskNames.join(", ")}.`,
 });
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -116,7 +116,7 @@ export function AppliesSince({
 
 export function WorkflowSwitch({
   workflow,
-  steps,
+  tasks,
   turnOnBody,
   slot,
   showControl = true,
@@ -125,8 +125,8 @@ export function WorkflowSwitch({
   onMessage,
 }: {
   readonly workflow: Domain.Workflow;
-  /** The steps Turn on will check: the workflow's own, or the draft's when {@link appliesFirst} will promote them. */
-  readonly steps: readonly Domain.StepWithTeamName[];
+  /** The tasks Turn on will check: the workflow's own, or the draft's when {@link appliesFirst} will promote them. */
+  readonly tasks: readonly Domain.TaskWithTeamName[];
   /** The rule that will start runs once the switch is on, for the Turn on dialog's first line. */
   readonly turnOnBody: string;
   /** Where the button goes: both surfaces make it the primary, but the editor and the detail page slot their other controls differently. */
@@ -140,7 +140,7 @@ export function WorkflowSwitch({
   readonly showControl?: boolean;
   /**
    * Turn on applies the draft in the same click, for a workflow that has
-   * never been applied: promoting steps that have never run and switching the
+   * never been applied: promoting tasks that have never run and switching the
    * workflow on are one decision (`ShopAgent.applyAndActivate`).
    */
   readonly appliesFirst?: boolean;
@@ -171,7 +171,7 @@ export function WorkflowSwitch({
   /**
    * Read when the dialog opens, not on page load: the count walks the open
    * orders' line items, which is fine once per decision and wasteful on
-   * every visit to a page that mostly shows steps.
+   * every visit to a page that mostly shows tasks.
    */
   const waiting = useQuery({
     queryKey: ["countWaitingOrders", workflowId],
@@ -262,7 +262,7 @@ export function WorkflowSwitch({
     setDate(toDateInput(loadedActivatedAt));
   }
 
-  const blocker = turnOnBlocker(steps);
+  const blocker = turnOnBlocker(tasks);
   const switching = activeMutation.isPending;
   const chosen = fromDateInput(date);
   const waitingLine =
@@ -309,7 +309,7 @@ export function WorkflowSwitch({
         <s-stack gap="base">
           <s-paragraph>{turnOnBody}</s-paragraph>
           {appliesFirst && (
-            <s-paragraph>Your steps are applied at the same time.</s-paragraph>
+            <s-paragraph>Your tasks are applied at the same time.</s-paragraph>
           )}
           {/* Named while it loads: Turn on is disabled until the count is in, and a silent disabled button reads as broken. */}
           {waiting.isFetching && (

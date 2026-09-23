@@ -318,13 +318,13 @@ const runListItem = (
     orderName: `#${id}`,
     orderProcessedAt,
   },
-  steps: [
+  tasks: [
     {
-      id: Schema.decodeUnknownSync(Domain.WorkflowRunStepId)(`${id}-s`),
+      id: Schema.decodeUnknownSync(Domain.WorkflowRunTaskId)(`${id}-s`),
       runId: Schema.decodeUnknownSync(Domain.WorkflowRunId)(id),
       position: 1,
-      stage: 1,
-      name: Schema.decodeUnknownSync(Domain.StepName)("Cut"),
+      step: 1,
+      name: Schema.decodeUnknownSync(Domain.TaskName)("Cut"),
       teamId: Schema.decodeUnknownSync(Domain.TeamId)("t"),
       teamName: Schema.decodeUnknownSync(Domain.TeamName)("T"),
       startedAt: overrides.startedBy === undefined ? null : 1,
@@ -341,7 +341,60 @@ const runListItem = (
       startedByRole: overrides.startedBy === undefined ? null : "member",
     },
   ],
-  stageCount: 1,
+  stepCount: 1,
+});
+
+const withTasks = (
+  tasks: readonly (readonly [name: string, team: string])[],
+): Domain.RunListItem => {
+  const item = runListItem("1", 0);
+  const [base] = item.tasks;
+  const [first, ...rest] = tasks.map(([name, team], index) => ({
+    ...base,
+    id: Schema.decodeUnknownSync(Domain.WorkflowRunTaskId)(`t${String(index)}`),
+    position: index + 2,
+    step: 2,
+    name: Schema.decodeUnknownSync(Domain.TaskName)(name),
+    teamName: Schema.decodeUnknownSync(Domain.TeamName)(team),
+  }));
+  if (first === undefined) throw new Error("withTasks: no tasks");
+  return { ...item, tasks: [first, ...rest], stepCount: 3 };
+};
+const line = (item: Domain.RunListItem, showTeam: boolean) => {
+  const { names, step } = Domain.runRowLine(item, showTeam);
+  return `${names} · ${step}`;
+};
+
+describe("Domain.runRowLine", () => {
+  it("a member row lists every ready task by name, then step k of n, and names a team per task only when they differ", () => {
+    const one = withTasks([["Stamp monogram", "Engraving"]]);
+    const shared = withTasks([
+      ["Stamp monogram", "Engraving"],
+      ["Engrave initials", "Engraving"],
+    ]);
+    const split = withTasks([
+      ["Stamp monogram", "Engraving"],
+      ["Engrave initials", "Finishing"],
+    ]);
+    strictEqual(line(one, false), "Stamp monogram · Step 2 of 3");
+    strictEqual(line(one, true), "Stamp monogram · Step 2 of 3 · Engraving");
+    strictEqual(
+      line(shared, true),
+      "Stamp monogram · Engrave initials · Step 2 of 3 · Engraving",
+    );
+    strictEqual(
+      line(shared, false),
+      "Stamp monogram · Engrave initials · Step 2 of 3",
+    );
+    strictEqual(
+      line(split, true),
+      "Stamp monogram (Engraving) · Engrave initials (Finishing) · Step 2 of 3",
+    );
+    strictEqual(
+      line(split, false),
+      "Stamp monogram (Engraving) · Engrave initials (Finishing) · Step 2 of 3",
+    );
+  });
 });
 
 const runIds = (items: readonly Domain.RunListItem[]) =>
@@ -375,7 +428,7 @@ describe("Domain.tierOf", () => {
    * longer has. The email is the snapshot that survives, and the work is still
    * theirs.
    */
-  it("keeps a step under Mine when the id changed but the email did not", () => {
+  it("keeps a task under Mine when the id changed but the email did not", () => {
     strictEqual(
       Domain.tierOf(
         runListItem("re-added", 20, {
@@ -512,15 +565,15 @@ describe("Domain.runIsOpen / Domain.runIsLive", () => {
 const TEAM = Schema.decodeUnknownSync(Domain.TeamId)("t");
 const OTHER_TEAM = Schema.decodeUnknownSync(Domain.TeamId)("u");
 
-const stepView = (
+const taskView = (
   overrides: Partial<
     Pick<
-      Domain.RunStepView,
+      Domain.RunTaskView,
       "teamId" | "ready" | "startedAt" | "completedAt" | "undoBlockedBy"
     >
   > = {},
 ): Pick<
-  Domain.RunStepView,
+  Domain.RunTaskView,
   "teamId" | "ready" | "startedAt" | "completedAt" | "undoBlockedBy"
 > => ({
   teamId: TEAM,
@@ -538,27 +591,27 @@ const NOTHING = {
   undo: null,
 };
 
-describe("Domain.stepActions", () => {
-  it("a done run's last step is undoable while nothing downstream started", () => {
+describe("Domain.taskActions", () => {
+  it("a done run's last task is undoable while nothing downstream started", () => {
     deepStrictEqual(
-      Domain.stepActions(
+      Domain.taskActions(
         run("done", null),
-        stepView({ ready: false, startedAt: 1, completedAt: 2 }),
+        taskView({ ready: false, startedAt: 1, completedAt: 2 }),
         [TEAM],
       ),
       { ...NOTHING, undo: { blockedBy: null } },
     );
   });
 
-  it("undo is refused once a later stage started, naming the blocker", () => {
+  it("reopening a task is refused once any task in a later step has started, naming the blocker", () => {
     const blocker: Domain.UndoBlocker = {
-      stepName: Schema.decodeUnknownSync(Domain.StepName)("Polish"),
+      taskName: Schema.decodeUnknownSync(Domain.TaskName)("Polish"),
       teamName: Schema.decodeUnknownSync(Domain.TeamName)("Finishing"),
     };
     deepStrictEqual(
-      Domain.stepActions(
+      Domain.taskActions(
         run("active", null),
-        stepView({
+        taskView({
           ready: false,
           startedAt: 1,
           completedAt: 2,
@@ -572,13 +625,13 @@ describe("Domain.stepActions", () => {
 
   it("a cancelled run offers no actions", () => {
     deepStrictEqual(
-      Domain.stepActions(run("cancelled", null), stepView(), [TEAM]),
+      Domain.taskActions(run("cancelled", null), taskView(), [TEAM]),
       NOTHING,
     );
     deepStrictEqual(
-      Domain.stepActions(
+      Domain.taskActions(
         run("cancelled", null),
-        stepView({ ready: false, startedAt: 1, completedAt: 2 }),
+        taskView({ ready: false, startedAt: 1, completedAt: 2 }),
         [TEAM],
       ),
       NOTHING,
@@ -587,35 +640,35 @@ describe("Domain.stepActions", () => {
 
   it("a flag hides Start and Done but not Undo", () => {
     deepStrictEqual(
-      Domain.stepActions(run("active", "blocked"), stepView(), [TEAM]),
+      Domain.taskActions(run("active", "blocked"), taskView(), [TEAM]),
       { ...NOTHING },
     );
     deepStrictEqual(
-      Domain.stepActions(
+      Domain.taskActions(
         run("active", "item_removed"),
-        stepView({ ready: false, startedAt: 1, completedAt: 2 }),
+        taskView({ ready: false, startedAt: 1, completedAt: 2 }),
         [TEAM],
       ),
       { ...NOTHING, undo: { blockedBy: null } },
     );
   });
 
-  it("a step on another team offers nothing", () => {
+  it("a task on another team offers nothing", () => {
     deepStrictEqual(
-      Domain.stepActions(run("active", null), stepView(), [OTHER_TEAM]),
+      Domain.taskActions(run("active", null), taskView(), [OTHER_TEAM]),
       NOTHING,
     );
     deepStrictEqual(
-      Domain.stepActions(run("active", null), stepView({ teamId: null }), [
+      Domain.taskActions(run("active", null), taskView({ teamId: null }), [
         TEAM,
       ]),
       NOTHING,
     );
   });
 
-  it("Start is offered only before the step is started; Done while it is ready", () => {
+  it("Start is offered only before the task is started; Done while it is ready", () => {
     deepStrictEqual(
-      Domain.stepActions(run("pending", null), stepView(), [TEAM]),
+      Domain.taskActions(run("pending", null), taskView(), [TEAM]),
       {
         start: true,
         done: true,
@@ -624,13 +677,13 @@ describe("Domain.stepActions", () => {
       },
     );
     deepStrictEqual(
-      Domain.stepActions(run("active", null), stepView({ startedAt: 1 }), [
+      Domain.taskActions(run("active", null), taskView({ startedAt: 1 }), [
         TEAM,
       ]),
       { start: false, done: true, putBack: true, undo: null },
     );
     deepStrictEqual(
-      Domain.stepActions(run("active", null), stepView({ ready: false }), [
+      Domain.taskActions(run("active", null), taskView({ ready: false }), [
         TEAM,
       ]),
       { ...NOTHING },
@@ -638,22 +691,22 @@ describe("Domain.stepActions", () => {
   });
 });
 
-describe("Domain.stepActions Put back", () => {
-  it("Put back is offered wherever Done is, and only on a started step", () => {
+describe("Domain.taskActions Put back", () => {
+  it("Put back is offered wherever Done is, and only on a started task", () => {
     strictEqual(
-      Domain.stepActions(run("active", null), stepView({ startedAt: 1 }), [
+      Domain.taskActions(run("active", null), taskView({ startedAt: 1 }), [
         TEAM,
       ]).putBack,
       true,
     );
     strictEqual(
-      Domain.stepActions(run("pending", null), stepView(), [TEAM]).putBack,
+      Domain.taskActions(run("pending", null), taskView(), [TEAM]).putBack,
       false,
     );
     strictEqual(
-      Domain.stepActions(
+      Domain.taskActions(
         run("active", null),
-        stepView({ ready: false, startedAt: 1 }),
+        taskView({ ready: false, startedAt: 1 }),
         [TEAM],
       ).putBack,
       false,
@@ -662,27 +715,27 @@ describe("Domain.stepActions Put back", () => {
 
   it("a flag hides Put back", () => {
     strictEqual(
-      Domain.stepActions(run("active", "blocked"), stepView({ startedAt: 1 }), [
+      Domain.taskActions(run("active", "blocked"), taskView({ startedAt: 1 }), [
         TEAM,
       ]).putBack,
       false,
     );
   });
 
-  it("a started step on another team offers no Put back", () => {
+  it("a started task on another team offers no Put back", () => {
     strictEqual(
-      Domain.stepActions(run("active", null), stepView({ startedAt: 1 }), [
+      Domain.taskActions(run("active", null), taskView({ startedAt: 1 }), [
         OTHER_TEAM,
       ]).putBack,
       false,
     );
   });
 
-  it("a finished step offers no Put back", () => {
+  it("a finished task offers no Put back", () => {
     strictEqual(
-      Domain.stepActions(
+      Domain.taskActions(
         run("active", null),
-        stepView({ ready: false, startedAt: 1, completedAt: 2 }),
+        taskView({ ready: false, startedAt: 1, completedAt: 2 }),
         [TEAM],
       ).putBack,
       false,
@@ -703,18 +756,18 @@ describe("Domain.runIsFlagged / runIsBlocked / flagIsReconcile", () => {
   });
 });
 
-const runStep = (
+const runTask = (
   position: number,
-  stage: number,
+  step: number,
   completed: boolean,
-): Domain.WorkflowRunStep => ({
-  id: Schema.decodeUnknownSync(Domain.WorkflowRunStepId)(
+): Domain.WorkflowRunTask => ({
+  id: Schema.decodeUnknownSync(Domain.WorkflowRunTaskId)(
     `s${String(position)}`,
   ),
   runId: Schema.decodeUnknownSync(Domain.WorkflowRunId)("r"),
   position,
-  stage,
-  name: Schema.decodeUnknownSync(Domain.StepName)(`Step ${String(position)}`),
+  step,
+  name: Schema.decodeUnknownSync(Domain.TaskName)(`Task ${String(position)}`),
   teamId: TEAM,
   teamName: Schema.decodeUnknownSync(Domain.TeamName)("T"),
   instructions: null,
@@ -732,44 +785,44 @@ const runStep = (
 });
 
 describe("Domain.runIsVisibleTo", () => {
-  it("a member's access to a run is any step of it on one of their teams, ready or not", () => {
-    const unassigned = { ...runStep(2, 2, false), teamId: null };
-    const steps = [runStep(1, 1, true), unassigned];
-    strictEqual(Domain.runIsVisibleTo(steps, [TEAM]), true);
-    strictEqual(Domain.runIsVisibleTo(steps, ["other"]), false);
-    // An unassigned step is on nobody's list.
+  it("a member's access to a run is any task of it on one of their teams, ready or not", () => {
+    const unassigned = { ...runTask(2, 2, false), teamId: null };
+    const tasks = [runTask(1, 1, true), unassigned];
+    strictEqual(Domain.runIsVisibleTo(tasks, [TEAM]), true);
+    strictEqual(Domain.runIsVisibleTo(tasks, ["other"]), false);
+    // An unassigned task is on nobody's list.
     strictEqual(Domain.runIsVisibleTo([unassigned], [TEAM]), false);
   });
 });
 
-describe("Domain.readySteps", () => {
-  it("a step is ready when open and nothing in an earlier stage is open; a whole parallel stage is ready at once", () => {
-    const steps = [
-      runStep(1, 1, true),
-      runStep(2, 2, false),
-      runStep(3, 2, false),
-      runStep(4, 3, false),
+describe("Domain.readyTasks", () => {
+  it("a task is ready when open and no task of an earlier step is open; every task of a step is ready together", () => {
+    const tasks = [
+      runTask(1, 1, true),
+      runTask(2, 2, false),
+      runTask(3, 2, false),
+      runTask(4, 3, false),
     ];
     deepStrictEqual(
-      Domain.readySteps(run("active", null), steps).map(
-        (step) => step.position,
+      Domain.readyTasks(run("active", null), tasks).map(
+        (task) => task.position,
       ),
       [2, 3],
     );
     deepStrictEqual(
-      Domain.readySteps(run("active", null), [
-        runStep(1, 1, false),
-        runStep(2, 2, false),
-      ]).map((step) => step.position),
+      Domain.readyTasks(run("active", null), [
+        runTask(1, 1, false),
+        runTask(2, 2, false),
+      ]).map((task) => task.position),
       [1],
     );
   });
 
-  it("a run that is not open has no ready step", () => {
-    const steps = [runStep(1, 1, false)];
-    deepStrictEqual(Domain.readySteps(run("cancelled", null), steps), []);
+  it("a run that is not open has no ready task", () => {
+    const tasks = [runTask(1, 1, false)];
+    deepStrictEqual(Domain.readyTasks(run("cancelled", null), tasks), []);
     deepStrictEqual(
-      Domain.readySteps(run("done", null), [runStep(1, 1, true)]),
+      Domain.readyTasks(run("done", null), [runTask(1, 1, true)]),
       [],
     );
   });

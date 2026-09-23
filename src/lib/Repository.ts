@@ -617,7 +617,7 @@ export class Repository extends Context.Service<
        * `TeamMember` cascades. Existing better-auth sessions are not revoked
        * — the member-area guard (`findMemberAccess`) rejects them on the next
        * request. Run history is untouched: the actor email is a snapshot on
-       * the run step, not a join against this row.
+       * the run task, not a join against this row.
        */
       const deleteMember = Effect.fn("Repository.deleteMember")(function* (
         member: Pick<Domain.Member, "shop" | "email">,

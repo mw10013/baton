@@ -17,7 +17,7 @@ import { seedConfig, seedMembers } from "./seed";
  *
  * This file signs in exactly twice — once per member, in `beforeAll` — and
  * every test re-creates its contexts from the storage state that produced,
- * because a magic-link round trip is the slowest step in the file. That is
+ * because a magic-link round trip is the slowest task in the file. That is
  * what `keepIdentities` on the seed is for: a seed normally drops the
  * better-auth `User` of every email it touches, which would sign both members
  * out on the first re-seed. With it on, each test still gets a pristine
@@ -42,20 +42,20 @@ const BOX_ORDER = "#9402";
 /** Routed Cut → Polish across the two teams; seeded only where a test needs downstream work. */
 const BAND_ORDER = "#9403";
 const BAND_TAG = "e2e-runs-band";
-/** A run's row names the step and nothing else: progress is the work page's. */
-const CUT_STEP = "Cut";
+/** A run's row names the task and nothing else: progress is the work page's. */
+const CUT_TASK = "Cut";
 /**
- * The work page's in-progress line. The badge beside the step name states
+ * The work page's in-progress line. The badge beside the task name states
  * the state, so the line under it is team, actor and when, with no "In
  * progress" in it. A run's row says `In progress · <who>` instead.
  */
 const STARTED = `${CUT_TEAM} · ${MAKER} · since`;
-/** The same line for a finished step: the `Done` badge carries the verb. */
+/** The same line for a finished task: the `Done` badge carries the verb. */
 const FINISHED = `${CUT_TEAM} · ${MAKER}`;
 /**
- * A row's line two where the reader holds the step themselves: where it
+ * A row's line two where the reader holds the task themselves: where it
  * is in the run, not "In progress · you", which would be true of every row
- * under a pressed Mine. The ring workflow has one step, and the maker is on
+ * under a pressed Mine. The ring workflow has one task, and the maker is on
  * one team, so no team name follows it either.
  */
 const MINE_STATE = "Step 1 of 1";
@@ -91,17 +91,17 @@ const DONE_TODAY = "Done today";
  * sees what is a fact about the seeded team rather than about ordering. Both
  * workflows are fully assigned, which turns them on, and both orders are
  * seeded fresh (`pending`, nothing started), so each carries exactly one ready
- * step.
+ * task.
  */
 const seedRuns = (
   config: SeedConfig,
   options: {
     readonly cutMembers: readonly string[];
     readonly keepIdentities: boolean;
-    /** Adds the two-stage band order, for the tests about downstream work. */
+    /** Adds the two-step band order, for the tests about downstream work. */
     readonly withBand?: boolean;
     /**
-     * Seeds the band order with its first stage already finished **by the
+     * Seeds the band order with its first step already finished **by the
      * merchant** — the state an intervention on the order page leaves behind,
      * reached here without an admin session (`SeedOrder.byMerchant`).
      */
@@ -125,19 +125,19 @@ const seedRuns = (
       {
         name: "E2E Runs Ring",
         tag: RING_TAG,
-        steps: [{ name: "Cut", team: CUT_TEAM }],
+        tasks: [{ name: "Cut", team: CUT_TEAM }],
       },
       {
         name: "E2E Runs Box",
         tag: BOX_TAG,
-        steps: [{ name: "Pack", team: PACK_TEAM }],
+        tasks: [{ name: "Pack", team: PACK_TEAM }],
       },
       ...(options.withBand === true
         ? [
             {
               name: "E2E Runs Band",
               tag: BAND_TAG,
-              steps: [
+              tasks: [
                 { name: "Cut", team: CUT_TEAM },
                 { name: "Polish", team: PACK_TEAM },
               ],
@@ -397,7 +397,7 @@ test.afterEach(async () => {
  * broken gate or a socket that never identifies leaves the buttons disabled
  * and `clickWhenEnabled` fails on the button rather than on the outcome.
  */
-test("a member starts and completes their team's ready step over the socket", async ({
+test("a member starts and completes their team's ready task over the socket", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -405,7 +405,7 @@ test("a member starts and completes their team's ready step over the socket", as
   const page = await openRuns(browser, config, makerState, "upNext");
 
   await expect(page.getByText(RING_ORDER, { exact: true })).toBeVisible();
-  await expect(page.getByText(CUT_STEP, { exact: true })).toBeVisible();
+  await expect(page.getByText(`${CUT_TASK} · ${MINE_STATE}`)).toBeVisible();
   await markDocument(page);
 
   await rowAction(page, RING_ORDER, "Start");
@@ -485,7 +485,7 @@ test("a run's row opens the work page and its menu does not", async ({
  * plain sight on the mate's, and it must still be there after the ring work is
  * finished.
  */
-test("a completed step lands on another member's run list without a reload", async ({
+test("a completed task lands on another member's run list without a reload", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -610,7 +610,7 @@ test("a started card moves to Mine for the starter and Teammates for a teammate"
   await expect(mate.getByText(`In progress · ${MAKER}`)).toBeVisible();
 
   /* The other side of that fact, on the starter's own page: the only started
-     step is theirs, so their Teammates tab is empty and says so in three
+     task is theirs, so their Teammates tab is empty and says so in three
      words rather than restating whose teams they are. */
   await selectTab(maker, "inProgress", TEAMMATES);
   await expect(maker.getByText(EMPTY_TEAMMATES)).toBeVisible();
@@ -978,12 +978,12 @@ test("a value the search schema cannot read falls back to the default", async ({
 });
 
 /**
- * Done today and Undo. The finished step leaves the list for the Done tab;
- * Undo puts it back, and because Undo returns the step to Ready
- * (`WorkflowRunRepository.uncompleteStep`) the card lands in "Up next", not
+ * Done today and Undo. The finished task leaves the list for the Done tab;
+ * Undo puts it back, and because Undo returns the task to Ready
+ * (`WorkflowRunRepository.uncompleteTask`) the card lands in "Up next", not
  * "Mine".
  */
-test("undo puts a finished step back to Ready", async ({ browser }) => {
+test("undo puts a finished task back to Ready", async ({ browser }) => {
   const config = seedConfig();
   await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
   const page = await openRuns(browser, config, makerState, "upNext");
@@ -1024,11 +1024,11 @@ test("undo puts a finished step back to Ready", async ({ browser }) => {
 });
 
 /**
- * Put back, the inverse of Start (`WorkflowRunRepository.unstartStep`). The
+ * Put back, the inverse of Start (`WorkflowRunRepository.unstartTask`). The
  * row leaves the starter's Mine and returns to Up next for everyone on the
  * team: the mate, who saw it under Teammates, sees it under Up next again.
  */
-test("put back returns a started step to Up next for everyone", async ({
+test("put back returns a started task to Up next for everyone", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -1079,12 +1079,12 @@ test("put back returns a started step to Up next for everyone", async ({
 });
 
 /**
- * A `done` run is only its last step's Done, and the work page must offer
- * Undo there just as the run list's Done tier does (`Domain.stepActions`: Undo's
- * gate is `runIsLive`, not `runIsOpen`). The ring order has one step, so Done
+ * A `done` run is only its last task's Done, and the work page must offer
+ * Undo there just as the run list's Done tier does (`Domain.taskActions`: Undo's
+ * gate is `runIsLive`, not `runIsOpen`). The ring order has one task, so Done
  * on it finishes the run, and the page it links to is the page under test.
  */
-test("a done run's work page offers Undo on its last step", async ({
+test("a done run's work page offers Undo on its last task", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -1097,7 +1097,7 @@ test("a done run's work page offers Undo on its last step", async ({
     page.getByRole("button", { name: "Done", exact: true }),
   );
   await expect(page.getByText(FINISHED)).toBeVisible();
-  /* The run's own badge says it is finished; the step still offers Undo. */
+  /* The run's own badge says it is finished; the task still offers Undo. */
   await expect(page.locator('s-badge:has-text("Done")').first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
   await expect(
@@ -1106,7 +1106,7 @@ test("a done run's work page offers Undo on its last step", async ({
 
   await clickWhenEnabled(page.getByRole("button", { name: "Undo" }));
   await expect(page.getByText(`Reopened by ${MAKER}`)).toBeVisible();
-  /* Undo returns the step to Ready: no starter, so Start is back. */
+  /* Undo returns the task to Ready: no starter, so Start is back. */
   await expect(page.locator('s-badge:has-text("Ready")')).toBeVisible();
   await expect(page.getByText(STARTED)).toHaveCount(0);
   await expect(
@@ -1121,16 +1121,16 @@ test("a done run's work page offers Undo on its last step", async ({
 /**
  * Once downstream has started the fix is a conversation, and **neither member
  * screen says so in words**: the mate (on the Polish team) starts the next
- * stage, the maker's Done today entry loses its menu, and the work page the
+ * step, the maker's Done today entry loses its menu, and the work page the
  * row still links to simply stops offering Undo.
  *
  * The rule used to be a disabled Undo beside a clause naming the blocker, so
  * that the control read as a refusal rather than as one that was never
  * undoable. That holds while refusal is the exception, and in a running shop
- * it is the rule: a finished step is nearly always downstream of something
+ * it is the rule: a finished task is nearly always downstream of something
  * already started. The run list dropped both on that argument, deferring the
  * explanation to this page — and this page is where the explanation is least
- * needed, because it lists the whole run: the step standing in the way is on
+ * needed, because it lists the whole run: the task standing in the way is on
  * screen, directly below, wearing an `In progress` badge. A sentence naming
  * it is the page arguing with itself.
  *
@@ -1148,7 +1148,7 @@ test("a blocked undo offers nothing and explains nothing, on the row or the work
     withBand: true,
   });
   const maker = await openRuns(browser, config, makerState, "upNext");
-  /* The row carries one menu, whose verb is Start while nobody has the step
+  /* The row carries one menu, whose verb is Start while nobody has the task
      and Done once the maker does, so finishing from the list takes no
      detour. */
   await rowAction(maker, BAND_ORDER, "Start");
@@ -1167,7 +1167,7 @@ test("a blocked undo offers nothing and explains nothing, on the row or the work
   await rowLink(maker, BAND_ORDER).click();
   await expect(maker.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
   /* The blocker itself is the explanation: Polish is on the page, under the
-     step that cannot be undone, with the badge that says why. */
+     task that cannot be undone, with the badge that says why. */
   await expect(maker.getByText(`${PACK_TEAM} · ${MATE} · since`)).toBeVisible();
   await expect(maker.getByRole("button", { name: "Undo" })).toHaveCount(0);
   await expect(maker.getByText("Can’t undo")).toHaveCount(0);
@@ -1177,20 +1177,20 @@ test("a blocked undo offers nothing and explains nothing, on the row or the work
  * Two shapes the work page holds to, neither of which any other assertion
  * here would catch.
  *
- * **The badge states the step's state and the line under it never repeats
+ * **The badge states the task's state and the line under it never repeats
  * the word.** A `Ready` badge over a line reading "Ready" printed the same
  * fact twice, a stride apart, and left the team crowded onto the header line
- * beside the step name — "Cut E2E Runs Cut", two unbounded merchant-authored
+ * beside the task name — "Cut E2E Runs Cut", two unbounded merchant-authored
  * names with only a weight between them, which reads as one noun phrase. The
  * team leads the subdued line instead and the header holds one name.
  *
  * **The note is the run's, and it opens in a modal.** One Note section under
- * the item, with one `Add note`; the step cards carry no note button. The
+ * the item, with one `Add note`; the task cards carry no note button. The
  * modal opens with the current text so appending is the easy path, and past
  * `Domain.noteCountFrom(Domain.RUN_NOTE_MAX_LENGTH)` (1800) it counts down to
  * the 2000 cap. Nothing says so below the threshold.
  */
-test("the run note opens in a modal and the step cards carry no note button", async ({
+test("the run note opens in a modal and the task cards carry no note button", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -1199,12 +1199,15 @@ test("the run note opens in a modal and the step cards carry no note button", as
   await rowLink(page, RING_ORDER).click();
   await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
 
-  /* The header line is the step alone; the team is the line under it, and
-     the badge's word appears nowhere but the badge. */
-  await expect(page.getByText(`1 · ${CUT_STEP}`)).toBeVisible();
+  /* The task sits under its `Step 1` label and its header line is the task
+     alone; the team is the line under it, and the badge's word appears
+     nowhere but the badge. */
+  const steps = page.locator('s-section[accessibilityLabel="Steps"]');
+  await expect(steps.getByText("Step 1", { exact: true })).toBeVisible();
+  await expect(steps.getByText(CUT_TASK, { exact: true })).toBeVisible();
   await expect(page.locator('s-badge:has-text("Ready")')).toBeVisible();
   /* Exact, so it is the line holding the team and nothing else: a `Ready`
-     step's line is the team name alone. */
+     task's line is the team name alone. */
   await expect(page.getByText(CUT_TEAM, { exact: true })).toBeVisible();
 
   /* No breadcrumb: `MemberBar`'s mark above the heading is the link back, and
@@ -1214,7 +1217,6 @@ test("the run note opens in a modal and the step cards carry no note button", as
     page.locator("s-page").getByRole("link", { name: config.shop }),
   ).toHaveCount(0);
 
-  const steps = page.locator('s-section[accessibilityLabel="Steps"]');
   await expect(steps.getByRole("button", { name: "Add note" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Add note" })).toHaveCount(1);
 
@@ -1251,12 +1253,12 @@ test("the run note opens in a modal and the step cards carry no note button", as
 });
 
 /**
- * The work page: opened from the card's order number, it lists every step
- * with its state, takes a note and a block, finishes the step, and reads the
- * actor back. Block comes before Done because blocking needs a ready step on
+ * The work page: opened from the card's order number, it lists every task
+ * with its state, takes a note and a block, finishes the task, and reads the
+ * actor back. Block comes before Done because blocking needs a ready task on
  * the member's team, and Cut is the maker's only one.
  */
-test("the work page shows the step history and takes a note, a block, and Done", async ({
+test("the work page shows the task history and takes a note, a block, and Done", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -1324,7 +1326,7 @@ test("the work page shows the step history and takes a note, a block, and Done",
   await expect(page.locator('s-banner[heading="Blocked"]')).toBeVisible();
 
   /* The same hold as the run list reads it: the card carries its one action
-     inside the banner and offers no step buttons at all, which is the whole
+     inside the banner and offers no task buttons at all, which is the whole
      of "blocked means stop". */
   await homeLink(page).click();
   await expect(
@@ -1378,7 +1380,7 @@ test("the work page shows the step history and takes a note, a block, and Done",
  * this project deliberately has no session for (see `playwright.config.ts` —
  * no `setup` dependency, so a run never prompts for Keychain access), and
  * `SeedOrder.byMerchant` puts the same rows in the object that
- * `merchantCompleteStep` would. `e2e/orders.spec.ts` drives the merchant's own
+ * `merchantCompleteTask` would. `e2e/orders.spec.ts` drives the merchant's own
  * buttons; this is the other end of the wire.
  *
  * The Undo here is the *member's*, which is the point of the second half: the
@@ -1409,9 +1411,9 @@ test("a merchant's completion reads as Merchant on the run list and the work pag
 
   /* The maker takes it back: the same line the merchant's reopen writes, with
      the member in the slot, and Cut is ready again. Start is offered because
-     Undo returns the step to Ready (`WorkflowRunRepository.uncompleteStep`),
+     Undo returns the task to Ready (`WorkflowRunRepository.uncompleteTask`),
      clearing the merchant's backfilled start along with everything else — the
-     step is nobody's, not "in progress by Merchant". */
+     task is nobody's, not "in progress by Merchant". */
   await clickWhenEnabled(page.getByRole("button", { name: "Undo" }));
   await expect(page.getByText(`Reopened by ${MAKER}`)).toBeVisible();
   await expect(page.getByRole("button", { name: "Start" })).toBeVisible();

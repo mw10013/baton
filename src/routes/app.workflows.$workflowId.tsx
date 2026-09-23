@@ -12,7 +12,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
-import { AttentionBanner, StageFlow } from "@/components/WorkflowStages";
+import { AttentionBanner, StepFlow } from "@/components/WorkflowSteps";
 import {
   activateResultMessage,
   AppliesSince,
@@ -87,16 +87,16 @@ export const Route = createFileRoute("/app/workflows/$workflowId")({
 
 /**
  * Workflow detail: what this workflow does today, read-only. Every edit
- * happens on `/app/workflows/$workflowId/edit`, so this page has no step
+ * happens on `/app/workflows/$workflowId/edit`, so this page has no task
  * controls and no form fields.
  *
- * The page shows what is in force and nothing else — the steps that start
+ * The page shows what is in force and nothing else — the tasks that start
  * runs now. A `Draft` accessory badge is the whole signal that the editor
  * holds unapplied changes; the editor, one click away, is where they are
  * read, applied, or discarded. There is no draft tab, no banner and no
  * sentence saying so: a badge and a button already say it, and a second
  * telling is what makes a page feel like a form. There is no version history
- * and no run history here either, on purpose: a run copies its steps when it
+ * and no run history here either, on purpose: a run copies its tasks when it
  * starts and is independent from then on.
  *
  * The header reads left to right as look · change · commit: `Edit`, `More
@@ -260,12 +260,12 @@ function RouteComponent() {
       </s-page>
     );
 
-  const { draft, steps } = detail;
+  const { draft, tasks } = detail;
   const workflow = detail.workflow;
 
   const fresh = neverApplied(detail);
   const hasDraft = draft !== null;
-  const blocker = turnOnBlocker(steps);
+  const blocker = turnOnBlocker(tasks);
   const active = Domain.isActive(workflow);
   /** Flow's asymmetry: Turn off is always offered, Turn on only when what would go on is what the editor is holding. */
   const showSwitch = !fresh && (active || !hasDraft);
@@ -333,7 +333,7 @@ function RouteComponent() {
       </s-menu>
       <WorkflowSwitch
         workflow={workflow}
-        steps={steps}
+        tasks={tasks}
         turnOnBody={turnOnBody(workflow.tag)}
         slot="primary-action"
         showControl={showSwitch}
@@ -366,10 +366,10 @@ function RouteComponent() {
             />
           )}
 
-          <AttentionBanner steps={steps} />
+          <AttentionBanner tasks={tasks} />
 
-          <StageFlow
-            steps={steps}
+          <StepFlow
+            tasks={tasks}
             trigger={
               <s-box
                 padding="base"

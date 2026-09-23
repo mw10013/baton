@@ -15,7 +15,7 @@ create table if not exists ShopSession (
 
 -- A row is access and membership, nothing more: deleting it cascades
 -- TeamMember and revokes sign-in on the next request.
--- Run history in the ShopAgent's SQLite survives because WorkflowRunStep
+-- Run history in the ShopAgent's SQLite survives because WorkflowRunTask
 -- snapshots the actor's email (startedByEmail / completedByEmail, the block
 -- flag's byEmail) at the moment of the action; the bare startedBy /
 -- completedBy ids carry no FK and simply stop resolving. Uniqueness is among
@@ -39,11 +39,11 @@ create index if not exists Member_shop_createdAt_idx on Member (shop, createdAt,
 -- to a team, which is deliberately left as an opaque id.
 --
 -- Every pointer from the ShopAgent's SQLite
--- (WorkflowStep, WorkflowDraftStep, open WorkflowRunStep) is nulled by
+-- (WorkflowTask, WorkflowDraftTask, open WorkflowRunTask) is nulled by
 -- ShopAgent.deleteTeam right after this row goes -- D1 first, then the object,
 -- and every object read treats an id no row carries exactly like null, so the
 -- cross-store window is harmless. History keeps reading because finished run
--- steps snapshot teamName; nothing resolves a deleted team by id. Uniqueness is
+-- tasks snapshot teamName; nothing resolves a deleted team by id. Uniqueness is
 -- among existing rows only.
 create table if not exists Team (
   id text primary key,

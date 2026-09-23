@@ -29,7 +29,7 @@ const clickMenuItem = (frame: FrameLocator, name: string) =>
  * draft and nothing else, so the editor offers **Turn on** and that one click
  * applies and activates; from then on the first saved change starts a draft,
  * Apply promotes it, and Discard throws it away. It also covers the one thing
- * that makes the lazy draft possible — editing a step that only exists on the
+ * that makes the lazy draft possible — editing a task that only exists on the
  * workflow so far, whose id the draft then carries (`ensureDraft`).
  *
  * The draft state is asserted through the header's buttons rather than the
@@ -48,7 +48,7 @@ const clickMenuItem = (frame: FrameLocator, name: string) =>
  * detail pages are `frame` (`appFrame`), while the editor runs in its own
  * `s-app-window` iframe, `editor` (`editorFrame`), that the admin mounts
  * beside the app's rather than inside it. Create opens the editor straight
- * away, so everything between Create and Turn on — the step forms, the canvas
+ * away, so everything between Create and Turn on — the task forms, the canvas
  * — is `editor`, and the detail page only comes back once the window hides.
  * Modals render in whichever frame opened them.
  *
@@ -82,11 +82,11 @@ const closeEditor = (page: Page) =>
   );
 
 /**
- * The step panel's Save and Delete, which are section buttons rather than
+ * The task panel's Save and Delete, which are section buttons rather than
  * hoisted page actions and share their names with the Rename and Delete
  * dialogs' confirms. Scoped to the aside so the two never collide.
  */
-const stepPanel = (editor: FrameLocator) =>
+const taskPanel = (editor: FrameLocator) =>
   editor.locator('s-section[slot="aside"]');
 
 test("a fresh workflow turns on from the editor, then edits go through the draft", async ({
@@ -105,7 +105,7 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
       {
         name: EXISTING,
         tag: "e2e-ring",
-        steps: [{ name: "Cut", team: TEAM }],
+        tasks: [{ name: "Cut", team: TEAM }],
       },
     ],
   );
@@ -123,9 +123,9 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
   await clickHoisted(page.getByRole("button", { name: "Create workflow" }));
   const nameField = frame.getByRole("textbox", { name: "Name", exact: true });
   const tagField = frame.getByRole("textbox", { name: "Tag", exact: true });
-  /* The step forms live in the editor window, so their Name field is a
+  /* The task forms live in the editor window, so their Name field is a
      different element from the create dialog's. */
-  const stepName = editor.getByRole("textbox", { name: "Name", exact: true });
+  const taskName = editor.getByRole("textbox", { name: "Name", exact: true });
   await nameField.fill("Cake");
   await expect(tagField).toHaveValue("cake");
   await tagField.fill("e2e-cake");
@@ -151,22 +151,22 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
   ).toBeVisible();
 
   await editor.getByRole("button", { name: "Add the first step" }).click();
-  await stepName.fill("Bake");
+  await taskName.fill("Bake");
   await editor
     .getByRole("combobox", { name: "Team", exact: true })
     .selectOption({ label: TEAM });
   await editor.getByRole("button", { name: "Add step" }).click();
-  await expect(editor.getByText("Stage 1", { exact: true })).toBeVisible();
+  await expect(editor.getByText("Step 1", { exact: true })).toBeVisible();
   await expect(editor.getByText("✓ Saved", { exact: false })).toBeVisible();
 
-  /* One click applies the steps and turns the switch on, and the dialog says
+  /* One click applies the tasks and turns the switch on, and the dialog says
      both halves. */
   await clickHoisted(page.getByRole("button", { name: "Turn on" }));
   await expect(
     editor.getByText("will start a run of this workflow", { exact: false }),
   ).toBeVisible();
   await expect(
-    editor.getByText("Your steps are applied at the same time.", {
+    editor.getByText("Your tasks are applied at the same time.", {
       exact: true,
     }),
   ).toBeVisible();
@@ -193,11 +193,11 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
     page.getByRole("button", { name: "Discard changes" }),
   ).toHaveCount(0);
 
-  /* The first saved change starts the draft — on a step that exists only on
+  /* The first saved change starts the draft — on a task that exists only on
      the workflow so far, which is the id-preserving copy under test. */
   await editor.getByRole("button", { name: "Edit Bake" }).click();
-  await stepName.fill("Bake and cool");
-  await stepPanel(editor)
+  await taskName.fill("Bake and cool");
+  await taskPanel(editor)
     .getByRole("button", { name: "Save", exact: true })
     .click();
   await expect(
@@ -207,41 +207,39 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
     page.getByRole("button", { name: "Apply changes" }),
   ).toBeVisible();
 
-  /* Two decisions, three verbs. A second step lands in its own stage;
-     "Run alongside the previous step" is the only thing that makes the two
-     parallel, "Run on its own" splits them back, and moving only reorders. */
+  /* Two decisions, three verbs. A second task lands in its own step;
+     "Join the previous step" is the only thing that makes the two parallel,
+     "Move to its own step" splits them back, and moving only reorders. */
   await editor.getByRole("button", { name: "Add a step", exact: true }).click();
-  await stepName.fill("Ice");
+  await taskName.fill("Ice");
   await editor
     .getByRole("combobox", { name: "Team", exact: true })
     .selectOption({ label: TEAM });
   await editor.getByRole("button", { name: "Add step" }).click();
-  await expect(editor.getByText("Stage 2", { exact: true })).toBeVisible();
+  await expect(editor.getByText("Step 2", { exact: true })).toBeVisible();
 
   await editor.getByRole("button", { name: "Edit Ice" }).click();
-  await editor
-    .getByRole("button", { name: "Run alongside the previous step" })
-    .click();
-  await expect(editor.getByText("Stage 2", { exact: true })).toHaveCount(0);
+  await editor.getByRole("button", { name: "Join the previous step" }).click();
+  await expect(editor.getByText("Step 2", { exact: true })).toHaveCount(0);
 
-  await editor.getByRole("button", { name: "Run on its own" }).click();
-  await expect(editor.getByText("Stage 2", { exact: true })).toBeVisible();
+  await editor.getByRole("button", { name: "Move to its own step" }).click();
+  await expect(editor.getByText("Step 2", { exact: true })).toBeVisible();
 
   /* Card order in the canvas: the label the card carries, top to bottom. */
-  const stepOrder = () =>
+  const taskOrder = () =>
     editor
       .locator('s-clickable[accessibilityLabel^="Edit "]')
       .evaluateAll((cards) =>
         cards.map((card) => card.getAttribute("accessibilityLabel")),
       );
   await editor.getByRole("button", { name: "Move earlier" }).click();
-  await expect.poll(stepOrder).toEqual(["Edit Ice", "Edit Bake and cool"]);
+  await expect.poll(taskOrder).toEqual(["Edit Ice", "Edit Bake and cool"]);
   await editor.getByRole("button", { name: "Move later" }).click();
-  await expect.poll(stepOrder).toEqual(["Edit Bake and cool", "Edit Ice"]);
-  await stepPanel(editor)
+  await expect.poll(taskOrder).toEqual(["Edit Bake and cool", "Edit Ice"]);
+  await taskPanel(editor)
     .getByRole("button", { name: "Delete", exact: true })
     .click();
-  await expect(editor.getByText("Stage 2", { exact: true })).toHaveCount(0);
+  await expect(editor.getByText("Step 2", { exact: true })).toHaveCount(0);
 
   /* Close keeps the draft, and the detail page still shows only what runs. */
   await closeEditor(page);
@@ -266,10 +264,10 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
   /* Apply on a workflow that is ON asks first, and that confirm is the one
      place a hoisted title-bar button has to open a modal back inside the
      window's own document. Applying from in there closes the window and the
-     detail page comes back on the new steps. */
+     detail page comes back on the new tasks. */
   await editor.getByRole("button", { name: "Edit Bake" }).click();
-  await stepName.fill("Bake and rest");
-  await stepPanel(editor)
+  await taskName.fill("Bake and rest");
+  await taskPanel(editor)
     .getByRole("button", { name: "Save", exact: true })
     .click();
   await clickHoisted(page.getByRole("button", { name: "Apply changes" }));
@@ -308,7 +306,7 @@ test("turning on a workflow offers to include earlier unfulfilled orders, and in
         name: EXISTING,
         active: false,
         tag: "e2e-ring",
-        steps: [{ name: "Cut", team: TEAM }],
+        tasks: [{ name: "Cut", team: TEAM }],
       },
     ],
     [
@@ -369,7 +367,7 @@ test("creating a workflow with a taken tag is refused under the field and names 
         name: HOLDER,
         active: true,
         tag: "e2e-ring",
-        steps: [{ name: "Cut", team: TEAM }],
+        tasks: [{ name: "Cut", team: TEAM }],
       },
     ],
   );
@@ -417,7 +415,7 @@ test("duplicate asks for a name and a tag, and the copy is off with the given ta
         name: SOURCE,
         active: true,
         tag: "e2e-ring",
-        steps: [{ name: "Cut", team: TEAM }],
+        tasks: [{ name: "Cut", team: TEAM }],
       },
     ],
   );
@@ -478,13 +476,13 @@ test("editing the tag from the detail page writes immediately and starts no draf
         name: SOURCE,
         active: true,
         tag: "e2e-ring",
-        steps: [{ name: "Cut", team: TEAM }],
+        tasks: [{ name: "Cut", team: TEAM }],
       },
       {
         name: RIVAL,
         active: true,
         tag: "e2e-rush",
-        steps: [{ name: "Cut", team: TEAM }],
+        tasks: [{ name: "Cut", team: TEAM }],
       },
     ],
   );
@@ -512,7 +510,7 @@ test("editing the tag from the detail page writes immediately and starts no draf
   await expect(
     frame.getByText("a product tagged “e2e-ring-2”", { exact: false }),
   ).toBeVisible();
-  /* Immediate, not drafted: the page still shows the workflow's own steps and
+  /* Immediate, not drafted: the page still shows the workflow's own tasks and
      the editor holds nothing. */
   await expect(frame.getByText("Cut", { exact: true })).toBeVisible();
 });

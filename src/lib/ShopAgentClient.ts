@@ -57,14 +57,14 @@ export class ShopAgentClientError extends Schema.TaggedError<ShopAgentClientErro
  * the object:
  *
  * - **Configuration a page reads and one person edits** (members, teams, the
- *   steps a team owns, the member's run list) goes through a route `loader` — via
+ *   tasks a team owns, the member's run list) goes through a route `loader` — via
  *   `Repository` for D1 rows, via this service for Durable Object rows. The
  *   page paints during SSR, and its own mutations refresh it with
  *   `router.invalidate()`. The route's server function is the module-private
  *   `getLoaderData` (see `Domain.AdminShopLoaderData` for the contract
  *   naming), so a route never invents a bespoke fetch name.
  * - **Operational state other actors change underneath the page** (orders,
- *   which webhooks, the bulk sync stream, and members' step actions all
+ *   which webhooks, the bulk sync stream, and members' task actions all
  *   write) goes through the `/app` socket via `useSubscribedQuery` — the
  *   subscribe pattern, described end to end on `Domain.Subscription`. All of
  *   it, or none — a socket `useQuery` outside that cycle never refetches,
@@ -98,9 +98,9 @@ export class ShopAgentClient extends Context.Service<
       shop: string,
       input: Domain.TeamIdInput,
     ) => Effect.Effect<readonly Domain.TeamWorkflow[], ShopAgentClientError>;
-    readonly countStepsByTeam: (
+    readonly countTasksByTeam: (
       shop: string,
-    ) => Effect.Effect<readonly Domain.TeamStepCounts[], ShopAgentClientError>;
+    ) => Effect.Effect<readonly Domain.TeamTaskCounts[], ShopAgentClientError>;
     readonly listAllTeamWorkflows: (
       shop: string,
     ) => Effect.Effect<
@@ -243,7 +243,7 @@ export class ShopAgentClient extends Context.Service<
       const runListView = Schema.toType(Domain.RunListView);
       const runView = Schema.toType(Schema.NullOr(Domain.RunView));
       const teamWorkflows = Schema.toType(Schema.Array(Domain.TeamWorkflow));
-      const teamStepCounts = Schema.toType(Schema.Array(Domain.TeamStepCounts));
+      const teamTaskCounts = Schema.toType(Schema.Array(Domain.TeamTaskCounts));
       const teamWorkflowsByTeam = Schema.toType(
         Schema.Array(Domain.TeamWorkflowByTeam),
       );
@@ -271,10 +271,10 @@ export class ShopAgentClient extends Context.Service<
               stub.listTeamWorkflows(input),
             ),
         ),
-        countStepsByTeam: Effect.fn("ShopAgentClient.countStepsByTeam")(
+        countTasksByTeam: Effect.fn("ShopAgentClient.countTasksByTeam")(
           (shop: string) =>
-            call("countStepsByTeam", teamStepCounts, shop, (stub) =>
-              stub.countStepsByTeam(),
+            call("countTasksByTeam", teamTaskCounts, shop, (stub) =>
+              stub.countTasksByTeam(),
             ),
         ),
         listAllTeamWorkflows: Effect.fn("ShopAgentClient.listAllTeamWorkflows")(

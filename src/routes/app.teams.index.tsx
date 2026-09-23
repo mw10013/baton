@@ -27,7 +27,7 @@ const TeamNameInput = Schema.Struct({
 });
 type TeamNameInput = typeof TeamNameInput.Type;
 
-/** Step ownership is Durable Object data joined into a D1 page (the loader-versus-socket rule on `ShopAgentClient`). */
+/** Task ownership is Durable Object data joined into a D1 page (the loader-versus-socket rule on `ShopAgentClient`). */
 const getLoaderData = createServerFn({ method: "GET" })
   .middleware([shopifyServerFnMiddleware])
   .handler(({ context: { runEffect, session } }) =>
@@ -147,7 +147,7 @@ function RouteComponent() {
               <s-stack alignItems="center" gap="small-300">
                 <s-heading>No teams yet</s-heading>
                 <s-paragraph color="subdued">
-                  A team is who can work a step; assign one to each step in a
+                  A team is who can work a task; assign one to each task in a
                   workflow.
                 </s-paragraph>
               </s-stack>
@@ -248,7 +248,7 @@ function RouteComponent() {
         {teams.length > 0 && (
           <s-box padding="base" paddingBlockEnd="none">
             <s-paragraph color="subdued">
-              Teams are who can work a step. Assign a team to each step in a
+              Teams are who can work a task. Assign a team to each task in a
               workflow.
             </s-paragraph>
           </s-box>

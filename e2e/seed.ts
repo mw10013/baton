@@ -35,21 +35,21 @@ export interface SeedTeam {
 }
 
 /**
- * A step of a seeded workflow; `team` names one of the seeded `teams`, or is
- * `null` to seed the step unassigned. A step with no `stage` follows the
- * previous one; give several steps the same `stage` to make them ready
+ * A task of a seeded workflow; `team` names one of the seeded `teams`, or is
+ * `null` to seed the task unassigned. A task with no `step` follows the
+ * previous one; give several tasks the same `step` to make them ready
  * together.
  */
-export interface SeedWorkflowStep {
+export interface SeedWorkflowTask {
   readonly name: string;
   readonly team: string | null;
-  readonly stage?: number;
+  readonly step?: number;
   readonly instructions?: string;
 }
 
 /**
- * Progress for one seeded run. `done` completes every step; `advance`
- * completes that many rounds of ready steps instead (`done` and `advance`
+ * Progress for one seeded run. `done` completes every task; `advance`
+ * completes that many rounds of ready tasks instead (`done` and `advance`
  * together are refused); `started` then Starts whatever is ready; `blocked`
  * flags the run with that reason. `byMerchant` records the completions and the
  * block as the merchant instead of the seed member, which is the fixture for
@@ -115,17 +115,17 @@ export interface SeedOrder extends SeedProgress {
   readonly after?: SeedOrderChange;
 }
 
-/** A workflow definition to create, steps inline and in order. */
+/** A workflow definition to create, tasks inline and in order. */
 export interface SeedWorkflow {
   readonly name: string;
-  /** On/off switch; defaults to on when there are steps and every step is assigned. */
+  /** On/off switch; defaults to on when there are tasks and every task is assigned. */
   readonly active?: boolean;
   /** The workflow's one tag; products carrying it follow this workflow. */
   readonly tag: string;
-  /** The workflow's steps; may be empty. */
-  readonly steps: readonly SeedWorkflowStep[];
+  /** The workflow's tasks; may be empty. */
+  readonly tasks: readonly SeedWorkflowTask[];
   /** A pending draft beside the workflow; the tag is not drafted. */
-  readonly draft?: { readonly steps: readonly SeedWorkflowStep[] };
+  readonly draft?: { readonly tasks: readonly SeedWorkflowTask[] };
 }
 
 /**

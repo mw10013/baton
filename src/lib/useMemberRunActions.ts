@@ -24,13 +24,13 @@ export const runResultMessage = Match.typeTags<
 >()({
   Ok: () => null,
   NotFound: () => "That work no longer exists.",
-  NotAllowed: () => "This step belongs to another team.",
+  NotAllowed: () => "This task belongs to another team.",
   /* Only the reason editor can reach this: somebody unblocked the run while
      it was open, so the edit has nothing to write on. */
   NotBlocked: () => "This work is no longer blocked.",
-  /* Also a Put back on a step someone else put back or finished just now. */
+  /* Also a Put back on a task someone else put back or finished just now. */
   NotReady: () =>
-    "This step or an earlier one changed just now, or this step is waiting on another team. Refresh.",
+    "This task or an earlier one changed just now, or this task is waiting on another team. Refresh.",
   Terminal: () => "This workflow is already finished or cancelled.",
   /* The page hides Start and Done behind the flag; a flag that landed after
      the render is the only way here. */
@@ -38,8 +38,8 @@ export const runResultMessage = Match.typeTags<
     Domain.flagIsReconcile(flag)
       ? "This work was flagged just now. Read the flag and dismiss it first."
       : "This work was blocked just now. Unblock it first.",
-  UndoBlocked: ({ stepName, teamName }) =>
-    `${teamName} already started ${stepName}. Ask them.`,
+  UndoBlocked: ({ taskName, teamName }) =>
+    `${teamName} already started ${taskName}. Ask them.`,
   /* Un-cancel is a merchant action and no member surface offers it; the
      variant is here because the union is one union, and a member reading a
      stale result should still get a sentence rather than nothing. */
@@ -59,7 +59,7 @@ export const runResultMessage = Match.typeTags<
  *
  * The inputs carry no identity. `memberId`, `memberEmail`, and `teamIds` live
  * on the connection the Worker's gate authorized, so the browser sends only
- * the id of the step or run it clicked and the text that was typed — see
+ * the id of the task or run it clicked and the text that was typed — see
  * `Domain.ConnectionState`.
  *
  * `onSuccess` is the page's own refetch. The write's publish would refetch
@@ -89,20 +89,20 @@ export const useMemberRunActions = ({
     return result;
   };
   const start = useMutation({
-    mutationFn: (runStepId: string) =>
-      call((stub) => stub.startStep({ runStepId })).then(settle),
+    mutationFn: (runTaskId: string) =>
+      call((stub) => stub.startTask({ runTaskId })).then(settle),
   });
   const complete = useMutation({
-    mutationFn: (runStepId: string) =>
-      call((stub) => stub.completeStep({ runStepId })).then(settle),
+    mutationFn: (runTaskId: string) =>
+      call((stub) => stub.completeTask({ runTaskId })).then(settle),
   });
   const uncomplete = useMutation({
-    mutationFn: (runStepId: string) =>
-      call((stub) => stub.uncompleteStep({ runStepId })).then(settle),
+    mutationFn: (runTaskId: string) =>
+      call((stub) => stub.uncompleteTask({ runTaskId })).then(settle),
   });
   const unstart = useMutation({
-    mutationFn: (runStepId: string) =>
-      call((stub) => stub.unstartStep({ runStepId })).then(settle),
+    mutationFn: (runTaskId: string) =>
+      call((stub) => stub.unstartTask({ runTaskId })).then(settle),
   });
   const note = useMutation({
     mutationFn: ({ runId, note }: { runId: string; note: string }) =>

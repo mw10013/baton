@@ -302,7 +302,7 @@ describe("runShopAgentOrdersStream with afterWrite", () => {
         });
         yield* workflows.addStep({
           workflowId: workflow.id,
-          name: Schema.decodeUnknownSync(Domain.StepName)("Engrave"),
+          name: Schema.decodeUnknownSync(Domain.TaskName)("Engrave"),
           teamId: team.id,
         });
         yield* workflows.applyDraft({
@@ -335,7 +335,7 @@ describe("runShopAgentOrdersStream with afterWrite", () => {
     strictEqual(first.length, 0);
     strictEqual(second.length, 1);
     strictEqual(second[0]?.run.source, "tag");
-    strictEqual(second[0]?.steps[0]?.teamName, "Engravers");
+    strictEqual(second[0]?.tasks[0]?.teamName, "Engravers");
     strictEqual(secondPass.length, 1);
   });
 });

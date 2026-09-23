@@ -5,7 +5,7 @@ import type {
   SeedProgress,
   SeedTeam,
   SeedWorkflow,
-  SeedWorkflowStep,
+  SeedWorkflowTask,
 } from "./seed.ts";
 
 /**
@@ -22,7 +22,7 @@ import type {
  * The shop is a fictional made-to-order gift maker — engraved boards, leather
  * journals, signet rings, embroidered blankets — so every screen reads the way
  * a merchant's would: a worker at Engraving sees "Engrave · Signet ring ·
- * #1002", not "Step 2a · Workflow 03". Realism is what makes UX judgments
+ * #1002", not "Task 2a · Workflow 03". Realism is what makes UX judgments
  * about the member area honest; the abstract names it replaced only proved
  * the plumbing.
  *
@@ -41,20 +41,20 @@ import type {
  * needs its own team is added by the spec that needs it (`seedMembers`),
  * never by growing this list past the smallest plan.
  *
- * Every maker team owns steps in at least two workflows so no list is
+ * Every maker team owns tasks in at least two workflows so no list is
  * single-workflow, and every hand-off crosses a team boundary. Tags are the
  * workflow names in tag form, which is what the create dialog prefills.
  *
  * The derived attention states are all seeded so every warning is visible
  * after one `pnpm seed`, and each carries its reading in its name so the row
  * cannot be mistaken for a mistake: `Retired team (empty)` has nobody on it,
- * `Pet tag (unassigned step)` has a step with no team (what a team delete
+ * `Pet tag (unassigned task)` has a task with no team (what a team delete
  * leaves behind) and one on the empty team, `Wholesale sample (no steps)`
  * has none, and `Photo frame` is seeded off.
  *
  * An invariant the ordinary write path enforces and the seed only checks in
  * part, so the fixture must honour it by construction: a workflow with an
- * unassigned step cannot be on; the seed defaults it off.
+ * unassigned task cannot be on; the seed defaults it off.
  *
  * Orders are written straight into the shop's object, bypassing Shopify, so
  * every lifecycle state a run list or order page can show exists without tagging
@@ -88,7 +88,7 @@ const LEATHER = "Leather";
 const JEWELRY = "Jewelry";
 const TEXTILES = "Textiles";
 const FINISHING = "Finishing";
-// Cross-cutting: not a product's team, it owns the first step of `Rush order`.
+// Cross-cutting: not a product's team, it owns the first task of `Rush order`.
 const RUSH = "Rush";
 export const RETIRED_TEAM_EMPTY = "Retired team (empty)";
 
@@ -102,15 +102,15 @@ export const teams: readonly SeedTeam[] = [
   { name: TEXTILES, members: [LEAD] },
   { name: FINISHING, members: [LEAD, maker(1)] },
   { name: RUSH, members: [LEAD, maker(2)] },
-  // nobody on it: "No members" on the team page and on the steps it owns
+  // nobody on it: "No members" on the team page and on the tasks it owns
   { name: RETIRED_TEAM_EMPTY, members: [] },
 ];
 
-const step = (
+const task = (
   name: string,
   team: string | null,
-  extra: Partial<Pick<SeedWorkflowStep, "stage" | "instructions">> = {},
-): SeedWorkflowStep => ({ name, team, ...extra });
+  extra: Partial<Pick<SeedWorkflowTask, "step" | "instructions">> = {},
+): SeedWorkflowTask => ({ name, team, ...extra });
 
 // Product tags the workflows match on; `orders` below carry the same.
 const TAG = {
@@ -131,104 +131,104 @@ const TAG = {
 
 /**
  * Each workflow is a distinct shape so the editor, run list, and order page each
- * have one row per case to look at: linear, a parallel stage in the middle
- * with the first team returning, a parallel first stage, instructions with a
- * pending draft, and the off / unassigned / no-steps rows.
+ * have one row per case to look at: linear, a parallel step in the middle
+ * with the first team returning, a parallel first step, instructions with a
+ * pending draft, and the off / unassigned / no-tasks rows.
  */
 export const workflows: readonly SeedWorkflow[] = [
   {
-    // three-step linear, the bread-and-butter product
+    // three-task linear, the bread-and-butter product
     name: "Engraved cutting board",
     tag: TAG.board,
-    steps: [
-      step("Cut and sand", WOODSHOP, {
+    tasks: [
+      task("Cut and sand", WOODSHOP, {
         instructions:
           "Cut to the size on the order. Sand to 220 grit; check for tear-out on the end grain.",
       }),
-      step("Engrave", ENGRAVING, {
+      task("Engrave", ENGRAVING, {
         instructions:
           "Engraving text is in the personalization. Confirm spelling against the order before running the laser.",
       }),
-      step("Oil and finish", FINISHING),
+      task("Oil and finish", FINISHING),
     ],
   },
   {
-    // parallel middle stage; Leather starts and returns at the end
+    // parallel middle step; Leather starts and returns at the end
     name: "Leather journal",
     tag: TAG.journal,
-    steps: [
-      step("Cut leather", LEATHER, { stage: 1 }),
-      step("Stamp monogram", ENGRAVING, {
-        stage: 2,
+    tasks: [
+      task("Cut leather", LEATHER, { step: 1 }),
+      task("Stamp monogram", ENGRAVING, {
+        step: 2,
         instructions: "Initials in the personalization; centre on the cover.",
       }),
-      step("Stitch spine", LEATHER, { stage: 2 }),
-      step("Condition and inspect", LEATHER, { stage: 3 }),
+      task("Stitch spine", LEATHER, { step: 2 }),
+      task("Condition and inspect", LEATHER, { step: 3 }),
     ],
   },
   {
-    // linear; instructions on every step; Jewelry starts and returns
+    // linear; instructions on every task; Jewelry starts and returns
     name: "Signet ring",
     tag: TAG.ring,
-    steps: [
-      step("Cast", JEWELRY, {
+    tasks: [
+      task("Cast", JEWELRY, {
         instructions: "Ring size and metal are in the personalization.",
       }),
-      step("Engrave crest", ENGRAVING, {
+      task("Engrave crest", ENGRAVING, {
         instructions: "Crest file is named after the order number.",
       }),
-      step("Polish", JEWELRY, {
+      task("Polish", JEWELRY, {
         instructions: "High polish unless the order says brushed.",
       }),
     ],
   },
   {
-    // two-step; a pending draft adds a third step so the detail page shows
+    // two-task; a pending draft adds a third task so the detail page shows
     // both sides
     name: "Embroidered blanket",
     tag: TAG.blanket,
-    steps: [
-      step("Embroider", TEXTILES, {
+    tasks: [
+      task("Embroider", TEXTILES, {
         instructions: "Name and thread colour are in the personalization.",
       }),
-      step("Steam and fold", FINISHING),
+      task("Steam and fold", FINISHING),
     ],
     draft: {
-      steps: [
-        step("Embroider", TEXTILES, {
+      tasks: [
+        task("Embroider", TEXTILES, {
           instructions: "Name and thread colour are in the personalization.",
         }),
-        step("Attach care label", TEXTILES),
-        step("Steam and fold", FINISHING),
+        task("Attach care label", TEXTILES),
+        task("Steam and fold", FINISHING),
       ],
     },
   },
   {
-    // parallel first stage, three wide; seeded off so the list has an "Off"
+    // parallel first step, three wide; seeded off so the list has an "Off"
     // row and it starts nothing until it is turned on
     name: "Photo frame",
     active: false,
     tag: TAG.frame,
-    steps: [
-      step("Cut frame", WOODSHOP, { stage: 1 }),
-      step("Engrave caption", ENGRAVING, { stage: 1 }),
-      step("Cut glass", FINISHING, { stage: 1 }),
-      step("Assemble", WOODSHOP, { stage: 2 }),
+    tasks: [
+      task("Cut frame", WOODSHOP, { step: 1 }),
+      task("Engrave caption", ENGRAVING, { step: 1 }),
+      task("Cut glass", FINISHING, { step: 1 }),
+      task("Assemble", WOODSHOP, { step: 2 }),
     ],
   },
   {
-    // one unassigned step (what a team delete leaves) and one on the empty
+    // one unassigned task (what a team delete leaves) and one on the empty
     // team: "Needs attention" in the list, both banners on the detail page,
-    // Turn on refused until the step is assigned
-    name: "Pet tag (unassigned step)",
+    // Turn on refused until the task is assigned
+    name: "Pet tag (unassigned task)",
     tag: TAG.petTag,
-    steps: [step("Stamp", null), step("Attach ring", RETIRED_TEAM_EMPTY)],
+    tasks: [task("Stamp", null), task("Attach ring", RETIRED_TEAM_EMPTY)],
   },
   {
-    // zero steps: "No steps"
+    // zero tasks: "No tasks"
     name: "Wholesale sample (no steps)",
     tag: TAG.sample,
-    steps: [],
+    tasks: [],
   },
   {
     // cross-cutting: every product also tagged `rush` is claimed by this one
@@ -236,73 +236,73 @@ export const workflows: readonly SeedWorkflow[] = [
     // workflow". A product tagged only `rush` follows it on its own.
     name: "Rush order",
     tag: TAG.rush,
-    steps: [
-      step("Expedite", RUSH, {
+    tasks: [
+      task("Expedite", RUSH, {
         instructions: "Pull the materials first; this jumps the bench queue.",
       }),
-      step("Pack rush", FINISHING),
+      task("Pack rush", FINISHING),
     ],
   },
   {
-    // the long one: twelve steps over eight stages, two of them three wide,
-    // so the editor, a card's sibling list, and "step 4 of 12" each have a
-    // row that is not three steps long
-    name: "Gift box (many steps)",
+    // the long one: twelve tasks over eight steps, two of them three wide,
+    // so the editor, a card's sibling list, and "task 4 of 12" each have a
+    // row that is not three tasks long
+    name: "Gift box (many tasks)",
     tag: TAG.giftBox,
-    steps: [
-      step("Cut box panels", WOODSHOP, { stage: 1 }),
-      step("Cut liner", TEXTILES, { stage: 1 }),
-      step("Cut leather strap", LEATHER, { stage: 1 }),
-      step("Engrave lid", ENGRAVING, {
-        stage: 2,
+    tasks: [
+      task("Cut box panels", WOODSHOP, { step: 1 }),
+      task("Cut liner", TEXTILES, { step: 1 }),
+      task("Cut leather strap", LEATHER, { step: 1 }),
+      task("Engrave lid", ENGRAVING, {
+        step: 2,
         instructions:
           "Lid text is in the personalization; centre on the grain.",
       }),
-      step("Cast charm", JEWELRY, { stage: 2 }),
-      step("Press liner", FINISHING, { stage: 2 }),
-      step("Assemble box", WOODSHOP),
-      step("Fit liner", FINISHING),
-      step("Attach strap", WOODSHOP),
-      step("Add charm", FINISHING),
-      step("Quality check", WOODSHOP, {
+      task("Cast charm", JEWELRY, { step: 2 }),
+      task("Press liner", FINISHING, { step: 2 }),
+      task("Assemble box", WOODSHOP),
+      task("Fit liner", FINISHING),
+      task("Attach strap", WOODSHOP),
+      task("Add charm", FINISHING),
+      task("Quality check", WOODSHOP, {
         instructions:
           "Open and close the lid ten times; the strap must not bind.",
       }),
-      step("Wrap and box", FINISHING),
+      task("Wrap and box", FINISHING),
     ],
   },
   {
-    // a draft that MOVES a step to another team rather than adding one: runs
+    // a draft that MOVES a task to another team rather than adding one: runs
     // open when it is applied keep the team they snapshotted, which is the
-    // thing the blanket's add-a-step draft cannot show
+    // thing the blanket's add-a-task draft cannot show
     name: "Wall clock",
     tag: TAG.clock,
-    steps: [
-      step("Cut face", WOODSHOP),
-      step("Engrave numerals", ENGRAVING, {
+    tasks: [
+      task("Cut face", WOODSHOP),
+      task("Engrave numerals", ENGRAVING, {
         instructions: "Numeral style is in the personalization.",
       }),
-      step("Fit movement", FINISHING),
+      task("Fit movement", FINISHING),
     ],
     draft: {
-      steps: [
-        step("Cut face", WOODSHOP),
-        step("Engrave numerals", WOODSHOP, {
+      tasks: [
+        task("Cut face", WOODSHOP),
+        task("Engrave numerals", WOODSHOP, {
           instructions: "Numeral style is in the personalization.",
         }),
-        step("Fit movement", FINISHING),
+        task("Fit movement", FINISHING),
       ],
     },
   },
   {
     // on, and it starts runs: an empty team does not block a start, so the
-    // second step lands on a team nobody is on — the order page's card names it
+    // second task lands on a team nobody is on — the order page's card names it
     // and no run list anywhere shows the card. Distinct from
-    // Pet tag, which is off because a step has no team at all.
-    name: "Keychain (empty team step)",
+    // Pet tag, which is off because a task has no team at all.
+    name: "Keychain (empty team task)",
     active: true,
     tag: TAG.keychain,
-    steps: [step("Cut", LEATHER), step("Attach ring", RETIRED_TEAM_EMPTY)],
+    tasks: [task("Cut", LEATHER), task("Attach ring", RETIRED_TEAM_EMPTY)],
   },
 ];
 
@@ -368,7 +368,7 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // two items, each one step in, and both next steps in progress at
+    // two items, each one task in, and both next tasks in progress at
     // Engraving: "In progress since … by lead@m.com" on two cards
     n: 1002,
     advance: 1,
@@ -379,7 +379,7 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // parallel stage ready: Engraving and Leather each hold a card for the
+    // parallel step ready: Engraving and Leather each hold a card for the
     // same journal and see each other as "together with"
     n: 1003,
     advance: 1,
@@ -620,7 +620,7 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // the merchant recorded the step from the order page: "Done by Merchant"
+    // the merchant recorded the task from the order page: "Done by Merchant"
     n: 1022,
     advance: 1,
     byMerchant: true,
@@ -642,7 +642,7 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // the cut is done and the next step belongs to a team with nobody on it:
+    // the cut is done and the next task belongs to a team with nobody on it:
     // the order page's card names the team and no run list shows it
     n: 1024,
     advance: 1,
@@ -683,7 +683,7 @@ const floorOrders: readonly SeedOrder[] = [
 
 /**
  * The startable product workflows, cycled by the generated rows below. Photo
- * frame (off), Pet tag (unassigned step) and Wholesale sample (no steps) are
+ * frame (off), Pet tag (unassigned task) and Wholesale sample (no steps) are
  * left out because they start nothing, and `rush` because a second tag would
  * make every generated row ambiguous.
  */

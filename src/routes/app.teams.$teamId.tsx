@@ -86,15 +86,15 @@ const getLoaderData = createServerFn({ method: "GET" })
         const teamWorkflows = yield* client.listTeamWorkflows(shop, {
           teamId: detail.value.team.id,
         });
-        const stepCounts =
-          (yield* client.countStepsByTeam(shop)).find(
+        const taskCounts =
+          (yield* client.countTasksByTeam(shop)).find(
             (row) => row.teamId === detail.value.team.id,
           ) ?? NO_COUNTS;
         return {
           ...detail.value,
           memberTeams,
           teamWorkflows,
-          stepCounts,
+          taskCounts,
         } satisfies Domain.TeamLoaderData;
       }),
     ),
@@ -194,7 +194,7 @@ export const Route = createFileRoute("/app/teams/$teamId")({
 /**
  * The team page is about people: its members are the one table, adding is the
  * primary action, and the workflows that use the team are a link list rather
- * than a step table above the roster (steps are edited on the workflow pages).
+ * than a task table above the roster (tasks are edited on the workflow pages).
  * Rename and delete live behind More actions, as on the workflow page.
  *
  * Laid out as Polaris' details template, like the order and workflow detail
@@ -206,7 +206,7 @@ export const Route = createFileRoute("/app/teams/$teamId")({
  * slot entirely at "large".
  */
 function RouteComponent() {
-  const { team, members, memberTeams, teamWorkflows, stepCounts } =
+  const { team, members, memberTeams, teamWorkflows, taskCounts } =
     Route.useLoaderData();
   const router = useRouter();
   const shopify = useAppBridge();
@@ -260,7 +260,7 @@ function RouteComponent() {
 
   /**
    * Delete goes through the Durable Object: it deletes the D1 row and then
-   * nulls every step pointer in the object's SQLite, in that order, so a step
+   * nulls every task pointer in the object's SQLite, in that order, so a task
    * saved against the team meanwhile is caught by the nulling (see
    * `ShopAgent.deleteTeam`).
    */
@@ -358,7 +358,7 @@ function RouteComponent() {
     if (current.length === 0)
       return emptyState(
         "No members yet",
-        "Nobody is on this team, so its steps sit unclaimed until someone joins.",
+        "Nobody is on this team, so its tasks sit unclaimed until someone joins.",
         addButton(false),
       );
     return (
@@ -423,7 +423,7 @@ function RouteComponent() {
       {/* The drill-in that makes the orders filter discoverable from the
           suspicion that prompts it — "is this team backed up?" — rather than
           from browsing a picker. `?team=` means waiting on: the orders whose
-          ready step is this team's right now, not every order it ever
+          ready task is this team's right now, not every order it ever
           touched. Production state stays on Orders; this page is the roster
           (`UsedByCard` below is configuration, not run state). */}
       <s-button
@@ -538,7 +538,7 @@ function RouteComponent() {
       </s-modal>
 
       <s-modal id={DELETE_MODAL} heading={`Delete ${team.name}?`}>
-        <s-paragraph>{deleteTeamWarning(stepCounts)}</s-paragraph>
+        <s-paragraph>{deleteTeamWarning(taskCounts)}</s-paragraph>
         <s-button
           slot="secondary-actions"
           commandFor={DELETE_MODAL}

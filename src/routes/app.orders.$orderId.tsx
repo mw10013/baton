@@ -18,6 +18,7 @@ import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
 import { errorMessage } from "@/lib/useMemberRunActions";
 import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
+import * as WorkflowLayout from "@/lib/WorkflowLayout";
 
 const orderQueryKey = (shop: string, legacyId: string) =>
   ["order", shop, legacyId] as const;
@@ -33,7 +34,7 @@ const decodeRunResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.RunResult),
 );
 const decodeAssignResult = Schema.decodeUnknownPromise(
-  Schema.toType(Domain.AssignRunStepTeamResult),
+  Schema.toType(Domain.AssignRunTaskTeamResult),
 );
 
 const connecting = () =>
@@ -47,25 +48,25 @@ const attachResultMessage = Match.typeTags<
   AlreadyExists: () => "That workflow is already running on this item.",
   LineItemNotFound: () => "That line item no longer exists.",
   WorkflowCannotStart: () =>
-    "That workflow cannot start: it is off, has no steps, or has an unassigned step.",
+    "That workflow cannot start: it is off, has no tasks, or has an unassigned task.",
   RunLimit: ({ limit }) =>
     `Baton is already running ${formatNumber(limit)} workflows. Finish or cancel some before starting another.`,
   /* The page offers no change on a done run (`changeable`); this is the
      race where the run finished between the render and the click. */
   ItemDone: ({ workflowName }) =>
-    `This item is finished on ${workflowName}. Reopen its last step to change it.`,
+    `This item is finished on ${workflowName}. Reopen its last task to change it.`,
   OrderClosed: () =>
     "This order is cancelled or fulfilled in Shopify, so there is no work left to attach.",
 });
 
 const assignResultMessage = Match.typeTags<
-  Domain.AssignRunStepTeamResult,
+  Domain.AssignRunTaskTeamResult,
   string | null
 >()({
   Assigned: () => null,
-  NotFound: () => "That step no longer exists.",
+  NotFound: () => "That task no longer exists.",
   TeamNotFound: () => "That team no longer exists. Choose another.",
-  StepFinished: () => "That step is already done and keeps its team.",
+  TaskFinished: () => "That task is already done and keeps its team.",
   RunNotOpen: () => "That workflow run is finished or cancelled.",
 });
 
@@ -75,9 +76,9 @@ const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
   NotAllowed: () => "Not allowed.",
   /* The reason editor, when a worker unblocked the run while it was open. */
   NotBlocked: () => "That workflow run is no longer blocked.",
-  /* Also Put back on a step a worker finished or put back just now. */
+  /* Also Put back on a task a worker finished or put back just now. */
   NotReady: () =>
-    "That step changed just now, or a step in an earlier stage is still open.",
+    "That task changed just now, or a task in an earlier step is still open.",
   /* Every merchant control on a done run is the note or Reopen, and both are
      allowed there (`Domain.RunStatus`); the page offers nothing on a
      cancelled run but Undo cancel. So a Terminal here is a cancel that landed
@@ -92,8 +93,8 @@ const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
   // Reachable from Manage's Reopen: the row hides that button when the page's
   // own `Domain.undoBlockedBy` says so, and this is the race where a worker
   // started downstream between the render and the click.
-  UndoBlocked: ({ teamName, stepName }) =>
-    `${teamName} already started ${stepName}.`,
+  UndoBlocked: ({ teamName, taskName }) =>
+    `${teamName} already started ${taskName}.`,
   ItemHasRun: ({ workflowName }) =>
     `This item is already on ${workflowName}. Cancel that run first to bring this one back.`,
 });
@@ -101,7 +102,7 @@ const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
 /**
  * One merchant intervention, as the Manage rows send it. `kind` picks the
  * callable and `toast` is the acknowledgement, written at the button so the
- * step's own name reaches it ("Cut marked done") rather than a generic verb.
+ * task's own name reaches it ("Cut marked done") rather than a generic verb.
  * Cancel and un-cancel ride the same union deliberately: one in-flight
  * mutation on the page means one `busy` flag, and the merchant cannot start a
  * second write while the first is unacknowledged.
@@ -109,17 +110,17 @@ const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
 type Intervention =
   | {
       readonly kind: "complete";
-      readonly runStepId: string;
+      readonly runTaskId: string;
       readonly toast: string;
     }
   | {
       readonly kind: "reopen";
-      readonly runStepId: string;
+      readonly runTaskId: string;
       readonly toast: string;
     }
   | {
       readonly kind: "putBack";
-      readonly runStepId: string;
+      readonly runTaskId: string;
       readonly toast: string;
     }
   | {
@@ -200,24 +201,35 @@ const ambiguitySentence = (matched: readonly Domain.Workflow[]) =>
 
 /**
  * The confirmation body. Done outranks started because it is the bigger loss:
- * a finished step is work someone will have to do again under the new
- * workflow, while a started one is work in progress. Steps do not carry over —
+ * a finished task is work someone will have to do again under the new
+ * workflow, while a started one is work in progress. Tasks do not carry over —
  * the new run is copied from its own definition — so the sentence says so
  * rather than leaving the merchant to assume otherwise.
+ *
+ * Counts steps, not task rows: a step is done when every task of it is and
+ * started when any task of it is, and the total is the run's last step. The
+ * merchant reads "task" only where a step holds more than one
+ * ({@link Domain.WorkflowTask}), so a row count would name a noun a linear
+ * shop never sees.
  */
 const changeWarning = (
   from: Domain.WorkflowName,
   to: string,
-  steps: readonly Domain.WorkflowRunStep[],
+  tasks: readonly Domain.WorkflowRunTask[],
 ) => {
-  const done = steps.filter((step) => step.completedAt !== null).length;
-  const started = steps.filter((step) => step.startedAt !== null).length;
+  const steps = WorkflowLayout.stepsOf(tasks);
+  const done = steps.filter((step) =>
+    step.every((task) => task.completedAt !== null),
+  ).length;
+  const started = steps.filter((step) =>
+    step.some((task) => task.startedAt !== null),
+  ).length;
   const total = formatNumber(steps.length);
   const progress =
     done > 0
       ? `${formatNumber(done)} of ${total} steps done`
       : `${formatNumber(started)} of ${total} steps started`;
-  return `${from} has ${progress}. Change to ${to} anyway? Those steps will not carry over.`;
+  return `${from} has ${progress}. Change to ${to} anyway? That work will not carry over.`;
 };
 
 /**
@@ -251,41 +263,41 @@ const fact = (label: string, value: React.ReactNode) =>
   );
 
 /**
- * A step's state line inside a Manage row, in the work page's order — done,
- * under way, ready, waiting — so the merchant and the worker describe one step
+ * A task's state line inside a Manage row, in the work page's order — done,
+ * under way, ready, waiting — so the merchant and the worker describe one task
  * the same way. `started by …` is appended to a Done line only when the
  * starter is not the completer: "Done by Merchant · 14:31 · started by
  * ben@…" is the shape of an intervention over someone's work, and printing
  * one name twice is not.
  */
 const manageStateLine = (
-  step: Domain.WorkflowRunStep,
+  task: Domain.WorkflowRunTask,
   ready: boolean,
 ): React.ReactNode => {
-  const completedBy = Domain.stepCompletedBy(step);
-  const startedBy = Domain.stepStartedBy(step);
-  if (step.completedAt !== null)
+  const completedBy = Domain.taskCompletedBy(task);
+  const startedBy = Domain.taskStartedBy(task);
+  if (task.completedAt !== null)
     return (
       <>
         {completedBy === null
           ? "Done · "
           : `Done by ${Domain.actorLabel(completedBy)} · `}
-        <LocalDateTime value={step.completedAt} format="time" />
+        <LocalDateTime value={task.completedAt} format="time" />
         {startedBy === null ||
         (completedBy !== null && Domain.sameActor(startedBy, completedBy))
           ? ""
           : ` · started by ${Domain.actorLabel(startedBy)}`}
       </>
     );
-  if (step.startedAt !== null)
+  if (task.startedAt !== null)
     return (
       <>
-        In progress since <LocalDateTime value={step.startedAt} format="time" />
+        In progress since <LocalDateTime value={task.startedAt} format="time" />
         {startedBy === null ? "" : ` by ${Domain.actorLabel(startedBy)}`}
       </>
     );
   if (ready) return "Ready";
-  return `Waiting on step ${String(step.stage - 1)}`;
+  return `Waiting on step ${String(task.step - 1)}`;
 };
 
 /**
@@ -305,31 +317,30 @@ const blockedLine = (run: Domain.WorkflowRun): React.ReactNode => {
   );
 };
 
-/** Stages, not steps: two steps that happen together read as one stop. */
-const stageCount = (steps: readonly Domain.WorkflowRunStep[]) =>
-  steps.reduce((max, step) => Math.max(max, step.stage), 0);
+const stepCount = (tasks: readonly Domain.WorkflowRunTask[]) =>
+  tasks.reduce((max, task) => Math.max(max, task.step), 0);
 
 /**
  * A run's blocked state as a wrapping block rather than a badge. The reason is
  * merchant prose up to `Domain.BLOCK_REASON_MAX_LENGTH` characters; a badge is sized for
  * a closed vocabulary and a long reason there stretches the row until the run's
- * own controls leave the viewport. The ready step is named because `blocked` is
- * a run-level flag (`merchantBlockRun` takes a `runId`) and on a multi-stage run
+ * own controls leave the viewport. The ready task is named because `blocked` is
+ * a run-level flag (`merchantBlockRun` takes a `runId`) and on a multi-step run
  * "blocked" alone does not say what is stuck.
  *
  * `actions` (Edit, which opens the Block modal on the reason, and Unblock)
  * arrive as a node rather than a callback because the buttons need the page's
  * `identified`, `busy` and mutation, none of which belong to a module-level
- * render helper — the same shape `stepTrail` uses for its picker. Unblock is
+ * render helper — the same shape `taskTrail` uses for its picker. Unblock is
  * offered here as well as inside Manage: a merchant who opened the disclosure
  * should not have to close it to unblock.
  */
 const blockedStrip = (
-  { run, steps }: Domain.WorkflowRunDetail,
+  { run, tasks }: Domain.WorkflowRunDetail,
   actions: React.ReactNode,
 ) => {
-  const stuck = Domain.readySteps(run, steps)
-    .map((step) => step.name)
+  const stuck = Domain.readyTasks(run, tasks)
+    .map((task) => task.name)
     .join(", ");
   const reason = run.flagDetail?.reason;
   return (
@@ -355,53 +366,47 @@ const blockedStrip = (
 
 /**
  * Where the run is, as the card's one read-only answer: `Step 1 of 3 · Cut ·
- * Bench · since 3:10 PM`. It replaced the inline step trail, which said the
- * same thing in a notation the merchant had to learn — a stage number, bold
- * for ready, `✓` and `●` marks, the team in parentheses. The full step list is
- * inside Manage, where `manageStateLine` already renders each step's state in
+ * Bench · since 3:10 PM`. It replaced the inline task trail, which said the
+ * same thing in a notation the merchant had to learn — a step number, bold
+ * for ready, `✓` and `●` marks, the team in parentheses. The full task list is
+ * inside Manage, where `manageStateLine` already renders each task's state in
  * words.
  *
- * The word is `Step` though the count is of stages: merchants count steps, and
- * a stage is an authoring detail (two steps that happen together). A parallel
- * stage is not lost — it lists both names after the position, `Step 2 of 3 ·
- * Engrave, Polish · Bench` — so the position stays a count of stops while the
- * row still says what is happening.
- *
  * Deliberately a second phrasing beside `manageStateLine`, not a call into it.
- * That one describes *one step* inside the Manage disclosure, in the work
+ * That one describes *one task* inside the Manage disclosure, in the work
  * page's vocabulary, so the merchant and the worker say the same thing about
- * the same step. This one describes *the run* on a collapsed card and has to
- * cover a parallel stage (several ready steps at once), which is not a step
+ * the same task. This one describes *the run* on a collapsed card and has to
+ * cover a parallel step (several ready tasks at once), which is not a task
  * state. Keeping them apart is cheaper than a shared function with a mode flag.
  */
-const nowLine = ({ run, steps }: Domain.WorkflowRunDetail): React.ReactNode => {
+const nowLine = ({ run, tasks }: Domain.WorkflowRunDetail): React.ReactNode => {
   if (!Domain.runIsLive(run)) return null;
-  /* The strip above already names the stuck step; a Now line under it would
-     name the same step a second time on one card. */
+  /* The strip above already names the stuck task; a Now line under it would
+     name the same task a second time on one card. */
   if (Domain.runIsBlocked(run)) return null;
-  /* Counts stages, like the open form's `of M`: the number the merchant saw
+  /* Counts steps, like the open form's `of M`: the number the merchant saw
      climb to `Step 2 of 2` must not become `3 steps` the day the run finishes. */
   if (!Domain.runIsOpen(run)) {
-    const stages = stageCount(steps);
-    return `Done \u00B7 ${formatNumber(stages)} step${stages === 1 ? "" : "s"}`;
+    const steps = stepCount(tasks);
+    return `Done \u00B7 ${formatNumber(steps)} step${steps === 1 ? "" : "s"}`;
   }
-  const ready = Domain.readySteps(run, steps);
-  const lowest = Domain.lowestOpenStage(steps);
-  /* Every remaining step unassigned, or an inconsistent run: the attention
+  const ready = Domain.readyTasks(run, tasks);
+  const lowest = Domain.lowestOpenStep(tasks);
+  /* Every remaining task unassigned, or an inconsistent run: the attention
      rows below are the answer, not a position. */
   if (ready.length === 0 || lowest === null) return null;
-  const names = ready.map((step) => step.name).join(", ");
-  const teams = [...new Set(ready.map((step) => step.teamName))].join(", ");
-  /** The stage's start, not a step's: on a parallel stage the earliest claim is when the run got here. */
-  const since = ready.reduce<number | null>((earliest, step) => {
-    if (step.startedAt === null) return earliest;
+  const names = ready.map((task) => task.name).join(", ");
+  const teams = [...new Set(ready.map((task) => task.teamName))].join(", ");
+  /** The step's start, not a task's: on a parallel step the earliest claim is when the run got here. */
+  const since = ready.reduce<number | null>((earliest, task) => {
+    if (task.startedAt === null) return earliest;
     return earliest === null
-      ? step.startedAt
-      : Math.min(earliest, step.startedAt);
+      ? task.startedAt
+      : Math.min(earliest, task.startedAt);
   }, null);
   return (
     <>
-      {`Step ${String(lowest)} of ${String(stageCount(steps))} \u00B7 ${names} \u00B7 ${teams}`}
+      {`Step ${String(lowest)} of ${String(stepCount(tasks))} \u00B7 ${names} \u00B7 ${teams}`}
       {since !== null && (
         <>
           {" \u00B7 since "}
@@ -414,36 +419,36 @@ const nowLine = ({ run, steps }: Domain.WorkflowRunDetail): React.ReactNode => {
 
 /**
  * The two derived attention states of a run, against the live team roster the
- * view carries: an open step whose team is gone is named with an "Assign team"
- * picker (the remedy that makes a team delete safe), and a ready step on a
+ * view carries: an open task whose team is gone is named with an "Assign team"
+ * picker (the remedy that makes a team delete safe), and a ready task on a
  * team with no members warns, linking to the team so the fix is one click.
  *
  * They render on the card, outside the Manage disclosure, because they are the
  * one thing that must be acted on and a disclosure would hide it. Every other
- * intervention — reassigning an already-assigned step, notes, block, cancel —
+ * intervention — reassigning an already-assigned task, notes, block, cancel —
  * is inside Manage: one place to act on a run rather than two, and nothing on
  * the card is a click target, so scanning an order never risks a stray "done".
  */
 const attentionRows = (
-  { run, steps }: Domain.WorkflowRunDetail,
+  { run, tasks }: Domain.WorkflowRunDetail,
   teams: readonly Domain.TeamRoster[],
-  assign: (runStepId: string) => React.ReactNode,
+  assign: (runTaskId: string) => React.ReactNode,
 ) => {
-  const ready = Domain.readySteps(run, steps);
-  const isReady = (step: Domain.WorkflowRunStep) =>
-    ready.some((candidate) => candidate.id === step.id);
+  const ready = Domain.readyTasks(run, tasks);
+  const isReady = (task: Domain.WorkflowRunTask) =>
+    ready.some((candidate) => candidate.id === task.id);
   const open = Domain.runIsOpen(run);
   const unassigned = open
-    ? steps.filter((step) => Domain.isRunStepUnassigned(step, teams))
+    ? tasks.filter((task) => Domain.isRunTaskUnassigned(task, teams))
     : [];
   /** The roster row, not the snapshot name, so the warning can link to the team page. */
   const emptyTeams = open
     ? [
         ...new Map(
-          steps.filter(isReady).flatMap((step) => {
+          tasks.filter(isReady).flatMap((task) => {
             const team = teams.find(
               (candidate) =>
-                candidate.id === step.teamId && candidate.memberCount === 0,
+                candidate.id === task.teamId && candidate.memberCount === 0,
             );
             return team === undefined ? [] : [[team.id, team] as const];
           }),
@@ -453,15 +458,15 @@ const attentionRows = (
   if (unassigned.length === 0 && emptyTeams.length === 0) return null;
   return (
     <s-stack gap="small-500">
-      {unassigned.map((step) => (
+      {unassigned.map((task) => (
         <s-stack
-          key={step.id}
+          key={task.id}
           direction="inline"
           gap="small-300"
           alignItems="center"
         >
-          <s-text type="strong">{`${step.name}: assign a team.`}</s-text>
-          {assign(step.id)}
+          <s-text type="strong">{`${task.name}: assign a team.`}</s-text>
+          {assign(task.id)}
         </s-stack>
       ))}
       {emptyTeams.length > 0 && (
@@ -505,7 +510,7 @@ export const Route = createFileRoute("/app/orders/$orderId")({
  * runs, and the order's facts. Subscribed like the index: the loader paints,
  * `useSubscribedQuery` reads through `ShopAgent.subscribeOrder` — which subscribes the
  * shared `/app` connection to this order's pushes — so a webhook, resync, or
- * member step action on this order repaints the page. Every write returns a
+ * member task action on this order repaints the page. Every write returns a
  * tagged result that is copy-mapped into the banner rather than thrown.
  *
  * The `$orderId` param is the Shopify legacy id, so the URL matches the one
@@ -522,14 +527,14 @@ function RouteComponent() {
   const [attachChoice, setAttachChoice] = React.useState<
     Record<string, string>
   >({});
-  /** The "Assign team" picker's choice per open run step. */
+  /** The "Assign team" picker's choice per open run task. */
   const [assignChoice, setAssignChoice] = React.useState<
     Record<string, string>
   >({});
   /**
    * Which live runs have their "Change workflow" picker open inside Manage;
    * closed is the default. Changing cancels the run that is there and does not
-   * carry its steps over, so it is a rare intervention and lives with the
+   * carry its tasks over, so it is a rare intervention and lives with the
    * others rather than at rest on the card. An item with no run needs no entry
    * here: its picker *is* the row, always open.
    *
@@ -557,7 +562,7 @@ function RouteComponent() {
    *
    * It survives re-renders on purpose, and the next reader's instinct will be to
    * reset it when new data arrives — do not. The subscription updates the query
-   * data without remounting, so a webhook or a worker's step action landing
+   * data without remounting, so a webhook or a worker's task action landing
    * while the merchant has a disclosure open must leave it open. What it must
    * not do is answer for a run that is no longer on this order, so reads go
    * through `managingRun` against the runs actually in hand.
@@ -648,11 +653,11 @@ function RouteComponent() {
       call((stub) =>
         Match.value(input).pipe(
           Match.discriminatorsExhaustive("kind")({
-            complete: ({ runStepId }) =>
-              stub.merchantCompleteStep({ runStepId }),
-            reopen: ({ runStepId }) =>
-              stub.merchantUncompleteStep({ runStepId }),
-            putBack: ({ runStepId }) => stub.merchantUnstartStep({ runStepId }),
+            complete: ({ runTaskId }) =>
+              stub.merchantCompleteTask({ runTaskId }),
+            reopen: ({ runTaskId }) =>
+              stub.merchantUncompleteTask({ runTaskId }),
+            putBack: ({ runTaskId }) => stub.merchantUnstartTask({ runTaskId }),
             note: ({ runId, note }) => stub.merchantSetRunNote({ runId, note }),
             block: ({ runId, reason }) =>
               stub.merchantBlockRun({ runId, reason }),
@@ -676,8 +681,8 @@ function RouteComponent() {
   });
 
   const assignMutation = useMutation({
-    mutationFn: (input: typeof Domain.AssignRunStepTeamInput.Encoded) =>
-      call((stub) => stub.assignRunStepTeam(input)).then(decodeAssignResult),
+    mutationFn: (input: typeof Domain.AssignRunTaskTeamInput.Encoded) =>
+      call((stub) => stub.assignRunTaskTeam(input)).then(decodeAssignResult),
     onSuccess: async (result) => {
       setBanner(assignResultMessage(result));
       await invalidate();
@@ -772,13 +777,13 @@ function RouteComponent() {
   const modalRun = runs.find(({ run }) => run.id === modalRunId)?.run ?? null;
 
   /**
-   * A team picker and an Assign button for one open step, rendered both on the
-   * card (beside an unassigned step, which is an attention state) and in the
-   * Manage rows (where any open step can be reassigned). The picker starts
-   * empty so Assign stays disabled until a team is chosen; picking the step's
+   * A team picker and an Assign button for one open task, rendered both on the
+   * card (beside an unassigned task, which is an attention state) and in the
+   * Manage rows (where any open task can be reassigned). The picker starts
+   * empty so Assign stays disabled until a team is chosen; picking the task's
    * current team is a harmless no-op write.
    */
-  const assignTeam = (runStepId: string) => (
+  const assignTeam = (runTaskId: string) => (
     <s-grid
       gridTemplateColumns="minmax(0, 16rem) auto"
       gap="small-300"
@@ -789,11 +794,11 @@ function RouteComponent() {
         label="Assign team"
         labelAccessibilityVisibility="exclusive"
         placeholder="Assign team"
-        value={assignChoice[runStepId] ?? ""}
+        value={assignChoice[runTaskId] ?? ""}
         disabled={!identified || busy}
         onChange={(event) => {
           const teamId = event.currentTarget.value;
-          setAssignChoice((choice) => ({ ...choice, [runStepId]: teamId }));
+          setAssignChoice((choice) => ({ ...choice, [runTaskId]: teamId }));
         }}
       >
         {teams.map((team) => (
@@ -804,10 +809,10 @@ function RouteComponent() {
       </s-select>
       <s-button
         variant="secondary"
-        disabled={!identified || busy || !assignChoice[runStepId]}
+        disabled={!identified || busy || !assignChoice[runTaskId]}
         onClick={() => {
-          const teamId = assignChoice[runStepId];
-          if (teamId) assignMutation.mutate({ runStepId, teamId });
+          const teamId = assignChoice[runTaskId];
+          if (teamId) assignMutation.mutate({ runTaskId, teamId });
         }}
       >
         Assign
@@ -885,37 +890,37 @@ function RouteComponent() {
     );
 
   /**
-   * The Manage disclosure: one row per step in position order, then the
+   * The Manage disclosure: one row per task in position order, then the
    * run-level actions — Block or Unblock, Cancel run, and Change workflow.
    * Every intervention lives here and nowhere else, in the order the worker
    * sees it on the work page, so the card above stays a read-only glance:
    * name, status, where the run is, and whatever needs attention.
    *
    * The Reopen verdict is computed here rather than fetched. The page already
-   * holds every step of every run on this order, which is exactly what the
+   * holds every task of every run on this order, which is exactly what the
    * rule takes (`Domain.undoBlockedBy`) — the same function the write itself
    * runs, so the button and the refusal cannot disagree — and asking the
-   * object for a verdict per step would only send back what is already here.
+   * object for a verdict per task would only send back what is already here.
    * There is no Start: the merchant records work, they do not claim it.
    *
    * No action here is primary — not `Mark done`, not `Block`, not `Add note`.
    * Every write on this page is a merchant reaching past a worker — the bench
-   * claims and completes steps on the work page — and a primary button is the
+   * claims and completes tasks on the work page — and a primary button is the
    * grammar of "this is what you came here to do", which is false here.
    * `Block` keeps its critical tone; that says "irreversible for the bench",
    * not "come here for this".
    *
-   * A step with no state to change renders as one line rather than a bordered
-   * box: on a three-stage run the boxes are most of the disclosure's height,
-   * and a step two stages out has nothing to offer but its team, which rides
+   * A task with no state to change renders as one line rather than a bordered
+   * box: on a three-step run the boxes are most of the disclosure's height,
+   * and a task two steps out has nothing to offer but its team, which rides
    * along on that line.
    *
-   * The note is the run's, not a step's: it shows on the card
+   * The note is the run's, not a task's: it shows on the card
    * (`noteBlock`), and `Add note` joins the run-level row here while it is
    * empty.
    */
   const manageRows = (
-    { run, steps }: Domain.WorkflowRunDetail,
+    { run, tasks }: Domain.WorkflowRunDetail,
     /**
      * The `Change workflow` button and, under it, its picker when open. They
      * arrive as nodes rather than a callback because both need the line item
@@ -933,40 +938,40 @@ function RouteComponent() {
     const addNote =
       Domain.runIsLive(run) && (run.note === null || run.note.length === 0);
     const readyIds = new Set(
-      Domain.readySteps(run, steps).map((step) => step.id),
+      Domain.readyTasks(run, tasks).map((task) => task.id),
     );
     /* A subdued panel so the disclosure reads as a drawer the header's Manage
-       button owns, not as more card. The step boxes inside invert the usual
-       emphasis: the ready step is the one white box on grey, the rest blend. */
+       button owns, not as more card. The task boxes inside invert the usual
+       emphasis: the ready task is the one white box on grey, the rest blend. */
     return (
       <s-box background="subdued" borderRadius="base" padding="base">
         <s-stack gap="small-300">
-          {steps.map((step) => {
-            const ready = readyIds.has(step.id);
+          {tasks.map((task) => {
+            const ready = readyIds.has(task.id);
             const blocker =
-              step.completedAt === null
+              task.completedAt === null
                 ? null
-                : Domain.undoBlockedBy(step, steps);
-            const reopenedBy = Domain.stepReopenedBy(step);
-            if (!ready && step.completedAt === null)
+                : Domain.undoBlockedBy(task, tasks);
+            const reopenedBy = Domain.taskReopenedBy(task);
+            if (!ready && task.completedAt === null)
               return (
-                <s-stack key={step.id} gap="small-300">
+                <s-stack key={task.id} gap="small-300">
                   <s-stack
                     direction="inline"
                     gap="small-300"
                     alignItems="center"
                   >
                     <s-text color="subdued">
-                      {`${String(step.stage)} ${step.name} \u00B7 ${step.teamName} \u00B7 `}
-                      {manageStateLine(step, false)}
+                      {`Step ${String(task.step)} \u00B7 ${task.name} \u00B7 ${task.teamName} \u00B7 `}
+                      {manageStateLine(task, false)}
                     </s-text>
-                    {open && assignTeam(step.id)}
+                    {open && assignTeam(task.id)}
                   </s-stack>
                 </s-stack>
               );
             return (
               <s-box
-                key={step.id}
+                key={task.id}
                 padding="small"
                 borderWidth="base"
                 borderRadius="base"
@@ -978,19 +983,19 @@ function RouteComponent() {
                     gap="small-300"
                     alignItems="center"
                   >
-                    <s-text type="strong">{step.name}</s-text>
+                    <s-text type="strong">{task.name}</s-text>
                     <s-text color="subdued">
-                      {`${step.teamName} \u00B7 stage ${String(step.stage)}`}
+                      {`${task.teamName} \u00B7 step ${String(task.step)}`}
                     </s-text>
                   </s-stack>
                   <s-text color="subdued">
-                    {manageStateLine(step, ready)}
+                    {manageStateLine(task, ready)}
                   </s-text>
-                  {reopenedBy !== null && step.reopenedAt !== null && (
+                  {reopenedBy !== null && task.reopenedAt !== null && (
                     <s-text color="subdued">
                       {`Reopened by ${Domain.actorLabel(reopenedBy)} \u00B7 `}
                       <LocalDateTime
-                        value={step.reopenedAt}
+                        value={task.reopenedAt}
                         format="relative"
                       />
                     </s-text>
@@ -1007,8 +1012,8 @@ function RouteComponent() {
                         onClick={() => {
                           intervene({
                             kind: "complete",
-                            runStepId: step.id,
-                            toast: `${step.name} marked done`,
+                            runTaskId: task.id,
+                            toast: `${task.name} marked done`,
                           });
                         }}
                       >
@@ -1017,9 +1022,9 @@ function RouteComponent() {
                     )}
                     {/* Put back, the inverse of a worker's Start; refused
                         under a flag for the reason on
-                        `WorkflowRunRepository.unstartStep`. */}
+                        `WorkflowRunRepository.unstartTask`. */}
                     {ready &&
-                      step.startedAt !== null &&
+                      task.startedAt !== null &&
                       !Domain.runIsFlagged(run) && (
                         <s-button
                           variant="secondary"
@@ -1027,15 +1032,15 @@ function RouteComponent() {
                           onClick={() => {
                             intervene({
                               kind: "putBack",
-                              runStepId: step.id,
-                              toast: `${step.name} put back`,
+                              runTaskId: task.id,
+                              toast: `${task.name} put back`,
                             });
                           }}
                         >
                           Put back
                         </s-button>
                       )}
-                    {step.completedAt !== null &&
+                    {task.completedAt !== null &&
                       (blocker === null ? (
                         <s-button
                           variant="secondary"
@@ -1043,8 +1048,8 @@ function RouteComponent() {
                           onClick={() => {
                             intervene({
                               kind: "reopen",
-                              runStepId: step.id,
-                              toast: `${step.name} reopened`,
+                              runTaskId: task.id,
+                              toast: `${task.name} reopened`,
                             });
                           }}
                         >
@@ -1053,14 +1058,14 @@ function RouteComponent() {
                       ) : (
                         /* The only screen that names the blocker, and the
                            only one that can act on it. A member is told
-                           nothing (`Domain.stepActions`): they cannot undo,
-                           and the blocking step is already on their page
+                           nothing (`Domain.taskActions`): they cannot undo,
+                           and the blocking task is already on their page
                            wearing its own badge. A merchant can reopen it,
                            so this is an instruction, and it has to pick out
-                           a step that "the first started step in a later
-                           stage" does not pick out by eye.
+                           a task that "the first started task in a later
+                           step" does not pick out by eye.
 
-                           Step first, team parenthetical: the other order —
+                           Task first, team parenthetical: the other order —
                            "Finishing started Fit movement" — garden-paths,
                            because a reader who does not already know the
                            team names takes the first word as the subject
@@ -1070,18 +1075,18 @@ function RouteComponent() {
                            in-progress one is cleared with Put back on its
                            own row, hence both verbs. */
                         <s-text color="subdued">
-                          {`Can\u2019t reopen: ${blocker.stepName} (${blocker.teamName}) already started \u2014 put it back or reopen it first`}
+                          {`Can\u2019t reopen: ${blocker.taskName} (${blocker.teamName}) already started \u2014 put it back or reopen it first`}
                         </s-text>
                       ))}
                   </s-stack>
-                  {open && step.completedAt === null && assignTeam(step.id)}
+                  {open && task.completedAt === null && assignTeam(task.id)}
                 </s-stack>
               </s-box>
             );
           })}
-          {/* The step list is one object and the run's own actions are another:
+          {/* The task list is one object and the run's own actions are another:
             Block, Unblock, Cancel and the note act on the whole run, and mixed
-            into the steps they read as a fourth button on the last one. */}
+            into the tasks they read as a fourth button on the last one. */}
           {(open || Domain.runIsBlocked(run) || addNote) && <s-divider />}
           {(open || addNote) && (
             <s-stack gap="small-300">
@@ -1236,7 +1241,7 @@ function RouteComponent() {
    * - **a live run** — a *change*, which cancels what is there. That one is a
    *   rare intervention, so it lives inside Manage (`changeOpen`). The options
    *   drop the incumbent (choosing it again is a no-op the server answers with
-   *   `AlreadyExists`), and a run with any step started or done asks first.
+   *   `AlreadyExists`), and a run with any task started or done asks first.
    *   A **done** run offers no change at all: see `changeable` below.
    *
    * Ambiguity is derived here rather than kept in state: a cancel elsewhere on
@@ -1254,7 +1259,7 @@ function RouteComponent() {
     // The same test as `Domain.ambiguousItems`, on the raw id list, so this
     // item and the orders index cannot disagree about whether it is waiting on
     // a choice; `matched` only narrows the picker, and a matched workflow that
-    // has since lost a team or its steps simply drops out of the options.
+    // has since lost a team or its tasks simply drops out of the options.
     const ambiguous =
       live === undefined &&
       item.matchedWorkflowIds.length >= 2 &&
@@ -1281,8 +1286,8 @@ function RouteComponent() {
       if (!chosen) return;
       const touched =
         live !== undefined &&
-        live.steps.some(
-          (step) => step.startedAt !== null || step.completedAt !== null,
+        live.tasks.some(
+          (task) => task.startedAt !== null || task.completedAt !== null,
         );
       if (live !== undefined && touched) {
         setChanging({
@@ -1293,7 +1298,7 @@ function RouteComponent() {
           warning: changeWarning(
             live.run.workflowName,
             options.find((workflow) => workflow.id === chosen)?.name ?? "",
-            live.steps,
+            live.tasks,
           ),
         });
         showModal(CHANGE_WORKFLOW_MODAL);
@@ -1524,7 +1529,7 @@ function RouteComponent() {
       </s-link>
       {/* The primary action leaves for the Shopify order: payment,
           fulfilment and the customer live there, and fulfilling is the next
-          step once the work here is done. Resync is secondary because webhooks
+          task once the work here is done. Resync is secondary because webhooks
           keep the order current; a primary Resync tells the merchant syncing
           is their job. It stays for the rare order that looks stale. */}
       <s-button

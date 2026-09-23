@@ -38,9 +38,9 @@ export const deleteTeamResultMessage = Match.typeTags<
 });
 
 export const NO_COUNTS: Domain.TeamDeleteCounts = {
-  workflowSteps: 0,
-  draftSteps: 0,
-  openRunSteps: 0,
+  workflowTasks: 0,
+  draftTasks: 0,
+  openRunTasks: 0,
 };
 
 export const plural = (count: number, noun: string) =>
@@ -51,22 +51,22 @@ export const plural = (count: number, noun: string) =>
  * become unassigned, and what that means. Only true clauses are spoken.
  */
 export const deleteTeamWarning = (counts: Domain.TeamDeleteCounts) => {
-  const configured = counts.workflowSteps + counts.draftSteps;
+  const configured = counts.workflowTasks + counts.draftTasks;
   const parts = [
-    ...(configured > 0 ? [plural(configured, "workflow step")] : []),
-    ...(counts.openRunSteps > 0
-      ? [plural(counts.openRunSteps, "in-progress step")]
+    ...(configured > 0 ? [plural(configured, "workflow task")] : []),
+    ...(counts.openRunTasks > 0
+      ? [plural(counts.openRunTasks, "in-progress task")]
       : []),
   ];
   if (parts.length === 0)
-    return "No workflow steps are assigned to it. This can't be undone.";
-  const verb = configured + counts.openRunSteps === 1 ? "is" : "are";
+    return "No workflow tasks are assigned to it. This can't be undone.";
+  const verb = configured + counts.openRunTasks === 1 ? "is" : "are";
   const consequences = [
     ...(configured > 0
-      ? ["Workflows with unassigned steps stop starting for new orders"]
+      ? ["Workflows with unassigned tasks stop starting for new orders"]
       : []),
-    ...(counts.openRunSteps > 0
-      ? ["in-progress steps wait until you assign a team"]
+    ...(counts.openRunTasks > 0
+      ? ["in-progress tasks wait until you assign a team"]
       : []),
   ];
   return `${parts.join(" and ")} ${verb} assigned to it. They will become unassigned. ${consequences.join(", and ")}.`;

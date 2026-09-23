@@ -11,7 +11,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
-import { AttentionBanner, StageFlow } from "@/components/WorkflowStages";
+import { AttentionBanner, StepFlow } from "@/components/WorkflowSteps";
 import { WorkflowSwitch } from "@/components/WorkflowSwitch";
 import * as Domain from "@/lib/Domain";
 import { hideModal } from "@/lib/polarisModal";
@@ -47,8 +47,8 @@ const APPLY_MODAL = "apply-draft";
 const decodeWorkflowResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.WorkflowResult),
 );
-const decodeStepResult = Schema.decodeUnknownPromise(
-  Schema.toType(Domain.StepResult),
+const decodeTaskResult = Schema.decodeUnknownPromise(
+  Schema.toType(Domain.TaskResult),
 );
 const decodeApplyResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.ApplyResult),
@@ -60,10 +60,10 @@ const decodeDeleteWorkflowResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.DeleteWorkflowResult),
 );
 
-const stepResultMessage = Match.typeTags<Domain.StepResult, string | null>()({
+const taskResultMessage = Match.typeTags<Domain.TaskResult, string | null>()({
   Ok: () => null,
-  NotFound: () => "That step no longer exists. Reload the page.",
-  Limit: ({ limit }) => `A workflow can have at most ${String(limit)} steps.`,
+  NotFound: () => "That task no longer exists. Reload the page.",
+  Limit: ({ limit }) => `A workflow can have at most ${String(limit)} tasks.`,
   TeamNotFound: () => "That team no longer exists. Choose another.",
 });
 
@@ -72,9 +72,9 @@ const applyResultMessage = Match.typeTags<Domain.ApplyResult, string | null>()({
   Ok: () => null,
   NotFound: () => "That workflow no longer exists.",
   NoDraft: () => "There are no changes to apply.",
-  NoSteps: () => "Add a step to this workflow.",
-  StepUnassigned: ({ stepNames }) =>
-    `Assign a team to ${stepNames.join(", ")}.`,
+  NoTasks: () => "Add a step to this workflow.",
+  TaskUnassigned: ({ taskNames }) =>
+    `Assign a team to ${taskNames.join(", ")}.`,
 });
 
 const discardResultMessage = Match.typeTags<
@@ -129,15 +129,15 @@ export const Route = createFileRoute("/app/workflows/$workflowId_/edit")({
  *
  * Opening it writes nothing. The canvas shows the draft when one exists and
  * the workflow itself when one does not — the first change is what creates
- * the draft, and because a step keeps its id from the workflow into the draft
- * (`WorkflowRepository.ensureDraft`) the step being edited is the same step
+ * the draft, and because a task keeps its id from the workflow into the draft
+ * (`WorkflowRepository.ensureDraft`) the task being edited is the same task
  * either way.
  *
  * The header is the state, in one primary button and one badge:
  *
  * - never applied — `Draft`, and **Turn on**, which applies and activates in
  *   one confirmed step (`ShopAgent.applyAndActivate`). Apply on its own would
- *   leave the merchant with steps in force that start nothing, then ask them
+ *   leave the merchant with tasks in force that start nothing, then ask them
  *   to turn on the thing they just applied;
  * - applied with no draft — no badge, and the plain on/off switch, because
  *   there is nothing here to commit;
@@ -162,7 +162,7 @@ function RouteComponent() {
   const shopify = useAppBridge();
   const { agent, identified } = useShopAgent();
   const [banner, setBanner] = React.useState<string | null>(null);
-  const [selectedStepId, setSelectedStepId] = React.useState<string | null>(
+  const [selectedTaskId, setSelectedTaskId] = React.useState<string | null>(
     null,
   );
   const [edit, setEdit] = React.useState({
@@ -170,9 +170,9 @@ function RouteComponent() {
     teamId: "",
     instructions: "",
   });
-  /** The open add-step form: `stage` is the stage it joins, `null` a new last stage. */
+  /** The open add-task form: `step` is the step it joins, `null` a new last step. */
   const [adding, setAdding] = React.useState<{
-    readonly stage: number | null;
+    readonly step: number | null;
     readonly name: string;
     readonly teamId: string;
     readonly instructions: string;
@@ -192,20 +192,20 @@ function RouteComponent() {
     setBanner(error.message);
   };
 
-  const onStepResult = async (result: Domain.StepResult) => {
-    setBanner(stepResultMessage(result));
+  const onTaskResult = async (result: Domain.TaskResult) => {
+    setBanner(taskResultMessage(result));
     await invalidate();
   };
 
   const addStepMutation = useMutation({
     mutationFn: (input: {
-      readonly stage: number | null;
+      readonly step: number | null;
       readonly name: string;
       readonly teamId: string;
       readonly instructions: string | null;
     }) =>
       call((stub) =>
-        input.stage === null
+        input.step === null
           ? stub.addStep({
               workflowId,
               name: input.name,
@@ -214,57 +214,57 @@ function RouteComponent() {
                 ? {}
                 : { instructions: input.instructions }),
             })
-          : stub.addParallelStep({
+          : stub.addTask({
               workflowId,
-              stage: input.stage,
+              step: input.step,
               name: input.name,
               teamId: input.teamId,
               ...(input.instructions === null
                 ? {}
                 : { instructions: input.instructions }),
             }),
-      ).then(decodeStepResult),
+      ).then(decodeTaskResult),
     onSuccess: async (result) => {
       if (result._tag === "Ok") setAdding(null);
-      await onStepResult(result);
+      await onTaskResult(result);
     },
     onError,
   });
 
-  const updateStepMutation = useMutation({
-    mutationFn: (input: typeof Domain.UpdateStepInput.Encoded) =>
-      call((stub) => stub.updateStep(input)).then(decodeStepResult),
-    onSuccess: onStepResult,
+  const updateTaskMutation = useMutation({
+    mutationFn: (input: typeof Domain.UpdateTaskInput.Encoded) =>
+      call((stub) => stub.updateTask(input)).then(decodeTaskResult),
+    onSuccess: onTaskResult,
     onError,
   });
 
-  const moveStepMutation = useMutation({
-    mutationFn: (input: typeof Domain.MoveStepInput.Encoded) =>
-      call((stub) => stub.moveStep(input)).then(decodeStepResult),
-    onSuccess: onStepResult,
+  const moveTaskMutation = useMutation({
+    mutationFn: (input: typeof Domain.MoveTaskInput.Encoded) =>
+      call((stub) => stub.moveTask(input)).then(decodeTaskResult),
+    onSuccess: onTaskResult,
     onError,
   });
 
-  const separateStepMutation = useMutation({
-    mutationFn: (input: typeof Domain.SeparateStepInput.Encoded) =>
-      call((stub) => stub.separateStep(input)).then(decodeStepResult),
-    onSuccess: onStepResult,
+  const separateTaskMutation = useMutation({
+    mutationFn: (input: typeof Domain.SeparateTaskInput.Encoded) =>
+      call((stub) => stub.separateTask(input)).then(decodeTaskResult),
+    onSuccess: onTaskResult,
     onError,
   });
 
-  const joinStepMutation = useMutation({
-    mutationFn: (input: typeof Domain.JoinStepInput.Encoded) =>
-      call((stub) => stub.joinStep(input)).then(decodeStepResult),
-    onSuccess: onStepResult,
+  const joinTaskMutation = useMutation({
+    mutationFn: (input: typeof Domain.JoinTaskInput.Encoded) =>
+      call((stub) => stub.joinTask(input)).then(decodeTaskResult),
+    onSuccess: onTaskResult,
     onError,
   });
 
-  const removeStepMutation = useMutation({
-    mutationFn: (input: typeof Domain.StepIdInput.Encoded) =>
-      call((stub) => stub.removeStep(input)).then(decodeStepResult),
+  const removeTaskMutation = useMutation({
+    mutationFn: (input: typeof Domain.TaskIdInput.Encoded) =>
+      call((stub) => stub.removeTask(input)).then(decodeTaskResult),
     onSuccess: async (result) => {
-      if (result._tag === "Ok") setSelectedStepId(null);
-      await onStepResult(result);
+      if (result._tag === "Ok") setSelectedTaskId(null);
+      await onTaskResult(result);
     },
     onError,
   });
@@ -299,7 +299,7 @@ function RouteComponent() {
       if (result._tag !== "Ok") return;
       hideModal(DISCARD_MODAL);
       shopify.toast.show("Draft discarded.");
-      setSelectedStepId(null);
+      setSelectedTaskId(null);
       setAdding(null);
       await invalidate();
     },
@@ -363,29 +363,29 @@ function RouteComponent() {
   }
 
   /**
-   * The step panel's fields are local state copied from the step, so a reload
-   * that changes the step underneath — a team deleted in another tab, an edit
+   * The task panel's fields are local state copied from the task, so a reload
+   * that changes the task underneath — a team deleted in another tab, an edit
    * from another session — would leave the panel showing values the server no
    * longer has. Seeding during render rather than from an effect is what lets
-   * this be the panel's only seeding path: selecting a step and a step
+   * this be the panel's only seeding path: selecting a task and a task
    * changing underneath are the same event here, a new `seeded` identity, so
-   * `selectStep` sets the selection and nothing else. An effect would instead
-   * paint the previous step's values for a frame and cascade a second render,
+   * `selectTask` sets the selection and nothing else. An effect would instead
+   * paint the previous task's values for a frame and cascade a second render,
    * and would still need the selection handler to seed ahead of it.
    *
-   * The comparison is over the values, not the step object, so an invalidation
-   * that returns an equal step leaves typing alone; the id is in it so that
-   * moving between two steps that happen to match still re-seeds.
+   * The comparison is over the values, not the task object, so an invalidation
+   * that returns an equal task leaves typing alone; the id is in it so that
+   * moving between two tasks that happen to match still re-seeds.
    */
-  const loadedSteps = detail?.draft?.steps ?? detail?.steps;
-  const loadedStep =
-    loadedSteps?.find((step) => step.id === selectedStepId) ?? null;
-  const loadedStepName = loadedStep?.name;
-  const loadedStepTeamId =
-    loadedStep === null || Domain.isUnassigned(loadedStep)
+  const loadedTasks = detail?.draft?.tasks ?? detail?.tasks;
+  const loadedTask =
+    loadedTasks?.find((task) => task.id === selectedTaskId) ?? null;
+  const loadedTaskName = loadedTask?.name;
+  const loadedTaskTeamId =
+    loadedTask === null || Domain.isUnassigned(loadedTask)
       ? ""
-      : (loadedStep.teamId ?? "");
-  const loadedStepInstructions = loadedStep?.instructions ?? "";
+      : (loadedTask.teamId ?? "");
+  const loadedTaskInstructions = loadedTask?.instructions ?? "";
   const [seeded, setSeeded] = React.useState<{
     readonly id: string;
     readonly name: string;
@@ -393,24 +393,24 @@ function RouteComponent() {
     readonly instructions: string;
   } | null>(null);
   if (
-    loadedStep !== null &&
-    loadedStepName !== undefined &&
+    loadedTask !== null &&
+    loadedTaskName !== undefined &&
     (seeded === null ||
-      seeded.id !== loadedStep.id ||
-      seeded.name !== loadedStepName ||
-      seeded.teamId !== loadedStepTeamId ||
-      seeded.instructions !== loadedStepInstructions)
+      seeded.id !== loadedTask.id ||
+      seeded.name !== loadedTaskName ||
+      seeded.teamId !== loadedTaskTeamId ||
+      seeded.instructions !== loadedTaskInstructions)
   ) {
     setSeeded({
-      id: loadedStep.id,
-      name: loadedStepName,
-      teamId: loadedStepTeamId,
-      instructions: loadedStepInstructions,
+      id: loadedTask.id,
+      name: loadedTaskName,
+      teamId: loadedTaskTeamId,
+      instructions: loadedTaskInstructions,
     });
     setEdit({
-      name: loadedStepName,
-      teamId: loadedStepTeamId,
-      instructions: loadedStepInstructions,
+      name: loadedTaskName,
+      teamId: loadedTaskTeamId,
+      instructions: loadedTaskInstructions,
     });
   }
 
@@ -430,35 +430,35 @@ function RouteComponent() {
   const workflow = detail.workflow;
 
   /** What the editor writes: the draft once one exists, the workflow itself until then. */
-  const steps = draft?.steps ?? detail.steps;
+  const tasks = draft?.tasks ?? detail.tasks;
   const hasDraft = draft !== null;
   const fresh = neverApplied(detail);
   /**
    * Turn on rather than Apply. `hasDraft` is true here too — the first added
-   * step creates the draft — so this check comes first, and what it means is
+   * task creates the draft — so this check comes first, and what it means is
    * that nothing has ever been in force, which is the whole difference.
    */
   const showSwitch = fresh || !hasDraft;
-  const blocker = applyBlocker(steps);
-  const selected = steps.find((step) => step.id === selectedStepId) ?? null;
+  const blocker = applyBlocker(tasks);
+  const selected = tasks.find((task) => task.id === selectedTaskId) ?? null;
   const busy =
     addStepMutation.isPending ||
-    updateStepMutation.isPending ||
-    moveStepMutation.isPending ||
-    separateStepMutation.isPending ||
-    joinStepMutation.isPending ||
-    removeStepMutation.isPending ||
+    updateTaskMutation.isPending ||
+    moveTaskMutation.isPending ||
+    separateTaskMutation.isPending ||
+    joinTaskMutation.isPending ||
+    removeTaskMutation.isPending ||
     applyMutation.isPending ||
     discardMutation.isPending;
-  const sharesStage = (step: Domain.StepWithTeamName) =>
-    steps.some((other) => other.id !== step.id && other.stage === step.stage);
-  const lastStage = steps.reduce((max, step) => Math.max(max, step.stage), 0);
+  const sharesStep = (task: Domain.TaskWithTeamName) =>
+    tasks.some((other) => other.id !== task.id && other.step === task.step);
+  const lastStep = tasks.reduce((max, task) => Math.max(max, task.step), 0);
 
   /** The panel's fields follow the selection: see the `seeded` block above. */
-  const selectStep = (stepId: string) => {
-    if (!steps.some((candidate) => candidate.id === stepId)) return;
+  const selectTask = (taskId: string) => {
+    if (!tasks.some((candidate) => candidate.id === taskId)) return;
     setAdding(null);
-    setSelectedStepId(stepId);
+    setSelectedTaskId(taskId);
   };
 
   const teamSelect = (
@@ -483,11 +483,11 @@ function RouteComponent() {
     </s-select>
   );
 
-  const addForm = (stage: number | null) => (
+  const addForm = (step: number | null) => (
     <s-box padding="base" border="base subdued dashed" borderRadius="base">
       <s-stack gap="small-300">
         <s-text type="strong">
-          {stage === null ? "New step" : "New step, at the same time"}
+          {step === null ? "New step" : `New task in step ${String(step)}`}
         </s-text>
         <s-text-field
           label="Name"
@@ -530,14 +530,14 @@ function RouteComponent() {
             onClick={() => {
               if (adding === null) return;
               addStepMutation.mutate({
-                stage: adding.stage,
+                step: adding.step,
                 name: adding.name,
                 teamId: adding.teamId,
                 instructions: instructionsOrNull(adding.instructions),
               });
             }}
           >
-            Add step
+            {step === null ? "Add step" : "Add task"}
           </s-button>
           <s-button
             variant="tertiary"
@@ -552,20 +552,20 @@ function RouteComponent() {
     </s-box>
   );
 
-  const openAdd = (stage: number | null) => {
-    setSelectedStepId(null);
-    setAdding({ stage, name: "", teamId: "", instructions: "" });
+  const openAdd = (step: number | null) => {
+    setSelectedTaskId(null);
+    setAdding({ step, name: "", teamId: "", instructions: "" });
   };
 
   /**
-   * The "at the same time" control, under one stage at a time: the stage
-   * holding the selected step, or the one whose form is open. Adding a
-   * parallel step is always about a particular stage, and repeating the
-   * button under every stage turned the canvas into a column of buttons.
+   * The "Add a task to this step" control, under one step at a time: the step
+   * holding the selected task, or the one whose form is open. Adding a
+   * parallel task is always about a particular step, and repeating the
+   * button under every step turned the canvas into a column of buttons.
    */
-  const stageFooter = (stage: number) => {
-    if (adding?.stage === stage) return addForm(stage);
-    if (selected === null || selected.stage !== stage || teams.length === 0)
+  const stepFooter = (step: number) => {
+    if (adding?.step === step) return addForm(step);
+    if (selected === null || selected.step !== step || teams.length === 0)
       return null;
     return (
       <s-stack direction="inline">
@@ -574,10 +574,10 @@ function RouteComponent() {
           icon="plus"
           disabled={busy}
           onClick={() => {
-            openAdd(stage);
+            openAdd(step);
           }}
         >
-          Add a step that runs at the same time
+          Add a task to this step
         </s-button>
       </s-stack>
     );
@@ -594,7 +594,7 @@ function RouteComponent() {
           <s-link href="/app/teams">Teams</s-link>
         </s-stack>
       );
-    if (adding !== null && adding.stage === null) return addForm(null);
+    if (adding !== null && adding.step === null) return addForm(null);
     return (
       <s-stack direction="inline">
         <s-button
@@ -604,7 +604,7 @@ function RouteComponent() {
             openAdd(null);
           }}
         >
-          {steps.length === 0 ? "Add the first step" : "Add a step"}
+          {tasks.length === 0 ? "Add the first step" : "Add a step"}
         </s-button>
       </s-stack>
     );
@@ -632,7 +632,7 @@ function RouteComponent() {
       {showSwitch ? (
         <WorkflowSwitch
           workflow={workflow}
-          steps={steps}
+          tasks={tasks}
           turnOnBody={turnOnBody(workflow.tag)}
           slot="primary-action"
           appliesFirst={fresh}
@@ -688,7 +688,7 @@ function RouteComponent() {
         <s-stack gap="base">
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
           {/* Only while the header offers Turn on or Apply: an active
-              workflow with no draft has neither, and its unassigned steps are
+              workflow with no draft has neither, and its unassigned tasks are
               `AttentionBanner`'s to report. */}
           {blocker !== null && !(showSwitch && Domain.isActive(workflow)) && (
             <s-banner
@@ -703,17 +703,17 @@ function RouteComponent() {
               <s-paragraph>{applyResultMessage(blocker)}</s-paragraph>
             </s-banner>
           )}
-          <AttentionBanner steps={steps} />
+          <AttentionBanner tasks={tasks} />
 
-          <StageFlow
-            steps={steps}
-            selectedStepId={selectedStepId}
-            onSelectStep={selectStep}
-            renderStageFooter={stageFooter}
+          <StepFlow
+            tasks={tasks}
+            selectedTaskId={selectedTaskId}
+            onSelectTask={selectTask}
+            renderStepFooter={stepFooter}
             footer={canvasFooter()}
           />
 
-          {/* Every step control writes as it is used, so there is no Save for
+          {/* Every task control writes as it is used, so there is no Save for
               the canvas and nothing on screen would otherwise say the work is
               safe. The date is the draft's while one exists: that is the edit
               this line is about. */}
@@ -745,7 +745,10 @@ function RouteComponent() {
       {selected === null ? (
         <s-box slot="aside" />
       ) : (
-        <s-section slot="aside" heading="Step">
+        <s-section
+          slot="aside"
+          heading={sharesStep(selected) ? "Task" : "Step"}
+        >
           <s-stack gap="base">
             <s-text-field
               label="Name"
@@ -769,20 +772,20 @@ function RouteComponent() {
             />
             {/*
               Two arrangement decisions, never mixed. Move earlier / Move later
-              change order and never concurrency: the moved step always ends
-              alone. Run alongside / Run on its own change concurrency and
-              never order. Enabled state is decided from the step's stage, not
-              its index: a step that shares stage 1 can still move earlier.
+              change order and never concurrency: the moved task always ends
+              alone. Join the previous step / Move to its own step change concurrency and
+              never order. Enabled state is decided from the task's step, not
+              its index: a task that shares step 1 can still move earlier.
             */}
             <s-button-group>
               <s-button
                 slot="secondary-actions"
                 disabled={
-                  busy || (!sharesStage(selected) && selected.stage === 1)
+                  busy || (!sharesStep(selected) && selected.step === 1)
                 }
                 onClick={() => {
-                  moveStepMutation.mutate({
-                    stepId: selected.id,
+                  moveTaskMutation.mutate({
+                    taskId: selected.id,
                     direction: "up",
                   });
                 }}
@@ -792,38 +795,37 @@ function RouteComponent() {
               <s-button
                 slot="secondary-actions"
                 disabled={
-                  busy ||
-                  (!sharesStage(selected) && selected.stage === lastStage)
+                  busy || (!sharesStep(selected) && selected.step === lastStep)
                 }
                 onClick={() => {
-                  moveStepMutation.mutate({
-                    stepId: selected.id,
+                  moveTaskMutation.mutate({
+                    taskId: selected.id,
                     direction: "down",
                   });
                 }}
               >
                 Move later
               </s-button>
-              {sharesStage(selected) ? (
+              {sharesStep(selected) ? (
                 <s-button
                   slot="secondary-actions"
                   disabled={busy}
                   onClick={() => {
-                    separateStepMutation.mutate({ stepId: selected.id });
+                    separateTaskMutation.mutate({ taskId: selected.id });
                   }}
                 >
-                  Run on its own
+                  Move to its own step
                 </s-button>
               ) : (
-                selected.stage > 1 && (
+                selected.step > 1 && (
                   <s-button
                     slot="secondary-actions"
                     disabled={busy}
                     onClick={() => {
-                      joinStepMutation.mutate({ stepId: selected.id });
+                      joinTaskMutation.mutate({ taskId: selected.id });
                     }}
                   >
-                    Run alongside the previous step
+                    Join the previous step
                   </s-button>
                 )
               )}
@@ -839,10 +841,10 @@ function RouteComponent() {
               <s-button
                 slot="secondary-actions"
                 tone="critical"
-                loading={removeStepMutation.isPending}
+                loading={removeTaskMutation.isPending}
                 disabled={busy}
                 onClick={() => {
-                  removeStepMutation.mutate({ stepId: selected.id });
+                  removeTaskMutation.mutate({ taskId: selected.id });
                 }}
               >
                 Delete
@@ -850,7 +852,7 @@ function RouteComponent() {
               <s-button
                 slot="primary-action"
                 variant="primary"
-                loading={updateStepMutation.isPending}
+                loading={updateTaskMutation.isPending}
                 disabled={
                   !identified ||
                   busy ||
@@ -858,8 +860,8 @@ function RouteComponent() {
                   edit.teamId === ""
                 }
                 onClick={() => {
-                  updateStepMutation.mutate({
-                    stepId: selected.id,
+                  updateTaskMutation.mutate({
+                    taskId: selected.id,
                     name: edit.name,
                     teamId: edit.teamId,
                     instructions: instructionsOrNull(edit.instructions),

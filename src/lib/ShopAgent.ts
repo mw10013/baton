@@ -51,10 +51,10 @@ import { ShopifyAdmin } from "@/lib/ShopifyAdmin";
 import { ShopifyAppEvents } from "@/lib/ShopifyAppEvents";
 import {
   type NoDraftError,
-  type NoStepsError,
-  type StageNotFoundError,
+  type NoTasksError,
   type StepNotFoundError,
-  type StepUnassignedError,
+  type TaskNotFoundError,
+  type TaskUnassignedError,
   type WorkflowLimitError,
   type WorkflowNotFoundError,
   type WorkflowOffError,
@@ -71,8 +71,8 @@ import {
   type RunNotFoundError,
   type RunTerminalError,
   type RunFlaggedError,
-  type StepNotReadyError,
-  type StepUndoBlockedError,
+  type TaskNotReadyError,
+  type TaskUndoBlockedError,
   WorkflowRunRepository,
   type WorkflowRunRepositoryError,
 } from "@/lib/WorkflowRunRepository";
@@ -343,19 +343,19 @@ const memberCallableEffect =
  * can place several orders in the same millisecond. The retention sweep reads
  * the same index as a range scan (`Domain.ShopLimits.orderRetentionDays`).
  *
- * `Workflow` / `WorkflowStep` are the production-workflow *definitions* a
- * merchant configures: what starts runs. `WorkflowDraft` / `WorkflowDraftStep`
+ * `Workflow` / `WorkflowTask` are the production-workflow *definitions* a
+ * merchant configures: what starts runs. `WorkflowDraft` / `WorkflowDraftTask`
  * are the merchant's private copy under edit (see the vocabulary on
- * `Domain.Workflow`): Edit copies the workflow's steps into the draft, every
- * editor write lands on the draft, Apply replaces the workflow's steps with
+ * `Domain.Workflow`): Edit copies the workflow's tasks into the draft, every
+ * editor write lands on the draft, Apply replaces the workflow's tasks with
  * the draft's and deletes it, Discard deletes it — each in
  * one transaction, so run creation sees the old definition or the new one and
  * never a half-edit. A workflow has at most one draft (`workflowId` is the
- * draft's primary key), and the draft's steps cascade with it. Steps live in
- * two tables rather than one with a flag so a step-id write can never be
+ * draft's primary key), and the draft's tasks cascade with it. Tasks live in
+ * two tables rather than one with a flag so a task-id write can never be
  * ambiguous about its side and `unique (workflowId, position)` holds on each
  * side independently. No history is kept: a run survives every later edit
- * because it snapshots its steps and names, not because old definitions are
+ * because it snapshots its tasks and names, not because old definitions are
  * retained. `activatedAt` is the on/off switch and the coverage date in one
  * column, stored and never derived: null is off; Turn on sets it to now or to
  * an earlier date the merchant chose; the merchant can move it on the
@@ -365,53 +365,52 @@ const memberCallableEffect =
  * pays. A run starts on an order only when `ShopOrder.processedAt >=
  * activatedAt`.
  *
- * `WorkflowStep.teamId` is a D1 `Team.id` with no foreign key because none is
+ * `WorkflowTask.teamId` is a D1 `Team.id` with no foreign key because none is
  * possible: `Team` lives in D1 and this table in the object's private SQLite,
  * and SQLite foreign keys do not cross databases. Integrity is
- * application-level — `addStep` / `updateStep` verify the team exists before
+ * application-level — `addStep` / `addTask` / `updateTask` verify the team exists before
  * writing, and `deleteTeam` nulls every pointer right after the D1 row goes
  * (`unassignTeam`, served by the `teamId` indexes). Nullable on purpose:
  * `null` is **unassigned**, the state a team delete leaves behind, and every
  * read treats an id no D1 row carries the same way, so the cross-store window
  * between the two writes is harmless. No workflow history is kept — a delete
- * removes the definition, its steps, and its draft; the runs it started stay,
+ * removes the definition, its tasks, and its draft; the runs it started stay,
  * because a run is self-sufficient with respect to its workflow and nothing
  * reads back through `workflowId`. `unique (workflowId, position)` is what forces every
  * layout edit to go through a scratch position inside one transaction — why
- * `WorkflowRepository.writeLayout` first parks every draft step at
- * `-position` before assigning final positions and stages.
- * `stage` groups steps that are ready together: along `position` stages are
- * dense `1..m` and non-decreasing, an invariant kept by the pure
+ * `WorkflowRepository.writeLayout` first parks every draft task at
+ * `-position` before assigning final positions and steps.
+ * `step` is the layout of {@link Domain.WorkflowTask}, kept by the pure
  * `WorkflowLayout` module rather than by SQL. `instructions` is merchant text
  * copied onto each run. Epoch-ms integers like `ShopOrder`, not D1 `Team`'s
  * ISO text: the two stores already differ, and one store should not mix.
  *
- * `WorkflowRun` / `WorkflowRunStep` are the *instances*: one workflow applied
- * to one line item, with the definition's steps copied
+ * `WorkflowRun` / `WorkflowRunTask` are the *instances*: one workflow applied
+ * to one line item, with the definition's tasks copied
  * in. Every display field is a snapshot and there is no foreign key to
  * `ShopOrder`, `OrderLineItem`, or `Workflow` — a run must survive an order
  * delete, a line item dropped by an edit, and a definition edit or rename,
  * because it is the record of work someone may already have started.
  * `unique (lineItemId, workflowId)` spans every status so a cancelled run
  * keeps its key: it is now only the *un-cancel* key, the one that lets
- * recovery from a mistaken cancel restore the steps already done rather than
+ * recovery from a mistaken cancel restore the tasks already done rather than
  * start a fresh run. The cardinality rule is the second index,
  * `WorkflowRun_live_item_uidx`, partial over `status <> 'cancelled'`: **one
  * live run per line item**, enforced by the database and not only by the
  * write paths, so reconcile, manual attach, replace and un-cancel all have to
  * be correct under it. `OrderLineItem.matchedWorkflowIds` is the other half:
  * the workflows whose tags matched at the last reconcile, from which
- * "ambiguous" (two or more, no live run) is derived at read time. `status` is denormalized from the steps for
- * the run list and the definitions badge; every step write recomputes it in
+ * "ambiguous" (two or more, no live run) is derived at read time. `status` is denormalized from the tasks for
+ * the run list and the definitions badge; every task write recomputes it in
  * the same transaction. `(teamId, completedAt)` serves the member's run list, which
- * asks for open steps by team. `WorkflowRunStep.teamId` is nullable for the
- * same reason as `WorkflowStep.teamId`: a team delete nulls it on open steps
+ * asks for open tasks by team. `WorkflowRunTask.teamId` is nullable for the
+ * same reason as `WorkflowTask.teamId`: a team delete nulls it on open tasks
  * (unassigned, on nobody's list until a person assigns a team) and leaves
- * finished steps alone, whose `teamName` snapshot is all history needs.
+ * finished tasks alone, whose `teamName` snapshot is all history needs.
  * `startedByEmail` / `completedByEmail` snapshot the actor the same way, so
- * a member delete never leaves history resolving to nobody. A run step is
- * *ready* when it is open and no step in an earlier `stage` of the same run
- * is still open, so several steps of one run can be ready at once;
+ * a member delete never leaves history resolving to nobody. A run task is
+ * *ready* by `readyWhere`'s rule, so several tasks of one run can be ready
+ * at once;
  * `startedAt` / `startedBy` record Start and make the run `active` before
  * anything is completed. `WorkflowRun.note` is free text about the whole
  * item, one field per run with no author (`Domain.SetRunNoteCommand`).
@@ -515,33 +514,33 @@ const initializeSchema = Effect.gen(function* () {
       createdAt integer not null,
       updatedAt integer not null
     );
-    create table if not exists WorkflowStep (
+    create table if not exists WorkflowTask (
       id text primary key,
       workflowId text not null references Workflow (id) on delete cascade,
       position integer not null,
-      stage integer not null,
+      step integer not null,
       name text not null check (name = trim(name) and length(name) > 0),
       teamId text,
       instructions text,
       unique (workflowId, position)
     );
-    create index if not exists WorkflowStep_teamId_idx on WorkflowStep (teamId);
+    create index if not exists WorkflowTask_teamId_idx on WorkflowTask (teamId);
     create table if not exists WorkflowDraft (
       workflowId text primary key references Workflow (id) on delete cascade,
       createdAt integer not null,
       updatedAt integer not null
     );
-    create table if not exists WorkflowDraftStep (
+    create table if not exists WorkflowDraftTask (
       id text primary key,
       workflowId text not null references WorkflowDraft (workflowId) on delete cascade,
       position integer not null,
-      stage integer not null,
+      step integer not null,
       name text not null check (name = trim(name) and length(name) > 0),
       teamId text,
       instructions text,
       unique (workflowId, position)
     );
-    create index if not exists WorkflowDraftStep_teamId_idx on WorkflowDraftStep (teamId);
+    create index if not exists WorkflowDraftTask_teamId_idx on WorkflowDraftTask (teamId);
     create table if not exists WorkflowRun (
       id text primary key,
       workflowId text not null,
@@ -572,11 +571,11 @@ const initializeSchema = Effect.gen(function* () {
     create index if not exists WorkflowRun_status_idx on WorkflowRun (status);
     create index if not exists WorkflowRun_open_age_idx
       on WorkflowRun (orderProcessedAt, lineItemId, id) where status in ('pending', 'active');
-    create table if not exists WorkflowRunStep (
+    create table if not exists WorkflowRunTask (
       id text primary key,
       runId text not null references WorkflowRun (id) on delete cascade,
       position integer not null,
-      stage integer not null,
+      step integer not null,
       name text not null,
       teamId text,
       teamName text not null,
@@ -594,8 +593,8 @@ const initializeSchema = Effect.gen(function* () {
       reopenedByEmail text,
       unique (runId, position)
     );
-    create index if not exists WorkflowRunStep_teamId_idx
-      on WorkflowRunStep (teamId, completedAt);
+    create index if not exists WorkflowRunTask_teamId_idx
+      on WorkflowRunTask (teamId, completedAt);
   `;
 });
 
@@ -778,8 +777,8 @@ const applyResult = <R>(
     Domain.Workflow,
     | WorkflowNotFoundError
     | NoDraftError
-    | NoStepsError
-    | StepUnassignedError
+    | NoTasksError
+    | TaskUnassignedError
     | SqlError.SqlError
     | WorkflowRepositoryError
     | WorkflowRunRepositoryError
@@ -803,12 +802,12 @@ const applyResult = <R>(
         Effect.succeed<Domain.ApplyResult>({ _tag: "NotFound" }),
       NoDraftError: () =>
         Effect.succeed<Domain.ApplyResult>({ _tag: "NoDraft" }),
-      NoStepsError: () =>
-        Effect.succeed<Domain.ApplyResult>({ _tag: "NoSteps" }),
-      StepUnassignedError: ({ stepNames }) =>
+      NoTasksError: () =>
+        Effect.succeed<Domain.ApplyResult>({ _tag: "NoTasks" }),
+      TaskUnassignedError: ({ taskNames }) =>
         Effect.succeed<Domain.ApplyResult>({
-          _tag: "StepUnassigned",
-          stepNames,
+          _tag: "TaskUnassigned",
+          taskNames,
         }),
     }),
   );
@@ -860,8 +859,8 @@ const activateResult = <R>(
   effect: Effect.Effect<
     { readonly workflow: Domain.Workflow; readonly started: number },
     | WorkflowNotFoundError
-    | NoStepsError
-    | StepUnassignedError
+    | NoTasksError
+    | TaskUnassignedError
     | SqlError.SqlError
     | WorkflowRepositoryError
     | WorkflowRunRepositoryError
@@ -887,12 +886,12 @@ const activateResult = <R>(
     Effect.catchTags({
       WorkflowNotFoundError: () =>
         Effect.succeed<Domain.ActivateResult>({ _tag: "NotFound" }),
-      NoStepsError: () =>
-        Effect.succeed<Domain.ActivateResult>({ _tag: "NoSteps" }),
-      StepUnassignedError: ({ stepNames }) =>
+      NoTasksError: () =>
+        Effect.succeed<Domain.ActivateResult>({ _tag: "NoTasks" }),
+      TaskUnassignedError: ({ taskNames }) =>
         Effect.succeed<Domain.ActivateResult>({
-          _tag: "StepUnassigned",
-          stepNames,
+          _tag: "TaskUnassigned",
+          taskNames,
         }),
     }),
   );
@@ -932,11 +931,11 @@ const changeActivatedAtResult = <R>(
     }),
   );
 
-const stepResult = <R>(
+const taskResult = <R>(
   effect: Effect.Effect<
-    Domain.StepResult,
+    Domain.TaskResult,
+    | TaskNotFoundError
     | StepNotFoundError
-    | StageNotFoundError
     | WorkflowNotFoundError
     | WorkflowLimitError
     | SqlError.SqlError
@@ -946,7 +945,7 @@ const stepResult = <R>(
     R
   >,
 ): Effect.Effect<
-  Domain.StepResult,
+  Domain.TaskResult,
   | SqlError.SqlError
   | WorkflowRepositoryError
   | RepositoryError
@@ -955,14 +954,14 @@ const stepResult = <R>(
 > =>
   effect.pipe(
     Effect.catchTags({
+      TaskNotFoundError: () =>
+        Effect.succeed<Domain.TaskResult>({ _tag: "NotFound" }),
       StepNotFoundError: () =>
-        Effect.succeed<Domain.StepResult>({ _tag: "NotFound" }),
-      StageNotFoundError: () =>
-        Effect.succeed<Domain.StepResult>({ _tag: "NotFound" }),
+        Effect.succeed<Domain.TaskResult>({ _tag: "NotFound" }),
       WorkflowNotFoundError: () =>
-        Effect.succeed<Domain.StepResult>({ _tag: "NotFound" }),
+        Effect.succeed<Domain.TaskResult>({ _tag: "NotFound" }),
       WorkflowLimitError: ({ limit }) =>
-        Effect.succeed<Domain.StepResult>({ _tag: "Limit", limit }),
+        Effect.succeed<Domain.TaskResult>({ _tag: "Limit", limit }),
     }),
   );
 
@@ -981,8 +980,8 @@ const runResult = <R>(
     | RunItemBusyError
     | RunNotAllowedError
     | RunNotBlockedError
-    | StepNotReadyError
-    | StepUndoBlockedError
+    | TaskNotReadyError
+    | TaskUndoBlockedError
     | SqlError.SqlError
     | WorkflowRunRepositoryError
     | WorkflowRepositoryError
@@ -1012,12 +1011,12 @@ const runResult = <R>(
         Effect.succeed<Domain.RunResult>({ _tag: "NotAllowed" }),
       RunNotBlockedError: () =>
         Effect.succeed<Domain.RunResult>({ _tag: "NotBlocked" }),
-      StepNotReadyError: () =>
+      TaskNotReadyError: () =>
         Effect.succeed<Domain.RunResult>({ _tag: "NotReady" }),
-      StepUndoBlockedError: ({ stepName, teamName }) =>
+      TaskUndoBlockedError: ({ taskName, teamName }) =>
         Effect.succeed<Domain.RunResult>({
           _tag: "UndoBlocked",
-          stepName,
+          taskName,
           teamName,
         }),
       RunItemBusyError: ({ workflowName }) =>
@@ -1100,7 +1099,7 @@ type PublishTeams = "all" | readonly string[];
  */
 const orderTeamIds = (
   target:
-    | { readonly runStepId: string }
+    | { readonly runTaskId: string }
     | { readonly runId: string }
     | { readonly orderId: string },
 ) =>
@@ -1117,25 +1116,25 @@ const unionTeams = (a: PublishTeams, b: PublishTeams): PublishTeams =>
   a === "all" || b === "all" ? "all" : [...new Set([...a, ...b])];
 
 /**
- * Readiness decided on a snapshot taken before any step of the
- * round is completed: completing stage 1 makes stage 2 ready at
- * once, so asking `completeStep` as the loop goes would run the
- * whole order to done in one round. The rule is `Domain.readySteps`.
+ * Readiness decided on a snapshot taken before any task of the
+ * round is completed: completing step 1 makes step 2 ready at
+ * once, so asking `completeTask` as the loop goes would run the
+ * whole order to done in one round. The rule is `Domain.readyTasks`.
  */
 /**
- * A seeded step write recorded as the merchant: no `teamIds`, which is the one
- * rule a merchant skips (`Domain.CompleteStepCommand`). Module scope because
+ * A seeded task write recorded as the merchant: no `teamIds`, which is the one
+ * rule a merchant skips (`Domain.CompleteTaskCommand`). Module scope because
  * it captures nothing — oxlint's `unicorn(consistent-function-scoping)`.
  */
-const merchantStepCommand = (step: Domain.WorkflowRunStep) => ({
-  runStepId: step.id,
+const merchantTaskCommand = (task: Domain.WorkflowRunTask) => ({
+  runTaskId: task.id,
   actor: { role: "merchant" } as const,
 });
 
-const seedReadySteps = (
+const seedReadyTasks = (
   details: readonly Domain.WorkflowRunDetail[],
-): Domain.WorkflowRunStep[] =>
-  details.flatMap(({ run, steps }) => Domain.readySteps(run, steps));
+): Domain.WorkflowRunTask[] =>
+  details.flatMap(({ run, tasks }) => Domain.readyTasks(run, tasks));
 
 export class ShopAgent extends Agent {
   declare private readonly runEffect: ReturnType<typeof makeRunEffect>;
@@ -1418,7 +1417,7 @@ export class ShopAgent extends Agent {
    * is their run list, which is scoped by team rather than by order, so an order
    * GID says nothing about whether their view changed. The five member
    * mutations name the teams their write could have affected — every team
-   * owning a step on any run of that order, because readiness crosses runs
+   * owning a task on any run of that order, because readiness crosses runs
    * (`WorkflowRunRepository.listOrderTeamIds`) — and everything else publishes
    * `"all"`, which reaches every member. Over-broad costs a refetch;
    * under-broad costs a list that silently stops updating, so `"all"` is the
@@ -1851,10 +1850,10 @@ export class ShopAgent extends Agent {
     const shop = this.name;
     /**
      * Scoped by team as well as by order: the union of the teams with an open
-     * step on the order before and after the reconcile, because a reconcile
-     * can take a team's last step away (a cancelled line, a dropped quantity)
+     * task on the order before and after the reconcile, because a reconcile
+     * can take a team's last task away (a cancelled line, a dropped quantity)
      * as readily as give one, and the team losing it is only nameable before.
-     * An order no team owns a step on either side publishes to *no* member —
+     * An order no team owns a task on either side publishes to *no* member —
      * the empty list is the intended answer, not a missing one — while the
      * merchant's pages still see their order's id.
      */
@@ -2277,12 +2276,12 @@ export class ShopAgent extends Agent {
    * has a `getWorkflow(workflowId)` that tracks Cloudflare Workflow instances.
    *
    * Joins team names from D1 inside the object rather than in a server fn: the
-   * runtime already holds `Repository`, and one round trip returns the steps,
+   * runtime already holds `Repository`, and one round trip returns the tasks,
    * their resolved team names and member counts, and the roster the picker
-   * needs. Both attention states are derived here and never stored: a step
+   * needs. Both attention states are derived here and never stored: a task
    * whose `teamId` is null or names no team resolves to `teamName: null`
    * (unassigned — flagged, never blocked in the editor, since the risk is
-   * when a run starts); a step on a team with no members carries
+   * when a run starts); a task on a team with no members carries
    * `memberCount: 0`. Assigning a team or adding a member clears either with
    * no other write.
    *
@@ -2304,26 +2303,26 @@ export class ShopAgent extends Agent {
           const roster = yield* teams();
           const teamOf = new Map(roster.map((team) => [team.id, team]));
           const withTeamNames = (
-            steps: readonly Domain.WorkflowStep[],
-          ): Domain.StepWithTeamName[] =>
-            steps.map((step) => {
+            tasks: readonly Domain.WorkflowTask[],
+          ): Domain.TaskWithTeamName[] =>
+            tasks.map((task) => {
               const team =
-                step.teamId === null ? undefined : teamOf.get(step.teamId);
+                task.teamId === null ? undefined : teamOf.get(task.teamId);
               return {
-                ...step,
+                ...task,
                 teamName: team?.name ?? null,
                 memberCount: team?.memberCount ?? null,
               };
             });
           return {
             workflow: detail.value.workflow,
-            steps: withTeamNames(detail.value.steps),
+            tasks: withTeamNames(detail.value.tasks),
             draft:
               detail.value.draft === null
                 ? null
                 : {
                     draft: detail.value.draft.draft,
-                    steps: withTeamNames(detail.value.draft.steps),
+                    tasks: withTeamNames(detail.value.draft.tasks),
                   },
             teams: roster,
           } satisfies Domain.WorkflowDetailView;
@@ -2350,7 +2349,7 @@ export class ShopAgent extends Agent {
     );
   }
 
-  /** Duplicate: the copy is off, keeps the steps, and takes the name and tag the dialog collected (`WorkflowRepository.duplicateWorkflow`). */
+  /** Duplicate: the copy is off, keeps the tasks, and takes the name and tag the dialog collected (`WorkflowRepository.duplicateWorkflow`). */
   @callable()
   duplicateWorkflow(
     input: typeof Domain.DuplicateWorkflowInput.Encoded,
@@ -2404,7 +2403,7 @@ export class ShopAgent extends Agent {
    * draft. Unlike a rename it changes how the workflow matches, so an on
    * workflow reconciles every stored order once afterwards, as Apply does:
    * an order already in Baton whose product carries the new tag starts now,
-   * not on Shopify's next edit. Runs in flight snapshot their tag and steps
+   * not on Shopify's next edit. Runs in flight snapshot their tag and tasks
    * and are untouched. Publishes because the order pages read the reconcile.
    */
   @callable()
@@ -2466,9 +2465,9 @@ export class ShopAgent extends Agent {
 
   /**
    * Apply changes. On an on workflow, reconciles every stored order once
-   * afterwards: new steps can make an item startable that was not, and those
+   * afterwards: new tasks can make an item startable that was not, and those
    * orders should start now rather than at whatever moment Shopify next edits
-   * them. Publishes because the next order starts against the new steps,
+   * them. Publishes because the next order starts against the new tasks,
    * which the order page's workflow pickers reflect.
    */
   @callable()
@@ -2684,7 +2683,7 @@ export class ShopAgent extends Agent {
             ...(yield* startContext()),
             workflow: {
               workflow: found.value.workflow,
-              steps: found.value.steps,
+              tasks: found.value.tasks,
             },
           });
         }),
@@ -2738,7 +2737,7 @@ export class ShopAgent extends Agent {
 
   /**
    * The live D1 roster with member counts, read fresh on every call: it is
-   * what every step pointer is resolved against (an id not in it is
+   * what every task pointer is resolved against (an id not in it is
    * unassigned) and what the empty-team warnings are computed from.
    */
   private teams() {
@@ -2756,7 +2755,7 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Loads what starting runs needs — every active definition with its steps, and
+   * Loads what starting runs needs — every active definition with its tasks, and
    * the active team roster from D1 — *before* any transaction opens, and
    * returns a per-order effect the caller hands to `upsertOrder.afterWrite`.
    * The D1 read is the one await run creation needs that is not storage, and it
@@ -2887,7 +2886,7 @@ export class ShopAgent extends Agent {
         runs: yield* runs.listRunsForOrder({ orderId: order.id }),
         teams: roster,
         itemWorkflows: workflows
-          .filter(({ steps }) => steps.length > 0)
+          .filter(({ tasks }) => tasks.length > 0)
           .map(({ workflow }) => workflow),
       } satisfies Domain.OrderDetailView;
     });
@@ -2993,10 +2992,10 @@ export class ShopAgent extends Agent {
           const workflows = yield* WorkflowRepository;
           const found = yield* workflows.getWorkflow({ workflowId });
           const roster = yield* teams();
-          // Only the workflow's own steps can start a run; a draft is never
+          // Only the workflow's own tasks can start a run; a draft is never
           // attachable.
           const detail: Domain.WorkflowDetail | null = Option.isSome(found)
-            ? { workflow: found.value.workflow, steps: found.value.steps }
+            ? { workflow: found.value.workflow, tasks: found.value.tasks }
             : null;
           if (detail === null || !canStart(detail, roster))
             return {
@@ -3088,15 +3087,15 @@ export class ShopAgent extends Agent {
    * re-derive that decision at runtime from the connection.
    *
    * Each builds `actor: { role: "merchant" }` and passes **no** `teamIds`,
-   * which is the entire permission difference (`Domain.CompleteStepCommand`):
-   * the step's team need not be one of the caller's, because the merchant has
-   * none, and an unassigned step is exactly the case they are here to fix.
-   * Stage order, terminal runs, and the downstream undo guard still apply.
+   * which is the entire permission difference (`Domain.CompleteTaskCommand`):
+   * the task's team need not be one of the caller's, because the merchant has
+   * none, and an unassigned task is exactly the case they are here to fix.
+   * Step order, terminal runs, and the downstream undo guard still apply.
    *
    * They publish with {@link publishToTeams}, not `publish("all")`: the
    * merchant's own order page is subscribed by order and the workers by team,
    * and the team fan-out for the touched order already reaches both. There is
-   * no merchant Start: "started" records that a worker picked the step up,
+   * no merchant Start: "started" records that a worker picked the task up,
    * and a merchant marking it started on their behalf would put a name on
    * work nobody has begun. The merchant either completes it outright or leaves
    * it for the team.
@@ -3104,82 +3103,82 @@ export class ShopAgent extends Agent {
    * No member id in the log line: there isn't one.
    */
   @callable()
-  merchantCompleteStep(
-    input: typeof Domain.CompleteStepInput.Encoded,
+  merchantCompleteTask(
+    input: typeof Domain.CompleteTaskInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
-    const publish = (runStepId: string) => this.publishToTeams({ runStepId });
+    const publish = (runTaskId: string) => this.publishToTeams({ runTaskId });
     return this.runEffect(
       callableEffect(
-        "ShopAgent.merchantCompleteStep",
-        Domain.CompleteStepInput,
+        "ShopAgent.merchantCompleteTask",
+        Domain.CompleteTaskInput,
         { role: "merchant", parse: { onExcessProperty: "error" } },
-      )(({ runStepId }) =>
+      )(({ runTaskId }) =>
         runResult(
           Effect.gen(function* () {
-            yield* (yield* WorkflowRunRepository).completeStep({
-              runStepId,
+            yield* (yield* WorkflowRunRepository).completeTask({
+              runTaskId,
               actor: { role: "merchant" },
-            } satisfies Domain.CompleteStepCommand);
+            } satisfies Domain.CompleteTaskCommand);
             yield* Effect.logInfo(
-              `ShopAgent.merchantCompleteStep: shop=${shop} step=${runStepId}`,
-            ).pipe(Effect.annotateLogs({ shop, step: runStepId }));
+              `ShopAgent.merchantCompleteTask: shop=${shop} task=${runTaskId}`,
+            ).pipe(Effect.annotateLogs({ shop, task: runTaskId }));
           }),
-        ).pipe(Effect.tap(() => publish(runStepId))),
+        ).pipe(Effect.tap(() => publish(runTaskId))),
       )(input),
     );
   }
 
   @callable()
-  merchantUncompleteStep(
-    input: typeof Domain.UncompleteStepInput.Encoded,
+  merchantUncompleteTask(
+    input: typeof Domain.UncompleteTaskInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
-    const publish = (runStepId: string) => this.publishToTeams({ runStepId });
+    const publish = (runTaskId: string) => this.publishToTeams({ runTaskId });
     return this.runEffect(
       callableEffect(
-        "ShopAgent.merchantUncompleteStep",
-        Domain.UncompleteStepInput,
+        "ShopAgent.merchantUncompleteTask",
+        Domain.UncompleteTaskInput,
         { role: "merchant", parse: { onExcessProperty: "error" } },
-      )(({ runStepId }) =>
+      )(({ runTaskId }) =>
         runResult(
           Effect.gen(function* () {
-            yield* (yield* WorkflowRunRepository).uncompleteStep({
-              runStepId,
+            yield* (yield* WorkflowRunRepository).uncompleteTask({
+              runTaskId,
               actor: { role: "merchant" },
-            } satisfies Domain.UncompleteStepCommand);
+            } satisfies Domain.UncompleteTaskCommand);
             yield* Effect.logInfo(
-              `ShopAgent.merchantUncompleteStep: shop=${shop} step=${runStepId}`,
-            ).pipe(Effect.annotateLogs({ shop, step: runStepId }));
+              `ShopAgent.merchantUncompleteTask: shop=${shop} task=${runTaskId}`,
+            ).pipe(Effect.annotateLogs({ shop, task: runTaskId }));
           }),
-        ).pipe(Effect.tap(() => publish(runStepId))),
+        ).pipe(Effect.tap(() => publish(runTaskId))),
       )(input),
     );
   }
 
-  /** Put back from the order page; the rule is on `WorkflowRunRepository.unstartStep`. */
+  /** Put back from the order page; the rule is on `WorkflowRunRepository.unstartTask`. */
   @callable()
-  merchantUnstartStep(
-    input: typeof Domain.UnstartStepInput.Encoded,
+  merchantUnstartTask(
+    input: typeof Domain.UnstartTaskInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
-    const publish = (runStepId: string) => this.publishToTeams({ runStepId });
+    const publish = (runTaskId: string) => this.publishToTeams({ runTaskId });
     return this.runEffect(
-      callableEffect("ShopAgent.merchantUnstartStep", Domain.UnstartStepInput, {
+      callableEffect("ShopAgent.merchantUnstartTask", Domain.UnstartTaskInput, {
         role: "merchant",
         parse: { onExcessProperty: "error" },
-      })(({ runStepId }) =>
+      })(({ runTaskId }) =>
         runResult(
           Effect.gen(function* () {
-            yield* (yield* WorkflowRunRepository).unstartStep({
-              runStepId,
+            yield* (yield* WorkflowRunRepository).unstartTask({
+              runTaskId,
               actor: { role: "merchant" },
-            } satisfies Domain.UnstartStepCommand);
+            } satisfies Domain.UnstartTaskCommand);
             yield* Effect.logInfo(
-              `ShopAgent.merchantUnstartStep: shop=${shop} step=${runStepId}`,
-            ).pipe(Effect.annotateLogs({ shop, step: runStepId }));
+              `ShopAgent.merchantUnstartTask: shop=${shop} task=${runTaskId}`,
+            ).pipe(Effect.annotateLogs({ shop, task: runTaskId }));
           }),
-        ).pipe(Effect.tap(() => publish(runStepId))),
+        ).pipe(Effect.tap(() => publish(runTaskId))),
       )(input),
     );
   }
@@ -3310,12 +3309,12 @@ export class ShopAgent extends Agent {
   /**
    * A publish scoped to the teams a member's write could have changed the
    * run list of — see `publish`. The read is one indexed query against the
-   * object's own SQLite, and it runs after the write so a step that just
+   * object's own SQLite, and it runs after the write so a task that just
    * became ready for another team is included.
    */
   private publishToTeams(
     target:
-      | { readonly runStepId: string }
+      | { readonly runTaskId: string }
       | { readonly runId: string }
       | { readonly orderId: string },
     touched: PublishScope = "all",
@@ -3447,54 +3446,54 @@ export class ShopAgent extends Agent {
   }
 
   @callable()
-  startStep(
-    input: typeof Domain.StartStepInput.Encoded,
+  startTask(
+    input: typeof Domain.StartTaskInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
-    const publish = (runStepId: string) => this.publishToTeams({ runStepId });
+    const publish = (runTaskId: string) => this.publishToTeams({ runTaskId });
     return this.runEffect(
-      memberCallableEffect("ShopAgent.startStep", Domain.StartStepInput, {
+      memberCallableEffect("ShopAgent.startTask", Domain.StartTaskInput, {
         onExcessProperty: "error",
-      })(({ runStepId }, { memberId, memberEmail, teamIds }) =>
+      })(({ runTaskId }, { memberId, memberEmail, teamIds }) =>
         runResult(
           Effect.gen(function* () {
-            yield* (yield* WorkflowRunRepository).startStep({
-              runStepId,
+            yield* (yield* WorkflowRunRepository).startTask({
+              runTaskId,
               actor: { role: "member", memberId, email: memberEmail },
               teamIds,
-            } satisfies Domain.StartStepCommand);
+            } satisfies Domain.StartTaskCommand);
             yield* Effect.logInfo(
-              `ShopAgent.startStep: shop=${shop} step=${runStepId} memberId=${memberId}`,
-            ).pipe(Effect.annotateLogs({ shop, step: runStepId, memberId }));
+              `ShopAgent.startTask: shop=${shop} task=${runTaskId} memberId=${memberId}`,
+            ).pipe(Effect.annotateLogs({ shop, task: runTaskId, memberId }));
           }),
-        ).pipe(Effect.tap(() => publish(runStepId))),
+        ).pipe(Effect.tap(() => publish(runTaskId))),
       )(input),
     );
   }
 
-  /** Put back; the rule is on `WorkflowRunRepository.unstartStep`. */
+  /** Put back; the rule is on `WorkflowRunRepository.unstartTask`. */
   @callable()
-  unstartStep(
-    input: typeof Domain.UnstartStepInput.Encoded,
+  unstartTask(
+    input: typeof Domain.UnstartTaskInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
-    const publish = (runStepId: string) => this.publishToTeams({ runStepId });
+    const publish = (runTaskId: string) => this.publishToTeams({ runTaskId });
     return this.runEffect(
-      memberCallableEffect("ShopAgent.unstartStep", Domain.UnstartStepInput, {
+      memberCallableEffect("ShopAgent.unstartTask", Domain.UnstartTaskInput, {
         onExcessProperty: "error",
-      })(({ runStepId }, { memberId, memberEmail, teamIds }) =>
+      })(({ runTaskId }, { memberId, memberEmail, teamIds }) =>
         runResult(
           Effect.gen(function* () {
-            yield* (yield* WorkflowRunRepository).unstartStep({
-              runStepId,
+            yield* (yield* WorkflowRunRepository).unstartTask({
+              runTaskId,
               actor: { role: "member", memberId, email: memberEmail },
               teamIds,
-            } satisfies Domain.UnstartStepCommand);
+            } satisfies Domain.UnstartTaskCommand);
             yield* Effect.logInfo(
-              `ShopAgent.unstartStep: shop=${shop} step=${runStepId} memberId=${memberId}`,
-            ).pipe(Effect.annotateLogs({ shop, step: runStepId, memberId }));
+              `ShopAgent.unstartTask: shop=${shop} task=${runTaskId} memberId=${memberId}`,
+            ).pipe(Effect.annotateLogs({ shop, task: runTaskId, memberId }));
           }),
-        ).pipe(Effect.tap(() => publish(runStepId))),
+        ).pipe(Effect.tap(() => publish(runTaskId))),
       )(input),
     );
   }
@@ -3582,27 +3581,27 @@ export class ShopAgent extends Agent {
   }
 
   @callable()
-  completeStep(
-    input: typeof Domain.CompleteStepInput.Encoded,
+  completeTask(
+    input: typeof Domain.CompleteTaskInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
-    const publish = (runStepId: string) => this.publishToTeams({ runStepId });
+    const publish = (runTaskId: string) => this.publishToTeams({ runTaskId });
     return this.runEffect(
-      memberCallableEffect("ShopAgent.completeStep", Domain.CompleteStepInput, {
+      memberCallableEffect("ShopAgent.completeTask", Domain.CompleteTaskInput, {
         onExcessProperty: "error",
-      })(({ runStepId }, { memberId, memberEmail, teamIds }) =>
+      })(({ runTaskId }, { memberId, memberEmail, teamIds }) =>
         runResult(
           Effect.gen(function* () {
-            yield* (yield* WorkflowRunRepository).completeStep({
-              runStepId,
+            yield* (yield* WorkflowRunRepository).completeTask({
+              runTaskId,
               actor: { role: "member", memberId, email: memberEmail },
               teamIds,
-            } satisfies Domain.CompleteStepCommand);
+            } satisfies Domain.CompleteTaskCommand);
             yield* Effect.logInfo(
-              `ShopAgent.completeStep: shop=${shop} step=${runStepId} memberId=${memberId}`,
-            ).pipe(Effect.annotateLogs({ shop, step: runStepId, memberId }));
+              `ShopAgent.completeTask: shop=${shop} task=${runTaskId} memberId=${memberId}`,
+            ).pipe(Effect.annotateLogs({ shop, task: runTaskId, memberId }));
           }),
-        ).pipe(Effect.tap(() => publish(runStepId))),
+        ).pipe(Effect.tap(() => publish(runTaskId))),
       )(input),
     );
   }
@@ -3612,29 +3611,29 @@ export class ShopAgent extends Agent {
    * order page shows every run of the order.
    */
   @callable()
-  uncompleteStep(
-    input: typeof Domain.UncompleteStepInput.Encoded,
+  uncompleteTask(
+    input: typeof Domain.UncompleteTaskInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
-    const publish = (runStepId: string) => this.publishToTeams({ runStepId });
+    const publish = (runTaskId: string) => this.publishToTeams({ runTaskId });
     return this.runEffect(
       memberCallableEffect(
-        "ShopAgent.uncompleteStep",
-        Domain.UncompleteStepInput,
+        "ShopAgent.uncompleteTask",
+        Domain.UncompleteTaskInput,
         { onExcessProperty: "error" },
-      )(({ runStepId }, { memberId, memberEmail, teamIds }) =>
+      )(({ runTaskId }, { memberId, memberEmail, teamIds }) =>
         runResult(
           Effect.gen(function* () {
-            yield* (yield* WorkflowRunRepository).uncompleteStep({
-              runStepId,
+            yield* (yield* WorkflowRunRepository).uncompleteTask({
+              runTaskId,
               actor: { role: "member", memberId, email: memberEmail },
               teamIds,
-            } satisfies Domain.UncompleteStepCommand);
+            } satisfies Domain.UncompleteTaskCommand);
             yield* Effect.logInfo(
-              `ShopAgent.uncompleteStep: shop=${shop} step=${runStepId} memberId=${memberId}`,
-            ).pipe(Effect.annotateLogs({ shop, step: runStepId, memberId }));
+              `ShopAgent.uncompleteTask: shop=${shop} task=${runTaskId} memberId=${memberId}`,
+            ).pipe(Effect.annotateLogs({ shop, task: runTaskId, memberId }));
           }),
-        ).pipe(Effect.tap(() => publish(runStepId))),
+        ).pipe(Effect.tap(() => publish(runTaskId))),
       )(input),
     );
   }
@@ -3729,57 +3728,57 @@ export class ShopAgent extends Agent {
   @callable()
   addStep(
     input: typeof Domain.AddStepInput.Encoded,
-  ): Promise<Domain.StepResult> {
+  ): Promise<Domain.TaskResult> {
     const teamExists = (teamId: string) => this.teamExists(teamId);
     return this.runEffect(
       callableEffect("ShopAgent.addStep", Domain.AddStepInput, {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })(({ workflowId, name, teamId, instructions }) =>
-        stepResult(
+        taskResult(
           Effect.gen(function* () {
             const team = yield* teamExists(teamId);
             if (team === null) return { _tag: "TeamNotFound" };
-            const step = yield* (yield* WorkflowRepository).addStep({
+            const task = yield* (yield* WorkflowRepository).addStep({
               workflowId,
               name,
               teamId: team.id,
               instructions: instructions ?? null,
             });
-            return { _tag: "Ok", step };
+            return { _tag: "Ok", task };
           }),
         ),
       )(input),
     );
   }
 
-  /** `StageNotFoundError` surfaces as `NotFound`: the stage the editor showed was closed by a concurrent edit. */
+  /** `StepNotFoundError` surfaces as `NotFound`: the step the editor showed was closed by a concurrent edit. */
   @callable()
-  addParallelStep(
-    input: typeof Domain.AddParallelStepInput.Encoded,
-  ): Promise<Domain.StepResult> {
+  addTask(
+    input: typeof Domain.AddTaskInput.Encoded,
+  ): Promise<Domain.TaskResult> {
     const shop = this.name;
     const teamExists = (teamId: string) => this.teamExists(teamId);
     return this.runEffect(
-      callableEffect("ShopAgent.addParallelStep", Domain.AddParallelStepInput, {
+      callableEffect("ShopAgent.addTask", Domain.AddTaskInput, {
         role: "merchant",
         parse: { onExcessProperty: "error" },
-      })(({ workflowId, stage, name, teamId, instructions }) =>
-        stepResult(
+      })(({ workflowId, step, name, teamId, instructions }) =>
+        taskResult(
           Effect.gen(function* () {
             const team = yield* teamExists(teamId);
             if (team === null) return { _tag: "TeamNotFound" };
-            const step = yield* (yield* WorkflowRepository).addParallelStep({
+            const task = yield* (yield* WorkflowRepository).addTask({
               workflowId,
-              stage,
+              step,
               name,
               teamId: team.id,
               instructions: instructions ?? null,
             });
             yield* Effect.logInfo(
-              `ShopAgent.addParallelStep: shop=${shop} workflowId=${workflowId} stage=${String(stage)}`,
-            ).pipe(Effect.annotateLogs({ shop, workflowId, stage }));
-            return { _tag: "Ok", step };
+              `ShopAgent.addTask: shop=${shop} workflowId=${workflowId} step=${String(step)}`,
+            ).pipe(Effect.annotateLogs({ shop, workflowId, step }));
+            return { _tag: "Ok", task };
           }),
         ),
       )(input),
@@ -3787,27 +3786,27 @@ export class ShopAgent extends Agent {
   }
 
   @callable()
-  updateStep(
-    input: typeof Domain.UpdateStepInput.Encoded,
-  ): Promise<Domain.StepResult> {
+  updateTask(
+    input: typeof Domain.UpdateTaskInput.Encoded,
+  ): Promise<Domain.TaskResult> {
     const teamExists = (teamId: string) => this.teamExists(teamId);
     return this.runEffect(
-      callableEffect("ShopAgent.updateStep", Domain.UpdateStepInput, {
+      callableEffect("ShopAgent.updateTask", Domain.UpdateTaskInput, {
         role: "merchant",
         parse: { onExcessProperty: "error" },
-      })(({ stepId, name, teamId, instructions }) =>
-        stepResult(
+      })(({ taskId, name, teamId, instructions }) =>
+        taskResult(
           Effect.gen(function* () {
             const repository = yield* WorkflowRepository;
             const team = yield* teamExists(teamId);
             if (team === null) return { _tag: "TeamNotFound" };
-            const step = yield* repository.updateStep({
-              stepId,
+            const task = yield* repository.updateTask({
+              taskId,
               name,
               teamId: team.id,
               instructions,
             });
-            return { _tag: "Ok", step };
+            return { _tag: "Ok", task };
           }),
         ),
       )(input),
@@ -3815,18 +3814,18 @@ export class ShopAgent extends Agent {
   }
 
   @callable()
-  moveStep(
-    input: typeof Domain.MoveStepInput.Encoded,
-  ): Promise<Domain.StepResult> {
+  moveTask(
+    input: typeof Domain.MoveTaskInput.Encoded,
+  ): Promise<Domain.TaskResult> {
     return this.runEffect(
-      callableEffect("ShopAgent.moveStep", Domain.MoveStepInput, {
+      callableEffect("ShopAgent.moveTask", Domain.MoveTaskInput, {
         role: "merchant",
         parse: { onExcessProperty: "error" },
-      })(({ stepId, direction }) =>
-        stepResult(
+      })(({ taskId, direction }) =>
+        taskResult(
           Effect.gen(function* () {
-            yield* (yield* WorkflowRepository).moveStep({ stepId, direction });
-            return { _tag: "Ok", step: null };
+            yield* (yield* WorkflowRepository).moveTask({ taskId, direction });
+            return { _tag: "Ok", task: null };
           }),
         ),
       )(input),
@@ -3834,31 +3833,31 @@ export class ShopAgent extends Agent {
   }
 
   @callable()
-  separateStep(
-    input: typeof Domain.SeparateStepInput.Encoded,
-  ): Promise<Domain.StepResult> {
+  separateTask(
+    input: typeof Domain.SeparateTaskInput.Encoded,
+  ): Promise<Domain.TaskResult> {
     const shop = this.name;
     return this.runEffect(
-      callableEffect("ShopAgent.separateStep", Domain.SeparateStepInput, {
+      callableEffect("ShopAgent.separateTask", Domain.SeparateTaskInput, {
         role: "merchant",
         parse: { onExcessProperty: "error" },
-      })(({ stepId }) =>
-        stepResult(
+      })(({ taskId }) =>
+        taskResult(
           Effect.gen(function* () {
             const repository = yield* WorkflowRepository;
-            const existing = yield* repository.getStep({ stepId });
+            const existing = yield* repository.getTask({ taskId });
             if (Option.isNone(existing)) return { _tag: "NotFound" };
-            yield* repository.separateStep({ stepId });
+            yield* repository.separateTask({ taskId });
             yield* Effect.logInfo(
-              `ShopAgent.separateStep: shop=${shop} workflowId=${existing.value.workflow.id} stage=${String(existing.value.step.stage)}`,
+              `ShopAgent.separateTask: shop=${shop} workflowId=${existing.value.workflow.id} step=${String(existing.value.task.step)}`,
             ).pipe(
               Effect.annotateLogs({
                 shop,
                 workflowId: existing.value.workflow.id,
-                stage: existing.value.step.stage,
+                step: existing.value.task.step,
               }),
             );
-            return { _tag: "Ok", step: null };
+            return { _tag: "Ok", task: null };
           }),
         ),
       )(input),
@@ -3866,31 +3865,31 @@ export class ShopAgent extends Agent {
   }
 
   @callable()
-  joinStep(
-    input: typeof Domain.JoinStepInput.Encoded,
-  ): Promise<Domain.StepResult> {
+  joinTask(
+    input: typeof Domain.JoinTaskInput.Encoded,
+  ): Promise<Domain.TaskResult> {
     const shop = this.name;
     return this.runEffect(
-      callableEffect("ShopAgent.joinStep", Domain.JoinStepInput, {
+      callableEffect("ShopAgent.joinTask", Domain.JoinTaskInput, {
         role: "merchant",
         parse: { onExcessProperty: "error" },
-      })(({ stepId }) =>
-        stepResult(
+      })(({ taskId }) =>
+        taskResult(
           Effect.gen(function* () {
             const repository = yield* WorkflowRepository;
-            const existing = yield* repository.getStep({ stepId });
+            const existing = yield* repository.getTask({ taskId });
             if (Option.isNone(existing)) return { _tag: "NotFound" };
-            yield* repository.joinStep({ stepId });
+            yield* repository.joinTask({ taskId });
             yield* Effect.logInfo(
-              `ShopAgent.joinStep: shop=${shop} workflowId=${existing.value.workflow.id} stage=${String(existing.value.step.stage)}`,
+              `ShopAgent.joinTask: shop=${shop} workflowId=${existing.value.workflow.id} step=${String(existing.value.task.step)}`,
             ).pipe(
               Effect.annotateLogs({
                 shop,
                 workflowId: existing.value.workflow.id,
-                stage: existing.value.step.stage,
+                step: existing.value.task.step,
               }),
             );
-            return { _tag: "Ok", step: null };
+            return { _tag: "Ok", task: null };
           }),
         ),
       )(input),
@@ -3898,18 +3897,18 @@ export class ShopAgent extends Agent {
   }
 
   @callable()
-  removeStep(
-    input: typeof Domain.StepIdInput.Encoded,
-  ): Promise<Domain.StepResult> {
+  removeTask(
+    input: typeof Domain.TaskIdInput.Encoded,
+  ): Promise<Domain.TaskResult> {
     return this.runEffect(
-      callableEffect("ShopAgent.removeStep", Domain.StepIdInput, {
+      callableEffect("ShopAgent.removeTask", Domain.TaskIdInput, {
         role: "merchant",
         parse: { onExcessProperty: "error" },
-      })(({ stepId }) =>
-        stepResult(
+      })(({ taskId }) =>
+        taskResult(
           Effect.gen(function* () {
-            yield* (yield* WorkflowRepository).removeStep({ stepId });
-            return { _tag: "Ok", step: null };
+            yield* (yield* WorkflowRepository).removeTask({ taskId });
+            return { _tag: "Ok", task: null };
           }),
         ),
       )(input),
@@ -3917,14 +3916,14 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Delete a team and its steps become unassigned. Two stores, two writes,
+   * Delete a team and its tasks become unassigned. Two stores, two writes,
    * D1 first: the two cannot share a transaction, and the order is what
-   * closes the race with a concurrent `addStep` / `updateStep` pointing at
+   * closes the race with a concurrent `addStep` / `updateTask` pointing at
    * this team. Its `teamExists` check reads D1; if that read lands after the
-   * D1 delete the write is refused, and if it lands before but the step
+   * D1 delete the write is refused, and if it lands before but the task
    * write lands before the nulling, the nulling catches it — the object is
    * single-threaded, so nothing interleaves with the nulling itself. The
-   * reverse order would let a step written between the nulling and the D1
+   * reverse order would let a task written between the nulling and the D1
    * delete validate fine and dangle forever. What remains is the nulling
    * failing after the D1 row is gone; every read already treats an id no
    * team carries as unassigned, so that state is self-healing, and a retry
@@ -3982,61 +3981,61 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Points any open run step at a team, started or not: the remedy for an
-   * unassigned step (see `deleteTeam`) and the merchant's way to move work
+   * Points any open run task at a team, started or not: the remedy for an
+   * unassigned task (see `deleteTeam`) and the merchant's way to move work
    * between teams. The team is checked against the live D1 roster here, as
-   * `addStep` does, and its name is snapshotted onto the step from that same
-   * read. Only `teamId` / `teamName` change, so a started step keeps
-   * `startedBy*`; a finished step is refused (`StepFinished`).
+   * `addStep` does, and its name is snapshotted onto the task from that same
+   * read. Only `teamId` / `teamName` change, so a started task keeps
+   * `startedBy*`; a finished task is refused (`TaskFinished`).
    */
   @callable()
-  assignRunStepTeam(
-    input: typeof Domain.AssignRunStepTeamInput.Encoded,
-  ): Promise<Domain.AssignRunStepTeamResult> {
+  assignRunTaskTeam(
+    input: typeof Domain.AssignRunTaskTeamInput.Encoded,
+  ): Promise<Domain.AssignRunTaskTeamResult> {
     const shop = this.name;
     const publish = (teams: PublishTeams) => this.publish("all", teams);
     const teamExists = (teamId: string) => this.teamExists(teamId);
     return this.runEffect(
       callableEffect(
-        "ShopAgent.assignRunStepTeam",
-        Domain.AssignRunStepTeamInput,
+        "ShopAgent.assignRunTaskTeam",
+        Domain.AssignRunTaskTeamInput,
         { role: "merchant", parse: { onExcessProperty: "error" } },
-      )(({ runStepId, teamId }) =>
+      )(({ runTaskId, teamId }) =>
         Effect.gen(function* () {
           const team = yield* teamExists(teamId);
           if (team === null)
             return {
               _tag: "TeamNotFound",
-            } satisfies Domain.AssignRunStepTeamResult;
+            } satisfies Domain.AssignRunTaskTeamResult;
           /**
-           * Both sides of the move: the team losing the step is only nameable
+           * Both sides of the move: the team losing the task is only nameable
            * before the write, and the team gaining it only after, so the
            * lists that change are the union of the two reads.
            */
-          const before = yield* orderTeamIds({ runStepId });
-          yield* (yield* WorkflowRunRepository).assignRunStepTeam({
-            runStepId,
+          const before = yield* orderTeamIds({ runTaskId });
+          yield* (yield* WorkflowRunRepository).assignRunTaskTeam({
+            runTaskId,
             team: { id: team.id, name: team.name },
           });
           yield* Effect.logInfo(
-            `ShopAgent.assignRunStepTeam: shop=${shop} step=${runStepId} teamId=${teamId}`,
-          ).pipe(Effect.annotateLogs({ shop, step: runStepId, teamId }));
+            `ShopAgent.assignRunTaskTeam: shop=${shop} task=${runTaskId} teamId=${teamId}`,
+          ).pipe(Effect.annotateLogs({ shop, task: runTaskId, teamId }));
           yield* publish(
-            unionTeams(before, yield* orderTeamIds({ runStepId })),
+            unionTeams(before, yield* orderTeamIds({ runTaskId })),
           );
-          return { _tag: "Assigned" } satisfies Domain.AssignRunStepTeamResult;
+          return { _tag: "Assigned" } satisfies Domain.AssignRunTaskTeamResult;
         }).pipe(
           Effect.catchTags({
             RunNotFoundError: () =>
-              Effect.succeed<Domain.AssignRunStepTeamResult>({
+              Effect.succeed<Domain.AssignRunTaskTeamResult>({
                 _tag: "NotFound",
               }),
-            StepFinishedError: () =>
-              Effect.succeed<Domain.AssignRunStepTeamResult>({
-                _tag: "StepFinished",
+            TaskFinishedError: () =>
+              Effect.succeed<Domain.AssignRunTaskTeamResult>({
+                _tag: "TaskFinished",
               }),
             RunTerminalError: () =>
-              Effect.succeed<Domain.AssignRunStepTeamResult>({
+              Effect.succeed<Domain.AssignRunTaskTeamResult>({
                 _tag: "RunNotOpen",
               }),
           }),
@@ -4048,7 +4047,7 @@ export class ShopAgent extends Agent {
   /**
    * Development seed: replaces this shop's workflow definitions (and every
    * run) with `input.workflows` in one transaction. One callable rather than
-   * `createWorkflow` + an `addStep` round trip per step, so the fixture
+   * `createWorkflow` + an `addStep` round trip per task, so the fixture
    * arrives as a single declarative payload and a failure partway cannot leave
    * a half-built definition behind.
    *
@@ -4098,11 +4097,11 @@ export class ShopAgent extends Agent {
   /**
    * Development seed for orders, same gate and reasoning as `seedWorkflows`.
    * Goes through `upsertOrder` + `reconcileOrder` rather than raw inserts so
-   * the fixture exercises run creation, and `done` finishes steps through
-   * `completeStep` with the step's own team so the readiness gate is
+   * the fixture exercises run creation, and `done` finishes tasks through
+   * `completeTask` with the task's own team so the readiness gate is
    * exercised the way it is on the floor. `advance`, `started`, and
    * `blocked` go through the same actions for the same reason: a seeded
-   * "step 2 of 3, in progress, blocked" card is indistinguishable from one a
+   * "Step 2 of 3, in progress, blocked" card is indistinguishable from one a
    * worker produced. Only rows under `SEED_ORDER_ID_PREFIX` are replaced;
    * synced orders are left alone.
    *
@@ -4153,17 +4152,17 @@ export class ShopAgent extends Agent {
             memberId,
             email: memberEmail,
           } satisfies Domain.MemberActor;
-          const actor = (step: Domain.WorkflowRunStep) => ({
-            runStepId: step.id,
+          const actor = (task: Domain.WorkflowRunTask) => ({
+            runTaskId: task.id,
             actor: memberActor,
-            teamIds: step.teamId === null ? [] : [step.teamId],
+            teamIds: task.teamId === null ? [] : [task.teamId],
           });
-          const stepCommand = (
-            step: Domain.WorkflowRunStep,
+          const taskCommand = (
+            task: Domain.WorkflowRunTask,
             merchant: boolean,
-          ) => (merchant ? merchantStepCommand(step) : actor(step));
+          ) => (merchant ? merchantTaskCommand(task) : actor(task));
           // Reloaded before every phase rather than carried: each phase
-          // completes steps, which changes what the next one may touch.
+          // completes tasks, which changes what the next one may touch.
           const openRun = (runId: string) =>
             runs
               .getRun({ runId })
@@ -4179,8 +4178,8 @@ export class ShopAgent extends Agent {
               const detail = yield* openRun(runId);
               if (detail === null) return;
               yield* Effect.forEach(
-                detail.steps,
-                (step) => runs.completeStep(stepCommand(step, merchant)),
+                detail.tasks,
+                (task) => runs.completeTask(taskCommand(task, merchant)),
                 { discard: true },
               );
               yield* Effect.logInfo(
@@ -4189,14 +4188,14 @@ export class ShopAgent extends Agent {
                 Effect.annotateLogs({ orderId: detail.run.orderId, runId }),
               );
             });
-          /** One round: every step ready at the start of the round gets completed; what that makes ready waits for the next. */
+          /** One round: every task ready at the start of the round gets completed; what that makes ready waits for the next. */
           const advanceRun = (runId: string, merchant: boolean) =>
             Effect.gen(function* () {
               const detail = yield* openRun(runId);
               if (detail === null) return;
               yield* Effect.forEach(
-                seedReadySteps([detail]),
-                (step) => runs.completeStep(stepCommand(step, merchant)),
+                seedReadyTasks([detail]),
+                (task) => runs.completeTask(taskCommand(task, merchant)),
                 { discard: true },
               );
             });
@@ -4205,12 +4204,12 @@ export class ShopAgent extends Agent {
               const detail = yield* openRun(runId);
               if (detail === null) return;
               yield* Effect.forEach(
-                detail.steps.filter((step) => step.completedAt === null),
-                (step) =>
+                detail.tasks.filter((task) => task.completedAt === null),
+                (task) =>
                   runs
-                    .startStep(actor(step))
+                    .startTask(actor(task))
                     .pipe(
-                      Effect.catchTag("StepNotReadyError", () => Effect.void),
+                      Effect.catchTag("TaskNotReadyError", () => Effect.void),
                     ),
                 { discard: true },
               );
@@ -4230,8 +4229,8 @@ export class ShopAgent extends Agent {
                     ? { actor: { role: "merchant" as const } }
                     : {
                         actor: memberActor,
-                        teamIds: detail.steps.flatMap((step) =>
-                          step.teamId === null ? [] : [step.teamId],
+                        teamIds: detail.tasks.flatMap((task) =>
+                          task.teamId === null ? [] : [task.teamId],
                         ),
                       }),
                   reason,
@@ -4271,7 +4270,7 @@ export class ShopAgent extends Agent {
                 workflowId,
               });
               const detail: Domain.WorkflowDetail | null = Option.isSome(found)
-                ? { workflow: found.value.workflow, steps: found.value.steps }
+                ? { workflow: found.value.workflow, tasks: found.value.tasks }
                 : null;
               yield* Option.isNone(target) ||
               detail === null ||
@@ -4411,7 +4410,7 @@ export class ShopAgent extends Agent {
 
   /**
    * Plain RPC, not `@callable()`: the team detail page reads this through its
-   * loader via `ShopAgentClient`, so nothing browser-side calls it. Step
+   * loader via `ShopAgentClient`, so nothing browser-side calls it. Task
    * ownership is configuration that only changes on the workflow pages, and a
    * loader read refreshes with `router.invalidate` and paints during SSR,
    * which a socket query without a push listener cannot do.
@@ -4443,11 +4442,11 @@ export class ShopAgent extends Agent {
   }
 
   /** Plain RPC for the same reason as {@link listTeamWorkflows}: the delete dialogs' counts, read by the team pages' loaders. */
-  countStepsByTeam(): Promise<readonly Domain.TeamStepCounts[]> {
+  countTasksByTeam(): Promise<readonly Domain.TeamTaskCounts[]> {
     return this.runEffect(
       WorkflowRepository.pipe(
-        Effect.flatMap((repository) => repository.countStepsByTeam()),
-        Effect.withLogSpan("ShopAgent.countStepsByTeam"),
+        Effect.flatMap((repository) => repository.countTasksByTeam()),
+        Effect.withLogSpan("ShopAgent.countTasksByTeam"),
       ),
     );
   }

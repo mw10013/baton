@@ -51,7 +51,7 @@ const decodeWorkflowResult = Schema.decodeUnknownPromise(
 
 /**
  * One place for every status badge. "Needs attention" is derived by the
- * object on every read: an unassigned step or a team with no members.
+ * object on every read: an unassigned task or a team with no members.
  */
 export const statusBadges = (workflow: Domain.WorkflowSummary) => (
   <s-stack direction="inline" gap="small-300">
@@ -102,7 +102,7 @@ export const Route = createFileRoute("/app/workflows/")({
  * it: the tag mirrors the name as the merchant types, so the name field is how
  * most of them will produce a tag at all, and dropping it would leave the tag
  * field alone with nothing to mirror.
- * Steps are decisions made in the editor, in front of the trigger card that
+ * Tasks are decisions made in the editor, in front of the trigger card that
  * says what they do, so the page carries no standing form.
  */
 function RouteComponent() {

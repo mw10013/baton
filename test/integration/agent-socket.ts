@@ -200,10 +200,10 @@ export const agentSocket = (response: Response): AgentSocket => {
  * would.
  */
 export const memberActions = (socket: AgentSocket) => ({
-  startStep: (input: typeof Domain.StartStepInput.Encoded) =>
-    socket.call<Domain.RunResult>("startStep", input),
-  completeStep: (input: typeof Domain.CompleteStepInput.Encoded) =>
-    socket.call<Domain.RunResult>("completeStep", input),
+  startTask: (input: typeof Domain.StartTaskInput.Encoded) =>
+    socket.call<Domain.RunResult>("startTask", input),
+  completeTask: (input: typeof Domain.CompleteTaskInput.Encoded) =>
+    socket.call<Domain.RunResult>("completeTask", input),
   setRunNote: (input: typeof Domain.SetRunNoteInput.Encoded) =>
     socket.call<Domain.RunResult>("setRunNote", input),
   blockRun: (input: typeof Domain.BlockRunInput.Encoded) =>
@@ -216,13 +216,13 @@ export const memberActions = (socket: AgentSocket) => ({
  * The merchant's five interventions, typed, over an already-open merchant
  * socket. No identity on the wire and none on the connection either: the
  * merchant *is* the shop, so the object supplies `{ role: "merchant" }` and no
- * `teamIds` (`ShopAgent.merchantCompleteStep`).
+ * `teamIds` (`ShopAgent.merchantCompleteTask`).
  */
 export const merchantActions = (socket: AgentSocket) => ({
-  completeStep: (input: typeof Domain.CompleteStepInput.Encoded) =>
-    socket.call<Domain.RunResult>("merchantCompleteStep", input),
-  uncompleteStep: (input: typeof Domain.UncompleteStepInput.Encoded) =>
-    socket.call<Domain.RunResult>("merchantUncompleteStep", input),
+  completeTask: (input: typeof Domain.CompleteTaskInput.Encoded) =>
+    socket.call<Domain.RunResult>("merchantCompleteTask", input),
+  uncompleteTask: (input: typeof Domain.UncompleteTaskInput.Encoded) =>
+    socket.call<Domain.RunResult>("merchantUncompleteTask", input),
   setRunNote: (input: typeof Domain.SetRunNoteInput.Encoded) =>
     socket.call<Domain.RunResult>("merchantSetRunNote", input),
   blockRun: (input: typeof Domain.BlockRunInput.Encoded) =>
