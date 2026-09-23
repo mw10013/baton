@@ -87,8 +87,9 @@ export const Route = createFileRoute("/shop/$shop/workflows/$runId")({
  * **The badge states the task's state and the line never repeats it.** The
  * line is the team, then who and when — "Jewelry · lead@m.com · Sep 21, 3:52
  * AM" under a `Done` badge. Saying "Done by" as well would print the badge's
- * word twice, a stride apart, in every state that has a badge. Waiting is the
- * one state with no badge, so it is the one state whose line carries the verb.
+ * word twice, a stride apart, in every state that has a badge. A waiting task
+ * has no badge and its line is the team alone: its place under a later
+ * `Step n` caption already says what it waits on.
  *
  * The team leads this line rather than sitting beside the task name above it.
  * Task name and team name are both merchant-authored and unbounded, and side
@@ -133,10 +134,7 @@ const taskState = (
     };
   if (task.ready)
     return { badge: { label: "Ready", tone: "info" }, text: task.teamName };
-  return {
-    badge: null,
-    text: `${task.teamName} · waiting on step ${String(task.step - 1)}`,
-  };
+  return { badge: null, text: task.teamName };
 };
 
 function RouteComponent() {
@@ -160,17 +158,20 @@ function RouteComponent() {
   });
   const teamIds = teams.map((team) => team.id);
 
-  const renderTask = (task: Domain.RunTaskView) => {
+  const renderTask = (task: Domain.RunTaskView, first: boolean) => {
     if (view === null) return null;
     const state = taskState(task);
     /** Shown only while the slot is filled: the next Done clears it (`Domain.WorkflowRunTask`). */
     const reopenedBy = Domain.taskReopenedBy(task);
     /**
-     * The buttons follow {@link Domain.taskActions}; the banner carries the
-     * only action a flag allows. Undo and Put back are offered where they are
-     * allowed and nowhere else: a blocked undo draws no disabled button and no sentence
-     * explaining itself, because the task standing in the way is on this same
-     * page with an `In progress` badge on it.
+     * The buttons follow {@link Domain.taskActions}, which also says why none
+     * is primary; the banner carries the only action a flag allows. The badge
+     * carries the state and the buttons are its exits, the advancing one
+     * first: `Start · Done`, `Done · Put back`, `Undo`. Undo and Put back are
+     * offered where they are allowed and nowhere else: a blocked undo draws no
+     * disabled button and no sentence explaining itself, because the task
+     * standing in the way is on this same page with an `In progress` badge on
+     * it.
      */
     const can = Domain.taskActions(view.run, task, teamIds);
     const anyAction = can.done || can.putBack || can.undo?.blockedBy === null;
@@ -178,8 +179,7 @@ function RouteComponent() {
       <s-box
         key={task.id}
         padding="small"
-        borderWidth="base"
-        borderRadius="base"
+        borderWidth={first ? "none" : "base none none none"}
       >
         <s-stack gap="small-300">
           <s-stack direction="inline" gap="small-300" alignItems="center">
@@ -211,7 +211,7 @@ function RouteComponent() {
               )}
               {can.done && (
                 <s-button
-                  variant="primary"
+                  variant="secondary"
                   disabled={actions.pending}
                   onClick={() => {
                     actions.complete.mutate(task.id);
@@ -305,6 +305,7 @@ function RouteComponent() {
     </>
   ) : null;
   const hasNote = run.note !== null && run.note.length > 0;
+  const hasOrderNote = view.orderNote !== null && view.orderNote.length > 0;
 
   return (
     <>
@@ -331,83 +332,103 @@ function RouteComponent() {
             Block
           </s-button>
         )}
-        <SocketBanner />
-        {/* Item first, chrome under it: what to make is the reason the page
-            was opened, and the workflow name, the run's status and its age
-            are the answers to questions asked after that. */}
-        <s-section accessibilityLabel={run.orderName}>
+        {/* No `s-section` on this page: a top-level section is a card
+            whether or not it has a heading, and the item, the note and the
+            steps are plain text on the page, with the step boxes the only
+            borders. The stack gives them the spacing sections would, and
+            `.member-work` the phone inset (`styles.css`). */}
+        <div className="member-work">
           <s-stack gap="base">
-            <RunItem run={run} />
-            <s-stack direction="inline" gap="small-300" alignItems="center">
-              <s-badge>{run.workflowName}</s-badge>
+            <SocketBanner />
+            {/* Page-wide banners sit at page level, above the content they
+              concern and outside any card, as Polaris places them. */}
+            {actions.banner !== null && (
+              <s-banner tone="critical">{actions.banner}</s-banner>
+            )}
+            <FlagBanner run={run} actions={flagActions} />
+            {/* Item first: what to make is why the page was opened. No workflow
+              name or age, because a member cannot act on either and the run
+              list carries the age. No border, because two bordered blocks on
+              one page compete. The Done / Cancelled badge stays: it is the
+              only sign the page is read-only. */}
+            <s-stack gap="small-300">
               {!Domain.runIsOpen(run) &&
                 (Domain.runIsLive(run) ? (
                   <s-badge tone="neutral">Done</s-badge>
                 ) : (
                   <s-badge tone="critical">Cancelled</s-badge>
                 ))}
-              <s-text color="subdued">
-                ordered{" "}
-                <LocalDateTime value={run.orderProcessedAt} format="relative" />
-              </s-text>
+              <RunItem run={run} />
             </s-stack>
-            {actions.banner !== null && (
-              <s-banner tone="critical">{actions.banner}</s-banner>
-            )}
-            <FlagBanner run={run} actions={flagActions} />
-          </s-stack>
-        </s-section>
-        {/* The run note second, above the tasks: it is the one answer to
-            "anything I should know about this job", and a note under a task
-            that is already done is a note nobody reads. On a cancelled run it
-            is a record with no button. */}
-        {(hasNote || canNote) && (
-          <s-section accessibilityLabel="Note">
-            <s-stack gap="small-300">
-              <s-stack
-                direction="inline"
-                justifyContent="space-between"
-                alignItems="center"
-                gap="base"
-              >
-                <s-heading>Note</s-heading>
-                {canNote && (
-                  <s-button
-                    variant="secondary"
-                    disabled={actions.pending}
-                    onClick={() => {
-                      showModal(NOTE_MODAL);
-                    }}
+            {/* The note is the run's one text field, always present and
+              possibly blank, so its one verb is Edit and the blank state is
+              the field's name rather than a call to add. It sits above the
+              tasks: it is the answer to "anything I should know about this
+              job", and a note under a task already done is a note nobody
+              reads. Shopify's order note is read-only and folds in under it,
+              so the page has one place for prose about the run. On a
+              cancelled run a blank note draws nothing. */}
+            {(hasNote || canNote || hasOrderNote) && (
+              <s-stack id="note" gap="small-300">
+                {(hasNote || canNote) && (
+                  <s-stack
+                    direction="inline"
+                    justifyContent="space-between"
+                    alignItems="start"
+                    gap="base"
                   >
-                    {hasNote ? "Edit" : "Add note"}
-                  </s-button>
+                    {hasNote ? (
+                      <Prose>{run.note}</Prose>
+                    ) : (
+                      <s-text color="subdued">Note</s-text>
+                    )}
+                    {canNote && (
+                      <s-button
+                        variant="secondary"
+                        disabled={actions.pending}
+                        onClick={() => {
+                          showModal(NOTE_MODAL);
+                        }}
+                      >
+                        Edit
+                      </s-button>
+                    )}
+                  </s-stack>
+                )}
+                {hasOrderNote && (
+                  <s-stack gap="small-500">
+                    <s-text color="subdued">From the order:</s-text>
+                    <Prose>{view.orderNote}</Prose>
+                  </s-stack>
                 )}
               </s-stack>
-              {hasNote && <Prose>{run.note}</Prose>}
+            )}
+            {/* One caption and one box per step: parallel tasks share the box,
+              separated by rules the way the run list separates rows, so a
+              step reads as one stop before the caption is read. A single-task
+              step is a caption over one row. The steps are an ordered list,
+              which is what they are. */}
+            <s-stack accessibilityRole="ordered-list" gap="base">
+              {WorkflowLayout.stepsOf(view.tasks).map((group) => {
+                const step = group[0]?.step ?? 0;
+                return (
+                  <s-stack
+                    key={step}
+                    accessibilityRole="list-item"
+                    gap="small-300"
+                  >
+                    <s-text color="subdued">{`Step ${String(step)}`}</s-text>
+                    <s-box borderWidth="base" borderRadius="base">
+                      {group.map((task, index) =>
+                        renderTask(task, index === 0),
+                      )}
+                    </s-box>
+                  </s-stack>
+                );
+              })}
             </s-stack>
-          </s-section>
-        )}
-        {view.orderNote !== null && view.orderNote.length > 0 && (
-          <s-section heading="Order note" accessibilityLabel="Order note">
-            <Prose>{view.orderNote}</Prose>
-          </s-section>
-        )}
-        {/* One block per step, like the editor's `StepFlow`: a subdued `Step n`
-            label and the step's tasks under it, so parallel tasks read as one
-            stop rather than as cards that share a number. */}
-        <s-section heading="Steps" accessibilityLabel="Steps">
-          <s-stack gap="base">
-            {WorkflowLayout.stepsOf(view.tasks).map((group) => {
-              const step = group[0]?.step ?? 0;
-              return (
-                <s-stack key={step} gap="small-300">
-                  <s-text color="subdued">{`Step ${String(step)}`}</s-text>
-                  {group.map(renderTask)}
-                </s-stack>
-              );
-            })}
           </s-stack>
-        </s-section>
+        </div>
         <RunNoteModal
           id={NOTE_MODAL}
           note={run.note}

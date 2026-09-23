@@ -3436,6 +3436,13 @@ export type RunTaskView = typeof RunTaskView.Type;
  * (`WorkflowRunRepository.unstartTask`). It shares Done's team gate, so every
  * member of the task's team sees it, not only the starter.
  *
+ * **The verbs a task offers are the same on the run list and the work page,
+ * and neither screen styles one as primary.** Primary and secondary are a
+ * page's hierarchy, held in `s-page`'s action slots; a task has neither.
+ * Polaris allows one primary per card and per page
+ * (`refs/shopify-docs/docs/apps/design/layout.md`, "Cards that offer
+ * interactivity"), and a step with two ready tasks would draw two.
+ *
  * **Nothing on a member screen renders that blocker.** The run list drops the
  * row's menu and the work page lists the whole run, so the started task
  * standing in the way is already on screen wearing its own badge, and a

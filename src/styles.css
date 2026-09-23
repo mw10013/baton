@@ -198,6 +198,20 @@ details[open] > .live-value-summary .live-value-preview {
 }
 
 /*
+ * The member work page's body (`shop.$shop.workflows.$runId.tsx`) is plain
+ * content with no `s-section`, and `s-page` insets only its heading on a
+ * phone: below 507px it pads its children 0.5rem, which suits full-width
+ * cards, and the heading 1.5rem. The extra 1rem lines the text up with the
+ * heading. The breakpoint is `s-page`'s own, measured: it has no custom
+ * property or container name to hook, so this repeats it.
+ */
+@media (width < 507px) {
+  .member-work {
+    padding-inline: 1rem;
+  }
+}
+
+/*
  * The member's run list (`shop.$shop.index.tsx`). Here rather than inline because
  * the clamp needs three declarations React's `style` types deprecate, and
  * because the file already owns the member area's other plain-element rules.

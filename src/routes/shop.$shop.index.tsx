@@ -328,8 +328,7 @@ function RouteComponent() {
      * (`refs/shopify-docs/docs/api/app-home/latest/patterns/compositions/resource-list.md`,
      * "Provide search, filtering, and row selection for a resource list"):
      * one tertiary `menu-horizontal` button in the `auto` cell, no labelled
-     * verb and no primary. Primary and secondary are a page's hierarchy, held
-     * in `s-page`'s action slots; a row has neither. One fixed-size control
+     * verb and no primary ({@link Domain.taskActions}). One fixed-size control
      * per row is also what stops the action column resizing itself row by row
      * and dragging the text column's edge with it.
      *

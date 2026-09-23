@@ -1,4 +1,4 @@
-import type { Browser, BrowserContext, Page } from "@playwright/test";
+import type { Browser, BrowserContext, Locator, Page } from "@playwright/test";
 
 import type { SeedConfig } from "./seed";
 
@@ -1184,8 +1184,9 @@ test("a blocked undo offers nothing and explains nothing, on the row or the work
  * names with only a weight between them, which reads as one noun phrase. The
  * team leads the subdued line instead and the header holds one name.
  *
- * **The note is the run's, and it opens in a modal.** One Note section under
- * the item, with one `Add note`; the task cards carry no note button. The
+ * **The note is the run's, and it opens in a modal.** One Note block under
+ * the item with one `Edit`, blank or not: a blank note shows the word `Note`
+ * where the prose would be. The task rows carry no note button. The
  * modal opens with the current text so appending is the easy path, and past
  * `Domain.noteCountFrom(Domain.RUN_NOTE_MAX_LENGTH)` (1800) it counts down to
  * the 2000 cap. Nothing says so below the threshold.
@@ -1202,7 +1203,7 @@ test("the run note opens in a modal and the task cards carry no note button", as
   /* The task sits under its `Step 1` label and its header line is the task
      alone; the team is the line under it, and the badge's word appears
      nowhere but the badge. */
-  const steps = page.locator('s-section[accessibilityLabel="Steps"]');
+  const steps = page.locator('s-stack[accessibilityRole="ordered-list"]');
   await expect(steps.getByText("Step 1", { exact: true })).toBeVisible();
   await expect(steps.getByText(CUT_TASK, { exact: true })).toBeVisible();
   await expect(page.locator('s-badge:has-text("Ready")')).toBeVisible();
@@ -1217,11 +1218,15 @@ test("the run note opens in a modal and the task cards carry no note button", as
     page.locator("s-page").getByRole("link", { name: config.shop }),
   ).toHaveCount(0);
 
-  await expect(steps.getByRole("button", { name: "Add note" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Add note" })).toHaveCount(1);
+  const note = page.locator("s-stack#note");
+  await expect(
+    note.locator('s-text[color="subdued"]').getByText("Note", { exact: true }),
+  ).toBeVisible();
+  await expect(note.getByRole("button", { name: "Edit" })).toHaveCount(1);
+  await expect(steps.getByRole("button", { name: "Edit" })).toHaveCount(0);
 
   const noteModal = page.locator("s-modal#run-note");
-  await clickWhenEnabled(page.getByRole("button", { name: "Add note" }));
+  await clickWhenEnabled(note.getByRole("button", { name: "Edit" }));
   await expect(noteModal.getByRole("textbox", { name: "Note" })).toBeVisible();
   await noteModal.getByRole("textbox", { name: "Note" }).fill("x".repeat(1799));
   await expect(noteModal.getByText("characters left")).toBeHidden();
@@ -1233,9 +1238,11 @@ test("the run note opens in a modal and the task cards carry no note button", as
   await clickWhenEnabled(
     noteModal.getByRole("button", { name: "Save", exact: true }),
   );
-  const note = page.locator('s-section[accessibilityLabel="Note"]');
   await expect(note.getByText("Left edge is rough")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Add note" })).toHaveCount(0);
+  await expect(
+    note.locator('s-text[color="subdued"]').getByText("Note", { exact: true }),
+  ).toHaveCount(0);
+  await expect(note.getByRole("button", { name: "Edit" })).toHaveCount(1);
 
   /* Edit opens on the saved text, so appending is the path of least
      resistance. */
@@ -1271,12 +1278,11 @@ test("the work page shows the task history and takes a note, a block, and Done",
   await rowLink(page, BAND_ORDER).click();
   await expect(page.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
   await expect(page.getByText("E2E Cuff ×1")).toBeVisible();
-  await expect(
-    page.getByText(`${PACK_TEAM} · waiting on step 1`),
-  ).toBeVisible();
 
   const noteModal = page.locator("s-modal#run-note");
-  await clickWhenEnabled(page.getByRole("button", { name: "Add note" }));
+  await clickWhenEnabled(
+    page.locator("s-stack#note").getByRole("button", { name: "Edit" }),
+  );
   await noteModal
     .getByRole("textbox", { name: "Note" })
     .fill("Left edge is rough");
@@ -1302,6 +1308,12 @@ test("the work page shows the task history and takes a note, a block, and Done",
     blockModal.getByRole("button", { name: "Block", exact: true }),
   );
   await expect(page.locator('s-banner[heading="Blocked"]')).toBeVisible();
+  /* Page level, above the item, not inside it. */
+  await expect(
+    page
+      .locator('s-banner[heading="Blocked"] ~ s-stack')
+      .filter({ hasText: "E2E Cuff ×1" }),
+  ).toHaveCount(1);
   await expect(page.getByText("Waiting on stones")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Done", exact: true }),
@@ -1372,6 +1384,111 @@ test("the work page shows the task history and takes a note, a block, and Done",
   await expect(
     page.getByRole("button", { name: `${DONE_TODAY} · 1` }),
   ).toBeVisible();
+});
+
+/** A workflow whose first step is two parallel Cut tasks and whose second is Pack's. */
+const PAIR_ORDER = "#9404";
+const ENGRAVE_TASK = "Engrave";
+const POLISH_TASK = "Polish";
+
+const seedPair = (config: SeedConfig) =>
+  seedMembers(
+    config,
+    [MAKER, MATE],
+    [
+      { name: CUT_TEAM, members: [MAKER] },
+      { name: PACK_TEAM, members: [MATE] },
+    ],
+    [
+      {
+        name: "E2E Runs Pair",
+        tag: "e2e-runs-pair",
+        tasks: [
+          { name: CUT_TASK, team: CUT_TEAM, step: 1 },
+          { name: ENGRAVE_TASK, team: CUT_TEAM, step: 1 },
+          { name: POLISH_TASK, team: PACK_TEAM, step: 2 },
+        ],
+      },
+    ],
+    [
+      {
+        n: 9404,
+        lineItems: [
+          { title: "E2E Pair", quantity: 1, tags: ["e2e-runs-pair"] },
+        ],
+      },
+    ],
+    { keepIdentities: true },
+  );
+
+/** Open the pair run's work page as the maker; returns the page and its step boxes. */
+const openPair = async (browser: Browser) => {
+  const config = seedConfig();
+  await seedPair(config);
+  const page = await openRuns(browser, config, makerState, "upNext");
+  await rowLink(page, PAIR_ORDER).click();
+  await expect(page.locator(`s-page[heading="${PAIR_ORDER}"]`)).toBeVisible();
+  const boxes = page
+    .locator('s-stack[accessibilityRole="ordered-list"]')
+    .locator('s-box[borderWidth="base"]');
+  return { page, boxes };
+};
+
+/** One task's row inside a step box, by task name. */
+const taskRow = (box: Locator, name: string) =>
+  box
+    .locator("s-box")
+    .filter({ has: box.page().getByText(name, { exact: true }) });
+
+/**
+ * The labels of a row's buttons, in document order. Read from the `s-button`
+ * hosts: the native button in each shadow root has no text of its own, the
+ * label is slotted.
+ */
+const buttonLabels = async (row: Locator) => {
+  const labels = await row.locator("s-button").allTextContents();
+  return labels.map((label) => label.trim());
+};
+
+test("one step is one box: parallel tasks share it and a single task has it alone", async ({
+  browser,
+}) => {
+  const { boxes } = await openPair(browser);
+  await expect(boxes).toHaveCount(2);
+  await expect(boxes.nth(0).getByText(CUT_TASK, { exact: true })).toBeVisible();
+  await expect(
+    boxes.nth(0).getByText(ENGRAVE_TASK, { exact: true }),
+  ).toBeVisible();
+  await expect(boxes.nth(1).locator("s-box")).toHaveCount(1);
+  await expect(
+    boxes.nth(1).getByText(POLISH_TASK, { exact: true }),
+  ).toBeVisible();
+});
+
+test("a waiting task's line is its team alone and it has no badge", async ({
+  browser,
+}) => {
+  const { boxes } = await openPair(browser);
+  const polish = taskRow(boxes.nth(1), POLISH_TASK);
+  await expect(polish.getByText(PACK_TEAM, { exact: true })).toBeVisible();
+  await expect(polish.locator("s-badge")).toHaveCount(0);
+});
+
+test("task buttons are all secondary and the advancing one comes first", async ({
+  browser,
+}) => {
+  const { page, boxes } = await openPair(browser);
+  await expect(
+    page
+      .locator('s-stack[accessibilityRole="ordered-list"]')
+      .locator('s-button[variant="primary"]'),
+  ).toHaveCount(0);
+  const cut = taskRow(boxes.nth(0), CUT_TASK);
+  await awaitEnabled(cut.getByRole("button", { name: "Start" }));
+  expect(await buttonLabels(cut)).toEqual(["Start", "Done"]);
+  await clickWhenEnabled(cut.getByRole("button", { name: "Start" }));
+  await expect(cut.getByRole("button", { name: "Put back" })).toBeVisible();
+  expect(await buttonLabels(cut)).toEqual(["Done", "Put back"]);
 });
 
 /**
