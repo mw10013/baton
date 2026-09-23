@@ -160,7 +160,16 @@ export class ShopAgentClient extends Context.Service<
       input: Domain.BillingCycleInput,
     ) => Effect.Effect<void, ShopAgentClientError>;
     /**
-     * Hands the object Shopify's own meter reading so the divergence from the
+     * Reports the roster size after a member add, so the object can raise the
+     * cycle's seat mark and queue the rise (`OrderRepository.recordRoster`).
+     * Answers the units queued.
+     */
+    readonly recordRoster: (
+      shop: string,
+      input: Domain.RecordRosterInput,
+    ) => Effect.Effect<number, ShopAgentClientError>;
+    /**
+     * Hands the object Shopify's own meter readings so the divergence from the
      * local count is observable. Nothing is corrected from it: the App Events
      * API answers `202` to an event it will later refuse, so this is the only
      * signal that a shop's usage is not being billed, and a silent auto-correct
@@ -315,6 +324,12 @@ export class ShopAgentClient extends Context.Service<
           (shop: string, input: Domain.BillingCycleInput) =>
             call("setBillingCycle", Schema.Void, shop, (stub) =>
               stub.setBillingCycle(input),
+            ),
+        ),
+        recordRoster: Effect.fn("ShopAgentClient.recordRoster")(
+          (shop: string, input: Domain.RecordRosterInput) =>
+            call("recordRoster", Schema.Number, shop, (stub) =>
+              stub.recordRoster(input),
             ),
         ),
         reconcileUsage: Effect.fn("ShopAgentClient.reconcileUsage")(

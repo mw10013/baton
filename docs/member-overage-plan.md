@@ -438,3 +438,130 @@ so and go on.
 Record here anything done differently from the steps above, anything
 skipped, and anything found to be wrong in this plan or the research. One
 entry per item: what, why, and what the user should look at.
+
+1. **The unchanged-cycle branch of `setBillingCycle` raises the seat mark.**
+   The plan had it do nothing. `OrderRepository.currentCycle` rolls a cycle
+   forward on its own when an order lands past `cycleEndAt`, and the
+   revalidation that follows pushes that same start, so the push takes the
+   unchanged branch and the new cycle would never get its first seat event.
+   Now a rolled cycle starts with `membersHighWater = 0`, and an unchanged
+   push applies `Domain.seatEventValue(memberCount, mark)`. That also covers
+   an add whose best-effort `recordRoster` failed. With the roster at or
+   under the mark it still queues nothing, so the plan's test holds as
+   written. Extra tests: "an unchanged cycle raises the mark to a roster
+   past it…" and "a cycle the counting path rolled forward starts with no
+   seat mark…". Look at: `OrderRepository.setBillingCycle` and
+   `currentCycle`.
+2. **A changed cycle deletes queued seat events dated inside it.** A
+   `recordRoster` before the first push opens the provisional cycle (month
+   start) and queues `seat#<monthStart>#n` dated now. The first real cycle
+   usually starts before now, so the `unaddressed` delete keeps that row and
+   Shopify would receive it plus the new cycle's full-roster event (double
+   billing). The changed branch now deletes unsent member-meter rows with
+   `occurredAt >= cycleStartAt` before queuing the roster. Test: "a new
+   cycle supersedes seat events queued under a provisional cycle".
+3. **Drift check.** No orders drift test existed to sit beside. The rule
+   moved to `Domain.meterDiverges`. `ShopUsage` gains `pendingOrderUnits`
+   and `pendingMemberUnits` (sums of `value` per handle, not row counts,
+   because a seat event can carry more than one unit). The test is at the
+   repository level: it reads both pending sums and applies the predicate.
+4. **`MembersLoaderData.maxMembers` was dropped, not renamed.** Step 4 says
+   delete, Step 6 says rename. Nothing on the members page reads it now.
+5. **`ShopifyPartner.meterQuantity` is exported** so the "reports each
+   meter's quantity by handle" test can call it directly. `activeSubscription`
+   is stubbed in `subscription-plan.test.ts`. The Partner `#graphql` query
+   needed no change because it already selects every item's handle and usage.
+6. **`worker-agent-gate.test.ts`**: "402s a member the plan has no seat for"
+   became "forwards a member past the plan's included seats" (expects 101).
+7. **The e2e test seeds `MAX_ENTITLEMENTS.membersIncluded + 1` (11)**, not
+   Basic + 1, so it is past the included seats on either plan without
+   reading the plan. That is under the ceiling of 12, so the add still
+   succeeds. It asserts the home tile before the add, because the seed has
+   already put the shop past its included seats. **Look at:** the add goes
+   through `recordRoster`, which sends a real seat event to the dev store's
+   `members` meter (test charges). The order seed never bills; member adds
+   in e2e do.
+8. **`README.md` line 25** ("Members … `maxMembers` … `memberHasSeat`") was
+   still stale and is updated. The Plans section already matched.
+9. **Members tile headline** is `N members, M included`, singular for 1.
+10. **`OrderRepository.recordRoster(input, now)`** takes the clock from the
+    object, the same way `countOrder` does. The catch-up seat event in the
+    unchanged branch of `setBillingCycle` is dated `Clock.currentTimeMillis`.
+11. **`ShopAgent.reconcileUsage` flushes the outbox after its check** (found
+    in Step 8). Nothing sent a new cycle's first seat event until the next
+    order or member add. Flushing in `setBillingCycle` instead caused a
+    false alarm: `revalidate` reads the meters, then pushes the cycle. A
+    flush there drained the pending units that excuse the gap, and the
+    check logged `meter=members local=4 shopify=0 pending=0`. Flushing after
+    the check sends promptly and keeps the tolerance. It still flushes only
+    when the contract reports at least one meter.
+
+### Step 8 record (2026-09-22)
+
+- 1: Home tile read `3 members, 3 included` with the sign-in sentence. Pass.
+- 2: Added `probe.seat4@example.com`. Tile read `4 members, 3 included` and
+  "1 past your plan's included seats are billed at your plan's rate." Pass.
+  The singular reads awkwardly ("1 … are billed").
+- 3: **Trial case.** The store was in the Basic trial, so no cycle had been
+  pushed. The object opened the provisional cycle, the seat event (value 4)
+  was queued with `status=no-shop-gid`, high-water was 4, and both metered
+  fields were empty.
+- 4 and 5: After remove and re-add, the console read `Members 4 of 3`,
+  high-water 4, and pending still 1. No new event was queued. Pass.
+- 6: Switched Basic to Pro. The billing period started at the switch (Sep
+  22 9:09 PM local) and high-water was 4. The provisional seat event was
+  replaced by `seat#<switch>#4`. It stayed pending until the fix in item 11,
+  then went out with `sent=1`. After about a minute, Refresh plan showed
+  "Shopify metered members 4" and "Shopify metered orders 0". Pass.
+- 7: Switched back to Basic. This lands the store in its trial remainder
+  (boundary Oct 1). A trial pushes no cycle, so the console keeps showing
+  Pro's billing period. The trial contract reports no meter readings, so
+  "Shopify metered members 4" is a stale Pro reading. Both are existing
+  behavior.
+- 8: Seeded 12 members through `/api/dev/seed`, then tried a 13th in the UI.
+  The banner read "This shop has reached the maximum number of members.
+  Contact support to raise it." Pass. Seeding 13 directly returns a 500,
+  because the seed does not map `MemberCeilingError`. The fixture is
+  restored with `pnpm seed`.
+- 9: **Deviates from the plan.** The fixture seeds 69 orders, not about 28,
+  so the seed alone reaches the ceiling of 35. The count is 35, "Orders
+  limited" is set, and the home page shows the "stopped syncing" banner.
+  Not raised; your call.
+- The Pricing page on the dev store shows Pro's orders meter as "First 20
+  Production orders". The README says 30. Both plans also show old feature
+  copy ("Up to 250 orders a month", "3 team members"). Partner Dashboard.
+- `npm run test:e2e:headed -- members`: 3 of 3 passed. The first attempt
+  failed at setup: Chrome had not written `Default/Cookies` to disk since
+  Sep 20, so the exported `_merchant_essential` looked 46 h old. Quitting
+  and reopening Chrome flushed the cookies, and setup passed.
+
+## Open items
+
+Reviewed 2026-09-22. Decisions applied in code where noted.
+
+1. **The seed alone reaches the orders ceiling.** The plan's "about 28"
+   counted only the floor orders; the fixture is 28 floor + 1 big + 40 scale = 69. Decision: `ShopLimits.maxOrdersPerCycle` is 100, above the seed and
+   still reachable by a sync of the dev store's 88 orders, so the ceiling
+   stays demonstrable. Applied.
+2. **Partner Dashboard: Pro's orders meter tier 1 is 20.** `README.md` and
+   `ENTITLEMENTS.pro.ordersPerCycle` say 30 (the $0.10 is tier 2's price, and
+   10 is Pro's included members). Until the tier is 30, Pro shops are billed
+   from the 21st order while the app calls up to 30 included. User fixes in
+   the dashboard.
+3. **Partner Dashboard: old plan feature copy.** User fixes; `README.md`,
+   "Top features", has the lines.
+4. **Members tile wording for one seat.** Applied: the verb follows the
+   count (`1 … is billed`, `2 … are billed`); the phrase the e2e matches
+   is unchanged.
+5. **The dev seed returns 500 past the members ceiling.** Left as is:
+   dev-only, and the e2e asserts it seeds under the ceiling.
+6. **Stale console fields after returning to a trial.** Applied:
+   `revalidate` pushes `reconcileUsage` whenever a contract exists, so a
+   contract that reports no meter stores null for both readings, which the
+   `ShopUsage` JSDoc already defines as "cannot report". The billing period
+   is left: a trial pushes no cycle, and the trial's end pushes a changed
+   cycle that recounts.
+7. **Member e2e sends real seat events.** Accepted. A seat event is a
+   roster delta, not a row, so there is no per-event analogue of
+   `Domain.orderIsSeeded`; dev-store charges are test charges, and the
+   meter reading is the evidence the path works.

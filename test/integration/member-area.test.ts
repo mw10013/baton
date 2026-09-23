@@ -93,7 +93,6 @@ describe("member area", () => {
         yield* repository.addMember({
           shop: SHOP,
           email: MEMBER,
-          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
         });
         const cookie = yield* signInThroughWorker(MEMBER);
         const response = yield* fetchWorker("http://localhost/shop", {
@@ -116,7 +115,6 @@ describe("member area", () => {
         yield* repository.addMember({
           shop: SHOP,
           email: MEMBER,
-          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
         });
         const cookie = yield* signInThroughWorker(MEMBER);
         const response = yield* fetchWorker(
@@ -143,7 +141,6 @@ describe("member area", () => {
         yield* repository.addMember({
           shop: SHOP,
           email: MEMBER,
-          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
         });
         const cookie = yield* signInThroughWorker(MEMBER);
         const shopUrl = `http://localhost/shop/${SHOP}`;
@@ -166,7 +163,6 @@ describe("member area", () => {
         yield* repository.addMember({
           shop: SHOP,
           email: MEMBER,
-          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
         });
         strictEqual(
           (yield* fetchWorker(shopUrl, { headers: { cookie } })).status,
@@ -196,7 +192,6 @@ describe("member run list", () => {
         yield* repository.addMember({
           shop: SHOP,
           email: MEMBER,
-          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
         });
         const cookie = yield* signInThroughWorker(MEMBER);
         strictEqual(
@@ -230,88 +225,28 @@ describe("member run list", () => {
     ),
   );
 
-  /**
-   * The seat rule end to end. `Domain.memberHasSeat` is derived on every
-   * request from the plan in force and the roster as it stands, so these three
-   * assertions are the whole policy: who is refused, what frees a seat, and
-   * what a downgrade does without anything being written.
-   */
-  it.effect(
-    "the fourth member of a three-seat shop is refused with the seat reason",
-    () =>
-      run(
-        Effect.gen(function* () {
-          const repository = yield* Repository;
-          yield* seedShop(SHOP);
-          yield* setPlan(SHOP, "baton-basic");
-          const emails = ["a", "b", "c", "d"].map((name) =>
-            emailOf(`${name}@example.com`),
-          );
-          for (const email of emails)
-            yield* repository.addMember({
-              shop: SHOP,
-              email,
-              limit: Domain.MAX_ENTITLEMENTS.maxMembers,
-            });
-          const seated = yield* signInThroughWorker(emails[2]);
-          const seatless = yield* signInThroughWorker(emails[3]);
-          strictEqual(
-            (yield* fetchWorker(`http://localhost/shop/${SHOP}`, {
-              headers: { cookie: seated },
-            })).status,
-            200,
-          );
-          const refused = yield* fetchWorker(`http://localhost/shop/${SHOP}`, {
-            headers: { cookie: seatless },
-          });
-          strictEqual(refused.status, 307);
-          strictEqual(
-            refused.headers.get("location"),
-            `/shop/${SHOP}/lapsed?reason=seat`,
-          );
-          // Removing an earlier member seats the next; nothing else changes.
-          yield* repository.deleteMember({ shop: SHOP, email: emails[0] });
-          strictEqual(
-            (yield* fetchWorker(`http://localhost/shop/${SHOP}`, {
-              headers: { cookie: seatless },
-            })).status,
-            200,
-          );
-        }),
-      ),
-  );
-
-  it.effect("a member's seat follows the plan in force at each request", () =>
+  /** Members past the plan's included seats are billed, never refused. */
+  it.effect("requireMember admits every member of a subscribed shop", () =>
     run(
       Effect.gen(function* () {
         const repository = yield* Repository;
         yield* seedShop(SHOP);
-        const emails = ["a", "b", "c", "d"].map((name) =>
-          emailOf(`${name}@example.com`),
+        yield* setPlan(SHOP, "baton-basic");
+        const emails = Array.from(
+          { length: Domain.entitlementsOfPlan("basic").membersIncluded + 1 },
+          (_, index) => emailOf(`m${String(index)}@example.com`),
         );
         for (const email of emails)
-          yield* repository.addMember({
-            shop: SHOP,
-            email,
-            limit: Domain.MAX_ENTITLEMENTS.maxMembers,
-          });
-        const third = yield* signInThroughWorker(emails[2]);
-        const fourth = yield* signInThroughWorker(emails[3]);
-        const status = (cookie: string) =>
-          Effect.map(
-            fetchWorker(`http://localhost/shop/${SHOP}`, {
+          yield* repository.addMember({ shop: SHOP, email });
+        for (const email of emails) {
+          const cookie = yield* signInThroughWorker(email);
+          strictEqual(
+            (yield* fetchWorker(`http://localhost/shop/${SHOP}`, {
               headers: { cookie },
-            }),
-            (response) => response.status,
+            })).status,
+            200,
           );
-        // Pro: both are in.
-        strictEqual(yield* status(third), 200);
-        strictEqual(yield* status(fourth), 200);
-        // The downgrade lands in the cache and nothing else is written; the
-        // very next request answers differently.
-        yield* setPlan(SHOP, "baton-basic");
-        strictEqual(yield* status(third), 200);
-        strictEqual(yield* status(fourth), 307);
+        }
       }),
     ),
   );
@@ -338,7 +273,6 @@ describe("member run list", () => {
         yield* repository.addMember({
           shop: SHOP,
           email: MEMBER,
-          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
         });
         // A magic link is only minted for someone who is a member somewhere.
         yield* seedShop(OTHER_SHOP);
@@ -346,7 +280,6 @@ describe("member run list", () => {
         yield* repository.addMember({
           shop: OTHER_SHOP,
           email: STRANGER,
-          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
         });
         const cookie = yield* signInThroughWorker(MEMBER);
         const stranger = yield* signInThroughWorker(STRANGER);
@@ -393,7 +326,6 @@ describe("admin console", () => {
         yield* repository.addMember({
           shop: SHOP,
           email: MEMBER,
-          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
         });
         const cookie = yield* signInThroughWorker(MEMBER);
         const response = yield* fetchWorker("http://localhost/admin", {
@@ -444,7 +376,6 @@ describe("login-callback", () => {
           yield* repository.addMember({
             shop: SHOP,
             email: MEMBER,
-            limit: Domain.MAX_ENTITLEMENTS.maxMembers,
           });
           const cookie = yield* signInThroughWorker(MEMBER);
           const one = yield* fetchWorker("http://localhost/login-callback", {
@@ -457,7 +388,6 @@ describe("login-callback", () => {
           yield* repository.addMember({
             shop: OTHER_SHOP,
             email: MEMBER,
-            limit: Domain.MAX_ENTITLEMENTS.maxMembers,
           });
           const two = yield* fetchWorker("http://localhost/login-callback", {
             headers: { cookie },

@@ -1,6 +1,6 @@
 import type { SqlError } from "effect/unstable/sql";
 
-import { Context, Effect, Layer, Match, Option, Schema } from "effect";
+import { Clock, Context, Effect, Layer, Match, Option, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 
 import * as Domain from "@/lib/Domain";
@@ -44,9 +44,13 @@ export const ShopUsageRow = Schema.Struct({
   ordersLimitedAt: Schema.NullOr(Schema.Number),
   openRunsLimitedAt: Schema.NullOr(Schema.Number),
   lastSweepAt: Schema.NullOr(Schema.Number),
-  lastReconciledQuantity: Schema.NullOr(Schema.Number),
+  membersHighWater: Schema.Number,
+  lastReconciledOrders: Schema.NullOr(Schema.Number),
+  lastReconciledMembers: Schema.NullOr(Schema.Number),
   pendingUsageEvents: Schema.Number,
   deadUsageEvents: Schema.Number,
+  pendingOrderUnits: Schema.Number,
+  pendingMemberUnits: Schema.Number,
 });
 export type ShopUsageRow = typeof ShopUsageRow.Type;
 
@@ -61,6 +65,7 @@ const ShopUsageCycle = Schema.Struct({
   cycleStartAt: Schema.NullOr(Schema.Number),
   cycleEndAt: Schema.NullOr(Schema.Number),
   ordersThisCycle: Schema.Number,
+  membersHighWater: Schema.Number,
 });
 
 /**
@@ -68,14 +73,27 @@ const ShopUsageCycle = Schema.Struct({
  * 64 characters. Derived from the order id alone, never from a clock: an order
  * is billed once and a replayed flush must not bill it again. A Shopify order
  * GID is around 30 characters, so this stays well inside the cap.
+ *
+ * One of two key shapes in the outbox; the other is {@link seatKey}.
  */
 const countKey = (orderId: string) => `${orderId}#count`;
 
-/** One usage-event row waiting in the outbox; `value` is {@link Domain.UsageEvent}'s. */
+/**
+ * A seat event's idempotency key: unique per cycle and per high-water mark
+ * ({@link Domain.seatEventValue}), so a replayed `recordRoster` with the same
+ * size is a no-op at the row level even if the mark comparison were raced.
+ * `seat#` plus two integers stays far inside the 64-character cap. Built by
+ * `recordRoster` and `setBillingCycle`.
+ */
+const seatKey = (cycleStartAt: number, mark: number) =>
+  `seat#${String(cycleStartAt)}#${String(mark)}`;
+
+/** One usage-event row waiting in the outbox; `value` is {@link Domain.UsageEvent}'s. `orderId` is null on a seat event. */
 export const UsageEventRow = Schema.Struct({
   idempotencyKey: Schema.String,
-  orderId: Schema.String,
-  value: Schema.Literal(1),
+  eventHandle: Schema.String,
+  orderId: Schema.NullOr(Schema.String),
+  value: Domain.UsageEvent.fields.value,
   occurredAt: Schema.Number,
   attempts: Schema.Number,
 });
@@ -355,14 +373,39 @@ export class OrderRepository extends Context.Service<
      * Records the shop's billing period, pushed in by the Worker after a plan
      * revalidation (`Domain.BillingCycleInput`).
      *
-     * Idempotent for an unchanged cycle: re-pushing the same start writes the
-     * columns and leaves the count alone, which is what makes it safe to call
-     * on every revalidation.
+     * A changed `cycleStartAt` is a new cycle: the order count is recounted
+     * from rows and the seat mark is reset to the roster
+     * (`input.memberCount`), which is queued as the cycle's first seat event,
+     * dated `cycleStartAt`. The seat meter at Shopify starts every cycle at
+     * zero and prices the whole roster by the plan's tiers
+     * (`Domain.ActiveSubscription`), so the value is the roster, not the
+     * overage.
+     *
+     * An unchanged start writes the columns and leaves the count alone, which
+     * is what makes it safe to call on every revalidation. It still raises the
+     * seat mark to the roster when the roster is past it, by
+     * {@link Domain.seatEventValue}: that covers an add whose
+     * `recordRoster` failed (it is best-effort), and a cycle the counting path
+     * rolled forward on its own, which starts with no mark.
      */
     readonly setBillingCycle: (
       input: Domain.BillingCycleInput,
     ) => Effect.Effect<void, SqlError.SqlError | OrderRepositoryError>;
-    /** Stores Shopify's meter reading and returns the counters beside it, so the caller can log the divergence. */
+    /**
+     * Raises the cycle's seat mark to `size` when past it and queues the rise
+     * as one seat event ({@link Domain.seatEventValue} is the rule); answers
+     * the units queued, `0` when not past the mark. A removal is never
+     * reported, so nothing lowers the mark within a cycle.
+     *
+     * Resolves the cycle first, as `countOrder` does: a shop with no cycle
+     * opens the provisional one so the key has a cycle to name, and a cycle
+     * past its end rolls forward and starts with no mark.
+     */
+    readonly recordRoster: (
+      input: Domain.RecordRosterInput,
+      now: number,
+    ) => Effect.Effect<number, SqlError.SqlError | OrderRepositoryError>;
+    /** Stores Shopify's meter readings and returns the counters beside them, so the caller can log the divergence. */
     readonly reconcileUsage: (
       input: Domain.ReconcileUsageInput,
     ) => Effect.Effect<ShopUsageRow, SqlError.SqlError | OrderRepositoryError>;
@@ -397,7 +440,8 @@ export class OrderRepository extends Context.Service<
      * back. Runs go with the order because a fixture row being replaced has no
      * trail worth keeping, and a run outliving its order carries its own
      * snapshot of the order name and item, so it would sit on a queue as a card
-     * nothing can clear. Usage: the meter counts orders Baton started work on
+     * nothing can clear. Seat events have a null `orderId`, so the `like` on
+     * `orderId` never touches them. Usage: the meter counts orders Baton started work on
      * and never reverses ({@link Domain.ShopUsage}), so a reseed would climb by
      * a fixture's worth every time until the quota banner appeared over a shop
      * holding one seed's orders. Only the seed knows the whole set is being
@@ -407,7 +451,11 @@ export class OrderRepository extends Context.Service<
      * what was added however the order later changed. The queued events go with
      * the rows because a fixture must not bill a development store; events
      * already accepted by Shopify are gone from the table and are the seed's
-     * own to answer for.
+     * own to answer for. `ordersLimitedAt` is cleared when the count given
+     * back leaves the cycle under {@link Domain.cycleAtOrderCeiling}: the
+     * orders the ceiling refused were the seed's own, and the reseed replaces
+     * them, so the banner has nothing left to say. This is the one clearing
+     * outside a cycle roll.
      */
     readonly deleteSeedOrders: () => Effect.Effect<void, SqlError.SqlError>;
     /**
@@ -545,6 +593,11 @@ export class OrderRepository extends Context.Service<
         "Invalid ShopUsage row",
       );
 
+      const readCycle = () =>
+        sql`select shopGid, cycleStartAt, cycleEndAt, ordersThisCycle, membersHighWater from ShopUsage where id = 1`.pipe(
+          Effect.flatMap(decodeCycle),
+        );
+
       /**
        * Orders whose `countedAt` is at or after `since`: what a cycle
        * starting there is worth, used to recount when the Worker pushes a new
@@ -584,9 +637,7 @@ export class OrderRepository extends Context.Service<
       const currentCycle = Effect.fn("OrderRepository.currentCycle")(function* (
         now: number,
       ) {
-        const [stored] = yield* decodeCycle(
-          yield* sql`select shopGid, cycleStartAt, cycleEndAt, ordersThisCycle from ShopUsage where id = 1`,
-        );
+        const [stored] = yield* readCycle();
         if (stored === undefined)
           return yield* Effect.fail(
             new OrderRepositoryError({
@@ -598,33 +649,39 @@ export class OrderRepository extends Context.Service<
           const cycleStartAt = Domain.provisionalCycleStart(now);
           yield* sql`
             update ShopUsage
-            set cycleStartAt = ${cycleStartAt}, ordersThisCycle = 0, ordersLimitedAt = null
+            set cycleStartAt = ${cycleStartAt}, ordersThisCycle = 0, ordersLimitedAt = null,
+                membersHighWater = 0
             where id = 1
           `;
-          return { shopGid: stored.shopGid, cycleStartAt, ordersThisCycle: 0 };
+          return {
+            shopGid: stored.shopGid,
+            cycleStartAt,
+            ordersThisCycle: 0,
+            membersHighWater: 0,
+          };
         }
         if (stored.cycleEndAt !== null && now >= stored.cycleEndAt) {
           // Recounted from the rows, as `setBillingCycle` does, so both ways a
           // cycle can start state one rule: the count is the orders counted
-          // at or after the start.
+          // at or after the start. The seat mark starts at zero: the object
+          // cannot count the roster, so the next `recordRoster` or
+          // `setBillingCycle` sends the whole of it into the new cycle.
           const count = yield* countedSince(stored.cycleEndAt);
           yield* sql`
             update ShopUsage
             set cycleStartAt = cycleEndAt, cycleEndAt = null,
-                ordersThisCycle = ${count}, ordersLimitedAt = null
+                ordersThisCycle = ${count}, ordersLimitedAt = null,
+                membersHighWater = 0
             where id = 1
           `;
           return {
             shopGid: stored.shopGid,
             cycleStartAt: stored.cycleEndAt,
             ordersThisCycle: count,
+            membersHighWater: 0,
           };
         }
-        return {
-          shopGid: stored.shopGid,
-          cycleStartAt: stored.cycleStartAt,
-          ordersThisCycle: stored.ordersThisCycle,
-        };
+        return { ...stored, cycleStartAt: stored.cycleStartAt };
       });
 
       /** Rule and reasoning on {@link OrderRepository.countOrder}. */
@@ -644,11 +701,37 @@ export class OrderRepository extends Context.Service<
         yield* sql`update ShopUsage set ordersThisCycle = ordersThisCycle + 1 where id = 1`;
         yield* queueUsageEvent({
           idempotencyKey: countKey(orderId),
+          eventHandle: Domain.USAGE_METER_ORDER,
           orderId,
           value: 1,
           occurredAt: now,
         });
       });
+
+      /**
+       * Raises the seat mark to `size` inside the caller's transaction and
+       * queues the rise; {@link Domain.seatEventValue} is the rule.
+       */
+      const raiseSeatMark = Effect.fn("OrderRepository.raiseSeatMark")(
+        function* (input: {
+          readonly cycleStartAt: number;
+          readonly highWater: number;
+          readonly size: number;
+          readonly occurredAt: number;
+        }) {
+          const value = Domain.seatEventValue(input.size, input.highWater);
+          if (value === 0) return 0;
+          yield* sql`update ShopUsage set membersHighWater = ${input.size} where id = 1`;
+          yield* queueUsageEvent({
+            idempotencyKey: seatKey(input.cycleStartAt, input.size),
+            eventHandle: Domain.USAGE_METER_MEMBER,
+            orderId: null,
+            value,
+            occurredAt: input.occurredAt,
+          });
+          return value;
+        },
+      );
 
       /**
        * `or ignore`, so re-queuing a key Shopify has already been told about is
@@ -658,19 +741,21 @@ export class OrderRepository extends Context.Service<
        * A seeded order queues nothing ({@link Domain.orderIsSeeded}). It is
        * refused here rather than at the call sites because this is the only
        * door into the outbox, and a fixture that reaches Shopify's meter costs
-       * real money under a permanent idempotency key.
+       * real money under a permanent idempotency key. A seat event has no
+       * order and is never a fixture's.
        */
       const queueUsageEvent = (input: {
         readonly idempotencyKey: string;
-        readonly orderId: string;
+        readonly eventHandle: string;
+        readonly orderId: string | null;
         readonly value: number;
         readonly occurredAt: number;
       }) =>
-        Domain.orderIsSeeded(input.orderId)
+        input.orderId !== null && Domain.orderIsSeeded(input.orderId)
           ? Effect.void
           : sql`
-              insert or ignore into UsageEvent (idempotencyKey, orderId, value, occurredAt)
-              values (${input.idempotencyKey}, ${input.orderId}, ${input.value}, ${input.occurredAt})
+              insert or ignore into UsageEvent (idempotencyKey, eventHandle, orderId, value, occurredAt)
+              values (${input.idempotencyKey}, ${input.eventHandle}, ${input.orderId}, ${input.value}, ${input.occurredAt})
             `;
 
       const markOrdersLimited = Effect.fn("OrderRepository.markOrdersLimited")(
@@ -692,11 +777,18 @@ export class OrderRepository extends Context.Service<
         const [usage] = yield* decodeUsage(
           yield* sql`
             select cycleStartAt, cycleEndAt, ordersThisCycle, ordersLimitedAt,
-                   openRunsLimitedAt, lastSweepAt, lastReconciledQuantity,
+                   openRunsLimitedAt, lastSweepAt, membersHighWater,
+                   lastReconciledOrders, lastReconciledMembers,
                    (select count(*) from UsageEvent
                     where cycleStartAt is null or occurredAt >= cycleStartAt) as pendingUsageEvents,
                    (select count(*) from UsageEvent
-                    where cycleStartAt is not null and occurredAt < cycleStartAt) as deadUsageEvents
+                    where cycleStartAt is not null and occurredAt < cycleStartAt) as deadUsageEvents,
+                   (select coalesce(sum(value), 0) from UsageEvent
+                    where eventHandle = ${Domain.USAGE_METER_ORDER}
+                      and (cycleStartAt is null or occurredAt >= cycleStartAt)) as pendingOrderUnits,
+                   (select coalesce(sum(value), 0) from UsageEvent
+                    where eventHandle = ${Domain.USAGE_METER_MEMBER}
+                      and (cycleStartAt is null or occurredAt >= cycleStartAt)) as pendingMemberUnits
             from ShopUsage where id = 1
           `,
         );
@@ -1241,11 +1333,10 @@ export class OrderRepository extends Context.Service<
 
         setBillingCycle: Effect.fn("OrderRepository.setBillingCycle")(
           function* (input: Domain.BillingCycleInput) {
+            const now = yield* Clock.currentTimeMillis;
             yield* sql.withTransaction(
               Effect.gen(function* () {
-                const [stored] = yield* decodeCycle(
-                  yield* sql`select shopGid, cycleStartAt, cycleEndAt, ordersThisCycle from ShopUsage where id = 1`,
-                );
+                const [stored] = yield* readCycle();
                 const changed = stored?.cycleStartAt !== input.cycleStartAt;
                 const unaddressed = stored?.shopGid === null;
                 yield* sql`
@@ -1255,7 +1346,15 @@ export class OrderRepository extends Context.Service<
                       cycleEndAt = ${input.cycleEndAt}
                   where id = 1
                 `;
-                if (!changed) return;
+                if (!changed) {
+                  yield* raiseSeatMark({
+                    cycleStartAt: input.cycleStartAt,
+                    highWater: stored?.membersHighWater ?? 0,
+                    size: input.memberCount,
+                    occurredAt: now,
+                  });
+                  return;
+                }
                 /**
                  * A new cycle is recounted from the rows rather than zeroed.
                  * The object may already have counted orders into a provisional
@@ -1283,16 +1382,55 @@ export class OrderRepository extends Context.Service<
                  */
                 if (unaddressed)
                   yield* sql`delete from UsageEvent where occurredAt < ${input.cycleStartAt}`;
+                /**
+                 * The new cycle's seat mark is the roster, sent whole. Any
+                 * seat event still queued and dated inside the new cycle came
+                 * from the outgoing mark (a provisional cycle, or one the
+                 * counting path rolled forward) and is superseded by this one;
+                 * sending both would bill those seats twice.
+                 */
+                yield* sql`
+                  delete from UsageEvent
+                  where eventHandle = ${Domain.USAGE_METER_MEMBER}
+                    and occurredAt >= ${input.cycleStartAt}
+                `;
+                yield* sql`update ShopUsage set membersHighWater = 0 where id = 1`;
+                yield* raiseSeatMark({
+                  cycleStartAt: input.cycleStartAt,
+                  highWater: 0,
+                  size: input.memberCount,
+                  occurredAt: input.cycleStartAt,
+                });
               }),
             );
           },
         ),
 
+        recordRoster: Effect.fn("OrderRepository.recordRoster")(function* (
+          input: Domain.RecordRosterInput,
+          now: number,
+        ) {
+          return yield* sql.withTransaction(
+            Effect.gen(function* () {
+              const cycle = yield* currentCycle(now);
+              return yield* raiseSeatMark({
+                cycleStartAt: cycle.cycleStartAt,
+                highWater: cycle.membersHighWater,
+                size: input.size,
+                occurredAt: now,
+              });
+            }),
+          );
+        }),
+
         reconcileUsage: Effect.fn("OrderRepository.reconcileUsage")(function* (
           input: Domain.ReconcileUsageInput,
         ) {
           yield* sql`
-            update ShopUsage set lastReconciledQuantity = ${input.quantity} where id = 1
+            update ShopUsage
+            set lastReconciledOrders = ${input.orders},
+                lastReconciledMembers = ${input.members}
+            where id = 1
           `;
           return yield* readUsage();
         }),
@@ -1302,9 +1440,7 @@ export class OrderRepository extends Context.Service<
         flushUsageEvents: Effect.fn("OrderRepository.flushUsageEvents")(
           function* (shop: string) {
             const appEvents = yield* ShopifyAppEvents;
-            const [usage] = yield* decodeCycle(
-              yield* sql`select shopGid, cycleStartAt, cycleEndAt, ordersThisCycle from ShopUsage where id = 1`,
-            );
+            const [usage] = yield* readCycle();
             const shopGid = usage?.shopGid ?? null;
             const cycleStartAt = usage?.cycleStartAt ?? null;
             if (shopGid === null || cycleStartAt === null) {
@@ -1336,10 +1472,10 @@ export class OrderRepository extends Context.Service<
               "Invalid UsageEvent rows",
             )(
               yield* sql`
-                select idempotencyKey, orderId, value, occurredAt, attempts
+                select idempotencyKey, eventHandle, orderId, value, occurredAt, attempts
                 from UsageEvent
                 where occurredAt >= ${cycleStartAt}
-                order by occurredAt
+                order by occurredAt, rowid
                 limit ${Domain.ShopLimits.sweepBatch}
               `,
             );
@@ -1360,7 +1496,7 @@ export class OrderRepository extends Context.Service<
               const failure = yield* appEvents
                 .send({
                   shopGid: gid,
-                  eventHandle: Domain.USAGE_METER_ORDER,
+                  eventHandle: row.eventHandle,
                   occurredAt: row.occurredAt,
                   idempotencyKey: row.idempotencyKey,
                   value: row.value,
@@ -1414,6 +1550,11 @@ export class OrderRepository extends Context.Service<
                   set ordersThisCycle = max(0, ordersThisCycle - ${counted})
                   where id = 1
                 `;
+                const [after] =
+                  yield* sql`select ordersThisCycle from ShopUsage where id = 1`
+                    .values;
+                if (!Domain.cycleAtOrderCeiling(Number(after?.[0] ?? 0)))
+                  yield* sql`update ShopUsage set ordersLimitedAt = null where id = 1`;
                 yield* sql`delete from UsageEvent where orderId like ${seedPrefix}`;
                 yield* sql`delete from WorkflowRun where orderId like ${seedPrefix}`;
                 yield* sql`delete from OrderLineItem where orderId like ${seedPrefix}`;

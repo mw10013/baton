@@ -74,18 +74,27 @@ export const planOfHandle = (handle: PlanHandle): Plan =>
 export interface Entitlements {
   /** Orders ({@link ShopUsage.ordersThisCycle}) included per billing cycle. Past this the usage meter bills; nothing blocks until {@link ShopLimits.maxOrdersPerCycle}. */
   readonly ordersPerCycle: number;
-  /** Seats. Members past this many, ordered by `createdAt` then `email`, are refused by `requireMember`; see {@link memberHasSeat}. */
-  readonly maxMembers: number;
+  /**
+   * Seats included; members past this many are billed by the
+   * {@link USAGE_METER_MEMBER} meter, never refused. Nothing in the app
+   * compares the roster to this number except the home page's Members tile:
+   * the meter's $0.00 band absorbs the included seats, so the object sends the
+   * roster size and Shopify prices it. The only refusal is
+   * {@link ShopLimits.maxMembers}, which is plan-independent.
+   */
+  readonly membersIncluded: number;
 }
 
 /**
  * What each tier grants. The Worker owns this table and the Durable Object
  * never sees it, but the split is *compare here, count there*, not "pass the
  * number in": `ordersPerCycle` is compared in the Worker against the
- * {@link ShopUsage} row the object keeps and reports, and `maxMembers` against
- * a D1 seat rank. Neither number reaches `ShopAgent`, so the object stores no
- * plan state to fall out of sync, and an upgrade or downgrade lands on the very
- * next page view with nothing to invalidate. The one plan-adjacent fact the
+ * {@link ShopUsage} row the object keeps and reports, and `membersIncluded` is
+ * compared nowhere but the home page's Members tile; the roster size reaches
+ * the object as a number to send ({@link RecordRosterInput}), not to compare.
+ * Neither entitlement reaches `ShopAgent`, so the object stores no plan state
+ * to fall out of sync, and an upgrade or downgrade lands on the very next page
+ * view with nothing to invalidate. The one plan-adjacent fact the
  * object does hold is the billing *cycle* (see {@link ShopUsage}), which is a
  * period, not an entitlement.
  *
@@ -97,19 +106,19 @@ export interface Entitlements {
  * move the Partner Dashboard plan copy (and the table in `README.md`) with
  * them. `ordersPerCycle` must equal tier 1 of the {@link USAGE_METER_ORDER}
  * meter on that plan — the **included allowance**, the band priced at $0.00 —
- * or the merchant is billed for an order the app calls included. It is not a
+ * or the merchant is billed for an order the app calls included; the same
+ * holds for `membersIncluded` and tier 1 of {@link USAGE_METER_MEMBER}. It is not a
  * "free tier": the allowance is what the subscription already paid for.
  * Nothing verifies the two agree; it is operator discipline, because the meter
  * lives in the Partner Dashboard and the app cannot read its tiers.
  *
  * Raising a limit is always safe; lowering one is not, with no grandfathering:
- * a cut applies to existing shops immediately. A cut to `maxMembers` takes
- * seats away from the newest members the moment it lands — nothing is written,
- * and {@link memberHasSeat} is where that is decided.
+ * a cut applies to existing shops immediately. A cut to `membersIncluded`
+ * only moves the $0.00 band; nobody loses access.
  */
 const ENTITLEMENTS = {
-  basic: { ordersPerCycle: 20, maxMembers: 3 },
-  pro: { ordersPerCycle: 30, maxMembers: 10 },
+  basic: { ordersPerCycle: 20, membersIncluded: 3 },
+  pro: { ordersPerCycle: 30, membersIncluded: 10 },
 } as const satisfies Record<Plan, Entitlements>;
 
 export const entitlementsOfPlan = (plan: Plan): Entitlements =>
@@ -126,10 +135,13 @@ export const MAX_ENTITLEMENTS: Entitlements = ENTITLEMENTS.pro;
  * The App Pricing usage meter handle for a counted order, identical on every
  * plan. Case-sensitive; must match the Partner Dashboard exactly, because the
  * App Events API answers `202` to a handle that matches no meter and the event
- * is then silently non-billable. It is one handle across tiers so the meter's
- * own graduated tiers — not the event — decide what an order costs.
+ * is then silently non-billable. Each meter is one handle across tiers so the
+ * meter's own graduated tiers — not the event — decide what a unit costs.
  */
 export const USAGE_METER_ORDER = "production-orders";
+
+/** The App Pricing usage meter handle for seats; same rules as {@link USAGE_METER_ORDER}. The value sent is {@link seatEventValue}. */
+export const USAGE_METER_MEMBER = "members";
 
 /**
  * What the shop's contract grants right now. Nothing is scheduled: a plan
@@ -159,14 +171,25 @@ export type PlanStatus = typeof PlanStatus.Type;
  * takes over. Both denote the same thing to a cache: the next instant at which
  * the contract may legitimately change without any notification, since App
  * Pricing sends no webhooks.
+ *
+ * A plan change is a new contract: a new cycle starting at the switch moment,
+ * with every meter at zero. Usage sent during a trial is not reported and does
+ * not carry into the paid cycle. Accepted usage shows on the meter within
+ * about 30 s. Measured on the dev store on 2026-09-22. This is why the seat
+ * meter is sent the whole roster at each new cycle
+ * (`OrderRepository.setBillingCycle`) rather than an overage: the plan's tiers
+ * price it, so a switch needs no app-side arithmetic.
  */
 export const ActiveSubscription = Schema.Struct({
   handle: PlanHandle,
   boundaryAt: Schema.NullOr(Schema.Number),
   /** `currentBillingCycle.startTime`; null during a trial, which has no cycle. */
   cycleStartAt: Schema.NullOr(Schema.Number),
-  /** Shopify's own count for {@link USAGE_METER_ORDER} this cycle, when the contract carries the meter; the figure local counting is reconciled against. */
-  usageQuantity: Schema.NullOr(Schema.Number),
+  /** Shopify's own quantity per meter this cycle, null when the contract lacks that meter's item; the figures local counting is reconciled against. */
+  usage: Schema.Struct({
+    orders: Schema.NullOr(Schema.Number),
+    members: Schema.NullOr(Schema.Number),
+  }),
 });
 export type ActiveSubscription = typeof ActiveSubscription.Type;
 
@@ -434,29 +457,8 @@ export const MemberAccess = Schema.Struct({
   shop: Shop,
   memberId: MemberId,
   teams: Schema.Array(Schema.Struct({ id: TeamId, name: TeamName })),
-  /** How many members of the shop were added before this one, 0-based; the input to {@link memberHasSeat}. */
-  seatRank: Schema.Number,
 });
 export type MemberAccess = typeof MemberAccess.Type;
-
-/**
- * A member holds a seat when fewer than `maxMembers` members of the shop were
- * added before them, ordering by `createdAt` then `email`.
- *
- * Derived on every check from the plan in force and the roster as it stands.
- * Nothing is written on a downgrade, so there is no moment Baton has to pick to
- * decide who loses access: a downgrade learned about inside a webhook changes
- * only the answer the next member request gets, and no plan history can grant a
- * seat past the current limit — upgrade, add ten, downgrade, and only the first
- * three are still in. The merchant frees a seat by removing a member or
- * upgrading; those are verbs the members page already has.
- *
- * The tiebreak on `email` exists because `createdAt` is a millisecond
- * timestamp two adds can share, and a rank that flips between requests would
- * seat a different member on each page load.
- */
-export const memberHasSeat = (seatRank: number, maxMembers: number) =>
-  seatRank < maxMembers;
 
 /**
  * One row per `(member, team)` edge in a shop, with the team's total member
@@ -509,7 +511,9 @@ export const ShopLimits = {
   /** `WorkflowRun` rows that are {@link runIsOpen} per shop; a safety valve, not a product limit. "Open", not "live": a `done` run is live for its line item but frees this slot. */
   maxOpenRuns: 5000,
   /** {@link ShopUsage.ordersThisCycle} at which syncing of *new* orders stops for the rest of the cycle. Provisional; enterprise fencing, not a tier — see {@link cycleAtOrderCeiling}. */
-  maxOrdersPerCycle: 10_000,
+  maxOrdersPerCycle: 100,
+  /** Members per shop on any plan; see {@link rosterAtCeiling}. Provisional; enterprise fencing, not a tier. */
+  maxMembers: 12,
   /** Line items kept per order on the bulk path; the rest are dropped and the order flagged. */
   maxLineItemsPerOrder: 250,
   /**
@@ -580,11 +584,24 @@ export const ShopUsage = Schema.Struct({
   lastSweepAt: Schema.NullOr(Schema.Number),
   /** Usage events queued for the current cycle and not yet accepted by Shopify. Non-zero for long is an operator signal, not a merchant-facing number. */
   pendingUsageEvents: Schema.Number,
-  /** Usage events that missed their cycle and can no longer be sent; see {@link usageEventIsDead}. Each is an order carried and never billed. */
+  /** Usage events that missed their cycle and can no longer be sent; see {@link usageEventIsDead}. Each is a unit carried and never billed. */
   deadUsageEvents: Schema.Number,
+  /** The {@link USAGE_METER_ORDER} share of {@link pendingUsageEvents}, as units; the tolerance of the orders drift check. */
+  pendingOrderUnits: Schema.Number,
+  /** The {@link USAGE_METER_MEMBER} share of {@link pendingUsageEvents}, as units; the tolerance of the members drift check. */
+  pendingMemberUnits: Schema.Number,
   /**
-   * Shopify's own meter reading at the last revalidation; null until one has
-   * reported it. Diagnostic only — nothing is corrected from it.
+   * The cycle's billable seat quantity: its high-water mark, as
+   * {@link seatEventValue} defines it. Everything sent to
+   * {@link USAGE_METER_MEMBER} this cycle sums to this number once the
+   * outbox drains. Never lowered by a removal; reset only by a new cycle
+   * (`OrderRepository.setBillingCycle`).
+   */
+  membersHighWater: Schema.Number,
+  /**
+   * Shopify's own {@link USAGE_METER_ORDER} reading at the last revalidation;
+   * null until one has reported it. Diagnostic only — nothing is corrected
+   * from it.
    *
    * Null can also mean the contract cannot report at all. Shopify reports the
    * quantity on the meter's *subscription item*, and an App Pricing contract
@@ -595,7 +612,9 @@ export const ShopUsage = Schema.Struct({
    * pre-meter contract listed one `FlatRatePrice` item after seven accepted
    * events; the replacement listed the meter at `quantity: 0` before any.
    */
-  lastReconciledQuantity: Schema.NullOr(Schema.Number),
+  lastReconciledOrders: Schema.NullOr(Schema.Number),
+  /** Shopify's own {@link USAGE_METER_MEMBER} reading at the last revalidation; null under the same conditions as {@link lastReconciledOrders}. */
+  lastReconciledMembers: Schema.NullOr(Schema.Number),
 });
 export type ShopUsage = typeof ShopUsage.Type;
 
@@ -612,6 +631,8 @@ export const BillingCycleInput = Schema.Struct({
   shopGid: ShopGid,
   cycleStartAt: Schema.Number,
   cycleEndAt: Schema.NullOr(Schema.Number),
+  /** The D1 roster size, read by the Worker just before the push; the seat mark a new cycle starts from. */
+  memberCount: Schema.Number,
 });
 export type BillingCycleInput = typeof BillingCycleInput.Type;
 
@@ -633,18 +654,20 @@ export const provisionalCycleStart = (now: number) => {
   return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
 };
 
-/** Shopify's meter reading for the current cycle, pushed in for the divergence check on {@link ShopUsage.lastReconciledQuantity}. */
+/** Shopify's meter readings for the current cycle, pushed in for the divergence checks on {@link ShopUsage.lastReconciledOrders} and {@link ShopUsage.lastReconciledMembers}; null where the contract lacks the meter. */
 export const ReconcileUsageInput = Schema.Struct({
-  quantity: Schema.Number,
+  orders: Schema.NullOr(Schema.Number),
+  members: Schema.NullOr(Schema.Number),
 });
 export type ReconcileUsageInput = typeof ReconcileUsageInput.Type;
 
 /**
- * One App Events billing event: one counted order.
+ * One App Events billing event: one counted order, or seats past the cycle's
+ * high-water mark.
  *
  * `idempotencyKey` is permanent at Shopify and capped at 64 characters, which
- * is why it is derived from the order id rather than from a clock: replaying a
- * flush must not bill twice.
+ * is why it is derived from the order id or the cycle and mark rather than
+ * from a clock: replaying a flush must not bill twice.
  */
 export const UsageEvent = Schema.Struct({
   shopGid: ShopGid,
@@ -653,12 +676,14 @@ export const UsageEvent = Schema.Struct({
   occurredAt: Schema.Number,
   idempotencyKey: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
   /**
-   * One order, one unit. A `Literal(1)` rather than a number because the meter
-   * only ever counts up: an order is billed the first time Baton creates a run
-   * for it (`OrderRepository.countOrder`) and nothing afterwards gives that
-   * back, so a negative or a plural value could only be a bug.
+   * A positive integer: `1` for an order, and for seats the roster size at a
+   * new cycle or the rise over the high-water mark ({@link seatEventValue}).
+   * Positive because both meters only count up — an order is billed the first
+   * time Baton creates a run for it (`OrderRepository.countOrder`), a seat
+   * mark is never lowered by a removal — and nothing is ever reversed, so zero
+   * or a negative could only be a bug.
    */
-  value: Schema.Literal(1),
+  value: Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0)),
 });
 export type UsageEvent = typeof UsageEvent.Type;
 
@@ -697,6 +722,52 @@ export const usageEventIsDead = (occurredAt: number, cycleStartAt: number) =>
  */
 export const cycleAtOrderCeiling = (ordersThisCycle: number) =>
   ordersThisCycle >= ShopLimits.maxOrdersPerCycle;
+
+/**
+ * A shop's roster is at its ceiling when it holds
+ * {@link ShopLimits.maxMembers} members, on any plan. `Repository.addMember`
+ * refuses a new email there, and the merchant is told to contact support. It
+ * is the one refusal on the roster: {@link Entitlements.membersIncluded} bills,
+ * it does not block.
+ */
+export const rosterAtCeiling = (count: number) =>
+  count >= ShopLimits.maxMembers;
+
+/**
+ * The seat units to queue when the roster reaches `rosterSize`: the rise over
+ * the cycle's high-water mark, or `0` when not past it.
+ *
+ * The billable seat quantity for a cycle is its high-water mark: the roster
+ * size at cycle start, plus one for each add that raises the mark. A removal
+ * never lowers it, so remove-then-add inside a cycle bills once, and nothing
+ * sent is ever reversed. The arithmetic, not the constant `1`, is the rule: a
+ * roster that grew by more than one between reports still sends exactly the
+ * rise.
+ */
+export const seatEventValue = (rosterSize: number, highWater: number) =>
+  Math.max(rosterSize - highWater, 0);
+
+/**
+ * A usage meter diverges when Shopify's reading and the local figure differ by
+ * more than the units still queued for that meter. Pending units are a gap
+ * the next flush closes; dead ones ({@link usageEventIsDead}) never close, so
+ * they are not tolerated, and a tolerance that grew with every lost event
+ * would hide the loss it exists to show. Each meter tolerates only its own
+ * pending units ({@link ShopUsage.pendingOrderUnits},
+ * {@link ShopUsage.pendingMemberUnits}).
+ */
+export const meterDiverges = (input: {
+  readonly local: number;
+  readonly shopify: number;
+  readonly pending: number;
+}) => Math.abs(input.local - input.shopify) > input.pending;
+
+/**
+ * The roster size the Worker reports after an add (`ShopAgent.recordRoster`).
+ * Plain RPC input: the roster is D1's, and the object cannot count it.
+ */
+export const RecordRosterInput = Schema.Struct({ size: Schema.Number });
+export type RecordRosterInput = typeof RecordRosterInput.Type;
 
 /** The length of every trimmed name: the schema check, the field `maxLength`, and the rename dialog's counter all read this. */
 export const NAME_MAX_LENGTH = 64;
@@ -2235,7 +2306,7 @@ export type AdminShopLoaderData =
 export interface AppIndexLoaderData {
   readonly entitlements: Entitlements;
   readonly usage: ShopUsage;
-  /** `Member` rows in D1, against `Entitlements.maxMembers`. */
+  /** `Member` rows in D1, against `Entitlements.membersIncluded`. */
   readonly memberCount: number;
   /** The next contract boundary. */
   readonly planBoundaryAt: number | null;
@@ -2282,12 +2353,6 @@ export interface MembersLoaderData {
   readonly members: readonly Member[];
   readonly teams: readonly TeamRoster[];
   readonly memberTeams: readonly MemberTeam[];
-  /**
-   * The plan's seats. `members` is already ordered `createdAt, email` — the
-   * same order {@link memberHasSeat} ranks by — so the page reads the cutoff
-   * off the row index and no per-row seat flag is sent.
-   */
-  readonly maxMembers: number;
 }
 
 /**

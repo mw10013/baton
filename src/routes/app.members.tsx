@@ -8,16 +8,13 @@ import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Effect, Option, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
-import { ManagePlanButton } from "@/components/ManagePlanButton";
 import { MemberTeamsFields } from "@/components/MemberTeamsFields";
 import * as Domain from "@/lib/Domain";
 import { fieldError, mutationErrorMessage } from "@/lib/form";
-import { formatNumber } from "@/lib/format";
 import { Repository, RepositoryError } from "@/lib/Repository";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
-import { resolveEntitlements } from "@/lib/SubscriptionPlan";
 import { failWith, sessionShop } from "@/lib/teams";
 
 const ADD_MODAL = "add-member";
@@ -44,8 +41,8 @@ const decodeMemberId = Schema.decodeUnknownEffect(Domain.MemberId);
 const decodeTeamIds = Schema.decodeUnknownEffect(Schema.Array(Domain.TeamId));
 
 const MEMBER_GONE = "That member no longer exists.";
-const memberLimitMessage = (limit: number) =>
-  `Your plan allows ${formatNumber(limit)} ${limit === 1 ? "member" : "members"}. Upgrade to add more.`;
+const MEMBER_CEILING =
+  "This shop has reached the maximum number of members. Contact support to raise it.";
 
 const getLoaderData = createServerFn({ method: "GET" })
   .middleware([shopifyServerFnMiddleware])
@@ -62,7 +59,6 @@ const getLoaderData = createServerFn({ method: "GET" })
               ({ id, name, memberCount }) satisfies Domain.TeamRoster,
           ),
           memberTeams: yield* repository.listMemberTeams(shop),
-          maxMembers: (yield* resolveEntitlements(shop)).maxMembers,
         } satisfies Domain.MembersLoaderData;
       }),
     ),
@@ -76,6 +72,12 @@ const getLoaderData = createServerFn({ method: "GET" })
  * after the insert because `addMember` returns nothing; both run on the
  * primary connection, so a miss cannot happen and is reported as the
  * repository's own invariant failure.
+ *
+ * The roster size after the insert goes to `ShopAgent.recordRoster`, which
+ * meters the seat (`Domain.seatEventValue`). Best-effort: a seat event that
+ * failed to record is an operator signal, not a reason to fail the add, and
+ * the next plan revalidation raises the mark to the roster anyway
+ * (`OrderRepository.setBillingCycle`).
  */
 const addMemberFn = createServerFn({ method: "POST" })
   .validator(Schema.toStandardSchemaV1(AddMemberInput))
@@ -86,8 +88,17 @@ const addMemberFn = createServerFn({ method: "POST" })
         const repository = yield* Repository;
         const shop = yield* sessionShop(session.shop);
         const email = yield* decodeEmail(data.email);
-        const { maxMembers } = yield* resolveEntitlements(shop);
-        yield* repository.addMember({ shop, email, limit: maxMembers });
+        yield* repository.addMember({ shop, email });
+        const shopAgentClient = yield* ShopAgentClient;
+        yield* repository.countMembers(shop).pipe(
+          Effect.flatMap((size) =>
+            shopAgentClient.recordRoster(shop, { size }),
+          ),
+          Effect.ignore({
+            log: "Warn",
+            message: `addMember: shop=${shop}: recordRoster failed`,
+          }),
+        );
         if (data.teamIds.length === 0) return;
         const member = yield* repository.findMember({ shop, email }).pipe(
           Effect.flatMap(
@@ -107,8 +118,8 @@ const addMemberFn = createServerFn({ method: "POST" })
           teamIds: yield* decodeTeamIds(data.teamIds),
         });
       }).pipe(
-        Effect.catchTag("MemberLimitError", ({ limit }) =>
-          Effect.fail(new Error(memberLimitMessage(limit))),
+        Effect.catchTag("MemberCeilingError", () =>
+          Effect.fail(new Error(MEMBER_CEILING)),
         ),
       ),
     ),
@@ -184,8 +195,7 @@ const MAX_CHIPS = 4;
  * paragraph. Edit teams and Add member share one checklist component.
  */
 function RouteComponent() {
-  const { members, teams, memberTeams, maxMembers } = Route.useLoaderData();
-  const { managePlanUrl } = Route.useRouteContext();
+  const { members, teams, memberTeams } = Route.useLoaderData();
   const router = useRouter();
   const shopify = useAppBridge();
   const addMember = useServerFn(addMemberFn);
@@ -202,18 +212,6 @@ function RouteComponent() {
 
   const teamsOf = (member: Domain.Member) =>
     memberTeams.filter((row) => row.memberId === member.id);
-
-  /**
-   * Who holds no seat, by `Domain.memberHasSeat`. `members` arrives ordered
-   * `createdAt, email` — the order that rule ranks by — so the cutoff is the
-   * row index and no per-row flag has to cross the wire. Computed against the
-   * unfiltered list, because the search box must not change who has a seat.
-   */
-  const seatless = new Set(
-    members
-      .filter((_, index) => !Domain.memberHasSeat(index, maxMembers))
-      .map((member) => member.id),
-  );
 
   const addMutation = useMutation({
     mutationFn: (data: AddMemberInput) => addMember({ data }),
@@ -355,12 +353,7 @@ function RouteComponent() {
           {rows.map((member) => (
             <s-table-row key={member.id} id={member.id}>
               <s-table-cell>
-                <s-stack direction="inline" gap="small-300" alignItems="center">
-                  <s-text>{member.email}</s-text>
-                  {seatless.has(member.id) && (
-                    <s-badge tone="critical">No seat</s-badge>
-                  )}
-                </s-stack>
+                <s-text>{member.email}</s-text>
               </s-table-cell>
               <s-table-cell>{teamsCell(member)}</s-table-cell>
               <s-table-cell>
@@ -412,17 +405,6 @@ function RouteComponent() {
       {addButton(true)}
 
       {mutationError && <s-banner tone="critical">{mutationError}</s-banner>}
-
-      {/* The seat rule, stated where the merchant can act on it: Remove is on
-          every row, and Manage plan is the other way out. Nothing was taken
-          away from anybody — the seats simply belong to the oldest members
-          while the plan says so. */}
-      {seatless.size > 0 && (
-        <s-banner tone="critical">
-          {`Your plan includes ${formatNumber(maxMembers)} members. Only the ${formatNumber(maxMembers)} oldest can sign in until you remove members or upgrade.`}
-          <ManagePlanButton url={managePlanUrl} />
-        </s-banner>
-      )}
 
       {/* `padding="none"` so the table runs edge to edge; the description
           goes inside a padded intro box instead of a slotted heading. */}

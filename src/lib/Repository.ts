@@ -35,17 +35,13 @@ export class TeamNameTakenError extends Schema.TaggedError<TeamNameTakenError>()
   { shop: Domain.Shop, name: Domain.TeamName },
 ) {}
 
-/**
- * The shop is at its plan's `maxMembers` and the email is not already a
- * member. Carries the limit so the page can name it without resolving the
- * plan a second time.
- */
-export class MemberLimitError extends Schema.TaggedError<MemberLimitError>()(
-  "MemberLimitError",
+/** The roster is at its ceiling ({@link Domain.rosterAtCeiling}) and the email is not already a member. */
+export class MemberCeilingError extends Schema.TaggedError<MemberCeilingError>()(
+  "MemberCeilingError",
   { shop: Domain.Shop, limit: Schema.Number },
 ) {}
 
-/** The shop is at `Domain.ShopLimits.maxTeams`. Plan-independent, unlike {@link MemberLimitError}. */
+/** The shop is at `Domain.ShopLimits.maxTeams`. */
 export class TeamLimitError extends Schema.TaggedError<TeamLimitError>()(
   "TeamLimitError",
   { shop: Domain.Shop, limit: Schema.Number },
@@ -187,16 +183,15 @@ export class Repository extends Context.Service<
       SqlError.SqlError | RepositoryError
     >;
     /**
-     * Idempotent for the row, and the cap is applied to *additions* only: an
-     * email already on the roster is re-added without ever consulting `limit`,
-     * so a shop sitting at or over its plan (a downgrade, a lowered constant)
-     * can still re-run the same add without being told it is full.
+     * Idempotent for the row, and the ceiling ({@link Domain.rosterAtCeiling})
+     * is applied to *additions* only: an email already on the roster is
+     * re-added without consulting it, so a shop at or over the ceiling (a
+     * lowered constant) can still re-run the same add without being told it
+     * is full.
      */
     readonly addMember: (
-      member: Pick<Domain.Member, "shop" | "email"> & {
-        readonly limit: number;
-      },
-    ) => Effect.Effect<void, SqlError.SqlError | MemberLimitError>;
+      member: Pick<Domain.Member, "shop" | "email">,
+    ) => Effect.Effect<void, SqlError.SqlError | MemberCeilingError>;
     readonly countMembers: (
       shop: Domain.Shop,
     ) => Effect.Effect<number, SqlError.SqlError>;
@@ -588,27 +583,25 @@ export class Repository extends Context.Service<
        * Count-then-insert as two statements rather than one transaction: D1
        * has no interactive transactions (the driver rejects `withTransaction`),
        * and a batch cannot branch on the count. The race that leaves is two
-       * merchants adding the last seat in the same instant and both winning —
-       * one member over a cap of three or ten, on a screen only the shop owner
-       * reaches. Buying that back would mean a `count` inside the insert, which
-       * neither expresses "already a member is exempt" nor reports which of the
-       * two conditions refused.
+       * merchants adding at the ceiling in the same instant and both winning —
+       * one member over it, on a screen only the shop owner reaches, and billed
+       * like any other seat. Buying that back would mean a `count` inside the
+       * insert, which neither expresses "already a member is exempt" nor
+       * reports which of the two conditions refused.
        */
       const addMember = Effect.fn("Repository.addMember")(function* (
-        member: Pick<Domain.Member, "shop" | "email"> & {
-          readonly limit: number;
-        },
+        member: Pick<Domain.Member, "shop" | "email">,
       ) {
         const existing = yield* sqlPrimary`
           select 1 from Member where shop = ${member.shop} and email = ${member.email}
         `;
         if (
           existing.length === 0 &&
-          (yield* countMembers(member.shop)) >= member.limit
+          Domain.rosterAtCeiling(yield* countMembers(member.shop))
         )
-          yield* new MemberLimitError({
+          yield* new MemberCeilingError({
             shop: member.shop,
-            limit: member.limit,
+            limit: Domain.ShopLimits.maxMembers,
           });
         const createdAt = new Date(
           yield* Clock.currentTimeMillis,
@@ -991,22 +984,11 @@ export class Repository extends Context.Service<
        * `Option.none()` — no team is a normal state for a member, not a
        * revoked grant. A deleted member has no row and is `Option.none()`:
        * the guard then 404s exactly as it would for a stranger.
-       *
-       * The seat rank is a correlated subquery in the same round trip rather
-       * than a second call, because `Domain.memberHasSeat` is checked on every
-       * one of those requests and a second D1 hop on the guard's path would be
-       * paid by every member page load and socket reconnect. `Member_shop_createdAt_idx`
-       * is what keeps it a short index range rather than a scan of the shop's
-       * roster.
        */
       const findMemberAccess = Effect.fn("Repository.findMemberAccess")(
         function* (member: Pick<Domain.Member, "shop" | "email">) {
           const rows = yield* sql`
-            select m.id as memberId, t.id as teamId, t.name as teamName,
-              (select count(*) from Member p
-               where p.shop = m.shop
-                 and (p.createdAt < m.createdAt
-                      or (p.createdAt = m.createdAt and p.email < m.email))) as seatRank
+            select m.id as memberId, t.id as teamId, t.name as teamName
             from Member m
             left join TeamMember tm on tm.memberId = m.id
             left join Team t on t.id = tm.teamId
@@ -1020,7 +1002,6 @@ export class Repository extends Context.Service<
                 memberId: Domain.MemberId,
                 teamId: Schema.NullOr(Domain.TeamId),
                 teamName: Schema.NullOr(Domain.TeamName),
-                seatRank: Schema.Number,
               }),
             ),
             "Invalid MemberAccess rows",
@@ -1033,7 +1014,6 @@ export class Repository extends Context.Service<
                 ? []
                 : [{ id: row.teamId, name: row.teamName }],
             ),
-            seatRank: decoded[0].seatRank,
           } satisfies Domain.MemberAccess);
         },
       );

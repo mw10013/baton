@@ -75,9 +75,8 @@ export const Route = createFileRoute("/app/")({
  * allowance renders a full bar and never overflows. The meter this is ported
  * from (`refs/bang/src/routes/app.index.tsx`, `CapacityTile`'s ancestor) takes
  * `Math.max(limit, count)` instead, which rescales the bar back to a fraction
- * at the point the shop passed the limit. Passing the limit costs something
- * different on each dimension — orders are billed, members lose seats — so
- * `detail` is the tile's own.
+ * at the point the shop passed the limit. Each tile says what passing its
+ * limit means, so `detail` is the tile's own.
  *
  * The headline carries both numbers because the bar shows only a ratio.
  */
@@ -124,7 +123,7 @@ function CapacityTile({
  * them.
  *
  * The banners above the section are the states that need a *remedy* named —
- * syncing stopped, members without seats. The steady-state numbers are not
+ * syncing stopped. The steady-state numbers are not
  * banners: the meters carry them, which is why `QuotaBanners` runs here with
  * its overage banner suppressed. It says the same thing the orders tile
  * already says, and a banner that is present on the ordinary day is a banner
@@ -134,7 +133,7 @@ function RouteComponent() {
   const { entitlements, usage, memberCount } = Route.useLoaderData();
   const { managePlanUrl } = Route.useRouteContext();
 
-  const seatless = memberCount - entitlements.maxMembers;
+  const membersOverBy = memberCount - entitlements.membersIncluded;
   const ordersOverBy = usage.ordersThisCycle - entitlements.ordersPerCycle;
 
   /* A cycle the object has not been told about yet has no end to name. */
@@ -153,11 +152,6 @@ function RouteComponent() {
         action={<ManagePlanButton url={managePlanUrl} />}
         suppressOverage
       />
-      {seatless > 0 && (
-        <s-banner tone="critical">
-          {`Your plan includes ${formatNumber(entitlements.maxMembers)} members. Only the ${formatNumber(entitlements.maxMembers)} oldest can sign in until you remove members or upgrade.`}
-        </s-banner>
-      )}
       <s-section
         heading="Usage and capacity"
         accessibilityLabel="Orders and member capacity"
@@ -190,12 +184,12 @@ function RouteComponent() {
             <CapacityTile
               heading="Members"
               href="/app/members"
-              headline={`${formatNumber(memberCount)} of ${formatNumber(entitlements.maxMembers)} seats used`}
+              headline={`${formatNumber(memberCount)} ${memberCount === 1 ? "member" : "members"}, ${formatNumber(entitlements.membersIncluded)} included`}
               count={memberCount}
-              limit={entitlements.maxMembers}
+              limit={entitlements.membersIncluded}
               detail={
-                seatless > 0
-                  ? `${formatNumber(seatless)} without a seat. Only the ${formatNumber(entitlements.maxMembers)} oldest can sign in.`
+                membersOverBy > 0
+                  ? `${formatNumber(membersOverBy)} past your plan's included seats ${membersOverBy === 1 ? "is" : "are"} billed at your plan's rate.`
                   : "Members sign in with their email on the member area."
               }
             />

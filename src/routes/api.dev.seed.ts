@@ -184,18 +184,7 @@ export const Route = createFileRoute("/api/dev/seed")({
               for (const email of members) {
                 if (keepIdentities !== true)
                   yield* sql`delete from User where email = ${email}`;
-                // Uncapped on purpose. The add-time cap is a merchant-facing
-                // rule about *adding*; what a shop over its seats looks like
-                // is `Domain.memberHasSeat`, derived on every request, and a
-                // fixture that cannot seed a shop past its seats cannot
-                // exercise that rule at all. The seed is local-only and
-                // replaces the roster wholesale, so nothing else is protected
-                // by a cap here.
-                yield* repository.addMember({
-                  shop,
-                  email,
-                  limit: Number.MAX_SAFE_INTEGER,
-                });
+                yield* repository.addMember({ shop, email });
               }
               const memberIds = new Map(
                 (yield* repository.listMembers(shop)).map((member) => [

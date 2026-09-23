@@ -92,8 +92,9 @@ const PLAN_HANDLE_MANAGE_WINDOW_MS = 15 * 60 * 1000;
  * The deadline is clamped to the contract boundary because the contract
  * changes there with no plan change and no redirect: the billing cycle rolls,
  * or a trial ends and the first cycle begins. The revalidation after it reads
- * the new cycle and pushes it to `ShopAgent.setBillingCycle`, which restarts
- * order counting. The boundary does not move within a cycle, so every
+ * the new cycle and pushes it, with the roster size, to
+ * `ShopAgent.setBillingCycle`, which restarts order counting and the seat
+ * mark. The boundary does not move within a cycle, so every
  * revalidation re-pins to the same instant.
  *
  * A boundary already in the past is ignored. Honoring it would write a deadline
@@ -251,9 +252,7 @@ export class SubscriptionPlan extends Context.Service<
         // socket open indefinitely, so a change the cache has just learned
         // about would otherwise never reach an open tab. Closing the shop's
         // connections makes each reconnect ask the gate again, which now
-        // answers with the new plan: a lapse becomes `402`, and a downgrade
-        // that leaves a member outside `Domain.memberHasSeat` becomes `402`
-        // for that member while every seated member reconnects and passes.
+        // answers with the new plan: a lapse becomes `402`.
         //
         // A never-cached row is excluded explicitly: without that, the very
         // first resolve of every shop would look like a change and revoke the
@@ -270,35 +269,40 @@ export class SubscriptionPlan extends Context.Service<
             }),
           );
         if (contract === null) return Unsubscribed;
-        // The object counts orders against the cycle and meters them, so it
-        // needs the period; it still learns nothing about the plan itself.
-        // Both pushes are best-effort for the same reason the revoke is: the
-        // plan answer this function exists to give is correct regardless, and
-        // the next revalidation retries.
-        if (contract.cycleStartAt !== null)
-          yield* shopAgentClient
-            .setBillingCycle(shopSession.shop, {
-              shopGid: shopSession.shopGid,
-              cycleStartAt: contract.cycleStartAt,
-              cycleEndAt: contract.boundaryAt,
-            })
-            .pipe(
-              Effect.ignore({
-                log: "Warn",
-                message: `SubscriptionPlan.revalidate: shop=${shopSession.shop}: billing cycle push failed`,
+        // The object counts orders against the cycle and meters them and the
+        // seats, so it needs the period and the roster size (the roster is
+        // D1's); it still learns nothing about the plan itself. The pushes
+        // are best-effort for the same reason the revoke is: the plan answer
+        // this function exists to give is correct regardless, and the next
+        // revalidation retries.
+        const cycleStartAt = contract.cycleStartAt;
+        if (cycleStartAt !== null)
+          yield* repository.countMembers(shopSession.shop).pipe(
+            Effect.flatMap((memberCount) =>
+              shopAgentClient.setBillingCycle(shopSession.shop, {
+                shopGid: shopSession.shopGid,
+                cycleStartAt,
+                cycleEndAt: contract.boundaryAt,
+                memberCount,
               }),
-            );
-        if (contract.usageQuantity !== null)
-          yield* shopAgentClient
-            .reconcileUsage(shopSession.shop, {
-              quantity: contract.usageQuantity,
-            })
-            .pipe(
-              Effect.ignore({
-                log: "Warn",
-                message: `SubscriptionPlan.revalidate: shop=${shopSession.shop}: usage reconciliation failed`,
-              }),
-            );
+            ),
+            Effect.ignore({
+              log: "Warn",
+              message: `SubscriptionPlan.revalidate: shop=${shopSession.shop}: billing cycle push failed`,
+            }),
+          );
+        // Pushed even when both readings are null: a contract that cannot
+        // report (a trial, a pre-meter contract) then clears the readings the
+        // last reporting contract left, rather than showing them as current.
+        // Null already means "cannot report" on `Domain.ShopUsage`.
+        yield* shopAgentClient
+          .reconcileUsage(shopSession.shop, contract.usage)
+          .pipe(
+            Effect.ignore({
+              log: "Warn",
+              message: `SubscriptionPlan.revalidate: shop=${shopSession.shop}: usage reconciliation failed`,
+            }),
+          );
         return subscribed({
           handle: contract.handle,
           boundaryAt: contract.boundaryAt,

@@ -59,7 +59,6 @@ const seedMember = (email: Domain.Email) =>
     yield* repository.addMember({
       shop,
       email,
-      limit: Domain.MAX_ENTITLEMENTS.maxMembers,
     });
   });
 

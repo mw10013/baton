@@ -492,12 +492,15 @@ const initializeSchema = Effect.gen(function* () {
       ordersLimitedAt integer,
       openRunsLimitedAt integer,
       lastSweepAt integer,
-      lastReconciledQuantity integer
+      membersHighWater integer not null default 0,
+      lastReconciledOrders integer,
+      lastReconciledMembers integer
     );
     insert or ignore into ShopUsage (id) values (1);
     create table if not exists UsageEvent (
       idempotencyKey text primary key,
-      orderId text not null,
+      eventHandle text not null,
+      orderId text,
       value integer not null,
       occurredAt integer not null,
       attempts integer not null default 0,
@@ -2017,6 +2020,11 @@ export class ShopAgent extends Agent {
    * caller is `SubscriptionPlan`, which is the only thing that reads an App
    * Pricing contract, and a browser naming its own billing period would be
    * naming its own bill.
+   *
+   * Does not flush, though a new cycle queues its first seat event: the
+   * revalidation reconciles next, against meter readings taken before this
+   * push, and a flush here would drain the pending units that explain the
+   * gap. {@link reconcileUsage} flushes after its check.
    */
   setBillingCycle(
     input: typeof Domain.BillingCycleInput.Encoded,
@@ -2033,18 +2041,49 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Stores Shopify's meter reading beside the local count and logs the two when
-   * they disagree by more than the outbox can explain. Plain RPC for the same
-   * reason as {@link setBillingCycle}.
+   * Reports the D1 roster size after a member add, which raises the cycle's
+   * seat mark and queues the rise (`OrderRepository.recordRoster`), then
+   * flushes. Plain RPC for the same reason as {@link setBillingCycle}: the
+   * caller is the Worker's add-member action, and the roster is D1's, so the
+   * object cannot count it. Answers the units queued.
+   */
+  recordRoster(
+    input: typeof Domain.RecordRosterInput.Encoded,
+  ): Promise<number> {
+    const shop = this.name;
+    return this.runEffect(
+      callableEffect("ShopAgent.recordRoster", Domain.RecordRosterInput, {
+        role: "rpc",
+      })((roster) =>
+        Effect.gen(function* () {
+          const queued = yield* (yield* OrderRepository).recordRoster(
+            roster,
+            yield* Clock.currentTimeMillis,
+          );
+          yield* flushUsageEvents(shop);
+          return queued;
+        }),
+      )(input),
+    );
+  }
+
+  /**
+   * Stores Shopify's meter readings beside the local counts and logs each
+   * meter whose two disagree by more than the outbox can explain. Plain RPC
+   * for the same reason as {@link setBillingCycle}. Orders compare
+   * `ordersThisCycle`, members compare `membersHighWater`, each by
+   * {@link Domain.meterDiverges}.
    *
    * Nothing is corrected. The App Events API answers `202` to an event it will
-   * later refuse, so a divergence is the *only* evidence that a shop's orders
-   * are not being billed, and quietly moving the local number to match would
-   * erase it. Pending events are subtracted first because they are a divergence
-   * that resolves itself on the next flush; dead ones
-   * (`Domain.usageEventIsDead`) are not, because they never will, and a
-   * tolerance that grew with every lost event would hide exactly the loss it
-   * is here to show.
+   * later refuse, so a divergence is the *only* evidence that a shop's usage
+   * is not being billed, and quietly moving the local number to match would
+   * erase it.
+   *
+   * Flushes after the check, not before: the readings predate anything sent
+   * now, so the check needs the pending units still queued. This is what
+   * sends a new cycle's first seat event without waiting for the next order
+   * or member add, and what first sends events queued before the shop had a
+   * `shopGid`.
    */
   reconcileUsage(
     input: typeof Domain.ReconcileUsageInput.Encoded,
@@ -2053,23 +2092,36 @@ export class ShopAgent extends Agent {
     return this.runEffect(
       callableEffect("ShopAgent.reconcileUsage", Domain.ReconcileUsageInput, {
         role: "rpc",
-      })(({ quantity }) =>
+      })((readings) =>
         Effect.gen(function* () {
-          const usage = yield* (yield* OrderRepository).reconcileUsage({
-            quantity,
-          });
-          const drift = Math.abs(usage.ordersThisCycle - quantity);
-          if (drift <= usage.pendingUsageEvents) return;
-          yield* Effect.logWarning(
-            `ShopAgent.reconcileUsage: shop=${shop} local=${String(usage.ordersThisCycle)} shopify=${String(quantity)} pending=${String(usage.pendingUsageEvents)}: metered usage diverges`,
-          ).pipe(
-            Effect.annotateLogs({
-              shop,
-              local: usage.ordersThisCycle,
-              shopify: quantity,
-              pending: usage.pendingUsageEvents,
-            }),
+          const usage = yield* (yield* OrderRepository).reconcileUsage(
+            readings,
           );
+          const meters = [
+            {
+              meter: Domain.USAGE_METER_ORDER,
+              local: usage.ordersThisCycle,
+              shopify: readings.orders,
+              pending: usage.pendingOrderUnits,
+            },
+            {
+              meter: Domain.USAGE_METER_MEMBER,
+              local: usage.membersHighWater,
+              shopify: readings.members,
+              pending: usage.pendingMemberUnits,
+            },
+          ];
+          for (const { meter, local, shopify, pending } of meters)
+            if (
+              shopify !== null &&
+              Domain.meterDiverges({ local, shopify, pending })
+            )
+              yield* Effect.logWarning(
+                `ShopAgent.reconcileUsage: shop=${shop} meter=${meter} local=${String(local)} shopify=${String(shopify)} pending=${String(pending)}: metered usage diverges`,
+              ).pipe(
+                Effect.annotateLogs({ shop, meter, local, shopify, pending }),
+              );
+          yield* flushUsageEvents(shop);
         }),
       )(input),
     );

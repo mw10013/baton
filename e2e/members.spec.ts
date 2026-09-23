@@ -90,25 +90,27 @@ test("members screen adds, staffs, normalizes, and removes a member", async ({
 });
 
 /**
- * The plan's member cap, asserted at the surface a merchant sees. The seed
- * writes `Domain.MAX_ENTITLEMENTS.maxMembers` rows (it bypasses the cap on
- * purpose: `api.dev.seed` has no plan to resolve), which is at or over every
- * tier's ceiling, so the next add is refused whichever plan the store is on.
- * The number in the copy is therefore matched, not asserted: what this test
- * pins is that `MemberLimitError` becomes the banner sentence rather than a
- * 500, and that no row was written.
+ * Seats past the plan's included count are billed, not refused. The seed
+ * writes one more member than the widest tier includes, so the shop is past
+ * its included seats whichever plan the dev store holds, and still under
+ * `Domain.ShopLimits.maxMembers` after the add. The home page's Members tile
+ * is where the merchant is told the extra seats are billed.
  */
-test("adding a member past the plan's cap is refused with the plan's ceiling", async ({
+test("adding a member past the included seats succeeds and the home tile says it is billed", async ({
   page,
 }) => {
   test.setTimeout(120_000);
   const seeded = Array.from(
-    { length: Domain.MAX_ENTITLEMENTS.maxMembers },
-    (_, index) => `e2e.cap${String(index)}@example.com`,
+    { length: Domain.MAX_ENTITLEMENTS.membersIncluded + 1 },
+    (_, index) => `e2e.seat${String(index).padStart(2, "0")}@example.com`,
   );
+  expect(seeded.length).toBeLessThan(Domain.ShopLimits.maxMembers);
   await seedMembers(seedConfig(), seeded, []);
 
   const frame = await gotoApp(page);
+  await expect(
+    frame.getByText(/past your plan's included seats/u),
+  ).toBeVisible();
   await clickHoisted(page.getByRole("link", { name: "Members", exact: true }));
   await expect(frame.locator('s-page[heading="Members"]')).toBeVisible();
   await expect(frame.getByText(seeded[0] ?? "", { exact: true })).toBeVisible();
@@ -118,48 +120,5 @@ test("adding a member past the plan's cap is refused with the plan's ceiling", a
     .getByRole("textbox", { name: "Email", exact: true })
     .fill(MEMBER_EMAIL);
   await frame.getByRole("button", { name: "Add", exact: true }).click();
-  await expect(
-    frame.getByText(
-      /Your plan allows [\d,]+ members?\. Upgrade to add more\./u,
-    ),
-  ).toBeVisible();
-  await expect(frame.getByText(MEMBER_EMAIL, { exact: true })).toHaveCount(0);
-});
-
-/**
- * Derived seats at the surface. The seed writes two more members than the
- * widest tier grants, so the shop is over its seats whichever plan the store
- * holds, and the seat count is read back out of the banner rather than assumed:
- * `Domain.memberHasSeat` is derived from the plan in force, and a test that
- * hard-coded a tier would pass or fail on which plan the dev store happens to
- * be subscribed to.
- */
-test("a shop over its seats badges the members without one and says how to fix it", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-  const seeded = Array.from(
-    { length: Domain.MAX_ENTITLEMENTS.maxMembers + 2 },
-    (_, index) => `e2e.seat${String(index).padStart(2, "0")}@example.com`,
-  );
-  await seedMembers(seedConfig(), seeded, []);
-
-  const frame = await gotoApp(page);
-  await clickHoisted(page.getByRole("link", { name: "Members", exact: true }));
-  await expect(frame.locator('s-page[heading="Members"]')).toBeVisible();
-
-  const banner = frame.getByText(
-    /Your plan includes [\d,]+ members\. Only the [\d,]+ oldest can sign in until you remove members or upgrade\./u,
-  );
-  await expect(banner).toBeVisible();
-  const seats = Number(
-    /includes (?<seats>[\d,]+) members/u
-      .exec((await banner.textContent()) ?? "")
-      ?.groups?.seats.replaceAll(",", "") ?? "",
-  );
-  expect(seats).toBeGreaterThan(0);
-  /* The badge is on the newest rows, so the count is the overflow exactly. */
-  await expect(frame.getByText("No seat", { exact: true })).toHaveCount(
-    seeded.length - seats,
-  );
+  await expect(frame.getByText(MEMBER_EMAIL, { exact: true })).toBeVisible();
 });

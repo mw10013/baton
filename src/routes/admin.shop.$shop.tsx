@@ -288,7 +288,7 @@ function FoundShop({
                 )
               }
             />
-            {/* The two halves of the usage meter's only observable: what this
+            {/* The two halves of each usage meter's only observable: what this
                 object counted, and what Shopify says it was told. A gap wider
                 than the outbox is a billing bug, and nothing else surfaces
                 it — the App Events API answers 202 to events it refuses. */}
@@ -301,11 +301,19 @@ function FoundShop({
               value={formatNumber(usage.deadUsageEvents)}
             />
             <Field
-              label="Shopify metered quantity"
+              label="Shopify metered orders"
               value={
-                usage.lastReconciledQuantity === null
+                usage.lastReconciledOrders === null
                   ? null
-                  : formatNumber(usage.lastReconciledQuantity)
+                  : formatNumber(usage.lastReconciledOrders)
+              }
+            />
+            <Field
+              label="Shopify metered members"
+              value={
+                usage.lastReconciledMembers === null
+                  ? null
+                  : formatNumber(usage.lastReconciledMembers)
               }
             />
             <Field
@@ -321,8 +329,12 @@ function FoundShop({
               value={`${formatNumber(memberCount)} of ${
                 entitlements === null
                   ? "—"
-                  : formatNumber(entitlements.maxMembers)
+                  : formatNumber(entitlements.membersIncluded)
               }`}
+            />
+            <Field
+              label="Members high-water"
+              value={formatNumber(usage.membersHighWater)}
             />
             {/* One decimal, not a rounded integer: a healthy shop sits well
                 under a megabyte, and "0 MB" reads as "not measured". */}

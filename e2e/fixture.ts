@@ -36,10 +36,10 @@ import type {
  * - `m2@m.com` is on Rush alone: the one persona whose run list is the
  *   cross-cutting workflow rather than a product's.
  *
- * Three, which is Basic's `maxMembers`, so a seeded shop holds a seat for
- * every login whichever plan it is on. The other maker teams carry only the
- * lead; a persona that needs its own team is added by the spec that needs it
- * (`seedMembers`), never by growing this list past the smallest plan.
+ * Three, which is Basic's `membersIncluded`, so a seeded shop bills no seat
+ * on either plan. The other maker teams carry only the lead; a persona that
+ * needs its own team is added by the spec that needs it (`seedMembers`),
+ * never by growing this list past the smallest plan.
  *
  * Every maker team owns steps in at least two workflows so no list is
  * single-workflow, and every hand-off crosses a team boundary. Tags are the

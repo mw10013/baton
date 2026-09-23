@@ -132,7 +132,6 @@ describe("ShopAgent connect gate", () => {
         yield* repository.addMember({
           shop,
           email: MEMBER,
-          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
         });
         const access = yield* repository.findMemberAccess({
           shop,
@@ -178,7 +177,6 @@ describe("ShopAgent connect gate", () => {
         yield* (yield* Repository).addMember({
           shop,
           email: MEMBER,
-          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
         });
         const cookie = yield* signInThroughWorker(MEMBER);
         const response = yield* upgrade(
@@ -203,7 +201,6 @@ describe("ShopAgent connect gate", () => {
         yield* (yield* Repository).addMember({
           shop: otherShop,
           email: STRANGER,
-          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
         });
         const cookie = yield* signInThroughWorker(STRANGER);
         const response = yield* upgrade(
@@ -252,7 +249,6 @@ describe("ShopAgent connect gate", () => {
         yield* repository.addMember({
           shop,
           email: MEMBER,
-          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
         });
         const cookie = yield* signInThroughWorker(MEMBER);
         const response = yield* upgrade(
@@ -266,15 +262,13 @@ describe("ShopAgent connect gate", () => {
   );
 
   /**
-   * The seat half of the same check. `requireMember` answers a seatless member
-   * with the same redirect a lapse gets, and the gate must not distinguish
-   * them: the reason is the shop's business, and the client's answer is `402`
-   * either way.
+   * Seats past the plan's included count are billed, not refused, so the gate
+   * has nothing to say about them.
    */
-  it.effect("402s a member the plan has no seat for", () =>
+  it.effect("forwards a member past the plan's included seats", () =>
     run(
       Effect.gen(function* () {
-        const shop = shopOf("gate-seatless.myshopify.com");
+        const shop = shopOf("gate-past-included.myshopify.com");
         yield* seedSubscribedShop(shop);
         const repository = yield* Repository;
         yield* repository.updateShopSessionPlan({
@@ -284,27 +278,19 @@ describe("ShopAgent connect gate", () => {
           planBoundaryAt: null,
           planCycleStartAt: null,
         });
-        const seats = Domain.entitlementsOfPlan("basic").maxMembers;
-        // Sorted before MEMBER so the tiebreak on email is unambiguous when every
-        // add lands in the same millisecond.
-        for (let index = 0; index < seats; index += 1)
+        const included = Domain.entitlementsOfPlan("basic").membersIncluded;
+        for (let index = 0; index < included; index += 1)
           yield* repository.addMember({
             shop,
-            email: emailOf(`aaa-seated-${String(index)}@example.com`),
-            limit: Domain.MAX_ENTITLEMENTS.maxMembers,
+            email: emailOf(`aaa-included-${String(index)}@example.com`),
           });
-        yield* repository.addMember({
-          shop,
-          email: MEMBER,
-          limit: Domain.MAX_ENTITLEMENTS.maxMembers,
-        });
+        yield* repository.addMember({ shop, email: MEMBER });
         const cookie = yield* signInThroughWorker(MEMBER);
         const response = yield* upgrade(
           `http://localhost/agents/shop-agent/${shop}`,
           { cookie },
         );
-        strictEqual(response.status, 402);
-        expect(yield* connectionStatesOf(shop)).toEqual([]);
+        strictEqual(response.status, 101);
       }),
     ),
   );

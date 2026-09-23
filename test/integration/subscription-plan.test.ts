@@ -10,7 +10,11 @@ import * as Domain from "@/lib/Domain";
 import { makeEnvLayer } from "@/lib/LayerEx";
 import { Repository } from "@/lib/Repository";
 import { ShopAgentClient, ShopAgentClientError } from "@/lib/ShopAgentClient";
-import { ShopifyPartner, ShopifyPartnerError } from "@/lib/ShopifyPartner";
+import {
+  meterQuantity,
+  ShopifyPartner,
+  ShopifyPartnerError,
+} from "@/lib/ShopifyPartner";
 import {
   SubscriptionPlan,
   SubscriptionPlanError,
@@ -72,7 +76,7 @@ const contract = (
 ): Domain.ActiveSubscription => ({
   boundaryAt: null,
   cycleStartAt: null,
-  usageQuantity: null,
+  usage: { orders: null, members: null },
   ...overrides,
 });
 
@@ -92,14 +96,14 @@ const subscribedTo = (
 interface Pushes {
   readonly revoked: Ref.Ref<readonly string[]>;
   readonly cycles: Ref.Ref<readonly Domain.BillingCycleInput[]>;
-  readonly reconciled: Ref.Ref<readonly number[]>;
+  readonly reconciled: Ref.Ref<readonly Domain.ReconcileUsageInput[]>;
 }
 
 const makePushes = Effect.gen(function* () {
   return {
     revoked: yield* Ref.make<readonly string[]>([]),
     cycles: yield* Ref.make<readonly Domain.BillingCycleInput[]>([]),
-    reconciled: yield* Ref.make<readonly number[]>([]),
+    reconciled: yield* Ref.make<readonly Domain.ReconcileUsageInput[]>([]),
   } satisfies Pushes;
 });
 
@@ -162,10 +166,7 @@ const run = <A, E>(
               return (_shop: string, input: Domain.ReconcileUsageInput) =>
                 pushes === undefined
                   ? Effect.void
-                  : Ref.update(pushes.reconciled, (seen) => [
-                      ...seen,
-                      input.quantity,
-                    ]);
+                  : Ref.update(pushes.reconciled, (seen) => [...seen, input]);
             return () =>
               Effect.die(`ShopAgentClient.${String(name)} not stubbed`);
           },
@@ -193,6 +194,22 @@ const failedActiveSubscription = () =>
   );
 
 afterEach(() => env.D1.exec("delete from ShopSession"));
+
+describe("ShopifyPartner.meterQuantity", () => {
+  it("reports each meter's quantity by handle, null when the contract lacks the item", () => {
+    const items = [
+      { handle: "baton-basic", usage: null },
+      { handle: Domain.USAGE_METER_ORDER, usage: { quantity: 21 } },
+      { handle: Domain.USAGE_METER_MEMBER, usage: { quantity: 4 } },
+    ];
+    assert.strictEqual(meterQuantity(items, Domain.USAGE_METER_ORDER), 21);
+    assert.strictEqual(meterQuantity(items, Domain.USAGE_METER_MEMBER), 4);
+    assert.strictEqual(
+      meterQuantity(items.slice(0, 2), Domain.USAGE_METER_MEMBER),
+      null,
+    );
+  });
+});
 
 describe("SubscriptionPlan", () => {
   it.effect(
@@ -499,7 +516,7 @@ describe("SubscriptionPlan", () => {
         { pushes },
       );
       assert.deepStrictEqual(yield* Ref.get(pushes.cycles), [
-        { shopGid, cycleStartAt: 500, cycleEndAt: 601_000 },
+        { shopGid, cycleStartAt: 500, cycleEndAt: 601_000, memberCount: 0 },
       ]);
     }),
   );
@@ -523,48 +540,66 @@ describe("SubscriptionPlan", () => {
     }),
   );
 
-  it.effect("reconciles the usage figure on revalidation", () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(1000);
-      const pushes = yield* makePushes;
-      yield* run(
-        () =>
-          Effect.succeed(
-            Option.some(
-              contract({
-                handle: "baton-pro",
-                cycleStartAt: 500,
-                usageQuantity: 42,
-              }),
+  it.effect(
+    "revalidate pushes the roster size with the cycle and both meter readings",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(1000);
+        const pushes = yield* makePushes;
+        yield* run(
+          () =>
+            Effect.succeed(
+              Option.some(
+                contract({
+                  handle: "baton-pro",
+                  cycleStartAt: 500,
+                  usage: { orders: 42, members: 5 },
+                }),
+              ),
             ),
-          ),
-        Effect.gen(function* () {
-          yield* seedShopSession("baton-pro", 500);
-          yield* (yield* SubscriptionPlan).resolve(shop);
-        }),
-        { pushes },
-      );
-      assert.deepStrictEqual(yield* Ref.get(pushes.reconciled), [42]);
-    }),
+          Effect.gen(function* () {
+            yield* seedShopSession("baton-pro", 500);
+            const repository = yield* Repository;
+            for (const email of ["a@example.com", "b@example.com"])
+              yield* repository.addMember({
+                shop,
+                email: Schema.decodeUnknownSync(Domain.Email)(email),
+              });
+            yield* (yield* SubscriptionPlan).resolve(shop);
+          }),
+          { pushes },
+        );
+        assert.deepStrictEqual(
+          (yield* Ref.get(pushes.cycles)).map((cycle) => cycle.memberCount),
+          [2],
+        );
+        assert.deepStrictEqual(yield* Ref.get(pushes.reconciled), [
+          { orders: 42, members: 5 },
+        ]);
+      }),
   );
 
-  it.effect("reconciles nothing when the contract carries no meter", () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(1000);
-      const pushes = yield* makePushes;
-      yield* run(
-        () =>
-          Effect.succeed(
-            Option.some(contract({ handle: "baton-pro", cycleStartAt: 500 })),
-          ),
-        Effect.gen(function* () {
-          yield* seedShopSession("baton-pro", 500);
-          yield* (yield* SubscriptionPlan).resolve(shop);
-        }),
-        { pushes },
-      );
-      assert.deepStrictEqual(yield* Ref.get(pushes.reconciled), []);
-    }),
+  it.effect(
+    "pushes null readings when the contract carries no meter, so stale readings clear",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(1000);
+        const pushes = yield* makePushes;
+        yield* run(
+          () =>
+            Effect.succeed(
+              Option.some(contract({ handle: "baton-pro", cycleStartAt: 500 })),
+            ),
+          Effect.gen(function* () {
+            yield* seedShopSession("baton-pro", 500);
+            yield* (yield* SubscriptionPlan).resolve(shop);
+          }),
+          { pushes },
+        );
+        assert.deepStrictEqual(yield* Ref.get(pushes.reconciled), [
+          { orders: null, members: null },
+        ]);
+      }),
   );
 
   it.effect("clamps expiry to a future boundary plus skew", () =>

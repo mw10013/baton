@@ -28,10 +28,8 @@ create table if not exists Member (
   unique (shop, email)
 );
 
--- Serves the seat rank on the member-area guard's hot path: the count of this
--- shop's members added before a given one, in the (createdAt, email) order
--- Domain.memberHasSeat ranks by. The unique (shop, email) index cannot answer
--- it, and the guard runs on every member page load and socket connect.
+-- Serves the members page, which lists a shop's members in (createdAt, email)
+-- order; the unique (shop, email) index cannot answer that order.
 create index if not exists Member_shop_createdAt_idx on Member (shop, createdAt, email);
 
 -- Teams are shop-scoped groupings of Member rows: identity, not workflow data,

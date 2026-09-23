@@ -132,20 +132,20 @@ const matchPlanHandle = Effect.fn("ShopifyPartner.matchPlanHandle")(function* (
 });
 
 /**
- * Shopify's own count for {@link Domain.USAGE_METER_ORDER} this cycle, read off
- * the meter's item. `null` when the contract carries no such item, which is not
+ * Shopify's own count for the meter `handle` this cycle, read off the meter's
+ * item. `null` when the contract carries no such item, which is not
  * an error: a plan with no meter configured yet reads as "nothing to reconcile
  * against" rather than as zero usage, and zero would look like a divergence
  * from every local count.
  */
-const meterQuantity = (
+export const meterQuantity = (
   items: readonly {
     readonly handle: string | null;
     readonly usage?: { readonly quantity: number | null } | null;
   }[],
+  handle: string,
 ): number | null =>
-  items.find((item) => item.handle === Domain.USAGE_METER_ORDER)?.usage
-    ?.quantity ?? null;
+  items.find((item) => item.handle === handle)?.usage?.quantity ?? null;
 
 export class ShopifyPartner extends Context.Service<
   ShopifyPartner,
@@ -241,7 +241,16 @@ export class ShopifyPartner extends Context.Service<
             cycleStartAt: parseBoundary(
               subscription.currentBillingCycle?.startTime ?? null,
             ),
-            usageQuantity: meterQuantity(subscription.items),
+            usage: {
+              orders: meterQuantity(
+                subscription.items,
+                Domain.USAGE_METER_ORDER,
+              ),
+              members: meterQuantity(
+                subscription.items,
+                Domain.USAGE_METER_MEMBER,
+              ),
+            },
           } satisfies Domain.ActiveSubscription);
         },
       );

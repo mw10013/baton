@@ -213,7 +213,6 @@ describe("ShopAgent team delete revocation", () => {
           yield* repository.addMember({
             shop,
             email,
-            limit: Domain.MAX_ENTITLEMENTS.maxMembers,
           });
           const access = yield* repository.findMemberAccess({ shop, email });
           const memberId = Option.isNone(access)

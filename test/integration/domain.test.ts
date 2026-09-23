@@ -804,35 +804,22 @@ describe("Domain.readySteps", () => {
   });
 });
 
-describe("Domain.memberHasSeat", () => {
-  it("a member holds a seat when fewer than maxMembers members were added before them", () => {
-    strictEqual(Domain.memberHasSeat(0, 3), true);
-    strictEqual(Domain.memberHasSeat(2, 3), true);
-    strictEqual(Domain.memberHasSeat(3, 3), false);
-  });
-
-  /**
-   * The downgrade case, which is the whole reason the rule is derived: the same
-   * rank answers differently under a smaller plan, with nothing written.
-   */
-  it("the same rank loses its seat when the plan in force grants fewer", () => {
-    const rank = Domain.MAX_ENTITLEMENTS.maxMembers - 1;
-    strictEqual(
-      Domain.memberHasSeat(rank, Domain.entitlementsOfPlan("pro").maxMembers),
-      true,
-    );
-    strictEqual(
-      Domain.memberHasSeat(rank, Domain.entitlementsOfPlan("basic").maxMembers),
-      false,
-    );
+describe("Domain.seatEventValue", () => {
+  it("the seat event value is the roster past the cycle's high-water mark, and zero when not past it", () => {
+    strictEqual(Domain.seatEventValue(4, 3), 1);
+    strictEqual(Domain.seatEventValue(6, 3), 3);
+    strictEqual(Domain.seatEventValue(5, 0), 5);
+    strictEqual(Domain.seatEventValue(3, 3), 0);
+    strictEqual(Domain.seatEventValue(2, 4), 0);
   });
 });
 
-describe("Domain.usageEventIsDead", () => {
-  it("a queued event is dead once the cycle that dated it has ended", () => {
-    strictEqual(Domain.usageEventIsDead(999, 1000), true);
-    strictEqual(Domain.usageEventIsDead(1000, 1000), false);
-    strictEqual(Domain.usageEventIsDead(1001, 1000), false);
+describe("Domain.rosterAtCeiling", () => {
+  it("a shop is at its ceiling when the roster has reached maxMembers", () => {
+    const { maxMembers } = Domain.ShopLimits;
+    strictEqual(Domain.rosterAtCeiling(maxMembers - 1), false);
+    strictEqual(Domain.rosterAtCeiling(maxMembers), true);
+    strictEqual(Domain.rosterAtCeiling(maxMembers + 1), true);
   });
 });
 

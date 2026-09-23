@@ -14,8 +14,8 @@ import * as Domain from "@/lib/Domain";
  * `Domain.ShopLimits.maxOrdersPerCycle`, a *new* order is refused for the rest
  * of the billing period and the refusal is flagged for the merchant.
  *
- * The real ceiling is 10,000 orders, which no test can reach by syncing, so
- * these lower the constant for the duration — the same seam the open-run
+ * The real ceiling is more orders than a test should sync, so these lower
+ * the constant for the duration — the same seam the open-run
  * ceiling tests use, and for the same reason: threading a limit through
  * `syncOrder` for nobody but this file would put a test seam in the production
  * signature.
@@ -71,6 +71,7 @@ describe("ShopAgent order ceiling", () => {
         shopGid,
         cycleStartAt: 0,
         cycleEndAt: 10_000,
+        memberCount: 0,
       });
       await setCount(shop, 2);
       // No Shopify call is made: the refusal lands before the fetch, which is
@@ -91,6 +92,7 @@ describe("ShopAgent order ceiling", () => {
         shopGid,
         cycleStartAt: 0,
         cycleEndAt: 10_000,
+        memberCount: 0,
       });
       await setCount(shop, 2);
       await agent.syncOrder(webhook("gid://shopify/Order/2", "wh-2"));
@@ -100,6 +102,7 @@ describe("ShopAgent order ceiling", () => {
         shopGid,
         cycleStartAt: 10_000,
         cycleEndAt: 20_000,
+        memberCount: 0,
       });
       const usage = await agent.getUsage();
       strictEqual(usage.ordersLimitedAt, null);

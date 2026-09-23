@@ -110,6 +110,25 @@ const usageEvents = () =>
     }));
   });
 
+/** The seat rows alone, with their dates: what the seat mark cases assert. */
+const seatEvents = () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql`
+      select idempotencyKey, value, occurredAt from UsageEvent
+      where eventHandle = ${Domain.USAGE_METER_MEMBER}
+      order by rowid
+    `.values;
+    return rows.map((row) => ({
+      idempotencyKey: String(row[0]),
+      value: Number(row[1]),
+      occurredAt: Number(row[2]),
+    }));
+  });
+
+const seatKey = (cycleStartAt: number, mark: number) =>
+  `seat#${String(cycleStartAt)}#${String(mark)}`;
+
 /**
  * Two `ShopifyAppEvents` stubs, because the whole point of the outbox is the
  * difference between them: an accepted event leaves no row, a refused one keeps
@@ -981,6 +1000,7 @@ describe("OrderRepository usage", () => {
       shopGid,
       cycleStartAt: CYCLE_START,
       cycleEndAt: CYCLE_END,
+      memberCount: 0,
     });
 
   /**
@@ -1089,6 +1109,7 @@ describe("OrderRepository usage", () => {
           shopGid,
           cycleStartAt: CYCLE_END,
           cycleEndAt: null,
+          memberCount: 0,
         });
         return yield* repository.getUsage();
       }),
@@ -1169,6 +1190,7 @@ describe("OrderRepository usage", () => {
           shopGid,
           cycleStartAt: CYCLE_END,
           cycleEndAt: null,
+          memberCount: 0,
         });
         yield* upsert(
           repository,
@@ -1212,6 +1234,7 @@ describe("OrderRepository usage", () => {
           shopGid,
           cycleStartAt: CYCLE_START + 10,
           cycleEndAt: CYCLE_END,
+          memberCount: 0,
         });
         return {
           usage: yield* repository.getUsage(),
@@ -1269,6 +1292,32 @@ describe("OrderRepository usage", () => {
     }
   });
 
+  it("deleteSeedOrders clears the limited flag when giving the count back leaves the cycle under the ceiling", async () => {
+    const limits = Domain.ShopLimits as { maxOrdersPerCycle: number };
+    const original = limits.maxOrdersPerCycle;
+    limits.maxOrdersPerCycle = 1;
+    try {
+      const { limited, usage } = await runInRepository(
+        Effect.gen(function* () {
+          const repository = yield* OrderRepository;
+          yield* openCycle(repository);
+          const seedId = `${Domain.SEED_ORDER_ID_PREFIX}1`;
+          yield* upsert(repository, paid(1, { id: seedId }), []);
+          yield* repository.countOrder(seedId, CYCLE_START);
+          yield* upsert(repository, paid(2), []);
+          const limited = yield* repository.getUsage();
+          yield* repository.deleteSeedOrders();
+          return { limited, usage: yield* repository.getUsage() };
+        }),
+      );
+      strictEqual(limited.ordersLimitedAt !== null, true);
+      strictEqual(usage.ordersThisCycle, 0);
+      strictEqual(usage.ordersLimitedAt, null);
+    } finally {
+      limits.maxOrdersPerCycle = original;
+    }
+  });
+
   it("flush deletes accepted events and keeps refused ones with the error", async () => {
     const { first, second } = await runInRepository(
       Effect.gen(function* () {
@@ -1301,6 +1350,297 @@ describe("OrderRepository usage", () => {
       }),
     );
     deepStrictEqual(flush, { sent: 0, remaining: 1 });
+  });
+
+  const openCycleWithRoster = (
+    repository: typeof OrderRepository.Service,
+    memberCount: number,
+  ) =>
+    repository.setBillingCycle({
+      shopGid,
+      cycleStartAt: CYCLE_START,
+      cycleEndAt: CYCLE_END,
+      memberCount,
+    });
+
+  it("an add past the high-water mark queues one seat event and raises the mark", async () => {
+    const { queued, usage, events } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        yield* openCycleWithRoster(repository, 3);
+        const queued = yield* repository.recordRoster(
+          { size: 4 },
+          CYCLE_START + 1,
+        );
+        return {
+          queued,
+          usage: yield* repository.getUsage(),
+          events: yield* seatEvents(),
+        };
+      }),
+    );
+    strictEqual(queued, 1);
+    strictEqual(usage.membersHighWater, 4);
+    deepStrictEqual(events, [
+      {
+        idempotencyKey: seatKey(CYCLE_START, 3),
+        value: 3,
+        occurredAt: CYCLE_START,
+      },
+      {
+        idempotencyKey: seatKey(CYCLE_START, 4),
+        value: 1,
+        occurredAt: CYCLE_START + 1,
+      },
+    ]);
+  });
+
+  it("an add at or under the high-water mark queues nothing", async () => {
+    const { queued, usage, events } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        yield* openCycleWithRoster(repository, 3);
+        const queued = [
+          yield* repository.recordRoster({ size: 3 }, CYCLE_START + 1),
+          yield* repository.recordRoster({ size: 2 }, CYCLE_START + 2),
+        ];
+        return {
+          queued,
+          usage: yield* repository.getUsage(),
+          events: yield* seatEvents(),
+        };
+      }),
+    );
+    deepStrictEqual(queued, [0, 0]);
+    strictEqual(usage.membersHighWater, 3);
+    strictEqual(events.length, 1);
+  });
+
+  /**
+   * A removal is never reported to the object, so what this pins is the
+   * consequence: removing and re-adding inside a cycle bills the seat once,
+   * and a revalidation that reads the smaller roster lowers nothing.
+   */
+  it("a member removal queues nothing and leaves the mark", async () => {
+    const { usage, events } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        yield* openCycleWithRoster(repository, 3);
+        yield* repository.recordRoster({ size: 4 }, CYCLE_START + 1);
+        // Removed: the roster is 3 again, and a revalidation reads it.
+        yield* openCycleWithRoster(repository, 3);
+        // Re-added.
+        yield* repository.recordRoster({ size: 4 }, CYCLE_START + 2);
+        return {
+          usage: yield* repository.getUsage(),
+          events: yield* seatEvents(),
+        };
+      }),
+    );
+    strictEqual(usage.membersHighWater, 4);
+    deepStrictEqual(
+      events.map((event) => event.value),
+      [3, 1],
+    );
+  });
+
+  it("a new cycle resets the mark to the roster and queues it as the cycle's first seat event", async () => {
+    const { usage, events } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        yield* openCycleWithRoster(repository, 3);
+        yield* repository.recordRoster({ size: 5 }, CYCLE_START + 1);
+        yield* repository.setBillingCycle({
+          shopGid,
+          cycleStartAt: CYCLE_END,
+          cycleEndAt: null,
+          memberCount: 4,
+        });
+        return {
+          usage: yield* repository.getUsage(),
+          events: yield* seatEvents(),
+        };
+      }),
+    );
+    strictEqual(usage.membersHighWater, 4);
+    deepStrictEqual(events.at(-1), {
+      idempotencyKey: seatKey(CYCLE_END, 4),
+      value: 4,
+      occurredAt: CYCLE_END,
+    });
+  });
+
+  it("an unchanged cycle leaves the mark and queues nothing", async () => {
+    const { usage, events } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        yield* openCycleWithRoster(repository, 3);
+        yield* openCycleWithRoster(repository, 3);
+        return {
+          usage: yield* repository.getUsage(),
+          events: yield* seatEvents(),
+        };
+      }),
+    );
+    strictEqual(usage.membersHighWater, 3);
+    strictEqual(events.length, 1);
+  });
+
+  it("an unchanged cycle raises the mark to a roster past it, so an add whose recordRoster failed is billed at the next revalidation", async () => {
+    const { usage, events } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        yield* openCycleWithRoster(repository, 3);
+        yield* openCycleWithRoster(repository, 5);
+        return {
+          usage: yield* repository.getUsage(),
+          events: yield* seatEvents(),
+        };
+      }),
+    );
+    strictEqual(usage.membersHighWater, 5);
+    deepStrictEqual(
+      events.map(({ idempotencyKey, value }) => ({ idempotencyKey, value })),
+      [
+        { idempotencyKey: seatKey(CYCLE_START, 3), value: 3 },
+        { idempotencyKey: seatKey(CYCLE_START, 5), value: 2 },
+      ],
+    );
+  });
+
+  /**
+   * The counting path rolls a cycle past its end without the Worker, and the
+   * revalidation that follows pushes that same start: an unchanged cycle to
+   * `setBillingCycle`. The rolled cycle must still get its whole roster sent.
+   */
+  it("a cycle the counting path rolled forward starts with no seat mark, and the next roster report sends the whole roster", async () => {
+    const { queued, events } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        yield* openCycleWithRoster(repository, 3);
+        const queued = yield* repository.recordRoster(
+          { size: 3 },
+          CYCLE_END + 1,
+        );
+        yield* repository.setBillingCycle({
+          shopGid,
+          cycleStartAt: CYCLE_END,
+          cycleEndAt: null,
+          memberCount: 3,
+        });
+        return { queued, events: yield* seatEvents() };
+      }),
+    );
+    strictEqual(queued, 3);
+    deepStrictEqual(
+      events.map(({ idempotencyKey, value }) => ({ idempotencyKey, value })),
+      [
+        { idempotencyKey: seatKey(CYCLE_START, 3), value: 3 },
+        { idempotencyKey: seatKey(CYCLE_END, 3), value: 3 },
+      ],
+    );
+  });
+
+  it("a new cycle supersedes seat events queued under a provisional cycle", async () => {
+    const events = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        yield* repository.recordRoster({ size: 3 }, CYCLE_START + 5);
+        yield* openCycleWithRoster(repository, 3);
+        return yield* seatEvents();
+      }),
+    );
+    deepStrictEqual(events, [
+      {
+        idempotencyKey: seatKey(CYCLE_START, 3),
+        value: 3,
+        occurredAt: CYCLE_START,
+      },
+    ]);
+  });
+
+  it("the flush sends each event under its own meter handle", async () => {
+    const sent = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        yield* openCycleWithRoster(repository, 2);
+        yield* upsert(repository, paid(1), []);
+        yield* count(repository, 1);
+        const sent: { eventHandle: string; value: number }[] = [];
+        yield* repository.flushUsageEvents("shop.myshopify.com").pipe(
+          Effect.provide(
+            Layer.succeed(
+              ShopifyAppEvents,
+              ShopifyAppEvents.of({
+                send: ({ eventHandle, value }) =>
+                  Effect.sync(() => {
+                    sent.push({ eventHandle, value });
+                  }),
+              }),
+            ),
+          ),
+        );
+        return sent;
+      }),
+    );
+    deepStrictEqual(sent, [
+      { eventHandle: Domain.USAGE_METER_MEMBER, value: 2 },
+      { eventHandle: Domain.USAGE_METER_ORDER, value: 1 },
+    ]);
+  });
+
+  it("seat events survive deleteSeedOrders", async () => {
+    const events = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        yield* openCycleWithRoster(repository, 3);
+        yield* repository.deleteSeedOrders();
+        return yield* seatEvents();
+      }),
+    );
+    strictEqual(events.length, 1);
+  });
+
+  it("the members drift check tolerates pending seat events", async () => {
+    const { pending, drained } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        yield* openCycleWithRoster(repository, 3);
+        yield* upsert(repository, paid(1), []);
+        yield* count(repository, 1);
+        // Shopify has seen nothing yet: both meters read zero.
+        const pending = yield* repository.reconcileUsage({
+          orders: 0,
+          members: 0,
+        });
+        yield* flushed();
+        const drained = yield* repository.reconcileUsage({
+          orders: 0,
+          members: 0,
+        });
+        return { pending, drained };
+      }),
+    );
+    strictEqual(pending.pendingMemberUnits, 3);
+    strictEqual(pending.pendingOrderUnits, 1);
+    strictEqual(
+      Domain.meterDiverges({
+        local: pending.membersHighWater,
+        shopify: 0,
+        pending: pending.pendingMemberUnits,
+      }),
+      false,
+    );
+    // Drained and still unreported: now it is a divergence.
+    strictEqual(
+      Domain.meterDiverges({
+        local: drained.membersHighWater,
+        shopify: 0,
+        pending: drained.pendingMemberUnits,
+      }),
+      true,
+    );
+    strictEqual(drained.lastReconciledMembers, 0);
   });
 
   it("reports whether the upsert created the row", async () => {
