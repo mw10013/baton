@@ -575,7 +575,7 @@ export const ShopUsage = Schema.Struct({
    * which is the billable quantity, rather than rows.
    */
   ordersThisCycle: Schema.Number,
-  /** Set when a new order was refused because of {@link ShopLimits.maxOrdersPerCycle}; null once the cycle rolls. */
+  /** Set when a new order was refused because of {@link ShopLimits.maxOrdersPerCycle}; null once the cycle rolls, or once `OrderRepository.deleteSeedOrders` gives the refused seed's count back. */
   ordersLimitedAt: Schema.NullOr(Schema.Number),
   /** Set when reconcile declined to auto-start a run because of `ShopLimits.maxOpenRuns`; null once under the ceiling again. */
   openRunsLimitedAt: Schema.NullOr(Schema.Number),
