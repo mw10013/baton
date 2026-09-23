@@ -245,6 +245,14 @@ const readShopifyCookies = (
  * Stage on the destination filesystem so rename atomically replaces the state.
  * A failed write leaves the previous export intact; scoped cleanup removes only
  * this invocation's staging directory, including on interruption.
+ *
+ * The freshness check reads Chrome's cookie database on disk, not the cookies
+ * Chrome holds in memory. A Chrome process that has run for days can stop
+ * writing that file while the admin keeps working in the browser, so the check
+ * fails with the admin open. The file's mtime and the `_merchant_essential`
+ * row's `last_access_utc` show it: both are old while the admin is in use.
+ * Quitting Chrome (Cmd-Q, not closing the window) writes the cookies out. A
+ * headed run cannot reveal this, because setup fails before any browser starts.
  */
 export const writeStorageState = (
   output: string,
@@ -255,7 +263,7 @@ export const writeStorageState = (
     if (!adminSessionFresh(cookies, issuedAt))
       yield* new AuthRefreshError({
         message:
-          "Chrome's Shopify admin session is expired or missing. Open the store's admin at https://admin.shopify.com in a normal window of the selected Chrome profile, wait for the dashboard to load, then retry. The previous export was kept.",
+          "Chrome's Shopify admin session is expired or missing. Open the store's admin at https://admin.shopify.com in a normal window of the selected Chrome profile, wait for the dashboard to load, then retry. If the admin is already open, Chrome may not have written its cookies to disk: quit Chrome with Cmd-Q, reopen it, load the admin, then retry. The previous export was kept.",
       });
     const fs = yield* FileSystem.FileSystem;
     const parent = path.dirname(output);

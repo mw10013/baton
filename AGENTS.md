@@ -1,9 +1,11 @@
 # AGENTS.md
 
-- Prefer JSDoc for complex and subtle behavior the code cannot show, and for rules: any behaviour more than one site must agree on is stated once, normatively, on the symbol that enforces it or the symbol that is the concept. Other sites `{@link}` it rather than restate it; a site that follows a different rule says so and why. Status, flag and role predicates are `Domain` functions, never inline comparisons in routes or the object (`scripts/rules-lint.ts`, run by `pnpm lint`, refuses them). Each rule has a test whose title is the rule. A JSDoc must carry its reasoning inline and never reference files under `docs/` — research docs go stale and get deleted. External URLs are acceptable. A `refs/` path is acceptable because `refs/` is pinned to the dependency versions in use (`pnpm refs:check`); cite the file and, if needed, a heading or symbol name, never a line number, which does not survive a version bump.
+- Prefer JSDoc for complex and subtle behavior the code cannot show, and for rules: any behaviour more than one site must agree on is stated once, normatively, on the symbol that enforces it or the symbol that is the concept. Other sites `{@link}` it rather than restate it; a site that follows a different rule says so and why. Each rule has a test whose title is the rule.
+- Status, flag and role predicates are `Domain` functions, never inline comparisons in routes or the object (`scripts/rules-lint.ts`, run by `pnpm lint`, refuses them).
+- A JSDoc must carry its reasoning inline and never reference files under `docs/` — research docs go stale and get deleted. External URLs are acceptable. A `refs/` path is acceptable because `refs/` is pinned to the dependency versions in use (`pnpm refs:check`); cite the file and, if needed, a heading or symbol name, never a line number, which does not survive a version bump.
 - Do not git commit unless you are explicitly instructed.
 - Commit to `main`. Do not create branches.
-- Please remove all mannered prose
+- Write replies, comments, and docs in plain, direct prose: no flourishes, hedging, or ornamental phrasing.
 
 ## Project
 
@@ -36,7 +38,7 @@ Downloaded source code of libraries are in `refs/` for reference.
 - **TanStack Query**: `refs/tan-query/docs/` (Markdown files - framework/react, reference, eslint)
 - **TanStack Form**: `refs/tan-form/docs/` (Markdown files)
 - **Cloudflare Docs**: `refs/cloudflare-docs/src/content/docs/` (MDX files)
-- **Effect Docs**: `refs/effect/ai-docs/src/` (Effect v4 release candidate — "effect" means v4 here)
+- **Effect Docs**: `refs/effect/ai-docs/src/` (Effect v4 — "effect" means v4 here)
 - **Better Auth**: `refs/better-auth/docs/content/docs/` (MDX docs; source in `refs/better-auth/packages/`)
 - **Shopify App JS**: `refs/shopify-app-js/` (source for `shopify-api`, `shopify-app-react-router`, and session storage adapters)
 - **Shopify Bridge**: `refs/shopify-bridge/`
@@ -45,7 +47,7 @@ Downloaded source code of libraries are in `refs/` for reference.
 - **Shopify Flow manual** (merchant help center): `refs/flow-manual/` (markdown; `reference/` has triggers, conditions, actions)
 - **Workers SDK**: `refs/workers-sdk/` (source for `wrangler`, `@cloudflare/vite-plugin`, `vitest-pool-workers`)
 - **Agents**: `refs/agents/` (source for the `agents` SDK; `packages/agents/CHANGELOG.md` is the upgrade record)
-- **PartyKit**: `refs/partykit/` (the monorepo, pinned to the `partysocket` version `agents` depends on; `packages/partysocket/` is the reconnecting WebSocket client under `useAgent`, `packages/partyserver/` is the Durable Object runtime agents 0.22.0 vendored into `agents/lifecycle`)
+- **PartyKit**: `refs/partykit/` (the monorepo, pinned to the `partysocket` version `agents` depends on; `packages/partysocket/` is the reconnecting WebSocket client under `useAgent`, `packages/partyserver/` is the Durable Object runtime that `agents` vendors into `agents/lifecycle`)
 - **Vitest**: `refs/vitest/`
 - **Competitor apps** (opt-in): `refs/route-to-ship/`, `refs/kanbanify/`, `refs/makers-production-view/`, `refs/makerbatch/`, `refs/benchcue/`
 
@@ -111,7 +113,7 @@ Effect.logError(`ShopAgent.getShopInfo: shop=${this.name}: ${message}`).pipe(
 
 ## SQL Guidelines
 
-- Using sqlite with Cloudflare D1.
+- SQLite in two places: Cloudflare D1 (shared `ShopSession` state) and each `ShopAgent` Durable Object's private SQLite.
 - Use lowercase for all sql keywords.
 - Use positional parameter placeholders.
 
@@ -129,6 +131,8 @@ Routine E2E test execution is headless: use `npm run test:e2e --`. Use `npm run 
 For interactive browser exploration with `playwright-cli`, default to headless mode (omit `--headed`). Use `--headed` when the user requests a visible browser or manual interaction is needed, such as signing in.
 
 Run it through the package script: `pnpm playwright-cli`.
+
+Wait for `body[data-hydrated="true"]` before any fill or click; until then input and clicks are silently dropped (see `awaitHydration` in `e2e/hydration.ts`).
 
 **Session naming:** `{port}-{purpose}` (e.g., `$(pnpm port)-localdev`, `$(pnpm port)-testing`)
 

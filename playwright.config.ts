@@ -20,6 +20,28 @@ try {
   void _error;
 }
 
+/**
+ * The E2E suite. Each practice is stated on the helper that enforces it; this
+ * comment is the index.
+ *
+ * - Interaction gate: nothing fills or clicks before `awaitHydration`
+ *   (`e2e/hydration.ts`). Specs reach it through `gotoApp` (`e2e/app.ts`, the
+ *   embedded app) and `gotoMember` (`e2e/member.ts`, `/shop`, `/login`,
+ *   `/admin`). A hand-driven `playwright-cli` session waits on the same
+ *   `body[data-hydrated="true"]` selector.
+ * - Frames: the embedded app and the workflow editor are separate iframes,
+ *   reached through `appFrame` and `editorFrame` (`e2e/app.ts`).
+ * - Admin session: the `setup` project exports Chrome's Shopify cookies
+ *   through `refreshShopifyAuth` (`scripts/lib/shopify-playwright-auth.ts`),
+ *   which also documents how that export fails. Before a run, open the store's
+ *   admin in a normal Chrome window.
+ * - Data: each spec seeds the exact shape its assertions compute through
+ *   `e2e/seed.ts`. `e2e/fixture.ts` is the shared shop for `pnpm seed` and
+ *   manual exploration, not for specs.
+ * - Projects: listed below, each with its reason. `pnpm test:e2e` runs e2e,
+ *   member and admin headless; billing runs only through
+ *   `pnpm test:e2e:billing`.
+ */
 export default defineConfig({
   testDir: "./e2e",
   outputDir: "./playwright/test-results",
