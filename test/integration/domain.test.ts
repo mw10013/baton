@@ -4,7 +4,6 @@ import { describe, it } from "vitest";
 
 import { flagBody, flagHeading, flagTone } from "@/components/MemberRun";
 import * as Domain from "@/lib/Domain";
-import { groupUsedBy } from "@/lib/usedBy";
 
 const order = (
   overrides: Partial<Domain.ShopOrder> = {},
@@ -253,42 +252,6 @@ describe("Domain.ambiguousItems", () => {
       1,
       "per item, not per order",
     );
-  });
-});
-
-const ownedStep = (
-  workflowId: string,
-  workflowName: string,
-  side: "workflow" | "draft",
-  stepName: string,
-): Domain.OwnedStep => ({
-  workflowId: Schema.decodeUnknownSync(Domain.WorkflowId)(workflowId),
-  workflowName: Schema.decodeUnknownSync(Domain.WorkflowName)(workflowName),
-  workflowTag: Schema.decodeUnknownSync(Domain.WorkflowTag)(
-    workflowName.toLowerCase(),
-  ),
-  side,
-  stepName: Schema.decodeUnknownSync(Domain.StepName)(stepName),
-});
-
-describe("groupUsedBy", () => {
-  it("groups steps by workflow, sorted by name, draft-only when no live step", () => {
-    const grouped = groupUsedBy([
-      ownedStep("w2", "pendant", "draft", "Cast"),
-      ownedStep("w1", "Ring", "workflow", "Engrave"),
-      ownedStep("w1", "Ring", "draft", "Engrave"),
-      ownedStep("w2", "pendant", "draft", "Polish"),
-    ]);
-    strictEqual(
-      grouped
-        .map(
-          (w) =>
-            `${w.workflowName}:${w.workflowTag}:${w.draftOnly ? "draft" : "live"}:${w.href}`,
-        )
-        .join("|"),
-      "pendant:pendant:draft:/app/workflows/w2|Ring:ring:live:/app/workflows/w1",
-    );
-    strictEqual(groupUsedBy([]).length, 0);
   });
 });
 

@@ -183,8 +183,8 @@ export const workflows: readonly SeedWorkflow[] = [
     ],
   },
   {
-    // two-step; a pending draft adds a third step so the list shows "Draft
-    // pending" and the detail page shows both sides
+    // two-step; a pending draft adds a third step so the detail page shows
+    // both sides
     name: "Embroidered blanket",
     tag: TAG.blanket,
     steps: [

@@ -205,7 +205,7 @@ describe("ShopAgent workflow callables", () => {
     ]);
     expect(detail?.draft?.steps.map((s) => s.teamId)).toEqual([null, b.id]);
     expect(detail?.teams.map((t) => t.name)).toEqual(["B"]);
-    expect(await agent.listStepsOwnedBy({ teamId: a.id })).toEqual([]);
+    expect(await agent.listTeamWorkflows({ teamId: a.id })).toEqual([]);
     // Off stays off; turning back on names the unassigned step.
     await agent.setWorkflowActive({ workflowId, active: false });
     expect(await agent.setWorkflowActive({ workflowId, active: true })).toEqual(
@@ -314,13 +314,8 @@ describe("ShopAgent workflow callables", () => {
     // Never applied: the list counts saved steps, and there are none.
     const list = await agent.listWorkflows();
     expect(
-      list
-        .map(
-          (w) =>
-            `${w.name}:${w.tag}:${String(w.stepCount)}:${String(w.hasDraft)}`,
-        )
-        .toSorted(),
-    ).toEqual(["W:w:0:true", "w:dupe:0:false"]);
+      list.map((w) => `${w.name}:${w.tag}:${String(w.stepCount)}`).toSorted(),
+    ).toEqual(["W:w:0", "w:dupe:0"]);
 
     expect(
       await agent.removeWorkflow({ workflowId: created.workflow.id }),

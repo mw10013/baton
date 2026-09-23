@@ -68,7 +68,7 @@ export class ShopAgentClientError extends Schema.TaggedError<ShopAgentClientErro
  *   write) goes through the `/app` socket via `useSubscribedQuery` — the
  *   subscribe pattern, described end to end on `Domain.Subscription`. All of
  *   it, or none — a socket `useQuery` outside that cycle never refetches,
- *   which is the bug that moved `listStepsOwnedBy` from the socket to this
+ *   which is the bug that moved `listTeamWorkflows` from the socket to this
  *   service.
  *
  * The `@callable()` set on `ShopAgent` is exactly what the browser may reach
@@ -94,16 +94,19 @@ export class ShopAgentClient extends Context.Service<
       shop: string,
       input: Domain.GetRunForMemberInput,
     ) => Effect.Effect<Domain.RunView | null, ShopAgentClientError>;
-    readonly listStepsOwnedBy: (
+    readonly listTeamWorkflows: (
       shop: string,
       input: Domain.TeamIdInput,
-    ) => Effect.Effect<readonly Domain.OwnedStep[], ShopAgentClientError>;
+    ) => Effect.Effect<readonly Domain.TeamWorkflow[], ShopAgentClientError>;
     readonly countStepsByTeam: (
       shop: string,
     ) => Effect.Effect<readonly Domain.TeamStepCounts[], ShopAgentClientError>;
-    readonly listOwnedSteps: (
+    readonly listAllTeamWorkflows: (
       shop: string,
-    ) => Effect.Effect<readonly Domain.OwnedStepByTeam[], ShopAgentClientError>;
+    ) => Effect.Effect<
+      readonly Domain.TeamWorkflowByTeam[],
+      ShopAgentClientError
+    >;
     readonly listOrders: (
       shop: string,
       input: Domain.ListOrdersInput,
@@ -239,10 +242,10 @@ export class ShopAgentClient extends Context.Service<
        */
       const runListView = Schema.toType(Domain.RunListView);
       const runView = Schema.toType(Schema.NullOr(Domain.RunView));
-      const ownedSteps = Schema.toType(Schema.Array(Domain.OwnedStep));
+      const teamWorkflows = Schema.toType(Schema.Array(Domain.TeamWorkflow));
       const teamStepCounts = Schema.toType(Schema.Array(Domain.TeamStepCounts));
-      const ownedStepsByTeam = Schema.toType(
-        Schema.Array(Domain.OwnedStepByTeam),
+      const teamWorkflowsByTeam = Schema.toType(
+        Schema.Array(Domain.TeamWorkflowByTeam),
       );
       const ordersView = Schema.toType(Domain.OrdersView);
       const orderDetail = Schema.toType(Schema.NullOr(Domain.OrderDetailView));
@@ -262,10 +265,10 @@ export class ShopAgentClient extends Context.Service<
               stub.getRunForMember(input),
             ),
         ),
-        listStepsOwnedBy: Effect.fn("ShopAgentClient.listStepsOwnedBy")(
+        listTeamWorkflows: Effect.fn("ShopAgentClient.listTeamWorkflows")(
           (shop: string, input: Domain.TeamIdInput) =>
-            call("listStepsOwnedBy", ownedSteps, shop, (stub) =>
-              stub.listStepsOwnedBy(input),
+            call("listTeamWorkflows", teamWorkflows, shop, (stub) =>
+              stub.listTeamWorkflows(input),
             ),
         ),
         countStepsByTeam: Effect.fn("ShopAgentClient.countStepsByTeam")(
@@ -274,10 +277,10 @@ export class ShopAgentClient extends Context.Service<
               stub.countStepsByTeam(),
             ),
         ),
-        listOwnedSteps: Effect.fn("ShopAgentClient.listOwnedSteps")(
+        listAllTeamWorkflows: Effect.fn("ShopAgentClient.listAllTeamWorkflows")(
           (shop: string) =>
-            call("listOwnedSteps", ownedStepsByTeam, shop, (stub) =>
-              stub.listOwnedSteps(),
+            call("listAllTeamWorkflows", teamWorkflowsByTeam, shop, (stub) =>
+              stub.listAllTeamWorkflows(),
             ),
         ),
         listOrders: Effect.fn("ShopAgentClient.listOrders")(

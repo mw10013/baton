@@ -473,15 +473,15 @@ export class WorkflowRepository extends Context.Service<
       readonly Domain.TeamStepCounts[],
       SqlError.SqlError | WorkflowRepositoryError
     >;
-    readonly listStepsOwnedBy: (input: {
+    readonly listTeamWorkflows: (input: {
       readonly teamId: string;
     }) => Effect.Effect<
-      readonly Domain.OwnedStep[],
+      readonly Domain.TeamWorkflow[],
       SqlError.SqlError | WorkflowRepositoryError
     >;
-    /** {@link listStepsOwnedBy} for every team at once; the teams index's "Used by" column. */
-    readonly listOwnedSteps: () => Effect.Effect<
-      readonly Domain.OwnedStepByTeam[],
+    /** {@link listTeamWorkflows} for every team at once; the teams index's "Used by" column. */
+    readonly listAllTeamWorkflows: () => Effect.Effect<
+      readonly Domain.TeamWorkflowByTeam[],
       SqlError.SqlError | WorkflowRepositoryError
     >;
     /**
@@ -927,7 +927,6 @@ export class WorkflowRepository extends Context.Service<
             )(
               yield* sql`
                 select w.*,
-                  exists (select 1 from WorkflowDraft d where d.workflowId = w.id) as hasDraft,
                   (select count(*) from WorkflowStep s where s.workflowId = w.id) as stepCount
                 from Workflow w
                 order by w.name collate nocase
@@ -1680,57 +1679,45 @@ export class WorkflowRepository extends Context.Service<
           },
         ),
 
-        listStepsOwnedBy: Effect.fn("WorkflowRepository.listStepsOwnedBy")(
+        listTeamWorkflows: Effect.fn("WorkflowRepository.listTeamWorkflows")(
           function* ({ teamId }: { readonly teamId: string }) {
             return yield* decode(
-              Schema.Array(Domain.OwnedStep),
-              "Invalid OwnedStep row",
+              Schema.Array(Domain.TeamWorkflow),
+              "Invalid TeamWorkflow row",
             )(
               yield* sql`
-                select workflowId, workflowName, workflowTag, side, stepName from (
-                  select w.id as workflowId, w.name as workflowName,
-                    w.tag as workflowTag,
-                    'workflow' as side, 0 as sideOrder, s.name as stepName, s.position
-                  from WorkflowStep s
-                  join Workflow w on w.id = s.workflowId
-                  where s.teamId = ${teamId}
-                  union all
-                  select w.id, w.name, w.tag, 'draft', 1, s.name, s.position
-                  from WorkflowDraftStep s
-                  join Workflow w on w.id = s.workflowId
-                  where s.teamId = ${teamId}
+                select w.id as workflowId, w.name as workflowName
+                from Workflow w
+                where w.id in (
+                  select workflowId from WorkflowStep where teamId = ${teamId}
+                  union
+                  select workflowId from WorkflowDraftStep where teamId = ${teamId}
                 )
-                order by workflowName collate nocase, sideOrder, position
+                order by w.name collate nocase
               `,
             );
           },
         ),
 
-        listOwnedSteps: Effect.fn("WorkflowRepository.listOwnedSteps")(
-          function* () {
-            return yield* decode(
-              Schema.Array(Domain.OwnedStepByTeam),
-              "Invalid OwnedStepByTeam row",
-            )(
-              yield* sql`
-                select teamId, workflowId, workflowName, workflowTag, side, stepName from (
-                  select s.teamId, w.id as workflowId, w.name as workflowName,
-                    w.tag as workflowTag,
-                    'workflow' as side, 0 as sideOrder, s.name as stepName, s.position
-                  from WorkflowStep s
-                  join Workflow w on w.id = s.workflowId
-                  where s.teamId is not null
-                  union all
-                  select s.teamId, w.id, w.name, w.tag, 'draft', 1, s.name, s.position
-                  from WorkflowDraftStep s
-                  join Workflow w on w.id = s.workflowId
-                  where s.teamId is not null
-                )
-                order by workflowName collate nocase, sideOrder, position
+        listAllTeamWorkflows: Effect.fn(
+          "WorkflowRepository.listAllTeamWorkflows",
+        )(function* () {
+          return yield* decode(
+            Schema.Array(Domain.TeamWorkflowByTeam),
+            "Invalid TeamWorkflowByTeam row",
+          )(
+            yield* sql`
+                select u.teamId, w.id as workflowId, w.name as workflowName
+                from (
+                  select teamId, workflowId from WorkflowStep where teamId is not null
+                  union
+                  select teamId, workflowId from WorkflowDraftStep where teamId is not null
+                ) u
+                join Workflow w on w.id = u.workflowId
+                order by w.name collate nocase, u.teamId
               `,
-            );
-          },
-        ),
+          );
+        }),
 
         unassignTeam: Effect.fn("WorkflowRepository.unassignTeam")(function* ({
           teamId,

@@ -1003,13 +1003,11 @@ export const WorkflowDraftStep = WorkflowStep;
 export type WorkflowDraftStep = typeof WorkflowDraftStep.Type;
 
 /**
- * List row. `tag` and `stepCount` describe the workflow; `hasDraft` says
- * what starts runs today is not what is being edited. `needsAttention` is the
+ * List row. `tag` and `stepCount` describe the workflow. `needsAttention` is the
  * derived badge from {@link Workflow}: a step unassigned or on a team with no
  * members, computed against the live roster on every list read.
  */
 const WorkflowSummaryRowFields = {
-  hasDraft: SqliteBoolean,
   stepCount: Schema.Number,
 };
 /** The stored half of {@link WorkflowSummary}: what one list query returns before the roster join. */
@@ -1419,23 +1417,19 @@ export const TeamStepCounts = Schema.Struct({
 });
 export type TeamStepCounts = typeof TeamStepCounts.Type;
 
-/** A step of the workflow or of its draft that points at a team; the team page lists both sides and links each to its workflow page. */
-export const OwnedStep = Schema.Struct({
+/** A workflow that uses a team: a step of the workflow or of its draft points at it. The team pages' "Used by" lists. */
+export const TeamWorkflow = Schema.Struct({
   workflowId: WorkflowId,
   workflowName: WorkflowName,
-  /** Beside the name wherever a workflow is listed off its own page: names may repeat, the tag may not. */
-  workflowTag: WorkflowTag,
-  side: Schema.Literals(["workflow", "draft"]),
-  stepName: StepName,
 });
-export type OwnedStep = typeof OwnedStep.Type;
+export type TeamWorkflow = typeof TeamWorkflow.Type;
 
-/** {@link OwnedStep} for every team at once, keyed by team: the teams index's "Used by" column in one object read. */
-export const OwnedStepByTeam = Schema.Struct({
+/** {@link TeamWorkflow} for every team at once, keyed by team: the teams index's "Used by" column in one object read. */
+export const TeamWorkflowByTeam = Schema.Struct({
   teamId: TeamId,
-  ...OwnedStep.fields,
+  ...TeamWorkflow.fields,
 });
-export type OwnedStepByTeam = typeof OwnedStepByTeam.Type;
+export type TeamWorkflowByTeam = typeof TeamWorkflowByTeam.Type;
 
 /** Assign a team to any open run step: the remedy that makes team delete safe, and the merchant's way to move work between teams. */
 export const AssignRunStepTeamInput = Schema.Struct({
@@ -2356,25 +2350,25 @@ export interface MembersLoaderData {
 }
 
 /**
- * `/app/teams` (`app.teams.index`). `ownedSteps` is Durable Object data
+ * `/app/teams` (`app.teams.index`). `teamWorkflows` is Durable Object data
  * joined into a D1 page by the loader (the loader-versus-socket rule on
  * `ShopAgentClient`), grouped per team into the "Used by" column.
  */
 export interface TeamsIndexLoaderData {
   readonly teams: readonly TeamSummary[];
-  readonly ownedSteps: readonly OwnedStepByTeam[];
+  readonly teamWorkflows: readonly TeamWorkflowByTeam[];
 }
 
 /**
  * `/app/teams/$teamId` (`app.teams.$teamId`; a param tail contributes its
- * noun, `Team`). `ownedSteps` and `stepCounts` are Durable Object data joined
+ * noun, `Team`). `teamWorkflows` and `stepCounts` are Durable Object data joined
  * into a D1 page by the loader — see the loader-versus-socket rule on
  * `ShopAgentClient`. `memberTeams` is the hint the Add members
  * dialog shows beside each candidate: where they already work.
  */
 export interface TeamLoaderData extends TeamDetail {
   readonly memberTeams: readonly MemberTeam[];
-  readonly ownedSteps: readonly OwnedStep[];
+  readonly teamWorkflows: readonly TeamWorkflow[];
   readonly stepCounts: TeamDeleteCounts;
 }
 

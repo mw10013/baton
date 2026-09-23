@@ -16,7 +16,6 @@ import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
 import { decodeName, failWith, NAME_TAKEN, sessionShop } from "@/lib/teams";
-import { groupUsedBy } from "@/lib/usedBy";
 
 const CREATE_MODAL = "create-team";
 
@@ -37,10 +36,9 @@ const getLoaderData = createServerFn({ method: "GET" })
         const teams = yield* (yield* Repository).listTeams({
           shop: yield* sessionShop(session.shop),
         });
-        const ownedSteps = yield* (yield* ShopAgentClient).listOwnedSteps(
-          session.shop,
-        );
-        return { teams, ownedSteps } satisfies Domain.TeamsIndexLoaderData;
+        const teamWorkflows =
+          yield* (yield* ShopAgentClient).listAllTeamWorkflows(session.shop);
+        return { teams, teamWorkflows } satisfies Domain.TeamsIndexLoaderData;
       }),
     ),
   );
@@ -74,11 +72,11 @@ export const Route = createFileRoute("/app/teams/")({
  * The teams page on the workflows pattern: a primary action that opens a
  * modal, a search once there is something to search, and no destructive
  * control on the index — deletion lives on the detail page, where the dialog
- * can say what the delete unassigns. "Used by" is derived from the object's
- * step ownership, grouped per team into workflow names.
+ * can say what the delete unassigns. "Used by" is the object's workflows per
+ * team, filtered here from one read of every team.
  */
 function RouteComponent() {
-  const { teams, ownedSteps } = Route.useLoaderData();
+  const { teams, teamWorkflows } = Route.useLoaderData();
   const router = useRouter();
   const shopify = useAppBridge();
   const createTeam = useServerFn(createTeamFn);
@@ -127,7 +125,7 @@ function RouteComponent() {
       : teams.filter((team) => team.name.toLowerCase().includes(trimmed));
 
   const usedBy = (team: Domain.TeamSummary) =>
-    groupUsedBy(ownedSteps.filter((step) => step.teamId === team.id));
+    teamWorkflows.filter((workflow) => workflow.teamId === team.id);
 
   const createButton = (slotted: boolean) => (
     <s-button
@@ -207,11 +205,11 @@ function RouteComponent() {
                       {workflows.map((workflow, index) => (
                         <React.Fragment key={workflow.workflowId}>
                           {index > 0 && <s-text color="subdued">,</s-text>}
-                          <s-link href={workflow.href}>
+                          <s-link
+                            href={`/app/workflows/${workflow.workflowId}`}
+                          >
                             {workflow.workflowName}
                           </s-link>
-                          <s-badge>{workflow.workflowTag}</s-badge>
-                          {workflow.draftOnly && <s-badge>draft</s-badge>}
                         </React.Fragment>
                       ))}
                     </s-stack>

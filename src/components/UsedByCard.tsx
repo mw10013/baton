@@ -1,13 +1,8 @@
 import type * as Domain from "@/lib/Domain";
 
-import { groupUsedBy } from "@/lib/usedBy";
-
 /**
  * The aside card answering "where is this team used?": the workflows whose
  * steps point at the team, each a link to where those steps are edited.
- * Each carries its tag, because a name does not identify a workflow — two may
- * share one — and the tag is the key the merchant already knows. Draft-only
- * use is badged "draft".
  *
  * It is a titled card in the page's aside rather than a sentence under the page
  * heading, because a bare paragraph is not something `s-page` lays out — it
@@ -20,11 +15,10 @@ import { groupUsedBy } from "@/lib/usedBy";
  * `s-page`; the aside only renders while the page is `inlineSize="base"`.
  */
 export function UsedByCard({
-  steps,
+  workflows,
 }: {
-  readonly steps: readonly Domain.OwnedStep[];
+  readonly workflows: readonly Domain.TeamWorkflow[];
 }) {
-  const workflows = groupUsedBy(steps);
   return (
     <s-section slot="aside" heading="Used by" accessibilityLabel="Used by">
       {workflows.length === 0 ? (
@@ -38,9 +32,9 @@ export function UsedByCard({
               gap="small-300"
               alignItems="center"
             >
-              <s-link href={workflow.href}>{workflow.workflowName}</s-link>
-              <s-badge>{workflow.workflowTag}</s-badge>
-              {workflow.draftOnly && <s-badge>draft</s-badge>}
+              <s-link href={`/app/workflows/${workflow.workflowId}`}>
+                {workflow.workflowName}
+              </s-link>
             </s-stack>
           ))}
         </s-stack>

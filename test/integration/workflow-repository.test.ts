@@ -616,7 +616,7 @@ describe("WorkflowRepository", () => {
       }),
     ));
 
-  it("countStepsByTeam / listStepsOwnedBy span workflows and both sides", () =>
+  it("countStepsByTeam / listTeamWorkflows span workflows and both sides", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -656,25 +656,20 @@ describe("WorkflowRepository", () => {
             ["t2", 0, 1, 0],
           ],
         );
-        const owned = yield* repo.listStepsOwnedBy({ teamId: "t1" });
+        const owned = yield* repo.listTeamWorkflows({ teamId: "t1" });
         deepStrictEqual(
-          owned.map((o) => [o.workflowName, o.stepName, o.side]),
-          [
-            ["A", "A1", "draft"],
-            ["B", "B1", "workflow"],
-          ],
+          owned.map((o) => o.workflowName),
+          ["A", "B"],
         );
         deepStrictEqual(
-          (yield* repo.listOwnedSteps()).map((o) => [
+          (yield* repo.listAllTeamWorkflows()).map((o) => [
             o.teamId,
             o.workflowName,
-            o.stepName,
-            o.side,
           ]),
           [
-            ["t1", "A", "A1", "draft"],
-            ["t2", "A", "A2", "draft"],
-            ["t1", "B", "B1", "workflow"],
+            ["t1", "A"],
+            ["t2", "A"],
+            ["t1", "B"],
           ],
         );
       }),
@@ -1034,10 +1029,7 @@ describe("WorkflowRepository workflow and draft", () => {
         strictEqual(fresh.draft, null);
         deepStrictEqual(yield* repo.listActiveWorkflowDetails(), []);
         const [row] = yield* repo.listWorkflows({ teams: ALL_TEAMS });
-        deepStrictEqual(
-          [row?.hasDraft, row?.stepCount, tagOf(row)],
-          [false, 0, "a"],
-        );
+        deepStrictEqual([row?.stepCount, tagOf(row)], [0, "a"]);
         const noDraft = yield* repo
           .applyDraft({ workflowId: w.id, teams: ALL_TEAMS })
           .pipe(Effect.flip);
@@ -1095,10 +1087,7 @@ describe("WorkflowRepository workflow and draft", () => {
           draftIds,
         );
         const [row] = yield* repo.listWorkflows({ teams: ALL_TEAMS });
-        deepStrictEqual(
-          [row?.hasDraft, row?.stepCount, tagOf(row)],
-          [false, 2, "a"],
-        );
+        deepStrictEqual([row?.stepCount, tagOf(row)], [2, "a"]);
         // Off: still invisible to run creation until turned on.
         deepStrictEqual(yield* repo.listActiveWorkflowDetails(), []);
         yield* repo.setWorkflowActive({
@@ -1501,15 +1490,12 @@ describe("WorkflowRepository workflow and draft", () => {
           [(yield* countT1())?.workflowSteps, (yield* countT1())?.draftSteps],
           [1, 1],
         );
+        // One workflow, not one per side: the team is on both.
         deepStrictEqual(
-          (yield* repo.listStepsOwnedBy({ teamId: T1.id })).map((o) => [
-            o.stepName,
-            o.side,
-          ]),
-          [
-            ["Cut", "workflow"],
-            ["Cut", "draft"],
-          ],
+          (yield* repo.listTeamWorkflows({ teamId: T1.id })).map(
+            (o) => o.workflowId,
+          ),
+          [w.id],
         );
         yield* repo.unassignTeam({ teamId: T1.id });
         strictEqual(yield* countT1(), null);
@@ -1522,7 +1508,7 @@ describe("WorkflowRepository workflow and draft", () => {
           after.draft?.steps.map((s) => s.teamId),
           [null, T2.id],
         );
-        deepStrictEqual(yield* repo.listStepsOwnedBy({ teamId: T1.id }), []);
+        deepStrictEqual(yield* repo.listTeamWorkflows({ teamId: T1.id }), []);
         // Idempotent: nothing left to null.
         yield* repo.unassignTeam({ teamId: T1.id });
         const [row] = yield* repo.listWorkflows({ teams: ALL_TEAMS });
@@ -1593,18 +1579,17 @@ describe("WorkflowRepository workflow and draft", () => {
           rows.map((w) => [
             w.name,
             Domain.isActive(w),
-            w.hasDraft,
             w.stepCount,
             w.needsAttention,
             tagOf(w),
           ]),
           [
-            ["Empty", false, false, 0, false, "e"],
-            ["Lost", false, false, 1, true, "g"],
-            ["Off", false, false, 1, false, "off"],
-            ["On", true, false, 1, false, "on"],
-            ["Pending", true, true, 1, false, "p"],
-            ["Second draft", true, true, 1, false, "s"],
+            ["Empty", false, 0, false, "e"],
+            ["Lost", false, 1, true, "g"],
+            ["Off", false, 1, false, "off"],
+            ["On", true, 1, false, "on"],
+            ["Pending", true, 1, false, "p"],
+            ["Second draft", true, 1, false, "s"],
           ],
         );
         const pending = rows.find((w) => w.name === "Pending");

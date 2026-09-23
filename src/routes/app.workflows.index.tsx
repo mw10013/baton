@@ -50,12 +50,8 @@ const decodeWorkflowResult = Schema.decodeUnknownPromise(
 );
 
 /**
- * One place for every status badge. Flow hides a pending draft from its
- * list; Baton shows it, because a production floor needs to know that what
- * starts runs today is not what is being edited (see `Domain.Workflow`).
- * "No steps" is a workflow whose draft has never been applied. "Needs
- * attention" is derived by the object on every read: an unassigned step or a
- * team with no members.
+ * One place for every status badge. "Needs attention" is derived by the
+ * object on every read: an unassigned step or a team with no members.
  */
 export const statusBadges = (workflow: Domain.WorkflowSummary) => (
   <s-stack direction="inline" gap="small-300">
@@ -64,7 +60,6 @@ export const statusBadges = (workflow: Domain.WorkflowSummary) => (
     ) : (
       <s-badge>{STATUS_INACTIVE}</s-badge>
     )}
-    {workflow.hasDraft && <s-badge tone="info">Draft</s-badge>}
     {workflow.stepCount === 0 && <s-badge tone="warning">No steps</s-badge>}
     {workflow.needsAttention && (
       <s-badge tone="critical">Needs attention</s-badge>

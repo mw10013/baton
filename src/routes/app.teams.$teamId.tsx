@@ -83,7 +83,7 @@ const getLoaderData = createServerFn({ method: "GET" })
         if (Option.isNone(detail)) return yield* Effect.fail(notFound());
         const memberTeams = yield* repository.listMemberTeams(shop);
         const client = yield* ShopAgentClient;
-        const ownedSteps = yield* client.listStepsOwnedBy(shop, {
+        const teamWorkflows = yield* client.listTeamWorkflows(shop, {
           teamId: detail.value.team.id,
         });
         const stepCounts =
@@ -93,7 +93,7 @@ const getLoaderData = createServerFn({ method: "GET" })
         return {
           ...detail.value,
           memberTeams,
-          ownedSteps,
+          teamWorkflows,
           stepCounts,
         } satisfies Domain.TeamLoaderData;
       }),
@@ -206,7 +206,7 @@ export const Route = createFileRoute("/app/teams/$teamId")({
  * slot entirely at "large".
  */
 function RouteComponent() {
-  const { team, members, memberTeams, ownedSteps, stepCounts } =
+  const { team, members, memberTeams, teamWorkflows, stepCounts } =
     Route.useLoaderData();
   const router = useRouter();
   const shopify = useAppBridge();
@@ -463,7 +463,7 @@ function RouteComponent() {
         </s-stack>
       </s-section>
 
-      <UsedByCard steps={ownedSteps} />
+      <UsedByCard workflows={teamWorkflows} />
 
       <s-section slot="aside" heading="Details" accessibilityLabel="Details">
         <s-grid

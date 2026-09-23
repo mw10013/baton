@@ -4418,33 +4418,33 @@ export class ShopAgent extends Agent {
    * loader read refreshes with `router.invalidate` and paints during SSR,
    * which a socket query without a push listener cannot do.
    */
-  listStepsOwnedBy(
+  listTeamWorkflows(
     input: typeof Domain.TeamIdInput.Encoded,
-  ): Promise<readonly Domain.OwnedStep[]> {
+  ): Promise<readonly Domain.TeamWorkflow[]> {
     return this.runEffect(
-      callableEffect("ShopAgent.listStepsOwnedBy", Domain.TeamIdInput, {
+      callableEffect("ShopAgent.listTeamWorkflows", Domain.TeamIdInput, {
         role: "rpc",
       })(({ teamId }) =>
         WorkflowRepository.pipe(
           Effect.flatMap((repository) =>
-            repository.listStepsOwnedBy({ teamId }),
+            repository.listTeamWorkflows({ teamId }),
           ),
         ),
       )(input),
     );
   }
 
-  /** Plain RPC for the same reason as {@link listStepsOwnedBy}: the teams index's "Used by" column, read by its loader. */
-  listOwnedSteps(): Promise<readonly Domain.OwnedStepByTeam[]> {
+  /** Plain RPC for the same reason as {@link listTeamWorkflows}: the teams index's "Used by" column, read by its loader. */
+  listAllTeamWorkflows(): Promise<readonly Domain.TeamWorkflowByTeam[]> {
     return this.runEffect(
       WorkflowRepository.pipe(
-        Effect.flatMap((repository) => repository.listOwnedSteps()),
-        Effect.withLogSpan("ShopAgent.listOwnedSteps"),
+        Effect.flatMap((repository) => repository.listAllTeamWorkflows()),
+        Effect.withLogSpan("ShopAgent.listAllTeamWorkflows"),
       ),
     );
   }
 
-  /** Plain RPC for the same reason as {@link listStepsOwnedBy}: the delete dialogs' counts, read by the team pages' loaders. */
+  /** Plain RPC for the same reason as {@link listTeamWorkflows}: the delete dialogs' counts, read by the team pages' loaders. */
   countStepsByTeam(): Promise<readonly Domain.TeamStepCounts[]> {
     return this.runEffect(
       WorkflowRepository.pipe(
