@@ -1185,8 +1185,8 @@ test("a blocked undo offers nothing and explains nothing, on the row or the work
  * team leads the subdued line instead and the header holds one name.
  *
  * **The note is the run's, and it opens in a modal.** One Note block under
- * the item with one `Edit`, blank or not: a blank note shows the word `Note`
- * where the prose would be. The task rows carry no note button. The
+ * the item with one `Edit note`, blank or not: a blank note is the button
+ * alone, with no placeholder word. The task rows carry no note button. The
  * modal opens with the current text so appending is the easy path, and past
  * `Domain.noteCountFrom(Domain.RUN_NOTE_MAX_LENGTH)` (1800) it counts down to
  * the 2000 cap. Nothing says so below the threshold.
@@ -1219,14 +1219,12 @@ test("the run note opens in a modal and the task cards carry no note button", as
   ).toHaveCount(0);
 
   const note = page.locator("s-stack#note");
-  await expect(
-    note.locator('s-text[color="subdued"]').getByText("Note", { exact: true }),
-  ).toBeVisible();
-  await expect(note.getByRole("button", { name: "Edit" })).toHaveCount(1);
-  await expect(steps.getByRole("button", { name: "Edit" })).toHaveCount(0);
+  await expect(note.getByText("Note", { exact: true })).toHaveCount(0);
+  await expect(note.getByRole("button", { name: "Edit note" })).toHaveCount(1);
+  await expect(steps.getByRole("button", { name: /Edit/u })).toHaveCount(0);
 
   const noteModal = page.locator("s-modal#run-note");
-  await clickWhenEnabled(note.getByRole("button", { name: "Edit" }));
+  await clickWhenEnabled(note.getByRole("button", { name: "Edit note" }));
   await expect(noteModal.getByRole("textbox", { name: "Note" })).toBeVisible();
   await noteModal.getByRole("textbox", { name: "Note" }).fill("x".repeat(1799));
   await expect(noteModal.getByText("characters left")).toBeHidden();
@@ -1239,14 +1237,11 @@ test("the run note opens in a modal and the task cards carry no note button", as
     noteModal.getByRole("button", { name: "Save", exact: true }),
   );
   await expect(note.getByText("Left edge is rough")).toBeVisible();
-  await expect(
-    note.locator('s-text[color="subdued"]').getByText("Note", { exact: true }),
-  ).toHaveCount(0);
-  await expect(note.getByRole("button", { name: "Edit" })).toHaveCount(1);
+  await expect(note.getByRole("button", { name: "Edit note" })).toHaveCount(1);
 
   /* Edit opens on the saved text, so appending is the path of least
      resistance. */
-  await clickWhenEnabled(note.getByRole("button", { name: "Edit" }));
+  await clickWhenEnabled(note.getByRole("button", { name: "Edit note" }));
   await expect(noteModal.getByRole("textbox", { name: "Note" })).toHaveValue(
     "Left edge is rough",
   );
@@ -1281,7 +1276,7 @@ test("the work page shows the task history and takes a note, a block, and Done",
 
   const noteModal = page.locator("s-modal#run-note");
   await clickWhenEnabled(
-    page.locator("s-stack#note").getByRole("button", { name: "Edit" }),
+    page.locator("s-stack#note").getByRole("button", { name: "Edit note" }),
   );
   await noteModal
     .getByRole("textbox", { name: "Note" })
@@ -1293,7 +1288,7 @@ test("the work page shows the task history and takes a note, a block, and Done",
 
   /* The block, and what a block means: the banner heading names the flag, the
      body is the reason with no prefix, and Done is gone until the hold is
-     lifted. Block and the reason edit share one modal: Edit reopens it under
+     lifted. Block and the reason edit share one modal: Edit reason reopens it under
      "Block reason" on the text there now, and Save rewrites it — two lines,
      kept as typed — without touching the hold. */
   const blockModal = page.locator("s-modal#run-block");
@@ -1322,7 +1317,7 @@ test("the work page shows the task history and takes a note, a block, and Done",
   await clickWhenEnabled(
     page
       .locator('s-banner[heading="Blocked"]')
-      .getByRole("button", { name: "Edit", exact: true }),
+      .getByRole("button", { name: "Edit reason", exact: true }),
   );
   await expect(blockModal.getByText("Block reason")).toBeVisible();
   await expect(blockModal.getByRole("textbox", { name: "Reason" })).toHaveValue(

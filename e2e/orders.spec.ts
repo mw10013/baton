@@ -418,8 +418,8 @@ test("the merchant cannot reopen a task whose next step is done", async ({
  * than inside the badge, and the Now line still says where the run is.
  * `Unblock` is on the page once, in the banner: the Manage row drops Block
  * while blocked and never repeats Unblock. Nothing in the Manage row is red.
- * The run note is always on the card, blank as the subdued word "Note", with
- * one Edit and no Add note.
+ * The run note is always on the card, blank as its "Edit note" button alone,
+ * with no placeholder word and no Add note.
  */
 test("the merchant blocks a run with a reason, edits it, notes the run, and unblocks it", async ({
   page,
@@ -480,7 +480,9 @@ test("the merchant blocks a run with a reason, edits it, notes the run, and unbl
   ).toHaveCount(0);
   await expect(item.locator('s-button[tone="critical"]')).toHaveCount(0);
 
-  await banner.getByRole("button", { name: "Edit", exact: true }).click();
+  await banner
+    .getByRole("button", { name: "Edit reason", exact: true })
+    .click();
   await expect(blockModal.getByText("Block reason")).toBeVisible();
   await expect(blockModal.getByRole("textbox", { name: "Reason" })).toHaveValue(
     "Out of walnut stock",
@@ -492,24 +494,19 @@ test("the merchant blocks a run with a reason, edits it, notes the run, and unbl
   await expect(banner.getByText("Walnut arrives Friday")).toBeVisible();
   await expect(banner.getByText("Merchant", { exact: false })).toBeVisible();
 
-  /* The blank note is the field's name, subdued, with its one Edit beside it.
-     `filter({ has })` also matches every stack above the note's own, and
-     ancestors precede descendants in document order, so `last()` is the
-     note's row. */
-  const blankNote = frame.locator('s-text[color="subdued"]', {
-    hasText: /^Note$/u,
-  });
-  const placeholder = item.locator(blankNote);
-  await expect(placeholder).toBeVisible();
-  const noteRow = item.locator("s-stack").filter({ has: blankNote }).last();
+  /* The blank note is its one button, which names the note: the banner's
+     Edit reason sits a few lines above it. */
+  await expect(item.getByText("Note", { exact: true })).toHaveCount(0);
+  const editNote = item.getByRole("button", { name: "Edit note", exact: true });
+  await expect(editNote).toHaveCount(1);
   const noteModal = frame.locator("s-modal#run-note");
-  await noteRow.getByRole("button", { name: "Edit", exact: true }).click();
+  await editNote.click();
   await noteModal
     .getByRole("textbox", { name: "Note" })
     .fill("Customer asked for gift wrap");
   await noteModal.getByRole("button", { name: "Save", exact: true }).click();
   await expect(item.getByText("Customer asked for gift wrap")).toBeVisible();
-  await expect(placeholder).toHaveCount(0);
+  await expect(editNote).toHaveCount(1);
   await expect(
     frame.getByRole("button", { name: "Add note", exact: true }),
   ).toHaveCount(0);
@@ -521,6 +518,112 @@ test("the merchant blocks a run with a reason, edits it, notes the run, and unbl
   await expect(
     frame.getByRole("button", { name: "Block", exact: true }),
   ).toBeVisible();
+});
+
+/**
+ * The card's layout, top to bottom: title, then the facts line carrying the
+ * live run's badges; the properties, with a null value as an em dash so the
+ * key never stands alone; the blocked banner, its reason cut to three lines
+ * with Show more when the cut hides text; the Now line; the note; and Manage
+ * last, directly above the drawer it opens.
+ */
+test("the order card puts the run's badges on the title line, Manage above its drawer, and cuts a long reason", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+
+  const MEMBER = "e2e.card@example.com";
+  const TEAM = "E2E Card Bench";
+  const REASON =
+    "Waiting on vector artwork from the customer before engraving the crest. ".repeat(
+      12,
+    );
+  await seedMembers(
+    seedConfig(),
+    [MEMBER],
+    [{ name: TEAM, members: [MEMBER] }],
+    [
+      {
+        name: "E2E Card Board",
+        tag: "e2e-card",
+        tasks: [{ name: "Engrave", team: TEAM }],
+      },
+    ],
+    [
+      {
+        n: 9311,
+        blocked: REASON,
+        lineItems: [
+          {
+            title: "E2E Board",
+            quantity: 1,
+            tags: ["e2e-card"],
+            customAttributes: [{ key: "Gift note", value: null }],
+          },
+        ],
+      },
+    ],
+  );
+
+  const frame = await gotoApp(page);
+  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await frame.getByRole("link", { name: "#9311" }).click();
+  const item = frame.locator("s-section").filter({
+    has: frame.getByRole("heading", { name: "E2E Board", exact: true }),
+  });
+  const banner = item.locator('s-banner[heading="Blocked"]');
+  await expect(banner).toBeVisible();
+
+  /* The badges share the facts line with "× 1", above the properties. */
+  const factsLine = item
+    .locator("s-stack")
+    .filter({ has: frame.getByText("\u00D7 1", { exact: true }) })
+    .last();
+  await expect(
+    factsLine.locator("s-badge", { hasText: "Not started" }),
+  ).toBeVisible();
+  await expect(
+    factsLine.locator("s-badge", { hasText: "Blocked" }),
+  ).toBeVisible();
+
+  await expect(item.getByText("Gift note", { exact: true })).toBeVisible();
+  await expect(item.getByText("\u2014", { exact: true })).toBeVisible();
+
+  /* Cut to three lines, then shown whole. */
+  const reason = banner.locator(".member-prose").first();
+  const clamped = await reason.boundingBox();
+  await banner.getByText("Show more", { exact: true }).click();
+  await expect(banner.getByText("Show less", { exact: true })).toBeVisible();
+  const whole = await reason.boundingBox();
+  expect(whole?.height ?? 0).toBeGreaterThan(clamped?.height ?? 0);
+
+  /* Manage is below the note and the drawer opens under it. */
+  const editNote = item.getByRole("button", { name: "Edit note", exact: true });
+  const manage = item.getByRole("button", { name: "Manage" });
+  const noteBox = await editNote.boundingBox();
+  const manageBox = await manage.boundingBox();
+  expect(manageBox?.y ?? 0).toBeGreaterThan(noteBox?.y ?? 0);
+  await manage.click();
+  const drawer = item.getByText("E2E Card Board workflow", { exact: true });
+  await expect(drawer).toBeVisible();
+  /* `s-text` lays out as `display: contents` and has no box, so the drawer
+     is placed by document order rather than by position. */
+  const drawerFollowsManage = await item.evaluate((section) => {
+    const button = [...section.querySelectorAll("s-button")].find(
+      (element) => element.textContent?.trim() === "Manage",
+    );
+    const header = [...section.querySelectorAll("s-text")].find(
+      (element) => element.textContent === "E2E Card Board workflow",
+    );
+    return (
+      button !== undefined &&
+      header !== undefined &&
+      (button.compareDocumentPosition(header) &
+        Node.DOCUMENT_POSITION_FOLLOWING) !==
+        0
+    );
+  });
+  expect(drawerFollowsManage).toBe(true);
 });
 
 /**

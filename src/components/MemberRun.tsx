@@ -116,6 +116,13 @@ export const flagActor = (run: Domain.WorkflowRun) => {
  * "Engraving: The Millers · est. 2019" is the thing the worker will make and
  * deserves a line of its own. A two-column `s-grid` keeps labels aligned; at
  * phone width the value column still wraps inside its cell.
+ *
+ * The key is subdued and the value strong, so a key never reads as a label of
+ * Baton's own. A null value is drawn as an em dash rather than hidden or left
+ * empty: an empty cell leaves the key standing alone, where it reads as a
+ * heading, and hiding the row loses "the customer left the gift note blank",
+ * which the maker needs when the product offers one. The merchant's order
+ * page renders this too, so both screens show a line item's properties alike.
  */
 export function Personalization({
   attributes,
@@ -128,7 +135,7 @@ export function Personalization({
       {attributes.map(({ key, value }) => (
         <React.Fragment key={key}>
           <s-text color="subdued">{key}</s-text>
-          <s-text type="strong">{value ?? ""}</s-text>
+          <s-text type="strong">{value ?? "\u2014"}</s-text>
         </React.Fragment>
       ))}
     </s-grid>
@@ -165,10 +172,84 @@ export function RunItem({ run }: { readonly run: Domain.WorkflowRun }) {
 }
 
 /**
+ * Prose cut to `lines` lines, with a Show more / Show less toggle only when
+ * the cut hides something. A block reason may run to
+ * {@link Domain.BLOCK_REASON_MAX_LENGTH} characters, and at full length the
+ * banner holding it is taller than the rest of the card; typical reasons fit
+ * in one or two lines and never see the toggle.
+ *
+ * Whether the cut hides anything depends on the width, so it is measured, not
+ * guessed from the character count: a count threshold either clamps a reason
+ * that fits (a Show more that reveals nothing) or leaves one uncut that does
+ * not. `s-paragraph`'s `lineClamp` clamps an element inside its open shadow
+ * root, rendered synchronously on connect, and that element's `scrollHeight`
+ * exceeding its `clientHeight` is the overflow. If the element is not there
+ * (Polaris changed its markup) the text renders in full rather than clipped
+ * with no way to expand it.
+ *
+ * The caller keys it on the text, so an edited reason starts collapsed and is
+ * measured afresh: a text that goes from three lines to four keeps the same
+ * clamped height, and no resize would fire to say it now overflows.
+ */
+export function ClampedProse({
+  lines,
+  children,
+}: {
+  readonly lines: number;
+  readonly children: string;
+}) {
+  const ref = React.useRef<React.ComponentRef<"s-paragraph">>(null);
+  const [expanded, setExpanded] = React.useState(false);
+  const [overflow, setOverflow] = React.useState<
+    "unknown" | "none" | "clipped" | "unmeasurable"
+  >("unknown");
+  React.useLayoutEffect(() => {
+    const inner = ref.current?.shadowRoot?.firstElementChild;
+    const observer = new ResizeObserver(() => {
+      if (inner instanceof HTMLElement && !expanded)
+        setOverflow(
+          inner.scrollHeight > inner.clientHeight + 1 ? "clipped" : "none",
+        );
+    });
+    if (inner instanceof HTMLElement) observer.observe(inner);
+    else setOverflow("unmeasurable");
+    return () => {
+      observer.disconnect();
+    };
+  }, [expanded]);
+  const clamp = !expanded && overflow !== "unmeasurable";
+  return (
+    <s-stack gap="small-500">
+      <div className="member-prose">
+        <s-paragraph ref={ref} lineClamp={clamp ? lines : undefined}>
+          {children}
+        </s-paragraph>
+      </div>
+      {/* A link, not a tertiary button: the button's inline padding sets
+          it off from the text's left edge, where a link lines up. */}
+      {(expanded || overflow === "clipped") && (
+        <s-text>
+          <s-link
+            onClick={() => {
+              setExpanded((current) => !current);
+            }}
+          >
+            {expanded ? "Show less" : "Show more"}
+          </s-link>
+        </s-text>
+      )}
+    </s-stack>
+  );
+}
+
+/**
  * The one banner both screens show for a flagged run: heading is the flag
- * kind, body is the detail, and under both a subdued line naming who and
- * when. The reason is never edited in here: the work page opens
- * `BlockModal` for that, so the banner has one shape.
+ * kind, body is the detail ({@link ClampedProse}, three lines), and under both
+ * a subdued line naming who and when. The reason is never edited in here: the
+ * work page opens `BlockModal` for that, so the banner has one shape. The
+ * button that does open it reads "Edit reason" on both screens, because the
+ * run note's own button sits a few lines below and a bare "Edit" does not say
+ * which of the two it opens.
  *
  * `actions` are rendered as the banner's own children and the caller sets
  * `slot="secondary-actions"` on them; a button that lifts, acknowledges or
@@ -194,7 +275,11 @@ export function FlagBanner({
   return (
     <s-banner tone={tone} heading={heading}>
       <s-stack gap="small-500">
-        {body !== null && <Prose>{body}</Prose>}
+        {body !== null && (
+          <ClampedProse key={body} lines={3}>
+            {body}
+          </ClampedProse>
+        )}
         {run.flagAt !== null && (
           <s-text color="subdued">
             {actor === null ? "" : `${actor} · `}
@@ -217,13 +302,16 @@ export const liftFlagLabel = (run: { readonly flag: Domain.RunFlag | null }) =>
   Domain.runIsBlocked(run) ? "Unblock" : "Dismiss";
 
 /**
- * The run's note, always drawn while the run is live: the text as typed, or
- * the subdued word "Note" as the field's name when blank. One verb, Edit,
- * because the note is a column that is always there and may be blank
+ * The run's note, always drawn while the run is live: the text as typed with
+ * an "Edit note" button under it, or the button alone when blank. One verb,
+ * Edit, because the note is a column that is always there and may be blank
  * ({@link Domain.SetRunNoteCommand}: `null` clears); "Add" would promise a
- * "Remove" that does not exist. On a run that is not live a blank note draws
- * nothing and a written one is read-only. Both run pages render this so the
- * placeholder word and the verb cannot drift.
+ * "Remove" that does not exist. The button names its object because the
+ * blocked banner's "Edit reason" sits a few lines above it, and because the
+ * blank note has no placeholder word to stand beside: a subdued "Note" on its
+ * own read as another heading with nothing under it. On a run that is not
+ * live a blank note draws nothing and a written one is read-only. Both run
+ * pages render this so the verb cannot drift.
  */
 export function RunNote({
   note,
@@ -239,17 +327,14 @@ export function RunNote({
   const hasNote = note !== null && note.length > 0;
   if (!hasNote && !canEdit) return null;
   return (
-    <s-stack
-      direction="inline"
-      justifyContent="space-between"
-      alignItems="start"
-      gap="base"
-    >
-      {hasNote ? <Prose>{note}</Prose> : <s-text color="subdued">Note</s-text>}
+    <s-stack gap="small-300">
+      {hasNote && <Prose>{note}</Prose>}
       {canEdit && (
-        <s-button variant="secondary" disabled={pending} onClick={onEdit}>
-          Edit
-        </s-button>
+        <s-stack direction="inline">
+          <s-button variant="secondary" disabled={pending} onClick={onEdit}>
+            Edit note
+          </s-button>
+        </s-stack>
       )}
     </s-stack>
   );

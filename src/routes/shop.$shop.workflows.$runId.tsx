@@ -203,7 +203,7 @@ function RouteComponent() {
             showModal(BLOCK_MODAL);
           }}
         >
-          Edit
+          Edit reason
         </s-button>
       )}
       <s-button

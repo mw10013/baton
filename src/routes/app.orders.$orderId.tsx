@@ -7,7 +7,12 @@ import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
-import { FlagBanner, flagTone, RunNote } from "@/components/MemberRun";
+import {
+  FlagBanner,
+  flagTone,
+  Personalization,
+  RunNote,
+} from "@/components/MemberRun";
 import { RunSteps } from "@/components/RunSteps";
 import { BlockModal, RunNoteModal } from "@/components/RunTextModals";
 import { changeWarning } from "@/lib/changeWarning";
@@ -714,7 +719,10 @@ function RouteComponent() {
     </s-button>
   );
 
-  /** Opens the Block modal on the standing reason: the banner's Edit. */
+  /**
+   * Opens the Block modal on the standing reason. The label is the
+   * {@link FlagBanner}'s rule, shared with the work page.
+   */
   const editReasonButton = (run: Domain.WorkflowRun) => (
     <s-button
       variant="secondary"
@@ -723,7 +731,7 @@ function RouteComponent() {
         openModal(BLOCK_MODAL, run);
       }}
     >
-      Edit
+      Edit reason
     </s-button>
   );
 
@@ -944,23 +952,92 @@ function RouteComponent() {
   };
 
   /**
-   * One run inside its line item's card: what it is, how it is doing, and —
-   * when the merchant opened Manage from the card header — the disclosure.
-   * Top to bottom: the badges, the {@link FlagBanner} while blocked (why it
-   * stopped, with Edit and Unblock), the Now line (where it is), the
-   * {@link RunNote}, and the attention rows.
+   * A run's badges: its status, its flag, and the one button either allows
+   * beside it. The item's live run shows these on the card's facts line,
+   * under the title, because the badge is the item's state at a glance and
+   * belongs next to the item it describes; on a line of their own lower down
+   * they read as belonging to whatever sat above them. A cancelled run keeps
+   * them on its own line in the run block ({@link renderRun}), since an item
+   * can carry several cancelled runs, each with its own Undo cancel.
+   *
+   * The Blocked badge stays while the {@link FlagBanner} shows: the badge is
+   * the glance, on the title line and matching the orders index, and the
+   * banner is the detail further down.
+   */
+  const runBadges = (run: Domain.WorkflowRun) => (
+    <>
+      <s-badge tone={RUN_STATUS_BADGE[run.status].tone}>
+        {RUN_STATUS_BADGE[run.status].label}
+      </s-badge>
+      {Domain.runIsFlagged(run) && (
+        <s-badge tone={flagTone(run) ?? "warning"}>{flagLabel(run)}</s-badge>
+      )}
+      {/* A finished run takes the quantity flag (`Domain.RunFlag`) but
+          has no run-action row to carry Dismiss, and reopening it through
+          Undo is a different decision from accepting the change. So the
+          one action its flag allows sits beside the badge. */}
+      {Domain.runIsDone(run) && Domain.runIsFlagged(run) && (
+        <s-button
+          variant="tertiary"
+          disabled={!identified || busy}
+          onClick={() => {
+            intervene({
+              kind: "unblock",
+              runId: run.id,
+              toast: "Flag dismissed",
+            });
+          }}
+        >
+          Dismiss
+        </s-button>
+      )}
+      {!Domain.runIsLive(run) && (
+        <s-button
+          variant="tertiary"
+          disabled={!identified || busy}
+          onClick={() => {
+            intervene({
+              kind: "uncancel",
+              runId: run.id,
+              toast: "Cancel undone",
+            });
+          }}
+        >
+          Undo cancel
+        </s-button>
+      )}
+    </>
+  );
+
+  /**
+   * One run inside its line item's card, below the item's title, facts and
+   * properties. Top to bottom: the {@link FlagBanner} while blocked (why it
+   * stopped, with Edit reason and Unblock), the Now line (where it is), the
+   * {@link RunNote}, the attention rows, then Manage and, when open, the
+   * disclosure it toggles. The live run's badges are on the facts line
+   * ({@link runBadges}); a cancelled run, which has no Manage and no Now
+   * line, is its badge row alone.
+   *
+   * The banner stays in the run block rather than above the item title: it
+   * is about the run (Unblock, the reason and who set it all act on or
+   * describe the run), and a card that opened on red would not yet say which
+   * item it is about. The badge on the title line flags the card first.
+   *
+   * Manage sits directly above the drawer it opens rather than in the card
+   * header. It is a disclosure, not an action on the card, and a disclosure
+   * belongs next to what it reveals; in the header it was the full card away
+   * from its drawer, and a long title wrapped it onto a line of its own.
    *
    * The card is headed by the line item, and the run line is the status badge
    * and where the run is. The workflow's name is the Manage drawer's header
    * (`manageRows`): the merchant who wants it is the one who opened Manage,
    * and on a shop whose workflows are named after products the card would
-   * otherwise print one string twice. `Undo cancel` stays here rather than moving to that
-   * header, because a cancelled run has no Manage to hang it beside and an
-   * item can carry several cancelled runs at once.
+   * otherwise print one string twice.
    */
   const renderRun = (
     detail: Domain.WorkflowRunDetail,
     change: Parameters<typeof manageRows>[1],
+    manageButton: React.ReactNode,
   ) => {
     const { run } = detail;
     const cancelled = !Domain.runIsLive(run);
@@ -968,50 +1045,11 @@ function RouteComponent() {
     const attention = attentionRows(detail, teams, assignTeam);
     return (
       <s-stack key={run.id} gap="small-300">
-        <s-stack direction="inline" gap="small-300" alignItems="center">
-          <s-badge tone={RUN_STATUS_BADGE[run.status].tone}>
-            {RUN_STATUS_BADGE[run.status].label}
-          </s-badge>
-          {Domain.runIsFlagged(run) && (
-            <s-badge tone={flagTone(run) ?? "warning"}>
-              {flagLabel(run)}
-            </s-badge>
-          )}
-          {/* A finished run takes the quantity flag (`Domain.RunFlag`) but
-              has no run-action row to carry Dismiss, and reopening it through
-              Undo is a different decision from accepting the change. So the
-              one action its flag allows sits beside the badge. */}
-          {Domain.runIsDone(run) && Domain.runIsFlagged(run) && (
-            <s-button
-              variant="tertiary"
-              disabled={!identified || busy}
-              onClick={() => {
-                intervene({
-                  kind: "unblock",
-                  runId: run.id,
-                  toast: "Flag dismissed",
-                });
-              }}
-            >
-              Dismiss
-            </s-button>
-          )}
-          {cancelled && (
-            <s-button
-              variant="tertiary"
-              disabled={!identified || busy}
-              onClick={() => {
-                intervene({
-                  kind: "uncancel",
-                  runId: run.id,
-                  toast: "Cancel undone",
-                });
-              }}
-            >
-              Undo cancel
-            </s-button>
-          )}
-        </s-stack>
+        {cancelled && (
+          <s-stack direction="inline" gap="small-300" alignItems="center">
+            {runBadges(run)}
+          </s-stack>
+        )}
         {Domain.runIsBlocked(run) && (
           <FlagBanner
             run={run}
@@ -1035,6 +1073,7 @@ function RouteComponent() {
           }}
         />
         {attention}
+        {!cancelled && manageButton}
         {!cancelled && managingRun(run) && manageRows(detail, change)}
       </s-stack>
     );
@@ -1207,12 +1246,10 @@ function RouteComponent() {
       ...(item.sku === null ? [] : [`SKU ${item.sku}`]),
     ].join(" \u00B7 ");
     /**
-     * `s-section` has no header action slot, so the header is built by hand:
-     * the section takes no `heading` and an inline stack inside it holds the
-     * `s-heading` and the button. This is what the Shopify admin's own order
-     * cards look like. The label stays `Manage` in both states with a flipping
-     * chevron — a `Hide` button in a card header reads as hiding the card, and
-     * `Done` collides with `Mark done` inside the disclosure it toggles.
+     * The disclosure toggle, placed by {@link renderRun} directly above the
+     * drawer it opens. The label stays `Manage` in both states with a flipping
+     * chevron — `Hide` reads as hiding the card, and `Done` collides with
+     * `Mark done` inside the disclosure it toggles.
      *
      * The state is the chevron and nothing else. `aria-expanded` was measured
      * (2026-09-16) and does not work here: React omits the attribute when it is
@@ -1246,54 +1283,37 @@ function RouteComponent() {
     return (
       <s-section key={item.id}>
         <s-stack gap="small-100">
-          <s-stack
-            direction="inline"
-            justifyContent="space-between"
-            alignItems="start"
-            gap="base"
-          >
-            {/* The facts sit under the title as its subtitle, tight to it,
-                so the card opens with one block rather than a title and a
-                lone "× 1" a full gap apart. */}
-            <s-stack gap="small-500">
-              <s-heading>{lineItemTitle(item)}</s-heading>
-              <s-stack direction="inline" gap="small-300" alignItems="center">
-                <s-text color="subdued">{facts}</s-text>
-                {removed && <s-badge tone="critical">Removed</s-badge>}
-              </s-stack>
+          {/* The facts sit under the title as its subtitle, tight to it, so
+              the card opens with one block rather than a title and a lone
+              "× 1" a full gap apart. The live run's badges end the facts
+              line ({@link runBadges}). */}
+          <s-stack gap="small-500">
+            <s-heading>{lineItemTitle(item)}</s-heading>
+            <s-stack direction="inline" gap="small-300" alignItems="center">
+              <s-text color="subdued">{facts}</s-text>
+              {removed && <s-badge tone="critical">Removed</s-badge>}
+              {live !== undefined && runBadges(live.run)}
             </s-stack>
-            {manageButton}
           </s-stack>
 
           {/* "Properties" is Shopify's merchant-facing name for line item
               `customAttributes`: the Help Center and theme docs say "line
               item properties", the API says `customAttributes`. Shortened
-              because the heading already sits inside the line item's card. */}
+              because the heading already sits inside the line item's card.
+              The rows are the work page's ({@link Personalization}). */}
           {item.customAttributes.length > 0 && (
             <s-stack gap="small-300">
               <s-text color="subdued">Properties</s-text>
-              <s-grid
-                gridTemplateColumns="max-content 1fr"
-                gap="small-300 base"
-                alignItems="start"
-              >
-                {item.customAttributes.map(({ key, value }) => (
-                  <React.Fragment key={key}>
-                    <s-text color="subdued">{key}</s-text>
-                    <s-text>{value ?? ""}</s-text>
-                  </React.Fragment>
-                ))}
-              </s-grid>
+              <Personalization attributes={item.customAttributes} />
             </s-stack>
           )}
 
           <s-stack gap="small-100">
             {ambiguous && <s-paragraph>{AMBIGUITY_SENTENCE}</s-paragraph>}
             {itemRuns.map((itemRun) =>
-              renderRun(
-                itemRun,
-                itemRun.run.id === live?.run.id ? change : null,
-              ),
+              itemRun.run.id === live?.run.id
+                ? renderRun(itemRun, change, manageButton)
+                : renderRun(itemRun, null, null),
             )}
             {live === undefined &&
               !removed &&
