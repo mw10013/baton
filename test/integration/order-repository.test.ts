@@ -60,7 +60,6 @@ const anOrder = (
   fulfillmentStatus: "UNFULFILLED",
   fullyPaid: false,
   note: null,
-  customAttributes: [{ key: "gift", value: "yes" }],
   lineItemsTruncated: false,
   syncedAt: 1000,
   syncSource: "bulk",
@@ -82,7 +81,7 @@ const aLineItem = (
   currentQuantity: 1,
   productTags: ["engraved"],
   matchedWorkflowIds: [],
-  customAttributes: [{ key: "text", value: "Hello" }],
+  properties: [{ key: "text", value: "Hello" }],
   requiresShipping: true,
   ...overrides,
 });
@@ -174,7 +173,6 @@ describe("OrderRepository.upsertOrder", () => {
     strictEqual(order.fullyPaid, false);
     strictEqual(lineItems.length, 2);
     strictEqual(lineItems[0]?.productTags[0], "engraved");
-    strictEqual(order.customAttributes[0]?.value, "yes");
   });
 
   /**
@@ -371,7 +369,7 @@ const seedStates = Effect.gen(function* () {
       yield* sql`
         insert into WorkflowRun (
           id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
-          lineItemId, lineItemTitle, variantTitle, sku, quantity, customAttributes,
+          lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
           source, status, flag, flagAt, flagDetail, createdAt, updatedAt,
           cancelledAt
         ) values (
@@ -922,7 +920,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
     yield* sql`
       insert into WorkflowRun (
         id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
-        lineItemId, lineItemTitle, variantTitle, sku, quantity, customAttributes,
+        lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
         source, status, flag, flagAt, flagDetail, createdAt, updatedAt,
         cancelledAt
       ) values (
@@ -1836,7 +1834,7 @@ const runWith =
       insert into WorkflowRun (
         id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
         lineItemId, lineItemTitle, variantTitle, sku, quantity,
-        customAttributes, source, status, flag, flagAt, flagDetail,
+        lineItemProperties, source, status, flag, flagAt, flagDetail,
         createdAt, updatedAt, cancelledAt
       ) values (
         ${`run-${orderId}-${status}`}, 'wf', 'Workflow', ${orderId}, '#1',

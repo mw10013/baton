@@ -18,8 +18,8 @@ import { handleWebhook } from "@/lib/Shopify";
  * `customer` selection in any order query. The order rows it does store are
  * keyed by order and line item, so there is no customer to look one up by.
  * The one caveat, and it is the reason this paragraph is specific rather than
- * a blanket "no customer data": `ShopOrder.note` and the `customAttributes` on
- * an order and its line items are free text a buyer may have typed personal
+ * a blanket "no customer data": `ShopOrder.note` and a line item's
+ * `properties` are free text a buyer may have typed personal
  * details into. They are stored as Shopify sends them and are deleted with the
  * shop on app/uninstalled, never in response to a per-customer request, which
  * Baton has no key to satisfy. The privacy page says exactly this.

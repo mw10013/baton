@@ -237,7 +237,7 @@ export class ShopAgentClient extends Context.Service<
         );
       /**
        * `Schema.toType`: the object already decoded these rows, so the wire
-       * value is the decoded shape (`customAttributes` an array, not JSON
+       * value is the decoded shape (`lineItemProperties` an array, not JSON
        * text) and must be validated on that side.
        */
       const runListView = Schema.toType(Domain.RunListView);

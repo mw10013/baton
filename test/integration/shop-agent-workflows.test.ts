@@ -536,7 +536,6 @@ const seedOrder = (
               fulfillmentStatus: "UNFULFILLED",
               fullyPaid: true,
               note: null,
-              customAttributes: [],
               lineItemsTruncated: false,
               syncedAt: processedAt,
               syncSource: "manual",
@@ -555,7 +554,7 @@ const seedOrder = (
                 currentQuantity: 1,
                 productTags: [...productTags],
                 matchedWorkflowIds: [],
-                customAttributes: [],
+                properties: [],
                 requiresShipping: true,
               },
             ],
@@ -1368,15 +1367,15 @@ describe("ShopAgent seed callables", () => {
         `insert or replace into ShopOrder
            (id, legacyId, name, processedAt, updatedAt, cancelledAt, closedAt,
             financialStatus, fulfillmentStatus, fullyPaid, note,
-            customAttributes, lineItemsTruncated, syncedAt, syncSource)
+            lineItemsTruncated, syncedAt, syncSource)
          values ('gid://shopify/Order/synced-1', 'synced-1', '#5001', 1, 1, null, null,
-                 'PAID', 'UNFULFILLED', 1, null, '[]', 0, 1, 'webhook')`,
+                 'PAID', 'UNFULFILLED', 1, null, 0, 1, 'webhook')`,
       );
       sql.exec(
         `insert or replace into OrderLineItem
            (id, orderId, productId, variantId, title, variantTitle, sku, quantity,
             currentQuantity, productTags,
-            matchedWorkflowIds, customAttributes, requiresShipping)
+            matchedWorkflowIds, properties, requiresShipping)
          values ('gid://shopify/Order/synced-1/line-1', 'gid://shopify/Order/synced-1',
                  null, null, 'Board', null, null, 1, 1, '["board"]',
                  '["a-workflow-this-seed-deletes"]', '[]', 1)`,

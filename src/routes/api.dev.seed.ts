@@ -33,7 +33,7 @@ const SeedOrderByWorkflowName = Schema.Struct({
       quantity: Schema.Number,
       currentQuantity: Schema.optionalKey(Schema.Number),
       tags: Schema.Array(Schema.String),
-      customAttributes: Schema.optionalKey(Schema.Array(Domain.OrderAttribute)),
+      properties: Schema.optionalKey(Schema.Array(Domain.LineItemProperty)),
       progress: Schema.optionalKey(Domain.SeedProgress),
       /** One of the seeded `workflows`, by name; set on the item as the merchant's Choose does. */
       workflow: Schema.optionalKey(Domain.WorkflowName),

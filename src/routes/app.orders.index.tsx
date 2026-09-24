@@ -109,7 +109,7 @@ const openOnlyFiltersShown = (value: Domain.OrdersStatus | null) =>
 /**
  * `Schema.toType`, not the schema itself. A Durable Object RPC result has
  * already been through the repository's decoder, so what arrives is the
- * **decoded** shape — `fullyPaid` a boolean, `customAttributes` an array. Decoding it again
+ * **decoded** shape — `fullyPaid` a boolean, `properties` an array. Decoding it again
  * against `Domain.OrdersView` would demand the *encoded* row shape (`0`/`1`,
  * a JSON string) and fail on the first order. `toType` derives a validator over
  * the decoded side, so the wire value is checked without re-running transforms
@@ -287,7 +287,7 @@ export const Route = createFileRoute("/app/orders/")({
 /**
  * The orders index: one table of what the Durable Object has stored, with
  * production state per order, and the window-sync button as a header action.
- * Everything per order — line items, personalization, workflows — lives on
+ * Everything per order — line items, their properties, workflows — lives on
  * `/app/orders/$orderId`.
  *
  * A subscribed page (the socket half of the loader-versus-socket rule on

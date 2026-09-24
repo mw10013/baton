@@ -82,7 +82,7 @@ test("orders screen imports open orders and lists them", async ({ page }) => {
   await expect(rows.first()).toBeVisible({ timeout: 30_000 });
 
   /* The order name links to the detail page, which is the only place
-     personalization (`customAttributes`) and product tags are rendered — the
+     properties and product tags are rendered — the
      fields the bulk path exists to collect. */
   await rows.first().getByRole("link").first().click();
   /* One card per line item, each an unslotted top-level section headed by the
@@ -558,7 +558,7 @@ test("the order card puts the run's badges on the title line, Manage above its d
             title: "E2E Board",
             quantity: 1,
             tags: ["e2e-card"],
-            customAttributes: [{ key: "Gift note", value: null }],
+            properties: [{ key: "Gift note", value: null }],
           },
         ],
       },

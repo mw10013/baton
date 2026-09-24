@@ -375,7 +375,6 @@ const storedOrder = (updatedAt: number): Domain.ShopOrder => ({
   fulfillmentStatus: "UNFULFILLED",
   fullyPaid: true,
   note: null,
-  customAttributes: [],
   lineItemsTruncated: false,
   syncedAt: updatedAt,
   syncSource: "bulk",

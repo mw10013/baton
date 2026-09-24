@@ -699,7 +699,7 @@ export class WorkflowRunRepository extends Context.Service<
       const orderColumns = sql.literal(
         `id, legacyId, name, processedAt, updatedAt, cancelledAt,
          closedAt, financialStatus, fulfillmentStatus, fullyPaid, note,
-         customAttributes, lineItemsTruncated, syncedAt, syncSource`,
+         lineItemsTruncated, syncedAt, syncSource`,
       );
 
       const findRun = (runId: string) =>
@@ -1063,7 +1063,7 @@ export class WorkflowRunRepository extends Context.Service<
             yield* sql`
               insert into WorkflowRun (
                 id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
-                lineItemId, lineItemTitle, variantTitle, sku, quantity, customAttributes,
+                lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
                 source, status, flag, flagAt, flagDetail, createdAt, updatedAt,
                 cancelledAt
               ) values (
@@ -1072,7 +1072,7 @@ export class WorkflowRunRepository extends Context.Service<
                 ${lineItem.id}, ${lineItem.title},
                 ${lineItem.variantTitle}, ${lineItem.sku},
                 ${Domain.unitsToMake(lineItem)},
-                ${json(lineItem.customAttributes)},
+                ${json(lineItem.properties)},
                 ${source}, 'pending', null, null, null, ${now}, ${now}, null
               )
               on conflict do nothing

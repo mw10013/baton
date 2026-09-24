@@ -52,7 +52,6 @@ query BulkOrdersQuery {
         displayFulfillmentStatus
         fullyPaid
         note
-        customAttributes { key value }
         lineItems {
           edges {
             node {

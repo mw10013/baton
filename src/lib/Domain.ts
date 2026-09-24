@@ -1504,12 +1504,18 @@ export const EpochMillis = Schema.DateFromString.pipe(
   }),
 );
 
-/** Shopify's `Attribute` — order `customAttributes` and line-item personalization. */
-export const OrderAttribute = Schema.Struct({
+/**
+ * One line item property: Shopify's `Attribute` as it appears in
+ * `LineItem.customAttributes`. The Help Center calls these line item
+ * properties, REST and Liquid call them `properties`, and the merchant's line
+ * item card is headed Properties. Order-level attributes are not stored (see
+ * {@link ShopOrder}).
+ */
+export const LineItemProperty = Schema.Struct({
   key: Schema.String,
   value: Schema.NullOr(Schema.String),
 });
-export type OrderAttribute = typeof OrderAttribute.Type;
+export type LineItemProperty = typeof LineItemProperty.Type;
 
 /**
  * One order in the shop's Durable Object SQLite. Encoded side is the row
@@ -1519,8 +1525,10 @@ export type OrderAttribute = typeof OrderAttribute.Type;
  * Deliberately carries no customer identity: no `customer`, `shippingAddress`,
  * email, or phone. Baton is a production-floor view, so the buyer never needs
  * naming, and staying off those fields keeps the app clear of Level 2 protected
- * customer data. `note` and `customAttributes` stay because they carry the
- * personalization text a maker works from.
+ * customer data. `note` stays because it can carry instructions a maker
+ * works from. Order-level `customAttributes` (the cart attributes the admin
+ * shows under Additional details) are not stored: no run or screen reads an
+ * order-level field, and the merchant reads them in the admin one click away.
  *
  * `financialStatus` is nullable because `Order.displayFinancialStatus` is —
  * `displayFulfillmentStatus` is the non-null one of the pair.
@@ -1544,7 +1552,6 @@ export const ShopOrder = Schema.Struct({
   fulfillmentStatus: Schema.String,
   fullyPaid: SqliteBoolean,
   note: Schema.NullOr(Schema.String),
-  customAttributes: Schema.fromJsonString(Schema.Array(OrderAttribute)),
   /**
    * Whether line items were **dropped** on the way in, past
    * {@link ShopLimits.maxLineItemsPerOrder}. Both paths ask Shopify for that
@@ -1576,6 +1583,11 @@ export type ShopOrder = typeof ShopOrder.Type;
  * workflow. Written by reconcile
  * only — the order sync writes `[]`, because matching happens after the write,
  * inside `afterWrite`.
+ *
+ * `properties` is the line item's own list, every key stored and shown as
+ * Shopify sends it, underscore-prefixed app keys included; Baton is a
+ * back-office view and hides nothing the merchant can already see in the
+ * admin.
  */
 export const OrderLineItem = Schema.Struct({
   id: Schema.String,
@@ -1589,7 +1601,7 @@ export const OrderLineItem = Schema.Struct({
   currentQuantity: Schema.Number,
   productTags: Schema.fromJsonString(Schema.Array(Schema.String)),
   matchedWorkflowIds: Schema.fromJsonString(Schema.Array(WorkflowId)),
-  customAttributes: Schema.fromJsonString(Schema.Array(OrderAttribute)),
+  properties: Schema.fromJsonString(Schema.Array(LineItemProperty)),
   requiresShipping: SqliteBoolean,
 });
 export type OrderLineItem = typeof OrderLineItem.Type;
@@ -1758,7 +1770,7 @@ export const SeedOrdersInput = Schema.Struct({
           quantity: Schema.Number,
           currentQuantity: Schema.optionalKey(Schema.Number),
           tags: Schema.Array(Schema.String),
-          customAttributes: Schema.optionalKey(Schema.Array(OrderAttribute)),
+          properties: Schema.optionalKey(Schema.Array(LineItemProperty)),
           /** This item's run alone; the order's own progress keys are ignored for it. */
           progress: Schema.optionalKey(SeedProgress),
           /**
@@ -2930,7 +2942,7 @@ export type RunFlagDetail = typeof RunFlagDetail.Type;
 /**
  * One workflow applied to one line item. Every display field
  * is a snapshot taken at creation — `workflowName`, `orderName`, the line
- * item's title and personalization — so a run's row reads only this row
+ * item's title and properties — so a run's row reads only this row
  * and the run outlives an order delete, a definition rename, or a line item
  * dropped from the order. No foreign keys to `ShopOrder`, `OrderLineItem`, or
  * `Workflow` for that reason. `unique (lineItemId, workflowId)` spans every
@@ -2958,7 +2970,11 @@ export const WorkflowRun = Schema.Struct({
   variantTitle: Schema.NullOr(Schema.String),
   sku: Schema.NullOr(Schema.String),
   quantity: Schema.Number,
-  customAttributes: Schema.fromJsonString(Schema.Array(OrderAttribute)),
+  /**
+   * The line item's `properties` at creation. Prefixed like `lineItemTitle`
+   * because on a run the bare word would read as the run's own.
+   */
+  lineItemProperties: Schema.fromJsonString(Schema.Array(LineItemProperty)),
   source: RunSource,
   status: RunStatus,
   flag: Schema.NullOr(RunFlag),
@@ -3149,7 +3165,7 @@ export type RunListTask = typeof RunListTask.Type;
  *
  * What goes is everything only the work page reads — the workflow's name,
  * the order id, the variant, the SKU, the timestamps, and
- * `customAttributes`, which is the one that matters: a JSON blob on every row
+ * `lineItemProperties`, which is the one that matters: a JSON blob on every row
  * of every read, parsed on arrival, to render nothing. The run `note` stays:
  * the row prints it.
  */
@@ -3160,7 +3176,7 @@ export const RunListRun = Schema.Struct(
     "orderId",
     "variantTitle",
     "sku",
-    "customAttributes",
+    "lineItemProperties",
     "source",
     "createdAt",
     "updatedAt",

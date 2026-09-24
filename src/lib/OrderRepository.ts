@@ -534,7 +534,7 @@ export class OrderRepository extends Context.Service<
       const orderColumns = sql.literal(
         `id, legacyId, name, processedAt, updatedAt, cancelledAt,
          closedAt, financialStatus, fulfillmentStatus, fullyPaid, note,
-         customAttributes, lineItemsTruncated, syncedAt, syncSource`,
+         lineItemsTruncated, syncedAt, syncSource`,
       );
 
       /**
@@ -602,13 +602,13 @@ export class OrderRepository extends Context.Service<
             insert into OrderLineItem (
               id, orderId, productId, variantId, title, variantTitle, sku,
               quantity, currentQuantity, productTags, matchedWorkflowIds,
-              customAttributes, requiresShipping
+              properties, requiresShipping
             ) values (
               ${item.id}, ${item.orderId}, ${item.productId}, ${item.variantId},
               ${item.title}, ${item.variantTitle}, ${item.sku},
               ${item.quantity}, ${item.currentQuantity},
               ${json(item.productTags)}, ${json(item.matchedWorkflowIds)},
-              ${json(item.customAttributes)}, ${bit(item.requiresShipping)}
+              ${json(item.properties)}, ${bit(item.requiresShipping)}
             )
             on conflict(id) do update set
               orderId = excluded.orderId,
@@ -620,7 +620,7 @@ export class OrderRepository extends Context.Service<
               quantity = excluded.quantity,
               currentQuantity = excluded.currentQuantity,
               productTags = excluded.productTags,
-              customAttributes = excluded.customAttributes,
+              properties = excluded.properties,
               requiresShipping = excluded.requiresShipping
           `,
           { discard: true },
@@ -866,7 +866,7 @@ export class OrderRepository extends Context.Service<
                 insert into ShopOrder (
                   id, legacyId, name, processedAt, updatedAt,
                   cancelledAt, closedAt, financialStatus, fulfillmentStatus,
-                  fullyPaid, note, customAttributes,
+                  fullyPaid, note,
                   lineItemsTruncated, syncedAt, syncSource
                 ) values (
                   ${order.id}, ${order.legacyId}, ${order.name},
@@ -874,7 +874,6 @@ export class OrderRepository extends Context.Service<
                   ${order.cancelledAt}, ${order.closedAt},
                   ${order.financialStatus}, ${order.fulfillmentStatus},
                   ${bit(order.fullyPaid)}, ${order.note},
-                  ${json(order.customAttributes)},
                   ${bit(order.lineItemsTruncated)}, ${order.syncedAt},
                   ${order.syncSource}
                 )
@@ -889,7 +888,6 @@ export class OrderRepository extends Context.Service<
                   fulfillmentStatus = excluded.fulfillmentStatus,
                   fullyPaid = excluded.fullyPaid,
                   note = excluded.note,
-                  customAttributes = excluded.customAttributes,
                   lineItemsTruncated = excluded.lineItemsTruncated,
                   syncedAt = excluded.syncedAt,
                   syncSource = excluded.syncSource

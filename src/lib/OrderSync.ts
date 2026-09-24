@@ -24,7 +24,6 @@ export const OrderNode = Schema.Struct({
   displayFulfillmentStatus: Schema.String,
   fullyPaid: Schema.Boolean,
   note: Schema.NullOr(Schema.String),
-  customAttributes: Schema.Array(Domain.OrderAttribute),
 });
 export type OrderNode = typeof OrderNode.Type;
 
@@ -41,7 +40,7 @@ export const LineItemNode = Schema.Struct({
   quantity: Schema.Number,
   currentQuantity: Schema.Number,
   requiresShipping: Schema.Boolean,
-  customAttributes: Schema.Array(Domain.OrderAttribute),
+  customAttributes: Schema.Array(Domain.LineItemProperty),
   variant: Schema.NullOr(Schema.Struct({ id: Schema.String })),
   product: Schema.NullOr(
     Schema.Struct({ id: Schema.String, tags: Schema.Array(Schema.String) }),
@@ -78,7 +77,6 @@ export const toShopOrder = ({
   fulfillmentStatus: node.displayFulfillmentStatus,
   fullyPaid: node.fullyPaid,
   note: node.note,
-  customAttributes: node.customAttributes,
   lineItemsTruncated,
   syncedAt,
   syncSource: source,
@@ -100,7 +98,8 @@ export const toOrderLineItem = (
   productTags: node.product?.tags ?? [],
   /** Reconcile owns this column; the sync writes the empty set and `afterWrite` fills it. */
   matchedWorkflowIds: [],
-  customAttributes: node.customAttributes,
+  /** Shopify's name for the list; the domain calls it properties (see {@link Domain.LineItemProperty}). */
+  properties: node.customAttributes,
   requiresShipping: node.requiresShipping,
 });
 
@@ -132,7 +131,6 @@ export const orderSyncQuery = `#graphql
       displayFulfillmentStatus
       fullyPaid
       note
-      customAttributes { key value }
       lineItems(first: $lineItems) {
         pageInfo { hasNextPage }
         nodes {

@@ -10,7 +10,7 @@ import { LocalDateTime } from "@/components/LocalDateTime";
 import {
   FlagBanner,
   flagTone,
-  Personalization,
+  LineItemProperties,
   RunNote,
 } from "@/components/MemberRun";
 import { RunSteps } from "@/components/RunSteps";
@@ -1296,15 +1296,16 @@ function RouteComponent() {
             </s-stack>
           </s-stack>
 
-          {/* "Properties" is Shopify's merchant-facing name for line item
-              `customAttributes`: the Help Center and theme docs say "line
-              item properties", the API says `customAttributes`. Shortened
-              because the heading already sits inside the line item's card.
-              The rows are the work page's ({@link Personalization}). */}
-          {item.customAttributes.length > 0 && (
+          {/* "Properties" is Shopify's merchant-facing name for the list: the
+              Help Center says "line item properties", REST and Liquid say
+              properties, only the GraphQL API says customAttributes.
+              Shortened because the heading already sits inside the line
+              item's card. The rows are the work page's
+              ({@link LineItemProperties}). */}
+          {item.properties.length > 0 && (
             <s-stack gap="small-300">
               <s-text color="subdued">Properties</s-text>
-              <Personalization attributes={item.customAttributes} />
+              <LineItemProperties properties={item.properties} />
             </s-stack>
           )}
 
@@ -1549,12 +1550,6 @@ function RouteComponent() {
             order.closedAt === null ? null : (
               <LocalDateTime value={order.closedAt} />
             ),
-          )}
-          {fact(
-            "Order attributes",
-            order.customAttributes
-              .map(({ key, value }) => `${key}: ${value ?? ""}`)
-              .join(", "),
           )}
         </s-grid>
       </s-section>

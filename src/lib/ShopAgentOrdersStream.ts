@@ -67,8 +67,8 @@ export interface OrdersStreamCounts {
  * Holds at most one order and its line items. A line item whose `__parentId`
  * is not the open order fails the stream rather than being dropped: Shopify
  * documents children as always following their parent, so a mismatch means the
- * file is not what this reader assumes and silently discarding personalization
- * data would be worse than a failed sync the merchant can retry.
+ * file is not what this reader assumes and silently discarding line item
+ * properties would be worse than a failed sync the merchant can retry.
  */
 const addLine = (
   active: OrderBuffer | null,

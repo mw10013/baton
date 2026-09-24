@@ -170,7 +170,7 @@ export const workflows: readonly SeedWorkflow[] = [
       }),
       task("Engrave", ENGRAVING, {
         instructions:
-          "Engraving text is in the personalization. Confirm spelling against the order before running the laser.",
+          "Engraving text is in the properties. Confirm spelling against the order before running the laser.",
       }),
       task("Oil and finish", FINISHING),
     ],
@@ -183,7 +183,7 @@ export const workflows: readonly SeedWorkflow[] = [
       task("Cut leather", LEATHER, { step: 1 }),
       task("Stamp monogram", ENGRAVING, {
         step: 2,
-        instructions: "Initials in the personalization; centre on the cover.",
+        instructions: "Initials in the properties; centre on the cover.",
       }),
       task("Stitch spine", LEATHER, { step: 2 }),
       task("Condition and inspect", LEATHER, { step: 3 }),
@@ -195,7 +195,7 @@ export const workflows: readonly SeedWorkflow[] = [
     tag: TAG.ring,
     tasks: [
       task("Cast", JEWELRY, {
-        instructions: "Ring size and metal are in the personalization.",
+        instructions: "Ring size and metal are in the properties.",
       }),
       task("Engrave crest", ENGRAVING, {
         instructions: "Crest file is named after the order number.",
@@ -212,14 +212,14 @@ export const workflows: readonly SeedWorkflow[] = [
     tag: TAG.blanket,
     tasks: [
       task("Embroider", TEXTILES, {
-        instructions: "Name and thread colour are in the personalization.",
+        instructions: "Name and thread colour are in the properties.",
       }),
       task("Steam and fold", FINISHING),
     ],
     draft: {
       tasks: [
         task("Embroider", TEXTILES, {
-          instructions: "Name and thread colour are in the personalization.",
+          instructions: "Name and thread colour are in the properties.",
         }),
         task("Attach care label", TEXTILES),
         task("Steam and fold", FINISHING),
@@ -278,8 +278,7 @@ export const workflows: readonly SeedWorkflow[] = [
       task("Cut leather strap", LEATHER, { step: 1 }),
       task("Engrave lid", ENGRAVING, {
         step: 2,
-        instructions:
-          "Lid text is in the personalization; centre on the grain.",
+        instructions: "Lid text is in the properties; centre on the grain.",
       }),
       task("Cast charm", JEWELRY, { step: 2 }),
       task("Press liner", FINISHING, { step: 2 }),
@@ -303,7 +302,7 @@ export const workflows: readonly SeedWorkflow[] = [
     tasks: [
       task("Cut face", WOODSHOP),
       task("Engrave numerals", ENGRAVING, {
-        instructions: "Numeral style is in the personalization.",
+        instructions: "Numeral style is in the properties.",
       }),
       task("Fit movement", FINISHING),
     ],
@@ -311,7 +310,7 @@ export const workflows: readonly SeedWorkflow[] = [
       tasks: [
         task("Cut face", WOODSHOP),
         task("Engrave numerals", WOODSHOP, {
-          instructions: "Numeral style is in the personalization.",
+          instructions: "Numeral style is in the properties.",
         }),
         task("Fit movement", FINISHING),
       ],
@@ -354,7 +353,7 @@ const item = (
   title: string,
   tag: string | readonly string[] | null,
   quantity: number,
-  personalization: Record<string, string | null> = {},
+  properties: Record<string, string | null> = {},
   extra: Partial<
     Pick<SeedLineItem, "currentQuantity" | "progress" | "workflow">
   > = {},
@@ -362,7 +361,7 @@ const item = (
   title,
   quantity,
   tags: tagsOf(tag),
-  customAttributes: Object.entries(personalization).map(([key, value]) => ({
+  properties: Object.entries(properties).map(([key, value]) => ({
     key,
     value,
   })),
@@ -691,7 +690,7 @@ const floorOrders: readonly SeedOrder[] = [
   // stays with the e2e specs instead of being faked here.
   {
     // every text field at its limit at once: a title that wraps, a block
-    // reason at exactly 1000 characters, and a personalization with no value
+    // reason at exactly 1000 characters, and a property with no value
     // (what an empty gift-note field sends)
     n: 1026,
     advance: 1,

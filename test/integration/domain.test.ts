@@ -19,7 +19,6 @@ const order = (
   fulfillmentStatus: "UNFULFILLED",
   fullyPaid: true,
   note: null,
-  customAttributes: [],
   lineItemsTruncated: false,
   syncedAt: 0,
   syncSource: "webhook",
@@ -180,7 +179,7 @@ const run = (
   variantTitle: null,
   sku: null,
   quantity: 1,
-  customAttributes: [],
+  lineItemProperties: [],
   source: "tag",
   status,
   flag,
@@ -231,7 +230,7 @@ const lineItem = (
   matchedWorkflowIds: matchedWorkflowIds.map((id) =>
     Schema.decodeUnknownSync(Domain.WorkflowId)(id),
   ),
-  customAttributes: [],
+  properties: [],
   requiresShipping: true,
 });
 

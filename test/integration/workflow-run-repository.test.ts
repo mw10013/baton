@@ -136,7 +136,6 @@ const order = (
   fulfillmentStatus: "UNFULFILLED",
   fullyPaid: true,
   note: "Gift wrap please",
-  customAttributes: [],
   lineItemsTruncated: false,
   syncedAt: PROCESSED_AT,
   syncSource: "webhook",
@@ -159,7 +158,7 @@ const lineItem = (
   currentQuantity: 2,
   productTags,
   matchedWorkflowIds: [],
-  customAttributes: [{ key: "Engraving", value: `Hello ${String(n)}` }],
+  properties: [{ key: "Engraving", value: `Hello ${String(n)}` }],
   requiresShipping: true,
   ...overrides,
 });
@@ -630,7 +629,7 @@ describe("WorkflowRunRepository one live run per item", () => {
           insert into WorkflowRun (
             id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
             lineItemId, lineItemTitle, variantTitle, sku, quantity,
-            customAttributes, source, status, flag, flagAt, flagDetail,
+            lineItemProperties, source, status, flag, flagAt, flagDetail,
             createdAt, updatedAt, cancelledAt
           ) values (
             'raw', ${b.id}, 'Workflow b', ${ORDER_ID}, '#1001', 0,
@@ -650,7 +649,7 @@ describe("WorkflowRunRepository one live run per item", () => {
           insert into WorkflowRun (
             id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
             lineItemId, lineItemTitle, variantTitle, sku, quantity,
-            customAttributes, source, status, flag, flagAt, flagDetail,
+            lineItemProperties, source, status, flag, flagAt, flagDetail,
             createdAt, updatedAt, cancelledAt
           ) values (
             'raw', ${b.id}, 'Workflow b', ${ORDER_ID}, '#1001', 0,
@@ -690,7 +689,7 @@ describe("WorkflowRunRepository one live run per item", () => {
           insert into WorkflowRun (
             id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
             lineItemId, lineItemTitle, variantTitle, sku, quantity,
-            customAttributes, source, status, flag, flagAt, flagDetail,
+            lineItemProperties, source, status, flag, flagAt, flagDetail,
             createdAt, updatedAt, cancelledAt
           ) values (
             'busy', 'other', 'Other', 'o2', 'o2', 0,
@@ -732,7 +731,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         strictEqual(first?.run.source, "tag");
         strictEqual(first?.run.status, "pending");
         strictEqual(first?.run.quantity, 2);
-        strictEqual(first?.run.customAttributes?.[0]?.value, "Hello 1");
+        strictEqual(first?.run.lineItemProperties?.[0]?.value, "Hello 1");
         deepStrictEqual(
           first?.tasks.map((s) => [s.position, s.name, s.teamName]),
           [
@@ -740,6 +739,22 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
             [2, "Finish", "Team B"],
           ],
         );
+      }),
+    ));
+
+  it("every line item property is kept, underscore-prefixed keys included", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seed;
+        const properties = [
+          { key: "_ioid", value: "x" },
+          { key: "Engraving", value: "Hi" },
+        ];
+        yield* upsertAndReconcile(order(), [
+          lineItem(1, ["a"], { properties }),
+        ]);
+        const [only] = yield* runsForOrder();
+        deepStrictEqual(only?.run.lineItemProperties, properties);
       }),
     ));
 
@@ -903,7 +918,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         strictEqual(gone.length, 2);
         strictEqual(
           gone.find((d) => d.run.id === activeRun.run.id)?.run
-            .customAttributes?.[0]?.value,
+            .lineItemProperties?.[0]?.value,
           "Hello 2",
         );
       }),
@@ -1552,12 +1567,12 @@ describe("WorkflowRunRepository tasks, run list, flags, delete", () => {
           blocked.map((item) => [item.run.id, item.run.flag]),
           [[second.run.id, "item_removed"]],
         );
-        /* The personalization is the work page's, not the row's, so it is
+        /* The properties are the work page's, not the row's, so it is
            read back off the run rather than off the list item. */
         const reconciled = yield* runsForOrder();
         strictEqual(
           reconciled.find((each) => each.run.id === second.run.id)?.run
-            .customAttributes[0]?.value,
+            .lineItemProperties[0]?.value,
           "Hello 2",
         );
         deepStrictEqual(

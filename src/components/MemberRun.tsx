@@ -112,7 +112,7 @@ export const flagActor = (run: Domain.WorkflowRun) => {
 };
 
 /**
- * Personalization as label / value rows rather than one joined string:
+ * A line item's properties as label / value rows rather than one joined string:
  * "Engraving: The Millers · est. 2019" is the thing the worker will make and
  * deserves a line of its own. A two-column `s-grid` keeps labels aligned; at
  * phone width the value column still wraps inside its cell.
@@ -121,18 +121,23 @@ export const flagActor = (run: Domain.WorkflowRun) => {
  * Baton's own. A null value is drawn as an em dash rather than hidden or left
  * empty: an empty cell leaves the key standing alone, where it reads as a
  * heading, and hiding the row loses "the customer left the gift note blank",
- * which the maker needs when the product offers one. The merchant's order
- * page renders this too, so both screens show a line item's properties alike.
+ * which the maker needs when the product offers one.
+ *
+ * Every property is drawn, underscore-prefixed app keys included: Baton is a
+ * back-office view and the merchant sees the same keys in the admin, so there
+ * is nothing to hide from either screen. The merchant's order page renders
+ * this too under a Properties heading, so both screens show a line item's
+ * properties alike.
  */
-export function Personalization({
-  attributes,
+export function LineItemProperties({
+  properties,
 }: {
-  readonly attributes: readonly Domain.OrderAttribute[];
+  readonly properties: readonly Domain.LineItemProperty[];
 }) {
-  if (attributes.length === 0) return null;
+  if (properties.length === 0) return null;
   return (
     <s-grid gridTemplateColumns="max-content 1fr" gap="small-500 base">
-      {attributes.map(({ key, value }) => (
+      {properties.map(({ key, value }) => (
         <React.Fragment key={key}>
           <s-text color="subdued">{key}</s-text>
           <s-text type="strong">{value ?? "\u2014"}</s-text>
@@ -166,7 +171,7 @@ export function RunItem({ run }: { readonly run: Domain.WorkflowRun }) {
         })}
       </s-text>
       {run.sku !== null && <s-text color="subdued">{`SKU ${run.sku}`}</s-text>}
-      <Personalization attributes={run.customAttributes} />
+      <LineItemProperties properties={run.lineItemProperties} />
     </s-stack>
   );
 }

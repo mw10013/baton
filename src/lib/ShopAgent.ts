@@ -438,7 +438,6 @@ const initializeSchema = Effect.gen(function* () {
       fulfillmentStatus text not null,
       fullyPaid integer not null,
       note text,
-      customAttributes text not null,
       lineItemsTruncated integer not null default 0,
       syncedAt integer not null,
       syncSource text not null,
@@ -464,7 +463,7 @@ const initializeSchema = Effect.gen(function* () {
       currentQuantity integer not null,
       productTags text not null,
       matchedWorkflowIds text not null default '[]',
-      customAttributes text not null,
+      properties text not null,
       requiresShipping integer not null
     );
     create index if not exists OrderLineItem_orderId on OrderLineItem (orderId);
@@ -553,7 +552,7 @@ const initializeSchema = Effect.gen(function* () {
       variantTitle text,
       sku text,
       quantity integer not null,
-      customAttributes text not null,
+      lineItemProperties text not null,
       source text not null check (source in ('tag', 'manual')),
       status text not null check (status in ('pending', 'active', 'done', 'cancelled')),
       flag text check (flag in ('item_removed', 'quantity_changed', 'order_cancelled', 'blocked', 'order_fulfilled')),
@@ -4316,7 +4315,6 @@ export class ShopAgent extends Agent {
               fulfillmentStatus: seed.fulfillmentStatus ?? "UNFULFILLED",
               fullyPaid: seed.unpaid !== true,
               note: seed.note ?? null,
-              customAttributes: [],
               lineItemsTruncated: false,
               syncedAt: now,
               syncSource: "manual",
@@ -4345,7 +4343,7 @@ export class ShopAgent extends Agent {
                   currentQuantity,
                   productTags: item.tags,
                   matchedWorkflowIds: [],
-                  customAttributes: item.customAttributes ?? [],
+                  properties: item.properties ?? [],
                   requiresShipping: true,
                 } satisfies Domain.OrderLineItem;
               });

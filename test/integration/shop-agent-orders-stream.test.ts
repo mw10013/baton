@@ -74,7 +74,6 @@ const orderLine = (n: number, updatedAt: string) => ({
   displayFulfillmentStatus: "UNFULFILLED",
   fullyPaid: true,
   note: null,
-  customAttributes: [],
 });
 
 const lineItemLine = (n: number, parent: number) => ({
@@ -129,7 +128,7 @@ describe("runShopAgentOrdersStream", () => {
     strictEqual(one.order.lineItemsTruncated, false);
     strictEqual(one.lineItems.length, 2);
     strictEqual(one.lineItems[0]?.productTags[0], "engraved");
-    strictEqual(one.lineItems[0]?.customAttributes[0]?.value, "Hello");
+    strictEqual(one.lineItems[0]?.properties[0]?.value, "Hello");
     strictEqual(Option.getOrThrow(second).lineItems.length, 1);
   });
 
@@ -213,7 +212,6 @@ describe("runShopAgentOrdersStream", () => {
             fulfillmentStatus: "FULFILLED",
             fullyPaid: true,
             note: null,
-            customAttributes: [],
             lineItemsTruncated: false,
             syncedAt: 0,
             syncSource: "webhook",

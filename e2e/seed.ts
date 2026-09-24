@@ -70,7 +70,7 @@ export interface SeedLineItem {
   readonly quantity: number;
   readonly currentQuantity?: number;
   readonly tags: readonly string[];
-  readonly customAttributes?: readonly {
+  readonly properties?: readonly {
     readonly key: string;
     readonly value: string | null;
   }[];
