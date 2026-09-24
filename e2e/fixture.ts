@@ -91,6 +91,13 @@ const FINISHING = "Finishing";
 // Cross-cutting: not a product's team, it owns the first task of `Rush order`.
 const RUSH = "Rush";
 export const RETIRED_TEAM_EMPTY = "Retired team (empty)";
+/**
+ * Exactly 64 characters, `Domain.NAME_MAX_LENGTH`: the longest team name the
+ * app accepts, so a task's team line has to wrap under a task name that is
+ * just as long.
+ */
+const AT_CAP_TEAM =
+  "Hand stitching, edge painting and final inspection bench, room 2";
 
 export const members: readonly SeedMember[] = [LEAD, maker(1), maker(2)];
 
@@ -104,6 +111,7 @@ export const teams: readonly SeedTeam[] = [
   { name: RUSH, members: [LEAD, maker(2)] },
   // nobody on it: "No members" on the team page and on the tasks it owns
   { name: RETIRED_TEAM_EMPTY, members: [] },
+  { name: AT_CAP_TEAM, members: [LEAD, maker(1)] },
 ];
 
 const task = (
@@ -124,16 +132,31 @@ const TAG = {
   clock: "wall-clock",
   giftBox: "gift-box",
   keychain: "keychain",
+  heirloom: "heirloom-journal",
   // Not a product: the label a merchant puts on an order, which is exactly
   // why a product carrying it as well as its own tag is ambiguous.
   rush: "rush",
 } as const;
 
 /**
+ * A name cut to exactly `Domain.NAME_MAX_LENGTH` (64) characters. `AT_CAP_TASK`
+ * is longer than that behind every numbered prefix, and the cut lands inside
+ * a word, so the name keeps all 64 characters after the seed trims it.
+ */
+const atCap = (name: string) => name.slice(0, 64);
+
+const AT_CAP_TASK =
+  "Condition, burnish and inspect the edges against the customer's reference";
+
+/** Exactly 64 characters: the longest workflow name, which the Manage drawer prints as its header. */
+const AT_CAP_WORKFLOW =
+  "Heirloom leather journal, hand-stitched spine, embossed monogram";
+
+/**
  * Each workflow is a distinct shape so the editor, run list, and order page each
  * have one row per case to look at: linear, a parallel step in the middle
  * with the first team returning, a parallel first step, instructions with a
- * pending draft, and the off / unassigned / no-tasks rows.
+ * pending draft, the off / unassigned / no-tasks rows, and one at the caps.
  */
 export const workflows: readonly SeedWorkflow[] = [
   {
@@ -304,6 +327,21 @@ export const workflows: readonly SeedWorkflow[] = [
     tag: TAG.keychain,
     tasks: [task("Cut", LEATHER), task("Attach ring", RETIRED_TEAM_EMPTY)],
   },
+  {
+    // at the caps: `Domain.WorkflowLimits.maxTasks` tasks and every name at
+    // `Domain.NAME_MAX_LENGTH`, so the Manage drawer and the member run page
+    // are judged at their longest, not at three short tasks. One task, then
+    // three in parallel, then one per step.
+    name: AT_CAP_WORKFLOW,
+    tag: TAG.heirloom,
+    tasks: Array.from({ length: 20 }, (_, index) =>
+      task(
+        atCap(`${String(index + 1)}. ${AT_CAP_TASK}`),
+        index % 2 === 0 ? LEATHER : AT_CAP_TEAM,
+        { step: index <= 3 ? Math.min(index + 1, 2) : index - 1 },
+      ),
+    ),
+  },
 ];
 
 /** One tag, several (the ambiguous case: `rush` beside the product's own), or none at all. */
@@ -369,7 +407,7 @@ const floorOrders: readonly SeedOrder[] = [
   },
   {
     // two items, each one task in, and both next tasks in progress at
-    // Engraving: "In progress since … by lead@m.com" on two cards
+    // Engraving: "In progress" over "Engraving · lead@m.com · since …" on two cards
     n: 1002,
     advance: 1,
     started: true,
@@ -620,7 +658,7 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // the merchant recorded the task from the order page: "Done by Merchant"
+    // the merchant recorded the task from the order page: "Done" over "<team> · Merchant · …"
     n: 1022,
     advance: 1,
     byMerchant: true,
@@ -677,6 +715,27 @@ const floorOrders: readonly SeedOrder[] = [
     started: true,
     lineItems: [
       item("Rush gift wrap", TAG.rush, 1, { Note: "Counter pickup" }),
+    ],
+  },
+  {
+    // the order page at its longest: an ambiguous item, a run at the caps in
+    // step 2 with step 1 done, and an item nothing matches. Manage on the
+    // journal opens 20 tasks with 64-character task, team and workflow names.
+    n: 1030,
+    lineItems: [
+      item("Engraved cutting board", [TAG.board, TAG.rush], 1, {
+        Engraving: "Rush — Dad's birthday",
+      }),
+      item(
+        "Heirloom leather journal",
+        TAG.heirloom,
+        1,
+        { Initials: "T.W." },
+        {
+          progress: { advance: 1 },
+        },
+      ),
+      item("Gift card sleeve", null, 2),
     ],
   },
 ];

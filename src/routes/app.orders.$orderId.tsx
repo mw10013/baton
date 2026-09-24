@@ -7,6 +7,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
+import { RunSteps } from "@/components/RunSteps";
 import { BlockModal, RunNoteModal } from "@/components/RunTextModals";
 import * as Domain from "@/lib/Domain";
 import { formatNumber, formatStatus } from "@/lib/format";
@@ -171,33 +172,14 @@ const NOTE_MODAL = "run-note";
 const BLOCK_MODAL = "run-block";
 
 /**
- * `Engraving, Rush and Gift`. Not `Intl.ListFormat`: every other sentence on
- * these pages is English written by hand, and a half-localised one reads worse
- * than a consistent one.
+ * The ambiguous item's sentence: why the merchant is being asked, and nothing
+ * that can drift from the select under it. It does not count the matches,
+ * because a count that must agree with a list is a second source of truth; it
+ * does not name the tags, because the merchant changes the workflow here, not
+ * the product.
  */
-const nameList = (names: readonly string[]): string =>
-  names.length <= 1
-    ? (names[0] ?? "")
-    : `${names.slice(0, -1).join(", ")} and ${names.at(-1) ?? ""}`;
-
-/**
- * Spelled out to five, digits past that. `Domain.WorkflowLimits.maxWorkflows`
- * is the real ceiling and "Seventeen workflows match this item" would be a
- * sentence nobody reads to the end of; five is where the list itself stops
- * being scannable anyway.
- */
-const SPELLED = ["", "One", "Two", "Three", "Four", "Five"] as const;
-
-/**
- * The ambiguous item's own sentence: which workflows matched, and the ask.
- * Each is named with its tag because the tag is what the merchant would go and
- * change on the product; the names alone leave them guessing which string on
- * this item pulled which workflow in.
- */
-const ambiguitySentence = (matched: readonly Domain.Workflow[]) =>
-  `${SPELLED[matched.length] ?? formatNumber(matched.length)} workflows match this item: ${nameList(
-    matched.map((workflow) => `${workflow.name} (\u201C${workflow.tag}\u201D)`),
-  )}. Choose one to start.`;
+const AMBIGUITY_SENTENCE =
+  "More than one workflow matches this item, so none was started.";
 
 /**
  * The confirmation body. Done outranks started because it is the bigger loss:
@@ -261,44 +243,6 @@ const fact = (label: string, value: React.ReactNode) =>
       <s-text>{value}</s-text>
     </React.Fragment>
   );
-
-/**
- * A task's state line inside a Manage row, in the work page's order — done,
- * under way, ready, waiting — so the merchant and the worker describe one task
- * the same way. `started by …` is appended to a Done line only when the
- * starter is not the completer: "Done by Merchant · 14:31 · started by
- * ben@…" is the shape of an intervention over someone's work, and printing
- * one name twice is not.
- */
-const manageStateLine = (
-  task: Domain.WorkflowRunTask,
-  ready: boolean,
-): React.ReactNode => {
-  const completedBy = Domain.taskCompletedBy(task);
-  const startedBy = Domain.taskStartedBy(task);
-  if (task.completedAt !== null)
-    return (
-      <>
-        {completedBy === null
-          ? "Done · "
-          : `Done by ${Domain.actorLabel(completedBy)} · `}
-        <LocalDateTime value={task.completedAt} format="time" />
-        {startedBy === null ||
-        (completedBy !== null && Domain.sameActor(startedBy, completedBy))
-          ? ""
-          : ` · started by ${Domain.actorLabel(startedBy)}`}
-      </>
-    );
-  if (task.startedAt !== null)
-    return (
-      <>
-        In progress since <LocalDateTime value={task.startedAt} format="time" />
-        {startedBy === null ? "" : ` by ${Domain.actorLabel(startedBy)}`}
-      </>
-    );
-  if (ready) return "Ready";
-  return `Waiting on step ${String(task.step - 1)}`;
-};
 
 /**
  * Who blocked the run and when. Attribution only: the reason is merchant prose
@@ -366,14 +310,14 @@ const blockedStrip = (
 
 /**
  * Where the run is, as the card's one read-only answer: `Step 1 of 3 · Cut ·
- * Bench · since 3:10 PM`. It replaced the inline task trail, which said the
- * same thing in a notation the merchant had to learn — a step number, bold
- * for ready, `✓` and `●` marks, the team in parentheses. The full task list is
- * inside Manage, where `manageStateLine` already renders each task's state in
- * words.
+ * since 3:10 PM`. Position and task names only: the team is inside Manage, on
+ * its own line under the task, where a 64-character team name has room. It
+ * replaced the inline task trail, which said the same thing in a notation the
+ * merchant had to learn — a step number, bold for ready, `✓` and `●` marks,
+ * the team in parentheses.
  *
- * Deliberately a second phrasing beside `manageStateLine`, not a call into it.
- * That one describes *one task* inside the Manage disclosure, in the work
+ * Deliberately a second phrasing beside {@link RunSteps}, not a call into it.
+ * That one describes *each task* inside the Manage disclosure, in the work
  * page's vocabulary, so the merchant and the worker say the same thing about
  * the same task. This one describes *the run* on a collapsed card and has to
  * cover a parallel step (several ready tasks at once), which is not a task
@@ -396,7 +340,6 @@ const nowLine = ({ run, tasks }: Domain.WorkflowRunDetail): React.ReactNode => {
      rows below are the answer, not a position. */
   if (ready.length === 0 || lowest === null) return null;
   const names = ready.map((task) => task.name).join(", ");
-  const teams = [...new Set(ready.map((task) => task.teamName))].join(", ");
   /** The step's start, not a task's: on a parallel step the earliest claim is when the run got here. */
   const since = ready.reduce<number | null>((earliest, task) => {
     if (task.startedAt === null) return earliest;
@@ -406,7 +349,7 @@ const nowLine = ({ run, tasks }: Domain.WorkflowRunDetail): React.ReactNode => {
   }, null);
   return (
     <>
-      {`Step ${String(lowest)} of ${String(stepCount(tasks))} \u00B7 ${names} \u00B7 ${teams}`}
+      {`Step ${String(lowest)} of ${String(stepCount(tasks))} \u00B7 ${names}`}
       {since !== null && (
         <>
           {" \u00B7 since "}
@@ -506,7 +449,7 @@ export const Route = createFileRoute("/app/orders/$orderId")({
 });
 
 /**
- * One order: its note, every line item with its personalization and workflow
+ * One order: its note, every line item with its properties and workflow
  * runs, and the order's facts. Subscribed like the index: the loader paints,
  * `useSubscribedQuery` reads through `ShopAgent.subscribeOrder` — which subscribes the
  * shared `/app` connection to this order's pushes — so a webhook, resync, or
@@ -531,6 +474,8 @@ function RouteComponent() {
   const [assignChoice, setAssignChoice] = React.useState<
     Record<string, string>
   >({});
+  /** The run task whose Manage row has its team picker open after Reassign; see `assignTeam`. */
+  const [reassigning, setReassigning] = React.useState<string | null>(null);
   /**
    * Which live runs have their "Change workflow" picker open inside Manage;
    * closed is the default. Changing cancels the run that is there and does not
@@ -685,6 +630,7 @@ function RouteComponent() {
       call((stub) => stub.assignRunTaskTeam(input)).then(decodeAssignResult),
     onSuccess: async (result) => {
       setBanner(assignResultMessage(result));
+      if (result._tag === "Assigned") setReassigning(null);
       await invalidate();
     },
     onError,
@@ -768,15 +714,24 @@ function RouteComponent() {
   const modalRun = runs.find(({ run }) => run.id === modalRunId)?.run ?? null;
 
   /**
-   * A team picker and an Assign button for one open task, rendered both on the
-   * card (beside an unassigned task, which is an attention state) and in the
-   * Manage rows (where any open task can be reassigned). The picker starts
-   * empty so Assign stays disabled until a team is chosen; picking the task's
-   * current team is a harmless no-op write.
+   * A team picker and an Assign button for one open task, in two places. On
+   * the card, beside an unassigned task in `attentionRows`, it is open by
+   * default, because a task with no team is the one thing on the card that
+   * must be acted on. In a Manage row it opens only after Reassign is pressed
+   * (`reassigning`), because a task that has a team is a fact, and four open
+   * selects on a run whose tasks are all assigned read as four unanswered
+   * questions; there it carries a Cancel that closes it again.
+   *
+   * The picker starts empty so Assign stays disabled until a team is chosen;
+   * picking the task's current team is a harmless no-op write.
    */
-  const assignTeam = (runTaskId: string) => (
+  const assignTeam = (runTaskId: string, onCancel?: () => void) => (
     <s-grid
-      gridTemplateColumns="minmax(0, 16rem) auto"
+      gridTemplateColumns={
+        onCancel === undefined
+          ? "minmax(0, 16rem) auto"
+          : "minmax(0, 16rem) auto auto"
+      }
       gap="small-300"
       alignItems="end"
       justifyContent="start"
@@ -808,6 +763,16 @@ function RouteComponent() {
       >
         Assign
       </s-button>
+      {onCancel !== undefined && (
+        <s-button
+          variant="tertiary"
+          onClick={() => {
+            onCancel();
+          }}
+        >
+          Cancel
+        </s-button>
+      )}
     </s-grid>
   );
 
@@ -881,11 +846,13 @@ function RouteComponent() {
     );
 
   /**
-   * The Manage disclosure: one row per task in position order, then the
-   * run-level actions — Block or Unblock, Cancel run, and Change workflow.
-   * Every intervention lives here and nowhere else, in the order the worker
-   * sees it on the work page, so the card above stays a read-only glance:
-   * name, status, where the run is, and whatever needs attention.
+   * The Manage disclosure: the member page's step cards with the merchant's
+   * buttons ({@link RunSteps} states their shape), under a header line naming
+   * the workflow, because the card does not; then the run-level actions —
+   * Block or Unblock, Cancel run, Change workflow, Add note — in one row under
+   * a rule. Every intervention lives here and nowhere else, so the card above
+   * stays a read-only glance: item, status, where the run is, and whatever
+   * needs attention.
    *
    * The Reopen verdict is computed here rather than fetched. The page already
    * holds every task of every run on this order, which is exactly what the
@@ -899,12 +866,8 @@ function RouteComponent() {
    * claims and completes tasks on the work page — and a primary button is the
    * grammar of "this is what you came here to do", which is false here.
    * `Block` keeps its critical tone; that says "irreversible for the bench",
-   * not "come here for this".
-   *
-   * A task with no state to change renders as one line rather than a bordered
-   * box: on a three-step run the boxes are most of the disclosure's height,
-   * and a task two steps out has nothing to offer but its team, which rides
-   * along on that line.
+   * not "come here for this". Reassign is tertiary: it opens a picker rather
+   * than writing, and it sits on every open task.
    *
    * The note is the run's, not a task's: it shows on the card
    * (`noteBlock`), and `Add note` joins the run-level row here while it is
@@ -931,150 +894,137 @@ function RouteComponent() {
     const readyIds = new Set(
       Domain.readyTasks(run, tasks).map((task) => task.id),
     );
+    const stepTasks = tasks.map((task) => ({
+      ...task,
+      ready: readyIds.has(task.id),
+    }));
     /* A subdued panel so the disclosure reads as a drawer the header's Manage
-       button owns, not as more card. The task boxes inside invert the usual
-       emphasis: the ready task is the one white box on grey, the rest blend. */
+       button owns, not as more card. */
     return (
       <s-box background="subdued" borderRadius="base" padding="base">
         <s-stack gap="small-300">
-          {tasks.map((task) => {
-            const ready = readyIds.has(task.id);
-            const blocker =
-              task.completedAt === null
-                ? null
-                : Domain.undoBlockedBy(task, tasks);
-            const reopenedBy = Domain.taskReopenedBy(task);
-            if (!ready && task.completedAt === null)
+          <s-text type="strong">{`${run.workflowName} workflow`}</s-text>
+          <RunSteps
+            tasks={stepTasks}
+            showInstructions={false}
+            renderActions={(task) => {
+              const blocker =
+                task.completedAt === null
+                  ? null
+                  : Domain.undoBlockedBy(task, tasks);
+              /* A flag means stop, for the merchant too: the write refuses
+                 Done on a flagged run (`Domain.runIsFlagged`), so the button
+                 goes with it and Unblock or Dismiss on the run row is the way
+                 on. Put back, the inverse of a worker's Start, is refused
+                 under a flag for the reason on
+                 `WorkflowRunRepository.unstartTask`. */
+              const markDone = task.ready && !Domain.runIsFlagged(run);
+              const putBack =
+                task.ready &&
+                task.startedAt !== null &&
+                !Domain.runIsFlagged(run);
+              const reopen = task.completedAt !== null && blocker === null;
+              const reassign =
+                open && task.completedAt === null && reassigning !== task.id;
+              if (!markDone && !putBack && !reopen && !reassign) return null;
               return (
-                <s-stack key={task.id} gap="small-300">
-                  <s-stack
-                    direction="inline"
-                    gap="small-300"
-                    alignItems="center"
-                  >
-                    <s-text color="subdued">
-                      {`Step ${String(task.step)} \u00B7 ${task.name} \u00B7 ${task.teamName} \u00B7 `}
-                      {manageStateLine(task, false)}
-                    </s-text>
-                    {open && assignTeam(task.id)}
-                  </s-stack>
-                </s-stack>
-              );
-            return (
-              <s-box
-                key={task.id}
-                padding="small"
-                borderWidth="base"
-                borderRadius="base"
-                background={ready ? "base" : "subdued"}
-              >
-                <s-stack gap="small-300">
-                  <s-stack
-                    direction="inline"
-                    gap="small-300"
-                    alignItems="center"
-                  >
-                    <s-text type="strong">{task.name}</s-text>
-                    <s-text color="subdued">
-                      {`${task.teamName} \u00B7 step ${String(task.step)}`}
-                    </s-text>
-                  </s-stack>
-                  <s-text color="subdued">
-                    {manageStateLine(task, ready)}
-                  </s-text>
-                  {reopenedBy !== null && task.reopenedAt !== null && (
-                    <s-text color="subdued">
-                      {`Reopened by ${Domain.actorLabel(reopenedBy)} \u00B7 `}
-                      <LocalDateTime
-                        value={task.reopenedAt}
-                        format="relative"
-                      />
-                    </s-text>
+                <>
+                  {markDone && (
+                    <s-button
+                      variant="secondary"
+                      disabled={!identified || busy}
+                      onClick={() => {
+                        intervene({
+                          kind: "complete",
+                          runTaskId: task.id,
+                          toast: `${task.name} marked done`,
+                        });
+                      }}
+                    >
+                      Mark done
+                    </s-button>
                   )}
-                  <s-stack direction="inline" gap="base" alignItems="center">
-                    {/* A flag means stop, for the merchant too: the write
-                        refuses Done on a flagged run (`Domain.runIsFlagged`),
-                        so the button goes with it and Unblock or Dismiss on
-                        the run row is the way on. */}
-                    {ready && !Domain.runIsFlagged(run) && (
-                      <s-button
-                        variant="secondary"
-                        disabled={!identified || busy}
-                        onClick={() => {
-                          intervene({
-                            kind: "complete",
-                            runTaskId: task.id,
-                            toast: `${task.name} marked done`,
-                          });
-                        }}
-                      >
-                        Mark done
-                      </s-button>
-                    )}
-                    {/* Put back, the inverse of a worker's Start; refused
-                        under a flag for the reason on
-                        `WorkflowRunRepository.unstartTask`. */}
-                    {ready &&
-                      task.startedAt !== null &&
-                      !Domain.runIsFlagged(run) && (
-                        <s-button
-                          variant="secondary"
-                          disabled={!identified || busy}
-                          onClick={() => {
-                            intervene({
-                              kind: "putBack",
-                              runTaskId: task.id,
-                              toast: `${task.name} put back`,
-                            });
-                          }}
-                        >
-                          Put back
-                        </s-button>
-                      )}
-                    {task.completedAt !== null &&
-                      (blocker === null ? (
-                        <s-button
-                          variant="secondary"
-                          disabled={!identified || busy}
-                          onClick={() => {
-                            intervene({
-                              kind: "reopen",
-                              runTaskId: task.id,
-                              toast: `${task.name} reopened`,
-                            });
-                          }}
-                        >
-                          Reopen
-                        </s-button>
-                      ) : (
-                        /* The only screen that names the blocker, and the
-                           only one that can act on it. A member is told
-                           nothing (`Domain.taskActions`): they cannot undo,
-                           and the blocking task is already on their page
-                           wearing its own badge. A merchant can reopen it,
-                           so this is an instruction, and it has to pick out
-                           a task that "the first started task in a later
-                           step" does not pick out by eye.
+                  {putBack && (
+                    <s-button
+                      variant="secondary"
+                      disabled={!identified || busy}
+                      onClick={() => {
+                        intervene({
+                          kind: "putBack",
+                          runTaskId: task.id,
+                          toast: `${task.name} put back`,
+                        });
+                      }}
+                    >
+                      Put back
+                    </s-button>
+                  )}
+                  {reopen && (
+                    <s-button
+                      variant="secondary"
+                      disabled={!identified || busy}
+                      onClick={() => {
+                        intervene({
+                          kind: "reopen",
+                          runTaskId: task.id,
+                          toast: `${task.name} reopened`,
+                        });
+                      }}
+                    >
+                      Reopen
+                    </s-button>
+                  )}
+                  {reassign && (
+                    <s-button
+                      variant="tertiary"
+                      disabled={!identified || busy}
+                      onClick={() => {
+                        setReassigning(task.id);
+                      }}
+                    >
+                      Reassign
+                    </s-button>
+                  )}
+                </>
+              );
+            }}
+            renderExtra={(task) => {
+              const blocker =
+                task.completedAt === null
+                  ? null
+                  : Domain.undoBlockedBy(task, tasks);
+              if (blocker !== null)
+                /* The only screen that names the blocker, and the only one
+                   that can act on it. A member is told nothing
+                   (`Domain.taskActions`): they cannot undo, and the blocking
+                   task is already on their page wearing its own badge. A
+                   merchant can reopen it, so this is an instruction, and it
+                   has to pick out a task that "the first started task in a
+                   later step" does not pick out by eye.
 
-                           Task first, team parenthetical: the other order —
-                           "Finishing started Fit movement" — garden-paths,
-                           because a reader who does not already know the
-                           team names takes the first word as the subject
-                           and the second as a verb.
+                   Task first, team parenthetical: the other order —
+                   "Finishing started Fit movement" — garden-paths, because a
+                   reader who does not already know the team names takes the
+                   first word as the subject and the second as a verb.
 
-                           Reopen only clears a finished blocker; an
-                           in-progress one is cleared with Put back on its
-                           own row, hence both verbs. */
-                        <s-text color="subdued">
-                          {`Can\u2019t reopen: ${blocker.taskName} (${blocker.teamName}) already started \u2014 put it back or reopen it first`}
-                        </s-text>
-                      ))}
-                  </s-stack>
-                  {open && task.completedAt === null && assignTeam(task.id)}
-                </s-stack>
-              </s-box>
-            );
-          })}
+                   Reopen only clears a finished blocker; an in-progress one
+                   is cleared with Put back on its own row, hence both verbs. */
+                return (
+                  <s-text color="subdued">
+                    {`Can\u2019t reopen: ${blocker.taskName} (${blocker.teamName}) already started \u2014 put it back or reopen it first`}
+                  </s-text>
+                );
+              if (open && task.completedAt === null && reassigning === task.id)
+                return assignTeam(task.id, () => {
+                  setReassigning(null);
+                  setAssignChoice((current) => {
+                    const { [task.id]: _dropped, ...rest } = current;
+                    return rest;
+                  });
+                });
+              return null;
+            }}
+          />
           {/* The task list is one object and the run's own actions are another:
             Block, Unblock, Cancel and the note act on the whole run, and mixed
             into the tasks they read as a fourth button on the last one. */}
@@ -1143,8 +1093,11 @@ function RouteComponent() {
    * One run inside its line item's card: what it is, how it is doing, and —
    * when the merchant opened Manage from the card header — the disclosure.
    *
-   * The run keeps its workflow name: its section is headed by the line item,
-   * not the workflow. `Undo cancel` stays here rather than moving to that
+   * The card is headed by the line item, and the run line is the status badge
+   * and where the run is. The workflow's name is the Manage drawer's header
+   * (`manageRows`): the merchant who wants it is the one who opened Manage,
+   * and on a shop whose workflows are named after products the card would
+   * otherwise print one string twice. `Undo cancel` stays here rather than moving to that
    * header, because a cancelled run has no Manage to hang it beside and an
    * item can carry several cancelled runs at once.
    */
@@ -1159,7 +1112,6 @@ function RouteComponent() {
     return (
       <s-stack key={run.id} gap="small-300">
         <s-stack direction="inline" gap="small-300" alignItems="center">
-          <s-text type="strong">{run.workflowName}</s-text>
           <s-badge tone={RUN_STATUS_BADGE[run.status].tone}>
             {RUN_STATUS_BADGE[run.status].label}
           </s-badge>
@@ -1223,8 +1175,10 @@ function RouteComponent() {
    *
    * - **ambiguous** — two or more workflows matched at the last reconcile and
    *   none started, because the server will not pick for the merchant. The
-   *   picker offers exactly the workflows that matched, under the sentence
-   *   naming them and the tag that pulled each one in.
+   *   picker offers every active workflow, the matches first: the item has
+   *   no Manage, so the select is the only way to a workflow the tags did not
+   *   pull in. The sentence above it says why it is asking
+   *   ({@link AMBIGUITY_SENTENCE}).
    * - **no run** — the ordinary manual start, over every active workflow. It
    *   is the row's resting state, not a disclosure: an empty select with a
    *   Start button beside it *is* the statement that nothing is running, and
@@ -1249,7 +1203,7 @@ function RouteComponent() {
     );
     // The same test as `Domain.ambiguousItems`, on the raw id list, so this
     // item and the orders index cannot disagree about whether it is waiting on
-    // a choice; `matched` only narrows the picker, and a matched workflow that
+    // a choice; `matched` only orders the picker, and a matched workflow that
     // has since lost a team or its tasks simply drops out of the options.
     const ambiguous =
       live === undefined &&
@@ -1262,17 +1216,20 @@ function RouteComponent() {
     // incumbent), so the page is the gate: change only while `runIsOpen`.
     const changeable = live === undefined || Domain.runIsOpen(live.run);
     const options = (() => {
-      if (ambiguous) return matched;
+      if (ambiguous)
+        return [
+          ...matched,
+          ...itemWorkflows.filter(
+            (workflow) => !matched.some((other) => other.id === workflow.id),
+          ),
+        ];
       if (live === undefined) return itemWorkflows;
       return itemWorkflows.filter(
         (workflow) => workflow.id !== live.run.workflowId,
       );
     })();
     const chosen = attachChoice[item.id];
-    const actionLabel = (() => {
-      if (ambiguous) return "Choose";
-      return live === undefined ? "Start" : "Change";
-    })();
+    const actionLabel = live === undefined ? "Start" : "Change";
     const submit = () => {
       if (!chosen) return;
       const touched =
@@ -1319,9 +1276,11 @@ function RouteComponent() {
       >
         <s-text color="subdued">Workflow</s-text>
         <s-select
-          label={`${actionLabel} workflow`}
+          label={live === undefined ? "Choose workflow" : "Change workflow"}
           labelAccessibilityVisibility="exclusive"
-          placeholder={`${actionLabel} workflow`}
+          placeholder={
+            live === undefined ? "Choose workflow" : "Change workflow"
+          }
           value={chosen ?? ""}
           disabled={!identified || busy}
           onChange={(event) => {
@@ -1332,10 +1291,17 @@ function RouteComponent() {
             }));
           }}
         >
-          {options.map((workflow) => (
-            <s-option key={workflow.id} value={workflow.id}>
-              {workflow.name}
-            </s-option>
+          {options.map((workflow, index) => (
+            <React.Fragment key={workflow.id}>
+              {/* Polaris `s-select` has no option groups, so a disabled
+                  option is the rule between the matches and the rest. */}
+              {ambiguous && index === matched.length && (
+                <s-option value="" disabled>
+                  {"\u2014"}
+                </s-option>
+              )}
+              <s-option value={workflow.id}>{workflow.name}</s-option>
+            </React.Fragment>
           ))}
         </s-select>
         <s-button
@@ -1398,10 +1364,9 @@ function RouteComponent() {
               : null,
           };
     /**
-     * Quantity, SKU and — only where they explain something — the product tags,
-     * as one subdued line rather than a row of badges. The tags are why a
-     * workflow matched, which is the answer on an item where nothing matched or
-     * two did; beside a running workflow's name they are noise next to the SKU.
+     * Quantity and SKU, as one subdued line under the title. No product tags:
+     * they were "why a workflow matched", and on an ambiguous item the
+     * picker's option list, matches first, is that answer now.
      */
     const facts = [
       /* Ordered vs. to make differ after an edit or a refund; shipping does not move it ({@link Domain.unitsToMake}). */
@@ -1409,9 +1374,6 @@ function RouteComponent() {
         ? `\u00D7 ${formatNumber(item.quantity)}`
         : `\u00D7 ${formatNumber(toMake)} to make (${formatNumber(item.quantity)} ordered)`,
       ...(item.sku === null ? [] : [`SKU ${item.sku}`]),
-      ...(live === undefined && item.productTags.length > 0
-        ? [`tags: ${item.productTags.join(", ")}`]
-        : []),
     ].join(" \u00B7 ");
     /**
      * `s-section` has no header action slot, so the header is built by hand:
@@ -1472,25 +1434,30 @@ function RouteComponent() {
             {manageButton}
           </s-stack>
 
+          {/* "Properties" is Shopify's merchant-facing name for line item
+              `customAttributes`: the Help Center and theme docs say "line
+              item properties", the API says `customAttributes`. Shortened
+              because the heading already sits inside the line item's card. */}
           {item.customAttributes.length > 0 && (
-            <s-grid
-              gridTemplateColumns="max-content 1fr"
-              gap="small-300 base"
-              alignItems="start"
-            >
-              {item.customAttributes.map(({ key, value }) => (
-                <React.Fragment key={key}>
-                  <s-text color="subdued">{key}</s-text>
-                  <s-text>{value ?? ""}</s-text>
-                </React.Fragment>
-              ))}
-            </s-grid>
+            <s-stack gap="small-300">
+              <s-text color="subdued">Properties</s-text>
+              <s-grid
+                gridTemplateColumns="max-content 1fr"
+                gap="small-300 base"
+                alignItems="start"
+              >
+                {item.customAttributes.map(({ key, value }) => (
+                  <React.Fragment key={key}>
+                    <s-text color="subdued">{key}</s-text>
+                    <s-text>{value ?? ""}</s-text>
+                  </React.Fragment>
+                ))}
+              </s-grid>
+            </s-stack>
           )}
 
           <s-stack gap="small-100">
-            {ambiguous && (
-              <s-paragraph>{ambiguitySentence(matched)}</s-paragraph>
-            )}
+            {ambiguous && <s-paragraph>{AMBIGUITY_SENTENCE}</s-paragraph>}
             {itemRuns.map((itemRun) =>
               renderRun(
                 itemRun,

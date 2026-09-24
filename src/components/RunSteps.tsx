@@ -1,0 +1,155 @@
+import * as React from "react";
+
+import { LocalDateTime } from "@/components/LocalDateTime";
+import * as Domain from "@/lib/Domain";
+import * as WorkflowLayout from "@/lib/WorkflowLayout";
+
+/** What a step card needs of a task: the row itself and the readiness rule's verdict on it. */
+export type RunStepTask = Domain.WorkflowRunTask & { readonly ready: boolean };
+
+/**
+ * A task's badge and the subdued line under it, in the order a worker asks:
+ * done, under way, ready, waiting.
+ *
+ * **The badge states the task's state and the line never repeats it.** The
+ * line is the team, then who and when — "Jewelry · lead@m.com · Sep 21, 3:52
+ * AM" under a `Done` badge. Saying "Done by" as well would print the badge's
+ * word twice, a stride apart, in every state that has a badge. A waiting task
+ * has no badge and its line is the team alone.
+ */
+const taskState = (
+  task: RunStepTask,
+): {
+  readonly text: React.ReactNode;
+  readonly badge: {
+    readonly label: string;
+    readonly tone: "neutral" | "success" | "info";
+  } | null;
+} => {
+  const completedBy = Domain.taskCompletedBy(task);
+  const startedBy = Domain.taskStartedBy(task);
+  if (task.completedAt !== null)
+    return {
+      badge: { label: "Done", tone: "neutral" },
+      text: (
+        <>
+          {completedBy === null
+            ? `${task.teamName} · `
+            : `${task.teamName} · ${Domain.actorLabel(completedBy)} · `}
+          <LocalDateTime value={task.completedAt} />
+        </>
+      ),
+    };
+  if (task.startedAt !== null)
+    return {
+      badge: { label: "In progress", tone: "success" },
+      text: (
+        <>
+          {startedBy === null
+            ? `${task.teamName} · since `
+            : `${task.teamName} · ${Domain.actorLabel(startedBy)} · since `}
+          <LocalDateTime value={task.startedAt} format="time" />
+        </>
+      ),
+    };
+  if (task.ready)
+    return { badge: { label: "Ready", tone: "info" }, text: task.teamName };
+  return { badge: null, text: task.teamName };
+};
+
+/**
+ * A run's tasks as step cards: the one shape the member's work page and the
+ * merchant's Manage drawer both draw, so a worker and a merchant looking at
+ * the same run see the same thing. The rules both pages agree on:
+ *
+ * - **One caption and one box per step.** A subdued `Step n` caption over a
+ *   bordered box; parallel tasks share the box, separated by rules the way the
+ *   run list separates rows, so a step reads as one stop before the caption is
+ *   read. A single-task step is a caption over one row. The steps are an
+ *   ordered list, which is what they are.
+ * - **The badge states the task's state and the line never repeats it** (see
+ *   `taskState`).
+ * - **The team leads the subdued line** under the task name rather than
+ *   sitting beside it: task and team names are both merchant text, and side
+ *   by side with only a weight between them "Cast Jewelry" reads as one noun
+ *   phrase. Each has its own line, so a long name wraps without colliding
+ *   with anything.
+ * - **A waiting task has no badge and its line is the team alone**: its place
+ *   under a later `Step n` caption already says what it waits on.
+ *
+ * The buttons are each page's own and arrive through `renderActions`, which
+ * returns the button row's contents or null for no row. `renderExtra` is
+ * content between the state line and the buttons: the order page's "Can't
+ * reopen" sentence and its team picker.
+ *
+ * `showInstructions` is a prop because the two pages differ on it: the worker
+ * reads a task's instructions here, at the bench, while the merchant wrote
+ * them and reads them on the workflow page, so the Manage drawer leaves them
+ * out rather than repeat the definition under every run.
+ */
+export function RunSteps<T extends RunStepTask>({
+  tasks,
+  showInstructions,
+  renderActions,
+  renderExtra,
+}: {
+  readonly tasks: readonly T[];
+  readonly showInstructions: boolean;
+  readonly renderActions: (task: T) => React.ReactElement | null;
+  readonly renderExtra?: (task: T) => React.ReactNode;
+}) {
+  const renderTask = (task: T, first: boolean) => {
+    const state = taskState(task);
+    /** Shown only while the slot is filled: the next Done clears it (`Domain.WorkflowRunTask`). */
+    const reopenedBy = Domain.taskReopenedBy(task);
+    const actions = renderActions(task);
+    const extra = renderExtra?.(task);
+    return (
+      <s-box
+        key={task.id}
+        padding="small"
+        borderWidth={first ? "none" : "base none none none"}
+      >
+        <s-stack gap="small-300">
+          <s-stack direction="inline" gap="small-300" alignItems="center">
+            <s-text type="strong">{task.name}</s-text>
+            {state.badge !== null && (
+              <s-badge tone={state.badge.tone}>{state.badge.label}</s-badge>
+            )}
+          </s-stack>
+          <s-text color="subdued">{state.text}</s-text>
+          {reopenedBy !== null && task.reopenedAt !== null && (
+            <s-text color="subdued">
+              {`Reopened by ${Domain.actorLabel(reopenedBy)} · `}
+              <LocalDateTime value={task.reopenedAt} format="relative" />
+            </s-text>
+          )}
+          {showInstructions && task.instructions !== null && (
+            <s-text>{task.instructions}</s-text>
+          )}
+          {extra}
+          {actions !== null && (
+            <s-stack direction="inline" gap="base" alignItems="center">
+              {actions}
+            </s-stack>
+          )}
+        </s-stack>
+      </s-box>
+    );
+  };
+  return (
+    <s-stack accessibilityRole="ordered-list" gap="base">
+      {WorkflowLayout.stepsOf(tasks).map((group) => {
+        const step = group[0]?.step ?? 0;
+        return (
+          <s-stack key={step} accessibilityRole="list-item" gap="small-300">
+            <s-text color="subdued">{`Step ${String(step)}`}</s-text>
+            <s-box borderWidth="base" borderRadius="base">
+              {group.map((task, index) => renderTask(task, index === 0))}
+            </s-box>
+          </s-stack>
+        );
+      })}
+    </s-stack>
+  );
+}

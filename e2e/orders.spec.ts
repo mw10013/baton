@@ -271,21 +271,40 @@ test("the merchant marks a task done, reopens it, and blocks the run", async ({
   await expect(frame.getByRole("button", { name: "Mark done" })).toBeHidden();
   await frame.getByRole("button", { name: "Manage" }).click();
 
+  /* The drawer draws the member page's step cards (`RunSteps`). A task that
+     has a team shows it as a line, not an open picker: the picker waits
+     behind Reassign, and Cancel puts the line back. */
+  await expect(frame.getByText("Step 1", { exact: true })).toBeVisible();
+  const assignTeam = frame.getByRole("combobox", { name: "Assign team" });
+  await expect(assignTeam).toHaveCount(0);
+  const item = frame.locator("s-section").filter({
+    has: frame.getByRole("heading", { name: "E2E Cuff", exact: true }),
+  });
+  await item.getByRole("button", { name: "Reassign" }).first().click();
+  await expect(assignTeam).toBeVisible();
+  await item.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(assignTeam).toHaveCount(0);
+
+  /* The badge carries the state; the line under it is the team, then who. */
+  const doneByMerchant = frame.getByText(`${CUT_TEAM} \u00B7 Merchant`);
   await expect(frame.getByText("Ready", { exact: true })).toBeVisible();
   await frame.getByRole("button", { name: "Mark done" }).first().click();
-  await expect(frame.getByText("Done by Merchant")).toBeVisible();
+  await expect(doneByMerchant).toBeVisible();
 
   await frame.getByRole("button", { name: "Reopen" }).click();
   await expect(frame.getByText("Reopened by Merchant")).toBeVisible();
-  await expect(frame.getByText("Done by Merchant")).toBeHidden();
+  await expect(doneByMerchant).toBeHidden();
   await expect(frame.getByText("Ready", { exact: true })).toBeVisible();
 
-  /* Both steps done takes the run to `done`. The card's badge says it in
-     merchant words, not `WorkflowRun.status`. */
+  /* Both steps done takes the run to `done`. The card says it in merchant
+     words, not `WorkflowRun.status`: its badge, and the now line counting the
+     steps. */
   await frame.getByRole("button", { name: "Mark done" }).first().click();
-  await expect(frame.getByText("Done by Merchant")).toBeVisible();
+  await expect(doneByMerchant).toBeVisible();
   await frame.getByRole("button", { name: "Mark done" }).first().click();
-  await expect(frame.getByText("Done", { exact: true })).toBeVisible();
+  await expect(
+    frame.getByText("Done \u00B7 2 steps", { exact: true }),
+  ).toBeVisible();
 });
 
 /**
@@ -323,7 +342,11 @@ test("the merchant puts back a task a member started", async ({ page }) => {
   await frame.getByRole("link", { name: "#9304" }).click();
   await frame.getByRole("button", { name: "Manage" }).click();
 
-  await expect(frame.getByText(/^In progress since/u)).toBeVisible();
+  /* The card's run badge also says In progress, so read the task's line:
+     team, who started it, since when. */
+  await expect(
+    frame.getByText(`${CUT_TEAM} \u00B7 ${MEMBER} \u00B7 since`),
+  ).toBeVisible();
   await frame.getByRole("button", { name: "Put back" }).click();
   await expect(frame.getByText("Ready", { exact: true })).toBeVisible();
   await expect(frame.getByRole("button", { name: "Put back" })).toHaveCount(0);
@@ -550,41 +573,43 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   await expect(frame.locator('s-page[heading="#9401"]')).toBeVisible();
 
   /* An item with no run carries the picker at rest, and on an ambiguous one it
-     offers exactly the two that matched — the item's sentence names them both,
-     with the tag that pulled each one in. */
+     offers every active workflow with the two that matched first. The
+     sentence says why it asks and names nothing, so it cannot drift from the
+     list. The shop may carry other tests' workflows, so the count is not
+     pinned; the order is. */
   const item = frame.locator("s-section").filter({
     has: frame.getByRole("heading", { name: "E2E Twice", exact: true }),
   });
   await expect(
     item.getByText(
-      `Two workflows match this item: ${ENGRAVING} (\u201Ce2e-engraved\u201D) and ${RUSH} (\u201Ce2e-rush\u201D). Choose one to start.`,
+      "More than one workflow matches this item, so none was started.",
       { exact: true },
     ),
   ).toBeVisible();
   const picker = item.getByRole("combobox", { name: "Choose workflow" });
-  await expect(picker.getByRole("option")).toHaveCount(2);
+  const options = picker.getByRole("option");
+  await expect(options.nth(0)).toHaveText(ENGRAVING);
+  await expect(options.nth(1)).toHaveText(RUSH);
 
   await picker.selectOption({ label: ENGRAVING });
-  await item.getByRole("button", { name: "Choose", exact: true }).click();
+  await item.getByRole("button", { name: "Start", exact: true }).click();
 
   /* The run replaces the ask, and with it the picker: an item with a live run
-     carries no workflow control at rest, only the header's Manage.
-
-     Wait on that button before naming the workflow: while the picker is open
-     the item carries the workflow's name three more times (the `s-option`, the
-     native `option`, and the select's own value), which is a strict-mode
-     violation rather than a retryable failure. */
+     carries no workflow control at rest, only the header's Manage. The
+     workflow's name is not on the card; it heads the Manage drawer. */
   const manage = item.getByRole("button", { name: "Manage" });
   await expect(manage).toBeVisible();
   await expect(
-    item.getByText("Choose one to start.", { exact: false }),
+    item.getByText("so none was started", { exact: false }),
   ).toHaveCount(0);
-  await expect(item.getByText(ENGRAVING, { exact: true })).toBeVisible();
+  await manage.click();
+  await expect(
+    item.getByText(`${ENGRAVING} workflow`, { exact: true }),
+  ).toBeVisible();
 
   /* Changing is a rare intervention, so it is inside the disclosure with the
      other ones. A pending run with nothing started changes with no
      confirmation: the dialog is for work already done. */
-  await manage.click();
   const change = item.getByRole("button", {
     name: "Change workflow",
     exact: true,
@@ -604,7 +629,10 @@ test("an item matching two workflows waits for the merchant to choose, then chan
     item.getByRole("combobox", { name: "Change workflow" }),
   ).toHaveCount(0);
   await expect(manage).toBeVisible();
-  await expect(item.getByText(RUSH, { exact: true })).toBeVisible();
+  await manage.click();
+  await expect(
+    item.getByText(`${RUSH} workflow`, { exact: true }),
+  ).toBeVisible();
   /* The replaced run stays on the page, cancelled: a run is the record of a
      decision, and the merchant should see the one they undid. */
   await expect(item.getByText("Cancelled", { exact: true })).toBeVisible();

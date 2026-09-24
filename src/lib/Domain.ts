@@ -1572,7 +1572,8 @@ export type ShopOrder = typeof ShopOrder.Type;
  * `matchedWorkflowIds` is the active, startable workflows whose tag matched
  * this item at the last reconcile, whether or not a run was started. Two or
  * more with no live run is an **ambiguity** the merchant resolves from the
- * order page; the picker there offers exactly these. Written by reconcile
+ * order page; the picker there offers these first, then every other active
+ * workflow. Written by reconcile
  * only — the order sync writes `[]`, because matching happens after the write,
  * inside `afterWrite`.
  */
@@ -2625,10 +2626,6 @@ export const actorLabel = (actor: ActorDisplay) =>
  */
 export const actorIsMember = (actor: Actor, email: Email) =>
   actor.role === "member" && actor.email === email;
-
-/** Whether two actor slots hold the same person: the merchant is one person, and members are the same by email. */
-export const sameActor = (a: Actor, b: Actor) =>
-  a.role === "merchant" ? b.role === "merchant" : actorIsMember(b, a.email);
 
 export const MerchantConnectionState = Schema.Struct({
   role: Schema.Literal("merchant"),
