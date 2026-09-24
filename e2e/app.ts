@@ -39,7 +39,8 @@ export const editorFrame = (page: Page): FrameLocator =>
 
 /**
  * Land on the authed home and return once it is safe to interact INSIDE the
- * iframe.
+ * iframe. `path` lands on another app page instead, relative to the preview
+ * URL's `/app` (`"app/orders?status=all"`); the admin forwards it to the iframe.
  *
  * The gate is `awaitHydration` (`e2e/hydration.ts`) against the iframe: the
  * `data-hydrated` marker on the embedded document's `<body>`, which flips in
@@ -86,8 +87,8 @@ export const editorFrame = (page: Page): FrameLocator =>
  * fast when the dev server / quick tunnel is down (the tunnel URL rotates on
  * every `pnpm app:dev` restart).
  */
-export async function gotoApp(page: Page): Promise<FrameLocator> {
-  await page.goto("", { waitUntil: "commit" });
+export async function gotoApp(page: Page, path = ""): Promise<FrameLocator> {
+  await page.goto(path, { waitUntil: "commit" });
   const frame = appFrame(page);
   await awaitHydration(frame, 15_000).catch(async () => {
     await page.reload({ waitUntil: "commit" });
@@ -115,18 +116,20 @@ export async function gotoApp(page: Page): Promise<FrameLocator> {
  * is a pill in the corner; nothing this suite drives sits under it.
  *
  * Expansion is read from the panel's own geometry, not from the toggle: the
- * button keeps the accessible name "Close Dev Console" in both states, so
- * clicking it unconditionally would expand a collapsed console every other
- * run. The class prefix is the CLI's own markup (a hashed CSS module), hence
- * the substring match and the no-op when nothing matches — a console that
- * renamed or vanished must not fail a suite that does not depend on it.
+ * button keeps the accessible name "Close Dev Console" in both states, and
+ * carries no `aria-expanded`, so clicking it unconditionally would expand a
+ * collapsed console every other run. The geometry is the panel's "Dev
+ * Console" heading, found by role and name like every other locator here:
+ * collapsing slides the panel down, taking the heading below the viewport
+ * (measured 2026-09-24: bottom 502 of a 720 viewport expanded, top 732
+ * collapsed). No heading means no console, which is a production-like
+ * admin, and nothing to do.
  */
 export const closeDevConsole = async (page: Page): Promise<void> => {
-  const panel = page.locator('[class*="ExtensionsTable"]').first();
-  if ((await panel.count()) === 0) return;
-  /** Expanded means the panel's own rows are on screen, not just its pill. */
+  const heading = page.getByRole("heading", { name: "Dev Console" }).first();
+  if ((await heading.count()) === 0) return;
   const expanded = () =>
-    panel.evaluate(
+    heading.evaluate(
       (el) => el.getBoundingClientRect().bottom < globalThis.innerHeight,
     );
   if (!(await expanded())) return;

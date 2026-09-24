@@ -24,7 +24,9 @@ import { ShopAgentSocketProvider } from "@/lib/ShopAgentSocketHost";
  * left rather than on the default one. A row's link to the work page carries
  * them without the row knowing they exist, and so will any later child of this
  * layout. `limit` is one of them because a return that lands on page one is a
- * member scrolling back to the row they were standing on.
+ * member scrolling back to the row they were standing on. The embedded app's
+ * lists follow the same rule on their own layouts: `OrdersSearch`
+ * (`app.orders.tsx`) and `WorkflowsSearch` (`app.workflows.tsx`).
  *
  * Nothing here is a sharing risk: a bench tablet is one member's place, the
  * three keys name a screen rather than a person, and the object scopes every

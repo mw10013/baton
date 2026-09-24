@@ -272,6 +272,9 @@ function RouteComponent() {
 
   return (
     <s-page heading={workflow.name} inlineSize="base">
+      {/* No search on the link: the layout's middleware carries the
+          merchant's status filter back to the list (`WorkflowsSearch` in
+          `app.workflows.tsx`). */}
       <s-link slot="breadcrumb-actions" href="/app/workflows">
         Workflows
       </s-link>

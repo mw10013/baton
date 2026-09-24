@@ -1897,8 +1897,17 @@ export type OrderNeed = typeof OrderNeed.Type;
  * `<processedAt>:<id>`. Not an offset: the bulk stream and webhooks both insert
  * while a merchant pages, and `limit/offset` would drop or repeat rows under
  * those writes.
+ *
+ * The shape is checked, not just the length: the cursor rides the orders URL
+ * as `?after=` (`OrdersSearch` in `app.orders.tsx`), where a value that does
+ * not decode reads as page one. Text that is not a cursor at all would
+ * otherwise pass, be read as page one by the repository, and still light
+ * Previous, because the page is "not page one" whenever `after` is present.
  */
-export const OrdersCursor = Schema.String.check(Schema.isMaxLength(128));
+export const OrdersCursor = Schema.String.check(
+  Schema.isMaxLength(128),
+  Schema.isPattern(/^\d+:.+$/u),
+);
 
 /**
  * What the merchant types into the order-number field. Trimmed and capped

@@ -214,9 +214,11 @@ function RouteComponent() {
 
   /**
    * The three controls, all of them navigations, because all three are in the
-   * URL. `replace: true` on every one so Back leaves the run list rather than
-   * walking the member back through every tab and team they glanced at — the
-   * filters are a screen's state, not a trail of places they have been.
+   * URL. **Filters are a screen's state, not a trail:** `replace: true` on
+   * every one so Back leaves the run list rather than walking the member back
+   * through every tab and team they glanced at. The embedded app's orders and
+   * workflows filters follow this rule (`setFilters` in `app.orders.index.tsx`
+   * and `app.workflows.index.tsx`).
    *
    * A tab or a team is a different list, so depth resets: "Show 25 more" of Up
    * next is not a promise about Blocked. `undefined` is how a key is removed,

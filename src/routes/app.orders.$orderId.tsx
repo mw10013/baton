@@ -1482,6 +1482,9 @@ function RouteComponent() {
 
   return (
     <s-page heading={order.name} inlineSize="base">
+      {/* No search on the link: the layout's middleware carries the
+          merchant's filters and page back to the list (`OrdersSearch` in
+          `app.orders.tsx`). */}
       <s-link slot="breadcrumb-actions" href="/app/orders">
         Orders
       </s-link>

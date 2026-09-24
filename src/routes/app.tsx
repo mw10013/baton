@@ -193,6 +193,12 @@ function RouteComponent() {
  * `src/routes/__root.tsx`; nothing here gates on hydration.
  *
  * Polaris is loaded globally by the root route.
+ *
+ * `href`, not `to`: an `s-link` href may carry a query (the orders list's
+ * row links do), and `to` is a path, while `href` is parsed into path and
+ * search. The bridge adds no search of its own. A subtree whose links must
+ * keep the merchant's context does so with `retainSearchParams` on its layout
+ * (`app.orders.tsx`, `app.workflows.tsx`), not here.
  */
 function AppProvider({ children }: { readonly children: React.ReactNode }) {
   const navigate = useNavigate();
@@ -200,7 +206,7 @@ function AppProvider({ children }: { readonly children: React.ReactNode }) {
   React.useEffect(() => {
     const handleNavigate = (event: Event) => {
       const href = (event.target as HTMLElement)?.getAttribute("href");
-      if (href) void navigate({ to: href });
+      if (href) void navigate({ href });
     };
 
     document.addEventListener("shopify:navigate", handleNavigate);

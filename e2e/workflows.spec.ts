@@ -3,6 +3,7 @@ import type { FrameLocator, Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
 
 import { clickHoisted, editorFrame, gotoApp } from "./app";
+import { awaitHydration } from "./hydration";
 import { seedConfig, seedMembers } from "./seed";
 
 /**
@@ -69,17 +70,36 @@ const CREATED = "E2E Cake";
  * the route renders no breadcrumb at all, and the admin owns the chrome
  * instead (`app.workflows.$workflowId_.edit.tsx`).
  *
- * Scoped to the window's dialog rather than taken by name alone because the
- * admin's portals and the CLI's dev console answer to "Close" too. The class
- * is a hashed CSS module of the admin's, hence the substring; `Dialog` and not
- * `Header`, which matches three nested elements and would trip strict mode.
+ * Scoped to the window's dialog rather than taken by name alone because
+ * Sidekick and the CLI's dev console answer to "Close" too, and by role
+ * rather than by the admin's class names, which are hashed CSS modules that
+ * change when the admin ships: this locator used `AppWindowModalDialog` until
+ * the admin dropped it (2026-09-24).
+ *
+ * Returns once the window's iframe is gone, not when the click lands. The
+ * admin animates the window out, and an Edit pressed during that animation
+ * opens nothing: the closing window takes the new one with it (seen
+ * 2026-09-24, when an Edit straight after this click left no window at all).
  */
-const closeEditor = (page: Page) =>
-  clickHoisted(
+const closeEditor = async (page: Page) => {
+  await clickHoisted(
     page
-      .locator('[class*="AppWindowModalDialog"]')
-      .getByRole("button", { name: "Close" }),
+      .getByRole("dialog")
+      .getByRole("button", { name: "Close", exact: true }),
   );
+  await expect(page.locator('iframe[src*="chrome=window"]')).toHaveCount(0);
+};
+
+/**
+ * The detail page's Edit, which opens the editor window, returning once the
+ * window's document is hydrated. A click before that lands in an inert body
+ * and is dropped without an error (`awaitHydration`), so the first click in a
+ * freshly opened editor needs this as much as a click on a fresh page does.
+ */
+const openEditor = async (page: Page) => {
+  await clickHoisted(page.getByRole("button", { name: "Edit", exact: true }));
+  await awaitHydration(editorFrame(page));
+};
 
 /**
  * The task panel's Save and Delete, which are section buttons rather than
@@ -136,6 +156,7 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
   /* Create lands in the editor, as Flow's does, so the new workflow's first
      screen is the canvas rather than its detail page. */
   await expect(editor.locator(`s-page[heading="${CREATED}"]`)).toBeVisible();
+  await awaitHydration(editor);
 
   /* Never applied: Turn on is the only commit on offer, and it is blocked
      until there is a step to apply. */
@@ -188,7 +209,7 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
   ).toHaveCount(0);
 
   /* Opening the editor is not an edit: no draft, so nothing to discard. */
-  await clickHoisted(page.getByRole("button", { name: "Edit", exact: true }));
+  await openEditor(page);
   await expect(
     page.getByRole("button", { name: "Discard changes" }),
   ).toHaveCount(0);
@@ -248,7 +269,7 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
 
   /* Discard leaves the workflow exactly as it was. Its confirm dialog belongs
      to the editor's document, not the app's. */
-  await clickHoisted(page.getByRole("button", { name: "Edit", exact: true }));
+  await openEditor(page);
   await clickHoisted(page.getByRole("button", { name: "Discard changes" }));
   await expect(
     editor.getByText("Are you sure you want to discard these changes?", {
@@ -517,4 +538,55 @@ test("editing the tag from the detail page writes immediately and starts no draf
   /* Immediate, not drafted: the page still shows the workflow's own tasks and
      the editor holds nothing. */
   await expect(frame.getByText("Cut", { exact: true })).toBeVisible();
+});
+
+/**
+ * `WorkflowsSearch` on the `/app/workflows` layout: the status filter rides
+ * the workflow page's URL, so its breadcrumb returns to the filtered list.
+ */
+test("the workflows list keeps its status filter across the workflow page", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+
+  const OFF = "E2E Keep Off";
+  await seedMembers(
+    seedConfig(),
+    [MEMBER],
+    [{ name: TEAM, members: [MEMBER] }],
+    [
+      {
+        name: EXISTING,
+        tag: "e2e-ring",
+        tasks: [{ name: "Cut", team: TEAM }],
+      },
+      {
+        name: OFF,
+        tag: "e2e-keep-off",
+        active: false,
+        tasks: [{ name: "Cut", team: TEAM }],
+      },
+    ],
+  );
+
+  const frame = await gotoApp(page);
+  await clickHoisted(
+    page.getByRole("link", { name: "Workflows", exact: true }),
+  );
+  await expect(frame.getByRole("link", { name: OFF })).toBeVisible();
+  const status = () => new URL(page.url()).searchParams.get("status");
+
+  await frame.getByRole("button", { name: "Active", exact: true }).click();
+  await expect.poll(status).toBe("active");
+  await expect(frame.getByRole("link", { name: OFF })).toHaveCount(0);
+
+  await frame.getByRole("link", { name: EXISTING }).click();
+  await expect(frame.locator(`s-page[heading="${EXISTING}"]`)).toBeVisible();
+  await expect.poll(status).toBe("active");
+
+  /* The hoisted breadcrumb's back arrow; see the orders round trip. */
+  await clickHoisted(page.locator('button[aria-label="Workflows"]'));
+  await expect(frame.getByRole("link", { name: EXISTING })).toBeVisible();
+  await expect.poll(status).toBe("active");
+  await expect(frame.getByRole("link", { name: OFF })).toHaveCount(0);
 });

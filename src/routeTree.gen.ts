@@ -22,6 +22,8 @@ import { Route as AdminShopAgentObjectsRouteImport } from './routes/admin.shop-a
 import { Route as AdminShopsRouteImport } from './routes/admin.shops'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppMembersRouteImport } from './routes/app.members'
+import { Route as AppOrdersRouteImport } from './routes/app.orders'
+import { Route as AppWorkflowsRouteImport } from './routes/app.workflows'
 import { Route as AuthSplatRouteImport } from './routes/auth.$'
 import { Route as ShopIndexRouteImport } from './routes/shop.index'
 import { Route as ShopShopRouteImport } from './routes/shop.$shop'
@@ -110,6 +112,16 @@ const AppMembersRoute = AppMembersRouteImport.update({
   path: '/members',
   getParentRoute: () => AppRoute,
 } as any)
+const AppOrdersRoute = AppOrdersRouteImport.update({
+  id: '/orders',
+  path: '/orders',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppWorkflowsRoute = AppWorkflowsRouteImport.update({
+  id: '/workflows',
+  path: '/workflows',
+  getParentRoute: () => AppRoute,
+} as any)
 const AuthSplatRoute = AuthSplatRouteImport.update({
   id: '/auth/$',
   path: '/auth/$',
@@ -151,19 +163,19 @@ const ApiDevSeedRoute = ApiDevSeedRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppOrdersIndexRoute = AppOrdersIndexRouteImport.update({
-  id: '/orders/',
-  path: '/orders/',
-  getParentRoute: () => AppRoute,
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppOrdersRoute,
 } as any)
 const AppOrdersOrderIdRoute = AppOrdersOrderIdRouteImport.update({
-  id: '/orders/$orderId',
-  path: '/orders/$orderId',
-  getParentRoute: () => AppRoute,
+  id: '/$orderId',
+  path: '/$orderId',
+  getParentRoute: () => AppOrdersRoute,
 } as any)
 const AppOrdersFromShopifyRoute = AppOrdersFromShopifyRouteImport.update({
-  id: '/orders/from-shopify',
-  path: '/orders/from-shopify',
-  getParentRoute: () => AppRoute,
+  id: '/from-shopify',
+  path: '/from-shopify',
+  getParentRoute: () => AppOrdersRoute,
 } as any)
 const AppTeamsIndexRoute = AppTeamsIndexRouteImport.update({
   id: '/teams/',
@@ -176,14 +188,14 @@ const AppTeamsTeamIdRoute = AppTeamsTeamIdRouteImport.update({
   getParentRoute: () => AppRoute,
 } as any)
 const AppWorkflowsIndexRoute = AppWorkflowsIndexRouteImport.update({
-  id: '/workflows/',
-  path: '/workflows/',
-  getParentRoute: () => AppRoute,
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppWorkflowsRoute,
 } as any)
 const AppWorkflowsWorkflowIdRoute = AppWorkflowsWorkflowIdRouteImport.update({
-  id: '/workflows/$workflowId',
-  path: '/workflows/$workflowId',
-  getParentRoute: () => AppRoute,
+  id: '/$workflowId',
+  path: '/$workflowId',
+  getParentRoute: () => AppWorkflowsRoute,
 } as any)
 const ShopShopIndexRoute = ShopShopIndexRouteImport.update({
   id: '/',
@@ -208,9 +220,9 @@ const WebhooksAppUninstalledRoute = WebhooksAppUninstalledRouteImport.update({
 } as any)
 const AppWorkflowsWorkflowIdEditRoute =
   AppWorkflowsWorkflowIdEditRouteImport.update({
-    id: '/workflows/$workflowId_/edit',
-    path: '/workflows/$workflowId/edit',
-    getParentRoute: () => AppRoute,
+    id: '/$workflowId_/edit',
+    path: '/$workflowId/edit',
+    getParentRoute: () => AppWorkflowsRoute,
   } as any)
 const ShopShopWorkflowsRunIdRoute = ShopShopWorkflowsRunIdRouteImport.update({
   id: '/workflows/$runId',
@@ -230,6 +242,8 @@ export interface FileRoutesByFullPath {
   '/admin/shop-agent-objects': typeof AdminShopAgentObjectsRoute
   '/admin/shops': typeof AdminShopsRoute
   '/app/members': typeof AppMembersRoute
+  '/app/orders': typeof AppOrdersRouteWithChildren
+  '/app/workflows': typeof AppWorkflowsRouteWithChildren
   '/auth/$': typeof AuthSplatRoute
   '/shop/$shop': typeof ShopShopRouteWithChildren
   '/webhooks/compliance': typeof WebhooksComplianceRoute
@@ -299,6 +313,8 @@ export interface FileRoutesById {
   '/admin/shop-agent-objects': typeof AdminShopAgentObjectsRoute
   '/admin/shops': typeof AdminShopsRoute
   '/app/members': typeof AppMembersRoute
+  '/app/orders': typeof AppOrdersRouteWithChildren
+  '/app/workflows': typeof AppWorkflowsRouteWithChildren
   '/auth/$': typeof AuthSplatRoute
   '/shop/$shop': typeof ShopShopRouteWithChildren
   '/webhooks/compliance': typeof WebhooksComplianceRoute
@@ -337,6 +353,8 @@ export interface FileRouteTypes {
     | '/admin/shop-agent-objects'
     | '/admin/shops'
     | '/app/members'
+    | '/app/orders'
+    | '/app/workflows'
     | '/auth/$'
     | '/shop/$shop'
     | '/webhooks/compliance'
@@ -405,6 +423,8 @@ export interface FileRouteTypes {
     | '/admin/shop-agent-objects'
     | '/admin/shops'
     | '/app/members'
+    | '/app/orders'
+    | '/app/workflows'
     | '/auth/$'
     | '/shop/$shop'
     | '/webhooks/compliance'
@@ -540,6 +560,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppMembersRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/orders': {
+      id: '/app/orders'
+      path: '/orders'
+      fullPath: '/app/orders'
+      preLoaderRoute: typeof AppOrdersRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/workflows': {
+      id: '/app/workflows'
+      path: '/workflows'
+      fullPath: '/app/workflows'
+      preLoaderRoute: typeof AppWorkflowsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/auth/$': {
       id: '/auth/$'
       path: '/auth/$'
@@ -598,24 +632,24 @@ declare module '@tanstack/react-router' {
     }
     '/app/orders/': {
       id: '/app/orders/'
-      path: '/orders'
+      path: '/'
       fullPath: '/app/orders/'
       preLoaderRoute: typeof AppOrdersIndexRouteImport
-      parentRoute: typeof AppRoute
+      parentRoute: typeof AppOrdersRoute
     }
     '/app/orders/$orderId': {
       id: '/app/orders/$orderId'
-      path: '/orders/$orderId'
+      path: '/$orderId'
       fullPath: '/app/orders/$orderId'
       preLoaderRoute: typeof AppOrdersOrderIdRouteImport
-      parentRoute: typeof AppRoute
+      parentRoute: typeof AppOrdersRoute
     }
     '/app/orders/from-shopify': {
       id: '/app/orders/from-shopify'
-      path: '/orders/from-shopify'
+      path: '/from-shopify'
       fullPath: '/app/orders/from-shopify'
       preLoaderRoute: typeof AppOrdersFromShopifyRouteImport
-      parentRoute: typeof AppRoute
+      parentRoute: typeof AppOrdersRoute
     }
     '/app/teams/': {
       id: '/app/teams/'
@@ -633,17 +667,17 @@ declare module '@tanstack/react-router' {
     }
     '/app/workflows/': {
       id: '/app/workflows/'
-      path: '/workflows'
+      path: '/'
       fullPath: '/app/workflows/'
       preLoaderRoute: typeof AppWorkflowsIndexRouteImport
-      parentRoute: typeof AppRoute
+      parentRoute: typeof AppWorkflowsRoute
     }
     '/app/workflows/$workflowId': {
       id: '/app/workflows/$workflowId'
-      path: '/workflows/$workflowId'
+      path: '/$workflowId'
       fullPath: '/app/workflows/$workflowId'
       preLoaderRoute: typeof AppWorkflowsWorkflowIdRouteImport
-      parentRoute: typeof AppRoute
+      parentRoute: typeof AppWorkflowsRoute
     }
     '/shop/$shop/': {
       id: '/shop/$shop/'
@@ -675,10 +709,10 @@ declare module '@tanstack/react-router' {
     }
     '/app/workflows/$workflowId_/edit': {
       id: '/app/workflows/$workflowId_/edit'
-      path: '/workflows/$workflowId/edit'
+      path: '/$workflowId/edit'
       fullPath: '/app/workflows/$workflowId/edit'
       preLoaderRoute: typeof AppWorkflowsWorkflowIdEditRouteImport
-      parentRoute: typeof AppRoute
+      parentRoute: typeof AppWorkflowsRoute
     }
     '/shop/$shop/workflows/$runId': {
       id: '/shop/$shop/workflows/$runId'
@@ -708,30 +742,54 @@ const AdminRouteChildren: AdminRouteChildren = {
 
 const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
-interface AppRouteChildren {
-  AppMembersRoute: typeof AppMembersRoute
-  AppIndexRoute: typeof AppIndexRoute
+interface AppOrdersRouteChildren {
   AppOrdersOrderIdRoute: typeof AppOrdersOrderIdRoute
   AppOrdersFromShopifyRoute: typeof AppOrdersFromShopifyRoute
-  AppTeamsTeamIdRoute: typeof AppTeamsTeamIdRoute
-  AppWorkflowsWorkflowIdRoute: typeof AppWorkflowsWorkflowIdRoute
   AppOrdersIndexRoute: typeof AppOrdersIndexRoute
-  AppTeamsIndexRoute: typeof AppTeamsIndexRoute
+}
+
+const AppOrdersRouteChildren: AppOrdersRouteChildren = {
+  AppOrdersOrderIdRoute: AppOrdersOrderIdRoute,
+  AppOrdersFromShopifyRoute: AppOrdersFromShopifyRoute,
+  AppOrdersIndexRoute: AppOrdersIndexRoute,
+}
+
+const AppOrdersRouteWithChildren = AppOrdersRoute._addFileChildren(
+  AppOrdersRouteChildren,
+)
+
+interface AppWorkflowsRouteChildren {
+  AppWorkflowsWorkflowIdRoute: typeof AppWorkflowsWorkflowIdRoute
   AppWorkflowsIndexRoute: typeof AppWorkflowsIndexRoute
   AppWorkflowsWorkflowIdEditRoute: typeof AppWorkflowsWorkflowIdEditRoute
 }
 
-const AppRouteChildren: AppRouteChildren = {
-  AppMembersRoute: AppMembersRoute,
-  AppIndexRoute: AppIndexRoute,
-  AppOrdersOrderIdRoute: AppOrdersOrderIdRoute,
-  AppOrdersFromShopifyRoute: AppOrdersFromShopifyRoute,
-  AppTeamsTeamIdRoute: AppTeamsTeamIdRoute,
+const AppWorkflowsRouteChildren: AppWorkflowsRouteChildren = {
   AppWorkflowsWorkflowIdRoute: AppWorkflowsWorkflowIdRoute,
-  AppOrdersIndexRoute: AppOrdersIndexRoute,
-  AppTeamsIndexRoute: AppTeamsIndexRoute,
   AppWorkflowsIndexRoute: AppWorkflowsIndexRoute,
   AppWorkflowsWorkflowIdEditRoute: AppWorkflowsWorkflowIdEditRoute,
+}
+
+const AppWorkflowsRouteWithChildren = AppWorkflowsRoute._addFileChildren(
+  AppWorkflowsRouteChildren,
+)
+
+interface AppRouteChildren {
+  AppMembersRoute: typeof AppMembersRoute
+  AppOrdersRoute: typeof AppOrdersRouteWithChildren
+  AppWorkflowsRoute: typeof AppWorkflowsRouteWithChildren
+  AppIndexRoute: typeof AppIndexRoute
+  AppTeamsTeamIdRoute: typeof AppTeamsTeamIdRoute
+  AppTeamsIndexRoute: typeof AppTeamsIndexRoute
+}
+
+const AppRouteChildren: AppRouteChildren = {
+  AppMembersRoute: AppMembersRoute,
+  AppOrdersRoute: AppOrdersRouteWithChildren,
+  AppWorkflowsRoute: AppWorkflowsRouteWithChildren,
+  AppIndexRoute: AppIndexRoute,
+  AppTeamsTeamIdRoute: AppTeamsTeamIdRoute,
+  AppTeamsIndexRoute: AppTeamsIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

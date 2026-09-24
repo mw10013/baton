@@ -26,25 +26,6 @@ import {
 
 const CREATE_MODAL = "create-workflow";
 
-/**
- * The status tabs are in the URL, so a filtered list is a link someone can
- * send. The search text is not: it changes on every keystroke and is
- * nobody's destination. There is no tag filter: a workflow's tag is its
- * identity, not a grouping dimension, and one filter button per tag made it
- * look like one.
- *
- * Hand-written rather than a schema so a value the page does not know —
- * a stale link, a hand-edited URL — reads as "no filter" instead of failing
- * the route: a wrong filter is not an error condition.
- */
-interface WorkflowsSearch {
-  readonly status?: "active" | "inactive";
-}
-const validateSearch = ({
-  status,
-}: Record<string, unknown>): WorkflowsSearch =>
-  status === "active" || status === "inactive" ? { status } : {};
-
 const decodeWorkflowResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.WorkflowResult),
 );
@@ -86,7 +67,6 @@ const getLoaderData = createServerFn({ method: "GET" })
   );
 
 export const Route = createFileRoute("/app/workflows/")({
-  validateSearch,
   loader: () => getLoaderData(),
   component: RouteComponent,
 });
@@ -198,9 +178,20 @@ function RouteComponent() {
     if (!tagDirty) setTag(next.trim().toLowerCase());
   };
 
-  /** Whatever is not in `next` is cleared, so the URL only ever carries the filters in force. */
-  const setFilters = (next: WorkflowsSearch) => {
-    void navigate({ search: next });
+  /**
+   * `status: undefined` is how the filter is removed; leaving the key out
+   * would let the layout's middleware retain the old value
+   * (`WorkflowsSearch` in `app.workflows.tsx`). `replace: true` for the run
+   * list's reason (`selectTab` in `shop.$shop.index.tsx`): the filters are a
+   * screen's state, not a trail.
+   */
+  const setFilters = (next: {
+    readonly status: "active" | "inactive" | undefined;
+  }) => {
+    void navigate({
+      search: (prev) => ({ ...prev, status: next.status }),
+      replace: true,
+    });
   };
 
   const trimmed = query.trim().toLowerCase();
@@ -217,7 +208,7 @@ function RouteComponent() {
     <s-button
       variant={status === value ? "primary" : "tertiary"}
       onClick={() => {
-        setFilters(value === undefined ? {} : { status: value });
+        setFilters({ status: value });
       }}
     >
       {label}
@@ -256,7 +247,7 @@ function RouteComponent() {
               variant="secondary"
               onClick={() => {
                 setQuery("");
-                setFilters({});
+                setFilters({ status: undefined });
               }}
             >
               Clear filters

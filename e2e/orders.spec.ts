@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 import { clickHoisted, gotoApp, hoistedEnabled } from "./app";
 import { seedConfig, seedMembers } from "./seed";
@@ -725,4 +725,180 @@ test("the needs row counts what its button shows", async ({ page }) => {
   ).toBeVisible();
   await expect(frame.getByRole("combobox", { name: "Team" })).toBeVisible();
   await expect(rows).toHaveCount(2);
+});
+
+/**
+ * Thirty orders all waiting on one fresh team, so the team filter keeps the
+ * list to this test's orders on a shop that also holds the sandbox's real
+ * ones, and 30 is a full first page (`ORDERS_PAGE_SIZE`, 25) plus a second
+ * of five.
+ */
+const seedTwoPages = async (team: string) => {
+  const member = "e2e.pages@example.com";
+  await seedMembers(
+    seedConfig(),
+    [member],
+    [{ name: team, members: [member] }],
+    [
+      {
+        name: "E2E Pages Ring",
+        tag: "e2e-pages",
+        tasks: [{ name: "Cut", team }],
+      },
+    ],
+    Array.from({ length: 30 }, (_, index) => ({
+      n: 9601 + index,
+      lineItems: [
+        { title: "E2E Pages Band", quantity: 1, tags: ["e2e-pages"] },
+      ],
+    })),
+  );
+};
+
+/** The orders list's context as the admin's URL mirrors it from the app. */
+const listContext = (page: Page) => {
+  const url = new URL(page.url());
+  return {
+    status: url.searchParams.get("status"),
+    team: url.searchParams.get("team"),
+    after: url.searchParams.get("after"),
+  };
+};
+
+/**
+ * `OrdersSearch` on the `/app/orders` layout: the filters and the page ride
+ * the order page's URL, so the breadcrumb and the browser's history both
+ * return to them. Previous on a page Next pushed is the browser's Back.
+ */
+test("the orders list keeps its filters and page across the order page", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+
+  const TEAM = "E2E Pages Bench";
+  await seedTwoPages(TEAM);
+
+  const frame = await gotoApp(page);
+  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  const rows = frame.locator("s-table-row", { hasText: /#96\d\d/u });
+  await frame.getByRole("button", { name: /^In production/u }).click();
+  await frame
+    .getByRole("combobox", { name: "Team" })
+    .selectOption({ label: TEAM });
+  await expect(rows).toHaveCount(25);
+
+  await frame.getByRole("button", { name: "Go to next page" }).click();
+  await expect(rows).toHaveCount(5);
+  await expect.poll(() => listContext(page).after).not.toBeNull();
+  const expected = listContext(page);
+  expect(expected.status).toBe("in_production");
+  expect(expected.team).not.toBeNull();
+
+  /* The row's real href carries them, so open-in-new-tab does too. */
+  const link = rows.first().getByRole("link").first();
+  const href = await link.evaluate((el) => el.getAttribute("href") ?? "");
+  const hrefSearch = new URL(href, "http://localhost").searchParams;
+  expect({
+    status: hrefSearch.get("status"),
+    team: hrefSearch.get("team"),
+    after: hrefSearch.get("after"),
+  }).toEqual(expected);
+
+  const rowText = await rows.first().textContent();
+  const name = /#96\d\d/u.exec(rowText ?? "")?.[0] ?? "";
+  await link.click();
+  await expect(frame.locator(`s-page[heading="${name}"]`)).toBeVisible();
+  await expect.poll(() => listContext(page)).toEqual(expected);
+
+  /* The breadcrumb is hoisted into the admin title bar, where it is drawn
+     twice: a back arrow labelled for the page it returns to, and the page's
+     name beside it. The arrow is the one with the label. */
+  await clickHoisted(page.locator('button[aria-label="Orders"]'));
+  await expect(rows).toHaveCount(5);
+  await expect.poll(() => listContext(page)).toEqual(expected);
+
+  /* Back to the order page, Back again to the page Next pushed, Forward to
+     the order page: every entry kept the filters and the page. */
+  await page.goBack();
+  await expect(frame.locator(`s-page[heading="${name}"]`)).toBeVisible();
+  await expect.poll(() => listContext(page)).toEqual(expected);
+  await page.goBack();
+  await expect(rows).toHaveCount(5);
+  await expect.poll(() => listContext(page)).toEqual(expected);
+  await page.goForward();
+  await expect(frame.locator(`s-page[heading="${name}"]`)).toBeVisible();
+  await expect.poll(() => listContext(page)).toEqual(expected);
+
+  /* Back once more to the page Next pushed: Previous there is the browser's
+     Back, to page one with the filters. */
+  await page.goBack();
+  await expect(rows).toHaveCount(5);
+  await frame.getByRole("button", { name: "Go to previous page" }).click();
+  await expect(rows).toHaveCount(25);
+  await expect
+    .poll(() => listContext(page))
+    .toEqual({ ...expected, after: null });
+});
+
+/**
+ * `setFilters` in `app.orders.index.tsx`: a filter is a new list, so the page
+ * resets, and it replaces the history entry, so Back leaves the list rather
+ * than replaying the filters.
+ */
+test("a filter change resets the page and replaces history", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+
+  const TEAM = "E2E Pages Filter";
+  await seedTwoPages(TEAM);
+
+  const frame = await gotoApp(page);
+  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
+  const rows = frame.locator("s-table-row", { hasText: /#96\d\d/u });
+  await frame.getByRole("button", { name: /^In production/u }).click();
+  await frame
+    .getByRole("combobox", { name: "Team" })
+    .selectOption({ label: TEAM });
+  await expect(rows).toHaveCount(25);
+
+  /* Two filters pressed, no page turned: one Back leaves Orders. */
+  await page.goBack();
+  await expect(frame.locator('s-page[heading="Orders"]')).toHaveCount(0);
+  await page.goForward();
+  await expect(rows).toHaveCount(25);
+
+  await frame.getByRole("button", { name: "Go to next page" }).click();
+  await expect(rows).toHaveCount(5);
+  await frame.getByRole("button", { name: "All", exact: true }).click();
+  await expect
+    .poll(() => {
+      const { status, after } = listContext(page);
+      return { status, after };
+    })
+    .toEqual({ status: "all", after: null });
+  await expect(rows).toHaveCount(25);
+});
+
+/** `lenientSearchKey`: an unreadable filter reads as that filter being off, never as an error. */
+test("a bad filter value reads as no filter", async ({ page }) => {
+  test.setTimeout(120_000);
+
+  const frame = await gotoApp(
+    page,
+    "app/orders?status=nonsense&need=nonsense&after=nonsense",
+  );
+  await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
+  await expect(
+    frame.getByRole("button", { name: "Open", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    frame.getByRole("button", { name: "Anything", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  /* `after=nonsense` is not shaped like a cursor (`Domain.OrdersCursor`), so
+     it is dropped too: this is page one and there is no previous page. */
+  await expect(
+    frame.getByRole("button", { name: "Go to previous page" }),
+  ).toBeDisabled();
 });

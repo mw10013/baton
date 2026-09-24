@@ -1,7 +1,12 @@
 import * as React from "react";
 
 import { useAppBridge } from "@shopify/app-bridge-react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  useLocation,
+  useNavigate,
+  useRouter,
+} from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Option, Schema } from "effect";
 
@@ -30,8 +35,8 @@ const decodeOrderSearch = Schema.decodeUnknownOption(Domain.OrderSearch);
 const TAG_BADGE_LIMIT = 3;
 
 /**
- * Keyed by every filter as well as the shop: each filter combination is a
- * different read, and the order page's invalidation of `["orders", shop]` is
+ * Keyed by every filter and the page as well as the shop: each combination is
+ * a different read, and the order page's invalidation of `["orders", shop]` is
  * a prefix match so it still reaches every one of them.
  */
 const ordersQueryKey = (
@@ -40,22 +45,8 @@ const ordersQueryKey = (
   status: Domain.OrdersStatus | null,
   need: Domain.OrderNeed | null,
   team: Domain.TeamId | null,
-) => ["orders", shop, q, status, need, team] as const;
-
-/**
- * `?q=` is the order-number search; `?status=` picks a lifecycle position
- * (`ready_to_ship` is the packer's view, `all` the whole history); `?need=`
- * keeps only open orders with that problem (`Domain.OrderNeed`); `?team=`
- * keeps only orders waiting on that team, which is the link the team detail
- * page drills in with. An absent `status` is open work
- * (`Domain.OrdersStatus`) and an absent `need` is anything.
- */
-const OrdersSearch = Schema.Struct({
-  q: Schema.optionalKey(Domain.OrderSearch),
-  status: Schema.optionalKey(Domain.OrdersStatus),
-  need: Schema.optionalKey(Domain.OrderNeed),
-  team: Schema.optionalKey(Domain.TeamId),
-});
+  after: string | null,
+) => ["orders", shop, q, status, need, team, after] as const;
 
 /** One button of the Status or Needs row: its value, label, and the `Domain.OrderCounts` key it shows, if counted. */
 interface FilterButton<A> {
@@ -131,9 +122,17 @@ const decodeSyncResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.OrdersSyncResult),
 );
 
-/** The detail page is addressed by `legacyId`; see `Domain.GetOrderDetailInput`. */
-export const orderDetailHref = ({ legacyId }: Domain.ShopOrder) =>
-  `/app/orders/${legacyId}`;
+/**
+ * The row's link target. The detail page is addressed by `legacyId`; see
+ * `Domain.GetOrderDetailInput`. No `search`: the layout's middleware puts the
+ * merchant's filters and page on it (`OrdersSearch` in `app.orders.tsx`), so
+ * the order page's URL carries them and its breadcrumb can take them back.
+ */
+const orderLocation = ({ legacyId }: Domain.ShopOrder) =>
+  ({
+    to: "/app/orders/$orderId",
+    params: { orderId: legacyId },
+  }) as const;
 
 /**
  * The lifecycle badge, from `Domain.productionState` over the row. An order
@@ -234,30 +233,34 @@ const emptyText = (
   );
 
 /**
- * The loader half of the subscribed page: the first page of the current filter,
- * read Worker-side so it paints during SSR. The socket's `subscribeOrders`
- * takes over on identify (see `useSubscribedQuery`). Paging past the first page is
- * component state, so only the filter is a loader dep.
+ * The loader half of the subscribed page: the current filter and page, read
+ * Worker-side so it paints during SSR. The socket's `subscribeOrders` takes
+ * over on identify (see `useSubscribedQuery`). The page is in the URL like the
+ * filters, so the SSR paint is the page the merchant left.
  */
 const OrdersLoaderInput = Schema.Struct({
   q: Schema.NullOr(Domain.OrderSearch),
   status: Schema.NullOr(Domain.OrdersStatus),
   need: Schema.NullOr(Domain.OrderNeed),
   team: Schema.NullOr(Domain.TeamId),
+  after: Schema.NullOr(Domain.OrdersCursor),
 });
 
 const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(OrdersLoaderInput))
   .middleware([shopifyServerFnMiddleware])
   .handler(
-    ({ data: { q, status, need, team }, context: { runEffect, session } }) =>
+    ({
+      data: { q, status, need, team, after },
+      context: { runEffect, session },
+    }) =>
       runEffect(
         Effect.gen(function* () {
           const client = yield* ShopAgentClient;
           return {
             view: yield* client.listOrders(session.shop, {
               limit: ORDERS_PAGE_SIZE,
-              cursor: null,
+              cursor: after,
               q,
               status,
               need,
@@ -270,12 +273,12 @@ const getLoaderData = createServerFn({ method: "GET" })
   );
 
 export const Route = createFileRoute("/app/orders/")({
-  validateSearch: Schema.toStandardSchemaV1(OrdersSearch),
   loaderDeps: ({ search }) => ({
     q: search.q ?? null,
     status: search.status ?? null,
     need: search.need ?? null,
     team: search.team ?? null,
+    after: search.after ?? null,
   }),
   loader: ({ deps }) => getLoaderData({ data: deps }),
   component: RouteComponent,
@@ -300,40 +303,76 @@ function RouteComponent() {
     status = null,
     need = null,
     team = null,
+    after = null,
   } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
+  const router = useRouter();
+  const nextPageEntry = useLocation({
+    select: (location) => location.state.ordersNextPage === true,
+  });
   const shopify = useAppBridge();
   const resourceLinkTarget = useResourceLinkTarget();
   const { view: initialView, usage } = Route.useLoaderData();
-  /**
-   * The repository pages forward only (keyset on `processedAt, id`), so
-   * "previous" is a stack of the cursors already visited: the top is the
-   * current page, the one beneath it is where "previous" goes. The cursor is
-   * read fresh on every fetch rather than keyed, so an invalidation re-reads the page
-   * being viewed.
-   */
-  const [cursors, setCursors] = React.useState<readonly (string | null)[]>([
-    null,
-  ]);
-  const cursor = cursors.at(-1) ?? null;
-  const cursorRef = React.useRef(cursor);
   const [syncing, setSyncing] = React.useState(false);
 
-  /** A filter change is a new list, so the cursor stack starts over. */
-  const setFilters = (next: {
-    readonly q: Domain.OrderSearch | null;
-    readonly status: Domain.OrdersStatus | null;
-    readonly need: Domain.OrderNeed | null;
-    readonly team: Domain.TeamId | null;
+  /**
+   * A filter change is a new list, so the page resets to one. `replace: true`
+   * for the run list's reason (`selectTab` in `shop.$shop.index.tsx`): the
+   * filters are a screen's state, not a trail.
+   *
+   * A patch over `prev`, not the whole set from this render: the URL commits
+   * before the page re-renders with it, so a second control pressed in that
+   * window would write the first one's old value back. A key left out of the
+   * patch keeps its value; `null` clears it. Clearing writes `undefined` into
+   * the search rather than omitting the key, because an omitted key is one
+   * the layout's middleware retains (`OrdersSearch` in `app.orders.tsx`).
+   */
+  const setFilters = (patch: {
+    readonly q?: Domain.OrderSearch | null;
+    readonly status?: Domain.OrdersStatus | null;
+    readonly need?: Domain.OrderNeed | null;
+    readonly team?: Domain.TeamId | null;
   }) => {
-    setCursors([null]);
     void navigate({
-      search: {
-        ...(next.q === null ? {} : { q: next.q }),
-        ...(next.status === null ? {} : { status: next.status }),
-        ...(next.need === null ? {} : { need: next.need }),
-        ...(next.team === null ? {} : { team: next.team }),
-      },
+      search: (prev) => ({
+        ...prev,
+        q: patch.q === undefined ? prev.q : (patch.q ?? undefined),
+        status:
+          patch.status === undefined
+            ? prev.status
+            : (patch.status ?? undefined),
+        need: patch.need === undefined ? prev.need : (patch.need ?? undefined),
+        team: patch.team === undefined ? prev.team : (patch.team ?? undefined),
+        after: undefined,
+      }),
+      replace: true,
+    });
+  };
+
+  /**
+   * The repository pages forward only (keyset on `processedAt, id`), so the
+   * URL holds the page being viewed and not the one before it. Next pushes a
+   * history entry and marks it (`ordersNextPage`, declared in
+   * `app.orders.tsx`), so on a marked entry the page before is the entry
+   * before, and Previous is the browser's Back. Anywhere else — the list
+   * reached by the breadcrumb, a nav link, a reload of a copied URL — the
+   * page before is unknown, and Previous goes to page one, replacing the
+   * entry so Back does not return to the page just left.
+   */
+  const nextPage = (cursor: string) => {
+    void navigate({
+      search: (prev) => ({ ...prev, after: cursor }),
+      state: { ordersNextPage: true },
+    });
+  };
+  const previousPage = () => {
+    if (nextPageEntry) {
+      router.history.back();
+      return;
+    }
+    void navigate({
+      search: (prev) => ({ ...prev, after: undefined }),
+      replace: true,
     });
   };
 
@@ -359,12 +398,12 @@ function RouteComponent() {
     agent,
     identified,
   } = useSubscribedQuery({
-    queryKey: ordersQueryKey(shop, q, status, need, team),
+    queryKey: ordersQueryKey(shop, q, status, need, team, after),
     subscribe: (stub, subscriberId) =>
       stub
         .subscribeOrders({
           limit: ORDERS_PAGE_SIZE,
-          cursor: cursorRef.current,
+          cursor: after,
           q,
           status,
           need,
@@ -376,18 +415,6 @@ function RouteComponent() {
   });
 
   /**
-   * The cursor reaches `subscribe` through a ref rather than the query key, so
-   * writing it here is what makes it a real dependency of this effect: publish
-   * the page to move to, then invalidate so the refetch reads it. Ordering
-   * holds because every fetch is downstream of an invalidation, and the ref's
-   * initial value already covers the first render.
-   */
-  React.useEffect(() => {
-    cursorRef.current = cursor;
-    if (identified) void invalidate();
-  }, [identified, invalidate, cursor]);
-
-  /**
    * Enter and blur, not a debounce: every other control in this row navigates
    * on the merchant's own action (a press-button click, a select change), and
    * a timer that navigated mid-number would page the table under the typing.
@@ -396,7 +423,7 @@ function RouteComponent() {
   const submitSearch = () => {
     const next = Option.getOrNull(decodeOrderSearch(searchDraft));
     if (next === q) return;
-    setFilters({ q: next, status, need, team });
+    setFilters({ q: next });
   };
   /**
    * The latest submit, held in a ref so the keydown listener below is attached
@@ -556,7 +583,7 @@ function RouteComponent() {
               </s-text>
               <s-link
                 onClick={() => {
-                  setFilters({ q: null, status, need, team });
+                  setFilters({ q: null });
                 }}
               >
                 Clear the search
@@ -570,16 +597,12 @@ function RouteComponent() {
       <s-table
         paginate
         loading={ordersQuery.isFetching}
-        hasPreviousPage={cursors.length > 1}
+        hasPreviousPage={after !== null}
         hasNextPage={view.page.nextCursor !== null}
-        onPreviousPage={() => {
-          setCursors((stack) =>
-            stack.length > 1 ? stack.slice(0, -1) : stack,
-          );
-        }}
+        onPreviousPage={previousPage}
         onNextPage={() => {
           const next = view.page.nextCursor;
-          if (next !== null) setCursors((stack) => [...stack, next]);
+          if (next !== null) nextPage(next);
         }}
       >
         <s-table-header-row>
@@ -597,7 +620,9 @@ function RouteComponent() {
           {orders.map((row) => (
             <s-table-row key={row.order.id} id={row.order.id}>
               <s-table-cell>
-                <s-link href={orderDetailHref(row.order)}>
+                <s-link
+                  href={router.buildLocation(orderLocation(row.order)).href}
+                >
                   {row.order.name}
                 </s-link>
               </s-table-cell>
@@ -693,7 +718,7 @@ function RouteComponent() {
     <s-button
       variant="tertiary"
       onClick={() => {
-        setFilters({ q: null, status, need, team });
+        setFilters({ q: null });
       }}
     >
       {`Order ${Domain.normaliseOrderSearch(q)}`}
@@ -770,10 +795,10 @@ function RouteComponent() {
                   {STATUSES.map((button) =>
                     pressButton(button, status, (value) => {
                       setFilters({
-                        q,
                         status: value,
-                        need: openOnlyFiltersShown(value) ? need : null,
-                        team: openOnlyFiltersShown(value) ? team : null,
+                        ...(openOnlyFiltersShown(value)
+                          ? {}
+                          : { need: null, team: null }),
                       });
                     }),
                   )}
@@ -785,7 +810,7 @@ function RouteComponent() {
                     <s-stack direction="inline" gap="small-300">
                       {NEEDS.map((button) =>
                         pressButton(button, need, (value) => {
-                          setFilters({ q, status, need: value, team });
+                          setFilters({ need: value });
                         }),
                       )}
                       {searchChip}
@@ -816,9 +841,6 @@ function RouteComponent() {
                         onChange={(event) => {
                           const value = event.currentTarget.value;
                           setFilters({
-                            q,
-                            status,
-                            need,
                             team:
                               view?.teams.find(({ id }) => id === value)?.id ??
                               null,

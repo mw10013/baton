@@ -906,3 +906,13 @@ describe("Domain.orderIsSeeded", () => {
     strictEqual(Domain.orderIsSeeded("gid://shopify/Order/1001"), false);
   });
 });
+
+describe("Domain.OrdersCursor", () => {
+  const decode = Schema.decodeUnknownOption(Domain.OrdersCursor);
+  it("a cursor is `<processedAt>:<id>`, so text that is not one is refused rather than read as page one", () => {
+    strictEqual(decode("1700000000000:gid://shopify/Order/1")._tag, "Some");
+    strictEqual(decode("nonsense")._tag, "None");
+    strictEqual(decode(":gid://shopify/Order/1")._tag, "None");
+    strictEqual(decode("1700000000000:")._tag, "None");
+  });
+});
