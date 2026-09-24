@@ -1173,9 +1173,8 @@ const ordersPage = async (
     limit: 50,
     cursor: null,
     q: null,
-    state: null,
-    paid: null,
-    attention: false,
+    status: null,
+    need: null,
     team: null,
   });
   return view.page.orders;
@@ -1260,10 +1259,9 @@ describe("ShopAgent seed callables", () => {
     const unrouted = await agent.listRunsForOrder({ orderId: seedOrderId(1) });
     strictEqual(unrouted.length, 0);
     const [asking] = await ordersPage(agent);
-    strictEqual(
-      asking === undefined ? null : Domain.productionState(asking),
-      "multiple_workflows",
-    );
+    deepStrictEqual(asking === undefined ? null : Domain.orderNeeds(asking), [
+      "choose_workflow",
+    ]);
 
     await agent.seedOrders({
       ...seedMember,
@@ -1279,6 +1277,12 @@ describe("ShopAgent seed callables", () => {
     strictEqual(
       chosen === undefined ? null : Domain.productionState(chosen),
       "in_production",
+    );
+    strictEqual(
+      chosen === undefined
+        ? null
+        : Domain.orderNeeds(chosen).includes("choose_workflow"),
+      false,
     );
   });
 

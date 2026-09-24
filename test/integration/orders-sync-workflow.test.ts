@@ -51,9 +51,8 @@ const listOrdersInput = {
   limit: 1,
   cursor: null,
   q: null,
-  state: null,
-  paid: null,
-  attention: false,
+  status: null,
+  need: null,
   team: null,
 } as const;
 

@@ -148,7 +148,7 @@ test("teams screen creates, staffs, renames, and deletes a team", async ({
 });
 
 /**
- * The drill-in that makes the orders "Waiting on" filter discoverable from the
+ * The drill-in that makes the orders "Team" filter discoverable from the
  * suspicion that prompts it: the team page's secondary action lands on
  * `/app/orders?team=<id>`, with the filter already set to that team and the
  * list showing the order the team is holding.
@@ -199,7 +199,7 @@ test("the team page drills in to the orders waiting on that team", async ({
      element, not an `<select>`, so its value is read off the element. */
   const team = new URL(page.url()).searchParams.get("team");
   expect(team).not.toBeNull();
-  const select = frame.getByRole("combobox", { name: "Waiting on" });
+  const select = frame.getByRole("combobox", { name: "Team" });
   await expect
     .poll(() =>
       select.evaluate((el) => (el as unknown as HTMLSelectElement).value),

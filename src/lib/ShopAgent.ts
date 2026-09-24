@@ -2171,9 +2171,8 @@ export class ShopAgent extends Agent {
     limit,
     cursor,
     q,
-    state,
-    paid,
-    attention,
+    status,
+    need,
     team,
   }: Domain.ListOrdersInput) {
     const readTeams = () => this.teams();
@@ -2199,9 +2198,8 @@ export class ShopAgent extends Agent {
           limit,
           cursor,
           q,
-          state,
-          paid,
-          attention,
+          status,
+          need,
           team,
           teams,
         }),

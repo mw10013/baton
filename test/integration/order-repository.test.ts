@@ -266,9 +266,8 @@ describe("OrderRepository.listOrders", () => {
           limit: 2,
           cursor: null,
           q: null,
-          state: null,
-          paid: null,
-          attention: false,
+          status: null,
+          need: null,
           team: null,
           teams: [],
         });
@@ -278,9 +277,8 @@ describe("OrderRepository.listOrders", () => {
             limit: 2,
             cursor: first.nextCursor,
             q: null,
-            state: null,
-            paid: null,
-            attention: false,
+            status: null,
+            need: null,
             team: null,
             teams: [],
           }),
@@ -299,21 +297,20 @@ describe("OrderRepository.listOrders", () => {
 });
 
 /**
- * Every SQL fragment against `Domain.productionState`: the fixture covers
- * each branch, and each filter must return exactly the names the TypeScript
- * function assigns that state. Runs are written directly because
- * `WorkflowRunRepository` is not in this test's layer and the filters only
- * read status. `#1009` is unpaid with no runs: the `null` state, in no
- * stage and no count.
+ * Every SQL fragment against `Domain.productionState` and `Domain.orderNeeds`:
+ * the fixture covers each branch, and each filter must return exactly the
+ * names the TypeScript functions give that status or need. Runs are written
+ * directly because `WorkflowRunRepository` is not in this test's layer and
+ * the filters only read status. `#1005`, `#1009`, `#1010` and `#1012` are
+ * open with no runs: the `null` status, under Open and All only.
  *
  * `#1012` and `#1013` are the ambiguity cases, written with
  * `matchedWorkflowIds` directly because reconcile is the only writer of that
- * column and this test has no `WorkflowRunRepository`. `#1013` is the
- * precedence case: an open run *and* an item still waiting on a choice,
- * which `Domain.productionState` reads as `multiple_workflows` rather than
- * `in_production`. Between them
- * they are also the proof that `json_array_length` exists in Durable Object
- * SQLite — every `AMBIGUOUS_ITEM` fragment would throw without it.
+ * column and this test has no `WorkflowRunRepository`. `#1013` has an open
+ * run *and* an item still waiting on a choice: `in_production` with need
+ * `choose_workflow`. Between them they are also the proof that
+ * `json_array_length` exists in Durable Object SQLite — every
+ * `AMBIGUOUS_ITEM` fragment would throw without it.
  */
 const seedStates = Effect.gen(function* () {
   const repository = yield* OrderRepository;
@@ -329,16 +326,16 @@ const seedStates = Effect.gen(function* () {
     { n: 2, statuses: ["done", "cancelled"] }, // ready
     { n: 3, statuses: ["done", "active"] }, // in production
     { n: 4, statuses: ["done", "pending"] }, // in production
-    { n: 5, statuses: [] }, // no workflow
+    { n: 5, statuses: [] }, // not started, needs a workflow
     { n: 6, order: { cancelledAt: 5 }, statuses: ["done"] }, // cancelled
     { n: 7, order: { fulfillmentStatus: "FULFILLED" }, statuses: ["done"] }, // shipped
     { n: 8, statuses: ["done", "done"] }, // ready
-    { n: 9, order: { fullyPaid: false }, statuses: [] }, // null: unpaid, nothing to say
-    { n: 10, statuses: ["cancelled"] }, // no workflow: a cancelled run is no run
+    { n: 9, order: { fullyPaid: false }, statuses: [] }, // not started, unpaid: no need
+    { n: 10, statuses: ["cancelled"] }, // not started, needs a workflow: a cancelled run is no run
     { n: 11, order: { fulfillmentStatus: "FULFILLED" }, statuses: [] }, // shipped, never started
-    { n: 12, statuses: [], matched: ["w1", "w2"] }, // choose a workflow
-    { n: 13, statuses: ["active"], matched: ["w1", "w2"] }, // choose a workflow, and one item in production
-    // Unpaid: the ambiguity is not a choice yet, so the manual run's stage wins.
+    { n: 12, statuses: [], matched: ["w1", "w2"] }, // not started, choose a workflow
+    { n: 13, statuses: ["active"], matched: ["w1", "w2"] }, // in production, and choose a workflow
+    // Unpaid: the ambiguity is not a choice yet, so no need.
     {
       n: 14,
       order: { fullyPaid: false },
@@ -388,27 +385,64 @@ const seedStates = Effect.gen(function* () {
   return repository;
 });
 
+/**
+ * `seedStates` plus the three needs it lacks, and a team to filter on:
+ * `#1003`'s open run is blocked, `#1013`'s carries a reconcile flag, and
+ * `#1004`'s open run has a task on a team that has left the roster. Ready
+ * tasks on Cut hang off `#1013` and `#1014`, so the team filter crosses
+ * both rows.
+ */
+const seedNeeds = Effect.gen(function* () {
+  const repository = yield* seedStates;
+  const sql = yield* SqlClient.SqlClient;
+  const task = (id: string, runId: string, teamId: string) => sql`
+    insert into WorkflowRunTask
+      (id, runId, position, step, name, teamId, teamName, completedAt)
+    values (${id}, ${runId}, 1, 1, 'Task', ${teamId}, 'Team', null)
+  `;
+  yield* sql`update WorkflowRun set flag = 'blocked', flagAt = 1 where id = 'run-3-1'`;
+  yield* sql`update WorkflowRun set flag = 'item_removed', flagAt = 1 where id = 'run-13-0'`;
+  yield* task("s4", "run-4-1", "team-gone");
+  yield* task("s13", "run-13-0", "team-cut");
+  yield* task("s14", "run-14-0", "team-cut");
+  const teams = Schema.decodeUnknownSync(Schema.Array(Domain.TeamRoster))([
+    { id: "team-cut", name: "Cut", memberCount: 1 },
+  ]);
+  const list = (
+    status: Domain.OrdersStatus | null,
+    need: Domain.OrderNeed | null = null,
+    team: Domain.TeamId | null = null,
+  ) =>
+    repository.listOrders({
+      limit: 20,
+      cursor: null,
+      q: null,
+      status,
+      need,
+      team,
+      teams,
+    });
+  return { list };
+});
+
 describe("OrderRepository.listOrders filters", () => {
-  it("each state returns exactly the orders productionState gives that state", async () => {
+  it("each status returns exactly the orders productionState gives that status, and open orders with no runs are under Open and All only", async () => {
     const pages = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* seedStates;
-        const list = (state: Domain.OrdersFilterState | null) =>
+        const list = (status: Domain.OrdersStatus | null) =>
           repository.listOrders({
             limit: 20,
             cursor: null,
             q: null,
-            state,
-            paid: null,
-            attention: false,
+            status,
+            need: null,
             team: null,
             teams: [],
           });
         return {
           open: yield* list(null),
           all: yield* list("all"),
-          no_workflow: yield* list("no_workflow"),
-          multiple_workflows: yield* list("multiple_workflows"),
           in_production: yield* list("in_production"),
           ready_to_ship: yield* list("ready_to_ship"),
           shipped: yield* list("shipped"),
@@ -417,42 +451,198 @@ describe("OrderRepository.listOrders filters", () => {
       }),
     );
     strictEqual(pages.all.orders.length, 14);
-    deepStrictEqual(names(pages.no_workflow), ["#1010", "#1005"]);
-    deepStrictEqual(names(pages.multiple_workflows), ["#1013", "#1012"]);
-    deepStrictEqual(names(pages.in_production), ["#1014", "#1004", "#1003"]);
+    // `#1013` is the row the research doc used as the undercount example:
+    // one item in production beside one waiting on a choice. It is in
+    // production now, with the choice as a need.
+    deepStrictEqual(names(pages.in_production), [
+      "#1014",
+      "#1013",
+      "#1004",
+      "#1003",
+    ]);
     deepStrictEqual(names(pages.ready_to_ship), ["#1008", "#1002", "#1001"]);
     deepStrictEqual(names(pages.shipped), ["#1011", "#1007"]);
     deepStrictEqual(names(pages.cancelled), ["#1006"]);
+    const positions = [
+      "in_production",
+      "ready_to_ship",
+      "shipped",
+      "cancelled",
+    ] as const;
     // The SQL and the TypeScript agree row by row.
     for (const row of pages.all.orders) {
-      const state = Domain.productionState(row);
-      const inList =
-        state === null ? false : names(pages[state]).includes(row.order.name);
-      strictEqual(
-        inList,
-        state !== null,
-        `${row.order.name} as ${String(state)}`,
-      );
+      const status = Domain.productionState(row);
+      for (const position of positions)
+        strictEqual(
+          names(pages[position]).includes(row.order.name),
+          status === position,
+          `${row.order.name} as ${String(status)} under ${position}`,
+        );
+      if (status === null)
+        strictEqual(
+          names(pages.open).includes(row.order.name),
+          true,
+          `${row.order.name} not started, under Open`,
+        );
     }
+    deepStrictEqual(
+      pages.all.orders
+        .filter((row) => Domain.productionState(row) === null)
+        .map((row) => row.order.name),
+      ["#1012", "#1010", "#1009", "#1005"],
+    );
+  });
+
+  it("each need returns exactly the orders orderNeeds includes it in", async () => {
+    const pages = await runInRepository(
+      Effect.gen(function* () {
+        const { list } = yield* seedNeeds;
+        return {
+          all: yield* list("all"),
+          no_workflow: yield* list("all", "no_workflow"),
+          choose_workflow: yield* list("all", "choose_workflow"),
+          team: yield* list("all", "team"),
+          blocked: yield* list("all", "blocked"),
+          changed: yield* list("all", "changed"),
+        };
+      }),
+    );
+    deepStrictEqual(names(pages.no_workflow), ["#1010", "#1005"]);
+    // `#1013` again: in production and choosing at once.
+    deepStrictEqual(names(pages.choose_workflow), ["#1013", "#1012"]);
+    deepStrictEqual(names(pages.team), ["#1004"]);
+    deepStrictEqual(names(pages.blocked), ["#1003"]);
+    deepStrictEqual(names(pages.changed), ["#1013"]);
+    for (const row of pages.all.orders)
+      for (const need of Domain.OrderNeed.literals)
+        strictEqual(
+          names(pages[need]).includes(row.order.name),
+          Domain.orderNeeds(row).includes(need),
+          `${row.order.name} under ${need}`,
+        );
+  });
+
+  /**
+   * `Domain.OrderCounts`, checked as the rule itself: for every combination
+   * of status, need and team, each count equals the length of the list its
+   * button would show. `shipped` is the one status with no open orders, so
+   * every need count under it is zero while the status counts are unchanged.
+   */
+  it("a count is what pressing that button would show, given every other filter", async () => {
+    const checks = await runInRepository(
+      Effect.gen(function* () {
+        const { list } = yield* seedNeeds;
+        const statuses = [
+          null,
+          "in_production",
+          "ready_to_ship",
+          "shipped",
+          "all",
+        ] as const;
+        const needs = [null, ...Domain.OrderNeed.literals] as const;
+        const teams = [null, aTeamId("team-cut")] as const;
+        const out: {
+          readonly label: string;
+          readonly count: number;
+          readonly shown: number;
+        }[] = [];
+        for (const status of statuses)
+          for (const need of needs)
+            for (const team of teams) {
+              const { counts } = yield* list(status, need, team);
+              const label = `${String(status)}/${String(need)}/${String(team)}`;
+              for (const position of [
+                "in_production",
+                "ready_to_ship",
+              ] as const)
+                out.push({
+                  label: `${label}: ${position}`,
+                  count: counts[position],
+                  shown: (yield* list(position, need, team)).orders.length,
+                });
+              for (const other of Domain.OrderNeed.literals)
+                out.push({
+                  label: `${label}: ${other}`,
+                  count: counts[other],
+                  shown: (yield* list(status, other, team)).orders.length,
+                });
+            }
+        return { out, shipped: (yield* list("shipped")).counts };
+      }),
+    );
+    for (const { label, count, shown } of checks.out)
+      strictEqual(count, shown, label);
+    deepStrictEqual(checks.shipped, {
+      in_production: 4,
+      ready_to_ship: 3,
+      no_workflow: 0,
+      choose_workflow: 0,
+      team: 0,
+      blocked: 0,
+      changed: 0,
+    });
+  });
+
+  it("counts cross the two rows: needs under a status, statuses under a need, all under a team", async () => {
+    const { open, production, blocked, cut } = await runInRepository(
+      Effect.gen(function* () {
+        const { list } = yield* seedNeeds;
+        return {
+          open: (yield* list(null)).counts,
+          production: (yield* list("in_production")).counts,
+          blocked: (yield* list(null, "blocked")).counts,
+          cut: (yield* list(null, null, aTeamId("team-cut"))).counts,
+        };
+      }),
+    );
+    deepStrictEqual(open, {
+      in_production: 4,
+      ready_to_ship: 3,
+      no_workflow: 2,
+      choose_workflow: 2,
+      team: 1,
+      blocked: 1,
+      changed: 1,
+    });
+    // Status counts ignore their own row; need counts are narrowed by it.
+    deepStrictEqual(production, {
+      in_production: 4,
+      ready_to_ship: 3,
+      no_workflow: 0,
+      choose_workflow: 1,
+      team: 1,
+      blocked: 1,
+      changed: 1,
+    });
+    deepStrictEqual(blocked, { ...open, in_production: 1, ready_to_ship: 0 });
+    // Cut holds `#1013` and `#1014`, both in production.
+    deepStrictEqual(cut, {
+      in_production: 2,
+      ready_to_ship: 0,
+      no_workflow: 0,
+      choose_workflow: 1,
+      team: 0,
+      blocked: 0,
+      changed: 1,
+    });
   });
 
   /**
    * Retention keeps a year of orders, so the list a merchant opens is the
    * bench, not the year; `"all"` is the only way to the closed ones
-   * (`Domain.OrdersFilterState`).
+   * (`Domain.OrdersStatus`).
    */
   it("lists open orders by default and everything under all", async () => {
     const { open, all } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* seedStates;
-        const list = (state: Domain.OrdersFilterState | null) =>
+        const list = (status: Domain.OrdersStatus | null) =>
           repository.listOrders({
             limit: 20,
             cursor: null,
             q: null,
-            state,
-            paid: null,
-            attention: false,
+            status,
+            need: null,
             team: null,
             teams: [],
           });
@@ -463,7 +653,7 @@ describe("OrderRepository.listOrders filters", () => {
     strictEqual(all.orders.length, 14);
     strictEqual(open.orders.length, 14 - closed.length);
     for (const name of closed) strictEqual(names(open).includes(name), false);
-    // Every open stage is still in the default view, and nothing else is.
+    // Every open position is still in the default view, and nothing else is.
     for (const row of open.orders)
       strictEqual(
         Domain.productionState(row) !== "shipped" &&
@@ -473,93 +663,27 @@ describe("OrderRepository.listOrders filters", () => {
       );
   });
 
-  it("counts the open stages once, independent of the page's filters", async () => {
-    const { ready, unpaid } = await runInRepository(
+  it("a need under All narrows to open orders", async () => {
+    const page = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* seedStates;
-        return {
-          ready: yield* repository.listOrders({
-            limit: 2,
-            cursor: null,
-            q: null,
-            state: "ready_to_ship",
-            paid: null,
-            attention: false,
-            team: null,
-            teams: [],
-          }),
-          unpaid: yield* repository.listOrders({
-            limit: 20,
-            cursor: null,
-            q: null,
-            state: null,
-            paid: false,
-            attention: false,
-            team: null,
-            teams: [],
-          }),
-        };
-      }),
-    );
-    // `#1012` is excluded from `no_workflow` and `#1013` from
-    // `in_production`: the ambiguity outranks both, so the chips partition
-    // the open orders exactly as the lists do. `#1014` is unpaid, so its
-    // ambiguity is not a choice yet and its active run counts it in production.
-    const expected = {
-      no_workflow: 2,
-      multiple_workflows: 2,
-      in_production: 3,
-      ready_to_ship: 3,
-      attention: 0,
-    };
-    deepStrictEqual(ready.openCounts, expected);
-    deepStrictEqual(unpaid.openCounts, expected);
-  });
-
-  it("paid crosses with state and pages under it", async () => {
-    const { paid, unpaid, second } = await runInRepository(
-      Effect.gen(function* () {
-        const repository = yield* seedStates;
-        const paid = yield* repository.listOrders({
-          limit: 2,
+        const sql = yield* SqlClient.SqlClient;
+        // A stale block on a shipped order's run is not a to-do.
+        yield* sql`update WorkflowRun set status = 'active', flag = 'blocked', flagAt = 1 where id = 'run-7-0'`;
+        return yield* repository.listOrders({
+          limit: 20,
           cursor: null,
           q: null,
-          state: "ready_to_ship",
-          paid: true,
-          attention: false,
+          status: "all",
+          need: "blocked",
           team: null,
           teams: [],
         });
-        return {
-          paid,
-          second: yield* repository.listOrders({
-            limit: 2,
-            cursor: paid.nextCursor,
-            q: null,
-            state: "ready_to_ship",
-            paid: true,
-            attention: false,
-            team: null,
-            teams: [],
-          }),
-          unpaid: yield* repository.listOrders({
-            limit: 20,
-            cursor: null,
-            q: null,
-            state: null,
-            paid: false,
-            attention: false,
-            team: null,
-            teams: [],
-          }),
-        };
       }),
     );
-    deepStrictEqual(names(paid), ["#1008", "#1002"]);
-    deepStrictEqual(names(second), ["#1001"]);
-    strictEqual(second.nextCursor, null);
-    deepStrictEqual(names(unpaid), ["#1014", "#1009"]);
+    deepStrictEqual(names(page), []);
   });
+
   /**
    * `RunCounts.blocked` and `RunCounts.flagged` are the two alarms the index
    * badge splits, and the split lives in SQL: one counter per `WorkflowRun`
@@ -581,9 +705,8 @@ describe("OrderRepository.listOrders filters", () => {
             limit: 20,
             cursor: null,
             q: null,
-            state: null,
-            paid: null,
-            attention: false,
+            status: null,
+            need: null,
             team: null,
             teams: [],
           }),
@@ -646,9 +769,8 @@ describe("OrderRepository.listOrders q", () => {
         limit: 20,
         cursor: null,
         q: Schema.decodeUnknownSync(Domain.OrderSearch)(q),
-        state: null,
-        paid: null,
-        attention: false,
+        status: null,
+        need: null,
         team: null,
         teams: [],
       });
@@ -674,18 +796,20 @@ describe("OrderRepository.listOrders q", () => {
     deepStrictEqual(names(await runInRepository(search("100_"))), []);
   });
 
-  it("leaves the open-stage counts alone, as the other filters do", async () => {
+  it("narrows the counts to the search", async () => {
     const { all, searched } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* seedNames;
+        const sql = yield* SqlClient.SqlClient;
+        // Paid with no runs: each order needs a workflow, so each is counted.
+        yield* sql`update ShopOrder set fullyPaid = 1`;
         const list = (q: Domain.OrderSearch | null) =>
           repository.listOrders({
             limit: 20,
             cursor: null,
             q,
-            state: null,
-            paid: null,
-            attention: false,
+            status: null,
+            need: null,
             team: null,
             teams: [],
           });
@@ -697,11 +821,12 @@ describe("OrderRepository.listOrders q", () => {
         };
       }),
     );
-    deepStrictEqual(searched.openCounts, all.openCounts);
+    strictEqual(all.counts.no_workflow, 3);
+    strictEqual(searched.counts.no_workflow, 1);
   });
 });
 
-describe("OrderRepository.listOrders attention", () => {
+describe("OrderRepository.listOrders need team", () => {
   /**
    * `Domain.OrderRow.attention` against a roster the test hands in: #3's
    * active run has an open task on a deleted team, #4's pending run has a
@@ -733,18 +858,17 @@ describe("OrderRepository.listOrders attention", () => {
         yield* task("s4b", "run-4-1", 2, "team-empty", null);
         yield* task("s1", "run-1-0", 1, "team-gone", 1);
         yield* task("s8", "run-8-0", 1, "team-cut", 1);
-        const list = (attention: boolean) =>
+        const list = (need: Domain.OrderNeed | null) =>
           repository.listOrders({
             limit: 20,
             cursor: null,
             q: null,
-            state: null,
-            paid: null,
-            attention,
+            status: null,
+            need,
             team: null,
             teams,
           });
-        return { all: yield* list(false), only: yield* list(true) };
+        return { all: yield* list(null), only: yield* list("team") };
       }),
     );
     deepStrictEqual(
@@ -752,8 +876,8 @@ describe("OrderRepository.listOrders attention", () => {
       ["#1004", "#1003"],
     );
     deepStrictEqual(names(only), ["#1004", "#1003"]);
-    strictEqual(all.openCounts.attention, 2);
-    strictEqual(only.openCounts.attention, 2);
+    strictEqual(all.counts.team, 2);
+    strictEqual(only.counts.team, 2);
   });
 });
 
@@ -814,18 +938,45 @@ describe("OrderRepository.listOrders waitingOn", () => {
        Anodize sorts first by name, so it would show if it counted. */
     yield* task("s4a", "run-4-1", 1, "team-cut");
     yield* task("s4b", "run-4-1", 2, "team-polish");
-    const list = (team: Domain.TeamId | null = null) =>
+    const list = (
+      team: Domain.TeamId | null = null,
+      status: Domain.OrdersStatus | null = null,
+    ) =>
       repository.listOrders({
         limit: 20,
         cursor: null,
         q: null,
-        state: null,
-        paid: null,
-        attention: false,
+        status,
+        need: null,
         team,
         teams,
       });
     return { sql, task, list };
+  });
+
+  /**
+   * `#1007` is shipped and `#1006` cancelled; each gets an active run with a
+   * ready task on Cut, as reconcile leaves one (flagged) when the order
+   * closes under live work. Neither is waiting on anyone, in the cell or
+   * under the filter, whichever status is showing.
+   */
+  it("a shipped or cancelled order waits on no team", async () => {
+    const { all, cut } = await runInRepository(
+      Effect.gen(function* () {
+        const { sql, task, list } = yield* waitingFixture;
+        yield* sql`update WorkflowRun set status = 'active', flag = 'order_fulfilled', flagAt = 1 where id = 'run-7-0'`;
+        yield* sql`update WorkflowRun set status = 'active', flag = 'order_cancelled', flagAt = 1 where id = 'run-6-0'`;
+        yield* task("s7", "run-7-0", 1, "team-cut");
+        yield* task("s6", "run-6-0", 1, "team-cut");
+        return {
+          all: yield* list(null, "all"),
+          cut: yield* list(aTeamId("team-cut"), "all"),
+        };
+      }),
+    );
+    deepStrictEqual(waitingOf(all, "#1007"), []);
+    deepStrictEqual(waitingOf(all, "#1006"), []);
+    deepStrictEqual(names(cut), ["#1004", "#1003"]);
   });
 
   it("names each team once, only for ready tasks on open runs", async () => {
@@ -877,10 +1028,10 @@ describe("OrderRepository.listOrders waitingOn", () => {
 
   /**
    * The filter is the column's membership test as a `where`, so the filtered
-   * page is exactly the rows whose cell names the team — and the stage strip
-   * stays independent of it, the way it is independent of `paid`.
+   * page is exactly the rows whose cell names the team — and the counts are
+   * narrowed to it, as `Domain.OrderCounts` says of every other filter.
    */
-  it("keeps exactly the rows waiting on that team, and leaves the counts alone", async () => {
+  it("keeps exactly the rows waiting on that team, and narrows the counts to it", async () => {
     const { all, cut, polish, unknown } = await runInRepository(
       Effect.gen(function* () {
         const { list } = yield* waitingFixture;
@@ -902,8 +1053,18 @@ describe("OrderRepository.listOrders waitingOn", () => {
     deepStrictEqual(names(cut), ["#1004", "#1003"]);
     deepStrictEqual(names(polish), []);
     deepStrictEqual(names(unknown), []);
-    deepStrictEqual(cut.openCounts, all.openCounts);
-    deepStrictEqual(unknown.openCounts, all.openCounts);
+    const none = {
+      in_production: 0,
+      ready_to_ship: 0,
+      no_workflow: 0,
+      choose_workflow: 0,
+      team: 0,
+      blocked: 0,
+      changed: 0,
+    };
+    deepStrictEqual(cut.counts, { ...none, in_production: 2 });
+    deepStrictEqual(unknown.counts, none);
+    strictEqual(all.counts.in_production, 4);
   });
 
   it("sorts by team name, not by id", async () => {

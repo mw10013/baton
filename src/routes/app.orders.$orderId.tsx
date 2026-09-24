@@ -731,21 +731,12 @@ function RouteComponent() {
   /**
    * The same aggregate the index computes in SQL, rebuilt from the run list
    * this page already carries so both pages read one `productionState`.
-   *
-   * Only the `ready_to_ship` banner reads it now. The page-level badge left:
-   * `productionState` ranks `no_workflow` below `in_production`, so a
-   * two-item order with one item running and one unrouted read "In
-   * production" while the unrouted card sat below the fold. The ranking is
-   * right for the index, where a merchant filters by it; here every state is
-   * per item and the cards carry it.
+   * Only the `ready_to_ship` banner reads it: every other state here is per
+   * item, and the cards carry it.
    */
   const state = Domain.productionState({
     order,
     runs: Domain.runCounts(runs.map(({ run }) => run)),
-    ambiguousItems: Domain.ambiguousItems(
-      lineItems,
-      runs.map(({ run }) => run),
-    ),
   });
   /** See `managing`: an id with no run on this order is stale and answers `false`. */
   const managingRun = (run: Domain.WorkflowRun) =>

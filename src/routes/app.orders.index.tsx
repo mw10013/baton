@@ -37,56 +37,83 @@ const TAG_BADGE_LIMIT = 3;
 const ordersQueryKey = (
   shop: string,
   q: Domain.OrderSearch | null,
-  state: Domain.OrdersFilterState | null,
-  paid: boolean | null,
-  attention: boolean,
+  status: Domain.OrdersStatus | null,
+  need: Domain.OrderNeed | null,
   team: Domain.TeamId | null,
-) => ["orders", shop, q, state, paid, attention, team] as const;
+) => ["orders", shop, q, status, need, team] as const;
 
 /**
- * `?q=` is the order-number search; `?state=` picks a stage of the strip
- * (`ready_to_ship` is the packer's view, `all` the whole history); `?paid=`
- * crosses it with the payment gate; `?attention=true` keeps only orders with a
- * run that needs attention (`Domain.OrderRow.attention`); `?team=` keeps only
- * orders waiting on that team, which is the link the team detail page drills
- * in with. An absent `state` is open work (`Domain.OrdersFilterState`).
+ * `?q=` is the order-number search; `?status=` picks a lifecycle position
+ * (`ready_to_ship` is the packer's view, `all` the whole history); `?need=`
+ * keeps only open orders with that problem (`Domain.OrderNeed`); `?team=`
+ * keeps only orders waiting on that team, which is the link the team detail
+ * page drills in with. An absent `status` is open work
+ * (`Domain.OrdersStatus`) and an absent `need` is anything.
  */
 const OrdersSearch = Schema.Struct({
   q: Schema.optionalKey(Domain.OrderSearch),
-  state: Schema.optionalKey(Domain.OrdersFilterState),
-  paid: Schema.optionalKey(Schema.Boolean),
-  attention: Schema.optionalKey(Schema.Boolean),
+  status: Schema.optionalKey(Domain.OrdersStatus),
+  need: Schema.optionalKey(Domain.OrderNeed),
   team: Schema.optionalKey(Domain.TeamId),
 });
 
-/**
- * The stage filters, in lifecycle order, with the two that are not stages at
- * either end: Open is the default view and All is the escape hatch to the
- * closed ones (`Domain.OrdersFilterState`). `cancelled` is deliberately
- * absent: it is rare, shows as a badge, and is not a stage an order moves
- * through. Only the open stages carry a count (see `Domain.OpenStageCounts`).
- *
- * No per-stage hint here: `stageText` already says what the selected stage
- * means at sentence length, and carrying both put a four-word gloss on every
- * button directly above the sentence that repeated it.
- */
-const STAGES: readonly {
-  readonly state: Domain.OrdersFilterState | null;
+/** One button of the Status or Needs row: its value, label, and the `Domain.OrderCounts` key it shows, if counted. */
+interface FilterButton<A> {
+  readonly value: A | null;
   readonly label: string;
-  readonly count: keyof Domain.OpenStageCounts | null;
-}[] = [
-  { state: null, label: "Open", count: null },
-  { state: "no_workflow", label: "No workflow", count: "no_workflow" },
-  {
-    state: "multiple_workflows",
-    label: "Choose a workflow",
-    count: "multiple_workflows",
-  },
-  { state: "in_production", label: "In production", count: "in_production" },
-  { state: "ready_to_ship", label: "Ready to ship", count: "ready_to_ship" },
-  { state: "shipped", label: "Shipped", count: null },
-  { state: "all", label: "All", count: null },
+  readonly count: keyof Domain.OrderCounts | null;
+}
+
+/**
+ * The Status row: lifecycle only, in the order an order moves, with the two
+ * that are not positions at either end — Open is the default view and All
+ * is the escape hatch to the closed ones (`Domain.OrdersStatus`). Problems
+ * are {@link NEEDS}. `cancelled` is deliberately absent: it is rare, shows
+ * as a badge, and is not a position an order moves through. Only the open
+ * positions carry a count (`Domain.OrderCounts`).
+ */
+const STATUSES: readonly FilterButton<Domain.OrdersStatus>[] = [
+  { value: null, label: "Open", count: null },
+  { value: "in_production", label: "In production", count: "in_production" },
+  { value: "ready_to_ship", label: "Ready to ship", count: "ready_to_ship" },
+  { value: "shipped", label: "Shipped", count: null },
+  { value: "all", label: "All", count: null },
 ];
+
+/**
+ * The Needs row: the merchant's to-do list, one button per
+ * `Domain.OrderNeed` in its order. The labels are the row badges' labels
+ * ({@link NEED_LABEL}), so the button and the row say the same words.
+ */
+const NEED_LABEL: Record<Domain.OrderNeed, string> = {
+  no_workflow: "No workflow",
+  choose_workflow: "Choose a workflow",
+  team: "Needs a team",
+  blocked: "Blocked",
+  changed: "Order changed",
+};
+
+const NEEDS: readonly FilterButton<Domain.OrderNeed>[] = [
+  { value: null, label: "Anything", count: null },
+  ...Domain.OrderNeed.literals.map((need) => ({
+    value: need,
+    label: NEED_LABEL[need],
+    count: need,
+  })),
+];
+
+/**
+ * The Needs row and the Team select are hidden under Shipped (and Cancelled,
+ * which has no button): a need is only ever on an open order
+ * (`Domain.OrderNeed`) and only an open order waits on a team
+ * (`Domain.OrderRow.waitingOn`), so neither can match there and every need
+ * count would be zero. Pressing Shipped also drops the need and the team, or
+ * the list would be filtered to nothing by a control that is no longer on
+ * screen. The search chip moves to the Status row while the Needs row is
+ * hidden: the search still applies, so the control to clear it stays.
+ */
+const openOnlyFiltersShown = (value: Domain.OrdersStatus | null) =>
+  value !== "shipped" && value !== "cancelled";
 
 /**
  * `Schema.toType`, not the schema itself. A Durable Object RPC result has
@@ -109,60 +136,19 @@ export const orderDetailHref = ({ legacyId }: Domain.ShopOrder) =>
   `/app/orders/${legacyId}`;
 
 /**
- * The production-state badge, from `Domain.productionState` over the row.
- * "No workflow" is the one an admin has to act on: a paid, uncancelled order
- * with no run means no workflow matched it, and nothing else on the page or
- * in the Shopify admin surfaces that. An unpaid order with no runs cannot
- * start any, so its empty cell is correct rather than alarming. "Ready to
- * ship" is derived, never stored: it clears on its own once Shopify reports
- * the fulfilment.
- *
- * Three alarms can sit on an in-production row and each names a different
- * remedy, which is why they are three badges rather than one. `Needs
- * attention` (rendered by the row, not here) is a configuration fault: the
- * remedy is the workflow editor or the members page. `Blocked` is a person
- * waiting on the merchant right now, so the remedy is the order page. `Order
- * changed` is Shopify having moved under a live run, and the remedy is
- * usually just to accept it. `Blocked` is critical because someone is
- * stopped; `Order changed` is a warning because nothing is.
- *
- * "Choose a workflow" is the same kind of fact as "No workflow" — an item the
- * merchant meant to route is not being made — but it outranks the aggregate
- * stage, so a row can be waiting on a choice *and* have work in progress. Both
- * are shown: the merchant otherwise reads the badge as "nothing is happening
- * on this order", which would be wrong.
+ * The lifecycle badge, from `Domain.productionState` over the row. An order
+ * not started yet shows nothing here; if that is a problem, `needBadges`
+ * says so. "Ready to ship" is derived, never stored: it clears on its own
+ * once Shopify reports the fulfilment.
  */
-const stateBadge = (row: Domain.OrderRow) =>
+const positionBadge = (row: Domain.OrderRow) =>
   Match.value(Domain.productionState(row)).pipe(
     Match.withReturnType<React.ReactNode>(),
     Match.when(null, () => null),
-    Match.when("no_workflow", () => (
-      <s-badge tone="warning">No workflow</s-badge>
-    )),
-    Match.when("multiple_workflows", () => (
-      <s-stack direction="inline" gap="small-300">
-        <s-badge tone="warning">Choose a workflow</s-badge>
-        {row.runs.open > 0 && (
-          <s-badge tone="info">
-            {`${formatNumber(row.runs.open)} active${row.runs.done > 0 ? ` · ${formatNumber(row.runs.done)} done` : ""}`}
-          </s-badge>
-        )}
-        {row.runs.blocked > 0 && <s-badge tone="critical">Blocked</s-badge>}
-        {row.runs.flagged > 0 && (
-          <s-badge tone="warning">Order changed</s-badge>
-        )}
-      </s-stack>
-    )),
     Match.when("in_production", () => (
-      <s-stack direction="inline" gap="small-300">
-        <s-badge tone="info">
-          {`${formatNumber(row.runs.open)} active${row.runs.done > 0 ? ` · ${formatNumber(row.runs.done)} done` : ""}`}
-        </s-badge>
-        {row.runs.blocked > 0 && <s-badge tone="critical">Blocked</s-badge>}
-        {row.runs.flagged > 0 && (
-          <s-badge tone="warning">Order changed</s-badge>
-        )}
-      </s-stack>
+      <s-badge tone="info">
+        {`${formatNumber(row.runs.open)} active${row.runs.done > 0 ? ` · ${formatNumber(row.runs.done)} done` : ""}`}
+      </s-badge>
     )),
     Match.when("ready_to_ship", () => (
       <s-badge tone="success">Ready to ship</s-badge>
@@ -171,6 +157,25 @@ const stateBadge = (row: Domain.OrderRow) =>
     Match.when("cancelled", () => <s-badge tone="neutral">Cancelled</s-badge>),
     Match.exhaustive,
   );
+
+/**
+ * One badge per `Domain.orderNeeds` element, in that order, which is the
+ * order of the Needs row. Tone follows whether a person is stopped: `team`
+ * and `blocked` are critical, the rest a warning.
+ */
+const needBadges = (row: Domain.OrderRow) =>
+  Domain.orderNeeds(row).map((need) => (
+    <s-badge
+      key={need}
+      tone={Match.value(need).pipe(
+        Match.when("team", () => "critical" as const),
+        Match.when("blocked", () => "critical" as const),
+        Match.orElse(() => "warning" as const),
+      )}
+    >
+      {NEED_LABEL[need]}
+    </s-badge>
+  ));
 
 /**
  * The import's whole status line. A shop that has never imported gets
@@ -194,62 +199,37 @@ const syncStatusText = (
 };
 
 /**
- * One sentence under the filters saying what the current stage means, with
- * the count where one is cheap to know. "All" and "Shipped" have no count on
- * purpose: that would be a full read of the shop's history on every refresh
- * of a subscribed page.
+ * Under a need, the empty text names the problem, which is the question the
+ * merchant pressed the button to ask; otherwise the status says what is
+ * missing.
  */
-const orders = (n: number) =>
-  `${formatNumber(n)} ${n === 1 ? "order" : "orders"}`;
-
-const stageText = (
-  view: Domain.OrdersView | undefined,
-  state: Domain.OrdersFilterState | null,
-) => {
-  if (view === undefined) return null;
-  const counts = view.page.openCounts;
-  return Match.value(state).pipe(
-    Match.withReturnType<string | null>(),
-    Match.when(null, () => null),
-    Match.when("all", () => null),
+const emptyText = (
+  status: Domain.OrdersStatus | null,
+  need: Domain.OrderNeed | null,
+) =>
+  Match.value(need).pipe(
+    Match.when("no_workflow", () => "No open orders need a workflow."),
     Match.when(
-      "no_workflow",
-      () =>
-        `${orders(counts.no_workflow)} paid with no matching workflow. Attach one from the order page.`,
+      "choose_workflow",
+      () => "No open orders need a workflow chosen.",
     ),
-    Match.when("multiple_workflows", () =>
-      counts.multiple_workflows === 0
-        ? "No orders are waiting on a choice."
-        : `${orders(counts.multiple_workflows)} have an item that matches more than one workflow. Open each one to choose.`,
+    Match.when("team", () => "No open orders need a team."),
+    Match.when("blocked", () => "No open orders are blocked."),
+    Match.when("changed", () => "No open orders have changed."),
+    Match.when(null, () =>
+      Match.value(status).pipe(
+        Match.when("all", () => "No orders stored."),
+        Match.when("in_production", () => "Nothing is in production."),
+        Match.when(
+          "ready_to_ship",
+          () => "No orders are made and waiting to be fulfilled.",
+        ),
+        Match.when("shipped", () => "No orders have been fulfilled yet."),
+        Match.when("cancelled", () => "No cancelled orders."),
+        Match.when(null, () => "No orders match these filters."),
+        Match.exhaustive,
+      ),
     ),
-    Match.when(
-      "in_production",
-      () => `${orders(counts.in_production)} with work in progress.`,
-    ),
-    Match.when(
-      "ready_to_ship",
-      () =>
-        `${orders(counts.ready_to_ship)} made and waiting to be fulfilled in Shopify.`,
-    ),
-    Match.when("shipped", () => "Orders fulfilled in Shopify."),
-    Match.when("cancelled", () => "Orders cancelled in Shopify."),
-    Match.exhaustive,
-  );
-};
-
-const emptyText = (state: Domain.OrdersFilterState | null) =>
-  Match.value(state).pipe(
-    Match.when("all", () => "No orders stored."),
-    Match.when("no_workflow", () => "Every paid order has a workflow."),
-    Match.when("multiple_workflows", () => "No orders need a workflow chosen."),
-    Match.when("in_production", () => "Nothing is in production."),
-    Match.when(
-      "ready_to_ship",
-      () => "No orders are made and waiting to be fulfilled.",
-    ),
-    Match.when("shipped", () => "No orders have been fulfilled yet."),
-    Match.when("cancelled", () => "No cancelled orders."),
-    Match.when(null, () => "No orders match these filters."),
     Match.exhaustive,
   );
 
@@ -261,9 +241,8 @@ const emptyText = (state: Domain.OrdersFilterState | null) =>
  */
 const OrdersLoaderInput = Schema.Struct({
   q: Schema.NullOr(Domain.OrderSearch),
-  state: Schema.NullOr(Domain.OrdersFilterState),
-  paid: Schema.NullOr(Schema.Boolean),
-  attention: Schema.Boolean,
+  status: Schema.NullOr(Domain.OrdersStatus),
+  need: Schema.NullOr(Domain.OrderNeed),
   team: Schema.NullOr(Domain.TeamId),
 });
 
@@ -271,10 +250,7 @@ const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(OrdersLoaderInput))
   .middleware([shopifyServerFnMiddleware])
   .handler(
-    ({
-      data: { q, state, paid, attention, team },
-      context: { runEffect, session },
-    }) =>
+    ({ data: { q, status, need, team }, context: { runEffect, session } }) =>
       runEffect(
         Effect.gen(function* () {
           const client = yield* ShopAgentClient;
@@ -283,9 +259,8 @@ const getLoaderData = createServerFn({ method: "GET" })
               limit: ORDERS_PAGE_SIZE,
               cursor: null,
               q,
-              state,
-              paid,
-              attention,
+              status,
+              need,
               team,
             }),
             usage: yield* client.getUsage(session.shop),
@@ -298,9 +273,8 @@ export const Route = createFileRoute("/app/orders/")({
   validateSearch: Schema.toStandardSchemaV1(OrdersSearch),
   loaderDeps: ({ search }) => ({
     q: search.q ?? null,
-    state: search.state ?? null,
-    paid: search.paid ?? null,
-    attention: search.attention ?? false,
+    status: search.status ?? null,
+    need: search.need ?? null,
     team: search.team ?? null,
   }),
   loader: ({ deps }) => getLoaderData({ data: deps }),
@@ -323,9 +297,8 @@ function RouteComponent() {
   const { shop } = Route.useRouteContext();
   const {
     q = null,
-    state = null,
-    paid = null,
-    attention = false,
+    status = null,
+    need = null,
     team = null,
   } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
@@ -349,18 +322,16 @@ function RouteComponent() {
   /** A filter change is a new list, so the cursor stack starts over. */
   const setFilters = (next: {
     readonly q: Domain.OrderSearch | null;
-    readonly state: Domain.OrdersFilterState | null;
-    readonly paid: boolean | null;
-    readonly attention: boolean;
+    readonly status: Domain.OrdersStatus | null;
+    readonly need: Domain.OrderNeed | null;
     readonly team: Domain.TeamId | null;
   }) => {
     setCursors([null]);
     void navigate({
       search: {
         ...(next.q === null ? {} : { q: next.q }),
-        ...(next.state === null ? {} : { state: next.state }),
-        ...(next.paid === null ? {} : { paid: next.paid }),
-        ...(next.attention ? { attention: true } : {}),
+        ...(next.status === null ? {} : { status: next.status }),
+        ...(next.need === null ? {} : { need: next.need }),
         ...(next.team === null ? {} : { team: next.team }),
       },
     });
@@ -369,8 +340,8 @@ function RouteComponent() {
   /**
    * The field's text while it is being typed. The URL is the filter; this is
    * the draft on the way to it, so a keystroke is not a navigation and not a
-   * read. It re-seeds whenever `q` changes from outside the field — Clear
-   * filters, the chip's own X, a back button — the same seeded-state shape
+   * read. It re-seeds whenever `q` changes from outside the field — the
+   * chip, "Clear the search", a back button — the same seeded-state shape
    * the workflow pages use for a loaded name.
    */
   const [searchDraft, setSearchDraft] = React.useState(q ?? "");
@@ -388,16 +359,15 @@ function RouteComponent() {
     agent,
     identified,
   } = useSubscribedQuery({
-    queryKey: ordersQueryKey(shop, q, state, paid, attention, team),
+    queryKey: ordersQueryKey(shop, q, status, need, team),
     subscribe: (stub, subscriberId) =>
       stub
         .subscribeOrders({
           limit: ORDERS_PAGE_SIZE,
           cursor: cursorRef.current,
           q,
-          state,
-          paid,
-          attention,
+          status,
+          need,
           team,
           subscriberId,
         })
@@ -426,7 +396,7 @@ function RouteComponent() {
   const submitSearch = () => {
     const next = Option.getOrNull(decodeOrderSearch(searchDraft));
     if (next === q) return;
-    setFilters({ q: next, state, paid, attention, team });
+    setFilters({ q: next, status, need, team });
   };
   /**
    * The latest submit, held in a ref so the keydown listener below is attached
@@ -472,7 +442,7 @@ function RouteComponent() {
   const syncInFlight = view?.syncState.inFlight ?? false;
   const orders = view?.page.orders ?? [];
   const filtered =
-    q !== null || state !== null || paid !== null || attention || team !== null;
+    q !== null || status !== null || need !== null || team !== null;
   /**
    * Nothing stored and nothing filtered: the shop has never had orders here,
    * so the card is the empty state alone. Declared beside `orders` rather than
@@ -528,10 +498,9 @@ function RouteComponent() {
   );
 
   /**
-   * The never-stored state: the card is this block alone, with the stage strip
-   * and the payment filters gone — filtering nothing by payment status is
-   * noise, and the strip of zeroes is what used to squeeze this copy into the
-   * bottom corner of the card. Same centred shape as the other index pages'
+   * The never-stored state: the card is this block alone, with the filter bar
+   * gone — filtering nothing is noise, and a bar of zeroes is what used to
+   * squeeze this copy into the bottom corner of the card. Same centred shape as the other index pages'
    * empty states.
    *
    * A shop that has synced and still has nothing gets different copy: "pull
@@ -575,11 +544,11 @@ function RouteComponent() {
       return (
         <s-box padding="base">
           {/* The search names what it did not find, because the number the
-              merchant typed is the whole question they asked; the stage copy
+              merchant typed is the whole question they asked; the filter copy
               answers a different one and would read as a non sequitur under a
               search that missed. */}
           {q === null ? (
-            <s-paragraph color="subdued">{emptyText(state)}</s-paragraph>
+            <s-paragraph color="subdued">{emptyText(status, need)}</s-paragraph>
           ) : (
             <s-stack direction="inline" gap="small-300" alignItems="center">
               <s-text color="subdued">
@@ -587,7 +556,7 @@ function RouteComponent() {
               </s-text>
               <s-link
                 onClick={() => {
-                  setFilters({ q: null, state, paid, attention, team });
+                  setFilters({ q: null, status, need, team });
                 }}
               >
                 Clear the search
@@ -647,17 +616,17 @@ function RouteComponent() {
               </s-table-cell>
               <s-table-cell>
                 <s-stack direction="inline" gap="small-300">
-                  {stateBadge(row)}
-                  {row.attention && (
-                    <s-badge tone="critical">Needs attention</s-badge>
-                  )}
+                  {positionBadge(row)}
+                  {needBadges(row)}
                 </s-stack>
               </s-table-cell>
-              {/* No placeholder for an empty cell. Empty means every ready
-                  step is unassigned or on a deleted team (an unstaffed team
-                  still shows, so the merchant knows whom to staff), and the
-                  critical badge beside it already says so. A dash would
-                  flatten that into "nothing to see". */}
+              {/* No placeholder for an empty cell. On an order in
+                  production, empty means every ready step is unassigned or
+                  on a deleted team (an unstaffed team still shows, so the
+                  merchant knows whom to staff), and the critical badge
+                  beside it already says so. A dash would flatten that into
+                  "nothing to see". A shipped or cancelled order is always
+                  empty (`Domain.OrderRow.waitingOn`). */}
               <s-table-cell>{waitingOnBadges(row.waitingOn)}</s-table-cell>
               <s-table-cell>{formatNumber(row.itemUnits)}</s-table-cell>
               {/* The packer's handoff: a made order is fulfilled in the
@@ -682,60 +651,55 @@ function RouteComponent() {
   };
 
   /**
-   * The stage filter: one toggle per stage, in the order an order moves through
-   * them, so the row doubles as a reading of where work sits.
+   * One button of the Status or Needs row. `s-press-button` for both rows:
+   * the pressed, hover and focus states come from Polaris, and `pressed`
+   * says "this one is on" where a disabled primary button read to a screen
+   * reader as unavailable. No red on the bar — `s-press-button` only takes
+   * `tone="neutral"`, and the alarm colour belongs on the row badges, where
+   * the remedy is.
    *
-   * `s-press-button` rather than the `s-clickable` tiles this used to be. The
-   * pressed, hover and focus states come from Polaris instead of being
-   * approximated with a background colour on a div — the tiles looked like
-   * plain text until one was selected — and it is the same control shape as the
-   * payment and "Needs attention" filters beside it, so the card carries one
-   * filter idiom rather than two stacked either side of a divider.
-   *
-   * The count rides in the label where there is one. An uncounted stage (see
-   * `STAGES`) is just its name: a blank where a number belongs reads as a
-   * number that failed to load.
+   * A counted button always renders, at zero if need be, so nothing on the
+   * bar appears or disappears with the data. An uncounted one (Open,
+   * Shipped, All, Anything) is just its name: a blank where a number belongs
+   * reads as a number that failed to load.
    */
-  const stageButton = ({
-    state: value,
-    label,
-    count,
-  }: (typeof STAGES)[number]) => {
-    const n = count === null ? null : view?.page.openCounts[count];
+  const pressButton = <A extends string>(
+    { value, label, count }: FilterButton<A>,
+    selected: A | null,
+    select: (value: A | null) => void,
+  ) => {
+    const n = count === null ? null : (view?.page.counts[count] ?? null);
     return (
       <s-press-button
-        key={value ?? "all"}
-        pressed={state === value}
+        key={value ?? "any"}
+        pressed={selected === value}
         onClick={() => {
-          setFilters({ q, state: value, paid, attention, team });
+          select(value);
         }}
       >
-        {n === undefined || n === null
-          ? label
-          : `${label} · ${formatNumber(n)}`}
+        {n === null ? label : `${label} · ${formatNumber(n)}`}
       </s-press-button>
     );
   };
 
   /**
-   * Same control as `stageButton`, for the same reason: the selected payment
-   * filter used to be a `disabled` primary button, which reads to a screen
-   * reader as "dimmed" — unavailable — when what it is is the one that is on.
-   * `pressed` says that, and re-pressing it is a no-op rather than a dead
-   * control.
+   * The search chip: the one filter whose control does not show its own
+   * value at rest, so it says so here. It ends the Needs row, or the Status
+   * row while that one is hidden (`openOnlyFiltersShown`). No
+   * `accessibilityLabel`: the visible text is the accessible name, so a
+   * locator and a screen reader read the same string.
    */
-  const paidButton = (label: string, value: boolean | null) => (
-    <s-press-button
-      pressed={paid === value}
+  const searchChip = q !== null && (
+    <s-button
+      variant="tertiary"
       onClick={() => {
-        setFilters({ q, state, paid: value, attention, team });
+        setFilters({ q: null, status, need, team });
       }}
     >
-      {label}
-    </s-press-button>
+      {`Order ${Domain.normaliseOrderSearch(q)}`}
+    </s-button>
   );
 
-  const attentionCount = view?.page.openCounts.attention ?? 0;
   const syncError = view?.syncState.lastError ?? null;
   const syncStatus = syncStatusText(view, ordersQuery.isError);
 
@@ -768,9 +732,9 @@ function RouteComponent() {
           </s-box>
         )}
         {/* One filter bar, gated on there being something to filter: see
-            `neverStored`. The three rows share a grid so "Stage", "Payment"
-            and "Waiting on" line up in a label column and their controls
-            start at the same inline offset. */}
+            `neverStored`. The rows share a grid so "Status", "Needs" and
+            "Team" line up in a label column and their controls start at the
+            same inline offset. */}
         {!neverStored && (
           <s-box padding="base">
             <s-stack gap="base">
@@ -778,8 +742,8 @@ function RouteComponent() {
                   merchant arriving with an order in hand, not a facet crossed
                   with the others, and the placeholder is its own label. Width
                   capped like the team select, which fills whatever it is
-                  given. The chip that says a search is on lives with the other
-                  cross-cutting filters below. */}
+                  given. The chip that says a search is on is `searchChip`,
+                  on the row below. */}
               <s-grid
                 gridTemplateColumns="minmax(0, 16rem)"
                 justifyContent="start"
@@ -801,133 +765,86 @@ function RouteComponent() {
                 gap="base"
                 alignItems="center"
               >
-                <s-text color="subdued">Stage</s-text>
+                <s-text color="subdued">Status</s-text>
                 <s-stack direction="inline" gap="small-300">
-                  {STAGES.map(stageButton)}
-                </s-stack>
-                <s-text color="subdued">Payment</s-text>
-                <s-stack direction="inline" gap="small-300">
-                  {paidButton("All", null)}
-                  {paidButton("Paid", true)}
-                  {paidButton("Not paid", false)}
-                  {/* Cross-cutting like payment, not a stage: the count is the
-                      open orders with an unassigned or unstaffed step, and the
-                      order page's "Assign team" picker is the remedy.
-
-                      The one filter that stays an `s-button`: it is an alert,
-                      not a neutral facet, and `s-press-button` only takes
-                      `tone="neutral"`, so a press-button would cost the red
-                      that is the whole point of the control. */}
-                  {(attention || attentionCount > 0) && (
-                    <s-button
-                      variant={attention ? "primary" : "secondary"}
-                      tone="critical"
-                      onClick={() => {
-                        setFilters({
-                          q,
-                          state,
-                          paid,
-                          attention: !attention,
-                          team,
-                        });
-                      }}
-                    >
-                      {`Needs attention · ${formatNumber(attentionCount)}`}
-                    </s-button>
-                  )}
-                  {/* The chip for the search, in the cross-cutting filter
-                      row beside Clear filters and shaped like it. No
-                      `accessibilityLabel`: the visible text is the accessible
-                      name, so a locator and a screen reader read the same
-                      string, and the sibling clear control labels itself the
-                      same way. */}
-                  {q !== null && (
-                    <s-button
-                      variant="tertiary"
-                      onClick={() => {
-                        setFilters({ q: null, state, paid, attention, team });
-                      }}
-                    >
-                      {`Order ${Domain.normaliseOrderSearch(q)}`}
-                    </s-button>
-                  )}
-                  {filtered && (
-                    <s-button
-                      variant="tertiary"
-                      onClick={() => {
-                        setFilters({
-                          q: null,
-                          state: null,
-                          paid: null,
-                          attention: false,
-                          team: null,
-                        });
-                      }}
-                    >
-                      Clear filters
-                    </s-button>
-                  )}
-                </s-stack>
-                <s-text color="subdued">Waiting on</s-text>
-                {/* A select rather than the press-buttons beside it: the team
-                    list is unbounded where the payment states are three, and
-                    a select whose value is the team already reads as the
-                    active chip, so this is one control instead of a control
-                    plus a chip. The primary way in is the drill-in from team
-                    detail, which sets `?team=`.
-
-                    Options are names only. A count per option would be a new
-                    per-team aggregate on every refresh of a subscribed page,
-                    which is the cost `Domain.OpenStageCounts` is bounded to
-                    avoid. The grid caps the width: `s-select` fills whatever
-                    inline size it is given. */}
-                <s-grid
-                  gridTemplateColumns="minmax(0, 16rem)"
-                  justifyContent="start"
-                >
-                  <s-select
-                    label="Waiting on"
-                    labelAccessibilityVisibility="exclusive"
-                    value={team ?? ""}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
+                  {STATUSES.map((button) =>
+                    pressButton(button, status, (value) => {
                       setFilters({
                         q,
-                        state,
-                        paid,
-                        attention,
-                        team:
-                          view?.teams.find(({ id }) => id === value)?.id ??
-                          null,
+                        status: value,
+                        need: openOnlyFiltersShown(value) ? need : null,
+                        team: openOnlyFiltersShown(value) ? team : null,
                       });
-                    }}
-                  >
-                    <s-option value="">Any team</s-option>
-                    {view?.teams.map(({ id, name }) => (
-                      <s-option key={id} value={id}>
-                        {name}
-                      </s-option>
-                    ))}
-                    {/* A link that set `?team=` outlives the team it named.
-                        Without this the control would read "Any team" while
-                        the list stayed filtered to nothing. */}
-                    {team !== null && !teamName.has(team) && (
-                      <s-option disabled value={team}>
-                        Deleted team
-                      </s-option>
-                    )}
-                  </s-select>
-                </s-grid>
+                    }),
+                  )}
+                  {!openOnlyFiltersShown(status) && searchChip}
+                </s-stack>
+                {openOnlyFiltersShown(status) && (
+                  <>
+                    <s-text color="subdued">Needs</s-text>
+                    <s-stack direction="inline" gap="small-300">
+                      {NEEDS.map((button) =>
+                        pressButton(button, need, (value) => {
+                          setFilters({ q, status, need: value, team });
+                        }),
+                      )}
+                      {searchChip}
+                    </s-stack>
+                    <s-text color="subdued">Team</s-text>
+                    {/* A select rather than press-buttons: the team list is
+                        unbounded, and a select whose value is the team
+                        already reads as the active chip, so this is one
+                        control instead of a control plus a chip. The primary
+                        way in is the drill-in from team detail, which sets
+                        `?team=`. It keeps the orders the Waiting on column
+                        names the team for.
+
+                        Options are names only. A count per option would be
+                        a new per-team aggregate on every refresh of a
+                        subscribed page, which is the cost
+                        `Domain.OrderCounts` is bounded to avoid. The grid
+                        caps the width: `s-select` fills whatever inline size
+                        it is given. */}
+                    <s-grid
+                      gridTemplateColumns="minmax(0, 16rem)"
+                      justifyContent="start"
+                    >
+                      <s-select
+                        label="Team"
+                        labelAccessibilityVisibility="exclusive"
+                        value={team ?? ""}
+                        onChange={(event) => {
+                          const value = event.currentTarget.value;
+                          setFilters({
+                            q,
+                            status,
+                            need,
+                            team:
+                              view?.teams.find(({ id }) => id === value)?.id ??
+                              null,
+                          });
+                        }}
+                      >
+                        <s-option value="">Any team</s-option>
+                        {view?.teams.map(({ id, name }) => (
+                          <s-option key={id} value={id}>
+                            {name}
+                          </s-option>
+                        ))}
+                        {/* A link that set `?team=` outlives the team it
+                            named. Without this the control would read "Any
+                            team" while the list stayed filtered to
+                            nothing. */}
+                        {team !== null && !teamName.has(team) && (
+                          <s-option disabled value={team}>
+                            Deleted team
+                          </s-option>
+                        )}
+                      </s-select>
+                    </s-grid>
+                  </>
+                )}
               </s-grid>
-              {/* Only alongside rows. With none, `emptyText` says the same
-                  thing in the body ("0 orders with work in progress." over
-                  "Nothing is in production."), and printing both reads as a
-                  stutter. */}
-              {orders.length > 0 && stageText(view, state) !== null && (
-                <s-paragraph color="subdued">
-                  {stageText(view, state)}
-                </s-paragraph>
-              )}
             </s-stack>
           </s-box>
         )}

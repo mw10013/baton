@@ -26,7 +26,7 @@ const order = (
   ...overrides,
 });
 
-/** `Partial` runs: `productionState` reads only `open` and `done`, so a case spells out just the counters it turns on. */
+/** `Partial` runs: a case spells out just the counters it turns on. */
 const row = (
   runs: Partial<Domain.RunCounts>,
   overrides: Partial<Domain.ShopOrder> = {},
@@ -53,38 +53,11 @@ describe("Domain.productionState", () => {
     Domain.OrderRow,
     Domain.ProductionState | null,
   ][] = [
-    ["paid, no runs", row(NONE), "no_workflow"],
-    ["unpaid, no runs", row(NONE, { fullyPaid: false }), null],
     ["open runs", row({ open: 1, done: 1, flagged: 0 }), "in_production"],
     [
-      "paid, one ambiguous item, no runs",
-      row(NONE, {}, 1),
-      "multiple_workflows",
-    ],
-    [
-      "ambiguous outranks in_production: one item chosen, another waiting",
+      "an ambiguous item does not move the position: one item chosen, another waiting",
       row({ open: 1, done: 0, flagged: 0 }, {}, 1),
-      "multiple_workflows",
-    ],
-    [
-      "ambiguous outranks ready_to_ship",
-      row({ open: 0, done: 2, flagged: 0 }, {}, 1),
-      "multiple_workflows",
-    ],
-    [
-      "unpaid cannot start, so an ambiguity is not yet a decision",
-      row(NONE, { fullyPaid: false }, 1),
-      null,
-    ],
-    [
-      "fulfilled outranks ambiguous",
-      row(NONE, { fulfillmentStatus: "FULFILLED" }, 1),
-      "shipped",
-    ],
-    [
-      "cancelled outranks ambiguous",
-      row(NONE, { cancelledAt: 1 }, 1),
-      "cancelled",
+      "in_production",
     ],
     [
       "all done, unfulfilled",
@@ -122,6 +95,74 @@ describe("Domain.productionState", () => {
     it(label, () => {
       strictEqual(Domain.productionState(input), expected);
     });
+
+  it("an open order with no runs is null whether or not it is paid", () => {
+    strictEqual(Domain.productionState(row(NONE)), null);
+    strictEqual(Domain.productionState(row(NONE, { fullyPaid: false })), null);
+    strictEqual(Domain.productionState(row(NONE, {}, 1)), null);
+  });
+});
+
+describe("Domain.orderNeeds", () => {
+  it("no_workflow: paid, open, no live run and no ambiguous item", () => {
+    deepStrictEqual(Domain.orderNeeds(row(NONE)), ["no_workflow"]);
+    deepStrictEqual(Domain.orderNeeds(row(NONE, { fullyPaid: false })), []);
+    deepStrictEqual(Domain.orderNeeds(row({ open: 1 })), []);
+    deepStrictEqual(Domain.orderNeeds(row({ done: 1 })), []);
+    deepStrictEqual(Domain.orderNeeds(row(NONE, {}, 1)), ["choose_workflow"]);
+  });
+
+  it("choose_workflow: an ambiguous item on an order that can start runs", () => {
+    deepStrictEqual(Domain.orderNeeds(row({ open: 1 }, {}, 1)), [
+      "choose_workflow",
+    ]);
+    deepStrictEqual(Domain.orderNeeds(row(NONE, { fullyPaid: false }, 1)), []);
+  });
+
+  it("team: the order needs attention", () => {
+    deepStrictEqual(
+      Domain.orderNeeds({ ...row({ open: 1 }), attention: true }),
+      ["team"],
+    );
+  });
+
+  it("blocked: an open run is blocked", () => {
+    deepStrictEqual(Domain.orderNeeds(row({ open: 1, blocked: 1 })), [
+      "blocked",
+    ]);
+  });
+
+  it("changed: an open run carries a reconcile flag", () => {
+    deepStrictEqual(Domain.orderNeeds(row({ open: 1, flagged: 1 })), [
+      "changed",
+    ]);
+  });
+
+  it("an order can be blocked and choosing at once, in row order", () => {
+    deepStrictEqual(
+      Domain.orderNeeds({
+        ...row({ open: 2, blocked: 1, flagged: 1 }, {}, 1),
+        attention: true,
+      }),
+      ["choose_workflow", "team", "blocked", "changed"],
+    );
+  });
+
+  it("a shipped or cancelled order has no needs", () => {
+    const troubled = (overrides: Partial<Domain.ShopOrder>) => ({
+      ...row({ open: 1, blocked: 1, flagged: 1 }, overrides, 1),
+      attention: true,
+    });
+    deepStrictEqual(
+      Domain.orderNeeds(troubled({ fulfillmentStatus: "FULFILLED" })),
+      [],
+    );
+    deepStrictEqual(Domain.orderNeeds(troubled({ cancelledAt: 1 })), []);
+    deepStrictEqual(
+      Domain.orderNeeds(row(NONE, { fulfillmentStatus: "FULFILLED" })),
+      [],
+    );
+  });
 });
 
 const run = (

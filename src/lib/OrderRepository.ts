@@ -144,18 +144,33 @@ const json = (value: unknown) => JSON.stringify(value);
  * matching `Domain.productionState`'s `none`.
  */
 const OPEN = "fulfillmentStatus <> 'FULFILLED' and cancelledAt is null";
+/**
+ * {@link OPEN} on an aliased `ShopOrder`, for statements that also read
+ * `WorkflowRun`: it has a `cancelledAt` of its own, so the bare form would be
+ * ambiguous there.
+ */
+const openAs = (alias: string) =>
+  `${alias}.fulfillmentStatus <> 'FULFILLED' and ${alias}.cancelledAt is null`;
 const ANY_RUN = `select 1 from WorkflowRun r
   where r.orderId = ShopOrder.id and r.status in ('pending', 'active', 'done')`;
 const OPEN_RUN = `select 1 from WorkflowRun r
   where r.orderId = ShopOrder.id and r.status in ('pending', 'active')`;
 const DONE_RUN = `select 1 from WorkflowRun r
   where r.orderId = ShopOrder.id and r.status = 'done'`;
+/** The `blocked` {@link Domain.OrderNeed}: an open run a worker or the merchant blocked. */
+const BLOCKED_RUN = `select 1 from WorkflowRun r
+  where r.orderId = ShopOrder.id and r.status in ('pending', 'active')
+    and r.flag = 'blocked'`;
+/** The `changed` {@link Domain.OrderNeed}: an open run carrying a reconcile flag. */
+const CHANGED_RUN = `select 1 from WorkflowRun r
+  where r.orderId = ShopOrder.id and r.status in ('pending', 'active')
+    and r.flag is not null and r.flag <> 'blocked'`;
 /**
  * `Domain.ambiguousItems` in SQL: an item with units still to make, two or
  * more workflows matched at the last reconcile, and no live run. "Live" is any
  * status but `cancelled`, so cancelling the only run on a twice-matched item
  * makes it ambiguous again with no further reconcile — which is the point of
- * deriving the stage rather than storing it.
+ * deriving the need rather than storing it.
  *
  * `json_array_length` is SQLite's JSON1, compiled into Durable Object SQLite;
  * `order-repository.test.ts` is the proof.
@@ -167,13 +182,32 @@ const AMBIGUOUS_ITEM = `select 1 from OrderLineItem li
     and json_array_length(li.matchedWorkflowIds) >= 2
     and not exists (${LIVE_RUN_FOR_ITEM})`;
 /**
- * The `multiple_workflows` stage as one predicate: `Domain.productionState`
- * only reaches that branch when the order can start runs, so an unpaid order
- * with an ambiguous item is *not* choosing — it reads as whatever its runs say.
- * The other stages exclude this whole term, not the bare `AMBIGUOUS_ITEM`, or
- * an unpaid order with a manual run would fall out of every bucket.
+ * The `choose_workflow` {@link Domain.OrderNeed} as one predicate: an order
+ * is only choosing when it can start runs, so an unpaid order with an
+ * ambiguous item is *not* choosing. `NO_WORKFLOW` excludes this whole term.
  */
 const CHOOSING = `fullyPaid = 1 and exists (${AMBIGUOUS_ITEM})`;
+/**
+ * The `no_workflow` {@link Domain.OrderNeed}: paid, no live run, and no item
+ * waiting on a choice. `OPEN` is the caller's, as for every need.
+ */
+const NO_WORKFLOW = `fullyPaid = 1 and not exists (${ANY_RUN}) and not (${CHOOSING})`;
+
+/**
+ * Each counted button's predicate over the `facts` rows of the count
+ * statement in `listOrders`: `statusFilter` and `needFilter` restated over
+ * per-order facts instead of correlated subqueries, and moving with them.
+ * `OPEN` is the statement's own `where`.
+ */
+const COUNT_FACT = {
+  in_production: "openRuns > 0",
+  ready_to_ship: "doneRuns > 0 and openRuns = 0",
+  no_workflow: "paid and openRuns = 0 and doneRuns = 0 and not choosing",
+  choose_workflow: "choosing",
+  team: "team",
+  blocked: "blockedRuns > 0",
+  changed: "changedRuns > 0",
+} as const satisfies Record<keyof Domain.OrderCounts, string>;
 
 const bit = (value: boolean) => (value ? 1 : 0);
 
@@ -298,25 +332,29 @@ export class OrderRepository extends Context.Service<
       orderId: string,
     ) => Effect.Effect<Option.Option<number>, SqlError.SqlError>;
     /**
-     * `state` filters by `Domain.OrdersFilterState` and `paid` by `fullyPaid`;
-     * each SQL fragment restates a branch of `productionState` and must move
-     * with it. The three open stages and the `openCounts` aggregate spell out
+     * `status` filters by `Domain.OrdersStatus`, each SQL fragment restating
+     * a branch of `productionState`; `need` filters by `Domain.OrderNeed`,
+     * each fragment restating an element of `orderNeeds`. Both must move with
+     * the function they restate. The open statuses, every need and the
+     * `counts` aggregate spell out
      * `fulfillmentStatus <> 'FULFILLED' and cancelledAt is null` verbatim so
      * SQLite can prove they are served by the partial `ShopOrder_open_idx`,
      * which is what keeps a count from reading the shop's whole history.
      *
-     * `openCounts` is the shop's open strip and honours none of the filters —
-     * not `state`, `paid`, `team`, `attention`, or `q` — so the numbers a
-     * merchant filters against do not move under the filter they just applied.
+     * `counts` follows `Domain.OrderCounts`: a count is what pressing that
+     * button would show, given every other filter. The two rows cross — the
+     * status counts are narrowed by `need`, `team` and `q` but not `status`,
+     * and the need counts by `status`, `team` and `q` but not `need`.
      */
     readonly listOrders: (input: {
       readonly limit: number;
       readonly cursor: string | null;
       /** `null` is no search; otherwise a prefix match on `ShopOrder.name` (`Domain.ListOrdersInput.q`). */
       readonly q: Domain.OrderSearch | null;
-      readonly state: Domain.OrdersFilterState | null;
-      readonly paid: boolean | null;
-      readonly attention: boolean;
+      /** `null` is open work (`Domain.ListOrdersInput.status`). */
+      readonly status: Domain.OrdersStatus | null;
+      /** `null` is any need (`Domain.ListOrdersInput.need`). */
+      readonly need: Domain.OrderNeed | null;
       /** `null` is any team; an id is `Domain.ListOrdersInput.team` — waiting on that team. */
       readonly team: Domain.TeamId | null;
       /** The live D1 roster `attention` and `waitingOn` are derived against (`Domain.OrderRow`). */
@@ -917,18 +955,16 @@ export class OrderRepository extends Context.Service<
           limit,
           cursor,
           q,
-          state,
-          paid,
-          attention,
+          status,
+          need,
           team,
           teams,
         }: {
           readonly limit: number;
           readonly cursor: string | null;
           readonly q: Domain.OrderSearch | null;
-          readonly state: Domain.OrdersFilterState | null;
-          readonly paid: boolean | null;
-          readonly attention: boolean;
+          readonly status: Domain.OrdersStatus | null;
+          readonly need: Domain.OrderNeed | null;
           readonly team: Domain.TeamId | null;
           readonly teams: readonly Domain.TeamRoster[];
         }) {
@@ -961,19 +997,18 @@ export class OrderRepository extends Context.Service<
             where r.orderId = ShopOrder.id and r.status in ('pending', 'active')
               and ${attentionTask}
           )`;
-          const attentionFilter = attention
-            ? attentionRun
-            : sql.literal("1 = 1");
           /**
            * The waiting-on column's membership test as a `where`, so a
            * filtered page is exactly the rows whose cell names the team —
-           * nothing to explain about why a row matched. Aliased `wr` for the
-           * same reason as `waitingRows` below: `readyWhere` binds `r`.
+           * nothing to explain about why a row matched. It restates
+           * `Domain.OrderRow.waitingOn` term for term, the open-order gate
+           * included, and must move with `waitingRows` below. Aliased `wr`
+           * for the same reason as `waitingRows`: `readyWhere` binds `r`.
            */
           const teamFilter =
             team === null
               ? sql.literal("1 = 1")
-              : sql`exists (
+              : sql`${sql.literal(OPEN)} and exists (
                   select 1 from WorkflowRun wr
                   join WorkflowRunTask s on s.runId = wr.id
                   where wr.orderId = ShopOrder.id
@@ -983,30 +1018,20 @@ export class OrderRepository extends Context.Service<
                     and ${sql.literal(ReadyWhere.readyWhere("s"))}
                 )`;
           /**
-           * `multiple_workflows` outranks the three aggregate stages, exactly
-           * as `Domain.productionState` orders them, so the other three carry
-           * `not (CHOOSING)` and the filters stay a partition of
-           * the open orders — the chips have to add up to what the lists show.
+           * The open statuses partition the open orders by run state alone:
+           * any open run is `in_production`, only finished runs is
+           * `ready_to_ship`, and an order with no runs is in neither — it is
+           * under Open and All only, as `Domain.productionState` says.
            */
-          const stateFilter = Match.value(state).pipe(
-            Match.when("no_workflow", () =>
-              sql.and([
-                OPEN,
-                "fullyPaid = 1",
-                `not exists (${ANY_RUN})`,
-                `not (${CHOOSING})`,
-              ]),
-            ),
-            Match.when("multiple_workflows", () => sql.and([OPEN, CHOOSING])),
+          const statusFilter = Match.value(status).pipe(
             Match.when("in_production", () =>
-              sql.and([OPEN, `exists (${OPEN_RUN})`, `not (${CHOOSING})`]),
+              sql.and([OPEN, `exists (${OPEN_RUN})`]),
             ),
             Match.when("ready_to_ship", () =>
               sql.and([
                 OPEN,
                 `exists (${DONE_RUN})`,
                 `not exists (${OPEN_RUN})`,
-                `not (${CHOOSING})`,
               ]),
             ),
             Match.when("shipped", () =>
@@ -1023,10 +1048,28 @@ export class OrderRepository extends Context.Service<
              * the negation of the `shipped` and `cancelled` branches above,
              * spelled as `OPEN` so the partial index serves it. `"all"` is the
              * only filter that reads a shop's whole history
-             * ({@link Domain.OrdersFilterState}).
+             * ({@link Domain.OrdersStatus}).
              */
             Match.when(null, () => sql.literal(OPEN)),
             Match.when("all", () => sql.literal("1 = 1")),
+            Match.exhaustive,
+          );
+          /**
+           * Every need carries `OPEN` (`Domain.OrderNeed`: a need is only
+           * ever on an open order), which is what makes a need under status
+           * `"all"` narrow to open orders.
+           */
+          const needFilter = Match.value(need).pipe(
+            Match.when(null, () => sql.literal("1 = 1")),
+            Match.when("no_workflow", () => sql.and([OPEN, NO_WORKFLOW])),
+            Match.when("choose_workflow", () => sql.and([OPEN, CHOOSING])),
+            Match.when("team", () => sql.and([OPEN, attentionRun])),
+            Match.when("blocked", () =>
+              sql.and([OPEN, `exists (${BLOCKED_RUN})`]),
+            ),
+            Match.when("changed", () =>
+              sql.and([OPEN, `exists (${CHANGED_RUN})`]),
+            ),
             Match.exhaustive,
           );
           /**
@@ -1041,12 +1084,6 @@ export class OrderRepository extends Context.Service<
             q === null
               ? sql.literal("1 = 1")
               : sql`name like ${`${escapeLike(Domain.normaliseOrderSearch(q))}%`} escape '\\' collate nocase`;
-          const paidFilter = Match.value(paid).pipe(
-            Match.when(true, () => sql.literal("fullyPaid = 1")),
-            Match.when(false, () => sql.literal("fullyPaid = 0")),
-            Match.when(null, () => sql.literal("1 = 1")),
-            Match.exhaustive,
-          );
           /**
            * Keyset, never `limit/offset`: the bulk stream and webhooks insert
            * while a merchant pages, and an offset would skip or repeat rows
@@ -1065,7 +1102,7 @@ export class OrderRepository extends Context.Service<
           const page = yield* decodeOrders(
             yield* sql`
               select ${orderColumns} from ShopOrder
-              where ${sql.and([keyset, searchFilter, stateFilter, paidFilter, attentionFilter, teamFilter])}
+              where ${sql.and([keyset, searchFilter, statusFilter, needFilter, teamFilter])}
               order by processedAt desc, id desc
               limit ${limit + 1}
             `,
@@ -1127,18 +1164,15 @@ export class OrderRepository extends Context.Service<
                   group by li.orderId
                 `.values;
           /**
-           * `Domain.OrderRow.waitingOn`: a fourth per-page read rather than a
-           * term on the page query, for the reason the comment above gives
-           * for the other aggregates — the `ShopOrder` decoder wants exactly
-           * its own columns, and this one returns several rows per order
-           * anyway. Gated on `liveIds` because a task pointing at a deleted
-           * team is `attention`, not somebody holding the order, and the
-           * outer run is aliased `wr`: `readyWhere` binds `r` for the task's
-           * own run inside its subqueries (see its JSDoc). A blocked run is
-           * left out even though its task is ready: the team cannot move it,
-           * so naming them here would send the merchant to the wrong desk —
-           * `RunCounts.blocked` is that run's column. The run list still shows it
-           * (last), because the worker who blocked it is the one who unblocks.
+           * `Domain.OrderRow.waitingOn`, whose JSDoc carries the rules: a
+           * fourth per-page read rather than a term on the page query, for
+           * the reason the comment above gives for the other aggregates — the
+           * `ShopOrder` decoder wants exactly its own columns, and this one
+           * returns several rows per order anyway. Gated on `liveIds` because
+           * a task pointing at a deleted team is `attention`, and the outer
+           * run is aliased `wr`: `readyWhere` binds `r` for the task's own
+           * run inside its subqueries (see its JSDoc). `teamFilter` above
+           * restates this read as a `where` and must move with it.
            */
           const waitingRows =
             ids.length === 0 || liveIds.length === 0
@@ -1147,7 +1181,9 @@ export class OrderRepository extends Context.Service<
                   select distinct wr.orderId, s.teamId
                   from WorkflowRunTask s
                   join WorkflowRun wr on wr.id = s.runId
+                  join ShopOrder o on o.id = wr.orderId
                   where ${sql.in("wr.orderId", ids)}
+                    and ${sql.literal(openAs("o"))}
                     and wr.status in ('pending', 'active')
                     and (wr.flag is null or wr.flag <> 'blocked')
                     and ${sql.in("s.teamId", liveIds)}
@@ -1204,26 +1240,87 @@ export class OrderRepository extends Context.Service<
             ]),
           );
           /**
-           * One pass over the open orders for all four stage counts, each term
-           * the same predicate as the matching `stateFilter` branch — including
-           * its `CHOOSING` exclusion, so the chips partition the open
-           * orders the way the lists do. Unpaid open orders with no runs are
-           * the `null` state and fall in no bucket. `attention` is
-           * cross-cutting and excludes nothing.
+           * `Domain.OrderCounts` in one statement over the open orders the
+           * search and team leave. `run_summary` is the per-page `runRows`
+           * aggregate hoisted over every open order, one grouped read of
+           * `WorkflowRun` in place of a correlated `exists` per fragment;
+           * `CHOOSING` and `attentionRun` stay correlated, walking line items
+           * and tasks. `facts` is materialised so each correlated term runs
+           * once per order however many sums read it. The sums restate
+           * `statusFilter` and `needFilter` over those facts and must move
+           * with them.
+           *
+           * `run_summary` is a `cross join`, which SQLite reads as "keep this
+           * table order" (https://www.sqlite.org/optoverview.html#crossjoin):
+           * with no `sqlite_stat1` the planner otherwise drives from
+           * `WorkflowRun_status_idx` and reads every run the retention window
+           * keeps, closed orders included. Driven from `ShopOrder_open_idx`
+           * through `WorkflowRun_orderId_idx`, the read is the open orders'
+           * runs only. The `ShopOrder` columns are qualified because
+           * `WorkflowRun` has a `cancelledAt` of its own.
+           *
+           * A status sum is crossed with the selected need and a need sum
+           * with the selected status, never with its own row. Under
+           * `shipped` and `cancelled` no open order has the status, so the
+           * need sums are zero while the status sums still answer "what if I
+           * pressed In production".
            */
+          const statusFact = Match.value(status).pipe(
+            Match.when("in_production", () => COUNT_FACT.in_production),
+            Match.when("ready_to_ship", () => COUNT_FACT.ready_to_ship),
+            Match.when(null, () => "1"),
+            Match.when("all", () => "1"),
+            Match.when("shipped", () => "0"),
+            Match.when("cancelled", () => "0"),
+            Match.exhaustive,
+          );
+          const needFact = need === null ? "1" : COUNT_FACT[need];
           const [countRow] = yield* sql`
-            select
-              sum(fullyPaid = 1 and not exists (${sql.literal(ANY_RUN)})
-                  and not (${sql.literal(CHOOSING)})),
-              sum(${sql.literal(CHOOSING)}),
-              sum(exists (${sql.literal(OPEN_RUN)})
-                  and not (${sql.literal(CHOOSING)})),
-              sum(exists (${sql.literal(DONE_RUN)}) and not exists (${sql.literal(OPEN_RUN)})
-                  and not (${sql.literal(CHOOSING)})),
-              sum(${attentionRun})
-            from ShopOrder
-            where ${sql.literal(OPEN)}
-          `.values;
+              with run_summary as (
+                select r.orderId,
+                  sum(r.status in ('pending', 'active')) as openRuns,
+                  sum(r.status = 'done') as doneRuns,
+                  sum(r.status in ('pending', 'active') and r.flag = 'blocked') as blockedRuns,
+                  sum(r.status in ('pending', 'active') and r.flag is not null
+                      and r.flag <> 'blocked') as changedRuns
+                from ShopOrder o
+                cross join WorkflowRun r on r.orderId = o.id
+                where ${sql.literal(openAs("o"))}
+                  and r.status in ('pending', 'active', 'done')
+                group by r.orderId
+              ),
+              facts as materialized (
+                select
+                  fullyPaid = 1 as paid,
+                  coalesce(rs.openRuns, 0) as openRuns,
+                  coalesce(rs.doneRuns, 0) as doneRuns,
+                  coalesce(rs.blockedRuns, 0) as blockedRuns,
+                  coalesce(rs.changedRuns, 0) as changedRuns,
+                  (${sql.literal(CHOOSING)}) as choosing,
+                  ${attentionRun} as team
+                from ShopOrder
+                left join run_summary rs on rs.orderId = ShopOrder.id
+                where ${sql.and([OPEN, searchFilter, teamFilter])}
+              )
+              select
+                sum(${sql.literal(COUNT_FACT.in_production)} and ${sql.literal(needFact)}),
+                sum(${sql.literal(COUNT_FACT.ready_to_ship)} and ${sql.literal(needFact)}),
+                sum(${sql.literal(COUNT_FACT.no_workflow)} and ${sql.literal(statusFact)}),
+                sum(${sql.literal(COUNT_FACT.choose_workflow)} and ${sql.literal(statusFact)}),
+                sum(${sql.literal(COUNT_FACT.team)} and ${sql.literal(statusFact)}),
+                sum(${sql.literal(COUNT_FACT.blocked)} and ${sql.literal(statusFact)}),
+                sum(${sql.literal(COUNT_FACT.changed)} and ${sql.literal(statusFact)})
+              from facts
+            `.values;
+          const counts = {
+            in_production: Number(countRow?.[0] ?? 0),
+            ready_to_ship: Number(countRow?.[1] ?? 0),
+            no_workflow: Number(countRow?.[2] ?? 0),
+            choose_workflow: Number(countRow?.[3] ?? 0),
+            team: Number(countRow?.[4] ?? 0),
+            blocked: Number(countRow?.[5] ?? 0),
+            changed: Number(countRow?.[6] ?? 0),
+          } satisfies Domain.OrderCounts;
           const last = orders.at(-1);
           return {
             orders: orders.map((order) => ({
@@ -1244,13 +1341,7 @@ export class OrderRepository extends Context.Service<
               page.length > limit && last !== undefined
                 ? encodeCursor(last)
                 : null,
-            openCounts: {
-              no_workflow: Number(countRow?.[0] ?? 0),
-              multiple_workflows: Number(countRow?.[1] ?? 0),
-              in_production: Number(countRow?.[2] ?? 0),
-              ready_to_ship: Number(countRow?.[3] ?? 0),
-              attention: Number(countRow?.[4] ?? 0),
-            },
+            counts,
           } satisfies Domain.OrdersPage;
         }),
 

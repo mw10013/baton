@@ -937,8 +937,9 @@ export type WorkflowTag = typeof WorkflowTag.Type;
  * A task whose team was deleted is **unassigned** (`teamId` null, or an id
  * no D1 row carries — read as null everywhere). **Needs attention** is the
  * badge for a workflow, run, or team with an unassigned task or a team with
- * no members; it is derived on every read, never stored, and the fix is
- * always **assign a team** or add a member. Unassigned refuses Apply and
+ * no members (on the orders index, the `team` {@link OrderNeed}, whose badge
+ * reads **Needs a team**); it is derived on every read, never stored, and the
+ * fix is always **assign a team** or add a member. Unassigned refuses Apply and
  * Turn on; an empty team is a warning only. Tasks change only through Apply,
  * so an order arriving between two edits sees a whole definition, never a
  * half one; the tag and the name are immediate, because runs snapshot both at
@@ -1812,20 +1813,25 @@ export const OrdersSyncStatus = Schema.Struct({
 export type OrdersSyncStatus = typeof OrdersSyncStatus.Type;
 
 /**
- * Never stored: computed from the order row and its run counts on every read,
- * which is what makes the packer's round trip automatic — fulfil in Shopify,
- * `orders/fulfilled` stores `FULFILLED`, the next read says `shipped`, and the
- * order leaves the Ready-to-ship list without anyone touching Baton.
+ * An order's lifecycle position: one per order, derived from the order row
+ * and its run counts on every read and never stored. `null` (no value) is an
+ * open order with no runs — not started — which shows under Open and All
+ * only. Problems are not positions: an order in production can also be
+ * blocked or waiting on a workflow choice, so those live on {@link OrderNeed}
+ * and an order carries any number of them beside its one position.
+ *
+ * Never stored is what makes the packer's round trip automatic — fulfil in
+ * Shopify, `orders/fulfilled` stores `FULFILLED`, the next read says
+ * `shipped`, and the order leaves the Ready-to-ship list without anyone
+ * touching Baton.
  *
  * The rule is a function, not a table: {@link productionState} is the one
- * definition, its precedence is documented there, and the SQL filters in
- * `OrderRepository.listOrders` restate its branches and must move with it.
- * Readers (`app.orders.index.tsx`) switch on the value for labels and
- * filters only; no site decides anything by comparing it inline.
+ * definition, and the SQL filters in `OrderRepository.listOrders` restate its
+ * branches and must move with it. Readers (`app.orders.index.tsx`) switch on
+ * the value for labels and filters only; no site decides anything by
+ * comparing it inline.
  */
 export const ProductionState = Schema.Literals([
-  "no_workflow",
-  "multiple_workflows",
   "in_production",
   "ready_to_ship",
   "shipped",
@@ -1834,22 +1840,56 @@ export const ProductionState = Schema.Literals([
 export type ProductionState = typeof ProductionState.Type;
 
 /**
- * The orders index's stage filter, which is {@link ProductionState} plus one
- * value that is not a stage.
+ * The orders index's Status row, which is {@link ProductionState} plus one
+ * value that is not a position.
  *
- * `null` is **open work**: everything except `shipped` and `cancelled`. It is
- * the default because retention keeps a year of orders
- * ({@link ShopLimits.orderRetentionDays}) and a merchant opening Orders is
- * looking at the bench, not at the year. `"all"` is the escape hatch that
- * shows the closed ones too, and is the only value here that crosses the open
- * and closed sets — which is why it is not a `ProductionState`: nothing
- * derives it from an order, and `productionState` must never return it.
+ * `null` is **open work**: everything except `shipped` and `cancelled`,
+ * not-started orders included. It is the default because retention keeps a
+ * year of orders ({@link ShopLimits.orderRetentionDays}) and a merchant
+ * opening Orders is looking at the bench, not at the year. `"all"` is the
+ * escape hatch that shows the closed ones too, and is the only value here
+ * that crosses the open and closed sets — which is why it is not a
+ * `ProductionState`: nothing derives it from an order, and `productionState`
+ * must never return it. `"cancelled"` is a legal value with no button.
  */
-export const OrdersFilterState = Schema.Union([
+export const OrdersStatus = Schema.Union([
   ProductionState,
   Schema.Literal("all"),
 ]);
-export type OrdersFilterState = typeof OrdersFilterState.Type;
+export type OrdersStatus = typeof OrdersStatus.Type;
+
+/**
+ * A problem on an open order that the merchant has a remedy for: the orders
+ * index's Needs row, in the order of that row. The one definition is
+ * {@link orderNeeds}; the SQL predicates in `OrderRepository.listOrders`
+ * restate each element and must move with it.
+ *
+ * | Need              | Rule                                                                                         | Remedy                                              |
+ * | ----------------- | -------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+ * | `no_workflow`     | paid, uncancelled, unfulfilled, no live run on any item, and no ambiguous item                | attach a workflow on the order page                 |
+ * | `choose_workflow` | `ambiguousItems > 0` and the order can start runs ({@link canStartRuns})                      | choose a workflow on the order page                 |
+ * | `team`            | {@link OrderRow} `attention`                                                                  | assign a team on the order page, or staff the team  |
+ * | `blocked`         | `runs.blocked > 0`                                                                            | the order page                                      |
+ * | `changed`         | `runs.flagged > 0`                                                                            | accept the change on the order page                 |
+ *
+ * An unpaid order with an ambiguous item is not choosing: reconcile would not
+ * start a run on it whichever workflow was chosen, so there is no decision
+ * waiting yet.
+ *
+ * A need is only ever on an open order (uncancelled, unfulfilled): a closed
+ * order has no work left, and a stale flag on it is not a to-do. Needs are
+ * independent of each other and of the {@link ProductionState}: one order can
+ * carry several, and an order in production can be waiting on a choice for
+ * another item at the same time.
+ */
+export const OrderNeed = Schema.Literals([
+  "no_workflow",
+  "choose_workflow",
+  "team",
+  "blocked",
+  "changed",
+]);
+export type OrderNeed = typeof OrderNeed.Type;
 
 /**
  * Keyset cursor over `(processedAt desc, id desc)`, encoded as
@@ -1906,16 +1946,23 @@ export const ListOrdersInput = Schema.Struct({
    * Always send the key, for the same reason as `team`.
    */
   q: Schema.NullOr(OrderSearch),
-  /** {@link OrdersFilterState}: `null` is open work, `"all"` is every order, and each stage has a SQL form in `OrderRepository.listOrders` that restates `productionState`. */
-  state: Schema.NullOr(OrdersFilterState),
-  /** `null` is any payment state; `true`/`false` filters on `fullyPaid`, the run-creation gate. */
-  paid: Schema.NullOr(Schema.Boolean),
-  /** `true` keeps only orders with an open run that needs attention (see `OrderRow.attention`). */
-  attention: Schema.Boolean,
   /**
-   * `null` is any team; an id keeps only orders with a ready task on that
-   * team — "waiting on", the run list's own predicate, not "owns a task
-   * somewhere in the run". The looser reading pulls in orders the team
+   * {@link OrdersStatus}: `null` is open work, `"all"` is every order, and
+   * each position has a SQL form in `OrderRepository.listOrders` that
+   * restates `productionState`. Always send the key, for the same reason as
+   * `team`.
+   */
+  status: Schema.NullOr(OrdersStatus),
+  /**
+   * {@link OrderNeed}: `null` is any ("Anything"); a need keeps only open
+   * orders {@link orderNeeds} gives it, under any status, `"all"` included.
+   * Always send the key, for the same reason as `team`.
+   */
+  need: Schema.NullOr(OrderNeed),
+  /**
+   * `null` is any team; an id keeps only orders waiting on that team
+   * ({@link OrderRow} `waitingOn`, open orders only) — the run list's own
+   * readiness predicate, not "owns a task somewhere in the run". The looser reading pulls in orders the team
    * finished days ago and orders it will not touch for two more steps, so
    * the label carries the predicate.
    *
@@ -1973,11 +2020,14 @@ export const OrderRow = Schema.Struct({
   itemUnits: Schema.Number,
   runs: RunCounts,
   /**
-   * **Needs attention**, derived at read time against the live D1 roster and
+   * **Needs a team**, derived at read time against the live D1 roster and
    * never stored: an open run has an open task that is unassigned (`teamId`
    * null or no longer in the roster) or a ready task on a team with no
    * members. The order page's "Assign team" picker and the members screen
    * are the remedies; either clears this with no further write.
+   *
+   * It is the `team` element of {@link orderNeeds}, and the row badge reads
+   * "Needs a team".
    */
   attention: Schema.Boolean,
   /**
@@ -1985,6 +2035,14 @@ export const OrderRow = Schema.Struct({
    * "who is holding it", answered at the altitude the list grows with — a
    * shop has a handful of teams, while its runs are a cross product of line
    * items and matching workflows.
+   *
+   * **Only an open order waits on a team**: a shipped or cancelled order's
+   * list is empty. Its open runs are the leftovers reconcile flagged
+   * (`order_fulfilled`, `order_cancelled`); a flag refuses Start and Done, so
+   * the team cannot move them, and the only action left is the worker's
+   * Dismiss on their own run list. Naming the team on the order would read as
+   * a hold-up on work that is over. This is the same line
+   * {@link OrderNeed} draws: needs are open-only too.
    *
    * Unassigned ready tasks contribute nothing, and neither does a team that
    * has left the roster: both are `attention`, and rendering one fault in two
@@ -2012,53 +2070,73 @@ export const OrderRow = Schema.Struct({
 export type OrderRow = typeof OrderRow.Type;
 
 /**
- * `null` is an unpaid order with no runs: nothing to say, and not a state a
- * person acts on. Cancelled wins over everything because it is the only stop
- * gate; `shipped` is checked next, before the run counts, so an order
- * fulfilled with runs still open reads as shipped (the runs carry the
- * `order_fulfilled` flag) and an order fulfilled with no runs at all — every
- * historical order the window sync pulls in — reads as shipped rather than
- * as a "No workflow" warning nobody can act on. The SQL forms in
- * `OrderRepository.listOrders` restate these branches and must move with them.
+ * The {@link ProductionState} of an order. `null` is an open order with no
+ * runs, paid or not: not started. Whether that is a problem is
+ * {@link orderNeeds}' question (`no_workflow`), not this one's.
  *
- * `multiple_workflows` sits above `in_production` and below `shipped`: an
- * ambiguity is a merchant decision blocking an item the merchant *meant* to
- * route, so it outranks the aggregate stage even when other items on the order
- * are already being made. A plain unrouted item is not a pending decision,
- * which is why `no_workflow` stays below `in_production`.
+ * Cancelled wins over everything because it is the only stop gate; `shipped`
+ * is checked next, before the run counts, so an order fulfilled with runs
+ * still open reads as shipped (the runs carry the `order_fulfilled` flag) and
+ * an order fulfilled with no runs at all — every historical order the window
+ * sync pulls in — reads as shipped. The open positions then follow the run
+ * counts alone: any open run is `in_production`, only finished runs is
+ * `ready_to_ship`. The SQL forms in `OrderRepository.listOrders` restate these
+ * branches and must move with them.
  *
- * Takes the three fields it reads rather than a whole `OrderRow`, so the order
+ * Takes the two fields it reads rather than a whole `OrderRow`, so the order
  * page — which rebuilds the aggregate from its own run list — does not have
  * to invent a value for every row field the index adds later.
  */
 export const productionState = ({
   order,
   runs,
-  ambiguousItems,
-}: Pick<
-  OrderRow,
-  "order" | "runs" | "ambiguousItems"
->): ProductionState | null =>
+}: Pick<OrderRow, "order" | "runs">): ProductionState | null =>
   Match.value({
     cancelled: isCancelled(order),
     fulfilled: isFulfilled(order),
     none: runs.open === 0 && runs.done === 0,
-    canStart: canStartRuns(order),
     open: runs.open > 0,
-    ambiguous: ambiguousItems > 0,
   }).pipe(
     Match.withReturnType<ProductionState | null>(),
     Match.when({ cancelled: true }, () => "cancelled"),
     Match.when({ fulfilled: true }, () => "shipped"),
-    Match.when(
-      { cancelled: false, fulfilled: false, canStart: true, ambiguous: true },
-      () => "multiple_workflows",
-    ),
-    Match.when({ none: true, canStart: true }, () => "no_workflow"),
     Match.when({ none: true }, () => null),
     Match.when({ open: true }, () => "in_production"),
     Match.orElse(() => "ready_to_ship"),
   );
+
+/**
+ * The {@link OrderNeed}s of one order, in `OrderNeed` order; `[]` for a
+ * cancelled or fulfilled order. The row badges render this result and the
+ * Needs filter restates each element in SQL.
+ *
+ * `no_workflow` tests fulfilment itself because {@link canStartRuns} reads
+ * paid and uncancelled only: a fulfilled order with no runs is every
+ * historical order the window sync pulled in, and is not a to-do.
+ */
+export const orderNeeds = ({
+  order,
+  runs,
+  attention,
+  ambiguousItems,
+}: Pick<
+  OrderRow,
+  "order" | "runs" | "attention" | "ambiguousItems"
+>): readonly OrderNeed[] => {
+  if (isCancelled(order) || isFulfilled(order)) return [];
+  const need: Record<OrderNeed, boolean> = {
+    no_workflow:
+      canStartRuns(order) &&
+      runs.open === 0 &&
+      runs.done === 0 &&
+      ambiguousItems === 0,
+    choose_workflow: canStartRuns(order) && ambiguousItems > 0,
+    team: attention,
+    blocked: runs.blocked > 0,
+    changed: runs.flagged > 0,
+  };
+  return OrderNeed.literals.filter((literal) => need[literal]);
+};
 
 /**
  * The index's per-order ambiguity count, recomputed from a detail page's line
@@ -2097,29 +2175,42 @@ export const runCounts = (runs: readonly WorkflowRun[]): RunCounts =>
   );
 
 /**
- * How many orders sit in each *open* stage, for the stage strip on the index.
- * Only the open stages are counted: they are read through the partial index
- * over unfulfilled, uncancelled orders, so the count costs one row per open
- * order, not one per order ever stored. "All" and "Shipped" carry no count —
- * on a shop with years of history that would be a full-table read on every
- * refresh of a subscribed page. Independent of the `paid` and `team` filters
- * so the strip reads the same whichever payment view or team is showing.
+ * The counts on the orders index's Status and Needs buttons.
+ *
+ * **A count is what pressing that button would show, given every other
+ * filter.** A status count honours the selected need, the team and the
+ * search; a need count honours the selected status, the team and the search.
+ * Neither honours its own row, or pressing a button would read "0" on every
+ * sibling of the pressed one.
+ *
+ * Both are computed over open orders only. They are read through the partial
+ * index over unfulfilled, uncancelled orders, so a count costs one row per
+ * open order, not one per order ever stored. So `shipped` and `all` carry no
+ * status count — on a shop with years of history that would be a full-table
+ * read on every refresh of a subscribed page — and under status `shipped` (or
+ * `cancelled`) the need counts are all zero and the route hides the row,
+ * while the status counts still read as the open positions they would show.
+ *
+ * Refreshes are bounded by the subscribed page's invalidation throttle,
+ * `INVALIDATION_THROTTLE_MS` in `useSubscribedQuery` (2 s), not by anything
+ * here.
  */
-export const OpenStageCounts = Schema.Struct({
-  no_workflow: Schema.Number,
-  multiple_workflows: Schema.Number,
+export const OrderCounts = Schema.Struct({
   in_production: Schema.Number,
   ready_to_ship: Schema.Number,
-  /** Open orders with `OrderRow.attention`; a cross-cutting count, not a stage. */
-  attention: Schema.Number,
+  no_workflow: Schema.Number,
+  choose_workflow: Schema.Number,
+  team: Schema.Number,
+  blocked: Schema.Number,
+  changed: Schema.Number,
 });
-export type OpenStageCounts = typeof OpenStageCounts.Type;
+export type OrderCounts = typeof OrderCounts.Type;
 
 export const OrdersPage = Schema.Struct({
   orders: Schema.Array(OrderRow),
   limit: Schema.Number,
   nextCursor: Schema.NullOr(OrdersCursor),
-  openCounts: OpenStageCounts,
+  counts: OrderCounts,
 });
 export type OrdersPage = typeof OrdersPage.Type;
 

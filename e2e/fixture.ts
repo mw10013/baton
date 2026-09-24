@@ -218,7 +218,7 @@ export const workflows: readonly SeedWorkflow[] = [
   },
   {
     // one unassigned task (what a team delete leaves) and one on the empty
-    // team: "Needs attention" in the list, both banners on the detail page,
+    // team: "Needs a team" in the list, both banners on the detail page,
     // Turn on refused until the task is assigned
     name: "Pet tag (unassigned task)",
     tag: TAG.petTag,
@@ -450,7 +450,7 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // unpaid: nothing routes and the Not-paid filter has a row
+    // unpaid: nothing routes, and an unpaid order with no runs has no need
     n: 1009,
     unpaid: true,
     lineItems: [item("Leather journal", TAG.journal, 1, { Initials: "S.P." })],
@@ -473,8 +473,8 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // one ambiguous item beside one that started fine: the order reads
-    // "Choose a workflow" even with the journal already in production
+    // one ambiguous item beside one that started fine: In production with
+    // "Choose a workflow"
     n: 1012,
     lineItems: [
       item("Engraved cutting board", [TAG.board, TAG.rush], 1, {

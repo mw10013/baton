@@ -423,8 +423,8 @@ function RouteComponent() {
       {/* The drill-in that makes the orders filter discoverable from the
           suspicion that prompts it — "is this team backed up?" — rather than
           from browsing a picker. `?team=` means waiting on: the orders whose
-          ready task is this team's right now, not every order it ever
-          touched. Production state stays on Orders; this page is the roster
+          ready task is this team's right now (open orders only, see
+          `Domain.OrderRow.waitingOn`), not every order it ever touched. Production state stays on Orders; this page is the roster
           (`UsedByCard` below is configuration, not run state). */}
       <s-button
         slot="secondary-actions"

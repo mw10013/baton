@@ -206,7 +206,7 @@ test("the orders index searches by order number and clears back to the list", as
   ).toHaveValue("");
 
   /* A number no order carries: the empty state names it rather than falling
-     back to the stage copy. */
+     back to the filter copy. */
   await frame.getByRole("textbox", { name: "Order number" }).fill("9999");
   await frame.getByRole("textbox", { name: "Order number" }).press("Enter");
   await expect(
@@ -485,7 +485,7 @@ test("the merchant blocks a run with a reason, edits it, notes the run, and unbl
  * and this is the fixture for it.
  *
  * So: the item matches two, nothing starts, the index shows the order under
- * _Choose a workflow_, and the order page asks. Then the same item is moved to
+ * the _Choose a workflow_ need, and the order page asks. Then the same item is moved to
  * the other workflow, which is a replace and has to be confirmed.
  */
 test("an item matching two workflows waits for the merchant to choose, then changes", async ({
@@ -530,17 +530,21 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   const frame = await gotoApp(page);
   await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
 
-  /* The stage strip carries the new chip with a count, and the row's badge
-     says the same thing. Scoped to the row for the badge, because the chip
-     above the table has the same words. */
-  await expect(
-    frame.getByRole("button", { name: /^Choose a workflow/u }),
-  ).toBeVisible();
+  /* The Needs row carries the button with a count, and the row's badge says
+     the same thing. Scoped to the row for the badge, because the button above
+     the table has the same words. */
+  const choose = frame.getByRole("button", { name: /^Choose a workflow/u });
+  await expect(choose).toBeVisible();
   await expect(
     frame
       .locator("s-table-row", { hasText: "#9401" })
       .getByText("Choose a workflow", { exact: true }),
   ).toBeVisible();
+  await choose.click();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("need"))
+    .toBe("choose_workflow");
+  await expect(frame.getByRole("link", { name: "#9401" })).toBeVisible();
 
   await frame.getByRole("link", { name: "#9401" }).click();
   await expect(frame.locator('s-page[heading="#9401"]')).toBeVisible();
@@ -605,11 +609,92 @@ test("an item matching two workflows waits for the merchant to choose, then chan
      decision, and the merchant should see the one they undid. */
   await expect(item.getByText("Cancelled", { exact: true })).toBeVisible();
 
-  /* And the order has left the stage: one live run, nothing left to choose. */
+  /* And the order has left the need: one live run, nothing left to choose. */
   await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
   await expect(
     frame
       .locator("s-table-row", { hasText: "#9401" })
       .getByText("Choose a workflow", { exact: true }),
   ).toHaveCount(0);
+});
+
+/**
+ * `Domain.OrderCounts` on screen: each Needs button's count is the number of
+ * rows pressing it shows. The search narrows the counts too, which is what
+ * keeps this test to its own two orders on a shop that also holds the
+ * sandbox's real ones.
+ */
+test("the needs row counts what its button shows", async ({ page }) => {
+  test.setTimeout(120_000);
+
+  const MEMBER = "e2e.needs@example.com";
+  const TEAM = "E2E Needs Bench";
+  await seedMembers(
+    seedConfig(),
+    [MEMBER],
+    [{ name: TEAM, members: [MEMBER] }],
+    [
+      {
+        name: "E2E Needs Cuff",
+        tag: "e2e-needs",
+        tasks: [{ name: "Cut", team: TEAM }],
+      },
+    ],
+    [
+      {
+        n: 9501,
+        lineItems: [{ title: "E2E Unrouted", quantity: 1, tags: [] }],
+      },
+      {
+        n: 9502,
+        blocked: "Waiting on the customer.",
+        lineItems: [{ title: "E2E Cuff", quantity: 1, tags: ["e2e-needs"] }],
+      },
+    ],
+  );
+
+  const frame = await gotoApp(page);
+  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
+
+  const search = frame.getByRole("textbox", { name: "Order number" });
+  await search.fill("#950");
+  await search.press("Enter");
+  await expect(frame.getByRole("button", { name: "Order #950" })).toBeVisible();
+
+  const rows = frame.locator("s-table-row", { hasText: /#950\d/u });
+  await expect(
+    frame.getByRole("button", { name: "No workflow · 1", exact: true }),
+  ).toBeVisible();
+  await expect(
+    frame.getByRole("button", { name: "Blocked · 1", exact: true }),
+  ).toBeVisible();
+  await expect(rows).toHaveCount(2);
+
+  await frame
+    .getByRole("button", { name: "No workflow · 1", exact: true })
+    .click();
+  await expect(rows).toHaveCount(1);
+  await expect(frame.getByRole("link", { name: "#9501" })).toBeVisible();
+
+  await frame.getByRole("button", { name: "Anything", exact: true }).click();
+  await expect(rows).toHaveCount(2);
+
+  /* Shipped hides the open-only filters and drops a pressed need, keeping
+     the search and its chip; All brings the row back with the need cleared. */
+  await frame.getByRole("button", { name: "Blocked · 1", exact: true }).click();
+  await expect(rows).toHaveCount(1);
+  await frame.getByRole("button", { name: "Shipped", exact: true }).click();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("need"))
+    .toBeNull();
+  await expect(frame.getByText("Needs", { exact: true })).toHaveCount(0);
+  await expect(frame.getByRole("combobox", { name: "Team" })).toHaveCount(0);
+  await expect(frame.getByRole("button", { name: "Order #950" })).toBeVisible();
+  await frame.getByRole("button", { name: "All", exact: true }).click();
+  await expect(
+    frame.getByRole("button", { name: "Anything", exact: true }),
+  ).toBeVisible();
+  await expect(frame.getByRole("combobox", { name: "Team" })).toBeVisible();
+  await expect(rows).toHaveCount(2);
 });
