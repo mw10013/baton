@@ -8,6 +8,7 @@ import {
   liftFlagLabel,
   Prose,
   RunItem,
+  RunNote,
 } from "@/components/MemberRun";
 import { RunSteps } from "@/components/RunSteps";
 import { BlockModal, RunNoteModal } from "@/components/RunTextModals";
@@ -273,41 +274,21 @@ function RouteComponent() {
                 ))}
               <RunItem run={run} />
             </s-stack>
-            {/* The note is the run's one text field, always present and
-              possibly blank, so its one verb is Edit and the blank state is
-              the field's name rather than a call to add. It sits above the
-              tasks: it is the answer to "anything I should know about this
-              job", and a note under a task already done is a note nobody
-              reads. Shopify's order note is read-only and folds in under it,
-              so the page has one place for prose about the run. On a
-              cancelled run a blank note draws nothing. */}
+            {/* The note sits above the tasks: it is the answer to "anything I
+              should know about this job", and a note under a task already
+              done is a note nobody reads. Shopify's order note is read-only
+              and folds in under it, so the page has one place for prose about
+              the run. {@link RunNote} states the note's own shape. */}
             {(hasNote || canNote || hasOrderNote) && (
               <s-stack id="note" gap="small-300">
-                {(hasNote || canNote) && (
-                  <s-stack
-                    direction="inline"
-                    justifyContent="space-between"
-                    alignItems="start"
-                    gap="base"
-                  >
-                    {hasNote ? (
-                      <Prose>{run.note}</Prose>
-                    ) : (
-                      <s-text color="subdued">Note</s-text>
-                    )}
-                    {canNote && (
-                      <s-button
-                        variant="secondary"
-                        disabled={actions.pending}
-                        onClick={() => {
-                          showModal(NOTE_MODAL);
-                        }}
-                      >
-                        Edit
-                      </s-button>
-                    )}
-                  </s-stack>
-                )}
+                <RunNote
+                  note={run.note}
+                  canEdit={canNote}
+                  pending={actions.pending}
+                  onEdit={() => {
+                    showModal(NOTE_MODAL);
+                  }}
+                />
                 {hasOrderNote && (
                   <s-stack gap="small-500">
                     <s-text color="subdued">From the order:</s-text>

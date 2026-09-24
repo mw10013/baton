@@ -181,26 +181,26 @@ Take screenshots at desktop width and at phone width (the banner and its two but
 
 Every symbol below has a JSDoc that states a rule the change breaks. Each must be rewritten, not patched, so the reasoning is inline and no sentence describes the old behaviour.
 
-| Symbol                            | File                           | What changes                                                              |
-| --------------------------------- | ------------------------------ | ------------------------------------------------------------------------- |
-| `flagLabel`                       | `app.orders.$orderId.tsx`      | Tone comes from `flagTone`; reason the strip is gone.                     |
-| `blockedLine`, `blockedStrip`     | `app.orders.$orderId.tsx`      | Deleted.                                                                  |
-| `nowLine`                         | `app.orders.$orderId.tsx`      | Renders while blocked; why.                                               |
-| `unblockButton`                   | `app.orders.$orderId.tsx`      | One site, the banner.                                                     |
-| `editReasonButton`                | `app.orders.$orderId.tsx`      | "banner" not "strip".                                                     |
-| `noteBlock`                       | `app.orders.$orderId.tsx`      | Deleted; `RunNote` carries the rule.                                      |
-| `manageRows`                      | `app.orders.$orderId.tsx`      | Row is Block, Cancel run, Change workflow; no red; no note; second param. |
-| `renderRun`                       | `app.orders.$orderId.tsx`      | Mentions banner, Now line, `RunNote`.                                     |
-| `changeOpen`, `changingRun`       | `app.orders.$orderId.tsx`      | Deleted.                                                                  |
-| `changing`                        | `app.orders.$orderId.tsx`      | Holds the modal's select state.                                           |
-| `CHANGE_WORKFLOW_MODAL`           | `app.orders.$orderId.tsx`      | Asks and confirms.                                                        |
-| `changeWarning`                   | `app.orders.$orderId.tsx` or `src/lib/` | Note clause.                                                     |
-| `workflowPicker`                  | `app.orders.$orderId.tsx`      | One place, at rest.                                                       |
-| `renderLineItem`                  | `app.orders.$orderId.tsx`      | Live-run bullet names the modal and why its submit is red.                |
-| `FlagBanner`                      | `MemberRun.tsx`                | Both pages; order page passes actions.                                    |
-| `RunNote`                         | `MemberRun.tsx`                | New; the note rule lives here.                                            |
-| Member note comment               | `shop.$shop.workflows.$runId.tsx` | Trimmed to what `RunNote` does not say.                                |
-| Block test JSDoc, change test JSDoc | `e2e/orders.spec.ts`         | New shapes.                                                               |
+| Symbol                              | File                                    | What changes                                                              |
+| ----------------------------------- | --------------------------------------- | ------------------------------------------------------------------------- |
+| `flagLabel`                         | `app.orders.$orderId.tsx`               | Tone comes from `flagTone`; reason the strip is gone.                     |
+| `blockedLine`, `blockedStrip`       | `app.orders.$orderId.tsx`               | Deleted.                                                                  |
+| `nowLine`                           | `app.orders.$orderId.tsx`               | Renders while blocked; why.                                               |
+| `unblockButton`                     | `app.orders.$orderId.tsx`               | One site, the banner.                                                     |
+| `editReasonButton`                  | `app.orders.$orderId.tsx`               | "banner" not "strip".                                                     |
+| `noteBlock`                         | `app.orders.$orderId.tsx`               | Deleted; `RunNote` carries the rule.                                      |
+| `manageRows`                        | `app.orders.$orderId.tsx`               | Row is Block, Cancel run, Change workflow; no red; no note; second param. |
+| `renderRun`                         | `app.orders.$orderId.tsx`               | Mentions banner, Now line, `RunNote`.                                     |
+| `changeOpen`, `changingRun`         | `app.orders.$orderId.tsx`               | Deleted.                                                                  |
+| `changing`                          | `app.orders.$orderId.tsx`               | Holds the modal's select state.                                           |
+| `CHANGE_WORKFLOW_MODAL`             | `app.orders.$orderId.tsx`               | Asks and confirms.                                                        |
+| `changeWarning`                     | `app.orders.$orderId.tsx` or `src/lib/` | Note clause.                                                              |
+| `workflowPicker`                    | `app.orders.$orderId.tsx`               | One place, at rest.                                                       |
+| `renderLineItem`                    | `app.orders.$orderId.tsx`               | Live-run bullet names the modal and why its submit is red.                |
+| `FlagBanner`                        | `MemberRun.tsx`                         | Both pages; order page passes actions.                                    |
+| `RunNote`                           | `MemberRun.tsx`                         | New; the note rule lives here.                                            |
+| Member note comment                 | `shop.$shop.workflows.$runId.tsx`       | Trimmed to what `RunNote` does not say.                                   |
+| Block test JSDoc, change test JSDoc | `e2e/orders.spec.ts`                    | New shapes.                                                               |
 
 `scripts/rules-lint.ts` refuses inline status predicates in routes; keep using `Domain.runIsBlocked`, `Domain.runIsLive`, `Domain.runIsOpen`.
 
@@ -208,4 +208,11 @@ Every symbol below has a JSDoc that states a rule the change breaks. Each must b
 
 Record here anything done differently from the steps above, anything that did not work, and anything found along the way that is out of scope. One entry per item: what, why, and what was done instead.
 
-- (none yet)
+- **Now line on a parallel step (step 3 check).** It listed every ready task's name, so a step of three 60-character tasks ran to four lines. The first attempt joined distinct names, which did nothing for the seeded run: its names carry position prefixes ("2. Condition…", "3. Condition…") and are all distinct. `nowLine` now prints the first ready task's name and a count: `Step 2 of 18 · 2. Condition… and 2 more`. Not blocked-specific: the unblocked card had the same problem.
+- **Banner buttons (step 2 check).** Edit and Unblock rendered flush against each other in the banner body. Wrapped in `<s-stack direction="inline" gap="small-300">` on the order page, as the plan allowed.
+- **Note block (step 5).** Rendered without the subdued `s-box`; at desktop and phone width the `Note [Edit]` row reads as a field on the card, so no box and no comment.
+- **`changeWarning` (step 7).** Moved to `src/lib/changeWarning.ts` and unit-tested in `test/integration/change-warning.test.ts` instead of an e2e assertion: the e2e seed has no run-note option. The touched-run path with a note was checked in the browser (warning ends "That work and the note will not carry over.").
+- **`changing` state (step 6).** Also holds `hasNote`, read from the live run when the modal opens, so the warning needs no second lookup. The `Change workflow` button in the Manage row gained `disabled={!identified || busy}`, like every other button there.
+- **No red in the Manage row (step 7).** The assertion is scoped to the item's `s-section`, not the frame: the page-level modals (Block, Change workflow) carry red submits that are always in the DOM.
+- **Member run page (step 8).** Not screenshotted; the member e2e project (29 tests, including the note block's markup) passed unchanged.
+- **Review (2026-09-24).** The `manageRows` JSDoc had a duplicated, truncated first line from a bad edit; rewritten. The Keep button cleared `changing` on click while `onAfterHide` cleared it again, so the label flipped to "Cancel" during the close animation; `onAfterHide` is now the one reset. Browser check at desktop and phone width on the seeded order 1030 (blocked run, banner with Edit and Unblock on one line, Now line, blank Note with Edit, plain Manage row, change modal with warning, Keep leaves no pick): matches the target render.

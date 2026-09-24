@@ -411,14 +411,15 @@ test("the merchant cannot reopen a task whose next step is done", async ({
 });
 
 /**
- * Block from the disclosure, edit the reason and unblock from the strip the
- * block raises on the card. Block and the reason edit share one modal, keyed
- * on whether the run is blocked. The reason is merchant prose, so it renders
- * as its own paragraph in that strip rather than inside the badge, and the
- * strip names the task the run is stuck on. `Unblock` is offered in both
- * places — the strip and the still-open disclosure — so the click takes the
- * first of the two. The run note is added from the disclosure and shows on
- * the card.
+ * Block from the disclosure, then edit the reason and unblock from the red
+ * banner the block raises on the card — the member page's `FlagBanner`. Block
+ * and the reason edit share one modal, keyed on whether the run is blocked.
+ * The reason is merchant prose, so it renders as the banner's body rather
+ * than inside the badge, and the Now line still says where the run is.
+ * `Unblock` is on the page once, in the banner: the Manage row drops Block
+ * while blocked and never repeats Unblock. Nothing in the Manage row is red.
+ * The run note is always on the card, blank as the subdued word "Note", with
+ * one Edit and no Add note.
  */
 test("the merchant blocks a run with a reason, edits it, notes the run, and unblocks it", async ({
   page,
@@ -452,6 +453,12 @@ test("the merchant blocks a run with a reason, edits it, notes the run, and unbl
   await frame.getByRole("button", { name: "Manage" }).click();
   /* No reason field on the card: the only one is in the closed modal. */
   await expect(frame.getByRole("textbox", { name: "Reason" })).toBeHidden();
+  const item = frame.locator("s-section").filter({
+    has: frame.getByRole("heading", { name: "E2E Cuff", exact: true }),
+  });
+  /* Every action in the Manage row is reversible in one tap, so none is red;
+     red is for the modal submit that commits a loss. */
+  await expect(item.locator('s-button[tone="critical"]')).toHaveCount(0);
 
   const blockModal = frame.locator("s-modal#run-block");
   await frame.getByRole("button", { name: "Block", exact: true }).click();
@@ -460,13 +467,20 @@ test("the merchant blocks a run with a reason, edits it, notes the run, and unbl
     .getByRole("textbox", { name: "Reason" })
     .fill("Out of walnut stock");
   await blockModal.getByRole("button", { name: "Block", exact: true }).click();
+  const banner = item.locator('s-banner[heading="Blocked"]');
+  await expect(banner).toBeVisible();
+  await expect(banner.getByText("Out of walnut stock")).toBeVisible();
+  await expect(banner.getByText("Merchant", { exact: false })).toBeVisible();
+  /* The banner says why it stopped; the Now line still says where. */
   await expect(
-    frame.getByText("Blocked \u00B7 Cut", { exact: true }),
+    item.getByText("Step 1 of 1 \u00B7 Cut", { exact: true }),
   ).toBeVisible();
-  await expect(frame.getByText("Out of walnut stock")).toBeVisible();
-  await expect(frame.getByText("Blocked by Merchant")).toBeVisible();
+  await expect(
+    item.getByRole("button", { name: "Block", exact: true }),
+  ).toHaveCount(0);
+  await expect(item.locator('s-button[tone="critical"]')).toHaveCount(0);
 
-  await frame.getByRole("button", { name: "Edit", exact: true }).click();
+  await banner.getByRole("button", { name: "Edit", exact: true }).click();
   await expect(blockModal.getByText("Block reason")).toBeVisible();
   await expect(blockModal.getByRole("textbox", { name: "Reason" })).toHaveValue(
     "Out of walnut stock",
@@ -475,22 +489,35 @@ test("the merchant blocks a run with a reason, edits it, notes the run, and unbl
     .getByRole("textbox", { name: "Reason" })
     .fill("Walnut arrives Friday");
   await blockModal.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(frame.getByText("Walnut arrives Friday")).toBeVisible();
-  await expect(frame.getByText("Blocked by Merchant")).toBeVisible();
+  await expect(banner.getByText("Walnut arrives Friday")).toBeVisible();
+  await expect(banner.getByText("Merchant", { exact: false })).toBeVisible();
 
+  /* The blank note is the field's name, subdued, with its one Edit beside it.
+     `filter({ has })` also matches every stack above the note's own, and
+     ancestors precede descendants in document order, so `last()` is the
+     note's row. */
+  const blankNote = frame.locator('s-text[color="subdued"]', {
+    hasText: /^Note$/u,
+  });
+  const placeholder = item.locator(blankNote);
+  await expect(placeholder).toBeVisible();
+  const noteRow = item.locator("s-stack").filter({ has: blankNote }).last();
   const noteModal = frame.locator("s-modal#run-note");
-  await frame.getByRole("button", { name: "Add note", exact: true }).click();
+  await noteRow.getByRole("button", { name: "Edit", exact: true }).click();
   await noteModal
     .getByRole("textbox", { name: "Note" })
     .fill("Customer asked for gift wrap");
   await noteModal.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(frame.getByText("Customer asked for gift wrap")).toBeVisible();
+  await expect(item.getByText("Customer asked for gift wrap")).toBeVisible();
+  await expect(placeholder).toHaveCount(0);
   await expect(
     frame.getByRole("button", { name: "Add note", exact: true }),
   ).toHaveCount(0);
 
-  await frame.getByRole("button", { name: "Unblock" }).first().click();
-  await expect(frame.getByText("Blocked by Merchant")).toBeHidden();
+  const unblock = frame.getByRole("button", { name: "Unblock" });
+  await expect(unblock).toHaveCount(1);
+  await unblock.click();
+  await expect(banner).toHaveCount(0);
   await expect(
     frame.getByRole("button", { name: "Block", exact: true }),
   ).toBeVisible();
@@ -508,8 +535,9 @@ test("the merchant blocks a run with a reason, edits it, notes the run, and unbl
  * and this is the fixture for it.
  *
  * So: the item matches two, nothing starts, the index shows the order under
- * the _Choose a workflow_ need, and the order page asks. Then the same item is moved to
- * the other workflow, which is a replace and has to be confirmed.
+ * the _Choose a workflow_ need, and the order page asks. Then the same item is
+ * moved to the other workflow through the Change workflow modal, which holds
+ * the select and, on a run with work on it, the warning.
  */
 test("an item matching two workflows waits for the merchant to choose, then changes", async ({
   page,
@@ -607,27 +635,31 @@ test("an item matching two workflows waits for the merchant to choose, then chan
     item.getByText(`${ENGRAVING} workflow`, { exact: true }),
   ).toBeVisible();
 
-  /* Changing is a rare intervention, so it is inside the disclosure with the
-     other ones. A pending run with nothing started changes with no
-     confirmation: the dialog is for work already done. */
+  /* Changing is a rare intervention, so its button is inside the disclosure
+     with the other ones, and it opens a modal holding the select. A pending
+     run with nothing started loses nothing, so the modal says nothing beyond
+     its heading: the warning is for work already done. */
   const change = item.getByRole("button", {
     name: "Change workflow",
     exact: true,
   });
   await change.click();
-  await item
-    .getByRole("combobox", { name: "Change workflow" })
+  const changeModal = frame.locator("s-modal#change-workflow");
+  await changeModal
+    .getByRole("combobox", { name: "Workflow" })
     .selectOption({ label: RUSH });
-  await item.getByRole("button", { name: "Change", exact: true }).click();
+  await expect(changeModal.getByText("will not carry over")).toHaveCount(0);
+  await changeModal
+    .getByRole("button", { name: "Change workflow", exact: true })
+    .click();
 
   /* The change replaces the run, so the disclosure the old one had open closes
-     with it — `managing` and `changeOpen` are both keyed by run id. The picker
-     going is the gate: `Manage` is on the card in every state, so waiting on it
-     would pass before the write landed and read the workflow's name off the
-     still-open select. */
+     with it — `managing` is keyed by run id. The modal hiding is the gate:
+     `Manage` is on the card in every state, so waiting on it would pass
+     before the write landed. */
   await expect(
-    item.getByRole("combobox", { name: "Change workflow" }),
-  ).toHaveCount(0);
+    changeModal.getByRole("combobox", { name: "Workflow" }),
+  ).toBeHidden();
   await expect(manage).toBeVisible();
   await manage.click();
   await expect(

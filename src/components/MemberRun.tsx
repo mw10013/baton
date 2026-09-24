@@ -173,6 +173,11 @@ export function RunItem({ run }: { readonly run: Domain.WorkflowRun }) {
  * `actions` are rendered as the banner's own children and the caller sets
  * `slot="secondary-actions"` on them; a button that lifts, acknowledges or
  * rewrites the flag belongs inside the thing that states it.
+ *
+ * The merchant's order page renders it too, for `blocked` only, with Edit and
+ * Unblock as `actions`, so the merchant sees the banner the worker sees. The
+ * reconcile flags there stay a badge on the run line: the order page says
+ * them in its own merchant vocabulary.
  */
 export function FlagBanner({
   run,
@@ -210,3 +215,42 @@ export function FlagBanner({
  */
 export const liftFlagLabel = (run: { readonly flag: Domain.RunFlag | null }) =>
   Domain.runIsBlocked(run) ? "Unblock" : "Dismiss";
+
+/**
+ * The run's note, always drawn while the run is live: the text as typed, or
+ * the subdued word "Note" as the field's name when blank. One verb, Edit,
+ * because the note is a column that is always there and may be blank
+ * ({@link Domain.SetRunNoteCommand}: `null` clears); "Add" would promise a
+ * "Remove" that does not exist. On a run that is not live a blank note draws
+ * nothing and a written one is read-only. Both run pages render this so the
+ * placeholder word and the verb cannot drift.
+ */
+export function RunNote({
+  note,
+  canEdit,
+  pending,
+  onEdit,
+}: {
+  readonly note: string | null;
+  readonly canEdit: boolean;
+  readonly pending: boolean;
+  readonly onEdit: () => void;
+}) {
+  const hasNote = note !== null && note.length > 0;
+  if (!hasNote && !canEdit) return null;
+  return (
+    <s-stack
+      direction="inline"
+      justifyContent="space-between"
+      alignItems="start"
+      gap="base"
+    >
+      {hasNote ? <Prose>{note}</Prose> : <s-text color="subdued">Note</s-text>}
+      {canEdit && (
+        <s-button variant="secondary" disabled={pending} onClick={onEdit}>
+          Edit
+        </s-button>
+      )}
+    </s-stack>
+  );
+}
