@@ -317,7 +317,7 @@ const seedStates = Effect.gen(function* () {
     readonly n: number;
     readonly order?: Partial<Domain.ShopOrder>;
     readonly statuses: readonly Domain.RunStatus[];
-    /** Written onto the order's own line item; two or more with no live run on it is ambiguous. */
+    /** Written onto the order's own line item; two or more with no run on it is ambiguous. */
     readonly matched?: readonly string[];
   }[] = [
     { n: 1, statuses: ["done"] }, // ready
@@ -329,7 +329,7 @@ const seedStates = Effect.gen(function* () {
     { n: 7, order: { fulfillmentStatus: "FULFILLED" }, statuses: ["done"] }, // shipped
     { n: 8, statuses: ["done", "done"] }, // ready
     { n: 9, order: { fullyPaid: false }, statuses: [] }, // not started, unpaid: no need
-    { n: 10, statuses: ["cancelled"] }, // not started, needs a workflow: a cancelled run is no run
+    { n: 10, statuses: ["cancelled"] }, // not started, and decided: no need
     { n: 11, order: { fulfillmentStatus: "FULFILLED" }, statuses: [] }, // shipped, never started
     { n: 12, statuses: [], matched: ["w1", "w2"] }, // not started, choose a workflow
     { n: 13, statuses: ["active"], matched: ["w1", "w2"] }, // in production, and choose a workflow
@@ -370,13 +370,12 @@ const seedStates = Effect.gen(function* () {
         insert into WorkflowRun (
           id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
           lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
-          source, status, flag, flagAt, flagDetail, createdAt, updatedAt,
-          cancelledAt
+          source, status, flag, flagAt, flagDetail, createdAt, updatedAt
         ) values (
           ${`run-${String(n)}-${String(index)}`}, 'wf', 'Workflow',
           ${orderId(n)}, ${`#10${String(n).padStart(2, "0")}`}, 0,
           ${`${lineItemId(n)}-${String(index)}`}, 'Item', null, null, 1,
-          '[]', 'tag', ${status}, null, null, null, 0, 0, null
+          '[]', 'tag', ${status}, null, null, null, 0, 0
         )
       `;
   }
@@ -505,7 +504,8 @@ describe("OrderRepository.listOrders filters", () => {
         };
       }),
     );
-    deepStrictEqual(names(pages.no_workflow), ["#1010", "#1005"]);
+    // `#1010`'s only item was cancelled: decided, so not `no_workflow`.
+    deepStrictEqual(names(pages.no_workflow), ["#1005"]);
     // `#1013` again: in production and choosing at once.
     deepStrictEqual(names(pages.choose_workflow), ["#1013", "#1012"]);
     deepStrictEqual(names(pages.team), ["#1004"]);
@@ -596,7 +596,7 @@ describe("OrderRepository.listOrders filters", () => {
     deepStrictEqual(open, {
       in_production: 4,
       ready_to_ship: 3,
-      no_workflow: 2,
+      no_workflow: 1,
       choose_workflow: 2,
       team: 1,
       blocked: 1,
@@ -718,18 +718,21 @@ describe("OrderRepository.listOrders filters", () => {
       done: 1,
       flagged: 0,
       blocked: 1,
+      cancelled: 0,
     });
     deepStrictEqual(runsOf("#1004"), {
       open: 1,
       done: 1,
       flagged: 1,
       blocked: 0,
+      cancelled: 0,
     });
     deepStrictEqual(runsOf("#1001"), {
       open: 0,
       done: 1,
       flagged: 0,
       blocked: 0,
+      cancelled: 0,
     });
   });
 });
@@ -921,12 +924,11 @@ describe("OrderRepository.listOrders waitingOn", () => {
       insert into WorkflowRun (
         id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
         lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
-        source, status, flag, flagAt, flagDetail, createdAt, updatedAt,
-        cancelledAt
+        source, status, flag, flagAt, flagDetail, createdAt, updatedAt
       ) values (
         'run-3-2', 'wf', 'Workflow', ${orderId(3)}, '#1003', 0,
         ${`${lineItemId(3)}-2`}, 'Item', null, null, 1, '[]', 'tag', 'active',
-        null, null, null, 0, 0, null
+        null, null, null, 0, 0
       )
     `;
     yield* task("s3a", "run-3-1", 1, "team-cut");
@@ -1835,11 +1837,11 @@ const runWith =
         id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
         lineItemId, lineItemTitle, variantTitle, sku, quantity,
         lineItemProperties, source, status, flag, flagAt, flagDetail,
-        createdAt, updatedAt, cancelledAt
+        createdAt, updatedAt
       ) values (
         ${`run-${orderId}-${status}`}, 'wf', 'Workflow', ${orderId}, '#1',
         0, ${`li-${orderId}`}, 'Item', null, null, 1, '[]', 'tag',
-        ${status}, null, null, null, ${updatedAt}, ${updatedAt}, null
+        ${status}, null, null, null, ${updatedAt}, ${updatedAt}
       )
     `;
 

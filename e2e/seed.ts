@@ -62,6 +62,8 @@ export interface SeedProgress {
   readonly started?: boolean;
   readonly blocked?: string;
   readonly byMerchant?: boolean;
+  /** Last, Cancel run as the merchant: the item keeps a `cancelled` marker and nothing starts on it. */
+  readonly cancelled?: boolean;
 }
 
 /** A line item of a seeded order; `tags` are the product tags a workflow matches on. `currentQuantity` defaults to `quantity`. */

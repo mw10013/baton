@@ -152,11 +152,19 @@ const doneActorLabel = (
 function RouteComponent() {
   const {
     shop,
+    memberId,
     memberEmail,
     teams,
     query: loaderQuery,
     view: loaderView,
   } = Route.useLoaderData();
+  /** The member as the actor every row's action set is computed for. */
+  const actor: Domain.Actor = {
+    role: "member",
+    memberId,
+    email: memberEmail,
+    teamIds: teams.map((team) => team.id),
+  };
   /**
    * Which list, narrowed to which team, how far down: all three from the URL
    * (`MemberSearch` in `shop.$shop.tsx`), with the defaults applied here at the
@@ -334,95 +342,95 @@ function RouteComponent() {
      * per row is also what stops the action column resizing itself row by row
      * and dragging the text column's edge with it.
      *
-     * `flagged` leaves only the verb that lifts the flag. A flag means the
-     * work has stopped or changed under the maker, so Start on a run reported
-     * cancelled is the row arguing with itself. The fixer's extra step
+     * Every verb is a field of {@link Domain.runActions} or
+     * {@link Domain.taskActions}; the row decides only which of the allowed
+     * verbs it lists. A flagged run lists the lift alone, and the action sets
+     * already refuse Start and Done under a flag: Start on a run whose order
+     * Shopify cancelled is the row arguing with itself. The fixer's extra step
      * (Unblock, then Done) is the price, and they are the rare reader.
+     *
+     * An unstarted task lists Start and not Done, although Done is allowed
+     * there: the row walks the member through the task one verb at a time,
+     * and Done straight from the list is one tap on the work page.
      *
      * A single ready task gives the bare verb: the task is named on line two
      * of the row this menu belongs to. Several give one item each, because a
      * single verb would act on the first and say nothing about the rest.
      *
      * A started task also gets Put back, the one-press fix for a Start
-     * pressed by mistake. It follows {@link Domain.taskActions}: wherever Done
-     * is, on a started task, for the whole team, so a row a teammate started
-     * offers it too. Every row here is open, ready and on the member's teams,
-     * and a flagged row returned above.
+     * pressed by mistake, wherever the action set allows it: for the whole
+     * team, so a row a teammate started offers it too.
      */
     const menuItems = () => {
       if (flagged)
-        return [
-          <s-button
-            key="lift"
-            onClick={() => {
-              actions.dismiss.mutate(run.id);
-            }}
-          >
-            {liftFlagLabel(run)}
-          </s-button>,
-        ];
-      if (rest.length > 0)
-        return tasks.flatMap((each) =>
-          each.startedAt === null ? (
+        return Domain.runActions(
+          actor,
+          item.order,
+          run,
+          tasks.map((each) => ({ ...each, ready: true })),
+        ).liftFlag
+          ? [
+              <s-button
+                key="lift"
+                onClick={() => {
+                  actions.dismiss.mutate(run.id);
+                }}
+              >
+                {liftFlagLabel(run)}
+              </s-button>,
+            ]
+          : [];
+      const named = (verb: string, each: Domain.RunListTask) =>
+        rest.length > 0 ? `${verb} · ${each.name}` : verb;
+      return tasks.flatMap((each) => {
+        /* Every task on a row is open and ready: that is what put it on the
+           list (`WorkflowRunRepository.listRuns`). */
+        const can = Domain.taskActions(actor, item.order, run, {
+          ...each,
+          ready: true,
+          completedAt: null,
+          undoBlockedBy: null,
+        });
+        if (can.start)
+          return [
             <s-button
               key={each.id}
               onClick={() => {
                 actions.start.mutate(each.id);
               }}
             >
-              {`Start · ${each.name}`}
-            </s-button>
-          ) : (
-            [
-              <s-button
-                key={each.id}
-                onClick={() => {
-                  actions.complete.mutate(each.id);
-                }}
-              >
-                {`Done · ${each.name}`}
-              </s-button>,
-              <s-button
-                key={`${each.id}-put-back`}
-                onClick={() => {
-                  actions.unstart.mutate(each.id);
-                }}
-              >
-                {`Put back · ${each.name}`}
-              </s-button>,
-            ]
-          ),
-        );
-      return started
-        ? [
-            <s-button
-              key={task.id}
-              onClick={() => {
-                actions.complete.mutate(task.id);
-              }}
-            >
-              Done
-            </s-button>,
-            <s-button
-              key={`${task.id}-put-back`}
-              onClick={() => {
-                actions.unstart.mutate(task.id);
-              }}
-            >
-              Put back
-            </s-button>,
-          ]
-        : [
-            <s-button
-              key={task.id}
-              onClick={() => {
-                actions.start.mutate(task.id);
-              }}
-            >
-              Start
+              {named("Start", each)}
             </s-button>,
           ];
+        return [
+          ...(can.done
+            ? [
+                <s-button
+                  key={each.id}
+                  onClick={() => {
+                    actions.complete.mutate(each.id);
+                  }}
+                >
+                  {named("Done", each)}
+                </s-button>,
+              ]
+            : []),
+          ...(can.putBack
+            ? [
+                <s-button
+                  key={`${each.id}-put-back`}
+                  onClick={() => {
+                    actions.unstart.mutate(each.id);
+                  }}
+                >
+                  {named("Put back", each)}
+                </s-button>,
+              ]
+            : []),
+        ];
+      });
     };
+    const items = menuItems();
     return (
       /* The separator above every row but the list's first, and nothing else.
          A flagged row used to draw a rule down its leading edge as well; it
@@ -468,30 +476,37 @@ function RouteComponent() {
                 <s-text color="subdued">{`${line.names} · ${detailLine()}`}</s-text>
               </div>
             </s-stack>
-            <s-button
-              icon="menu-horizontal"
-              variant="tertiary"
-              accessibilityLabel={`Actions for ${run.orderName}`}
-              disabled={actions.pending}
-              commandFor={menuId}
-              onClick={insideRow}
-            />
+            {items.length > 0 && (
+              <s-button
+                icon="menu-horizontal"
+                variant="tertiary"
+                accessibilityLabel={`Actions for ${run.orderName}`}
+                disabled={actions.pending}
+                commandFor={menuId}
+                onClick={insideRow}
+              />
+            )}
           </s-grid>
         </s-clickable>
-        <s-menu id={menuId} accessibilityLabel={`Actions for ${run.orderName}`}>
-          {menuItems()}
-        </s-menu>
+        {items.length > 0 && (
+          <s-menu
+            id={menuId}
+            accessibilityLabel={`Actions for ${run.orderName}`}
+          >
+            {items}
+          </s-menu>
+        )}
       </s-box>
     );
   };
 
-  /** The same rule as the work page's Undo, {@link Domain.taskActions}, on the tier's own row. */
+  /** The same rule as the work page's Undo, {@link Domain.taskActions}' `reopen`, on the tier's own row. */
   const doneUndo = (entry: Domain.DoneItem) =>
-    Domain.taskActions(
-      entry.run,
-      { ...entry.task, ready: false, undoBlockedBy: entry.undoBlockedBy },
-      teams.map((team) => team.id),
-    ).undo;
+    Domain.taskActions(actor, entry.order, entry.run, {
+      ...entry.task,
+      ready: false,
+      undoBlockedBy: entry.undoBlockedBy,
+    }).reopen;
 
   /**
    * A finished task's row, the same shape as a waiting one: the row is a link

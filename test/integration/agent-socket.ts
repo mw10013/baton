@@ -193,7 +193,7 @@ export const agentSocket = (response: Response): AgentSocket => {
 };
 
 /**
- * The five member mutations, typed, over an already-open member socket. The
+ * The member run writes, typed, over an already-open member socket. The
  * wire inputs carry no identity — that comes from the connection the socket was
  * opened with — so a test that wants a different member or a different team
  * scope opens a different socket, exactly as a different person's browser
@@ -201,19 +201,25 @@ export const agentSocket = (response: Response): AgentSocket => {
  */
 export const memberActions = (socket: AgentSocket) => ({
   startTask: (input: typeof Domain.StartTaskInput.Encoded) =>
-    socket.call<Domain.RunResult>("startTask", input),
+    socket.call<Domain.RunResult>("memberStartTask", input),
   completeTask: (input: typeof Domain.CompleteTaskInput.Encoded) =>
-    socket.call<Domain.RunResult>("completeTask", input),
+    socket.call<Domain.RunResult>("memberCompleteTask", input),
   setRunNote: (input: typeof Domain.SetRunNoteInput.Encoded) =>
-    socket.call<Domain.RunResult>("setRunNote", input),
+    socket.call<Domain.RunResult>("memberSetRunNote", input),
   blockRun: (input: typeof Domain.BlockRunInput.Encoded) =>
-    socket.call<Domain.RunResult>("blockRun", input),
+    socket.call<Domain.RunResult>("memberBlockRun", input),
   dismissFlag: (input: typeof Domain.DismissFlagInput.Encoded) =>
-    socket.call<Domain.RunResult>("dismissFlag", input),
+    socket.call<Domain.RunResult>("memberDismissFlag", input),
+  setBlockReason: (input: typeof Domain.SetBlockReasonInput.Encoded) =>
+    socket.call<Domain.RunResult>("memberSetBlockReason", input),
+  uncompleteTask: (input: typeof Domain.UncompleteTaskInput.Encoded) =>
+    socket.call<Domain.RunResult>("memberUncompleteTask", input),
+  unstartTask: (input: typeof Domain.UnstartTaskInput.Encoded) =>
+    socket.call<Domain.RunResult>("memberUnstartTask", input),
 });
 
 /**
- * The merchant's five interventions, typed, over an already-open merchant
+ * The merchant's run writes on tasks and flags, typed, over an already-open merchant
  * socket. No identity on the wire and none on the connection either: the
  * merchant *is* the shop, so the object supplies `{ role: "merchant" }` and no
  * `teamIds` (`ShopAgent.merchantCompleteTask`).
@@ -229,6 +235,10 @@ export const merchantActions = (socket: AgentSocket) => ({
     socket.call<Domain.RunResult>("merchantBlockRun", input),
   dismissFlag: (input: typeof Domain.RunIdInput.Encoded) =>
     socket.call<Domain.RunResult>("merchantDismissFlag", input),
+  setBlockReason: (input: typeof Domain.SetBlockReasonInput.Encoded) =>
+    socket.call<Domain.RunResult>("merchantSetBlockReason", input),
+  unstartTask: (input: typeof Domain.UnstartTaskInput.Encoded) =>
+    socket.call<Domain.RunResult>("merchantUnstartTask", input),
 });
 
 /** A merchant socket plus its typed interventions, the order page's half of the wire. */

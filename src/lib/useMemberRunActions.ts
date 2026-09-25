@@ -23,15 +23,22 @@ export const runResultMessage = Match.typeTags<
   string | null
 >()({
   Ok: () => null,
+  /* Also a run the merchant cancelled while the page was open: a cancel
+     leaves a marker with no tasks, which no member write can act on
+     (`Domain.RunStatus`). */
   NotFound: () => "That work no longer exists.",
-  NotAllowed: () => "This task belongs to another team.",
+  /* The page offers only what `Domain.runActions` and `Domain.taskActions`
+     allow; a refusal is the work changing under the page, or another team's
+     task. */
+  NotAllowed: () =>
+    "That isn't available on this work now. It changed, or it belongs to another team.",
   /* Only the reason editor can reach this: somebody unblocked the run while
      it was open, so the edit has nothing to write on. */
   NotBlocked: () => "This work is no longer blocked.",
   /* Also a Put back on a task someone else put back or finished just now. */
   NotReady: () =>
     "This task or an earlier one changed just now, or this task is waiting on another team. Refresh.",
-  Terminal: () => "This workflow is already finished or cancelled.",
+  Terminal: () => "This workflow is already finished.",
   /* The page hides Start and Done behind the flag; a flag that landed after
      the render is the only way here. */
   Flagged: ({ flag }) =>
@@ -40,10 +47,6 @@ export const runResultMessage = Match.typeTags<
       : "This work was blocked just now. Unblock it first.",
   UndoBlocked: ({ taskName, teamName }) =>
     `${teamName} already started ${taskName}. Ask them.`,
-  /* Un-cancel is a merchant action and no member surface offers it; the
-     variant is here because the union is one union, and a member reading a
-     stale result should still get a sentence rather than nothing. */
-  ItemHasRun: ({ workflowName }) => `This item is already on ${workflowName}.`,
 });
 
 /**
@@ -90,41 +93,41 @@ export const useMemberRunActions = ({
   };
   const start = useMutation({
     mutationFn: (runTaskId: string) =>
-      call((stub) => stub.startTask({ runTaskId })).then(settle),
+      call((stub) => stub.memberStartTask({ runTaskId })).then(settle),
   });
   const complete = useMutation({
     mutationFn: (runTaskId: string) =>
-      call((stub) => stub.completeTask({ runTaskId })).then(settle),
+      call((stub) => stub.memberCompleteTask({ runTaskId })).then(settle),
   });
   const uncomplete = useMutation({
     mutationFn: (runTaskId: string) =>
-      call((stub) => stub.uncompleteTask({ runTaskId })).then(settle),
+      call((stub) => stub.memberUncompleteTask({ runTaskId })).then(settle),
   });
   const unstart = useMutation({
     mutationFn: (runTaskId: string) =>
-      call((stub) => stub.unstartTask({ runTaskId })).then(settle),
+      call((stub) => stub.memberUnstartTask({ runTaskId })).then(settle),
   });
   const note = useMutation({
     mutationFn: ({ runId, note }: { runId: string; note: string }) =>
-      call((stub) => stub.setRunNote({ runId, note: textOrNull(note) })).then(
-        settle,
-      ),
+      call((stub) =>
+        stub.memberSetRunNote({ runId, note: textOrNull(note) }),
+      ).then(settle),
   });
   const block = useMutation({
     mutationFn: ({ runId, reason }: { runId: string; reason: string }) =>
-      call((stub) => stub.blockRun({ runId, reason: textOrNull(reason) })).then(
-        settle,
-      ),
+      call((stub) =>
+        stub.memberBlockRun({ runId, reason: textOrNull(reason) }),
+      ).then(settle),
   });
   const setBlockReason = useMutation({
     mutationFn: ({ runId, reason }: { runId: string; reason: string }) =>
       call((stub) =>
-        stub.setBlockReason({ runId, reason: textOrNull(reason) }),
+        stub.memberSetBlockReason({ runId, reason: textOrNull(reason) }),
       ).then(settle),
   });
   const dismiss = useMutation({
     mutationFn: (runId: string) =>
-      call((stub) => stub.dismissFlag({ runId })).then(settle),
+      call((stub) => stub.memberDismissFlag({ runId })).then(settle),
   });
   const mutations = [
     start,

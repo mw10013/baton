@@ -2,7 +2,7 @@
  * Holds the line drawn in `src/lib/Domain.ts`: status, flag and role rules
  * are `Domain` predicates, never inline comparisons in routes, components or
  * the object. A site that needs `run.status === "done"` needs a predicate
- * that says what "done" means to it (`runIsOpen`, `runIsLive`,
+ * that says what "done" means to it (`runIsOpen`, `runIsDone`,
  * `runIsUnstarted`), and a site that needs `user.role === "admin"` needs
  * `userIsAdmin`. `Domain.ts` is the one file allowed to spell the literals.
  *

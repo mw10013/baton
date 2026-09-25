@@ -28,14 +28,14 @@ import {
 const CALLABLE_ROLES = {
   unsubscribe: "any",
   subscribeRuns: "member",
-  startTask: "member",
-  completeTask: "member",
-  setRunNote: "member",
-  blockRun: "member",
-  setBlockReason: "member",
-  dismissFlag: "member",
-  uncompleteTask: "member",
-  unstartTask: "member",
+  memberStartTask: "member",
+  memberCompleteTask: "member",
+  memberSetRunNote: "member",
+  memberBlockRun: "member",
+  memberSetBlockReason: "member",
+  memberDismissFlag: "member",
+  memberUncompleteTask: "member",
+  memberUnstartTask: "member",
   subscribeRun: "member",
   syncOrders: "merchant",
   getUsage: "merchant",
@@ -54,10 +54,9 @@ const CALLABLE_ROLES = {
   countWaitingOrders: "merchant",
   removeWorkflow: "merchant",
   subscribeOrder: "merchant",
-  listRunsForOrder: "merchant",
-  attachWorkflow: "merchant",
-  cancelRun: "merchant",
-  uncancelRun: "merchant",
+  merchantListRunsForOrder: "merchant",
+  merchantAttachWorkflow: "merchant",
+  merchantCancelRun: "merchant",
   merchantCompleteTask: "merchant",
   merchantUncompleteTask: "merchant",
   merchantUnstartTask: "merchant",
@@ -73,7 +72,7 @@ const CALLABLE_ROLES = {
   joinTask: "merchant",
   removeTask: "merchant",
   deleteTeam: "merchant",
-  assignRunTaskTeam: "merchant",
+  merchantAssignRunTaskTeam: "merchant",
   seedWorkflows: "merchant",
   seedOrders: "merchant",
 } as const satisfies Record<string, "merchant" | "member" | "any">;
@@ -210,5 +209,51 @@ describe("ShopAgent callable role gate", () => {
       /forbidden/iu,
     );
     socket.close();
+  });
+});
+
+describe("ShopAgent run callable names", () => {
+  const RUN_WRITES = [
+    "merchantAttachWorkflow",
+    "merchantCancelRun",
+    "merchantCompleteTask",
+    "merchantUncompleteTask",
+    "merchantUnstartTask",
+    "merchantSetRunNote",
+    "merchantBlockRun",
+    "merchantSetBlockReason",
+    "merchantDismissFlag",
+    "merchantAssignRunTaskTeam",
+    "memberStartTask",
+    "memberCompleteTask",
+    "memberUncompleteTask",
+    "memberUnstartTask",
+    "memberSetRunNote",
+    "memberBlockRun",
+    "memberSetBlockReason",
+    "memberDismissFlag",
+  ] as const;
+
+  it("every run-write callable is named <role><Verb>, where the role is the ConnectionRole allowed to call it", async () => {
+    const shop = "callables-naming.myshopify.com";
+    const socket = await openAgentSocket(shop, merchantHeaders());
+    await socket.waitForMessage((data) => data.includes("cf_agent_identity"));
+    const callables = await decoratedCallables(shop);
+    for (const name of RUN_WRITES) {
+      expect(callables).toContain(name);
+      const role = name.startsWith("merchant") ? "merchant" : "member";
+      expect(roleOf(name), name).toBe(role);
+    }
+    socket.close();
+    const member = await memberSocket(shop);
+    for (const name of RUN_WRITES.filter((name) => name.startsWith("merchant")))
+      await expect(member.call(name, {}), name).rejects.toThrow(/forbidden/iu);
+    member.close();
+    const merchant = await openAgentSocket(shop, merchantHeaders());
+    for (const name of RUN_WRITES.filter((name) => name.startsWith("member")))
+      await expect(merchant.call(name, {}), name).rejects.toThrow(
+        /forbidden/iu,
+      );
+    merchant.close();
   });
 });

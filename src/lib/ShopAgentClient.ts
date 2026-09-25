@@ -90,7 +90,7 @@ export class ShopAgentClient extends Context.Service<
       input: Domain.ListRunsInput,
     ) => Effect.Effect<Domain.RunListView, ShopAgentClientError>;
     /** The work page's loader read; `null` is "not yours or not there", one answer on purpose. */
-    readonly getRunForMember: (
+    readonly memberGetRun: (
       shop: string,
       input: Domain.GetRunForMemberInput,
     ) => Effect.Effect<Domain.RunView | null, ShopAgentClientError>;
@@ -259,10 +259,10 @@ export class ShopAgentClient extends Context.Service<
           (shop: string, input: Domain.ListRunsInput) =>
             call("listRuns", runListView, shop, (stub) => stub.listRuns(input)),
         ),
-        getRunForMember: Effect.fn("ShopAgentClient.getRunForMember")(
+        memberGetRun: Effect.fn("ShopAgentClient.memberGetRun")(
           (shop: string, input: Domain.GetRunForMemberInput) =>
-            call("getRunForMember", runView, shop, (stub) =>
-              stub.getRunForMember(input),
+            call("memberGetRun", runView, shop, (stub) =>
+              stub.memberGetRun(input),
             ),
         ),
         listTeamWorkflows: Effect.fn("ShopAgentClient.listTeamWorkflows")(

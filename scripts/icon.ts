@@ -337,7 +337,7 @@ function whooshPath(w: Whoosh): string {
   };
   const halfWidth = (t: number) => {
     const s = t < w.belly ? t / w.belly : (1 - t) / (1 - w.belly);
-    return (w.width * Math.pow(Math.max(s, 0), w.ease)) / 2;
+    return (w.width * Math.max(s, 0) ** w.ease) / 2;
   };
 
   const left: Point[] = [];
@@ -355,7 +355,7 @@ function whooshPath(w: Whoosh): string {
   const start = knot(left, 0);
   return (
     `<path d="M ${fixed(start[0])} ${fixed(start[1])}` +
-    `${throughPoints(left)}${throughPoints([...right].reverse())} Z" fill="${w.fill}"/>`
+    `${throughPoints(left)}${throughPoints(right.toReversed())} Z" fill="${w.fill}"/>`
   );
 }
 
@@ -367,7 +367,7 @@ function markBody(name: string): string {
 }
 
 const indent = (markup: string, pad: string) =>
-  markup.replaceAll("><", `>\n${pad}<`).split("\n").join(`\n`).replace(/^/, "");
+  markup.replaceAll("><", `>\n${pad}<`);
 
 /**
  * The note carried at the top of `public/app-icon.svg`. It is the mark's
@@ -507,14 +507,16 @@ function renderPng(): void {
       "-trim",
       "info:-",
     ]).toString();
-    const m = /(\d+)x(\d+) \d+x\d+\+(\d+)\+(\d+)/.exec(trimmed);
-    if (m) {
-      const [w, h, x, y] = m.slice(1).map(Number) as [
-        number,
-        number,
-        number,
-        number,
-      ];
+    const m = /(?<w>\d+)x(?<h>\d+) \d+x\d+\+(?<x>\d+)\+(?<y>\d+)/u.exec(
+      trimmed,
+    );
+    if (m?.groups) {
+      const { w, h, x, y } = {
+        w: Number(m.groups.w),
+        h: Number(m.groups.h),
+        x: Number(m.groups.x),
+        y: Number(m.groups.y),
+      };
       const margins = [x - 1, 1200 - (x - 1) - w, y - 1, 1200 - (y - 1) - h];
       const long = Math.max(w, h);
       const tight = Math.min(...margins);

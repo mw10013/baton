@@ -44,6 +44,7 @@ const NONE = {
   done: 0,
   flagged: 0,
   blocked: 0,
+  cancelled: 0,
 } satisfies Domain.RunCounts;
 
 describe("Domain.productionState", () => {
@@ -100,15 +101,23 @@ describe("Domain.productionState", () => {
     strictEqual(Domain.productionState(row(NONE, { fullyPaid: false })), null);
     strictEqual(Domain.productionState(row(NONE, {}, 1)), null);
   });
+
+  it("an order whose only items were cancelled is not started", () => {
+    strictEqual(Domain.productionState(row({ cancelled: 1 })), null);
+  });
 });
 
 describe("Domain.orderNeeds", () => {
-  it("no_workflow: paid, open, no live run and no ambiguous item", () => {
+  it("no_workflow: paid, open, no run and no ambiguous item", () => {
     deepStrictEqual(Domain.orderNeeds(row(NONE)), ["no_workflow"]);
     deepStrictEqual(Domain.orderNeeds(row(NONE, { fullyPaid: false })), []);
     deepStrictEqual(Domain.orderNeeds(row({ open: 1 })), []);
     deepStrictEqual(Domain.orderNeeds(row({ done: 1 })), []);
     deepStrictEqual(Domain.orderNeeds(row(NONE, {}, 1)), ["choose_workflow"]);
+  });
+
+  it("a cancelled item counts as decided: no no_workflow need", () => {
+    deepStrictEqual(Domain.orderNeeds(row({ cancelled: 1 })), []);
   });
 
   it("choose_workflow: an ambiguous item on an order that can start runs", () => {
@@ -203,7 +212,6 @@ describe("Domain.runCounts", () => {
       run("active", "blocked"),
       run("active", "item_removed"),
       run("done", "item_removed"),
-      run("cancelled", "order_cancelled"),
     ]);
     strictEqual(counts.open, 3);
     strictEqual(counts.done, 1);
@@ -242,10 +250,13 @@ const runOn = (
 describe("Domain.ambiguousItems", () => {
   /**
    * The same three conditions `OrderRepository`'s `AMBIGUOUS_ITEM` spells out
-   * in SQL. `done` counts as live on purpose: a finished item does not get a
-   * second route, so it is not a decision anyone is waiting on.
+   * in SQL. A `done` run counts on purpose: a finished item does not get a
+   * second route, so it is not a decision anyone is waiting on. A cancelled
+   * run is deleted (`Domain.RunStatus`), so a cancel makes the item a
+   * decision again with no rule of its own: the "two matches and no run"
+   * case below.
    */
-  it("counts items with two matches, units to make, and no live run", () => {
+  it("counts items with two matches, units to make, and no run", () => {
     strictEqual(
       Domain.ambiguousItems([lineItem("a", ["w1", "w2"])], []),
       1,
@@ -267,7 +278,7 @@ describe("Domain.ambiguousItems", () => {
         [runOn("a", "pending")],
       ),
       0,
-      "a live run owns the item",
+      "a run owns the item",
     );
     strictEqual(
       Domain.ambiguousItems(
@@ -275,15 +286,7 @@ describe("Domain.ambiguousItems", () => {
         [runOn("a", "done")],
       ),
       0,
-      "done is live: a finished item gets no second route",
-    );
-    strictEqual(
-      Domain.ambiguousItems(
-        [lineItem("a", ["w1", "w2"])],
-        [runOn("a", "cancelled")],
-      ),
-      1,
-      "a cancel makes it a decision again",
+      "a done run owns the item: a finished item gets no second route",
     );
     strictEqual(
       Domain.ambiguousItems(
@@ -382,6 +385,7 @@ const runListItem = (
     },
   ],
   stepCount: 1,
+  order: { cancelledAt: null, fulfillmentStatus: "UNFULFILLED" },
 });
 
 const withTasks = (
@@ -583,21 +587,25 @@ describe("Domain.SeedOrdersInput", () => {
   });
 });
 
-describe("Domain.runIsOpen / Domain.runIsLive", () => {
-  it("open is pending or active; live is anything but cancelled", () => {
-    const statuses: readonly Domain.RunStatus[] = [
-      "pending",
-      "active",
-      "done",
-      "cancelled",
-    ];
+describe("Domain.runIsOpen / Domain.runIsDone / Domain.runIsCancelled", () => {
+  it("open is pending or active; done is the last task's Done; cancelled is the merchant's marker", () => {
     deepStrictEqual(
-      statuses.map((status) => Domain.runIsOpen(run(status, null))),
+      Domain.RunStatus.literals.map((status) =>
+        Domain.runIsOpen(run(status, null)),
+      ),
       [true, true, false, false],
     );
     deepStrictEqual(
-      statuses.map((status) => Domain.runIsLive(run(status, null))),
-      [true, true, true, false],
+      Domain.RunStatus.literals.map((status) =>
+        Domain.runIsDone(run(status, null)),
+      ),
+      [false, false, true, false],
+    );
+    deepStrictEqual(
+      Domain.RunStatus.literals.map((status) =>
+        Domain.runIsCancelled(run(status, null)),
+      ),
+      [false, false, false, true],
     );
   });
 });
@@ -628,18 +636,42 @@ const NOTHING = {
   start: false,
   done: false,
   putBack: false,
-  undo: null,
+  reopen: null,
+  reassign: false,
 };
 
+const OPEN_ORDER: Domain.OrderState = {
+  cancelledAt: null,
+  fulfillmentStatus: "UNFULFILLED",
+};
+
+/** The member-side action set on an open order: the rules below are about the run and the task, not the order ({@link Domain.taskActions}). */
+const memberActions = (
+  runState: Parameters<typeof Domain.taskActions>[2],
+  task: Parameters<typeof Domain.taskActions>[3],
+  teamIds: readonly Domain.TeamId[],
+) =>
+  Domain.taskActions(
+    {
+      role: "member",
+      memberId: Schema.decodeUnknownSync(Domain.MemberId)("m"),
+      email: Schema.decodeUnknownSync(Domain.Email)("m@example.com"),
+      teamIds,
+    },
+    OPEN_ORDER,
+    runState,
+    task,
+  );
+
 describe("Domain.taskActions", () => {
-  it("a done run's last task is undoable while nothing downstream started", () => {
+  it("a done run's last task is reopenable while nothing downstream started", () => {
     deepStrictEqual(
-      Domain.taskActions(
+      memberActions(
         run("done", null),
         taskView({ ready: false, startedAt: 1, completedAt: 2 }),
         [TEAM],
       ),
-      { ...NOTHING, undo: { blockedBy: null } },
+      { ...NOTHING, reopen: { blockedBy: null } },
     );
   });
 
@@ -649,7 +681,7 @@ describe("Domain.taskActions", () => {
       teamName: Schema.decodeUnknownSync(Domain.TeamName)("Finishing"),
     };
     deepStrictEqual(
-      Domain.taskActions(
+      memberActions(
         run("active", null),
         taskView({
           ready: false,
@@ -659,73 +691,56 @@ describe("Domain.taskActions", () => {
         }),
         [TEAM],
       ),
-      { ...NOTHING, undo: { blockedBy: blocker } },
+      { ...NOTHING, reopen: { blockedBy: blocker } },
     );
   });
 
-  it("a cancelled run offers no actions", () => {
+  it("a flag hides Start and Done but not Reopen", () => {
     deepStrictEqual(
-      Domain.taskActions(run("cancelled", null), taskView(), [TEAM]),
-      NOTHING,
-    );
-    deepStrictEqual(
-      Domain.taskActions(
-        run("cancelled", null),
-        taskView({ ready: false, startedAt: 1, completedAt: 2 }),
-        [TEAM],
-      ),
-      NOTHING,
-    );
-  });
-
-  it("a flag hides Start and Done but not Undo", () => {
-    deepStrictEqual(
-      Domain.taskActions(run("active", "blocked"), taskView(), [TEAM]),
+      memberActions(run("active", "blocked"), taskView(), [TEAM]),
       { ...NOTHING },
     );
     deepStrictEqual(
-      Domain.taskActions(
+      memberActions(
         run("active", "item_removed"),
         taskView({ ready: false, startedAt: 1, completedAt: 2 }),
         [TEAM],
       ),
-      { ...NOTHING, undo: { blockedBy: null } },
+      { ...NOTHING, reopen: { blockedBy: null } },
     );
   });
 
   it("a task on another team offers nothing", () => {
     deepStrictEqual(
-      Domain.taskActions(run("active", null), taskView(), [OTHER_TEAM]),
+      memberActions(run("active", null), taskView(), [OTHER_TEAM]),
       NOTHING,
     );
     deepStrictEqual(
-      Domain.taskActions(run("active", null), taskView({ teamId: null }), [
-        TEAM,
-      ]),
+      memberActions(run("active", null), taskView({ teamId: null }), [TEAM]),
       NOTHING,
     );
   });
 
   it("Start is offered only before the task is started; Done while it is ready", () => {
+    deepStrictEqual(memberActions(run("pending", null), taskView(), [TEAM]), {
+      start: true,
+      done: true,
+      putBack: false,
+      reopen: null,
+      reassign: false,
+    });
     deepStrictEqual(
-      Domain.taskActions(run("pending", null), taskView(), [TEAM]),
+      memberActions(run("active", null), taskView({ startedAt: 1 }), [TEAM]),
       {
-        start: true,
+        start: false,
         done: true,
-        putBack: false,
-        undo: null,
+        putBack: true,
+        reopen: null,
+        reassign: false,
       },
     );
     deepStrictEqual(
-      Domain.taskActions(run("active", null), taskView({ startedAt: 1 }), [
-        TEAM,
-      ]),
-      { start: false, done: true, putBack: true, undo: null },
-    );
-    deepStrictEqual(
-      Domain.taskActions(run("active", null), taskView({ ready: false }), [
-        TEAM,
-      ]),
+      memberActions(run("active", null), taskView({ ready: false }), [TEAM]),
       { ...NOTHING },
     );
   });
@@ -734,17 +749,16 @@ describe("Domain.taskActions", () => {
 describe("Domain.taskActions Put back", () => {
   it("Put back is offered wherever Done is, and only on a started task", () => {
     strictEqual(
-      Domain.taskActions(run("active", null), taskView({ startedAt: 1 }), [
-        TEAM,
-      ]).putBack,
+      memberActions(run("active", null), taskView({ startedAt: 1 }), [TEAM])
+        .putBack,
       true,
     );
     strictEqual(
-      Domain.taskActions(run("pending", null), taskView(), [TEAM]).putBack,
+      memberActions(run("pending", null), taskView(), [TEAM]).putBack,
       false,
     );
     strictEqual(
-      Domain.taskActions(
+      memberActions(
         run("active", null),
         taskView({ ready: false, startedAt: 1 }),
         [TEAM],
@@ -755,7 +769,7 @@ describe("Domain.taskActions Put back", () => {
 
   it("a flag hides Put back", () => {
     strictEqual(
-      Domain.taskActions(run("active", "blocked"), taskView({ startedAt: 1 }), [
+      memberActions(run("active", "blocked"), taskView({ startedAt: 1 }), [
         TEAM,
       ]).putBack,
       false,
@@ -764,7 +778,7 @@ describe("Domain.taskActions Put back", () => {
 
   it("a started task on another team offers no Put back", () => {
     strictEqual(
-      Domain.taskActions(run("active", null), taskView({ startedAt: 1 }), [
+      memberActions(run("active", null), taskView({ startedAt: 1 }), [
         OTHER_TEAM,
       ]).putBack,
       false,
@@ -773,7 +787,7 @@ describe("Domain.taskActions Put back", () => {
 
   it("a finished task offers no Put back", () => {
     strictEqual(
-      Domain.taskActions(
+      memberActions(
         run("active", null),
         taskView({ ready: false, startedAt: 1, completedAt: 2 }),
         [TEAM],
@@ -859,8 +873,6 @@ describe("Domain.readyTasks", () => {
   });
 
   it("a run that is not open has no ready task", () => {
-    const tasks = [runTask(1, 1, false)];
-    deepStrictEqual(Domain.readyTasks(run("cancelled", null), tasks), []);
     deepStrictEqual(
       Domain.readyTasks(run("done", null), [runTask(1, 1, true)]),
       [],

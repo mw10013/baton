@@ -260,10 +260,11 @@ export function ClampedProse({
  * `slot="secondary-actions"` on them; a button that lifts, acknowledges or
  * rewrites the flag belongs inside the thing that states it.
  *
- * The merchant's order page renders it too, for `blocked` only, with Edit and
- * Unblock as `actions`, so the merchant sees the banner the worker sees. The
- * reconcile flags there stay a badge on the run line: the order page says
- * them in its own merchant vocabulary.
+ * The merchant's order page renders it too, for every flag, with the same
+ * `actions` read from {@link Domain.runActions}, so the merchant sees the
+ * banner the worker sees and every flag has its lift where it is stated. The
+ * badge on the order page's title line keeps the merchant's own words for
+ * the flag.
  */
 export function FlagBanner({
   run,
@@ -298,25 +299,26 @@ export function FlagBanner({
 }
 
 /**
- * The one button a flag allows, by who set it: Unblock lifts a person's hold
- * ({@link Domain.runIsBlocked}); Dismiss acknowledges a reconcile flag, which
- * is not a hold anybody set. Both screens read it from here so the word
- * cannot differ between the run list and the work page.
+ * The word on {@link Domain.runActions}' `liftFlag`, by who set the flag:
+ * Unblock lifts a person's hold ({@link Domain.runIsBlocked}); Dismiss
+ * acknowledges a reconcile flag, which is not a hold anybody set. One field,
+ * two words, because both are one write. Every screen reads the word from
+ * here so it cannot differ between them.
  */
 export const liftFlagLabel = (run: { readonly flag: Domain.RunFlag | null }) =>
   Domain.runIsBlocked(run) ? "Unblock" : "Dismiss";
 
 /**
- * The run's note, always drawn while the run is live: the text as typed with
- * an "Edit note" button under it, or the button alone when blank. One verb,
+ * The run's note: the text as typed with an "Edit note" button under it, or
+ * the button alone when blank. `canEdit` is {@link Domain.runActions}' `note`. One verb,
  * Edit, because the note is a column that is always there and may be blank
  * ({@link Domain.SetRunNoteCommand}: `null` clears); "Add" would promise a
  * "Remove" that does not exist. The button names its object because the
  * blocked banner's "Edit reason" sits a few lines above it, and because the
  * blank note has no placeholder word to stand beside: a subdued "Note" on its
- * own read as another heading with nothing under it. On a run that is not
- * live a blank note draws nothing and a written one is read-only. Both run
- * pages render this so the verb cannot drift.
+ * own read as another heading with nothing under it. Where the note is not
+ * editable a blank note draws nothing and a written one is read-only. Both
+ * run pages render this so the verb cannot drift.
  */
 export function RunNote({
   note,

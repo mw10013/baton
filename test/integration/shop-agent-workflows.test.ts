@@ -14,7 +14,7 @@ import { OrderRepository } from "@/lib/OrderRepository";
 import { Repository } from "@/lib/Repository";
 import { runShopAgentMigrations, type ShopAgent } from "@/lib/ShopAgent";
 
-import { openMemberSocket } from "./agent-socket";
+import { openMemberSocket, openMerchantSocket } from "./agent-socket";
 
 const layer = Repository.layerNoDeps.pipe(
   Layer.provide(
@@ -458,12 +458,12 @@ describe("ShopAgent workflow callables", () => {
 
     const on = await agent.setWorkflowActive({ workflowId, active: true });
     strictEqual(on._tag, "Ok");
-    const attached = await agent.attachWorkflow({
+    const attached = await agent.merchantAttachWorkflow({
       lineItemId: "gid://shopify/LineItem/1",
       workflowId,
     });
     if (attached._tag !== "Ok") throw new Error(attached._tag);
-    const [run] = await agent.listRunsForOrder({
+    const [run] = await agent.merchantListRunsForOrder({
       orderId: "gid://shopify/Order/1",
     });
     expect(run?.tasks.map((s) => s.name)).toEqual(["S"]);
@@ -583,34 +583,34 @@ describe("ShopAgent workflow run callables", () => {
     if (created._tag !== "Ok") throw new Error(created._tag);
     const workflowId = created.workflow.id;
 
-    const noTasks = await agent.attachWorkflow({
+    const noTasks = await agent.merchantAttachWorkflow({
       lineItemId: "gid://shopify/LineItem/1",
       workflowId,
     });
     strictEqual(noTasks._tag, "WorkflowCannotStart");
     await agent.addStep({ workflowId, name: "Engrave", teamId: team.id });
     // A draft is not attachable; neither is an applied but off workflow.
-    const draftOnly = await agent.attachWorkflow({
+    const draftOnly = await agent.merchantAttachWorkflow({
       lineItemId: "gid://shopify/LineItem/1",
       workflowId,
     });
     strictEqual(draftOnly._tag, "WorkflowCannotStart");
     const applied = await agent.applyDraft({ workflowId });
     strictEqual(applied._tag, "Ok");
-    const off = await agent.attachWorkflow({
+    const off = await agent.merchantAttachWorkflow({
       lineItemId: "gid://shopify/LineItem/1",
       workflowId,
     });
     strictEqual(off._tag, "WorkflowCannotStart");
     await agent.setWorkflowActive({ workflowId, active: true });
 
-    const unknownItem = await agent.attachWorkflow({
+    const unknownItem = await agent.merchantAttachWorkflow({
       lineItemId: "nope",
       workflowId,
     });
     strictEqual(unknownItem._tag, "LineItemNotFound");
 
-    const attached = await agent.attachWorkflow({
+    const attached = await agent.merchantAttachWorkflow({
       lineItemId: "gid://shopify/LineItem/1",
       workflowId,
     });
@@ -620,13 +620,13 @@ describe("ShopAgent workflow run callables", () => {
     strictEqual(attached.run.orderName, "#1001");
     strictEqual(attached.replaced, null);
 
-    const twice = await agent.attachWorkflow({
+    const twice = await agent.merchantAttachWorkflow({
       lineItemId: "gid://shopify/LineItem/1",
       workflowId,
     });
     strictEqual(twice._tag, "AlreadyExists");
 
-    const listed = await agent.listRunsForOrder({
+    const listed = await agent.merchantListRunsForOrder({
       orderId: "gid://shopify/Order/1",
     });
     expect(listed.map((d) => [d.run.id, d.tasks.length])).toEqual([
@@ -638,13 +638,13 @@ describe("ShopAgent workflow run callables", () => {
     expect(await agent.removeWorkflow({ workflowId })).toEqual({
       _tag: "Deleted",
     });
-    const kept = await agent.listRunsForOrder({
+    const kept = await agent.merchantListRunsForOrder({
       orderId: "gid://shopify/Order/1",
     });
     expect(
       kept.map((d) => [d.run.id, d.run.workflowName, d.tasks.length]),
     ).toEqual([[attached.run.id, attached.run.workflowName, 1]]);
-    const gone = await agent.attachWorkflow({
+    const gone = await agent.merchantAttachWorkflow({
       lineItemId: "gid://shopify/LineItem/1",
       workflowId,
     });
@@ -670,7 +670,7 @@ describe("ShopAgent workflow run callables", () => {
       const applied = await agent.applyDraft({ workflowId });
       if (applied._tag !== "Ok") throw new Error(applied._tag);
       await agent.setWorkflowActive({ workflowId, active: true });
-      return agent.attachWorkflow({
+      return agent.merchantAttachWorkflow({
         lineItemId: "gid://shopify/LineItem/1",
         workflowId,
       });
@@ -695,7 +695,7 @@ describe("ShopAgent workflow run callables", () => {
     strictEqual(unpaid._tag, "Ok");
   });
 
-  it("attachWorkflow over a live run replaces it and names what it cancelled", async () => {
+  it("merchantAttachWorkflow over an open run deletes it and names it as replaced; over a cancelled item it starts fresh, even the same workflow", async () => {
     const shop = "wf-replace.myshopify.com";
     const team = await seedTeam(shop, "Engraving");
     await seedOrder(shop, Date.now() - 24 * 60 * 60 * 1000);
@@ -717,13 +717,13 @@ describe("ShopAgent workflow run callables", () => {
     const first = await build("Engraving");
     const second = await build("Rush");
 
-    const attached = await agent.attachWorkflow({
+    const attached = await agent.merchantAttachWorkflow({
       lineItemId: "gid://shopify/LineItem/1",
       workflowId: first.id,
     });
     if (attached._tag !== "Ok") throw new Error(attached._tag);
 
-    const replaced = await agent.attachWorkflow({
+    const replaced = await agent.merchantAttachWorkflow({
       lineItemId: "gid://shopify/LineItem/1",
       workflowId: second.id,
     });
@@ -732,18 +732,27 @@ describe("ShopAgent workflow run callables", () => {
     strictEqual(replaced.replaced?.workflowName, "Engraving");
     strictEqual(replaced.run.workflowName, "Rush");
 
-    // The item is Rush's now, so the old run cannot be brought back until
-    // Rush's is cancelled.
-    expect(await agent.uncancelRun({ runId: attached.run.id })).toEqual({
-      _tag: "ItemHasRun",
-      workflowName: "Rush",
+    // The replaced run is gone, not kept beside the new one.
+    const afterChange = await agent.merchantListRunsForOrder({
+      orderId: "gid://shopify/Order/1",
     });
-    expect(await agent.cancelRun({ runId: replaced.run.id })).toEqual({
+    deepStrictEqual(
+      afterChange.map(({ run }) => run.id),
+      [replaced.run.id],
+    );
+
+    expect(await agent.merchantCancelRun({ runId: replaced.run.id })).toEqual({
       _tag: "Ok",
     });
-    expect(await agent.uncancelRun({ runId: attached.run.id })).toEqual({
-      _tag: "Ok",
+    // Rush again, the workflow just cancelled: a fresh run over the marker.
+    const again = await agent.merchantAttachWorkflow({
+      lineItemId: "gid://shopify/LineItem/1",
+      workflowId: second.id,
     });
+    if (again._tag !== "Ok") throw new Error(again._tag);
+    strictEqual(again.replaced, null);
+    strictEqual(again.run.status, "pending");
+    expect(again.run.id).not.toBe(replaced.run.id);
   });
 
   it("createWorkflow and updateWorkflowTag refuse a tag another workflow holds; the switch never does", async () => {
@@ -849,7 +858,9 @@ describe("ShopAgent workflow run callables", () => {
     if (nudged._tag !== "Ok") throw new Error(nudged._tag);
     strictEqual(nudged.started, 0);
     expect(
-      await agent.listRunsForOrder({ orderId: "gid://shopify/Order/1" }),
+      await agent.merchantListRunsForOrder({
+        orderId: "gid://shopify/Order/1",
+      }),
     ).toHaveLength(0);
 
     const off = await agent.setWorkflowActive({
@@ -859,7 +870,7 @@ describe("ShopAgent workflow run callables", () => {
     if (off._tag !== "Ok") throw new Error(off._tag);
     // Turn off started a run: `started` is meaningful in both directions.
     strictEqual(off.started, 1);
-    const runs = await agent.listRunsForOrder({
+    const runs = await agent.merchantListRunsForOrder({
       orderId: "gid://shopify/Order/1",
     });
     expect(runs.map((d) => d.run.workflowId)).toEqual([keeper.id]);
@@ -880,7 +891,9 @@ describe("ShopAgent workflow run callables", () => {
     // Placed after Turn on, but carrying a tag no workflow has yet.
     await seedOrder(shop, Date.now() + 60 * 60 * 1000, ["laser"]);
     expect(
-      await agent.listRunsForOrder({ orderId: "gid://shopify/Order/1" }),
+      await agent.merchantListRunsForOrder({
+        orderId: "gid://shopify/Order/1",
+      }),
     ).toHaveLength(0);
 
     // The retag is the definition write that makes the item match; the
@@ -890,13 +903,13 @@ describe("ShopAgent workflow run callables", () => {
       tag: "laser",
     });
     strictEqual(retagged._tag, "Ok");
-    const runs = await agent.listRunsForOrder({
+    const runs = await agent.merchantListRunsForOrder({
       orderId: "gid://shopify/Order/1",
     });
     expect(runs.map((d) => d.run.workflowId)).toEqual([workflowId]);
   });
 
-  it("cancelRun / uncancelRun / completeTask map repository failures to results", async () => {
+  it("merchantCancelRun / memberCompleteTask map refusals to results", async () => {
     const shop = "wf-cancel.myshopify.com";
     const team = await seedTeam(shop, "Engraving");
     await seedOrder(shop, Date.now());
@@ -912,22 +925,18 @@ describe("ShopAgent workflow run callables", () => {
       teamId: team.id,
     });
     await goLive(agent, created.workflow.id);
-    const attached = await agent.attachWorkflow({
+    const attached = await agent.merchantAttachWorkflow({
       lineItemId: "gid://shopify/LineItem/1",
       workflowId: created.workflow.id,
     });
     if (attached._tag !== "Ok") throw new Error(attached._tag);
     const runId = attached.run.id;
 
-    expect(await agent.uncancelRun({ runId })).toEqual({ _tag: "Terminal" });
-    expect(await agent.cancelRun({ runId })).toEqual({ _tag: "Ok" });
-    expect(await agent.cancelRun({ runId })).toEqual({ _tag: "Terminal" });
-    expect(await agent.uncancelRun({ runId })).toEqual({ _tag: "Ok" });
-    expect(await agent.cancelRun({ runId: "nope" })).toEqual({
+    expect(await agent.merchantCancelRun({ runId: "nope" })).toEqual({
       _tag: "NotFound",
     });
 
-    const [detail] = await agent.listRunsForOrder({
+    const [detail] = await agent.merchantListRunsForOrder({
       orderId: "gid://shopify/Order/1",
     });
     const runTaskId = detail?.tasks[0]?.id ?? "";
@@ -948,11 +957,25 @@ describe("ShopAgent workflow run callables", () => {
     });
     expect(await engraver.completeTask({ runTaskId })).toEqual({ _tag: "Ok" });
     expect(await runListItems(agent, [team.id])).toHaveLength(0);
-    expect(await agent.cancelRun({ runId })).toEqual({ _tag: "Terminal" });
+    // A done run offers no Cancel (`Domain.runActions`), and has no flag to lift.
+    expect(await agent.merchantCancelRun({ runId })).toEqual({
+      _tag: "NotAllowed",
+    });
     expect(await engraver.dismissFlag({ runId })).toEqual({
       _tag: "NotAllowed",
     });
     engraver.close();
+    // Reopened, it is open again and cancels once; the marker left behind
+    // is no run to act on.
+    const merchant = await openMerchantSocket(shop);
+    expect(await merchant.uncompleteTask({ runTaskId })).toEqual({
+      _tag: "Ok",
+    });
+    merchant.close();
+    expect(await agent.merchantCancelRun({ runId })).toEqual({ _tag: "Ok" });
+    expect(await agent.merchantCancelRun({ runId })).toEqual({
+      _tag: "NotFound",
+    });
   });
 
   /**
@@ -991,13 +1014,13 @@ describe("ShopAgent workflow run callables", () => {
       teamId: team.id,
     });
     await goLive(agent, created.workflow.id);
-    const attached = await agent.attachWorkflow({
+    const attached = await agent.merchantAttachWorkflow({
       lineItemId: "gid://shopify/LineItem/1",
       workflowId: created.workflow.id,
     });
     if (attached._tag !== "Ok") throw new Error(attached._tag);
     const runId = attached.run.id;
-    const [detail] = await agent.listRunsForOrder({
+    const [detail] = await agent.merchantListRunsForOrder({
       orderId: "gid://shopify/Order/1",
     });
     const runTaskId = detail?.tasks[0]?.id ?? "";
@@ -1082,12 +1105,12 @@ describe("ShopAgent workflow run callables", () => {
       teamId: a.id,
     });
     await goLive(agent, created.workflow.id);
-    const attached = await agent.attachWorkflow({
+    const attached = await agent.merchantAttachWorkflow({
       lineItemId: "gid://shopify/LineItem/1",
       workflowId: created.workflow.id,
     });
     if (attached._tag !== "Ok") throw new Error(attached._tag);
-    const [detail] = await agent.listRunsForOrder({
+    const [detail] = await agent.merchantListRunsForOrder({
       orderId: "gid://shopify/Order/1",
     });
     const runTaskId = detail?.tasks[0]?.id ?? "";
@@ -1098,11 +1121,15 @@ describe("ShopAgent workflow run callables", () => {
     expect(view?.runs[0]?.tasks[0]?.teamId).toBe(null);
     expect(view?.teams).toEqual([]);
 
-    expect(await agent.assignRunTaskTeam({ runTaskId, teamId: a.id })).toEqual({
+    expect(
+      await agent.merchantAssignRunTaskTeam({ runTaskId, teamId: a.id }),
+    ).toEqual({
       _tag: "TeamNotFound",
     });
     const b = await seedTeam(shop, "B");
-    expect(await agent.assignRunTaskTeam({ runTaskId, teamId: b.id })).toEqual({
+    expect(
+      await agent.merchantAssignRunTaskTeam({ runTaskId, teamId: b.id }),
+    ).toEqual({
       _tag: "Assigned",
     });
     const [item] = await runListItems(agent, [b.id]);
@@ -1122,7 +1149,9 @@ describe("ShopAgent workflow run callables", () => {
     expect(await inB.startTask({ runTaskId })).toEqual({ _tag: "Ok" });
     inB.close();
     const c = await seedTeam(shop, "C");
-    expect(await agent.assignRunTaskTeam({ runTaskId, teamId: c.id })).toEqual({
+    expect(
+      await agent.merchantAssignRunTaskTeam({ runTaskId, teamId: c.id }),
+    ).toEqual({
       _tag: "Assigned",
     });
     expect(await runListItems(agent, [b.id])).toEqual([]);
@@ -1145,11 +1174,18 @@ describe("ShopAgent workflow run callables", () => {
       "m2@example.com",
     );
     strictEqual(finished?.runs[0]?.tasks[0]?.startedByEmail, "m1@example.com");
-    expect(await agent.assignRunTaskTeam({ runTaskId, teamId: c.id })).toEqual({
-      _tag: "TaskFinished",
+    // A finished task keeps its team: `Domain.taskActions`' `reassign` is
+    // false, so the action set refuses before the repository's own guard.
+    expect(
+      await agent.merchantAssignRunTaskTeam({ runTaskId, teamId: c.id }),
+    ).toEqual({
+      _tag: "NotAllowed",
     });
     expect(
-      await agent.assignRunTaskTeam({ runTaskId: "nope", teamId: b.id }),
+      await agent.merchantAssignRunTaskTeam({
+        runTaskId: "nope",
+        teamId: b.id,
+      }),
     ).toEqual({ _tag: "NotFound" });
   });
 });
@@ -1218,7 +1254,9 @@ describe("ShopAgent seed callables", () => {
         },
       ],
     });
-    const runs = await agent.listRunsForOrder({ orderId: seedOrderId(1) });
+    const runs = await agent.merchantListRunsForOrder({
+      orderId: seedOrderId(1),
+    });
     expect(
       runs
         .map(({ run, tasks }) => ({
@@ -1255,7 +1293,9 @@ describe("ShopAgent seed callables", () => {
       ...seedMember,
       orders: [{ n: 1, lineItems: [ambiguousItem] }],
     });
-    const unrouted = await agent.listRunsForOrder({ orderId: seedOrderId(1) });
+    const unrouted = await agent.merchantListRunsForOrder({
+      orderId: seedOrderId(1),
+    });
     strictEqual(unrouted.length, 0);
     const [asking] = await ordersPage(agent);
     deepStrictEqual(asking === undefined ? null : Domain.orderNeeds(asking), [
@@ -1268,7 +1308,9 @@ describe("ShopAgent seed callables", () => {
         { n: 1, lineItems: [{ ...ambiguousItem, workflowId: boardId }] },
       ],
     });
-    const runs = await agent.listRunsForOrder({ orderId: seedOrderId(1) });
+    const runs = await agent.merchantListRunsForOrder({
+      orderId: seedOrderId(1),
+    });
     expect(runs.map(({ run }) => [run.workflowName, run.source])).toEqual([
       ["Board", "manual"],
     ]);
@@ -1310,7 +1352,9 @@ describe("ShopAgent seed callables", () => {
       ],
     });
     const flagOf = async (n: number) => {
-      const runs = await agent.listRunsForOrder({ orderId: seedOrderId(n) });
+      const runs = await agent.merchantListRunsForOrder({
+        orderId: seedOrderId(n),
+      });
       return runs[0]?.run.flag;
     };
     strictEqual(await flagOf(1), "order_cancelled");

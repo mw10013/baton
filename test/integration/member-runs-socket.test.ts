@@ -163,12 +163,12 @@ const seedShopWithWork = async (shopName: string) => {
     active: true,
   });
   if (live._tag !== "Ok") throw new Error(live._tag);
-  const attached = await agent.attachWorkflow({
+  const attached = await agent.merchantAttachWorkflow({
     lineItemId: LINE_ITEM_ID,
     workflowId: created.workflow.id,
   });
   if (attached._tag !== "Ok") throw new Error(attached._tag);
-  const [detail] = await agent.listRunsForOrder({ orderId: ORDER_ID });
+  const [detail] = await agent.merchantListRunsForOrder({ orderId: ORDER_ID });
   const runTaskId = detail?.tasks[0]?.id;
   if (runTaskId === undefined) throw new Error("no run task");
   return { shop, runTaskId, ...seeded };

@@ -51,6 +51,8 @@ JSDoc: on the `ShopAgent` class, or on the first run callable, add the rule: "Ev
 
 ## Step 2. Remove cancelled runs (Q13)
 
+**Amended by section 13 (decided 2026-09-24).** Cancel run does not delete the row. It deletes the tasks and keeps a `cancelled` marker, so reconcile starts nothing on the item until the merchant picks a workflow. Change workflow and reconcile still delete. Where this step and 13e disagree, 13e wins: `cancelled` stays in `RunStatus`, `cancelledAt` stays on `WorkflowRun`, and the constraint is the total `unique (lineItemId)` with no partial index. Everything else below stands: no Undo cancel, no revive, no `uncancelRun`, no `ItemHasRun`, no `runIsLive`.
+
 ### 2a. Schema, `src/lib/ShopAgent.ts`
 
 In the `WorkflowRun` DDL:
@@ -235,4 +237,136 @@ Format, one entry per item:
 
 - **Step N, file:symbol.** What the plan said. What was found. What was done. Open or resolved.
 
-(none yet)
+- **Step 2, `WorkflowRunRepository.cancelRun`, reconcile.** The plan said Cancel run deletes the run. Found: the cancelled row did a third job the research missed. Its `unique (lineItemId, workflowId)` key stopped reconcile from auto-starting the same workflow on that item again. With the row deleted, the next `orders/updated` webhook, Apply or Turn on starts a fresh run of the workflow the merchant just cancelled. Resolved by section 13: a task-less `cancelled` marker.
+- **Step 1, `ShopAgentClient.getRunForMember`.** Renamed to `memberGetRun` along with the callable, so the client wrapper and the RPC share a name. `Domain.GetRunForMemberInput` kept its name. The test helpers `memberActions` / `merchantActions` in `test/integration/agent-socket.ts` keep their short keys (`completeTask`, ...) and now call the `member*` / `merchant*` callables. Resolved.
+- **Step 1, naming rule.** The `<role><Verb>` JSDoc sits on `merchantListRunsForOrder`, the first run callable in the file. Its test is in `shop-agent-callables.test.ts`, titled with the rule. Resolved.
+- **Step 3b, `Domain.lineItemState`.** The plan's decision tree checks `currentQuantity === 0` first. That would hide an active run flagged `item_removed`, which is seed row 1 of step 8 (banner with Dismiss). A run is checked first, then `removed`. The signature is `(item, runs, workflows)` with no order, because the order only hides the resting picker, which the page does with `canAttachRun`. `startable` gained `ambiguous: boolean` for the ambiguity sentence. `Domain.runTaskViews` was added so the order page gets `RunTaskView`s from its own rows. Resolved.
+- **Step 3c, `Domain.runActions`.** It takes the run's tasks as a fourth argument, because every "m" cell needs "a ready task on the member's team" and `note` needs "the member can see the run". Resolved.
+- **Step 3c, matrix cell "done, quantity flag / liftFlag / m".** The research table says M m. The repository's `dismissFlag` requires a ready task on the member's team, and a done run has none, so the member has always been refused. The JSDoc table marks the cell M only and says why. The work page used to draw a Dismiss button there that the server always refused; it no longer draws it. Decided 2026-09-24: kept merchant-only. The member work page's banner on a done run's flag says "Your merchant will review this." instead of drawing no button. Resolved.
+- **Step 6, work page Block.** It used to show on any open, unflagged run and the repository refused a member whose task was not ready. It now follows `runActions.block`, so Block disappears when none of the member's tasks on the run is ready. The same happens to Edit reason and the lift. Behaviour change, deliberate.
+- **Step 3d / 6, closed orders on member pages.** `taskActions` is all false on a closed order, so a member loses Start, Done, Put back and Undo on a closed order's run after the flag is dismissed. A run list row with no allowed verb now draws no menu button. Behaviour change, per R1.
+- **Step 3/6, `Domain.OrderState`.** Member views need the order's open or closed state. `OrderState` (`cancelledAt`, `fulfillmentStatus`) was added to `RunView`, `RunListItem` and `DoneItem`, read by join. A run whose order is missing is dropped from those reads (retention deletes both together). `canAttachRun`, `isCancelled` and `isFulfilled` now take the narrow shape. Resolved.
+- **Step 4, enforcement.** `WorkflowRunRepository.getRunGate` loads run, task views and order state in one call. The rule JSDoc is on `ShopAgent`'s module-level `requireRunAction` (the enforcer) rather than on the first callable. `merchantCancelRun` reads the team scope before the delete, because afterwards the run is gone. `AssignRunTaskTeamResult` gained `NotAllowed`. Some refusals that used to come back as `Terminal` now come back as `NotAllowed`. Resolved.
+- **Section 13, implemented.** `cancelled` is back in `RunStatus` as a task-less marker with `cancelledAt`. `cancelRun` deletes the tasks and clears note and flag. `setRun` replaces a marker with `replaced: null`, the same workflow included. Reconcile's `adjust` skips markers. `getRunView` and `getRunGate` answer none for one. `RunCounts` gained `cancelled`; `orderNeeds`, `NO_WORKFLOW` and the count facts treat it as decided. `LineItemState` gained the `cancelled` kind. Seed progress gained `cancelled` (`Domain.SeedProgress`, `e2e/seed.ts`). Resolved.
+- **Step 2, `WorkflowRunRepository.setRunNote`.** The repository refuses a note on the marker with `RunTerminalError` as a second line under `runActions.note`. `RunTerminalError`'s JSDoc now says "the run's status refuses the write" rather than "the run is done". Resolved.
+- **Step 4, `merchantAssignRunTaskTeam` on a finished task.** The action-set gate now answers `NotAllowed` before the repository's `TaskFinished` can. The test in `shop-agent-workflows.test.ts` was changed to expect `NotAllowed`; the page copy for it is "That task can no longer be reassigned." `TaskFinished` and `RunNotOpen` stay as the repository's second line. Resolved.
+- **Step 2 tests, `workflow-run-repository.test.ts`.** Two assertions were deleted rather than rewritten: the un-cancel refusal test ("un-cancel is refused while another live run occupies the item"), and in the unassign test the `RunTerminalError` from assigning a task of a cancelled run, then un-cancelling it. Neither state exists any more; the marker has no tasks. The rest were rewritten: reconcile deletions assert the row is absent and count `removed`; the "partial index" test is now "the unique index refuses a second row for an item, and a cancelled marker still holds the slot"; the un-cancel reconcile test is now "a cancelled item starts nothing on reconcile". Resolved.
+- **Step 5, `renderLineItem`.** The plan says `Match.value(Domain.lineItemState(...))`. oxlint reads JSX arrows in `Match`'s object literal as components defined in render (`react(no-unstable-nested-components)`), so the page uses an exhaustive `switch` with a `satisfies never` default. The Domain derivation uses `Match`. Resolved.
+- **Step 5, Change workflow on a removed item.** An open run on a line at zero units (`item_removed`) still offers Change workflow, because `runActions.changeWorkflow` does not read units. Seen on #1031 in step 8. Decided 2026-09-24: `runActions` takes the line item and `changeWorkflow` needs units to make (matrix row "open, nothing to make"); `merchantAttachWorkflow` answers `NothingToMake` on a zero-unit item; a cancelled item at zero units draws its line with no picker (`LineItemState.cancelled.startable`). Resolved.
+- **Step 5, toast on a plain Start.** Starting a workflow from the picker now toasts "Started X." (it was silent), so the start over a cancelled marker says "Started", never "resumed", as 13d asks. Resolved.
+- **Step 8, screenshots.** #1031 (item removed), #1019 (cancelled in Shopify), #1032 (done, quantity changed), #1033 (blocked, pending), #1034 (three matches) and #1035 (cancelled item) were opened in the embedded admin and match section 4 and 13d, including the Cancel run and Reassign modals. The local Durable Object still had the old schema (which accepts the marker), so no reset was needed to look. No mismatch recorded.
+- **Step 10, lint.** The pre-existing `jsx-curly-brace-presence` warning on the order page and the eight in `scripts/icon.ts` are fixed (`**`, `toReversed`, named `u` regex groups, and a no-op `split/join/replace` chain removed from `indent`). `pnpm lint` reports no warnings. Resolved.
+- **Step 10, grep gate 2.** `grep "'cancelled'" src/lib/WorkflowRunRepository.ts src/lib/Domain.ts` is not empty: `cancelRun` writes `status = 'cancelled'`. That is the section 13 marker, which the gate predates. The literal in `Domain.ts` is in `RunStatus` and `runIsCancelled`, as the Domain rule requires, spelled with double quotes. Resolved.
+- **Step 9, E2E.** `orders.spec.ts`: Reassign asserts the modal; the change test asserts the replaced run is gone, then cancels through the modal and starts the same workflow fresh; a new spec "each order-page state draws the controls its action set allows" covers the step 8 rows. `member-runs.member.spec.ts`: one JSDoc no longer names `runIsLive` (the button still reads Undo). Full headless run: 63 of 64 passed; the new spec failed because it opened #9502 through the index, whose default Open filter hides a Shopify-cancelled order. It now opens each order by URL and passes on its own. Resolved.
+
+### Review (2026-09-24)
+
+A second pass over the finished implementation against this plan and section 13. Code, schema, enforcement and tests match the decided model; `pnpm typecheck`, `pnpm lint` and `pnpm test` (445) pass. Section 12's deviations are all sound. What the pass found and did:
+
+- **JSDoc still describing delete-on-cancel.** `ShopAgent.merchantCancelRun` ("Deletes the run"), the order page's `NotFound` copy comment, and the work page's not-found comment all said a cancel deletes the run. Rewritten to the marker. Resolved.
+- **`Domain.WorkflowRun` said a run outlives an order delete and must not join `ShopOrder`.** Retention already deleted runs with their orders, and step 3/6 added an inner join to `ShopOrder` on the run list, Done tier and `getRunGate`, so the claim was false twice over. The JSDoc and the `orderProcessedAt` note now say the snapshots are for reading alone and an order delete takes its runs. The seed comment on `replaceWorkflows` that repeated the claim is reworded. Resolved.
+- **`Domain.RunResult` vs `RunTerminalError`.** `Terminal` said "the run is done"; the repository's error said "the run's status refuses the write" (it also covers the note on a marker). Aligned, and `NotFound` now says it is what every write on a marker gets, because `getRunGate` treats the marker as no run. `getRunGate`'s interface JSDoc says the same. Resolved.
+- **`merchantAttachWorkflow` JSDoc** did not mention the marker (fresh start, `replaced: null`) or `NothingToMake`. Added. Resolved.
+- **Work page banner without a button.** The page showed "Your merchant will review this." on a done run only, by `runIsDone`; a member whose tasks are all downstream on an open flagged run got a banner with no button and no sentence. It now shows the note whenever `runActions.liftFlag` is false, so the page reads one field and the JSDoc says both cases. Resolved.
+- **Not changed, worth knowing.** `requireRunAction` raises `RunNotAllowedError` with `teamId: ""` because the error's shape is the team gate's; harmless, but the field is now a misnomer for the action-set refusal. `scripts/icon.ts` was touched for lint warnings the plan did not ask about. Section 12's "grep gate 2" hit (`status = 'cancelled'` in `cancelRun`) is the marker write and stays.
+- **Looked at.** #1035 (cancelled item: neutral badge, the line, the picker with the cancelled workflow first) and #1019 (cancelled in Shopify: page banner, flag banner with Dismiss, note, Manage) in the embedded admin match 13d and section 4.
+
+## 13. Cancelled items: open design
+
+Found during step 2. This section reopens Q13 of the research. Answer inline; the recommendation under each question is mine.
+
+### 13a. What the cancelled row was doing
+
+Today (before this plan) a cancelled run was a full `WorkflowRun` row with `status = 'cancelled'`. It served three purposes:
+
+1. **Undo cancel.** Decided away (research Q1, Q13).
+2. **Resume on reattach.** Picking the same workflow revived the row with its done tasks. Decided away.
+3. **Blocking auto-restart.** Nobody listed this one. Reconcile creates a run for an item with exactly one matching workflow and no live run. `insertRun` uses `on conflict do nothing`, and the cancelled row still held `(lineItemId, workflowId)`, so the insert was skipped. The merchant's cancel stuck.
+
+Delete-on-cancel keeps 1 and 2 gone but loses 3. Where it bites:
+
+| Who deletes the run                     | Can reconcile restart it?      | Why                                                                                                    |
+| --------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| Merchant: Cancel run                    | **Yes**, on the next reconcile | The item still matches by tag, the order is open and paid, and nothing is left on the item             |
+| Merchant: Change workflow               | No                             | The new run holds the item                                                                             |
+| Reconcile: order cancelled or fulfilled | No                             | A closed order starts nothing                                                                          |
+| Reconcile: line dropped to zero units   | No                             | `matchesTag` needs `currentQuantity > 0`. If an edit raises it again, starting again is arguably right |
+
+So only Cancel run needs something to remember it. Reconcile runs on every `orders/updated` webhook (payment, fulfilment, tags, note, edits) and on every Apply, Turn on or date change of an active workflow. A cancelled run would typically be back within minutes or hours.
+
+### 13b. The model you described: cancel is final, the item is visible, a new workflow is a fresh run
+
+Restating it so we agree on it:
+
+- Cancel run kills the run completely. No undo, no revive, ever.
+- Afterwards the item is visibly **cancelled** on the order page, and nothing starts on it automatically.
+- The merchant may give it a workflow by hand: any workflow, including the one just cancelled. That is a fresh run copied from the definition, with no link to the old one.
+- The new run replaces the cancelled marker. An item never holds more than one thing.
+
+I agree with this, and it is simpler than the research's "cancel means gone" for one reason: it names the state the merchant is in. Once auto-restart has to be blocked, a cancelled item is a real state with a real rule ("nothing starts here by itself"). Hiding it would leave the merchant staring at a picker with no idea why the tag match that routes every other item did nothing here. Shopify's own cancelled order is the same shape: visibly Cancelled, final, and the way forward is a new thing, not a revived old one.
+
+### 13c. Where the marker lives
+
+| Option                                            | How                                                                                                                                                                                                                                                                                                                                     | Cost                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **A. A stripped `WorkflowRun` row** (recommended) | Cancel run deletes the tasks and keeps the row with `status = 'cancelled'`, `cancelledAt`, `workflowName`. The total `unique (lineItemId)` from step 2 stays, so the marker takes the item's one slot and can never accumulate. A manual attach deletes it and inserts the fresh run in one transaction, as Change workflow does today. | Every reader that means "a run with work" must skip `cancelled` again: roughly the open, done and ambiguity SQL in `OrderRepository`, `getRunView`, `lineItemState`, and the counts. That is fewer than before this plan, because a marker has no tasks: the run list, Done tier, readiness SQL and team fan-out never see it. |
+| B. A marker on `OrderLineItem`                    | e.g. `routing = 'manual'`                                                                                                                                                                                                                                                                                                               | `OrderLineItem` rows are deleted and reinserted on every sync (`OrderRepository.upsertOrder`), so the upsert has to carry the marker across. It is easy to lose in a later edit. Nothing on the item can show which workflow was cancelled or when, so the card line in 13d has nothing to print.                              |
+| C. A table of its own                             | e.g. `RunHold (lineItemId primary key, at)`                                                                                                                                                                                                                                                                                             | You did not want another table. It also duplicates what option A's row already holds.                                                                                                                                                                                                                                          |
+
+**Why the partial index does not come back under A.** It existed only so that many cancelled rows could sit beside one live run on the same item. Under A the marker _is_ the item's one row, so `unique (lineItemId)` stays total. Cancel run turns the run into the marker in place, and a manual attach replaces the marker.
+
+**Why deleting the tasks matters.** With no tasks there is nothing to revive, by construction rather than by a rule someone has to remember. It also keeps the marker out of every task-driven read (run list, Done tier, readiness, team fan-out, the open-run ceiling).
+
+### 13d. What the merchant sees
+
+The line item card, under the title and facts:
+
+```
+Engraved cutting board — Walnut
+× 1 · SKU ECB-W                                   [Cancelled]
+
+Engraving workflow cancelled · 3h ago. Nothing starts on this item until you choose a workflow.
+Workflow  [ Choose workflow ▾ ]  [Start]
+```
+
+- The badge on the title line is **Cancelled**, neutral or subdued rather than red. It is a decision the merchant made, not an alarm. (Red stays for Blocked and for Shopify cancelling the order.)
+- One subdued line names what was cancelled and when, and says the consequence. It is the only place the old workflow's name survives.
+- The picker at rest lists every active workflow, the matched ones first as today, **including the one just cancelled**. Start creates a fresh run. The toast says "Started Engraving." with no "resumed" wording anywhere.
+- No Manage, no note, no Undo. A marker has no tasks, and its note goes with it (see 13f Q-C4).
+- On a closed order the line stays and the picker goes (R1).
+
+The Cancel run modal says the consequence up front, so nobody is surprised by the card afterwards:
+
+> **Cancel this run?**
+> 2 of 3 steps are done. That work will be lost. Nothing will start on this item until you choose a workflow.
+> [Keep run] [Cancel run]
+
+### 13e. What changes in the plan if A is chosen
+
+| Area                                                  | Change                                                                                                                                                                                                                                                          |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RunStatus`                                           | `pending \| active \| done \| cancelled`. JSDoc: `cancelled` is a marker with no tasks. No write moves a run out of it; a manual attach replaces the row. Only Cancel run writes it.                                                                            |
+| `WorkflowRun`                                         | `cancelledAt` comes back (nullable, set only on the marker).                                                                                                                                                                                                    |
+| Schema                                                | Keep the total `lineItemId unique` from step 2. Status check gains `'cancelled'`. No partial index.                                                                                                                                                             |
+| `cancelRun`                                           | In one transaction: delete the tasks, set `status = 'cancelled'`, `cancelledAt`, clear `flag`, `flagAt`, `flagDetail` and `note`, release the ceiling.                                                                                                          |
+| `setRun`                                              | An incumbent that is `cancelled` is replaced like an open one, but `replaced` comes back `null` (nothing was running). A `done` incumbent is still refused. The same workflow as a cancelled incumbent is **not** `AlreadyExists`; it starts fresh.             |
+| Reconcile                                             | An item holding a marker counts as having a run, so nothing auto-starts. `adjust` skips markers. The marker is not flagged when the order is cancelled or fulfilled (nothing to stop). Reconcile's own deletions (13a rows 3–4) stay deletions, with no marker. |
+| `Domain.runIsCancelled`                               | New predicate. `runIsOpen`, `runIsDone` unchanged.                                                                                                                                                                                                              |
+| `lineItemState`                                       | New kind `cancelled: { run, options, matched }`, one per layout: the cancelled line plus the picker.                                                                                                                                                            |
+| `runActions` / `taskActions`                          | Not computed for a marker: the page has no run controls for the `cancelled` kind. `ShopAgent`'s `getRunGate` answers `NotFound` for a marker, so every run write refuses.                                                                                       |
+| `OrderRepository` SQL, `runCounts`, `productionState` | Open and done count as before. `ANY_RUN` and `RUN_FOR_ITEM` decide the needs; see Q-C2.                                                                                                                                                                         |
+| Member pages                                          | `getRunView` answers none for a marker, so an open work page on a cancelled run shows not-found, as a deleted run would. The run list never sees it (no tasks).                                                                                                 |
+| Tests                                                 | Rewrite the reconcile test "keeps a cancelled run cancelled" as "a cancelled item starts nothing on reconcile" (the rule gets a test titled with it). Add: "a manual attach on a cancelled item starts a fresh run, even of the same workflow".                 |
+
+### 13f. Decisions (2026-09-24)
+
+| #    | Decision                                                                                                                                       |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Q-C1 | The marker is a stripped `WorkflowRun` row: `status = 'cancelled'`, `cancelledAt`, no tasks, under the total `unique (lineItemId)`.            |
+| Q-C2 | A cancelled item counts as decided: not `no_workflow`, not `choose_workflow`. `RunCounts` gains `cancelled` so `orderNeeds` and the SQL agree. |
+| Q-C3 | The word is `cancelled`, for the literal and the badge.                                                                                        |
+| Q-C4 | Cancel run clears the note and the flag. The modal names the note when there is one.                                                           |
+| Q-C5 | Change workflow leaves no marker.                                                                                                              |
+| Q-C6 | Reconcile's own deletions leave no marker.                                                                                                     |
+| Q-C7 | On a closed order the cancelled line stays and the picker goes.                                                                                |
+| Q-C8 | Step 2 is amended by 13e; work resumes from there.                                                                                             |

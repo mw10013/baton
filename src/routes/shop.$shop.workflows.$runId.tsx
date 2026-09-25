@@ -34,7 +34,7 @@ const ParamsInput = Schema.Struct({
 });
 
 /**
- * The work page's first paint, SSR like the run list's. `getRunForMember`
+ * The work page's first paint, SSR like the run list's. `memberGetRun`
  * answers `null` for a run that is not there *or* not on one of the member's
  * teams — one answer, so a member cannot probe run ids — and the page renders
  * its not-found state for both.
@@ -49,7 +49,7 @@ const getLoaderData = createServerFn({ method: "GET" })
           shop: data.shop,
           email: user.email,
         });
-        const view = yield* (yield* ShopAgentClient).getRunForMember(shop, {
+        const view = yield* (yield* ShopAgentClient).memberGetRun(shop, {
           runId: data.runId,
           teamIds: teams.map((team) => team.id),
         });
@@ -79,7 +79,13 @@ export const Route = createFileRoute("/shop/$shop/workflows/$runId")({
 });
 
 function RouteComponent() {
-  const { shop, memberEmail, teams, view: initialView } = Route.useLoaderData();
+  const {
+    shop,
+    memberId,
+    memberEmail,
+    teams,
+    view: initialView,
+  } = Route.useLoaderData();
   const { runId } = Route.useParams();
   const {
     data: view,
@@ -97,21 +103,29 @@ function RouteComponent() {
     identified,
     onSuccess: () => invalidate(),
   });
-  const teamIds = teams.map((team) => team.id);
+  /** The member as the actor every action set on this page is computed for. */
+  const actor: Domain.Actor = {
+    role: "member",
+    memberId,
+    email: memberEmail,
+    teamIds: teams.map((team) => team.id),
+  };
 
   /**
    * The buttons follow {@link Domain.taskActions}, which also says why none is
    * primary; the banner carries the only action a flag allows. The badge
    * carries the state and the buttons are its exits, the advancing one first:
-   * `Start · Done`, `Done · Put back`, `Undo`. Undo and Put back are offered
-   * where they are allowed and nowhere else: a blocked undo draws no disabled
-   * button and no sentence explaining itself, because the task standing in the
-   * way is on this same page with an `In progress` badge on it.
+   * `Start · Done`, `Done · Put back`, `Undo`. The label is Undo although the
+   * field is `reopen`: on the bench the verb takes back the member's own
+   * Done. Undo and Put back are offered where they are allowed and nowhere
+   * else: a blocked undo draws no disabled button and no sentence explaining
+   * itself, because the task standing in the way is on this same page with an
+   * `In progress` badge on it.
    */
   const taskButtons = (task: Domain.RunTaskView) => {
     if (view === null) return null;
-    const can = Domain.taskActions(view.run, task, teamIds);
-    const anyAction = can.done || can.putBack || can.undo?.blockedBy === null;
+    const can = Domain.taskActions(actor, view.order, view.run, task);
+    const anyAction = can.done || can.putBack || can.reopen?.blockedBy === null;
     if (!anyAction) return null;
     return (
       <>
@@ -148,7 +162,7 @@ function RouteComponent() {
             Put back
           </s-button>
         )}
-        {can.undo?.blockedBy === null && (
+        {can.reopen?.blockedBy === null && (
           <s-button
             variant="secondary"
             disabled={actions.pending}
@@ -169,6 +183,10 @@ function RouteComponent() {
         <MemberBar shop={shop} email={memberEmail} />
         <s-page heading="Not found" inlineSize="small">
           <s-section accessibilityLabel="Not found">
+            {/* Also where a page open on a run lands when the merchant
+                cancels it: a cancel deletes the run's tasks and leaves a
+                marker no member can work (`Domain.RunStatus`), so the
+                subscription's next read answers `null`. */}
             <s-paragraph color="subdued">
               This work is not on one of your teams, or it no longer exists.
             </s-paragraph>
@@ -178,46 +196,54 @@ function RouteComponent() {
     );
 
   const { run } = view;
-  /** A member may put a hold on work that is running and not already flagged. */
-  const canBlock = Domain.runIsOpen(run) && !Domain.runIsFlagged(run);
-  /**
-   * The note is the run's, not a task's, and a member who can see the page
-   * may write it while the run is live: `WorkflowRunRepository.setRunNote`.
-   */
-  const canNote = Domain.runIsLive(run);
+  /** Block, the note, Edit reason and the lift: {@link Domain.runActions}. */
+  const can = Domain.runActions(actor, view.order, run, view.tasks);
   /**
    * Unblock lifts the hold and nothing else: the run goes back to the tier
    * and the tasks it had, and whoever lifted it presses Done next if the work
    * is in fact done. Dismiss is the other word on purpose — a reconcile flag
    * is not a hold anybody set, and acknowledging it is all there is to do.
    * Unblock takes one tap and no confirmation: Block undoes it.
+   *
+   * A flag the member cannot lift still shows its banner: on a done run,
+   * because it has no ready task and accepting a quantity change on finished
+   * work is the merchant's decision, since it may mean reopening it; on an
+   * open run, when none of the member's tasks is ready yet. Both are
+   * {@link Domain.runActions}' `liftFlag`. The banner then says who acts, so
+   * a banner with no button does not read as a broken one.
    */
-  const flagActions = Domain.runIsFlagged(run) ? (
-    <>
-      {Domain.runIsBlocked(run) && (
-        <s-button
-          slot="secondary-actions"
-          variant="secondary"
-          disabled={actions.pending}
-          onClick={() => {
-            showModal(BLOCK_MODAL);
-          }}
-        >
-          Edit reason
-        </s-button>
-      )}
-      <s-button
-        slot="secondary-actions"
-        variant="secondary"
-        disabled={actions.pending}
-        onClick={() => {
-          actions.dismiss.mutate(run.id);
-        }}
-      >
-        {liftFlagLabel(run)}
-      </s-button>
-    </>
-  ) : null;
+  const reviewNote = (
+    <s-text color="subdued">Your merchant will review this.</s-text>
+  );
+  const flagActions =
+    can.editReason || can.liftFlag ? (
+      <>
+        {can.editReason && (
+          <s-button
+            slot="secondary-actions"
+            variant="secondary"
+            disabled={actions.pending}
+            onClick={() => {
+              showModal(BLOCK_MODAL);
+            }}
+          >
+            Edit reason
+          </s-button>
+        )}
+        {can.liftFlag && (
+          <s-button
+            slot="secondary-actions"
+            variant="secondary"
+            disabled={actions.pending}
+            onClick={() => {
+              actions.dismiss.mutate(run.id);
+            }}
+          >
+            {liftFlagLabel(run)}
+          </s-button>
+        )}
+      </>
+    ) : null;
   const hasNote = run.note !== null && run.note.length > 0;
   const hasOrderNote = view.orderNote !== null && view.orderNote.length > 0;
 
@@ -234,7 +260,7 @@ function RouteComponent() {
         {/* Block stays a visible page action, not an overflow item: it says
             the worker can stop the line. It opens a modal, so no field is
             mounted for it on the visits that do not use it. */}
-        {canBlock && (
+        {can.block && (
           <s-button
             slot="secondary-actions"
             variant="secondary"
@@ -259,19 +285,14 @@ function RouteComponent() {
             {actions.banner !== null && (
               <s-banner tone="critical">{actions.banner}</s-banner>
             )}
-            <FlagBanner run={run} actions={flagActions} />
+            <FlagBanner run={run} actions={flagActions ?? reviewNote} />
             {/* Item first: what to make is why the page was opened. No workflow
               name or age, because a member cannot act on either and the run
               list carries the age. No border, because two bordered blocks on
-              one page compete. The Done / Cancelled badge stays: it is the
-              only sign the page is read-only. */}
+              one page compete. The Done badge stays: it is the only sign the
+              page is read-only. */}
             <s-stack gap="small-300">
-              {!Domain.runIsOpen(run) &&
-                (Domain.runIsLive(run) ? (
-                  <s-badge tone="neutral">Done</s-badge>
-                ) : (
-                  <s-badge tone="critical">Cancelled</s-badge>
-                ))}
+              {Domain.runIsDone(run) && <s-badge tone="neutral">Done</s-badge>}
               <RunItem run={run} />
             </s-stack>
             {/* The note sits above the tasks: it is the answer to "anything I
@@ -279,11 +300,11 @@ function RouteComponent() {
               done is a note nobody reads. Shopify's order note is read-only
               and folds in under it, so the page has one place for prose about
               the run. {@link RunNote} states the note's own shape. */}
-            {(hasNote || canNote || hasOrderNote) && (
+            {(hasNote || can.note || hasOrderNote) && (
               <s-stack id="note" gap="small-300">
                 <RunNote
                   note={run.note}
-                  canEdit={canNote}
+                  canEdit={can.note}
                   pending={actions.pending}
                   onEdit={() => {
                     showModal(NOTE_MODAL);

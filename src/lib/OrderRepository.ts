@@ -140,8 +140,10 @@ const json = (value: unknown) => JSON.stringify(value);
  * partial index when the query's `where` provably implies the index's, and it
  * proves that by matching terms, not by reasoning about them. The run
  * fragments are correlated to the outer `ShopOrder` row and served by
- * `WorkflowRun_orderId_idx`. A `cancelled` run counts as no run at all,
- * matching `Domain.productionState`'s `none`.
+ * `WorkflowRun_orderId_idx`. The `cancelled` marker counts as the item
+ * decided (`Domain.RunStatus`): it is in `ANY_RUN` and `RUN_FOR_ITEM`, so an
+ * item the merchant cancelled is neither "No workflow" nor "Choose a
+ * workflow", and it is in no status fragment.
  */
 const OPEN = "fulfillmentStatus <> 'FULFILLED' and cancelledAt is null";
 /**
@@ -152,7 +154,7 @@ const OPEN = "fulfillmentStatus <> 'FULFILLED' and cancelledAt is null";
 const openAs = (alias: string) =>
   `${alias}.fulfillmentStatus <> 'FULFILLED' and ${alias}.cancelledAt is null`;
 const ANY_RUN = `select 1 from WorkflowRun r
-  where r.orderId = ShopOrder.id and r.status in ('pending', 'active', 'done')`;
+  where r.orderId = ShopOrder.id`;
 const OPEN_RUN = `select 1 from WorkflowRun r
   where r.orderId = ShopOrder.id and r.status in ('pending', 'active')`;
 const DONE_RUN = `select 1 from WorkflowRun r
@@ -167,20 +169,20 @@ const CHANGED_RUN = `select 1 from WorkflowRun r
     and r.flag is not null and r.flag <> 'blocked'`;
 /**
  * `Domain.ambiguousItems` in SQL: an item with units still to make, two or
- * more workflows matched at the last reconcile, and no live run. "Live" is any
- * status but `cancelled`, so cancelling the only run on a twice-matched item
- * makes it ambiguous again with no further reconcile — which is the point of
- * deriving the need rather than storing it.
+ * more workflows matched at the last reconcile, and no row at all, run or
+ * `cancelled` marker. Change workflow away and back, or reconcile deleting a
+ * pending run, reads correctly with no further reconcile — which is the point
+ * of deriving the need rather than storing it.
  *
  * `json_array_length` is SQLite's JSON1, compiled into Durable Object SQLite;
  * `order-repository.test.ts` is the proof.
  */
-const LIVE_RUN_FOR_ITEM = `select 1 from WorkflowRun r
-  where r.lineItemId = li.id and r.status <> 'cancelled'`;
+const RUN_FOR_ITEM = `select 1 from WorkflowRun r
+  where r.lineItemId = li.id`;
 const AMBIGUOUS_ITEM = `select 1 from OrderLineItem li
   where li.orderId = ShopOrder.id and li.currentQuantity > 0
     and json_array_length(li.matchedWorkflowIds) >= 2
-    and not exists (${LIVE_RUN_FOR_ITEM})`;
+    and not exists (${RUN_FOR_ITEM})`;
 /**
  * The `choose_workflow` {@link Domain.OrderNeed} as one predicate: an order
  * is only choosing when it can start runs, so an unpaid order with an
@@ -188,7 +190,7 @@ const AMBIGUOUS_ITEM = `select 1 from OrderLineItem li
  */
 const CHOOSING = `fullyPaid = 1 and exists (${AMBIGUOUS_ITEM})`;
 /**
- * The `no_workflow` {@link Domain.OrderNeed}: paid, no live run, and no item
+ * The `no_workflow` {@link Domain.OrderNeed}: paid, no run or marker, and no item
  * waiting on a choice. `OPEN` is the caller's, as for every need.
  */
 const NO_WORKFLOW = `fullyPaid = 1 and not exists (${ANY_RUN}) and not (${CHOOSING})`;
@@ -202,7 +204,8 @@ const NO_WORKFLOW = `fullyPaid = 1 and not exists (${ANY_RUN}) and not (${CHOOSI
 const COUNT_FACT = {
   in_production: "openRuns > 0",
   ready_to_ship: "doneRuns > 0 and openRuns = 0",
-  no_workflow: "paid and openRuns = 0 and doneRuns = 0 and not choosing",
+  no_workflow:
+    "paid and openRuns = 0 and doneRuns = 0 and cancelledRuns = 0 and not choosing",
   choose_workflow: "choosing",
   team: "team",
   blocked: "blockedRuns > 0",
@@ -1132,7 +1135,8 @@ export class OrderRepository extends Context.Service<
                     sum(status = 'done') as done,
                     sum(flag is not null and flag <> 'blocked'
                         and status in ('pending', 'active')) as flagged,
-                    sum(flag = 'blocked' and status in ('pending', 'active')) as blocked
+                    sum(flag = 'blocked' and status in ('pending', 'active')) as blocked,
+                    sum(status = 'cancelled') as cancelled
                   from WorkflowRun
                   where ${sql.in("orderId", ids)}
                   group by orderId
@@ -1158,7 +1162,7 @@ export class OrderRepository extends Context.Service<
                   where ${sql.in("li.orderId", ids)}
                     and li.currentQuantity > 0
                     and json_array_length(li.matchedWorkflowIds) >= 2
-                    and not exists (${sql.literal(LIVE_RUN_FOR_ITEM)})
+                    and not exists (${sql.literal(RUN_FOR_ITEM)})
                   group by li.orderId
                 `.values;
           /**
@@ -1234,6 +1238,7 @@ export class OrderRepository extends Context.Service<
                 done: Number(row[2] ?? 0),
                 flagged: Number(row[3] ?? 0),
                 blocked: Number(row[4] ?? 0),
+                cancelled: Number(row[5] ?? 0),
               } satisfies Domain.RunCounts,
             ]),
           );
@@ -1280,11 +1285,11 @@ export class OrderRepository extends Context.Service<
                   sum(r.status = 'done') as doneRuns,
                   sum(r.status in ('pending', 'active') and r.flag = 'blocked') as blockedRuns,
                   sum(r.status in ('pending', 'active') and r.flag is not null
-                      and r.flag <> 'blocked') as changedRuns
+                      and r.flag <> 'blocked') as changedRuns,
+                  sum(r.status = 'cancelled') as cancelledRuns
                 from ShopOrder o
                 cross join WorkflowRun r on r.orderId = o.id
                 where ${sql.literal(openAs("o"))}
-                  and r.status in ('pending', 'active', 'done')
                 group by r.orderId
               ),
               facts as materialized (
@@ -1294,6 +1299,7 @@ export class OrderRepository extends Context.Service<
                   coalesce(rs.doneRuns, 0) as doneRuns,
                   coalesce(rs.blockedRuns, 0) as blockedRuns,
                   coalesce(rs.changedRuns, 0) as changedRuns,
+                  coalesce(rs.cancelledRuns, 0) as cancelledRuns,
                   (${sql.literal(CHOOSING)}) as choosing,
                   ${attentionRun} as team
                 from ShopOrder
@@ -1329,6 +1335,7 @@ export class OrderRepository extends Context.Service<
                 done: 0,
                 flagged: 0,
                 blocked: 0,
+                cancelled: 0,
               },
               attention: needsAttention.has(order.id),
               waitingOn: waitingOn.get(order.id) ?? [],

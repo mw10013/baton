@@ -1,3 +1,5 @@
+import type { ShopAgentSocket } from "@/lib/ShopAgentContext";
+
 import * as React from "react";
 
 import { useAppBridge } from "@shopify/app-bridge-react";
@@ -11,11 +13,12 @@ import {
   FlagBanner,
   flagTone,
   LineItemProperties,
+  liftFlagLabel,
   RunNote,
 } from "@/components/MemberRun";
 import { RunSteps } from "@/components/RunSteps";
 import { BlockModal, RunNoteModal } from "@/components/RunTextModals";
-import { changeWarning } from "@/lib/changeWarning";
+import { cancelWarning, changeWarning } from "@/lib/changeWarning";
 import * as Domain from "@/lib/Domain";
 import { formatNumber, formatStatus } from "@/lib/format";
 import { adminOrderUrl, useResourceLinkTarget } from "@/lib/orderLinks";
@@ -24,7 +27,7 @@ import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
-import { errorMessage } from "@/lib/useMemberRunActions";
+import { errorMessage, textOrNull } from "@/lib/useMemberRunActions";
 import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
 
 const orderQueryKey = (shop: string, legacyId: string) =>
@@ -58,12 +61,14 @@ const attachResultMessage = Match.typeTags<
     "That workflow cannot start: it is off, has no tasks, or has an unassigned task.",
   RunLimit: ({ limit }) =>
     `Baton is already running ${formatNumber(limit)} workflows. Finish or cancel some before starting another.`,
-  /* The page offers no change on a done run (`changeable`); this is the
-     race where the run finished between the render and the click. */
+  /* The page offers no change on a done run (`Domain.runActions`); this is
+     the race where the run finished between the render and the click. */
   ItemDone: ({ workflowName }) =>
     `This item is finished on ${workflowName}. Reopen its last task to change it.`,
   OrderClosed: () =>
     "This order is cancelled or fulfilled in Shopify, so there is no work left to attach.",
+  NothingToMake: () =>
+    "This item has nothing left to make, so no workflow can start on it.",
 });
 
 const assignResultMessage = Match.typeTags<
@@ -74,94 +79,50 @@ const assignResultMessage = Match.typeTags<
   NotFound: () => "That task no longer exists.",
   TeamNotFound: () => "That team no longer exists. Choose another.",
   TaskFinished: () => "That task is already done and keeps its team.",
-  RunNotOpen: () => "That workflow run is finished or cancelled.",
+  RunNotOpen: () => "That workflow run is finished.",
+  NotAllowed: () => "That task can no longer be reassigned.",
 });
 
 const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
   Ok: () => null,
+  /* Also a run another admin cancelled: a cancel leaves a task-less marker
+     that no run write can act on (`Domain.RunStatus`), so the server answers
+     as if the run were gone. */
   NotFound: () => "That workflow run no longer exists.",
-  NotAllowed: () => "Not allowed.",
+  /* The page offers a write only where `Domain.runActions` or
+     `Domain.taskActions` allows it and the server checks the same field, so
+     this is the run changing between the render and the click. */
+  NotAllowed: () => "That run changed just now, so nothing was done.",
   /* The reason editor, when a worker unblocked the run while it was open. */
   NotBlocked: () => "That workflow run is no longer blocked.",
   /* Also Put back on a task a worker finished or put back just now. */
   NotReady: () =>
     "That task changed just now, or a task in an earlier step is still open.",
-  /* Every merchant control on a done run is the note or Reopen, and both are
-     allowed there (`Domain.RunStatus`); the page offers nothing on a
-     cancelled run but Undo cancel. So a Terminal here is a cancel that landed
-     between the render and the click. */
-  Terminal: () => "That workflow run was cancelled.",
+  /* A run that finished between the render and the click. */
+  Terminal: () => "That workflow run is finished.",
   /* Mark done is hidden while a run is flagged; a flag that landed after the
      render is the only way here. */
   Flagged: ({ flag }) =>
     Domain.flagIsReconcile(flag)
       ? "That workflow run was flagged just now. Dismiss the flag first."
       : "That workflow run is blocked. Unblock it first.",
-  // Reachable from Manage's Reopen: the row hides that button when the page's
-  // own `Domain.undoBlockedBy` says so, and this is the race where a worker
-  // started downstream between the render and the click.
+  // Reachable from Manage's Reopen: the row hides that button when
+  // `Domain.taskActions` carries a blocker, and this is the race where a
+  // worker started downstream between the render and the click.
   UndoBlocked: ({ teamName, taskName }) =>
     `${teamName} already started ${taskName}.`,
-  ItemHasRun: ({ workflowName }) =>
-    `This item is already on ${workflowName}. Cancel that run first to bring this one back.`,
 });
 
 /**
- * One merchant intervention, as the Manage rows send it. `kind` picks the
- * callable and `toast` is the acknowledgement, written at the button so the
- * task's own name reaches it ("Cut marked done") rather than a generic verb.
- * Cancel and un-cancel ride the same union deliberately: one in-flight
- * mutation on the page means one `busy` flag, and the merchant cannot start a
- * second write while the first is unacknowledged.
+ * Merchant words, not `WorkflowRun.status`: "pending" reads as "waiting for
+ * approval". Cancelled is neutral, not red: it is a decision the merchant
+ * made, and red stays for a hold and for Shopify cancelling the order.
  */
-type Intervention =
-  | {
-      readonly kind: "complete";
-      readonly runTaskId: string;
-      readonly toast: string;
-    }
-  | {
-      readonly kind: "reopen";
-      readonly runTaskId: string;
-      readonly toast: string;
-    }
-  | {
-      readonly kind: "putBack";
-      readonly runTaskId: string;
-      readonly toast: string;
-    }
-  | {
-      readonly kind: "note";
-      readonly runId: string;
-      readonly note: string | null;
-      readonly toast: string;
-    }
-  | {
-      readonly kind: "block";
-      readonly runId: string;
-      readonly reason: string | null;
-      readonly toast: string;
-    }
-  | {
-      readonly kind: "blockReason";
-      readonly runId: string;
-      readonly reason: string | null;
-      readonly toast: string;
-    }
-  | { readonly kind: "unblock"; readonly runId: string; readonly toast: string }
-  | { readonly kind: "cancel"; readonly runId: string; readonly toast: string }
-  | {
-      readonly kind: "uncancel";
-      readonly runId: string;
-      readonly toast: string;
-    };
-
-/** Merchant words, not `WorkflowRun.status`: "pending" reads as "waiting for approval". */
 const RUN_STATUS_BADGE = {
   pending: { label: "Not started", tone: "neutral" },
   active: { label: "In progress", tone: "info" },
   done: { label: "Done", tone: "success" },
-  cancelled: { label: "Cancelled", tone: "critical" },
+  cancelled: { label: "Cancelled", tone: "neutral" },
 } as const satisfies Record<Domain.RunStatus, { label: string; tone: string }>;
 
 const RUN_FLAG_LABEL = {
@@ -174,6 +135,8 @@ const RUN_FLAG_LABEL = {
 
 /** The one modal that both asks and confirms: the select and, on a touched run, the warning. */
 const CHANGE_WORKFLOW_MODAL = "change-workflow";
+const CANCEL_RUN_MODAL = "cancel-run";
+const REASSIGN_MODAL = "reassign-task";
 const NOTE_MODAL = "run-note";
 const BLOCK_MODAL = "run-block";
 
@@ -205,6 +168,29 @@ const flagLabel = (run: Domain.WorkflowRun) => {
     return `${RUN_FLAG_LABEL[run.flag]}: ${run.flagDetail.item}`;
   return RUN_FLAG_LABEL[run.flag];
 };
+
+interface TaskWrite {
+  readonly runTaskId: string;
+  readonly toast: string;
+}
+interface RunWrite {
+  readonly runId: string;
+  readonly toast: string;
+}
+interface TextWrite extends RunWrite {
+  readonly text: string | null;
+}
+
+/** The merchant as the actor every action set on this page is computed for. */
+const MERCHANT: Domain.Actor = { role: "merchant" };
+
+/** The roster as select options, an empty team named so the pick is not a surprise. */
+const teamOptions = (teams: readonly Domain.TeamRoster[]) =>
+  teams.map((team) => (
+    <s-option key={team.id} value={team.id}>
+      {team.memberCount === 0 ? `${team.name} (no members)` : team.name}
+    </s-option>
+  ));
 
 const lineItemTitle = ({ title, variantTitle }: Domain.OrderLineItem) =>
   variantTitle === null ? title : `${title} — ${variantTitle}`;
@@ -247,7 +233,6 @@ const stepCount = (tasks: readonly Domain.WorkflowRunTask[]) =>
  * stopped.
  */
 const nowLine = ({ run, tasks }: Domain.WorkflowRunDetail): React.ReactNode => {
-  if (!Domain.runIsLive(run)) return null;
   /* Counts steps, like the open form's `of M`: the number the merchant saw
      climb to `Step 2 of 2` must not become `3 steps` the day the run finishes. */
   if (!Domain.runIsOpen(run)) {
@@ -292,6 +277,9 @@ const nowLine = ({ run, tasks }: Domain.WorkflowRunDetail): React.ReactNode => {
  * view carries: an open task whose team is gone is named with an "Assign team"
  * picker (the remedy that makes a team delete safe), and a ready task on a
  * team with no members warns, linking to the team so the fix is one click.
+ * Both are about work that can still move, so both follow
+ * {@link Domain.taskActions}' `reassign`: the picker is that write, and the
+ * warning's remedy is either it or a new member.
  *
  * They render on the card, outside the Manage disclosure, because they are the
  * one thing that must be acted on and a disclosure would hide it. Every other
@@ -300,31 +288,30 @@ const nowLine = ({ run, tasks }: Domain.WorkflowRunDetail): React.ReactNode => {
  * the card is a click target, so scanning an order never risks a stray "done".
  */
 const attentionRows = (
-  { run, tasks }: Domain.WorkflowRunDetail,
+  tasks: readonly (Domain.RunTaskView & {
+    readonly actions: Domain.TaskActions;
+  })[],
   teams: readonly Domain.TeamRoster[],
   assign: (runTaskId: string) => React.ReactNode,
 ) => {
-  const ready = Domain.readyTasks(run, tasks);
-  const isReady = (task: Domain.WorkflowRunTask) =>
-    ready.some((candidate) => candidate.id === task.id);
-  const open = Domain.runIsOpen(run);
-  const unassigned = open
-    ? tasks.filter((task) => Domain.isRunTaskUnassigned(task, teams))
-    : [];
+  const assignable = tasks.filter(({ actions }) => actions.reassign);
+  const unassigned = assignable.filter((task) =>
+    Domain.isRunTaskUnassigned(task, teams),
+  );
   /** The roster row, not the snapshot name, so the warning can link to the team page. */
-  const emptyTeams = open
-    ? [
-        ...new Map(
-          tasks.filter(isReady).flatMap((task) => {
-            const team = teams.find(
-              (candidate) =>
-                candidate.id === task.teamId && candidate.memberCount === 0,
-            );
-            return team === undefined ? [] : [[team.id, team] as const];
-          }),
-        ).values(),
-      ]
-    : [];
+  const emptyTeams = [
+    ...new Map(
+      assignable
+        .filter((task) => task.ready)
+        .flatMap((task) => {
+          const team = teams.find(
+            (candidate) =>
+              candidate.id === task.teamId && candidate.memberCount === 0,
+          );
+          return team === undefined ? [] : [[team.id, team] as const];
+        }),
+    ).values(),
+  ];
   if (unassigned.length === 0 && emptyTeams.length === 0) return null;
   return (
     <s-stack gap="small-500">
@@ -385,6 +372,11 @@ export const Route = createFileRoute("/app/orders/$orderId")({
  *
  * The `$orderId` param is the Shopify legacy id, so the URL matches the one
  * the admin uses for the same order (`Domain.GetOrderDetailInput`).
+ *
+ * The page decides no gate. Each line item's card is a switch on
+ * {@link Domain.lineItemState}, and each button reads a field of
+ * {@link Domain.runActions} or {@link Domain.taskActions}, which the
+ * `ShopAgent` callable behind it checks again.
  */
 function RouteComponent() {
   const { shop } = Route.useRouteContext();
@@ -397,12 +389,10 @@ function RouteComponent() {
   const [attachChoice, setAttachChoice] = React.useState<
     Record<string, string>
   >({});
-  /** The "Assign team" picker's choice per open run task. */
+  /** The "Assign team" picker's choice per unassigned run task. */
   const [assignChoice, setAssignChoice] = React.useState<
     Record<string, string>
   >({});
-  /** The run task whose Manage row has its team picker open after Reassign; see `assignTeam`. */
-  const [reassigning, setReassigning] = React.useState<string | null>(null);
   /**
    * What the Change workflow modal holds, or null when it is closed: the item,
    * the run being replaced (its name, for "Keep …", and its tasks, for the
@@ -421,6 +411,23 @@ function RouteComponent() {
     readonly options: readonly Domain.Workflow[];
     readonly tasks: readonly Domain.WorkflowRunTask[];
     readonly workflowId: string | null;
+  } | null>(null);
+  /** The run the Cancel run modal asks about, with what its sentence names. */
+  const [cancelling, setCancelling] = React.useState<{
+    readonly runId: string;
+    readonly tasks: readonly Domain.WorkflowRunTask[];
+    readonly hasNote: boolean;
+  } | null>(null);
+  /**
+   * The task the Reassign modal is about: its name for the heading, its
+   * current team for the default and for "Keep …", and the modal's own pick.
+   */
+  const [reassigning, setReassigning] = React.useState<{
+    readonly runTaskId: string;
+    readonly taskName: Domain.TaskName;
+    readonly teamName: Domain.TeamName;
+    readonly teamId: string;
+    readonly error: string | null;
   } | null>(null);
   /**
    * Which runs have their "Manage" disclosure open; closed is the default.
@@ -462,9 +469,8 @@ function RouteComponent() {
       queryClient.invalidateQueries({ queryKey: ["orders", shop] }),
     ]);
 
-  const call = <A,>(
-    op: (stub: NonNullable<typeof agent>["stub"]) => Promise<A>,
-  ) => (agent ? withSocketRecovery(agent)(() => op(agent.stub)) : connecting());
+  const call = <A,>(op: (stub: ShopAgentSocket["stub"]) => Promise<A>) =>
+    agent ? withSocketRecovery(agent)(() => op(agent.stub)) : connecting();
 
   const onError = (error: Error) => {
     setBanner(error.message);
@@ -472,7 +478,9 @@ function RouteComponent() {
 
   const attachMutation = useMutation({
     mutationFn: (input: typeof Domain.AttachWorkflowInput.Encoded) =>
-      call((stub) => stub.attachWorkflow(input)).then(decodeAttachResult),
+      call((stub) => stub.merchantAttachWorkflow(input)).then(
+        decodeAttachResult,
+      ),
     onSuccess: async (result, { lineItemId }) => {
       setBanner(attachResultMessage(result));
       if (result._tag === "Ok") {
@@ -482,13 +490,15 @@ function RouteComponent() {
         });
         setChanging(null);
         hideModal(CHANGE_WORKFLOW_MODAL);
-        /* A replace is two facts — what started and what stopped — and the
-           cancelled run's card stays on the page, so the toast is where the
-           merchant learns the second one was theirs to expect. */
-        if (result.replaced !== null)
-          shopify.toast.show(
-            `Changed to ${result.run.workflowName}. ${result.replaced.workflowName} was cancelled.`,
-          );
+        /* The replaced run is deleted (`Domain.RunStatus`), and the modal
+           already named what it cost, so the toast says only where the item
+           is now. A start over nothing, or over a cancelled marker, is a
+           fresh run: "Started", never "resumed". */
+        shopify.toast.show(
+          result.replaced === null
+            ? `Started ${result.run.workflowName}.`
+            : `Changed to ${result.run.workflowName}.`,
+        );
       }
       await invalidate();
     },
@@ -496,34 +506,19 @@ function RouteComponent() {
   });
 
   /**
-   * Every merchant write against a run, through one mutation: the
-   * `merchant*` callables plus cancel and un-cancel, which the header used to
-   * send on their own. A refused write raises no banner — the row should not
-   * have offered it, so the honest answer is the toast plus the re-render the
-   * subscription brings, exactly as the worker's page behaves.
+   * One mutation per action field, each calling the matching `merchant*`
+   * callable: the field that rendered the button, the mutation behind it and
+   * the callable that checks the field again share one name. A refused write
+   * raises no banner — the page should not have offered it, so the honest
+   * answer is the toast plus the re-render the subscription brings, exactly
+   * as the worker's page behaves. `toast` is the acknowledgement, written at
+   * the button so the task's own name reaches it ("Cut marked done").
    */
-  const interveneMutation = useMutation({
-    mutationFn: (input: Intervention) =>
-      call((stub) =>
-        Match.value(input).pipe(
-          Match.discriminatorsExhaustive("kind")({
-            complete: ({ runTaskId }) =>
-              stub.merchantCompleteTask({ runTaskId }),
-            reopen: ({ runTaskId }) =>
-              stub.merchantUncompleteTask({ runTaskId }),
-            putBack: ({ runTaskId }) => stub.merchantUnstartTask({ runTaskId }),
-            note: ({ runId, note }) => stub.merchantSetRunNote({ runId, note }),
-            block: ({ runId, reason }) =>
-              stub.merchantBlockRun({ runId, reason }),
-            blockReason: ({ runId, reason }) =>
-              stub.merchantSetBlockReason({ runId, reason }),
-            unblock: ({ runId }) => stub.merchantDismissFlag({ runId }),
-            cancel: ({ runId }) => stub.cancelRun({ runId }),
-            uncancel: ({ runId }) => stub.uncancelRun({ runId }),
-          }),
-        ),
-      ).then(decodeRunResult),
-    onSuccess: async (result, input) => {
+  const runWrite = {
+    onSuccess: async (
+      result: Domain.RunResult,
+      input: { readonly toast: string },
+    ) => {
       if (result._tag === "Ok") shopify.toast.show(input.toast);
       else
         shopify.toast.show(runResultMessage(result) ?? "Nothing changed.", {
@@ -532,14 +527,85 @@ function RouteComponent() {
       await invalidate();
     },
     onError,
+  };
+  const done = useMutation({
+    mutationFn: ({ runTaskId }: TaskWrite) =>
+      call((stub) => stub.merchantCompleteTask({ runTaskId })).then(
+        decodeRunResult,
+      ),
+    ...runWrite,
+  });
+  const putBack = useMutation({
+    mutationFn: ({ runTaskId }: TaskWrite) =>
+      call((stub) => stub.merchantUnstartTask({ runTaskId })).then(
+        decodeRunResult,
+      ),
+    ...runWrite,
+  });
+  const reopen = useMutation({
+    mutationFn: ({ runTaskId }: TaskWrite) =>
+      call((stub) => stub.merchantUncompleteTask({ runTaskId })).then(
+        decodeRunResult,
+      ),
+    ...runWrite,
+  });
+  const note = useMutation({
+    mutationFn: ({ runId, text }: TextWrite) =>
+      call((stub) => stub.merchantSetRunNote({ runId, note: text })).then(
+        decodeRunResult,
+      ),
+    ...runWrite,
+  });
+  const block = useMutation({
+    mutationFn: ({ runId, text }: TextWrite) =>
+      call((stub) => stub.merchantBlockRun({ runId, reason: text })).then(
+        decodeRunResult,
+      ),
+    ...runWrite,
+  });
+  const editReason = useMutation({
+    mutationFn: ({ runId, text }: TextWrite) =>
+      call((stub) => stub.merchantSetBlockReason({ runId, reason: text })).then(
+        decodeRunResult,
+      ),
+    ...runWrite,
+  });
+  const liftFlag = useMutation({
+    mutationFn: ({ runId }: RunWrite) =>
+      call((stub) => stub.merchantDismissFlag({ runId })).then(decodeRunResult),
+    ...runWrite,
+  });
+  const cancel = useMutation({
+    mutationFn: ({ runId }: RunWrite) =>
+      call((stub) => stub.merchantCancelRun({ runId })).then(decodeRunResult),
+    ...runWrite,
+    onSuccess: async (result: Domain.RunResult, input: RunWrite) => {
+      if (result._tag === "Ok") {
+        setCancelling(null);
+        hideModal(CANCEL_RUN_MODAL);
+      }
+      await runWrite.onSuccess(result, input);
+    },
   });
 
-  const assignMutation = useMutation({
+  const reassign = useMutation({
     mutationFn: (input: typeof Domain.AssignRunTaskTeamInput.Encoded) =>
-      call((stub) => stub.assignRunTaskTeam(input)).then(decodeAssignResult),
-    onSuccess: async (result) => {
-      setBanner(assignResultMessage(result));
-      if (result._tag === "Assigned") setReassigning(null);
+      call((stub) => stub.merchantAssignRunTaskTeam(input)).then(
+        decodeAssignResult,
+      ),
+    onSuccess: async (result, { runTaskId }) => {
+      const message = assignResultMessage(result);
+      /* The attention row's picker has no modal to hold a message, so its
+         refusal goes to the page banner; the modal keeps its own. */
+      if (reassigning?.runTaskId === runTaskId) {
+        if (message === null) {
+          setReassigning(null);
+          hideModal(REASSIGN_MODAL);
+        } else
+          setReassigning((current) =>
+            current === null ? null : { ...current, error: message },
+          );
+      } else setBanner(message);
       await invalidate();
     },
     onError,
@@ -583,6 +649,7 @@ function RouteComponent() {
     );
 
   const { order, lineItems, runs, itemWorkflows, teams } = detail;
+  const orderOpen = Domain.canAttachRun(order);
   /**
    * The same aggregate the index computes in SQL, rebuilt from the run list
    * this page already carries so both pages read one `productionState`.
@@ -596,17 +663,22 @@ function RouteComponent() {
   /** See `managing`: an id with no run on this order is stale and answers `false`. */
   const managingRun = (run: Domain.WorkflowRun) =>
     managing.has(run.id) && runs.some((other) => other.run.id === run.id);
-  const busy =
-    attachMutation.isPending ||
-    interveneMutation.isPending ||
-    assignMutation.isPending;
-  const intervene = (input: Intervention) => {
-    interveneMutation.mutate(input);
-  };
+  const busy = [
+    attachMutation,
+    done,
+    putBack,
+    reopen,
+    note,
+    block,
+    editReason,
+    liftFlag,
+    cancel,
+    reassign,
+  ].some((mutation) => mutation.isPending);
+  const pending = !identified || busy;
   /** A modal's write: `null` closes it, a message stays under its field. */
-  const interveneFromModal = (input: Intervention) =>
-    interveneMutation
-      .mutateAsync(input)
+  const fromModal = (write: Promise<Domain.RunResult>) =>
+    write
       .then((result) =>
         result._tag === "Ok"
           ? null
@@ -633,26 +705,23 @@ function RouteComponent() {
         ?.name ?? "";
     return changeWarning(changing.from, to, changing.tasks, changing.hasNote);
   })();
+  const cancellingWarning =
+    cancelling === null
+      ? ""
+      : cancelWarning(cancelling.tasks, cancelling.hasNote);
 
   /**
-   * A team picker and an Assign button for one open task, in two places. On
-   * the card, beside an unassigned task in `attentionRows`, it is open by
-   * default, because a task with no team is the one thing on the card that
-   * must be acted on. In a Manage row it opens only after Reassign is pressed
-   * (`reassigning`), because a task that has a team is a fact, and four open
-   * selects on a run whose tasks are all assigned read as four unanswered
-   * questions; there it carries a Cancel that closes it again.
+   * The team picker and Assign button beside an unassigned task in
+   * `attentionRows`, open at rest because a task with no team is a required
+   * slot left empty, the one thing on the card that must be acted on. A task
+   * that has a team changes it through the Reassign modal instead: a filled
+   * slot is changed in a modal, an empty one is filled at rest.
    *
-   * The picker starts empty so Assign stays disabled until a team is chosen;
-   * picking the task's current team is a harmless no-op write.
+   * The picker starts empty so Assign stays disabled until a team is chosen.
    */
-  const assignTeam = (runTaskId: string, onCancel?: () => void) => (
+  const assignTeam = (runTaskId: string) => (
     <s-grid
-      gridTemplateColumns={
-        onCancel === undefined
-          ? "minmax(0, 16rem) auto"
-          : "minmax(0, 16rem) auto auto"
-      }
+      gridTemplateColumns="minmax(0, 16rem) auto"
       gap="small-300"
       alignItems="end"
       justifyContent="start"
@@ -662,77 +731,25 @@ function RouteComponent() {
         labelAccessibilityVisibility="exclusive"
         placeholder="Assign team"
         value={assignChoice[runTaskId] ?? ""}
-        disabled={!identified || busy}
+        disabled={pending}
         onChange={(event) => {
           const teamId = event.currentTarget.value;
           setAssignChoice((choice) => ({ ...choice, [runTaskId]: teamId }));
         }}
       >
-        {teams.map((team) => (
-          <s-option key={team.id} value={team.id}>
-            {team.memberCount === 0 ? `${team.name} (no members)` : team.name}
-          </s-option>
-        ))}
+        {teamOptions(teams)}
       </s-select>
       <s-button
         variant="secondary"
-        disabled={!identified || busy || !assignChoice[runTaskId]}
+        disabled={pending || !assignChoice[runTaskId]}
         onClick={() => {
           const teamId = assignChoice[runTaskId];
-          if (teamId) assignMutation.mutate({ runTaskId, teamId });
+          if (teamId) reassign.mutate({ runTaskId, teamId });
         }}
       >
         Assign
       </s-button>
-      {onCancel !== undefined && (
-        <s-button
-          variant="tertiary"
-          onClick={() => {
-            onCancel();
-          }}
-        >
-          Cancel
-        </s-button>
-      )}
     </s-grid>
-  );
-
-  /**
-   * The one Unblock on the page, in the run's {@link FlagBanner}: the banner is
-   * the blocked run's control surface, so the Manage row does not repeat it. A
-   * function rather than inline JSX because it needs the page's `identified`,
-   * `busy` and `intervene`, which the banner does not hold.
-   */
-  const unblockButton = (run: Domain.WorkflowRun) => (
-    <s-button
-      variant="secondary"
-      disabled={!identified || busy}
-      onClick={() => {
-        intervene({
-          kind: "unblock",
-          runId: run.id,
-          toast: "Run unblocked",
-        });
-      }}
-    >
-      Unblock
-    </s-button>
-  );
-
-  /**
-   * Opens the Block modal on the standing reason. The label is the
-   * {@link FlagBanner}'s rule, shared with the work page.
-   */
-  const editReasonButton = (run: Domain.WorkflowRun) => (
-    <s-button
-      variant="secondary"
-      disabled={!identified || busy}
-      onClick={() => {
-        openModal(BLOCK_MODAL, run);
-      }}
-    >
-      Edit reason
-    </s-button>
   );
 
   /**
@@ -744,44 +761,34 @@ function RouteComponent() {
    * read-only glance: item, status, where the run is, and whatever needs
    * attention.
    *
-   * The Reopen verdict is computed here rather than fetched. The page already
-   * holds every task of every run on this order, which is exactly what the
-   * rule takes (`Domain.undoBlockedBy`) — the same function the write itself
-   * runs, so the button and the refusal cannot disagree — and asking the
-   * object for a verdict per task would only send back what is already here.
-   * There is no Start: the merchant records work, they do not claim it.
-   *
    * No action here is primary — not `Mark done`, not `Block`. Every write on
    * this page is a merchant reaching past a worker — the bench claims and
    * completes tasks on the work page — and a primary button is the grammar of
    * "this is what you came here to do", which is false here. Nothing here is
-   * red either: every action in the row is reversible in one tap (Block by
-   * Unblock, Cancel run by Undo cancel), and Polaris puts the critical tone on
-   * the button that performs a destructive action, not on the one that opens
-   * the question. On this page that is the Change workflow modal's submit.
-   * Reassign is tertiary: it opens a picker rather than writing, and it sits
-   * on every open task.
+   * red either: Polaris puts the critical tone on the button that performs a
+   * destructive action, not on the one that opens the question, and Cancel
+   * run and Change workflow each open a modal whose submit is red. Reassign
+   * is tertiary: it opens a modal rather than writing, and it sits on every
+   * open task.
    *
    * The note is on the card ({@link RunNote}) and has no button here.
    */
   const manageRows = (
-    { run, tasks }: Domain.WorkflowRunDetail,
+    run: Domain.WorkflowRun,
+    tasks: readonly (Domain.RunTaskView & {
+      readonly actions: Domain.TaskActions;
+    })[],
+    actions: Domain.RunActions,
     /**
      * The `Change workflow` button. It arrives as a node rather than a
      * callback because opening the modal needs the line item it belongs to —
-     * its options and its live run's tasks — which a run-level helper does not
+     * its options and its run's tasks — which a run-level helper does not
      * hold.
      */
     change: React.ReactNode | null,
   ) => {
-    const open = Domain.runIsOpen(run);
-    const readyIds = new Set(
-      Domain.readyTasks(run, tasks).map((task) => task.id),
-    );
-    const stepTasks = tasks.map((task) => ({
-      ...task,
-      ready: readyIds.has(task.id),
-    }));
+    const byId = new Map(tasks.map((task) => [task.id, task.actions]));
+    const runRow = actions.block || actions.cancel || change !== null;
     /* A subdued panel so the disclosure reads as a drawer the header's Manage
        button owns, not as more card. */
     return (
@@ -789,37 +796,22 @@ function RouteComponent() {
         <s-stack gap="small-300">
           <s-text type="strong">{`${run.workflowName} workflow`}</s-text>
           <RunSteps
-            tasks={stepTasks}
+            tasks={tasks}
             showInstructions={false}
             renderActions={(task) => {
-              const blocker =
-                task.completedAt === null
-                  ? null
-                  : Domain.undoBlockedBy(task, tasks);
-              /* A flag means stop, for the merchant too: the write refuses
-                 Done on a flagged run (`Domain.runIsFlagged`), so the button
-                 goes with it and Unblock or Dismiss on the run row is the way
-                 on. Put back, the inverse of a worker's Start, is refused
-                 under a flag for the reason on
-                 `WorkflowRunRepository.unstartTask`. */
-              const markDone = task.ready && !Domain.runIsFlagged(run);
-              const putBack =
-                task.ready &&
-                task.startedAt !== null &&
-                !Domain.runIsFlagged(run);
-              const reopen = task.completedAt !== null && blocker === null;
-              const reassign =
-                open && task.completedAt === null && reassigning !== task.id;
-              if (!markDone && !putBack && !reopen && !reassign) return null;
+              const can = byId.get(task.id);
+              if (can === undefined) return null;
+              const canReopen = can.reopen?.blockedBy === null;
+              if (!can.done && !can.putBack && !canReopen && !can.reassign)
+                return null;
               return (
                 <>
-                  {markDone && (
+                  {can.done && (
                     <s-button
                       variant="secondary"
-                      disabled={!identified || busy}
+                      disabled={pending}
                       onClick={() => {
-                        intervene({
-                          kind: "complete",
+                        done.mutate({
                           runTaskId: task.id,
                           toast: `${task.name} marked done`,
                         });
@@ -828,13 +820,12 @@ function RouteComponent() {
                       Mark done
                     </s-button>
                   )}
-                  {putBack && (
+                  {can.putBack && (
                     <s-button
                       variant="secondary"
-                      disabled={!identified || busy}
+                      disabled={pending}
                       onClick={() => {
-                        intervene({
-                          kind: "putBack",
+                        putBack.mutate({
                           runTaskId: task.id,
                           toast: `${task.name} put back`,
                         });
@@ -843,13 +834,12 @@ function RouteComponent() {
                       Put back
                     </s-button>
                   )}
-                  {reopen && (
+                  {canReopen && (
                     <s-button
                       variant="secondary"
-                      disabled={!identified || busy}
+                      disabled={pending}
                       onClick={() => {
-                        intervene({
-                          kind: "reopen",
+                        reopen.mutate({
                           runTaskId: task.id,
                           toast: `${task.name} reopened`,
                         });
@@ -858,12 +848,23 @@ function RouteComponent() {
                       Reopen
                     </s-button>
                   )}
-                  {reassign && (
+                  {can.reassign && (
                     <s-button
                       variant="tertiary"
-                      disabled={!identified || busy}
+                      disabled={pending}
                       onClick={() => {
-                        setReassigning(task.id);
+                        setReassigning({
+                          runTaskId: task.id,
+                          taskName: task.name,
+                          teamName: task.teamName,
+                          teamId:
+                            task.teamId !== null &&
+                            teams.some((team) => team.id === task.teamId)
+                              ? task.teamId
+                              : "",
+                          error: null,
+                        });
+                        showModal(REASSIGN_MODAL);
                       }}
                     >
                       Reassign
@@ -873,56 +874,43 @@ function RouteComponent() {
               );
             }}
             renderExtra={(task) => {
-              const blocker =
-                task.completedAt === null
-                  ? null
-                  : Domain.undoBlockedBy(task, tasks);
-              if (blocker !== null)
-                /* The only screen that names the blocker, and the only one
-                   that can act on it. A member is told nothing
-                   (`Domain.taskActions`): they cannot undo, and the blocking
-                   task is already on their page wearing its own badge. A
-                   merchant can reopen it, so this is an instruction, and it
-                   has to pick out a task that "the first started task in a
-                   later step" does not pick out by eye.
+              const blocker = byId.get(task.id)?.reopen?.blockedBy ?? null;
+              if (blocker === null) return null;
+              /* The only screen that names the blocker, and the only one
+                 that can act on it. A member is told nothing
+                 (`Domain.taskActions`): they cannot undo, and the blocking
+                 task is already on their page wearing its own badge. A
+                 merchant can reopen it, so this is an instruction, and it
+                 has to pick out a task that "the first started task in a
+                 later step" does not pick out by eye.
 
-                   Task first, team parenthetical: the other order —
-                   "Finishing started Fit movement" — garden-paths, because a
-                   reader who does not already know the team names takes the
-                   first word as the subject and the second as a verb.
+                 Task first, team parenthetical: the other order —
+                 "Finishing started Fit movement" — garden-paths, because a
+                 reader who does not already know the team names takes the
+                 first word as the subject and the second as a verb.
 
-                   Reopen only clears a finished blocker; an in-progress one
-                   is cleared with Put back on its own row, hence both verbs. */
-                return (
-                  <s-text color="subdued">
-                    {`Can\u2019t reopen: ${blocker.taskName} (${blocker.teamName}) already started \u2014 put it back or reopen it first`}
-                  </s-text>
-                );
-              if (open && task.completedAt === null && reassigning === task.id)
-                return assignTeam(task.id, () => {
-                  setReassigning(null);
-                  setAssignChoice((current) => {
-                    const { [task.id]: _dropped, ...rest } = current;
-                    return rest;
-                  });
-                });
-              return null;
+                 Reopen only clears a finished blocker; an in-progress one
+                 is cleared with Put back on its own row, hence both verbs. */
+              return (
+                <s-text color="subdued">
+                  {`Can’t reopen: ${blocker.taskName} (${blocker.teamName}) already started — put it back or reopen it first`}
+                </s-text>
+              );
             }}
           />
           {/* The task list is one object and the run's own actions are another:
             Block, Cancel and Change act on the whole run, and mixed
             into the tasks they read as a fourth button on the last one. */}
-          {open && <s-divider />}
-          {open && (
+          {runRow && <s-divider />}
+          {runRow && (
             /* One row for everything that acts on the whole run. Block leads
-               because it is the intervention a merchant reaches for most, and
-               is absent while blocked: the banner on the card holds Unblock.
+               because it is the intervention a merchant reaches for most.
                Cancel and Change are the rare ones and sit after it. */
             <s-stack direction="inline" gap="small-300">
-              {!Domain.runIsBlocked(run) && (
+              {actions.block && (
                 <s-button
                   variant="secondary"
-                  disabled={!identified || busy}
+                  disabled={pending}
                   onClick={() => {
                     openModal(BLOCK_MODAL, run);
                   }}
@@ -930,19 +918,22 @@ function RouteComponent() {
                   Block
                 </s-button>
               )}
-              <s-button
-                variant="secondary"
-                disabled={!identified || busy}
-                onClick={() => {
-                  intervene({
-                    kind: "cancel",
-                    runId: run.id,
-                    toast: "Run cancelled",
-                  });
-                }}
-              >
-                Cancel run
-              </s-button>
+              {actions.cancel && (
+                <s-button
+                  variant="secondary"
+                  disabled={pending}
+                  onClick={() => {
+                    setCancelling({
+                      runId: run.id,
+                      tasks,
+                      hasNote: run.note !== null && run.note.length > 0,
+                    });
+                    showModal(CANCEL_RUN_MODAL);
+                  }}
+                >
+                  Cancel run
+                </s-button>
+              )}
               {change}
             </s-stack>
           )}
@@ -952,17 +943,15 @@ function RouteComponent() {
   };
 
   /**
-   * A run's badges: its status, its flag, and the one button either allows
-   * beside it. The item's live run shows these on the card's facts line,
+   * A run's badges: its status and its flag, and no buttons — the flag's own
+   * action is in its {@link FlagBanner}. They end the card's facts line,
    * under the title, because the badge is the item's state at a glance and
    * belongs next to the item it describes; on a line of their own lower down
-   * they read as belonging to whatever sat above them. A cancelled run keeps
-   * them on its own line in the run block ({@link renderRun}), since an item
-   * can carry several cancelled runs, each with its own Undo cancel.
+   * they read as belonging to whatever sat above them.
    *
-   * The Blocked badge stays while the {@link FlagBanner} shows: the badge is
-   * the glance, on the title line and matching the orders index, and the
-   * banner is the detail further down.
+   * The flag badge stays while the banner shows: the badge is the glance, on
+   * the title line and matching the orders index, and the banner is the
+   * detail further down.
    */
   const runBadges = (run: Domain.WorkflowRun) => (
     <>
@@ -972,61 +961,39 @@ function RouteComponent() {
       {Domain.runIsFlagged(run) && (
         <s-badge tone={flagTone(run) ?? "warning"}>{flagLabel(run)}</s-badge>
       )}
-      {/* A finished run takes the quantity flag (`Domain.RunFlag`) but
-          has no run-action row to carry Dismiss, and reopening it through
-          Undo is a different decision from accepting the change. So the
-          one action its flag allows sits beside the badge. */}
-      {Domain.runIsDone(run) && Domain.runIsFlagged(run) && (
-        <s-button
-          variant="tertiary"
-          disabled={!identified || busy}
-          onClick={() => {
-            intervene({
-              kind: "unblock",
-              runId: run.id,
-              toast: "Flag dismissed",
-            });
-          }}
-        >
-          Dismiss
-        </s-button>
-      )}
-      {!Domain.runIsLive(run) && (
-        <s-button
-          variant="tertiary"
-          disabled={!identified || busy}
-          onClick={() => {
-            intervene({
-              kind: "uncancel",
-              runId: run.id,
-              toast: "Cancel undone",
-            });
-          }}
-        >
-          Undo cancel
-        </s-button>
-      )}
     </>
   );
 
   /**
    * One run inside its line item's card, below the item's title, facts and
-   * properties. Top to bottom: the {@link FlagBanner} while blocked (why it
-   * stopped, with Edit reason and Unblock), the Now line (where it is), the
+   * properties. Top to bottom: the {@link FlagBanner} while flagged (why it
+   * stopped, with Edit reason and the lift), the Now line (where it is), the
    * {@link RunNote}, the attention rows, then Manage and, when open, the
-   * disclosure it toggles. The live run's badges are on the facts line
-   * ({@link runBadges}); a cancelled run, which has no Manage and no Now
-   * line, is its badge row alone.
+   * disclosure it toggles. The badges are on the facts line
+   * ({@link runBadges}).
    *
    * The banner stays in the run block rather than above the item title: it
-   * is about the run (Unblock, the reason and who set it all act on or
+   * is about the run (the lift, the reason and who set it all act on or
    * describe the run), and a card that opened on red would not yet say which
    * item it is about. The badge on the title line flags the card first.
    *
    * Manage sits directly above the drawer it opens rather than in the card
    * header. It is a disclosure, not an action on the card, and a disclosure
    * belongs next to what it reveals; in the header it was the full card away
-   * from its drawer, and a long title wrapped it onto a line of its own.
+   * from its drawer, and a long title wrapped it onto a line of its own. The
+   * label stays `Manage` in both states with a flipping chevron — `Hide`
+   * reads as hiding the card, and `Done` collides with `Mark done` inside
+   * the disclosure it toggles.
+   *
+   * The state is the chevron and nothing else. `aria-expanded` was measured
+   * (2026-09-16) and does not work here: React omits the attribute when it is
+   * false and writes it on the `s-button` host when true, but the host is not
+   * the element carrying the button role, so it never reaches the
+   * accessibility tree. The remaining lever is `accessibilityLabel`, which
+   * replaces the accessible name — "Manage, expanded" — and that is a worse
+   * trade than a silent chevron: it renames the control every merchant and
+   * every test addresses by its visible word, for a state a screen reader
+   * then hears as part of the name rather than as a state.
    *
    * The card is headed by the line item, and the run line is the status badge
    * and where the run is. The workflow's name is the Manage drawer's header
@@ -1035,127 +1002,141 @@ function RouteComponent() {
    * otherwise print one string twice.
    */
   const renderRun = (
-    detail: Domain.WorkflowRunDetail,
-    change: Parameters<typeof manageRows>[1],
-    manageButton: React.ReactNode,
+    item: Domain.OrderLineItem,
+    run: Domain.WorkflowRun,
+    views: readonly Domain.RunTaskView[],
   ) => {
-    const { run } = detail;
-    const cancelled = !Domain.runIsLive(run);
-    const now = nowLine(detail);
-    const attention = attentionRows(detail, teams, assignTeam);
+    const tasks = views.map((task) => ({
+      ...task,
+      actions: Domain.taskActions(MERCHANT, order, run, task),
+    }));
+    const actions = Domain.runActions(MERCHANT, order, run, tasks, item);
+    const now = nowLine({ run, tasks });
+    const attention = attentionRows(tasks, teams, assignTeam);
+    const options = itemWorkflows.filter(
+      (workflow) => workflow.id !== run.workflowId,
+    );
+    /**
+     * `Change workflow`, handed to `manageRows`. Absent when the field is
+     * false or when the shop's only active workflow is the one already
+     * running.
+     */
+    const change =
+      !actions.changeWorkflow || options.length === 0 ? null : (
+        <s-button
+          variant="secondary"
+          disabled={pending}
+          onClick={() => {
+            setChanging({
+              lineItemId: item.id,
+              from: run.workflowName,
+              hasNote: run.note !== null && run.note.length > 0,
+              options,
+              tasks,
+              workflowId: null,
+            });
+            showModal(CHANGE_WORKFLOW_MODAL);
+          }}
+        >
+          Change workflow
+        </s-button>
+      );
     return (
       <s-stack key={run.id} gap="small-300">
-        {cancelled && (
-          <s-stack direction="inline" gap="small-300" alignItems="center">
-            {runBadges(run)}
-          </s-stack>
-        )}
-        {Domain.runIsBlocked(run) && (
-          <FlagBanner
-            run={run}
-            actions={
-              /* No `slot` on the buttons, so they sit in the banner body,
-                 which puts no gap between children; the stack supplies it. */
+        <FlagBanner
+          run={run}
+          actions={
+            /* No `slot` on the buttons, so they sit in the banner body,
+               which puts no gap between children; the stack supplies it. */
+            actions.editReason || actions.liftFlag ? (
               <s-stack direction="inline" gap="small-300">
-                {editReasonButton(run)}
-                {unblockButton(run)}
+                {actions.editReason && (
+                  <s-button
+                    variant="secondary"
+                    disabled={pending}
+                    onClick={() => {
+                      openModal(BLOCK_MODAL, run);
+                    }}
+                  >
+                    Edit reason
+                  </s-button>
+                )}
+                {actions.liftFlag && (
+                  <s-button
+                    variant="secondary"
+                    disabled={pending}
+                    onClick={() => {
+                      liftFlag.mutate({
+                        runId: run.id,
+                        toast: Domain.runIsBlocked(run)
+                          ? "Run unblocked"
+                          : "Flag dismissed",
+                      });
+                    }}
+                  >
+                    {liftFlagLabel(run)}
+                  </s-button>
+                )}
               </s-stack>
-            }
-          />
-        )}
+            ) : null
+          }
+        />
         {now !== null && <s-text>{now}</s-text>}
         <RunNote
           note={run.note}
-          canEdit={Domain.runIsLive(run)}
-          pending={!identified || busy}
+          canEdit={actions.note}
+          pending={pending}
           onEdit={() => {
             openModal(NOTE_MODAL, run);
           }}
         />
         {attention}
-        {!cancelled && manageButton}
-        {!cancelled && managingRun(run) && manageRows(detail, change)}
+        <s-stack direction="inline">
+          <s-button
+            variant="secondary"
+            icon={managingRun(run) ? "chevron-up" : "chevron-down"}
+            onClick={() => {
+              setManaging((current) => {
+                const next = new Set(current);
+                if (!next.delete(run.id)) next.add(run.id);
+                return next;
+              });
+            }}
+          >
+            Manage
+          </s-button>
+        </s-stack>
+        {managingRun(run) && manageRows(run, tasks, actions, change)}
       </s-stack>
     );
   };
 
   /**
-   * An item holds at most one live run, so the picker under it is one of three
-   * things and the item's own state decides which:
+   * The select and its Start, at rest under an item with no run: the item's
+   * empty state rather than an edit, so it is the one workflow control not in
+   * a modal. A change on a running item goes through the Change workflow
+   * modal instead, which deletes what is there.
    *
-   * - **ambiguous** — two or more workflows matched at the last reconcile and
-   *   none started, because the server will not pick for the merchant. The
-   *   picker offers every active workflow, the matches first: the item has
-   *   no Manage, so the select is the only way to a workflow the tags did not
-   *   pull in. The sentence above it says why it is asking
-   *   ({@link AMBIGUITY_SENTENCE}).
-   * - **no run** — the ordinary manual start, over every active workflow. It
-   *   is the row's resting state, not a disclosure: an empty select with a
-   *   Start button beside it *is* the statement that nothing is running, and
-   *   it says it in one click rather than two.
-   * - **a live run** — a *change*, which cancels what is there. That one is a
-   *   rare intervention, so its button lives inside Manage and opens the
-   *   Change workflow modal, which holds the select and, on a run with any
-   *   task started or done, the warning. The options drop the incumbent
-   *   (choosing it again is a no-op the server answers with `AlreadyExists`).
-   *   It is the one write on this page that cannot be undone: the replaced
-   *   run stays cancelled, and Undo cancel is refused while the new run holds
-   *   the item. That is why the modal's submit is the page's one red button.
-   *   A **done** run offers no change at all: see `changeable` below.
+   * The options are the matched workflows first, then every other active
+   * workflow ({@link Domain.lineItemState}): on an ambiguous item the item
+   * has no Manage, so the select is the only way to a workflow the tags did
+   * not pull in. On a cancelled item the cancelled workflow is among them;
+   * picking it starts a fresh run.
    *
-   * Ambiguity is derived here rather than kept in state: a cancel elsewhere on
-   * the page can make an item ambiguous again between renders, and state
-   * seeded once would not notice.
+   * A grid, not an inline stack: a Polaris form control fills the inline size
+   * it is given and has no width prop, so `s-select` in an inline stack takes
+   * the whole row and pushes the submit onto the next line at every window
+   * width. The leading label cell is an `s-text` rather than the select's own
+   * label so the visible word stays "Workflow" while the accessible name
+   * stays the verb.
    */
-  const renderLineItem = (item: Domain.OrderLineItem) => {
-    const removed = item.currentQuantity === 0;
-    const toMake = Domain.unitsToMake(item);
-    const itemRuns = runs.filter(({ run }) => run.lineItemId === item.id);
-    const live = itemRuns.find(({ run }) => Domain.runIsLive(run));
-    const matched = itemWorkflows.filter((workflow) =>
-      item.matchedWorkflowIds.includes(workflow.id),
-    );
-    // The same test as `Domain.ambiguousItems`, on the raw id list, so this
-    // item and the orders index cannot disagree about whether it is waiting on
-    // a choice; `matched` only orders the picker, and a matched workflow that
-    // has since lost a team or its tasks simply drops out of the options.
-    const ambiguous =
-      live === undefined &&
-      item.matchedWorkflowIds.length >= 2 &&
-      toMake > 0 &&
-      !removed;
-    // A done run is finished work with a record; changing it would rewrite
-    // that history to `cancelled` for a rework the run cards do not model.
-    // The server would allow it (`setRun` replaces any `Domain.runIsLive`
-    // incumbent), so the page is the gate: change only while `runIsOpen`.
-    const changeable = live === undefined || Domain.runIsOpen(live.run);
-    const options = (() => {
-      if (ambiguous)
-        return [
-          ...matched,
-          ...itemWorkflows.filter(
-            (workflow) => !matched.some((other) => other.id === workflow.id),
-          ),
-        ];
-      if (live === undefined) return itemWorkflows;
-      return itemWorkflows.filter(
-        (workflow) => workflow.id !== live.run.workflowId,
-      );
-    })();
+  const workflowPicker = (
+    item: Domain.OrderLineItem,
+    options: readonly Domain.Workflow[],
+    matched: readonly Domain.WorkflowId[],
+  ) => {
     const chosen = attachChoice[item.id];
-    /**
-     * The select and its Start, at rest under an item with no run: the item's
-     * resting state rather than a disclosure, so it is not in a modal. A
-     * change on a live run goes through the Change workflow modal instead.
-     *
-     * A grid, not an inline stack: a Polaris form control fills the inline size
-     * it is given and has no width prop, so `s-select` in an inline stack takes
-     * the whole row and pushes the submit onto the next line at every window
-     * width. The leading label cell is an `s-text` rather than the select's own
-     * label so the visible word stays "Workflow" while the accessible name
-     * stays the verb.
-     */
-    const workflowPicker = () => (
+    return (
       <s-grid
         gridTemplateColumns="max-content minmax(0, 20rem) auto"
         gap="base"
@@ -1168,7 +1149,7 @@ function RouteComponent() {
           labelAccessibilityVisibility="exclusive"
           placeholder="Choose workflow"
           value={chosen ?? ""}
-          disabled={!identified || busy}
+          disabled={pending}
           onChange={(event) => {
             const workflowId = event.currentTarget.value;
             setAttachChoice((choice) => ({
@@ -1181,9 +1162,9 @@ function RouteComponent() {
             <React.Fragment key={workflow.id}>
               {/* Polaris `s-select` has no option groups, so a disabled
                   option is the rule between the matches and the rest. */}
-              {ambiguous && index === matched.length && (
+              {index > 0 && index === matched.length && (
                 <s-option value="" disabled>
-                  {"\u2014"}
+                  —
                 </s-option>
               )}
               <s-option value={workflow.id}>{workflow.name}</s-option>
@@ -1192,7 +1173,7 @@ function RouteComponent() {
         </s-select>
         <s-button
           variant="secondary"
-          disabled={!identified || busy || !chosen}
+          disabled={pending || !chosen}
           onClick={() => {
             if (chosen)
               attachMutation.mutate({
@@ -1205,34 +1186,17 @@ function RouteComponent() {
         </s-button>
       </s-grid>
     );
-    /**
-     * `Change workflow`, handed to `manageRows` through `renderRun`. Null when
-     * there is nothing to change: a removed item, a done run, or a shop whose
-     * only active workflow is the one already running.
-     */
-    const change =
-      live === undefined ||
-      removed ||
-      !changeable ||
-      options.length === 0 ? null : (
-        <s-button
-          variant="secondary"
-          disabled={!identified || busy}
-          onClick={() => {
-            setChanging({
-              lineItemId: item.id,
-              from: live.run.workflowName,
-              hasNote: live.run.note !== null && live.run.note.length > 0,
-              options,
-              tasks: live.tasks,
-              workflowId: null,
-            });
-            showModal(CHANGE_WORKFLOW_MODAL);
-          }}
-        >
-          Change workflow
-        </s-button>
-      );
+  };
+
+  /**
+   * One line item's card: title, facts, properties, then the body its
+   * {@link Domain.lineItemState} kind draws. On a closed order the resting
+   * controls of `startable` and `unmatched` draw nothing: the page banner
+   * already says why no work can start.
+   */
+  const renderLineItem = (item: Domain.OrderLineItem) => {
+    const toMake = Domain.unitsToMake(item);
+    const itemState = Domain.lineItemState(item, runs, itemWorkflows);
     /**
      * Quantity and SKU, as one subdued line under the title. No product tags:
      * they were "why a workflow matched", and on an ambiguous item the
@@ -1241,42 +1205,76 @@ function RouteComponent() {
     const facts = [
       /* Ordered vs. to make differ after an edit or a refund; shipping does not move it ({@link Domain.unitsToMake}). */
       toMake === item.quantity
-        ? `\u00D7 ${formatNumber(item.quantity)}`
-        : `\u00D7 ${formatNumber(toMake)} to make (${formatNumber(item.quantity)} ordered)`,
+        ? `× ${formatNumber(item.quantity)}`
+        : `× ${formatNumber(toMake)} to make (${formatNumber(item.quantity)} ordered)`,
       ...(item.sku === null ? [] : [`SKU ${item.sku}`]),
-    ].join(" \u00B7 ");
+    ].join(" · ");
     /**
-     * The disclosure toggle, placed by {@link renderRun} directly above the
-     * drawer it opens. The label stays `Manage` in both states with a flipping
-     * chevron — `Hide` reads as hiding the card, and `Done` collides with
-     * `Mark done` inside the disclosure it toggles.
-     *
-     * The state is the chevron and nothing else. `aria-expanded` was measured
-     * (2026-09-16) and does not work here: React omits the attribute when it is
-     * false and writes it on the `s-button` host when true, but the host is not
-     * the element carrying the button role, so it never reaches the
-     * accessibility tree. The remaining lever is `accessibilityLabel`, which
-     * replaces the accessible name — "Manage, expanded" — and that is a worse
-     * trade than a silent chevron: it renames the control every merchant and
-     * every test addresses by its visible word, for a state a screen reader
-     * then hears as part of the name rather than as a state.
+     * A `switch` rather than `Match`: the branches return JSX, and a JSX
+     * arrow in an object literal reads to oxlint as a component defined in
+     * render. TypeScript still refuses a missing kind, through `never`.
      */
-    const manageButton =
-      live === undefined ? null : (
-        <s-button
-          variant="secondary"
-          icon={managingRun(live.run) ? "chevron-up" : "chevron-down"}
-          onClick={() => {
-            setManaging((current) => {
-              const next = new Set(current);
-              if (!next.delete(live.run.id)) next.add(live.run.id);
-              return next;
-            });
-          }}
-        >
-          Manage
-        </s-button>
-      );
+    const body = ((): React.ReactNode => {
+      switch (itemState.kind) {
+        case "removed": {
+          return null;
+        }
+        case "unmatched": {
+          return orderOpen ? (
+            <s-paragraph color="subdued">
+              No workflows can start.{" "}
+              <s-link href="/app/workflows">Create one.</s-link>
+            </s-paragraph>
+          ) : null;
+        }
+        case "startable": {
+          return orderOpen ? (
+            <>
+              {itemState.ambiguous && (
+                <s-paragraph>{AMBIGUITY_SENTENCE}</s-paragraph>
+              )}
+              {workflowPicker(item, itemState.options, itemState.matched)}
+            </>
+          ) : null;
+        }
+        /* The one place the cancelled workflow's name survives, and the
+           consequence the Cancel run modal promised, then the picker. */
+        case "cancelled": {
+          return (
+            <>
+              <s-paragraph color="subdued">
+                {`${itemState.run.workflowName} workflow cancelled \u00B7 `}
+                {itemState.run.cancelledAt !== null && (
+                  <LocalDateTime
+                    value={itemState.run.cancelledAt}
+                    format="relative"
+                  />
+                )}
+                {orderOpen && itemState.startable
+                  ? ". Nothing starts on this item until you choose a workflow."
+                  : "."}
+              </s-paragraph>
+              {orderOpen &&
+                itemState.startable &&
+                workflowPicker(item, itemState.options, itemState.matched)}
+            </>
+          );
+        }
+        case "running":
+        case "finished": {
+          return renderRun(item, itemState.run, itemState.tasks);
+        }
+        default: {
+          return itemState satisfies never;
+        }
+      }
+    })();
+    const run =
+      itemState.kind === "running" ||
+      itemState.kind === "finished" ||
+      itemState.kind === "cancelled"
+        ? itemState.run
+        : null;
     /* No `accessibilityLabel` on the section: with no `heading`, `s-section`
        renders the label as a second, hidden heading and screen readers hear
        the title twice. The `s-heading` inside is the section's name. */
@@ -1285,14 +1283,16 @@ function RouteComponent() {
         <s-stack gap="small-100">
           {/* The facts sit under the title as its subtitle, tight to it, so
               the card opens with one block rather than a title and a lone
-              "× 1" a full gap apart. The live run's badges end the facts
-              line ({@link runBadges}). */}
+              "× 1" a full gap apart. The run's badges end the facts line
+              ({@link runBadges}). */}
           <s-stack gap="small-500">
             <s-heading>{lineItemTitle(item)}</s-heading>
             <s-stack direction="inline" gap="small-300" alignItems="center">
               <s-text color="subdued">{facts}</s-text>
-              {removed && <s-badge tone="critical">Removed</s-badge>}
-              {live !== undefined && runBadges(live.run)}
+              {item.currentQuantity === 0 && (
+                <s-badge tone="critical">Removed</s-badge>
+              )}
+              {run !== null && runBadges(run)}
             </s-stack>
           </s-stack>
 
@@ -1309,24 +1309,9 @@ function RouteComponent() {
             </s-stack>
           )}
 
-          <s-stack gap="small-100">
-            {ambiguous && <s-paragraph>{AMBIGUITY_SENTENCE}</s-paragraph>}
-            {itemRuns.map((itemRun) =>
-              itemRun.run.id === live?.run.id
-                ? renderRun(itemRun, change, manageButton)
-                : renderRun(itemRun, null, null),
-            )}
-            {live === undefined &&
-              !removed &&
-              (options.length === 0 ? (
-                <s-paragraph color="subdued">
-                  No workflows can start.{" "}
-                  <s-link href="/app/workflows">Create one.</s-link>
-                </s-paragraph>
-              ) : (
-                workflowPicker()
-              ))}
-          </s-stack>
+          {body !== null && body !== undefined && (
+            <s-stack gap="small-100">{body}</s-stack>
+          )}
         </s-stack>
       </s-section>
     );
@@ -1366,6 +1351,7 @@ function RouteComponent() {
 
       <SocketBanner />
       {(banner !== null ||
+        !orderOpen ||
         order.lineItemsTruncated ||
         state === "ready_to_ship") && (
         /* In the main column, not `slot="supplemental-start"`: that slot
@@ -1374,6 +1360,22 @@ function RouteComponent() {
            first thing in the column and the card under them still lines up
            with the aside's top edge. */
         <s-stack gap="base">
+          {/* The closed order, said once for the whole page rather than on
+              every item ({@link Domain.canAttachRun}). The items keep their
+              badges and banners; what goes is every write that does work. */}
+          {!orderOpen && (
+            <s-banner
+              tone={Domain.isCancelled(order) ? "critical" : "info"}
+              heading={
+                Domain.isCancelled(order)
+                  ? "Cancelled in Shopify"
+                  : "Fulfilled in Shopify"
+              }
+            >
+              Work on this order is read-only. Dismiss the flags to clear them
+              from the team views.
+            </s-banner>
+          )}
           {state === "ready_to_ship" && (
             <s-banner tone="success">
               Every run is done.{" "}
@@ -1403,9 +1405,8 @@ function RouteComponent() {
 
       {/* One modal for the page, driven by `changing`: a per-item one would
           mount a dialog under every line item of every order. The select
-          lives in it rather than inline under Manage because an inline picker
-          stayed open per run, dangled across the page, and could be open on
-          several runs at once. */}
+          lives in it rather than inline under Manage because a filled slot
+          is changed in a modal; only an empty one is filled at rest. */}
       <s-modal
         id={CHANGE_WORKFLOW_MODAL}
         heading="Change workflow?"
@@ -1418,7 +1419,7 @@ function RouteComponent() {
             label="Workflow"
             placeholder="Choose workflow"
             value={changing?.workflowId ?? ""}
-            disabled={!identified || busy}
+            disabled={pending}
             onChange={(event) => {
               const workflowId = event.currentTarget.value;
               setChanging((current) =>
@@ -1455,10 +1456,7 @@ function RouteComponent() {
           tone="critical"
           loading={attachMutation.isPending}
           disabled={
-            !identified ||
-            busy ||
-            changing === null ||
-            changing.workflowId === null
+            pending || changing === null || changing.workflowId === null
           }
           onClick={() => {
             if (changing !== null && changing.workflowId !== null)
@@ -1472,19 +1470,110 @@ function RouteComponent() {
         </s-button>
       </s-modal>
 
+      {/* Cancel run deletes the run's tasks and note and leaves the item
+          cancelled (`Domain.RunStatus`), so the question is asked here and
+          names the loss; there is no undo after it. */}
+      <s-modal
+        id={CANCEL_RUN_MODAL}
+        heading="Cancel this run?"
+        onAfterHide={() => {
+          setCancelling(null);
+        }}
+      >
+        <s-paragraph>{cancellingWarning}</s-paragraph>
+        <s-button
+          slot="secondary-actions"
+          commandFor={CANCEL_RUN_MODAL}
+          command="--hide"
+        >
+          Keep run
+        </s-button>
+        <s-button
+          slot="primary-action"
+          variant="primary"
+          tone="critical"
+          loading={cancel.isPending}
+          disabled={pending || cancelling === null}
+          onClick={() => {
+            if (cancelling !== null)
+              cancel.mutate({
+                runId: cancelling.runId,
+                toast: "Run cancelled.",
+              });
+          }}
+        >
+          Cancel run
+        </s-button>
+      </s-modal>
+
+      {/* Reassign changes a filled slot, so it is a modal like Change
+          workflow; the select opens on the current team so the merchant
+          sees what they are replacing. */}
+      <s-modal
+        id={REASSIGN_MODAL}
+        heading={
+          reassigning === null ? "Reassign" : `Reassign ${reassigning.taskName}`
+        }
+        onAfterHide={() => {
+          setReassigning(null);
+        }}
+      >
+        <s-select
+          label="Team"
+          value={reassigning?.teamId ?? ""}
+          disabled={pending}
+          {...(reassigning === null || reassigning.error === null
+            ? {}
+            : { error: reassigning.error })}
+          onChange={(event) => {
+            const teamId = event.currentTarget.value;
+            setReassigning((current) =>
+              current === null ? null : { ...current, teamId, error: null },
+            );
+          }}
+        >
+          {teamOptions(teams)}
+        </s-select>
+        <s-button
+          slot="secondary-actions"
+          commandFor={REASSIGN_MODAL}
+          command="--hide"
+        >
+          {reassigning === null ? "Cancel" : `Keep ${reassigning.teamName}`}
+        </s-button>
+        <s-button
+          slot="primary-action"
+          variant="primary"
+          loading={reassign.isPending}
+          disabled={
+            pending || reassigning === null || reassigning.teamId === ""
+          }
+          onClick={() => {
+            if (reassigning !== null && reassigning.teamId !== "")
+              reassign.mutate({
+                runTaskId: reassigning.runTaskId,
+                teamId: reassigning.teamId,
+              });
+          }}
+        >
+          Assign
+        </s-button>
+      </s-modal>
+
       <RunNoteModal
         id={NOTE_MODAL}
         note={modalRun?.note ?? null}
-        pending={!identified || busy}
-        onSave={(note) =>
+        pending={pending}
+        onSave={(text) =>
           modalRun === null
             ? Promise.resolve("That workflow run no longer exists.")
-            : interveneFromModal({
-                kind: "note",
-                runId: modalRun.id,
-                note: note.trim() === "" ? null : note,
-                toast: "Note saved",
-              })
+            : fromModal(
+                note.mutateAsync({
+                  runId: modalRun.id,
+                  text: textOrNull(text),
+                  toast: "Note saved",
+                }),
+              )
         }
       />
       <BlockModal
@@ -1492,26 +1581,28 @@ function RouteComponent() {
         run={
           modalRun ?? { orderName: order.name, flag: null, flagDetail: null }
         }
-        pending={!identified || busy}
+        pending={pending}
         onBlock={(reason) =>
           modalRun === null
             ? Promise.resolve("That workflow run no longer exists.")
-            : interveneFromModal({
-                kind: "block",
-                runId: modalRun.id,
-                reason: reason.trim() === "" ? null : reason,
-                toast: "Run blocked",
-              })
+            : fromModal(
+                block.mutateAsync({
+                  runId: modalRun.id,
+                  text: textOrNull(reason),
+                  toast: "Run blocked",
+                }),
+              )
         }
         onSaveReason={(reason) =>
           modalRun === null
             ? Promise.resolve("That workflow run no longer exists.")
-            : interveneFromModal({
-                kind: "blockReason",
-                runId: modalRun.id,
-                reason: reason.trim() === "" ? null : reason,
-                toast: "Reason saved",
-              })
+            : fromModal(
+                editReason.mutateAsync({
+                  runId: modalRun.id,
+                  text: textOrNull(reason),
+                  toast: "Reason saved",
+                }),
+              )
         }
       />
 

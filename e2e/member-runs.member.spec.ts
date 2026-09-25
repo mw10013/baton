@@ -1080,8 +1080,8 @@ test("put back returns a started task to Up next for everyone", async ({
 
 /**
  * A `done` run is only its last task's Done, and the work page must offer
- * Undo there just as the run list's Done tier does (`Domain.taskActions`: Undo's
- * gate is `runIsLive`, not `runIsOpen`). The ring order has one task, so Done
+ * Undo there just as the run list's Done tier does (`Domain.taskActions`:
+ * `reopen` does not need `runIsOpen`). The ring order has one task, so Done
  * on it finishes the run, and the page it links to is the page under test.
  */
 test("a done run's work page offers Undo on its last task", async ({

@@ -737,6 +737,55 @@ const floorOrders: readonly SeedOrder[] = [
       item("Gift card sleeve", null, 2),
     ],
   },
+  {
+    // the line removed in Shopify while the board was on the bench: the run
+    // stays, flagged "Item removed", with Dismiss in its banner and no Mark
+    // done; Reassign still offered
+    n: 1031,
+    advance: 1,
+    after: { lineItems: [{ position: 1, currentQuantity: 0 }] },
+    lineItems: [
+      item("Engraved cutting board", TAG.board, 1, { Engraving: "Removed" }),
+    ],
+  },
+  {
+    // finished, then one of two units refunded: Done plus "Quantity
+    // changed", Dismiss in the banner, Reopen in Manage
+    n: 1032,
+    done: true,
+    after: { lineItems: [{ position: 1, currentQuantity: 1 }] },
+    lineItems: [item("Leather journal", TAG.journal, 2, { Initials: "Q.C." })],
+  },
+  {
+    // blocked before anyone started: Not started plus Blocked, Edit reason
+    // and Unblock in the banner, Reassign in Manage, no Mark done
+    n: 1033,
+    blocked: "Waiting on the customer's photo.",
+    lineItems: [item("Wall clock", TAG.clock, 1, { Numerals: "Arabic" })],
+  },
+  {
+    // three workflows claim the item: the picker lists the three matches,
+    // a rule, then every other workflow
+    n: 1034,
+    lineItems: [
+      item("Engraved journal board", [TAG.board, TAG.journal, TAG.rush], 1),
+    ],
+  },
+  {
+    // the merchant cancelled the run after a step was done: the Cancelled
+    // badge, "… workflow cancelled", and the picker to start one afresh;
+    // reconcile starts nothing on it
+    n: 1035,
+    lineItems: [
+      item(
+        "Signet ring",
+        TAG.ring,
+        1,
+        { Size: "8", Metal: "Silver" },
+        { progress: { advance: 1, cancelled: true } },
+      ),
+    ],
+  },
 ];
 
 /**
