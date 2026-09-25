@@ -76,7 +76,7 @@ export class ShopAgentClientError extends Schema.TaggedError<ShopAgentClientErro
  *
  * The member's run list is the rule's clearest case, and the reason the five member
  * mutations are *not* here: `listRuns` is the SSR paint and stays on this
- * path, while Start, Done, Note, Block, and Dismiss became `@callable()` once
+ * path, while Start, Done, Note, Block, and Unblock became `@callable()` once
  * `/shop/*` got a socket. Their privileged inputs did not become less
  * privileged — they moved from a Worker-resolved argument to
  * `Domain.ConnectionState` on the connection, which the same `requireMember`

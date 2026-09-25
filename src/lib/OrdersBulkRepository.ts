@@ -77,7 +77,7 @@ query BulkOrdersQuery {
 /**
  * The import query, which is the same on every click: the open, unfulfilled
  * orders created in the last {@link ORDER_IMPORT_WINDOW_DAYS} days. A maker's
- * working set is the orders still to be made, and everything already shipped,
+ * working set is the orders still to be made, and everything already fulfilled,
  * closed, or cancelled would occupy the object's SQLite for nothing.
  *
  * Fixed on purpose, with no last-import marker and no delta window. A

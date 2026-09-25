@@ -33,7 +33,7 @@ const CALLABLE_ROLES = {
   memberSetRunNote: "member",
   memberBlockRun: "member",
   memberSetBlockReason: "member",
-  memberDismissFlag: "member",
+  memberUnblockRun: "member",
   memberUncompleteTask: "member",
   memberUnstartTask: "member",
   subscribeRun: "member",
@@ -63,7 +63,7 @@ const CALLABLE_ROLES = {
   merchantSetRunNote: "merchant",
   merchantBlockRun: "merchant",
   merchantSetBlockReason: "merchant",
-  merchantDismissFlag: "merchant",
+  merchantUnblockRun: "merchant",
   addStep: "merchant",
   addTask: "merchant",
   updateTask: "merchant",
@@ -222,7 +222,7 @@ describe("ShopAgent run callable names", () => {
     "merchantSetRunNote",
     "merchantBlockRun",
     "merchantSetBlockReason",
-    "merchantDismissFlag",
+    "merchantUnblockRun",
     "merchantAssignRunTaskTeam",
     "memberStartTask",
     "memberCompleteTask",
@@ -231,7 +231,7 @@ describe("ShopAgent run callable names", () => {
     "memberSetRunNote",
     "memberBlockRun",
     "memberSetBlockReason",
-    "memberDismissFlag",
+    "memberUnblockRun",
   ] as const;
 
   it("every run-write callable is named <role><Verb>, where the role is the ConnectionRole allowed to call it", async () => {

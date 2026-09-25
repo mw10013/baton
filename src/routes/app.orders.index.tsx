@@ -56,18 +56,20 @@ interface FilterButton<A> {
 }
 
 /**
- * The Status row: lifecycle only, in the order an order moves, with the two
- * that are not positions at either end — Open is the default view and All
- * is the escape hatch to the closed ones (`Domain.OrdersStatus`). Problems
- * are {@link NEEDS}. `cancelled` is deliberately absent: it is rare, shows
- * as a badge, and is not a position an order moves through. Only the open
+ * The Status row: the production ladder (`Domain.ProductionState`), in the
+ * order an order moves, with the two that are not positions at either end —
+ * Open (to make, making and made) is the default view and All is the escape
+ * hatch to the closed ones (`Domain.OrdersStatus`). Problems are
+ * {@link NEEDS}. `cancelled` is deliberately absent: it is rare, shows as a
+ * badge, and is not a position an order moves through. Only the open
  * positions carry a count (`Domain.OrderCounts`).
  */
 const STATUSES: readonly FilterButton<Domain.OrdersStatus>[] = [
   { value: null, label: "Open", count: null },
-  { value: "in_production", label: "In production", count: "in_production" },
-  { value: "ready_to_ship", label: "Ready to ship", count: "ready_to_ship" },
-  { value: "shipped", label: "Shipped", count: null },
+  { value: "to_make", label: "To make", count: "to_make" },
+  { value: "making", label: "Making", count: "making" },
+  { value: "made", label: "Made", count: "made" },
+  { value: "fulfilled", label: "Fulfilled", count: null },
   { value: "all", label: "All", count: null },
 ];
 
@@ -81,7 +83,6 @@ const NEED_LABEL: Record<Domain.OrderNeed, string> = {
   choose_workflow: "Choose a workflow",
   team: "Needs a team",
   blocked: "Blocked",
-  changed: "Order changed",
 };
 
 const NEEDS: readonly FilterButton<Domain.OrderNeed>[] = [
@@ -94,17 +95,17 @@ const NEEDS: readonly FilterButton<Domain.OrderNeed>[] = [
 ];
 
 /**
- * The Needs row and the Team select are hidden under Shipped (and Cancelled,
- * which has no button): a need is only ever on an open order
+ * The Needs row and the Team select are hidden under Fulfilled (and
+ * Cancelled, which has no button): a need is only ever on an open order
  * (`Domain.OrderNeed`) and only an open order waits on a team
  * (`Domain.OrderRow.waitingOn`), so neither can match there and every need
- * count would be zero. Pressing Shipped also drops the need and the team, or
+ * count would be zero. Pressing Fulfilled also drops the need and the team, or
  * the list would be filtered to nothing by a control that is no longer on
  * screen. The search chip moves to the Status row while the Needs row is
  * hidden: the search still applies, so the control to clear it stays.
  */
 const openOnlyFiltersShown = (value: Domain.OrdersStatus | null) =>
-  value !== "shipped" && value !== "cancelled";
+  value !== "fulfilled" && value !== "cancelled";
 
 /**
  * `Schema.toType`, not the schema itself. A Durable Object RPC result has
@@ -135,25 +136,19 @@ const orderLocation = ({ legacyId }: Domain.ShopOrder) =>
   }) as const;
 
 /**
- * The lifecycle badge, from `Domain.productionState` over the row. An order
- * not started yet shows nothing here; if that is a problem, `needBadges`
- * says so. "Ready to ship" is derived, never stored: it clears on its own
- * once Shopify reports the fulfilment.
+ * The ladder badge, from `Domain.productionState` over the row, one for every
+ * order. Whether To make is a problem is `needBadges`' to say. Made is
+ * derived, never stored: it becomes Fulfilled on its own once Shopify
+ * reports the fulfilment.
  */
 const positionBadge = (row: Domain.OrderRow) =>
   Match.value(Domain.productionState(row)).pipe(
     Match.withReturnType<React.ReactNode>(),
-    Match.when(null, () => null),
-    Match.when("in_production", () => (
-      <s-badge tone="info">
-        {`${formatNumber(row.runs.open)} active${row.runs.done > 0 ? ` · ${formatNumber(row.runs.done)} done` : ""}`}
-      </s-badge>
-    )),
-    Match.when("ready_to_ship", () => (
-      <s-badge tone="success">Ready to ship</s-badge>
-    )),
-    Match.when("shipped", () => <s-badge tone="neutral">Shipped</s-badge>),
-    Match.when("cancelled", () => <s-badge tone="neutral">Cancelled</s-badge>),
+    Match.when("to_make", () => <s-badge tone="neutral">To make</s-badge>),
+    Match.when("making", () => <s-badge tone="info">Making</s-badge>),
+    Match.when("made", () => <s-badge tone="success">Made</s-badge>),
+    Match.when("fulfilled", () => <s-badge tone="neutral">Fulfilled</s-badge>),
+    Match.when("cancelled", () => <s-badge tone="critical">Cancelled</s-badge>),
     Match.exhaustive,
   );
 
@@ -214,16 +209,16 @@ const emptyText = (
     ),
     Match.when("team", () => "No open orders need a team."),
     Match.when("blocked", () => "No open orders are blocked."),
-    Match.when("changed", () => "No open orders have changed."),
     Match.when(null, () =>
       Match.value(status).pipe(
         Match.when("all", () => "No orders stored."),
-        Match.when("in_production", () => "Nothing is in production."),
+        Match.when("to_make", () => "No open orders are waiting to be made."),
+        Match.when("making", () => "Nothing is being made."),
         Match.when(
-          "ready_to_ship",
+          "made",
           () => "No orders are made and waiting to be fulfilled.",
         ),
-        Match.when("shipped", () => "No orders have been fulfilled yet."),
+        Match.when("fulfilled", () => "No orders have been fulfilled yet."),
         Match.when("cancelled", () => "No cancelled orders."),
         Match.when(null, () => "No orders match these filters."),
         Match.exhaustive,
@@ -609,7 +604,7 @@ function RouteComponent() {
           <s-table-header listSlot="primary">Order</s-table-header>
           <s-table-header listSlot="secondary">Placed</s-table-header>
           <s-table-header listSlot="inline">Payment</s-table-header>
-          <s-table-header listSlot="inline">Workflows</s-table-header>
+          <s-table-header listSlot="inline">Production</s-table-header>
           <s-table-header listSlot="labeled">Waiting on</s-table-header>
           <s-table-header listSlot="labeled" format="numeric">
             Items
@@ -650,12 +645,12 @@ function RouteComponent() {
                   on a deleted team (an unstaffed team still shows, so the
                   merchant knows whom to staff), and the critical badge
                   beside it already says so. A dash would flatten that into
-                  "nothing to see". A shipped or cancelled order is always
+                  "nothing to see". A fulfilled or cancelled order is always
                   empty (`Domain.OrderRow.waitingOn`). */}
               <s-table-cell>{waitingOnBadges(row.waitingOn)}</s-table-cell>
               <s-table-cell>{formatNumber(row.itemUnits)}</s-table-cell>
               {/* The packer's handoff: a made order is fulfilled in the
-                  Shopify admin, never here, so the ready-to-ship row links
+                  Shopify admin, never here, so the Made row links
                   straight to it. Other rows get the same link under a
                   neutral label. */}
               <s-table-cell>
@@ -663,7 +658,7 @@ function RouteComponent() {
                   href={adminOrderUrl(row.order)}
                   target={resourceLinkTarget}
                 >
-                  {Domain.productionState(row) === "ready_to_ship"
+                  {Domain.productionState(row) === "made"
                     ? "Fulfil in Shopify"
                     : "View in Shopify"}
                 </s-link>
@@ -685,7 +680,7 @@ function RouteComponent() {
    *
    * A counted button always renders, at zero if need be, so nothing on the
    * bar appears or disappears with the data. An uncounted one (Open,
-   * Shipped, All, Anything) is just its name: a blank where a number belongs
+   * Fulfilled, All, Anything) is just its name: a blank where a number belongs
    * reads as a number that failed to load.
    */
   const pressButton = <A extends string>(

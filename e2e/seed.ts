@@ -51,7 +51,7 @@ export interface SeedWorkflowTask {
  * Progress for one seeded run. `done` completes every task; `advance`
  * completes that many rounds of ready tasks instead (`done` and `advance`
  * together are refused); `started` then Starts whatever is ready; `blocked`
- * flags the run with that reason. `byMerchant` records the completions and the
+ * blocks the run with that reason. `byMerchant` records the completions and the
  * block as the merchant instead of the seed member, which is the fixture for
  * what a worker sees after an intervention; `started` stays the member's
  * either way.
@@ -62,7 +62,7 @@ export interface SeedProgress {
   readonly started?: boolean;
   readonly blocked?: string;
   readonly byMerchant?: boolean;
-  /** Last, Cancel run as the merchant: the item keeps a `cancelled` marker and nothing starts on it. */
+  /** Last, Cancel run as the merchant: the run closes (`merchant_cancelled`), keeps its tasks, and nothing starts on the item. */
   readonly cancelled?: boolean;
 }
 
@@ -88,9 +88,10 @@ export interface SeedLineItem {
 }
 
 /**
- * A second state for the order, written after progress, so its runs come to
- * carry the flags only a change that lands *after* work started can produce:
- * `order_cancelled`, `order_fulfilled`, `quantity_changed`, `item_removed`.
+ * A second state for the order, written after progress, so its runs end up as
+ * only a change that lands *after* work started can leave them: closed
+ * (`order_cancelled`, `fulfilled`, `item_removed`) or resized with the
+ * quantity badge.
  * `lineItems` are addressed by 1-based position in the order's own
  * `lineItems`, and a quantity left out keeps what the first write gave it.
  */

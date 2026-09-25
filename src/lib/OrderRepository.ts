@@ -140,16 +140,17 @@ const json = (value: unknown) => JSON.stringify(value);
  * partial index when the query's `where` provably implies the index's, and it
  * proves that by matching terms, not by reasoning about them. The run
  * fragments are correlated to the outer `ShopOrder` row and served by
- * `WorkflowRun_orderId_idx`. The `cancelled` marker counts as the item
- * decided (`Domain.RunStatus`): it is in `ANY_RUN` and `RUN_FOR_ITEM`, so an
- * item the merchant cancelled is neither "No workflow" nor "Choose a
- * workflow", and it is in no status fragment.
+ * `WorkflowRun_orderId_idx`. A closed run still holds its item
+ * (`Domain.RunStatus`): it is in `ANY_RUN` and `RUN_FOR_ITEM`, so an item
+ * whose run closed is neither "No workflow" nor "Choose a workflow", and it
+ * is in no status fragment but `to_make`'s, which asks for no open and no
+ * done run.
  */
 const OPEN = "fulfillmentStatus <> 'FULFILLED' and cancelledAt is null";
 /**
  * {@link OPEN} on an aliased `ShopOrder`, for statements that also read
- * `WorkflowRun`: it has a `cancelledAt` of its own, so the bare form would be
- * ambiguous there.
+ * `WorkflowRun`: qualified so the predicate cannot bind to a run column of
+ * the same name (both tables carry a `closedAt`).
  */
 const openAs = (alias: string) =>
   `${alias}.fulfillmentStatus <> 'FULFILLED' and ${alias}.cancelledAt is null`;
@@ -162,17 +163,12 @@ const DONE_RUN = `select 1 from WorkflowRun r
 /** The `blocked` {@link Domain.OrderNeed}: an open run a worker or the merchant blocked. */
 const BLOCKED_RUN = `select 1 from WorkflowRun r
   where r.orderId = ShopOrder.id and r.status in ('pending', 'active')
-    and r.flag = 'blocked'`;
-/** The `changed` {@link Domain.OrderNeed}: an open run carrying a reconcile flag. */
-const CHANGED_RUN = `select 1 from WorkflowRun r
-  where r.orderId = ShopOrder.id and r.status in ('pending', 'active')
-    and r.flag is not null and r.flag <> 'blocked'`;
+    and r.blockedAt is not null`;
 /**
  * `Domain.ambiguousItems` in SQL: an item with units still to make, two or
- * more workflows matched at the last reconcile, and no row at all, run or
- * `cancelled` marker. Change workflow away and back, or reconcile deleting a
- * pending run, reads correctly with no further reconcile — which is the point
- * of deriving the need rather than storing it.
+ * more workflows matched at the last reconcile, and no run of any status.
+ * Change workflow away and back reads correctly with no further reconcile —
+ * which is the point of deriving the need rather than storing it.
  *
  * `json_array_length` is SQLite's JSON1, compiled into Durable Object SQLite;
  * `order-repository.test.ts` is the proof.
@@ -190,7 +186,7 @@ const AMBIGUOUS_ITEM = `select 1 from OrderLineItem li
  */
 const CHOOSING = `fullyPaid = 1 and exists (${AMBIGUOUS_ITEM})`;
 /**
- * The `no_workflow` {@link Domain.OrderNeed}: paid, no run or marker, and no item
+ * The `no_workflow` {@link Domain.OrderNeed}: paid, no run of any status, and no item
  * waiting on a choice. `OPEN` is the caller's, as for every need.
  */
 const NO_WORKFLOW = `fullyPaid = 1 and not exists (${ANY_RUN}) and not (${CHOOSING})`;
@@ -202,14 +198,14 @@ const NO_WORKFLOW = `fullyPaid = 1 and not exists (${ANY_RUN}) and not (${CHOOSI
  * `OPEN` is the statement's own `where`.
  */
 const COUNT_FACT = {
-  in_production: "openRuns > 0",
-  ready_to_ship: "doneRuns > 0 and openRuns = 0",
+  to_make: "openRuns = 0 and doneRuns = 0",
+  making: "openRuns > 0",
+  made: "doneRuns > 0 and openRuns = 0",
   no_workflow:
-    "paid and openRuns = 0 and doneRuns = 0 and cancelledRuns = 0 and not choosing",
+    "paid and openRuns = 0 and doneRuns = 0 and closedRuns = 0 and not choosing",
   choose_workflow: "choosing",
   team: "team",
   blocked: "blockedRuns > 0",
-  changed: "changedRuns > 0",
 } as const satisfies Record<keyof Domain.OrderCounts, string>;
 
 const bit = (value: boolean) => (value ? 1 : 0);
@@ -1014,28 +1010,32 @@ export class OrderRepository extends Context.Service<
                   join WorkflowRunTask s on s.runId = wr.id
                   where wr.orderId = ShopOrder.id
                     and wr.status in ('pending', 'active')
-                    and (wr.flag is null or wr.flag <> 'blocked')
+                    and wr.blockedAt is null
                     and s.teamId = ${team}
                     and ${sql.literal(ReadyWhere.readyWhere("s"))}
                 )`;
           /**
            * The open statuses partition the open orders by run state alone:
-           * any open run is `in_production`, only finished runs is
-           * `ready_to_ship`, and an order with no runs is in neither — it is
-           * under Open and All only, as `Domain.productionState` says.
+           * no open and no done run is `to_make`, any open run is `making`,
+           * only finished runs is `made`, as `Domain.productionState` says.
            */
           const statusFilter = Match.value(status).pipe(
-            Match.when("in_production", () =>
-              sql.and([OPEN, `exists (${OPEN_RUN})`]),
+            Match.when("to_make", () =>
+              sql.and([
+                OPEN,
+                `not exists (${OPEN_RUN})`,
+                `not exists (${DONE_RUN})`,
+              ]),
             ),
-            Match.when("ready_to_ship", () =>
+            Match.when("making", () => sql.and([OPEN, `exists (${OPEN_RUN})`])),
+            Match.when("made", () =>
               sql.and([
                 OPEN,
                 `exists (${DONE_RUN})`,
                 `not exists (${OPEN_RUN})`,
               ]),
             ),
-            Match.when("shipped", () =>
+            Match.when("fulfilled", () =>
               sql.and([
                 "cancelledAt is null",
                 "fulfillmentStatus = 'FULFILLED'",
@@ -1046,7 +1046,7 @@ export class OrderRepository extends Context.Service<
             ),
             /**
              * `null` is the default view and it is open work, not everything:
-             * the negation of the `shipped` and `cancelled` branches above,
+             * the negation of the `fulfilled` and `cancelled` branches above,
              * spelled as `OPEN` so the partial index serves it. `"all"` is the
              * only filter that reads a shop's whole history
              * ({@link Domain.OrdersStatus}).
@@ -1067,9 +1067,6 @@ export class OrderRepository extends Context.Service<
             Match.when("team", () => sql.and([OPEN, attentionRun])),
             Match.when("blocked", () =>
               sql.and([OPEN, `exists (${BLOCKED_RUN})`]),
-            ),
-            Match.when("changed", () =>
-              sql.and([OPEN, `exists (${CHANGED_RUN})`]),
             ),
             Match.exhaustive,
           );
@@ -1133,10 +1130,8 @@ export class OrderRepository extends Context.Service<
                     orderId,
                     sum(status in ('pending', 'active')) as open,
                     sum(status = 'done') as done,
-                    sum(flag is not null and flag <> 'blocked'
-                        and status in ('pending', 'active')) as flagged,
-                    sum(flag = 'blocked' and status in ('pending', 'active')) as blocked,
-                    sum(status = 'cancelled') as cancelled
+                    sum(blockedAt is not null and status in ('pending', 'active')) as blocked,
+                    sum(status = 'closed') as closed
                   from WorkflowRun
                   where ${sql.in("orderId", ids)}
                   group by orderId
@@ -1187,7 +1182,7 @@ export class OrderRepository extends Context.Service<
                   where ${sql.in("wr.orderId", ids)}
                     and ${sql.literal(openAs("o"))}
                     and wr.status in ('pending', 'active')
-                    and (wr.flag is null or wr.flag <> 'blocked')
+                    and wr.blockedAt is null
                     and ${sql.in("s.teamId", liveIds)}
                     and ${sql.literal(ReadyWhere.readyWhere("s"))}
                 `.values;
@@ -1236,9 +1231,8 @@ export class OrderRepository extends Context.Service<
               {
                 open: Number(row[1] ?? 0),
                 done: Number(row[2] ?? 0),
-                flagged: Number(row[3] ?? 0),
-                blocked: Number(row[4] ?? 0),
-                cancelled: Number(row[5] ?? 0),
+                blocked: Number(row[3] ?? 0),
+                closed: Number(row[4] ?? 0),
               } satisfies Domain.RunCounts,
             ]),
           );
@@ -1259,21 +1253,22 @@ export class OrderRepository extends Context.Service<
            * `WorkflowRun_status_idx` and reads every run the retention window
            * keeps, closed orders included. Driven from `ShopOrder_open_idx`
            * through `WorkflowRun_orderId_idx`, the read is the open orders'
-           * runs only. The `ShopOrder` columns are qualified because
-           * `WorkflowRun` has a `cancelledAt` of its own.
+           * runs only. The `ShopOrder` columns are qualified for the reason
+           * on {@link openAs}.
            *
            * A status sum is crossed with the selected need and a need sum
            * with the selected status, never with its own row. Under
-           * `shipped` and `cancelled` no open order has the status, so the
+           * `fulfilled` and `cancelled` no open order has the status, so the
            * need sums are zero while the status sums still answer "what if I
-           * pressed In production".
+           * pressed Making".
            */
           const statusFact = Match.value(status).pipe(
-            Match.when("in_production", () => COUNT_FACT.in_production),
-            Match.when("ready_to_ship", () => COUNT_FACT.ready_to_ship),
+            Match.when("to_make", () => COUNT_FACT.to_make),
+            Match.when("making", () => COUNT_FACT.making),
+            Match.when("made", () => COUNT_FACT.made),
             Match.when(null, () => "1"),
             Match.when("all", () => "1"),
-            Match.when("shipped", () => "0"),
+            Match.when("fulfilled", () => "0"),
             Match.when("cancelled", () => "0"),
             Match.exhaustive,
           );
@@ -1283,10 +1278,8 @@ export class OrderRepository extends Context.Service<
                 select r.orderId,
                   sum(r.status in ('pending', 'active')) as openRuns,
                   sum(r.status = 'done') as doneRuns,
-                  sum(r.status in ('pending', 'active') and r.flag = 'blocked') as blockedRuns,
-                  sum(r.status in ('pending', 'active') and r.flag is not null
-                      and r.flag <> 'blocked') as changedRuns,
-                  sum(r.status = 'cancelled') as cancelledRuns
+                  sum(r.status in ('pending', 'active') and r.blockedAt is not null) as blockedRuns,
+                  sum(r.status = 'closed') as closedRuns
                 from ShopOrder o
                 cross join WorkflowRun r on r.orderId = o.id
                 where ${sql.literal(openAs("o"))}
@@ -1298,8 +1291,7 @@ export class OrderRepository extends Context.Service<
                   coalesce(rs.openRuns, 0) as openRuns,
                   coalesce(rs.doneRuns, 0) as doneRuns,
                   coalesce(rs.blockedRuns, 0) as blockedRuns,
-                  coalesce(rs.changedRuns, 0) as changedRuns,
-                  coalesce(rs.cancelledRuns, 0) as cancelledRuns,
+                  coalesce(rs.closedRuns, 0) as closedRuns,
                   (${sql.literal(CHOOSING)}) as choosing,
                   ${attentionRun} as team
                 from ShopOrder
@@ -1307,23 +1299,23 @@ export class OrderRepository extends Context.Service<
                 where ${sql.and([OPEN, searchFilter, teamFilter])}
               )
               select
-                sum(${sql.literal(COUNT_FACT.in_production)} and ${sql.literal(needFact)}),
-                sum(${sql.literal(COUNT_FACT.ready_to_ship)} and ${sql.literal(needFact)}),
+                sum(${sql.literal(COUNT_FACT.to_make)} and ${sql.literal(needFact)}),
+                sum(${sql.literal(COUNT_FACT.making)} and ${sql.literal(needFact)}),
+                sum(${sql.literal(COUNT_FACT.made)} and ${sql.literal(needFact)}),
                 sum(${sql.literal(COUNT_FACT.no_workflow)} and ${sql.literal(statusFact)}),
                 sum(${sql.literal(COUNT_FACT.choose_workflow)} and ${sql.literal(statusFact)}),
                 sum(${sql.literal(COUNT_FACT.team)} and ${sql.literal(statusFact)}),
-                sum(${sql.literal(COUNT_FACT.blocked)} and ${sql.literal(statusFact)}),
-                sum(${sql.literal(COUNT_FACT.changed)} and ${sql.literal(statusFact)})
+                sum(${sql.literal(COUNT_FACT.blocked)} and ${sql.literal(statusFact)})
               from facts
             `.values;
           const counts = {
-            in_production: Number(countRow?.[0] ?? 0),
-            ready_to_ship: Number(countRow?.[1] ?? 0),
-            no_workflow: Number(countRow?.[2] ?? 0),
-            choose_workflow: Number(countRow?.[3] ?? 0),
-            team: Number(countRow?.[4] ?? 0),
-            blocked: Number(countRow?.[5] ?? 0),
-            changed: Number(countRow?.[6] ?? 0),
+            to_make: Number(countRow?.[0] ?? 0),
+            making: Number(countRow?.[1] ?? 0),
+            made: Number(countRow?.[2] ?? 0),
+            no_workflow: Number(countRow?.[3] ?? 0),
+            choose_workflow: Number(countRow?.[4] ?? 0),
+            team: Number(countRow?.[5] ?? 0),
+            blocked: Number(countRow?.[6] ?? 0),
           } satisfies Domain.OrderCounts;
           const last = orders.at(-1);
           return {
@@ -1333,9 +1325,8 @@ export class OrderRepository extends Context.Service<
               runs: runs.get(order.id) ?? {
                 open: 0,
                 done: 0,
-                flagged: 0,
                 blocked: 0,
-                cancelled: 0,
+                closed: 0,
               },
               attention: needsAttention.has(order.id),
               waitingOn: waitingOn.get(order.id) ?? [],
@@ -1693,10 +1684,10 @@ export class OrderRepository extends Context.Service<
                     const chunk = ids.slice(at, at + 90);
                     /**
                      * The runs go with the order, live ones included, and
-                     * nothing is flagged on the way out: a flag exists so a
-                     * member reads why their work stopped, and a row deleted
-                     * by the next statement of the same transaction is read
-                     * by nobody.
+                     * nothing is closed on the way out: a closed run exists
+                     * so a member reads why their work stopped, and a row
+                     * deleted by the next statement of the same transaction
+                     * is read by nobody.
                      */
                     const deletedRuns =
                       yield* sql`delete from WorkflowRun where ${sql.in("orderId", chunk)} returning id`;

@@ -48,9 +48,9 @@ const FULFILLED_ORDER: Domain.OrderState = {
   fulfillmentStatus: "FULFILLED",
 };
 
-const run = (status: Domain.RunStatus, flag: Domain.RunFlag | null) => ({
+const run = (status: Domain.RunStatus, blocked = false) => ({
   status,
-  flag,
+  blockedAt: blocked ? 1 : null,
 });
 
 /** The run's one task, ready exactly when the run is open. */
@@ -70,14 +70,14 @@ const RUN_MATRIX: readonly (readonly [
   cells: Record<keyof Domain.RunActions, Cell>,
 ])[] = [
   [
-    "open, no flag",
+    "open, not blocked",
     OPEN_ORDER,
-    run("active", null),
+    run("active"),
     {
       note: "M m",
       block: "M m",
       editReason: "",
-      liftFlag: "",
+      unblock: "",
       cancel: "M",
       changeWorkflow: "M",
     },
@@ -85,51 +85,38 @@ const RUN_MATRIX: readonly (readonly [
   [
     "open, blocked",
     OPEN_ORDER,
-    run("active", "blocked"),
+    run("active", true),
     {
       note: "M m",
       block: "",
       editReason: "M m",
-      liftFlag: "M m",
+      unblock: "M m",
       cancel: "M",
       changeWorkflow: "M",
     },
   ],
   [
-    "open, reconcile flag",
+    "done",
     OPEN_ORDER,
-    run("active", "item_removed"),
+    run("done"),
     {
       note: "M m",
       block: "",
       editReason: "",
-      liftFlag: "M m",
-      cancel: "M",
-      changeWorkflow: "M",
-    },
-  ],
-  [
-    "done, no flag",
-    OPEN_ORDER,
-    run("done", null),
-    {
-      note: "M m",
-      block: "",
-      editReason: "",
-      liftFlag: "",
+      unblock: "",
       cancel: "",
       changeWorkflow: "",
     },
   ],
   [
-    "done, quantity flag",
+    "closed",
     OPEN_ORDER,
-    run("done", "quantity_changed"),
+    run("closed"),
     {
       note: "M m",
       block: "",
       editReason: "",
-      liftFlag: "M",
+      unblock: "",
       cancel: "",
       changeWorkflow: "",
     },
@@ -137,13 +124,13 @@ const RUN_MATRIX: readonly (readonly [
   [
     "order closed",
     CANCELLED_ORDER,
-    run("active", "order_cancelled"),
+    run("active"),
     {
       note: "M m",
       block: "",
       editReason: "",
-      liftFlag: "M m",
-      cancel: "M",
+      unblock: "",
+      cancel: "",
       changeWorkflow: "",
     },
   ],
@@ -176,11 +163,11 @@ describe("Domain.runActions matrix", () => {
       note: "M m",
       block: "M m",
       editReason: "",
-      liftFlag: "",
+      unblock: "",
       cancel: "M",
       changeWorkflow: "",
     } as const;
-    const state = run("active", null);
+    const state = run("active");
     const tasks = tasksOf("active");
     const zero = { currentQuantity: 0 };
     deepStrictEqual(
@@ -195,12 +182,8 @@ describe("Domain.runActions matrix", () => {
 
   it("without the line item, Change workflow is not offered", () => {
     strictEqual(
-      Domain.runActions(
-        MERCHANT,
-        OPEN_ORDER,
-        run("active", null),
-        tasksOf("active"),
-      ).changeWorkflow,
+      Domain.runActions(MERCHANT, OPEN_ORDER, run("active"), tasksOf("active"))
+        .changeWorkflow,
       false,
     );
   });
@@ -208,48 +191,67 @@ describe("Domain.runActions matrix", () => {
   it("a member whose team holds no ready task gets only the note, and only if the run is theirs to see", () => {
     const tasks = [{ teamId: T, ready: false }];
     deepStrictEqual(
-      Domain.runActions(MEMBER, OPEN_ORDER, run("active", "blocked"), tasks),
+      Domain.runActions(MEMBER, OPEN_ORDER, run("active", true), tasks),
       {
         note: true,
         block: false,
         editReason: false,
-        liftFlag: false,
+        unblock: false,
         cancel: false,
         changeWorkflow: false,
       },
     );
     strictEqual(
-      Domain.runActions(OUTSIDER, OPEN_ORDER, run("active", null), tasks).note,
+      Domain.runActions(OUTSIDER, OPEN_ORDER, run("active"), tasks).note,
       false,
     );
   });
 
   it("a fulfilled order is closed the same way as a cancelled one", () => {
-    deepStrictEqual(
-      Domain.runActions(
-        MERCHANT,
-        FULFILLED_ORDER,
-        run("active", "order_fulfilled"),
-        tasksOf("active"),
-        ITEM,
-      ),
-      expected(RUN_MATRIX[5]?.[3] ?? {}, "M"),
-    );
+    for (const state of [run("active"), run("done"), run("closed")])
+      deepStrictEqual(
+        Domain.runActions(
+          MERCHANT,
+          FULFILLED_ORDER,
+          state,
+          tasksOf(state.status),
+          ITEM,
+        ),
+        expected(RUN_MATRIX[4]?.[3] ?? {}, "M"),
+      );
   });
 
-  it("a cancelled marker offers nothing", () => {
-    for (const actor of [MERCHANT, MEMBER])
+  it("a closed run offers only the note", () => {
+    for (const [actor, tasks] of [
+      [MERCHANT, [{ teamId: T, ready: false }]],
+      [MEMBER, [{ teamId: T, ready: false }]],
+    ] as const)
       deepStrictEqual(
-        Domain.runActions(actor, OPEN_ORDER, run("cancelled", null), []),
+        Domain.runActions(actor, OPEN_ORDER, run("closed"), tasks, ITEM),
         {
-          note: false,
+          note: true,
           block: false,
           editReason: false,
-          liftFlag: false,
+          unblock: false,
           cancel: false,
           changeWorkflow: false,
         },
       );
+  });
+
+  it("cancel is not offered on a closed order", () => {
+    for (const order of [CANCELLED_ORDER, FULFILLED_ORDER])
+      for (const blocked of [false, true])
+        strictEqual(
+          Domain.runActions(
+            MERCHANT,
+            order,
+            run("active", blocked),
+            tasksOf("active"),
+            ITEM,
+          ).cancel,
+          false,
+        );
   });
 });
 
@@ -297,31 +299,31 @@ const TASK_MATRIX: readonly (readonly [
   cells: TaskCell,
 ])[] = [
   [
-    "run open, no flag, task ready, not started",
-    [[OPEN_ORDER, run("pending", null), task()]],
+    "run open, not blocked, task ready, not started",
+    [[OPEN_ORDER, run("pending"), task()]],
     {
       M: { ...NOTHING, done: true, reassign: true },
       m: { ...NOTHING, start: true, done: true },
     },
   ],
   [
-    "run open, no flag, task ready, started",
-    [[OPEN_ORDER, run("active", null), task({ startedAt: 1 })]],
+    "run open, not blocked, task ready, started",
+    [[OPEN_ORDER, run("active"), task({ startedAt: 1 })]],
     {
       M: { ...NOTHING, done: true, putBack: true, reassign: true },
       m: { ...NOTHING, done: true, putBack: true },
     },
   ],
   [
-    "run open, no flag, task waiting",
-    [[OPEN_ORDER, run("active", null), task({ ready: false })]],
+    "run open, not blocked, task waiting",
+    [[OPEN_ORDER, run("active"), task({ ready: false })]],
     { M: { ...NOTHING, reassign: true }, m: NOTHING },
   ],
   [
-    "run open, flagged, any open task",
+    "run open, blocked, any open task",
     [
-      [OPEN_ORDER, run("active", "blocked"), task({ startedAt: 1 })],
-      [OPEN_ORDER, run("active", "item_removed"), task()],
+      [OPEN_ORDER, run("active", true), task({ startedAt: 1 })],
+      [OPEN_ORDER, run("pending", true), task()],
     ],
     { M: { ...NOTHING, reassign: true }, m: NOTHING },
   ],
@@ -330,12 +332,17 @@ const TASK_MATRIX: readonly (readonly [
     [
       [
         OPEN_ORDER,
-        run("active", null),
+        run("active"),
         task({ ready: false, startedAt: 1, completedAt: 2 }),
       ],
       [
         OPEN_ORDER,
-        run("done", "quantity_changed"),
+        run("done"),
+        task({ ready: false, startedAt: 1, completedAt: 2 }),
+      ],
+      [
+        OPEN_ORDER,
+        run("active", true),
         task({ ready: false, startedAt: 1, completedAt: 2 }),
       ],
     ],
@@ -349,7 +356,7 @@ const TASK_MATRIX: readonly (readonly [
     [
       [
         OPEN_ORDER,
-        run("active", null),
+        run("active"),
         task({
           ready: false,
           startedAt: 1,
@@ -364,12 +371,25 @@ const TASK_MATRIX: readonly (readonly [
     },
   ],
   [
+    "run closed",
+    [
+      [OPEN_ORDER, run("closed"), task({ ready: false })],
+      [OPEN_ORDER, run("closed"), task({ ready: false, startedAt: 1 })],
+      [
+        OPEN_ORDER,
+        run("closed"),
+        task({ ready: false, startedAt: 1, completedAt: 2 }),
+      ],
+    ],
+    { M: NOTHING, m: NOTHING },
+  ],
+  [
     "order closed",
     [
-      [CANCELLED_ORDER, run("active", null), task({ startedAt: 1 })],
+      [CANCELLED_ORDER, run("active"), task({ startedAt: 1 })],
       [
         FULFILLED_ORDER,
-        run("done", null),
+        run("done"),
         task({ ready: false, startedAt: 1, completedAt: 2 }),
       ],
     ],
@@ -394,9 +414,22 @@ describe("Domain.taskActions matrix", () => {
 
   it("a task on none of the member's teams offers the member nothing", () => {
     deepStrictEqual(
-      Domain.taskActions(OUTSIDER, OPEN_ORDER, run("active", null), task()),
+      Domain.taskActions(OUTSIDER, OPEN_ORDER, run("active"), task()),
       NOTHING,
     );
+  });
+
+  it("reopen is not offered on a closed run", () => {
+    for (const actor of [MERCHANT, MEMBER])
+      strictEqual(
+        Domain.taskActions(
+          actor,
+          OPEN_ORDER,
+          run("closed"),
+          task({ ready: false, startedAt: 1, completedAt: 2 }),
+        ).reopen,
+        null,
+      );
   });
 });
 
@@ -447,13 +480,15 @@ const detailOf = (
     lineItemProperties: [],
     source: "tag",
     status,
-    flag: null,
-    flagAt: null,
-    flagDetail: null,
+    blockedAt: null,
+    blockReason: null,
+    blockedBy: null,
+    quantityChangedFrom: null,
     note: null,
     createdAt: 0,
     updatedAt: 0,
-    cancelledAt: status === "cancelled" ? 1 : null,
+    closedAt: status === "closed" ? 1 : null,
+    closedReason: status === "closed" ? "merchant_cancelled" : null,
   },
   tasks: [],
 });
@@ -477,7 +512,7 @@ describe("Domain.lineItemState", () => {
     strictEqual(kind(lineItemOf(), [detailOf("pending")]), "running");
     strictEqual(kind(lineItemOf(), [detailOf("active")]), "running");
     strictEqual(kind(lineItemOf(), [detailOf("done")]), "finished");
-    strictEqual(kind(lineItemOf(), [detailOf("cancelled")]), "cancelled");
+    strictEqual(kind(lineItemOf(), [detailOf("closed")]), "closed");
     // A run is the news even when the line went to zero under it.
     strictEqual(
       kind(lineItemOf({ currentQuantity: 0 }), [detailOf("active")]),
@@ -500,25 +535,29 @@ describe("Domain.lineItemState", () => {
       ["Polish", "Engrave", "Rush"],
     );
 
-    // A cancelled item offers every workflow, the cancelled one included.
-    const cancelled = Domain.lineItemState(
+    // A closed item keeps its run's tasks as the record and offers every
+    // workflow, the closed one included.
+    const closedDetail = detailOf("closed");
+    const closed = Domain.lineItemState(
       lineItemOf(),
-      [detailOf("cancelled")],
+      [closedDetail],
       workflows,
     );
-    if (cancelled.kind !== "cancelled") throw new Error(cancelled.kind);
+    if (closed.kind !== "closed") throw new Error(closed.kind);
+    strictEqual(closed.run.id, closedDetail.run.id);
+    deepStrictEqual(closed.tasks, []);
     deepStrictEqual(
-      cancelled.options.map((workflow) => workflow.id),
+      closed.options.map((workflow) => workflow.id),
       [polish.id, engrave.id],
     );
-    strictEqual(cancelled.startable, true);
-    // Nothing left to make: the cancelled line stands, and no workflow starts.
+    strictEqual(closed.startable, true);
+    // Nothing left to make: the closed run stands, and no workflow starts.
     const emptied = Domain.lineItemState(
       lineItemOf({ currentQuantity: 0 }),
-      [detailOf("cancelled")],
+      [detailOf("closed")],
       workflows,
     );
-    if (emptied.kind !== "cancelled") throw new Error(emptied.kind);
+    if (emptied.kind !== "closed") throw new Error(emptied.kind);
     strictEqual(emptied.startable, false);
   });
 });
@@ -666,12 +705,13 @@ describe("ShopAgent refuses what the action set refuses", () => {
       teamIds: [team.id],
     });
 
-    // open, no flag: no reason to edit, no flag to lift; the waiting task
-    // takes no Done.
+    // open, not blocked: no reason to edit, no block to lift; the waiting
+    // task takes no Done.
     expect(await merchant.setBlockReason({ runId, reason: "x" })).toEqual(
       NOT_ALLOWED,
     );
-    expect(await merchant.dismissFlag({ runId })).toEqual(NOT_ALLOWED);
+    expect(await merchant.unblockRun({ runId })).toEqual(NOT_ALLOWED);
+    expect(await member.unblockRun({ runId })).toEqual(NOT_ALLOWED);
     expect(await member.setBlockReason({ runId, reason: "x" })).toEqual(
       NOT_ALLOWED,
     );
@@ -694,20 +734,7 @@ describe("ShopAgent refuses what the action set refuses", () => {
     expect(await merchant.completeTask({ runTaskId: cut.id })).toEqual(
       NOT_ALLOWED,
     );
-
-    // open, reconcile flag: Block would overwrite it, and there is no reason.
-    await exec(
-      shop,
-      "update WorkflowRun set flag = 'item_removed', flagDetail = null where id = ?",
-      runId,
-    );
-    expect(await merchant.blockRun({ runId, reason: null })).toEqual(
-      NOT_ALLOWED,
-    );
-    expect(await merchant.setBlockReason({ runId, reason: "x" })).toEqual(
-      NOT_ALLOWED,
-    );
-    expect(await member.dismissFlag({ runId })).toEqual({ _tag: "Ok" });
+    expect(await member.unblockRun({ runId })).toEqual({ _tag: "Ok" });
 
     // open, nothing to make: the line went to zero, so no workflow replaces
     // the run; the units come back before the next row.
@@ -738,6 +765,7 @@ describe("ShopAgent refuses what the action set refuses", () => {
     expect(await merchant.blockRun({ runId, reason: null })).toEqual(
       NOT_ALLOWED,
     );
+    expect(await merchant.unblockRun({ runId })).toEqual(NOT_ALLOWED);
     expect(
       await agent.merchantAssignRunTaskTeam({
         runTaskId: cut.id,
@@ -753,17 +781,9 @@ describe("ShopAgent refuses what the action set refuses", () => {
       _tag: "Ok",
     });
 
-    // done, quantity flag: the merchant lifts it; a member has no ready task.
-    await exec(
-      shop,
-      `update WorkflowRun set flag = 'quantity_changed', flagDetail = '{"from":1,"to":1}' where id = ?`,
-      runId,
-    );
-    expect(await member.dismissFlag({ runId })).toEqual(NOT_ALLOWED);
-    expect(await merchant.dismissFlag({ runId })).toEqual({ _tag: "Ok" });
-
     // order closed: Polish reopened first so the run is open again, then
-    // Shopify cancels the order. Only the note, the lift and Cancel remain.
+    // Shopify cancels the order. Only the note remains; there is nothing to
+    // cancel.
     expect(await merchant.uncompleteTask({ runTaskId: polish.id })).toEqual({
       _tag: "Ok",
     });
@@ -785,6 +805,7 @@ describe("ShopAgent refuses what the action set refuses", () => {
     expect(await merchant.blockRun({ runId, reason: null })).toEqual(
       NOT_ALLOWED,
     );
+    expect(await agent.merchantCancelRun({ runId })).toEqual(NOT_ALLOWED);
     expect(
       await agent.merchantAssignRunTaskTeam({
         runTaskId: polish.id,
@@ -799,15 +820,41 @@ describe("ShopAgent refuses what the action set refuses", () => {
     expect(await member.setRunNote({ runId, note: "closed" })).toEqual({
       _tag: "Ok",
     });
-    expect(await agent.merchantCancelRun({ runId })).toEqual({ _tag: "Ok" });
 
-    // The cancelled marker: every run write finds nothing to act on.
+    // closed: the order reopens and the merchant cancels the run. Only the
+    // note is left on it.
+    await exec(
+      shop,
+      "update ShopOrder set cancelledAt = null where id = ?",
+      ORDER_ID,
+    );
+    expect(await agent.merchantCancelRun({ runId })).toEqual({ _tag: "Ok" });
     expect(await merchant.setRunNote({ runId, note: "x" })).toEqual({
-      _tag: "NotFound",
+      _tag: "Ok",
     });
-    expect(await merchant.dismissFlag({ runId })).toEqual({
-      _tag: "NotFound",
+    expect(await member.setRunNote({ runId, note: "y" })).toEqual({
+      _tag: "Ok",
     });
+    expect(await agent.merchantCancelRun({ runId })).toEqual(NOT_ALLOWED);
+    expect(await merchant.blockRun({ runId, reason: null })).toEqual(
+      NOT_ALLOWED,
+    );
+    expect(await merchant.unblockRun({ runId })).toEqual(NOT_ALLOWED);
+    expect(await merchant.completeTask({ runTaskId: polish.id })).toEqual(
+      NOT_ALLOWED,
+    );
+    expect(await merchant.uncompleteTask({ runTaskId: cut.id })).toEqual(
+      NOT_ALLOWED,
+    );
+    expect(await member.uncompleteTask({ runTaskId: cut.id })).toEqual(
+      NOT_ALLOWED,
+    );
+    expect(
+      await agent.merchantAssignRunTaskTeam({
+        runTaskId: polish.id,
+        teamId: team.id,
+      }),
+    ).toEqual(NOT_ALLOWED);
     merchant.close();
     member.close();
   });

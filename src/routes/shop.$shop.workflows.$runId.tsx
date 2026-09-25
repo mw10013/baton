@@ -4,9 +4,10 @@ import { Effect, Schema } from "effect";
 
 import { MemberBar } from "@/components/MemberBar";
 import {
-  FlagBanner,
-  liftFlagLabel,
+  BlockBanner,
+  ClosedLine,
   Prose,
+  QuantityBadge,
   RunItem,
   RunNote,
 } from "@/components/MemberRun";
@@ -113,7 +114,7 @@ function RouteComponent() {
 
   /**
    * The buttons follow {@link Domain.taskActions}, which also says why none is
-   * primary; the banner carries the only action a flag allows. The badge
+   * primary; the banner carries the only action a block allows. The badge
    * carries the state and the buttons are its exits, the advancing one first:
    * `Start · Done`, `Done · Put back`, `Undo`. The label is Undo although the
    * field is `reopen`: on the bench the verb takes back the member's own
@@ -183,10 +184,6 @@ function RouteComponent() {
         <MemberBar shop={shop} email={memberEmail} />
         <s-page heading="Not found" inlineSize="small">
           <s-section accessibilityLabel="Not found">
-            {/* Also where a page open on a run lands when the merchant
-                cancels it: a cancel deletes the run's tasks and leaves a
-                marker no member can work (`Domain.RunStatus`), so the
-                subscription's next read answers `null`. */}
             <s-paragraph color="subdued">
               This work is not on one of your teams, or it no longer exists.
             </s-paragraph>
@@ -196,27 +193,23 @@ function RouteComponent() {
     );
 
   const { run } = view;
-  /** Block, the note, Edit reason and the lift: {@link Domain.runActions}. */
+  /** Block, the note, Edit reason and Unblock: {@link Domain.runActions}. */
   const can = Domain.runActions(actor, view.order, run, view.tasks);
   /**
    * Unblock lifts the hold and nothing else: the run goes back to the tier
    * and the tasks it had, and whoever lifted it presses Done next if the work
-   * is in fact done. Dismiss is the other word on purpose — a reconcile flag
-   * is not a hold anybody set, and acknowledging it is all there is to do.
-   * Unblock takes one tap and no confirmation: Block undoes it.
+   * is in fact done. It takes one tap and no confirmation: Block undoes it.
    *
-   * A flag the member cannot lift still shows its banner: on a done run,
-   * because it has no ready task and accepting a quantity change on finished
-   * work is the merchant's decision, since it may mean reopening it; on an
-   * open run, when none of the member's tasks is ready yet. Both are
-   * {@link Domain.runActions}' `liftFlag`. The banner then says who acts, so
-   * a banner with no button does not read as a broken one.
+   * A block the member cannot lift still shows its banner, when none of the
+   * member's tasks is ready yet ({@link Domain.runActions}' `unblock`). The
+   * banner then says who acts, so a banner with no button does not read as a
+   * broken one.
    */
   const reviewNote = (
     <s-text color="subdued">Your merchant will review this.</s-text>
   );
-  const flagActions =
-    can.editReason || can.liftFlag ? (
+  const blockActions =
+    can.editReason || can.unblock ? (
       <>
         {can.editReason && (
           <s-button
@@ -230,16 +223,16 @@ function RouteComponent() {
             Edit reason
           </s-button>
         )}
-        {can.liftFlag && (
+        {can.unblock && (
           <s-button
             slot="secondary-actions"
             variant="secondary"
             disabled={actions.pending}
             onClick={() => {
-              actions.dismiss.mutate(run.id);
+              actions.unblock.mutate(run.id);
             }}
           >
-            {liftFlagLabel(run)}
+            Unblock
           </s-button>
         )}
       </>
@@ -285,14 +278,30 @@ function RouteComponent() {
             {actions.banner !== null && (
               <s-banner tone="critical">{actions.banner}</s-banner>
             )}
-            <FlagBanner run={run} actions={flagActions ?? reviewNote} />
+            <BlockBanner run={run} actions={blockActions ?? reviewNote} />
+            {/* A closed run, reached by link: where the block banner would
+              be, why it ended and when ({@link Domain.ClosedReason}). Only
+              the note is left to do on it ({@link Domain.runActions}). */}
+            {Domain.runIsClosed(run) && (
+              <s-banner tone="info" heading="Closed">
+                <ClosedLine run={run} viewer="member" />
+              </s-banner>
+            )}
             {/* Item first: what to make is why the page was opened. No workflow
               name or age, because a member cannot act on either and the run
               list carries the age. No border, because two bordered blocks on
               one page compete. The Done badge stays: it is the only sign the
-              page is read-only. */}
+              page is read-only. The quantity badge sits beside it after a
+              Shopify change, until the next finished task clears it. */}
             <s-stack gap="small-300">
-              {Domain.runIsDone(run) && <s-badge tone="neutral">Done</s-badge>}
+              {(Domain.runIsDone(run) || run.quantityChangedFrom !== null) && (
+                <s-stack direction="inline" gap="small-300">
+                  {Domain.runIsDone(run) && (
+                    <s-badge tone="neutral">Done</s-badge>
+                  )}
+                  <QuantityBadge run={run} />
+                </s-stack>
+              )}
               <RunItem run={run} />
             </s-stack>
             {/* The note sits above the tasks: it is the answer to "anything I

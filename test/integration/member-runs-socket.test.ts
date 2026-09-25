@@ -256,7 +256,7 @@ describe("member run list socket", () => {
       tab: "done",
     });
     expect(done.items).toHaveLength(0);
-    expect(done.done).toHaveLength(0);
+    expect(done.recent).toHaveLength(0);
     expect(done.counts.upNext).toBe(1);
     worker.close();
   });

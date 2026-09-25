@@ -45,23 +45,11 @@ export const changeWarning = (
 };
 
 /**
- * The Cancel run modal's body. Cancel run deletes the run's tasks and its
- * note and leaves a marker that stops reconcile from starting anything on
- * the item (`Domain.RunStatus`), so this is the only guard against a
- * mistaken cancel: it names the finished steps and the note being lost, when
- * there are any, and always says what the item will do next. Counts steps
- * for the reason on {@link changeWarning}.
+ * The Cancel run modal's body. Cancel run closes the run
+ * (`merchant_cancelled`, `Domain.ClosedReason`): work on it stops, the steps
+ * already done stay on the run as the record, and nothing starts on the item
+ * until the merchant chooses a workflow (`Domain.RunStatus`). There is no way
+ * back, so this is the guard against a mistaken cancel.
  */
-export const cancelWarning = (
-  tasks: readonly Domain.WorkflowRunTask[],
-  hasNote: boolean,
-) => {
-  const steps = WorkflowLayout.stepsOf(tasks);
-  const done = steps.filter((step) =>
-    step.every((task) => task.completedAt !== null),
-  ).length;
-  const next = "Nothing will start on this item until you choose a workflow.";
-  if (done > 0)
-    return `${formatNumber(done)} of ${formatNumber(steps.length)} steps are done. ${hasNote ? "That work and the note" : "That work"} will be lost. ${next}`;
-  return hasNote ? `The note will be lost. ${next}` : next;
-};
+export const cancelWarning = (workflow: Domain.WorkflowName, item: string) =>
+  `Cancel the ${workflow} run on ${item}? Work on it stops. Steps already done stay on record. You can start another workflow on the item afterwards.`;

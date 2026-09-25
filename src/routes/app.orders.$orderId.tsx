@@ -10,10 +10,10 @@ import { Effect, Match, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
 import {
-  FlagBanner,
-  flagTone,
+  BlockBanner,
+  ClosedLine,
   LineItemProperties,
-  liftFlagLabel,
+  QuantityBadge,
   RunNote,
 } from "@/components/MemberRun";
 import { RunSteps } from "@/components/RunSteps";
@@ -85,27 +85,22 @@ const assignResultMessage = Match.typeTags<
 
 const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
   Ok: () => null,
-  /* Also a run another admin cancelled: a cancel leaves a task-less marker
-     that no run write can act on (`Domain.RunStatus`), so the server answers
-     as if the run were gone. */
   NotFound: () => "That workflow run no longer exists.",
   /* The page offers a write only where `Domain.runActions` or
      `Domain.taskActions` allows it and the server checks the same field, so
-     this is the run changing between the render and the click. */
+     this is the run changing between the render and the click: another admin
+     cancelled it, or Shopify closed the order. */
   NotAllowed: () => "That run changed just now, so nothing was done.",
   /* The reason editor, when a worker unblocked the run while it was open. */
   NotBlocked: () => "That workflow run is no longer blocked.",
   /* Also Put back on a task a worker finished or put back just now. */
   NotReady: () =>
     "That task changed just now, or a task in an earlier step is still open.",
-  /* A run that finished between the render and the click. */
-  Terminal: () => "That workflow run is finished.",
-  /* Mark done is hidden while a run is flagged; a flag that landed after the
-     render is the only way here. */
-  Flagged: ({ flag }) =>
-    Domain.flagIsReconcile(flag)
-      ? "That workflow run was flagged just now. Dismiss the flag first."
-      : "That workflow run is blocked. Unblock it first.",
+  /* A run that finished or closed between the render and the click. */
+  Terminal: () => "That workflow run is finished or closed.",
+  /* Mark done is hidden while a run is blocked; a block that landed after
+     the render is the only way here. */
+  Blocked: () => "That workflow run is blocked. Unblock it first.",
   // Reachable from Manage's Reopen: the row hides that button when
   // `Domain.taskActions` carries a blocker, and this is the race where a
   // worker started downstream between the render and the click.
@@ -115,23 +110,16 @@ const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
 
 /**
  * Merchant words, not `WorkflowRun.status`: "pending" reads as "waiting for
- * approval". Cancelled is neutral, not red: it is a decision the merchant
- * made, and red stays for a hold and for Shopify cancelling the order.
+ * approval". Closed is neutral, not red: the work ended and nothing waits on
+ * anyone ({@link Domain.RunStatus}); red stays for a hold. The reason is the
+ * line under it ({@link ClosedLine}), not a badge of its own.
  */
 const RUN_STATUS_BADGE = {
   pending: { label: "Not started", tone: "neutral" },
   active: { label: "In progress", tone: "info" },
   done: { label: "Done", tone: "success" },
-  cancelled: { label: "Cancelled", tone: "neutral" },
+  closed: { label: "Closed", tone: "neutral" },
 } as const satisfies Record<Domain.RunStatus, { label: string; tone: string }>;
-
-const RUN_FLAG_LABEL = {
-  item_removed: "Item removed",
-  quantity_changed: "Quantity changed",
-  order_cancelled: "Order cancelled",
-  blocked: "Blocked",
-  order_fulfilled: "Already shipped in Shopify",
-} as const satisfies Record<Domain.RunFlag, string>;
 
 /** The one modal that both asks and confirms: the select and, on a touched run, the warning. */
 const CHANGE_WORKFLOW_MODAL = "change-workflow";
@@ -149,25 +137,6 @@ const BLOCK_MODAL = "run-block";
  */
 const AMBIGUITY_SENTENCE =
   "More than one workflow matches this item, so none was started.";
-
-/**
- * A flag as a badge: a closed vocabulary plus, where the flag names a thing,
- * that thing. `blocked` is deliberately absent from the second branch — its
- * reason is merchant prose up to `Domain.BLOCK_REASON_MAX_LENGTH` characters, and a
- * badge sized for one word stretches the row until the run's own controls
- * leave the viewport. The reason renders in the {@link FlagBanner} instead.
- *
- * The tone comes from {@link flagTone}, so the merchant and the worker see the
- * same split between a stop and a change. The words are this page's own on
- * purpose: the merchant's vocabulary ("Item removed", "Already shipped in
- * Shopify") is not the bench's.
- */
-const flagLabel = (run: Domain.WorkflowRun) => {
-  if (run.flag === null) return null;
-  if (Domain.flagIsReconcile(run.flag) && run.flagDetail?.item !== undefined)
-    return `${RUN_FLAG_LABEL[run.flag]}: ${run.flagDetail.item}`;
-  return RUN_FLAG_LABEL[run.flag];
-};
 
 interface TaskWrite {
   readonly runTaskId: string;
@@ -233,6 +202,8 @@ const stepCount = (tasks: readonly Domain.WorkflowRunTask[]) =>
  * stopped.
  */
 const nowLine = ({ run, tasks }: Domain.WorkflowRunDetail): React.ReactNode => {
+  /* A closed run's line is its reason ({@link ClosedLine}), not a position. */
+  if (Domain.runIsClosed(run)) return null;
   /* Counts steps, like the open form's `of M`: the number the merchant saw
      climb to `Step 2 of 2` must not become `3 steps` the day the run finishes. */
   if (!Domain.runIsOpen(run)) {
@@ -415,8 +386,8 @@ function RouteComponent() {
   /** The run the Cancel run modal asks about, with what its sentence names. */
   const [cancelling, setCancelling] = React.useState<{
     readonly runId: string;
-    readonly tasks: readonly Domain.WorkflowRunTask[];
-    readonly hasNote: boolean;
+    readonly workflowName: Domain.WorkflowName;
+    readonly item: string;
   } | null>(null);
   /**
    * The task the Reassign modal is about: its name for the heading, its
@@ -492,8 +463,8 @@ function RouteComponent() {
         hideModal(CHANGE_WORKFLOW_MODAL);
         /* The replaced run is deleted (`Domain.RunStatus`), and the modal
            already named what it cost, so the toast says only where the item
-           is now. A start over nothing, or over a cancelled marker, is a
-           fresh run: "Started", never "resumed". */
+           is now. A start over nothing, or over a closed run, is a fresh
+           run: "Started", never "resumed". */
         shopify.toast.show(
           result.replaced === null
             ? `Started ${result.run.workflowName}.`
@@ -570,9 +541,9 @@ function RouteComponent() {
       ),
     ...runWrite,
   });
-  const liftFlag = useMutation({
+  const unblock = useMutation({
     mutationFn: ({ runId }: RunWrite) =>
-      call((stub) => stub.merchantDismissFlag({ runId })).then(decodeRunResult),
+      call((stub) => stub.merchantUnblockRun({ runId })).then(decodeRunResult),
     ...runWrite,
   });
   const cancel = useMutation({
@@ -649,12 +620,12 @@ function RouteComponent() {
     );
 
   const { order, lineItems, runs, itemWorkflows, teams } = detail;
-  const orderOpen = Domain.canAttachRun(order);
+  const orderOpen = Domain.orderIsOpen(order);
   /**
    * The same aggregate the index computes in SQL, rebuilt from the run list
    * this page already carries so both pages read one `productionState`.
-   * Only the `ready_to_ship` banner reads it: every other state here is per
-   * item, and the cards carry it.
+   * Only the `made` banner reads it: every other state here is per item, and
+   * the cards carry it.
    */
   const state = Domain.productionState({
     order,
@@ -671,7 +642,7 @@ function RouteComponent() {
     note,
     block,
     editReason,
-    liftFlag,
+    unblock,
     cancel,
     reassign,
   ].some((mutation) => mutation.isPending);
@@ -708,7 +679,7 @@ function RouteComponent() {
   const cancellingWarning =
     cancelling === null
       ? ""
-      : cancelWarning(cancelling.tasks, cancelling.hasNote);
+      : cancelWarning(cancelling.workflowName, cancelling.item);
 
   /**
    * The team picker and Assign button beside an unassigned task in
@@ -925,8 +896,11 @@ function RouteComponent() {
                   onClick={() => {
                     setCancelling({
                       runId: run.id,
-                      tasks,
-                      hasNote: run.note !== null && run.note.length > 0,
+                      workflowName: run.workflowName,
+                      item:
+                        run.variantTitle === null
+                          ? run.lineItemTitle
+                          : `${run.lineItemTitle} — ${run.variantTitle}`,
                     });
                     showModal(CANCEL_RUN_MODAL);
                   }}
@@ -943,39 +917,39 @@ function RouteComponent() {
   };
 
   /**
-   * A run's badges: its status and its flag, and no buttons — the flag's own
-   * action is in its {@link FlagBanner}. They end the card's facts line,
-   * under the title, because the badge is the item's state at a glance and
-   * belongs next to the item it describes; on a line of their own lower down
-   * they read as belonging to whatever sat above them.
-   *
-   * The flag badge stays while the banner shows: the badge is the glance, on
-   * the title line and matching the orders index, and the banner is the
-   * detail further down.
+   * A run's badges: its status, Blocked while {@link Domain.runIsBlocked},
+   * and, after a Shopify quantity change, the {@link QuantityBadge}; no
+   * buttons. They end the card's facts line, under the title, because the
+   * badge is the item's state at a glance and belongs next to the item it
+   * describes; on a line of their own lower down they read as belonging to
+   * whatever sat above them. The Blocked badge stays while the banner shows:
+   * the badge is the glance, and the banner, with the reason and Unblock, is
+   * the detail further down.
    */
   const runBadges = (run: Domain.WorkflowRun) => (
     <>
       <s-badge tone={RUN_STATUS_BADGE[run.status].tone}>
         {RUN_STATUS_BADGE[run.status].label}
       </s-badge>
-      {Domain.runIsFlagged(run) && (
-        <s-badge tone={flagTone(run) ?? "warning"}>{flagLabel(run)}</s-badge>
-      )}
+      {Domain.runIsBlocked(run) && <s-badge tone="critical">Blocked</s-badge>}
+      <QuantityBadge run={run} />
     </>
   );
 
   /**
    * One run inside its line item's card, below the item's title, facts and
-   * properties. Top to bottom: the {@link FlagBanner} while flagged (why it
-   * stopped, with Edit reason and the lift), the Now line (where it is), the
+   * properties. Top to bottom: the {@link ClosedLine} on a closed run (why
+   * and when it ended), the {@link BlockBanner} while blocked (why it
+   * stopped, with Edit reason and Unblock), the Now line (where it is), the
    * {@link RunNote}, the attention rows, then Manage and, when open, the
    * disclosure it toggles. The badges are on the facts line
-   * ({@link runBadges}).
+   * ({@link runBadges}). A closed run keeps its tasks as the record, so
+   * Manage still lists them, with no buttons ({@link Domain.taskActions}).
    *
    * The banner stays in the run block rather than above the item title: it
-   * is about the run (the lift, the reason and who set it all act on or
+   * is about the run (Unblock, the reason and who set it all act on or
    * describe the run), and a card that opened on red would not yet say which
-   * item it is about. The badge on the title line flags the card first.
+   * item it is about.
    *
    * Manage sits directly above the drawer it opens rather than in the card
    * header. It is a disclosure, not an action on the card, and a disclosure
@@ -1043,12 +1017,13 @@ function RouteComponent() {
       );
     return (
       <s-stack key={run.id} gap="small-300">
-        <FlagBanner
+        <ClosedLine run={run} viewer="merchant" />
+        <BlockBanner
           run={run}
           actions={
             /* No `slot` on the buttons, so they sit in the banner body,
                which puts no gap between children; the stack supplies it. */
-            actions.editReason || actions.liftFlag ? (
+            actions.editReason || actions.unblock ? (
               <s-stack direction="inline" gap="small-300">
                 {actions.editReason && (
                   <s-button
@@ -1061,20 +1036,18 @@ function RouteComponent() {
                     Edit reason
                   </s-button>
                 )}
-                {actions.liftFlag && (
+                {actions.unblock && (
                   <s-button
                     variant="secondary"
                     disabled={pending}
                     onClick={() => {
-                      liftFlag.mutate({
+                      unblock.mutate({
                         runId: run.id,
-                        toast: Domain.runIsBlocked(run)
-                          ? "Run unblocked"
-                          : "Flag dismissed",
+                        toast: "Run unblocked",
                       });
                     }}
                   >
-                    {liftFlagLabel(run)}
+                    Unblock
                   </s-button>
                 )}
               </s-stack>
@@ -1120,8 +1093,8 @@ function RouteComponent() {
    * The options are the matched workflows first, then every other active
    * workflow ({@link Domain.lineItemState}): on an ambiguous item the item
    * has no Manage, so the select is the only way to a workflow the tags did
-   * not pull in. On a cancelled item the cancelled workflow is among them;
-   * picking it starts a fresh run.
+   * not pull in. On a closed item the closed workflow is among them; picking
+   * it starts a fresh run.
    *
    * A grid, not an inline stack: a Polaris form control fills the inline size
    * it is given and has no width prop, so `s-select` in an inline stack takes
@@ -1191,8 +1164,9 @@ function RouteComponent() {
   /**
    * One line item's card: title, facts, properties, then the body its
    * {@link Domain.lineItemState} kind draws. On a closed order the resting
-   * controls of `startable` and `unmatched` draw nothing: the page banner
-   * already says why no work can start.
+   * controls of `startable`, `unmatched` and `closed` draw nothing: the
+   * sidebar's Fulfillment and Cancelled lines already say why no work can
+   * start.
    */
   const renderLineItem = (item: Domain.OrderLineItem) => {
     const toMake = Domain.unitsToMake(item);
@@ -1203,7 +1177,7 @@ function RouteComponent() {
      * picker's option list, matches first, is that answer now.
      */
     const facts = [
-      /* Ordered vs. to make differ after an edit or a refund; shipping does not move it ({@link Domain.unitsToMake}). */
+      /* Ordered vs. to make differ after an edit or a refund; fulfilment does not move it ({@link Domain.unitsToMake}). */
       toMake === item.quantity
         ? `× ${formatNumber(item.quantity)}`
         : `× ${formatNumber(toMake)} to make (${formatNumber(item.quantity)} ordered)`,
@@ -1237,26 +1211,20 @@ function RouteComponent() {
             </>
           ) : null;
         }
-        /* The one place the cancelled workflow's name survives, and the
-           consequence the Cancel run modal promised, then the picker. */
-        case "cancelled": {
+        /* The run as the record, its reason line first, then what the
+           Cancel run modal promised: the picker, for a fresh run. */
+        case "closed": {
           return (
             <>
-              <s-paragraph color="subdued">
-                {`${itemState.run.workflowName} workflow cancelled \u00B7 `}
-                {itemState.run.cancelledAt !== null && (
-                  <LocalDateTime
-                    value={itemState.run.cancelledAt}
-                    format="relative"
-                  />
-                )}
-                {orderOpen && itemState.startable
-                  ? ". Nothing starts on this item until you choose a workflow."
-                  : "."}
-              </s-paragraph>
-              {orderOpen &&
-                itemState.startable &&
-                workflowPicker(item, itemState.options, itemState.matched)}
+              {renderRun(item, itemState.run, itemState.tasks)}
+              {orderOpen && itemState.startable && (
+                <>
+                  <s-paragraph color="subdued">
+                    Nothing starts on this item until you choose a workflow.
+                  </s-paragraph>
+                  {workflowPicker(item, itemState.options, itemState.matched)}
+                </>
+              )}
             </>
           );
         }
@@ -1272,7 +1240,7 @@ function RouteComponent() {
     const run =
       itemState.kind === "running" ||
       itemState.kind === "finished" ||
-      itemState.kind === "cancelled"
+      itemState.kind === "closed"
         ? itemState.run
         : null;
     /* No `accessibilityLabel` on the section: with no `heading`, `s-section`
@@ -1350,39 +1318,24 @@ function RouteComponent() {
       </s-button>
 
       <SocketBanner />
-      {(banner !== null ||
-        !orderOpen ||
-        order.lineItemsTruncated ||
-        state === "ready_to_ship") && (
+      {(banner !== null || order.lineItemsTruncated || state === "made") && (
         /* In the main column, not `slot="supplemental-start"`: that slot
            renders above the main column only, so anything in it pushes the
            first card below the top of the aside. Here the banners are the
            first thing in the column and the card under them still lines up
            with the aside's top edge. */
         <s-stack gap="base">
-          {/* The closed order, said once for the whole page rather than on
-              every item ({@link Domain.canAttachRun}). The items keep their
-              badges and banners; what goes is every write that does work. */}
-          {!orderOpen && (
-            <s-banner
-              tone={Domain.isCancelled(order) ? "critical" : "info"}
-              heading={
-                Domain.isCancelled(order)
-                  ? "Cancelled in Shopify"
-                  : "Fulfilled in Shopify"
-              }
-            >
-              Work on this order is read-only. Dismiss the flags to clear them
-              from the team views.
-            </s-banner>
-          )}
-          {state === "ready_to_ship" && (
+          {/* No banner for a closed order ({@link Domain.orderIsOpen}): the
+              sidebar's Fulfillment and Cancelled lines say it, each closed
+              run says why on its own card ({@link ClosedLine}), and nothing
+              is waiting on the merchant. */}
+          {state === "made" && (
             <s-banner tone="success">
               Every run is done.{" "}
               <s-link href={adminOrderUrl(order)} target={resourceLinkTarget}>
                 Fulfil this order in the Shopify admin
               </s-link>
-              ; it will show as Shipped here once Shopify reports it.
+              .
             </s-banner>
           )}
           {/* One cap, one sentence: every path stores the first 250 and
@@ -1470,9 +1423,9 @@ function RouteComponent() {
         </s-button>
       </s-modal>
 
-      {/* Cancel run deletes the run's tasks and note and leaves the item
-          cancelled (`Domain.RunStatus`), so the question is asked here and
-          names the loss; there is no undo after it. */}
+      {/* Cancel run closes the run (`Domain.RunStatus`) and there is no undo
+          after it, so the question is asked here and says what happens to
+          the work ({@link cancelWarning}). */}
       <s-modal
         id={CANCEL_RUN_MODAL}
         heading="Cancel this run?"
@@ -1579,7 +1532,11 @@ function RouteComponent() {
       <BlockModal
         id={BLOCK_MODAL}
         run={
-          modalRun ?? { orderName: order.name, flag: null, flagDetail: null }
+          modalRun ?? {
+            orderName: order.name,
+            blockedAt: null,
+            blockReason: null,
+          }
         }
         pending={pending}
         onBlock={(reason) =>

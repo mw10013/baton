@@ -1,3 +1,4 @@
+import type * as Domain from "@/lib/Domain";
 import type { ShopAgentSocket } from "@/lib/ShopAgentContext";
 
 import * as React from "react";
@@ -5,7 +6,6 @@ import * as React from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Match } from "effect";
 
-import * as Domain from "@/lib/Domain";
 import { withSocketRecovery } from "@/lib/ShopAgentContext";
 
 /** A blank text field on the wire is "cleared", which the object stores as `null`. */
@@ -23,13 +23,10 @@ export const runResultMessage = Match.typeTags<
   string | null
 >()({
   Ok: () => null,
-  /* Also a run the merchant cancelled while the page was open: a cancel
-     leaves a marker with no tasks, which no member write can act on
-     (`Domain.RunStatus`). */
   NotFound: () => "That work no longer exists.",
   /* The page offers only what `Domain.runActions` and `Domain.taskActions`
-     allow; a refusal is the work changing under the page, or another team's
-     task. */
+     allow; a refusal is the work changing under the page (closed by Shopify
+     or the merchant while it was open), or another team's task. */
   NotAllowed: () =>
     "That isn't available on this work now. It changed, or it belongs to another team.",
   /* Only the reason editor can reach this: somebody unblocked the run while
@@ -38,13 +35,11 @@ export const runResultMessage = Match.typeTags<
   /* Also a Put back on a task someone else put back or finished just now. */
   NotReady: () =>
     "This task or an earlier one changed just now, or this task is waiting on another team. Refresh.",
-  Terminal: () => "This workflow is already finished.",
-  /* The page hides Start and Done behind the flag; a flag that landed after
-     the render is the only way here. */
-  Flagged: ({ flag }) =>
-    Domain.flagIsReconcile(flag)
-      ? "This work was flagged just now. Read the flag and dismiss it first."
-      : "This work was blocked just now. Unblock it first.",
+  /* A finished run, or one Shopify or the merchant closed under the page. */
+  Terminal: () => "This work is already finished or closed.",
+  /* The page hides Start and Done behind the block; a block that landed
+     after the render is the only way here. */
+  Blocked: () => "This work was blocked just now. Unblock it first.",
   UndoBlocked: ({ taskName, teamName }) =>
     `${teamName} already started ${taskName}. Ask them.`,
 });
@@ -125,9 +120,9 @@ export const useMemberRunActions = ({
         stub.memberSetBlockReason({ runId, reason: textOrNull(reason) }),
       ).then(settle),
   });
-  const dismiss = useMutation({
+  const unblock = useMutation({
     mutationFn: (runId: string) =>
-      call((stub) => stub.memberDismissFlag({ runId })).then(settle),
+      call((stub) => stub.memberUnblockRun({ runId })).then(settle),
   });
   const mutations = [
     start,
@@ -137,7 +132,7 @@ export const useMemberRunActions = ({
     note,
     block,
     setBlockReason,
-    dismiss,
+    unblock,
   ];
   /**
    * Disabled while a write is in flight, and while the socket is not
@@ -154,7 +149,7 @@ export const useMemberRunActions = ({
    * would print the same sentence twice, once behind the modal and again
    * after it closes, until the next write cleared it.
    */
-  const bannerMutations = [start, complete, uncomplete, unstart, dismiss];
+  const bannerMutations = [start, complete, uncomplete, unstart, unblock];
   const banner =
     bannerMutations.find((mutation) => mutation.error)?.error?.message ??
     bannerMutations
@@ -169,7 +164,7 @@ export const useMemberRunActions = ({
     note,
     block,
     setBlockReason,
-    dismiss,
+    unblock,
     pending,
     banner,
   };

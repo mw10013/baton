@@ -1,6 +1,6 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 
-import { appFrame, clickHoisted, gotoApp, hoistedEnabled } from "./app";
+import { clickHoisted, gotoApp, hoistedEnabled } from "./app";
 import { seedConfig, seedMembers } from "./seed";
 
 /**
@@ -221,7 +221,7 @@ test("the orders index searches by order number and clears back to the list", as
 /**
  * The merchant's interventions end to end, against a seeded two-step run:
  * Manage opens, Mark done records the merchant on the task, Reopen takes it
- * back, and Block / Unblock move the run flag. Each assertion reads the row's
+ * back, and Block / Unblock move the run's block. Each assertion reads the row's
  * own attribution rather than a toast, because the row is what the next person
  * to look at this order will see.
  *
@@ -419,7 +419,7 @@ test("the merchant cannot reopen a task whose next step is done", async ({
 
 /**
  * Block from the disclosure, then edit the reason and unblock from the red
- * banner the block raises on the card — the member page's `FlagBanner`. Block
+ * banner the block raises on the card — the `BlockBanner` the member page shows too. Block
  * and the reason edit share one modal, keyed on whether the run is blocked.
  * The reason is merchant prose, so it renders as the banner's body rather
  * than inside the badge, and the Now line still says where the run is.
@@ -781,29 +781,29 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   await expect(item.getByRole("button", { name: "Manage" })).toHaveCount(1);
 
   /* Cancel run asks first, because nothing brings the run back. After it
-     the item is visibly cancelled and waits for the merchant: the picker
-     offers every workflow, the cancelled one included, as a fresh run. */
+     the item's run is Closed, "Cancelled by you", and the item waits for the
+     merchant: the picker offers every workflow, the closed one included, as
+     a fresh run. */
   await item.getByRole("button", { name: "Cancel run", exact: true }).click();
   const cancelModal = frame.locator("s-modal#cancel-run");
   await expect(
-    cancelModal.getByText(
-      "Nothing will start on this item until you choose a workflow.",
-    ),
+    cancelModal.getByText("Steps already done stay on record.", {
+      exact: false,
+    }),
   ).toBeVisible();
   await cancelModal
     .getByRole("button", { name: "Cancel run", exact: true })
     .click();
-  await expect(item.getByText("Cancelled", { exact: true })).toBeVisible();
+  await expect(item.getByText("Closed", { exact: true })).toBeVisible();
   await expect(
-    item.getByText(`${RUSH} workflow cancelled`, { exact: false }),
+    item.getByText("Cancelled by you", { exact: false }),
   ).toBeVisible();
-  await expect(manage).toHaveCount(0);
   await item
     .getByRole("combobox", { name: "Choose workflow" })
     .selectOption({ label: RUSH });
   await item.getByRole("button", { name: "Start", exact: true }).click();
+  await expect(item.getByText("Closed", { exact: true })).toHaveCount(0);
   await expect(manage).toBeVisible();
-  await expect(item.getByText("Cancelled", { exact: true })).toHaveCount(0);
 
   /* And the order has left the need: one live run, nothing left to choose. */
   await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
@@ -850,7 +850,7 @@ test("each order-page state draws the controls its action set allows", async ({
     ],
     [
       {
-        // an open reconcile flag: Dismiss, no Mark done, no Block
+        // the line removed in Shopify under a started run: closed, no buttons
         n: 9501,
         advance: 1,
         after: { lineItems: [{ position: 1, currentQuantity: 0 }] },
@@ -905,6 +905,15 @@ test("each order-page state draws the controls its action set allows", async ({
           },
         ],
       },
+      {
+        // started, then the quantity dropped: resized, with the badge
+        n: 9507,
+        started: true,
+        after: { lineItems: [{ position: 1, currentQuantity: 1 }] },
+        lineItems: [
+          { title: "E2E Shrunk", quantity: 2, tags: ["e2e-state-a"] },
+        ],
+      },
     ],
   );
 
@@ -919,21 +928,28 @@ test("each order-page state draws the controls its action set allows", async ({
       has: frame.getByRole("heading", { name: title, exact: true }),
     });
   };
+  /* A closed run offers nothing but the note: no Dismiss anywhere, and no
+     Cancel run on a closed order (`Domain.runActions`). */
   const removed = await open(9501, "E2E Removed");
-  await expect(button(removed, "Dismiss")).toBeVisible();
+  await expect(removed.getByText("Closed", { exact: true })).toBeVisible();
+  await expect(
+    removed.getByText("Item removed or refunded in Shopify", { exact: false }),
+  ).toBeVisible();
+  await expect(button(removed, "Dismiss")).toHaveCount(0);
   await button(removed, "Manage").click();
   await expect(button(removed, "Mark done")).toHaveCount(0);
   await expect(button(removed, "Block")).toHaveCount(0);
-  await expect(button(removed, "Reassign").first()).toBeVisible();
-  await expect(button(removed, "Cancel run")).toBeVisible();
+  await expect(button(removed, "Reassign")).toHaveCount(0);
+  await expect(button(removed, "Cancel run")).toHaveCount(0);
 
   const closed = await open(9502, "E2E Closed");
+  await expect(closed.getByText("Closed", { exact: true })).toBeVisible();
   await expect(
-    appFrame(page).getByText("Cancelled in Shopify").first(),
+    closed.getByText("Order cancelled in Shopify", { exact: false }),
   ).toBeVisible();
-  await expect(button(closed, "Dismiss")).toBeVisible();
+  await expect(button(closed, "Dismiss")).toHaveCount(0);
   await button(closed, "Manage").click();
-  await expect(button(closed, "Cancel run")).toBeVisible();
+  await expect(button(closed, "Cancel run")).toHaveCount(0);
   await expect(button(closed, "Mark done")).toHaveCount(0);
   await expect(button(closed, "Reopen")).toHaveCount(0);
   await expect(button(closed, "Reassign")).toHaveCount(0);
@@ -944,7 +960,9 @@ test("each order-page state draws the controls its action set allows", async ({
   await expect(
     resized.getByText("Done", { exact: true }).first(),
   ).toBeVisible();
-  await expect(button(resized, "Dismiss")).toBeVisible();
+  /* A done run is never resized: no badge, nothing to dismiss. */
+  await expect(resized.getByText(/^Quantity changed/u)).toHaveCount(0);
+  await expect(button(resized, "Dismiss")).toHaveCount(0);
   await button(resized, "Manage").click();
   await expect(button(resized, "Reopen")).toBeVisible();
   await expect(button(resized, "Cancel run")).toHaveCount(0);
@@ -966,14 +984,26 @@ test("each order-page state draws the controls its action set allows", async ({
   await expect(options.nth(2)).toHaveText("E2E State C");
 
   const stopped = await open(9506, "E2E Stopped");
-  await expect(stopped.getByText("Cancelled", { exact: true })).toBeVisible();
+  await expect(stopped.getByText("Closed", { exact: true })).toBeVisible();
   await expect(
-    stopped.getByText("E2E State A workflow cancelled", { exact: false }),
+    stopped.getByText("Cancelled by you", { exact: false }),
   ).toBeVisible();
-  await expect(button(stopped, "Manage")).toHaveCount(0);
   await expect(
     stopped.getByRole("combobox", { name: "Choose workflow" }),
   ).toBeVisible();
+  /* The finished step stays on record under Manage, with no buttons. */
+  await button(stopped, "Manage").click();
+  await expect(stopped.getByText("E2E State A one")).toBeVisible();
+  await expect(button(stopped, "Reopen")).toHaveCount(0);
+
+  /* The quantity badge is a notice with no button: the next Done clears it. */
+  const shrunk = await open(9507, "E2E Shrunk");
+  await expect(
+    shrunk.getByText("Quantity changed · 2 → 1", { exact: true }),
+  ).toBeVisible();
+  await button(shrunk, "Manage").click();
+  await button(shrunk, "Mark done").first().click();
+  await expect(shrunk.getByText(/^Quantity changed/u)).toHaveCount(0);
 });
 
 /**
@@ -1038,11 +1068,11 @@ test("the needs row counts what its button shows", async ({ page }) => {
   await frame.getByRole("button", { name: "Anything", exact: true }).click();
   await expect(rows).toHaveCount(2);
 
-  /* Shipped hides the open-only filters and drops a pressed need, keeping
+  /* Fulfilled hides the open-only filters and drops a pressed need, keeping
      the search and its chip; All brings the row back with the need cleared. */
   await frame.getByRole("button", { name: "Blocked · 1", exact: true }).click();
   await expect(rows).toHaveCount(1);
-  await frame.getByRole("button", { name: "Shipped", exact: true }).click();
+  await frame.getByRole("button", { name: "Fulfilled", exact: true }).click();
   await expect
     .poll(() => new URL(page.url()).searchParams.get("need"))
     .toBeNull();
@@ -1111,7 +1141,7 @@ test("the orders list keeps its filters and page across the order page", async (
   const frame = await gotoApp(page);
   await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
   const rows = frame.locator("s-table-row", { hasText: /#96\d\d/u });
-  await frame.getByRole("button", { name: /^In production/u }).click();
+  await frame.getByRole("button", { name: /^Making/u }).click();
   await frame
     .getByRole("combobox", { name: "Team" })
     .selectOption({ label: TEAM });
@@ -1121,7 +1151,7 @@ test("the orders list keeps its filters and page across the order page", async (
   await expect(rows).toHaveCount(5);
   await expect.poll(() => listContext(page).after).not.toBeNull();
   const expected = listContext(page);
-  expect(expected.status).toBe("in_production");
+  expect(expected.status).toBe("making");
   expect(expected.team).not.toBeNull();
 
   /* The row's real href carries them, so open-in-new-tab does too. */
@@ -1187,7 +1217,7 @@ test("a filter change resets the page and replaces history", async ({
   await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
   const rows = frame.locator("s-table-row", { hasText: /#96\d\d/u });
-  await frame.getByRole("button", { name: /^In production/u }).click();
+  await frame.getByRole("button", { name: /^Making/u }).click();
   await frame
     .getByRole("combobox", { name: "Team" })
     .selectOption({ label: TEAM });

@@ -25,10 +25,9 @@ export class RunNotFoundError extends Schema.TaggedError<RunNotFoundError>()(
 ) {}
 
 /**
- * The run's status refuses the write. Start, Done, Put back, Block, Cancel
- * and team assignment need `Domain.runIsOpen`; the note needs a run that is
- * not the `cancelled` marker. The table on {@link Domain.RunStatus} is the
- * rule.
+ * The run's status refuses the write. Start, Done, Put back, Block, Unblock,
+ * Cancel and team assignment need `Domain.runIsOpen`; Reopen refuses a
+ * closed run. The table on {@link Domain.RunStatus} is the rule.
  */
 export class RunTerminalError extends Schema.TaggedError<RunTerminalError>()(
   "RunTerminalError",
@@ -36,14 +35,24 @@ export class RunTerminalError extends Schema.TaggedError<RunTerminalError>()(
 ) {}
 
 /**
- * Start or Done refused because the run carries a flag: a flag means stop,
- * whoever set it, until a person lifts it. Gate: `Domain.runIsFlagged`; see
- * {@link Domain.RunFlag}. Undo and the run note are not gated by it — Undo
- * takes work back rather than doing more, and a held run is the one to write on.
+ * Start, Done or Put back refused because the run is blocked: a block means
+ * stop until a person unblocks it. Gate: {@link Domain.runIsBlocked}, which
+ * states the rule. Reopen and the run note are not gated by it.
  */
-export class RunFlaggedError extends Schema.TaggedError<RunFlaggedError>()(
-  "RunFlaggedError",
-  { runId: Schema.String, flag: Domain.RunFlag },
+export class RunBlockedError extends Schema.TaggedError<RunBlockedError>()(
+  "RunBlockedError",
+  { runId: Schema.String },
+) {}
+
+/**
+ * Cancel run refused because Shopify has closed the order
+ * ({@link Domain.orderIsOpen}). Reconcile closes every open run on a closed
+ * order in the same transaction as the order write, so this is a race with
+ * that write, not a state a page should offer.
+ */
+export class RunOrderClosedError extends Schema.TaggedError<RunOrderClosedError>()(
+  "RunOrderClosedError",
+  { runId: Schema.String },
 ) {}
 
 /**
@@ -119,9 +128,10 @@ export class TaskFinishedError extends Schema.TaggedError<TaskFinishedError>()(
 export interface ReconcileCounts {
   /** Runs created by this pass. */
   readonly created: number;
-  /** Pending runs deleted because Shopify cancelled or fulfilled the order, or dropped the line. */
-  readonly removed: number;
-  readonly flagged: number;
+  /** Open runs whose quantity this pass rewrote to the line's units ({@link Domain.WorkflowRun} `quantityChangedFrom`). */
+  readonly resized: number;
+  /** Open runs this pass closed: the order cancelled or fulfilled, or the line at zero units ({@link Domain.ClosedReason}). */
+  readonly closed: number;
   /**
    * Line items this pass left **ambiguous**: two or more startable workflows
    * matched and no run exists, so nothing was started and the merchant
@@ -157,7 +167,7 @@ export interface StartContext {
  * its task waits on nobody's list until someone joins. Shared by the tag
  * match on upsert and by manual attach — the latter skips the line-item half
  * (tags, quantity, fulfilment, age) but never this half, and answers
- * separately to {@link Domain.canAttachRun} for the state of the order as a
+ * separately to {@link Domain.orderIsOpen} for the state of the order as a
  * whole. Drafts never reach here: `WorkflowDetail` carries workflow tasks
  * only.
  */
@@ -176,7 +186,7 @@ export const canStart = (
  * The line-item half: the tag test and the date rule. An order qualifies
  * only when it was placed (`processedAt`) on or after the workflow's
  * `activatedAt`: a bulk stream of thirty days of history, or an edit
- * webhook on an order shipped a month ago, must not start work on orders
+ * webhook on an order fulfilled a month ago, must not start work on orders
  * placed before the workflow was turned on, whichever path delivers them.
  * It is Turn on, not the last Apply: a re-apply must not disown an unpaid
  * order placed while the workflow was on. An off workflow never reaches
@@ -230,10 +240,16 @@ const actorColumns = (actor: Domain.Actor) =>
 
 const NO_COUNTS: ReconcileCounts = {
   created: 0,
-  removed: 0,
-  flagged: 0,
+  resized: 0,
+  closed: 0,
   ambiguous: 0,
 };
+
+/** An {@link Domain.Actor} as attribution: `teamIds` is the gate's, never stored. */
+const attribution = (actor: Domain.Actor): Domain.Actor =>
+  actor.role === "merchant"
+    ? actor
+    : { role: "member", memberId: actor.memberId, email: actor.email };
 
 export class WorkflowRunRepository extends Context.Service<
   WorkflowRunRepository,
@@ -305,15 +321,15 @@ export class WorkflowRunRepository extends Context.Service<
      * - an open run for a different workflow is deleted first, tasks and
      *   all, so the unique `lineItemId` is free before the insert, and comes
      *   back as `replaced`;
-     * - a `cancelled` marker is deleted the same way, whatever its workflow,
-     *   and `replaced` is null: nothing was running;
+     * - a `closed` run is deleted the same way, tasks and all, whatever its
+     *   workflow, and `replaced` is null: nothing was running;
      * - a `done` run is refused ({@link RunFinishedError}).
      *
-     * A workflow the item ran before, the cancelled one included, starts
-     * fresh from its definition. Nothing of the earlier run is resumed: a
-     * replace deletes it and a marker has no tasks ({@link Domain.RunStatus}).
-     * The merchant confirmed the loss in the Change workflow or Cancel run
-     * modal.
+     * A workflow the item ran before, the closed one included, starts fresh
+     * from its definition. Nothing of the earlier run is resumed: closed is
+     * final ({@link Domain.RunStatus}). The merchant confirmed the loss in
+     * the Change workflow modal, or chose a new workflow for an item whose
+     * run had already ended.
      *
      * Attach is the merchant's opt-in, so the date rule does not apply to it.
      */
@@ -326,7 +342,7 @@ export class WorkflowRunRepository extends Context.Service<
     }) => Effect.Effect<
       Option.Option<{
         readonly run: Domain.WorkflowRun;
-        /** The open run deleted to make room, or null when the item was free or held a `cancelled` marker. */
+        /** The open run deleted to make room, or null when the item was free or its run was closed. */
         readonly replaced: Domain.WorkflowRun | null;
       }>,
       | SqlError.SqlError
@@ -344,9 +360,9 @@ export class WorkflowRunRepository extends Context.Service<
      * What an action set reads ({@link Domain.runActions},
      * {@link Domain.taskActions}): the run, its tasks decorated as
      * {@link Domain.RunTaskView}s, and its order's open or closed state.
-     * `None` when the run, or its order, is gone, and for a `cancelled`
-     * marker: it has no work to act on, so every run write refuses it as
-     * not found ({@link Domain.RunStatus}).
+     * `None` when the run, or its order, is gone. A closed run is returned:
+     * its note is still writable, and the action sets refuse everything else
+     * on it.
      */
     readonly getRunGate: (
       input: { readonly runId: string } | { readonly runTaskId: string },
@@ -366,17 +382,18 @@ export class WorkflowRunRepository extends Context.Service<
       SqlError.SqlError | WorkflowRunRepositoryError
     >;
     /**
-     * Turns the run into the item's `cancelled` marker, in one transaction:
-     * its tasks are deleted, the row keeps its snapshot fields and gains
-     * `cancelledAt`, and the note and any flag are cleared — the note was
-     * about work that no longer exists, and a flag would put the marker back
-     * in Attention and the counts. The row stays so reconcile starts nothing
-     * on the item ({@link Domain.RunStatus}). Gate: {@link Domain.runIsOpen};
-     * a `done` run is not cancelled, it is undone.
+     * The merchant's Cancel run: closes the run, reason `merchant_cancelled`
+     * ({@link Domain.ClosedReason}), in one transaction. The tasks stay as the
+     * record of who did what, the note stays, and the block and the quantity
+     * badge are cleared with the rest of the run's open state. The row keeps
+     * the item's slot so reconcile starts nothing on it ({@link Domain.RunStatus}).
+     * Gate: {@link Domain.runIsOpen} and the order open
+     * ({@link Domain.orderIsOpen}); a `done` run is not cancelled, it is
+     * reopened.
      *
-     * There is no way back, so the merchant confirms in a modal that names
-     * the steps and the note being lost; the confirmation is the guard for a
-     * mistaken cancel, and this write needs no second one.
+     * There is no way back, so the merchant confirms in a modal; the
+     * confirmation is the guard for a mistaken cancel, and this write needs
+     * no second one. A new workflow on the item afterwards starts fresh.
      */
     readonly cancelRun: (input: {
       readonly runId: string;
@@ -386,6 +403,7 @@ export class WorkflowRunRepository extends Context.Service<
       | WorkflowRunRepositoryError
       | RunNotFoundError
       | RunTerminalError
+      | RunOrderClosedError
     >;
     /**
      * The member's run list, tiered and cut here rather than on the page: every run
@@ -393,7 +411,9 @@ export class WorkflowRunRepository extends Context.Service<
      * {@link Domain.tierOf} against `memberEmail`. **Every** tier is counted;
      * **one** is returned — the one `query.tab` names — sorted oldest first
      * and cut to `query.limit`. `tab: "done"` returns no items at all and the
-     * caller reads `listDone` for that tab's rows.
+     * caller reads `listRecent` for that tab's rows. Only open runs have
+     * ready tasks, so a closed or done run is never listed
+     * ({@link Domain.RunStatus}).
      *
      * `teamCounts` and `total` are over all of `teamIds` whatever `query.team`
      * narrows to, so the team select does not move under the finger, while the
@@ -416,21 +436,24 @@ export class WorkflowRunRepository extends Context.Service<
       SqlError.SqlError | WorkflowRunRepositoryError
     >;
     /**
-     * Tasks owned by `teamIds` completed at or after `since`, newest first,
-     * each with its run and the undo verdict ({@link undoBlockedBy}). The
-     * team's, not the caller's: a colleague notices a mistake as readily as
-     * its author.
+     * The Recent tab ({@link Domain.RecentItem}): tasks owned by `teamIds`
+     * completed at or after `since`, each with its run and the undo verdict
+     * ({@link Domain.undoBlockedBy}), and runs with a task on `teamIds` that
+     * closed at or after `since`, newest first by `completedAt` or
+     * `closedAt`. The team's, not the caller's: a colleague notices a mistake
+     * as readily as its author, and a closed run is news to everyone who
+     * could see it.
      *
-     * `total` is always the count inside the window, because the heading says
-     * it even while the tier is collapsed; `limit: 0` is that collapsed state
-     * and returns the count alone, reading no rows.
+     * `total` is always the count inside the window, because the tab says it
+     * even while another tab is showing; `limit: 0` returns the count alone,
+     * reading no rows.
      */
-    readonly listDone: (input: {
+    readonly listRecent: (input: {
       readonly teamIds: readonly string[];
       readonly since: number;
       readonly limit: number;
     }) => Effect.Effect<
-      { readonly items: readonly Domain.DoneItem[]; readonly total: number },
+      { readonly items: readonly Domain.RecentItem[]; readonly total: number },
       SqlError.SqlError | WorkflowRunRepositoryError
     >;
     /**
@@ -444,9 +467,10 @@ export class WorkflowRunRepository extends Context.Service<
      * from a single Done. The `reopened*` slot already says who and when, so
      * nothing is lost. Allowed
      * for the task's team while nothing downstream has started
-     * (`TaskUndoBlockedError` otherwise, naming the blocker). No status
-     * gate, not `runIsOpen` — undoing a `done` run's last task is the point;
-     * see {@link Domain.RunStatus}.
+     * (`TaskUndoBlockedError` otherwise, naming the blocker). Gate: not
+     * {@link Domain.runIsClosed}, rather than `runIsOpen` — undoing a `done`
+     * run's last task is the point, while a closed run is final; see
+     * {@link Domain.RunStatus}.
      */
     readonly uncompleteTask: (
       input: Domain.UncompleteTaskCommand,
@@ -465,7 +489,7 @@ export class WorkflowRunRepository extends Context.Service<
      * status is recomputed (a run whose only started task is put back is
      * `pending` again). Refused on a finished task or an unstarted task
      * (`TaskNotReadyError`), a run that is not {@link Domain.runIsOpen}
-     * (`RunTerminalError`), a flagged run (`RunFlaggedError`), or, for a
+     * (`RunTerminalError`), a blocked run (`RunBlockedError`), or, for a
      * member, a task not on one of their teams (`RunNotAllowedError`).
      *
      * Offered to the whole team, not only the starter: Start is a record, not
@@ -473,7 +497,7 @@ export class WorkflowRunRepository extends Context.Service<
      * records who put it back; the task is plain Ready and the next Start
      * writes a fresh record.
      *
-     * Undo is allowed under a flag because it takes work back; Put back is
+     * Undo is allowed under a block because it takes work back; Put back is
      * refused, because a held task is the one someone needs to write on, and
      * clearing who has it under a hold loses the one name the merchant needs.
      */
@@ -487,14 +511,15 @@ export class WorkflowRunRepository extends Context.Service<
       | RunNotAllowedError
       | TaskNotReadyError
       | RunTerminalError
-      | RunFlaggedError
+      | RunBlockedError
     >;
     /**
      * The work page's read: the run with every task decorated by readiness
      * and the undo verdict, the order's live note and line items. `None`
      * when the run does not exist or the caller cannot see it
      * ({@link Domain.runIsVisibleTo}) — one answer for both, so a member
-     * cannot probe run ids.
+     * cannot probe run ids. A closed run is returned: a link to it lands on
+     * its reason rather than on a not-found.
      */
     readonly getRunView: (input: {
       readonly runId: string;
@@ -508,7 +533,7 @@ export class WorkflowRunRepository extends Context.Service<
      * original `startedAt` / `startedBy` / `startedByEmail` — no takeover, no
      * error — so two people pressing it does not rewrite who began. The
      * email is snapshotted so history reads after the member is deleted.
-     * Gates: {@link Domain.runIsOpen}, and not {@link Domain.runIsFlagged}.
+     * Gates: {@link Domain.runIsOpen}, and not {@link Domain.runIsBlocked}.
      */
     readonly startTask: (
       input: Domain.StartTaskCommand,
@@ -520,14 +545,17 @@ export class WorkflowRunRepository extends Context.Service<
       | RunNotAllowedError
       | TaskNotReadyError
       | RunTerminalError
-      | RunFlaggedError
+      | RunBlockedError
     >;
     /**
      * Also backfills the started slot with the same actor when Done arrives
      * without a Start, so every finished task records who. Clears the
      * `reopened` slot: that slot says "sent back and not yet redone", and a
-     * Done is precisely the end of that. Nothing is created here. Gates:
-     * {@link Domain.runIsOpen}, and not {@link Domain.runIsFlagged}.
+     * Done is precisely the end of that. Clears the run's quantity badge
+     * (`quantityChangedFrom`, rule on {@link Domain.WorkflowRun}): a step
+     * finished after the change is proof someone worked with the new number.
+     * Nothing is created here. Gates: {@link Domain.runIsOpen}, and not
+     * {@link Domain.runIsBlocked}.
      */
     readonly completeTask: (
       input: Domain.CompleteTaskCommand,
@@ -539,13 +567,13 @@ export class WorkflowRunRepository extends Context.Service<
       | RunNotAllowedError
       | TaskNotReadyError
       | RunTerminalError
-      | RunFlaggedError
+      | RunBlockedError
     >;
     /**
      * Writes the run's note; `null` clears it. No readiness requirement — a
      * note on a done run is allowed: a note is a record, not work, and the
-     * thing noticed after the last Done is exactly what wants writing down.
-     * Refused on the `cancelled` marker only; see {@link Domain.RunStatus}. A member
+     * thing noticed after the last Done is exactly what wants writing down,
+     * and a closed run keeps its record too; see {@link Domain.RunStatus}. A member
      * needs to see the run ({@link Domain.runIsVisibleTo}), not to hold a
      * ready task as Block does: a done run has no ready task and would
      * refuse every member. Last write wins; see
@@ -559,9 +587,12 @@ export class WorkflowRunRepository extends Context.Service<
       | WorkflowRunRepositoryError
       | RunNotFoundError
       | RunNotAllowedError
-      | RunTerminalError
     >;
-    /** Sets `flag = 'blocked'` with an optional reason and the actor, overwriting any prior flag. Allowed when a ready task belongs to `teamIds`. Gate: {@link Domain.runIsOpen}; see {@link Domain.RunStatus}. */
+    /**
+     * Blocks the run ({@link Domain.runIsBlocked}): `blockedAt`, the optional
+     * reason, and the actor as `blockedBy`. Allowed when a ready task belongs
+     * to `teamIds`. Gate: {@link Domain.runIsOpen}; see {@link Domain.RunStatus}.
+     */
     readonly blockRun: (
       input: Domain.BlockRunCommand,
     ) => Effect.Effect<
@@ -593,15 +624,14 @@ export class WorkflowRunRepository extends Context.Service<
         | { readonly orderId: string },
     ) => Effect.Effect<readonly string[], SqlError.SqlError>;
     /**
-     * Rewrites `flagDetail.reason` on a run that is already `blocked`;
-     * `null` clears the text and leaves the hold standing. `by` and `flagAt`
-     * are untouched — they record who set the hold and when, not who last
+     * Rewrites `blockReason` on a run that is already blocked; `null` clears
+     * the text and leaves the hold standing. `blockedBy` and `blockedAt` are
+     * untouched — they record who set the hold and when, not who last
      * corrected its wording, and an edit is only text. Last write wins with
      * no history, by the rule on {@link Domain.SetRunNoteCommand}.
      *
-     * Fails `RunNotBlockedError` unless the flag is `blocked`. A reconcile
-     * flag's body is generated from the run, so there is nothing to write,
-     * and an unflagged run would be a hold set by nobody.
+     * Fails `RunNotBlockedError` unless {@link Domain.runIsBlocked}: an
+     * unblocked run with a reason would be a hold set by nobody.
      */
     readonly setBlockReason: (
       input: Domain.SetBlockReasonCommand,
@@ -613,15 +643,23 @@ export class WorkflowRunRepository extends Context.Service<
       | RunNotAllowedError
       | RunNotBlockedError
     >;
-    /** Allowed when any ready task of the run belongs to one of `teamIds`, or unconditionally for the merchant (`teamIds` undefined). */
-    readonly dismissFlag: (
-      input: Domain.DismissFlagCommand,
+    /**
+     * Lifts the block: nulls `blockedAt`, `blockReason` and `blockedBy`.
+     * Allowed when any ready task of the run belongs to one of `teamIds`, or
+     * unconditionally for the merchant (`teamIds` undefined). Fails
+     * `RunNotBlockedError` when there is no block to lift (a second Unblock
+     * racing the first), and `RunTerminalError` unless {@link Domain.runIsOpen}.
+     */
+    readonly unblockRun: (
+      input: Domain.UnblockRunCommand,
     ) => Effect.Effect<
       void,
       | SqlError.SqlError
       | WorkflowRunRepositoryError
       | RunNotFoundError
       | RunNotAllowedError
+      | RunNotBlockedError
+      | RunTerminalError
     >;
     /**
      * Points any *open* run task at `team`, snapshotting the name from the
@@ -981,8 +1019,13 @@ export class WorkflowRunRepository extends Context.Service<
        * `status` is a function of the tasks; recomputing it in SQL from the
        * same rows the task write just touched is what keeps the two in one
        * transaction with nothing to drift. A started task counts as `active`
-       * on its own: "someone has started work" is exactly what should protect
-       * a run from being silently deleted by reconcile.
+       * on its own: "someone has started work" is what puts the quantity
+       * badge on a run reconcile resizes.
+       *
+       * Only ever called on an open run: every caller gates on
+       * {@link Domain.runIsOpen}, or on not {@link Domain.runIsClosed} for
+       * Undo, so a closed run's status, which is written rather than derived,
+       * is never recomputed away.
        */
       const recomputeStatus = (runId: string, now: number) =>
         Effect.andThen(
@@ -1021,8 +1064,8 @@ export class WorkflowRunRepository extends Context.Service<
       );
 
       /**
-       * Clears the banner once the shop is back under the ceiling. The flag is
-       * read first so the common case — never limited — is one row read and no
+       * Clears the banner once the shop is back under the ceiling. The column
+       * is read first so the common case — never limited — is one row read and no
        * count, which matters because this runs on transitions as ordinary as
        * completing a task.
        */
@@ -1038,60 +1081,28 @@ export class WorkflowRunRepository extends Context.Service<
       });
 
       /**
-       * Deletes the order's pending runs: nobody started them, so there is no
-       * work to flag, and a cancelled row would have no reader (the rule is on
-       * {@link Domain.RunStatus}). Tasks go with them by cascade.
+       * Closes every open run the fragment selects, with `reason`
+       * ({@link Domain.ClosedReason}), and returns how many. The one close
+       * write, for reconcile and Cancel run alike. The tasks and the note
+       * stay as the record; the block and the quantity badge go, because they
+       * are about work that has stopped ({@link Domain.RunStatus}). Closing
+       * frees open-run slots, so the ceiling banner is re-checked.
        */
-      const removePending = (orderId: string) =>
-        sql`
-          delete from WorkflowRun
-          where orderId = ${orderId} and status = 'pending'
-          returning id
-        `.pipe(
-          Effect.tap(() => releaseOpenRunLimit()),
-          Effect.map((rows) => rows.length),
-        );
-
-      const flagWhere = (
-        status: Statement.Fragment,
+      const closeOpenRuns = (
         where: Statement.Fragment,
-        flag: Domain.RunFlag,
-        detail: Domain.RunFlagDetail,
+        reason: Domain.ClosedReason,
         now: number,
       ) =>
         sql`
           update WorkflowRun
-          set flag = ${flag}, flagAt = ${now}, flagDetail = ${json(detail)}, updatedAt = ${now}
-          where ${status} and ${where}
+          set status = 'closed', closedAt = ${now}, closedReason = ${reason},
+              blockedAt = null, blockReason = null, blockedBy = null,
+              quantityChangedFrom = null, updatedAt = ${now}
+          where ${where} and status in ('pending', 'active')
           returning id
-        `.pipe(Effect.map((rows) => rows.length));
-
-      const flagActive = (
-        where: Statement.Fragment,
-        flag: Domain.RunFlag,
-        detail: Domain.RunFlagDetail,
-        now: number,
-      ) => flagWhere(sql`status = 'active'`, where, flag, detail, now);
-
-      /**
-       * The one write that marks a run whose line item changed size, and the
-       * one flag a `done` run can take (the rule is on `Domain.RunFlag`): a
-       * finished run keeps its quantity, so the flag is all that happens to
-       * it, while an active run is resized first by the caller. A `pending`
-       * run never reaches here — nobody has started it, so it is resized
-       * silently.
-       */
-      const flagQuantityChanged = (
-        runId: string,
-        detail: Domain.RunFlagDetail,
-        now: number,
-      ) =>
-        flagWhere(
-          sql`status in ('active', 'done')`,
-          sql`id = ${runId}`,
-          "quantity_changed",
-          detail,
-          now,
+        `.pipe(
+          Effect.tap(() => releaseOpenRunLimit()),
+          Effect.map((rows) => rows.length),
         );
 
       /**
@@ -1125,7 +1136,7 @@ export class WorkflowRunRepository extends Context.Service<
               insert into WorkflowRun (
                 id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
                 lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
-                source, status, flag, flagAt, flagDetail, createdAt, updatedAt
+                source, status, createdAt, updatedAt
               ) values (
                 ${runId}, ${workflow.id}, ${workflow.name}, ${order.id},
                 ${order.name}, ${order.processedAt},
@@ -1133,7 +1144,7 @@ export class WorkflowRunRepository extends Context.Service<
                 ${lineItem.variantTitle}, ${lineItem.sku},
                 ${Domain.unitsToMake(lineItem)},
                 ${json(lineItem.properties)},
-                ${source}, 'pending', null, null, null, ${now}, ${now}
+                ${source}, 'pending', ${now}, ${now}
               )
               on conflict do nothing
               returning *
@@ -1180,6 +1191,13 @@ export class WorkflowRunRepository extends Context.Service<
        * matches are of no interest, and an unpaid one is reconciled the
        * moment it pays.
        *
+       * **Close, never flag.** A Shopify change is applied to the runs and
+       * waits on nobody ({@link Domain.RunStatus}): the order cancelled or
+       * fulfilled closes every open run, a line at zero units closes its
+       * open run, and a quantity change resizes an open run. A `done` run is
+       * never touched, whatever the order does, because it is the record of
+       * what was made; a closed run is already over.
+       *
        * Two gates, deliberately split. `Domain.isCancelled` and
        * `Domain.isFulfilled` are the stop gates and return early;
        * `Domain.canStartRuns` (paid) gates only run *creation*. Adjusting
@@ -1208,32 +1226,31 @@ export class WorkflowRunRepository extends Context.Service<
             yield* earlyExit("cancelled");
             return {
               ...NO_COUNTS,
-              removed: yield* removePending(orderId),
-              flagged: yield* flagActive(
+              closed: yield* closeOpenRuns(
                 sql`orderId = ${orderId}`,
                 "order_cancelled",
-                {},
                 now,
               ),
             };
           }
           /**
-           * Nothing left to make. Pending runs go silently (no one started
-           * them); active runs are flagged because their premise cannot be
-           * restored. Partial fulfillment changes nothing anywhere: shipping
-           * a line leaves its `currentQuantity` alone, so neither this branch
-           * nor `adjust` below sees a difference ({@link Domain.unitsToMake}).
+           * Nothing left to make: every open run closes, pending or active,
+           * one rule for both, because the work is over whether or not anyone
+           * started it. Partial fulfillment changes nothing anywhere:
+           * fulfilling a line leaves its `currentQuantity` alone, so neither
+           * this branch nor `adjust` below sees a difference
+           * ({@link Domain.unitsToMake}).
            */
           if (Domain.isFulfilled(order)) {
             yield* earlyExit("fulfilled");
-            const removed = yield* removePending(orderId);
-            const flagged = yield* flagActive(
-              sql`orderId = ${orderId}`,
-              "order_fulfilled",
-              {},
-              now,
-            );
-            return { ...NO_COUNTS, removed, flagged };
+            return {
+              ...NO_COUNTS,
+              closed: yield* closeOpenRuns(
+                sql`orderId = ${orderId}`,
+                "fulfilled",
+                now,
+              ),
+            };
           }
           const orderCanStart = Domain.canStartRuns(order);
           const lineItems = yield* decodeLineItems(
@@ -1254,9 +1271,10 @@ export class WorkflowRunRepository extends Context.Service<
            * - two or more matches is an ambiguity, and picking for the
            *   merchant would route work to the wrong team silently, so
            *   nothing starts and the order page asks;
-           * - a run (`pending`, `active` or `done`) or the merchant's
-           *   `cancelled` marker already owns the item, so a workflow turned on later never displaces it — which
-           *   is the whole of the "existing runs win" rule, no extra code.
+           * - a run of any status, `done` and `closed` included, already owns
+           *   the item, so a workflow turned on later never displaces it —
+           *   which is the whole of the "existing runs win" rule, no extra
+           *   code.
            *
            * `matchedWorkflowIds` is written on every pass, including when the
            * order cannot start runs yet, so an unpaid order already carries
@@ -1354,73 +1372,55 @@ export class WorkflowRunRepository extends Context.Service<
           const created = inserted.length;
           /**
            * Tracks `Domain.unitsToMake`, so a refund that lowers
-           * `currentQuantity` reads exactly like a merchant edit.
+           * `currentQuantity` reads exactly like a merchant edit. Open runs
+           * only: a `done` run is the record of what was made and is never
+           * resized or closed, so a line whose units reach zero under it is
+           * the ordinary end of that work; a closed run is over.
            *
-           * Runs over every run, `done` included, because a quantity
-           * change on a finished line is exactly the case nobody is watching
-           * for: the merchant edits the order in Shopify and the maker has
-           * already put the work down. A `done` run takes the flag and
-           * nothing else — see `Domain.RunFlag` for the whole rule, including
-           * why a `done` run whose units reach zero is left alone.
+           * Zero units closes the run as `item_removed`. Any other change
+           * writes the new units onto the run; on an `active` run it also
+           * keeps the original quantity in `quantityChangedFrom` for the
+           * badge, and a change back to that quantity clears the badge, since
+           * there is nothing left to tell. The rule is on
+           * {@link Domain.WorkflowRun}.
            */
           const adjust = (run: Domain.WorkflowRun) => {
-            // A marker holds the item and nothing else: no units to track.
-            if (Domain.runIsCancelled(run))
-              return Effect.succeed({ removed: 0, flagged: 0 });
+            const unchanged = Effect.succeed({ resized: 0, closed: 0 });
+            if (!Domain.runIsOpen(run)) return unchanged;
             const lineItem = lineItems.find(
               (item) => item.id === run.lineItemId,
             );
             const units =
               lineItem === undefined ? 0 : Domain.unitsToMake(lineItem);
-            if (Domain.runIsDone(run))
-              return units === 0 ||
-                units === run.quantity ||
-                Domain.alreadyFlaggedQuantity(run, units)
-                ? Effect.succeed({ removed: 0, flagged: 0 })
-                : flagQuantityChanged(
-                    run.id,
-                    { from: run.quantity, to: units },
-                    now,
-                  ).pipe(Effect.map((flagged) => ({ removed: 0, flagged })));
             if (units === 0)
-              return Domain.runIsUnstarted(run)
-                ? sql`delete from WorkflowRun where id = ${run.id}`.pipe(
-                    Effect.tap(() => releaseOpenRunLimit()),
-                    Effect.as({ removed: 1, flagged: 0 }),
-                  )
-                : flagActive(sql`id = ${run.id}`, "item_removed", {}, now).pipe(
-                    Effect.map((flagged) => ({ removed: 0, flagged })),
-                  );
-            if (units === run.quantity)
-              return Effect.succeed({ removed: 0, flagged: 0 });
+              return closeOpenRuns(
+                sql`id = ${run.id}`,
+                "item_removed",
+                now,
+              ).pipe(Effect.map((closed) => ({ resized: 0, closed })));
+            if (units === run.quantity) return unchanged;
+            const original = Domain.runIsUnstarted(run)
+              ? run.quantityChangedFrom
+              : (run.quantityChangedFrom ?? run.quantity);
+            const from = original === units ? null : original;
             return sql`
                 update WorkflowRun
-                set quantity = ${units}, updatedAt = ${now}
+                set quantity = ${units}, quantityChangedFrom = ${from},
+                    updatedAt = ${now}
                 where id = ${run.id}
-              `.pipe(
-              Effect.andThen(
-                Domain.runIsUnstarted(run)
-                  ? Effect.succeed(0)
-                  : flagQuantityChanged(
-                      run.id,
-                      { from: run.quantity, to: units },
-                      now,
-                    ),
-              ),
-              Effect.map((flagged) => ({ removed: 0, flagged })),
-            );
+              `.pipe(Effect.as({ resized: 1, closed: 0 }));
           };
           const adjusted = yield* Effect.all(runs.map(adjust));
           return adjusted.reduce<ReconcileCounts>(
             (counts, delta) => ({
               ...counts,
-              removed: counts.removed + delta.removed,
-              flagged: counts.flagged + delta.flagged,
+              resized: counts.resized + delta.resized,
+              closed: counts.closed + delta.closed,
             }),
             {
               created,
-              removed: 0,
-              flagged: 0,
+              resized: 0,
+              closed: 0,
               ambiguous: ambiguous.length,
             },
           );
@@ -1530,16 +1530,16 @@ export class WorkflowRunRepository extends Context.Service<
                   `,
                 );
                 const [incumbent] = existing;
-                const cancelled =
-                  incumbent !== undefined && Domain.runIsCancelled(incumbent);
+                const closed =
+                  incumbent !== undefined && Domain.runIsClosed(incumbent);
                 if (
-                  !cancelled &&
+                  !closed &&
                   incumbent?.workflowId === input.workflow.workflow.id
                 )
                   return Option.none();
                 if (
                   incumbent !== undefined &&
-                  !cancelled &&
+                  !closed &&
                   !Domain.runIsOpen(incumbent)
                 )
                   return yield* new RunFinishedError({
@@ -1550,7 +1550,7 @@ export class WorkflowRunRepository extends Context.Service<
                 // the insert.
                 if (incumbent !== undefined)
                   yield* sql`delete from WorkflowRun where id = ${incumbent.id}`;
-                const replaced = cancelled ? null : (incumbent ?? null);
+                const replaced = closed ? null : (incumbent ?? null);
                 // The item's one run was deleted above, so the insert's
                 // `on conflict do nothing` cannot fire here.
                 //
@@ -1591,9 +1591,7 @@ export class WorkflowRunRepository extends Context.Service<
           input: { readonly runId: string } | { readonly runTaskId: string },
         ) {
           const found = yield* getRun(input);
-          // Every run write is refused on a marker: it has no work to act on.
-          if (Option.isNone(found) || Domain.runIsCancelled(found.value.run))
-            return Option.none();
+          if (Option.isNone(found)) return Option.none();
           const { run, tasks } = found.value;
           const order = (yield* orderStates([run.orderId])).get(run.orderId);
           return order === undefined
@@ -1615,15 +1613,17 @@ export class WorkflowRunRepository extends Context.Service<
               const run = yield* requireRun(runId);
               if (!Domain.runIsOpen(run))
                 yield* new RunTerminalError({ runId, status: run.status });
+              const order = (yield* orderStates([run.orderId])).get(
+                run.orderId,
+              );
+              if (order === undefined || !Domain.orderIsOpen(order))
+                yield* new RunOrderClosedError({ runId });
               const now = yield* Clock.currentTimeMillis;
-              yield* sql`delete from WorkflowRunTask where runId = ${runId}`;
-              yield* sql`
-                update WorkflowRun
-                set status = 'cancelled', cancelledAt = ${now}, updatedAt = ${now},
-                    note = null, flag = null, flagAt = null, flagDetail = null
-                where id = ${runId}
-              `;
-              yield* releaseOpenRunLimit();
+              yield* closeOpenRuns(
+                sql`id = ${runId}`,
+                "merchant_cancelled",
+                now,
+              );
             }),
           );
         }),
@@ -1682,8 +1682,9 @@ export class WorkflowRunRepository extends Context.Service<
             { attention: [], mine: [], inProgress: [], upNext: [] },
           );
           const tier = (wanted: Domain.RunTier) => byTier[wanted];
-          // "done" is not a tier: its rows come from `listDone`, which reads
-          // finished tasks rather than the ready ones grouped here.
+          // "done" (Recent) is not a tier: its rows come from `listRecent`,
+          // which reads finished tasks and closed runs rather than the ready
+          // ones grouped here.
           const selected =
             query.tab === "done"
               ? []
@@ -1701,7 +1702,7 @@ export class WorkflowRunRepository extends Context.Service<
           };
         }),
 
-        listDone: Effect.fn("WorkflowRunRepository.listDone")(function* ({
+        listRecent: Effect.fn("WorkflowRunRepository.listRecent")(function* ({
           teamIds,
           since,
           limit,
@@ -1711,57 +1712,99 @@ export class WorkflowRunRepository extends Context.Service<
           readonly limit: number;
         }) {
           if (teamIds.length === 0) return { items: [], total: 0 };
+          const teams = json(teamIds);
           /**
-           * Served by `WorkflowRunTask_teamId_idx (teamId, completedAt)` and
-           * bounded by the caller's window, so it counts a day of one team's
-           * finished tasks rather than scanning the table.
+           * Two windows, each bounded by `since` and served by its own index:
+           * finished tasks by `WorkflowRunTask_teamId_idx (teamId,
+           * completedAt)`, closed runs by `WorkflowRun_closed_idx (closedAt)`,
+           * partial over `closed`. So each counts a day, not the table.
            */
-          const counted = yield* sql`
+          const closedWhere = sql`
+            r.status = 'closed' and r.closedAt >= ${since}
+              and exists (
+                select 1 from WorkflowRunTask t
+                where t.runId = r.id
+                  and t.teamId in (select value from json_each(${teams}))
+              )
+          `;
+          const countedTasks = yield* sql`
             select count(*) from WorkflowRunTask s
             where s.completedAt >= ${since}
-              and s.teamId in (select value from json_each(${json(teamIds)}))
+              and s.teamId in (select value from json_each(${teams}))
           `.values;
-          const total = Number(counted[0]?.[0] ?? 0);
-          // The collapsed tier: the heading still counts the day, so the count
-          // is read and the rows are not.
+          const countedClosed =
+            yield* sql`select count(*) from WorkflowRun r where ${closedWhere}`
+              .values;
+          const total =
+            Number(countedTasks[0]?.[0] ?? 0) +
+            Number(countedClosed[0]?.[0] ?? 0);
+          // Collapsed: the tab still counts the day, so the counts are read
+          // and the rows are not.
           if (limit === 0) return { items: [], total };
           const done = yield* decodeTasks(
             yield* sql`
               select s.* from WorkflowRunTask s
               where s.completedAt >= ${since}
-                and s.teamId in (select value from json_each(${json(teamIds)}))
+                and s.teamId in (select value from json_each(${teams}))
               order by s.completedAt desc, s.position desc
               limit ${limit}
             `,
           );
-          if (done.length === 0) return { items: [], total };
-          const runIds = [...new Set(done.map((task) => task.runId))];
-          const runs = yield* decodeRuns(
+          const closed = yield* decodeRuns(
             yield* sql`
-              select * from WorkflowRun
-              where id in (select value from json_each(${json(runIds)}))
+              select r.* from WorkflowRun r where ${closedWhere}
+              order by r.closedAt desc, r.id desc
+              limit ${limit}
             `,
           );
+          const runIds = [...new Set(done.map((task) => task.runId))];
+          const runs = [
+            ...closed,
+            ...(yield* decodeRuns(
+              runIds.length === 0
+                ? []
+                : yield* sql`
+                    select * from WorkflowRun
+                    where id in (select value from json_each(${json(runIds)}))
+                  `,
+            )),
+          ];
           const tasks = yield* tasksForRuns(runIds);
           const orders = yield* orderStates(runs.map((run) => run.orderId));
-          const items = done.flatMap((task): Domain.DoneItem[] => {
-            const run = runs.find((candidate) => candidate.id === task.runId);
-            const order =
-              run === undefined ? undefined : orders.get(run.orderId);
-            return run === undefined || order === undefined
-              ? []
-              : [
-                  {
-                    run,
-                    task,
-                    undoBlockedBy: Domain.undoBlockedBy(
+          const taskItems = done.flatMap(
+            (task): (Domain.RecentItem & { readonly at: number })[] => {
+              const run = runs.find((candidate) => candidate.id === task.runId);
+              const order =
+                run === undefined ? undefined : orders.get(run.orderId);
+              return run === undefined || order === undefined
+                ? []
+                : [
+                    {
+                      kind: "task",
+                      run,
                       task,
-                      tasks.filter((other) => other.runId === run.id),
-                    ),
-                    order,
-                  },
-                ];
-          });
+                      undoBlockedBy: Domain.undoBlockedBy(
+                        task,
+                        tasks.filter((other) => other.runId === run.id),
+                      ),
+                      order,
+                      at: task.completedAt ?? 0,
+                    },
+                  ];
+            },
+          );
+          const closedItems = closed.flatMap(
+            (run): (Domain.RecentItem & { readonly at: number })[] => {
+              const order = orders.get(run.orderId);
+              return order === undefined
+                ? []
+                : [{ kind: "closed", run, order, at: run.closedAt ?? 0 }];
+            },
+          );
+          const items = [...taskItems, ...closedItems]
+            .toSorted((a, b) => b.at - a.at)
+            .slice(0, limit)
+            .map(({ at: _at, ...item }): Domain.RecentItem => item);
           return { items, total };
         }),
 
@@ -1773,11 +1816,12 @@ export class WorkflowRunRepository extends Context.Service<
           }: Domain.UncompleteTaskCommand) {
             yield* sql.withTransaction(
               Effect.gen(function* () {
-                // Any status: undoing a `done` run's last task is the point.
+                // Undoing a `done` run's last task is the point; a closed run
+                // is final.
                 const { task, run } = yield* requireActionable({
                   runTaskId,
                   teamIds,
-                  gate: () => true,
+                  gate: (candidate) => !Domain.runIsClosed(candidate),
                 });
                 if (task.completedAt === null)
                   yield* new TaskNotReadyError({ runTaskId });
@@ -1818,8 +1862,8 @@ export class WorkflowRunRepository extends Context.Service<
                 runTaskId,
                 teamIds,
               });
-              if (run.flag !== null)
-                yield* new RunFlaggedError({ runId: run.id, flag: run.flag });
+              if (Domain.runIsBlocked(run))
+                yield* new RunBlockedError({ runId: run.id });
               if (task.startedAt === null || task.completedAt !== null)
                 yield* new TaskNotReadyError({ runTaskId });
               // A started task is ready by construction (Start required it,
@@ -1847,14 +1891,13 @@ export class WorkflowRunRepository extends Context.Service<
           readonly teamIds: readonly string[];
         }) {
           const found = yield* findRun(runId);
-          // A marker is not work: a page open on a run the merchant just
-          // cancelled lands on not-found, as it would for a deleted run.
-          if (Option.isNone(found) || Domain.runIsCancelled(found.value))
-            return Option.none();
+          if (Option.isNone(found)) return Option.none();
           const run = found.value;
           const tasks = yield* tasksForRuns([run.id]);
           if (!Domain.runIsVisibleTo(tasks, teamIds)) return Option.none();
-          const ready = yield* readyTasks(run.id);
+          // `readyWhere` reads tasks alone, and a closed run keeps its open
+          // tasks as the record: nothing on it is ready ({@link Domain.readyTasks}).
+          const ready = Domain.runIsOpen(run) ? yield* readyTasks(run.id) : [];
           const [orderRow] = yield* decode(
             Schema.Array(
               Schema.Struct({
@@ -1894,8 +1937,8 @@ export class WorkflowRunRepository extends Context.Service<
           yield* sql.withTransaction(
             Effect.gen(function* () {
               const { run } = yield* requireActionable({ runTaskId, teamIds });
-              if (run.flag !== null)
-                yield* new RunFlaggedError({ runId: run.id, flag: run.flag });
+              if (Domain.runIsBlocked(run))
+                yield* new RunBlockedError({ runId: run.id });
               if (!(yield* isReady(runTaskId)))
                 yield* new TaskNotReadyError({ runTaskId });
               const now = yield* Clock.currentTimeMillis;
@@ -1925,8 +1968,8 @@ export class WorkflowRunRepository extends Context.Service<
                   runTaskId,
                   teamIds,
                 });
-                if (run.flag !== null)
-                  yield* new RunFlaggedError({ runId: run.id, flag: run.flag });
+                if (Domain.runIsBlocked(run))
+                  yield* new RunBlockedError({ runId: run.id });
                 if (!(yield* isReady(runTaskId)))
                   yield* new TaskNotReadyError({ runTaskId });
                 const now = yield* Clock.currentTimeMillis;
@@ -1944,6 +1987,7 @@ export class WorkflowRunRepository extends Context.Service<
                       reopenedByEmail = null
                   where id = ${runTaskId}
                 `;
+                yield* sql`update WorkflowRun set quantityChangedFrom = null where id = ${run.id}`;
                 yield* recomputeStatus(run.id, now);
               }),
             );
@@ -1957,9 +2001,7 @@ export class WorkflowRunRepository extends Context.Service<
         }: Domain.SetRunNoteCommand) {
           yield* sql.withTransaction(
             Effect.gen(function* () {
-              const run = yield* requireRun(runId);
-              if (Domain.runIsCancelled(run))
-                yield* new RunTerminalError({ runId, status: run.status });
+              yield* requireRun(runId);
               yield* requireRunTeam(runId, teamIds);
               const now = yield* Clock.currentTimeMillis;
               yield* sql`
@@ -1983,11 +2025,10 @@ export class WorkflowRunRepository extends Context.Service<
                 yield* new RunTerminalError({ runId, status: run.status });
               yield* requireReadyTeam(runId, teamIds);
               const now = yield* Clock.currentTimeMillis;
-              const detail: Domain.RunFlagDetail =
-                reason === null ? { by: actor } : { reason, by: actor };
               yield* sql`
                 update WorkflowRun
-                set flag = 'blocked', flagAt = ${now}, flagDetail = ${json(detail)}, updatedAt = ${now}
+                set blockedAt = ${now}, blockReason = ${reason},
+                    blockedBy = ${json(attribution(actor))}, updatedAt = ${now}
                 where id = ${runId}
               `;
             }),
@@ -2029,9 +2070,6 @@ export class WorkflowRunRepository extends Context.Service<
 
         setBlockReason: Effect.fn("WorkflowRunRepository.setBlockReason")(
           function* ({ runId, teamIds, reason }: Domain.SetBlockReasonCommand) {
-            // Transactional where `dismissFlag` is not: this one reads
-            // `flagDetail` and writes it back, so an Unblock landing in
-            // between would leave the cleared flag carrying a reason again.
             yield* sql.withTransaction(
               Effect.gen(function* () {
                 const run = yield* requireRun(runId);
@@ -2039,15 +2077,9 @@ export class WorkflowRunRepository extends Context.Service<
                   yield* new RunNotBlockedError({ runId });
                 yield* requireReadyTeam(runId, teamIds);
                 const now = yield* Clock.currentTimeMillis;
-                // Spread and delete rather than rebuild: `by` is the fact this
-                // write must not disturb, and `item` / `from` / `to` are not
-                // this flag's but cost nothing to carry.
-                const { reason: _dropped, ...rest } = run.flagDetail ?? {};
-                const detail: Domain.RunFlagDetail =
-                  reason === null ? rest : { ...rest, reason };
                 yield* sql`
                   update WorkflowRun
-                  set flagDetail = ${json(detail)}, updatedAt = ${now}
+                  set blockReason = ${reason}, updatedAt = ${now}
                   where id = ${run.id}
                 `;
               }),
@@ -2055,28 +2087,27 @@ export class WorkflowRunRepository extends Context.Service<
           },
         ),
 
-        dismissFlag: Effect.fn("WorkflowRunRepository.dismissFlag")(function* ({
+        unblockRun: Effect.fn("WorkflowRunRepository.unblockRun")(function* ({
           runId,
           teamIds,
-        }: Domain.DismissFlagCommand) {
-          const run = yield* requireRun(runId);
-          yield* requireReadyTeam(runId, teamIds);
-          const now = yield* Clock.currentTimeMillis;
-          // A `done` run's quantity flag is cleared by accepting the units it
-          // reported (`Domain.dismissAcceptsQuantity`); clearing alone would
-          // have the next reconcile raise it again.
-          yield* Domain.dismissAcceptsQuantity(run)
-            ? sql`
-              update WorkflowRun
-              set flag = null, flagAt = null, flagDetail = null,
-                  quantity = ${run.flagDetail.to}, updatedAt = ${now}
-              where id = ${run.id}
-            `
-            : sql`
-              update WorkflowRun
-              set flag = null, flagAt = null, flagDetail = null, updatedAt = ${now}
-              where id = ${run.id}
-            `;
+        }: Domain.UnblockRunCommand) {
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              const run = yield* requireRun(runId);
+              if (!Domain.runIsOpen(run))
+                yield* new RunTerminalError({ runId, status: run.status });
+              if (!Domain.runIsBlocked(run))
+                yield* new RunNotBlockedError({ runId });
+              yield* requireReadyTeam(runId, teamIds);
+              const now = yield* Clock.currentTimeMillis;
+              yield* sql`
+                update WorkflowRun
+                set blockedAt = null, blockReason = null, blockedBy = null,
+                    updatedAt = ${now}
+                where id = ${run.id}
+              `;
+            }),
+          );
         }),
 
         assignRunTaskTeam: Effect.fn("WorkflowRunRepository.assignRunTaskTeam")(

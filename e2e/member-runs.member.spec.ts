@@ -62,7 +62,7 @@ const MINE_STATE = "Step 1 of 1";
 /** Per-tab empty text (`TAB_EMPTY` in `src/lib/runTabs.ts`). */
 const EMPTY_MINE = "Nothing in hand.";
 const EMPTY_TEAMMATES = "Nobody else has work.";
-const EMPTY_DONE = "Nothing finished in the last day.";
+const EMPTY_DONE = "Nothing finished or closed in the last day.";
 /**
  * Every seeded order is `#94xx`, which is how a row is counted rather than
  * read. The row itself is the link, so what it announces is its
@@ -84,7 +84,7 @@ const MINE = "Mine";
 const UP_NEXT = "Up next";
 const TEAMMATES = "Teammates";
 const BLOCKED = "Blocked";
-const DONE_TODAY = "Done today";
+const RECENT = "Recent";
 
 /**
  * One workflow per team and one order for each, so every assertion about who
@@ -526,7 +526,7 @@ test("a completed task lands on another member's run list without a reload", asy
     mate.getByRole("button", { name: `${UP_NEXT} · 1` }),
   ).toBeVisible();
   await expect(
-    mate.getByRole("button", { name: `${DONE_TODAY} · 1` }),
+    mate.getByRole("button", { name: `${RECENT} · 1` }),
   ).toBeVisible();
   await expectSameDocument(mate);
 });
@@ -978,7 +978,7 @@ test("a value the search schema cannot read falls back to the default", async ({
 });
 
 /**
- * Done today and Undo. The finished task leaves the list for the Done tab;
+ * Recent and Undo. The finished task leaves the list for the Recent tab;
  * Undo puts it back, and because Undo returns the task to Ready
  * (`WorkflowRunRepository.uncompleteTask`) the card lands in "Up next", not
  * "Mine".
@@ -988,7 +988,7 @@ test("undo puts a finished task back to Ready", async ({ browser }) => {
   await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
   const page = await openRuns(browser, config, makerState, "upNext");
   await expect(
-    page.getByRole("button", { name: `${DONE_TODAY} · 0` }),
+    page.getByRole("button", { name: `${RECENT} · 0` }),
   ).toBeVisible();
 
   await rowAction(page, RING_ORDER, "Start");
@@ -996,13 +996,13 @@ test("undo puts a finished task back to Ready", async ({ browser }) => {
   await rowAction(page, RING_ORDER, "Done");
   await expect(page.getByText(EMPTY_MINE)).toBeVisible();
   await expect(
-    page.getByRole("button", { name: `${DONE_TODAY} · 1` }),
+    page.getByRole("button", { name: `${RECENT} · 1` }),
   ).toBeVisible();
   /* Unopened, the tab is a count and nothing else: its rows are a different
      read, so the Undo below is only reachable once the tab is chosen. The
      entry says "by you" rather than the reader's own address, which on this
      tier is the longest and least informative text on the page. */
-  await selectTab(page, "done", DONE_TODAY);
+  await selectTab(page, "done", RECENT);
   await expect(page.getByText("by you at")).toBeVisible();
 
   await rowAction(page, RING_ORDER, "Undo");
@@ -1121,7 +1121,7 @@ test("a done run's work page offers Undo on its last task", async ({
 /**
  * Once downstream has started the fix is a conversation, and **neither member
  * screen says so in words**: the mate (on the Polish team) starts the next
- * step, the maker's Done today entry loses its menu, and the work page the
+ * step, the maker's Recent entry loses its menu, and the work page the
  * row still links to simply stops offering Undo.
  *
  * The rule used to be a disabled Undo beside a clause naming the blocker, so
@@ -1155,9 +1155,9 @@ test("a blocked undo offers nothing and explains nothing, on the row or the work
   await selectTab(maker, "mine", MINE);
   await rowAction(maker, BAND_ORDER, "Done");
   await expect(
-    maker.getByRole("button", { name: `${DONE_TODAY} · 1` }),
+    maker.getByRole("button", { name: `${RECENT} · 1` }),
   ).toBeVisible();
-  await selectTab(maker, "done", DONE_TODAY);
+  await selectTab(maker, "done", RECENT);
   await awaitEnabled(rowMenu(maker, BAND_ORDER));
 
   const mate = await openRuns(browser, config, mateState, "upNext");
@@ -1286,7 +1286,7 @@ test("the work page shows the task history and takes a note, a block, and Done",
   );
   await expect(page.getByText("Left edge is rough")).toBeVisible();
 
-  /* The block, and what a block means: the banner heading names the flag, the
+  /* The block, and what a block means: the banner heading says Blocked, the
      body is the reason with no prefix, and Done is gone until the hold is
      lifted. Block and the reason edit share one modal: Edit reason reopens it under
      "Block reason" on the text there now, and Save rewrites it — two lines,
@@ -1345,9 +1345,7 @@ test("the work page shows the task history and takes a note, a block, and Done",
   await selectTab(page, "attention", BLOCKED);
   const blocked = card(page, BAND_ORDER);
   /* No badge on the row either: "Blocked" there would repeat the pressed tab,
-     the verb in the menu, and the reason on line two. The flags reconcile
-     sets keep their badges, because each names a different thing Shopify
-     did. */
+     the verb in the menu, and the reason on line two. */
   await expect(blocked.getByText("Blocked")).toHaveCount(0);
   await clickWhenEnabled(rowMenu(page, BAND_ORDER));
   await expect(
@@ -1377,7 +1375,88 @@ test("the work page shows the task history and takes a note, a block, and Done",
   /* Cut is done and Polish is the packer's, so the run is no card of the
      maker's any more; what remains of it on this page is the Done entry. */
   await expect(
-    page.getByRole("button", { name: `${DONE_TODAY} · 1` }),
+    page.getByRole("button", { name: `${RECENT} · 1` }),
+  ).toBeVisible();
+});
+
+/**
+ * A Shopify event never creates a to-do (`Domain.RunStatus`): a run the order's
+ * fulfilment or cancel closed leaves Mine, Up next and Blocked by its status,
+ * and Recent says why, with no verb on the row.
+ */
+test("closed runs leave every work list and show on Recent with their reason", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedMembers(
+    config,
+    [MAKER],
+    [{ name: CUT_TEAM, members: [MAKER] }],
+    [
+      {
+        name: "E2E Runs Ring",
+        tag: RING_TAG,
+        tasks: [
+          { name: "Cut", team: CUT_TEAM },
+          { name: "Polish", team: CUT_TEAM },
+        ],
+      },
+    ],
+    [
+      {
+        n: 9451,
+        started: true,
+        after: { fulfillmentStatus: "FULFILLED" },
+        lineItems: [
+          { title: "E2E Fulfilled Ring", quantity: 1, tags: [RING_TAG] },
+        ],
+      },
+      {
+        n: 9452,
+        blocked: "Waiting on stones",
+        after: { cancelled: true },
+        lineItems: [
+          { title: "E2E Cancelled Ring", quantity: 1, tags: [RING_TAG] },
+        ],
+      },
+    ],
+    { keepIdentities: true },
+  );
+  const page = await openRuns(browser, config, makerState);
+  await expect(page.getByRole("button", { name: `${MINE} · 0` })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: `${UP_NEXT} · 0` }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: `${BLOCKED} · 0` }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: `${RECENT} · 2` }),
+  ).toBeVisible();
+
+  await selectTab(page, "done", RECENT);
+  await expect(
+    card(page, "#9451").getByText("Closed · Fulfilled in Shopify"),
+  ).toBeVisible();
+  await expect(
+    card(page, "#9452").getByText("Closed · Order cancelled in Shopify"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Actions for #9451" }),
+  ).toHaveCount(0);
+
+  /* The work page on a closed run says why where a block would be, and
+     offers nothing but the note. */
+  await rowLink(page, "#9451").click();
+  await expect(page.locator('s-banner[heading="Closed"]')).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Done", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Block", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Edit note", exact: true }),
   ).toBeVisible();
 });
 
@@ -1512,9 +1591,9 @@ test("a merchant's completion reads as Merchant on the run list and the work pag
   const page = await openRuns(browser, config, makerState);
 
   await expect(
-    page.getByRole("button", { name: `${DONE_TODAY} · 1` }),
+    page.getByRole("button", { name: `${RECENT} · 1` }),
   ).toBeVisible();
-  await selectTab(page, "done", DONE_TODAY);
+  await selectTab(page, "done", RECENT);
   await expect(page.getByText("by Merchant at")).toBeVisible();
 
   await rowLink(page, BAND_ORDER).click();

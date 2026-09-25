@@ -65,7 +65,8 @@ import type {
  * `e2e/seed.ts`: a line item's own `progress` overrides the order's, which is
  * what puts one order's items in four different states; and `after` is a second
  * state for the order written *after* the work started, which is the only way
- * to reach the flags a late cancel, shipment or refund produces.
+ * to reach the closed and resized runs a late cancel, fulfilment or refund
+ * produces.
  *
  * `Rush order` is the fixture's one cross-cutting workflow: a product carrying
  * `rush` beside its own tag is claimed by two workflows, nothing starts, and
@@ -74,7 +75,7 @@ import type {
  *
  * The rows from `#2001` are generated rather than hand-written, and are always
  * seeded: the member's run list and the orders index are only honest at a few
- * hundred cards and more than one page, and a second flagless fixture would
+ * hundred cards and more than one page, and a second fixture without them would
  * only leave it unclear which one a screen was judged against.
  */
 
@@ -455,8 +456,8 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // fully made, packed, and still unfulfilled in Shopify: the Ready-to-ship
-    // filter has a row
+    // fully made, packed, and still unfulfilled in Shopify: the Made filter
+    // has a row
     n: 1006,
     done: true,
     lineItems: [item("Signet ring", TAG.ring, 1, { Size: "7", Metal: "Gold" })],
@@ -477,8 +478,8 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // blocked by a worker with a reason: the "Needs attention" banner and
-    // Dismiss on the card
+    // blocked by a worker with a reason: the Blocked banner, with Unblock
+    // and Edit reason, on the card
     n: 1008,
     advance: 1,
     blocked: "Crest file missing from the order — asked the customer.",
@@ -510,7 +511,7 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // one ambiguous item beside one that started fine: In production with
+    // one ambiguous item beside one that started fine: Making with
     // "Choose a workflow"
     n: 1012,
     lineItems: [
@@ -629,24 +630,24 @@ const floorOrders: readonly SeedOrder[] = [
     lineItems: [],
   },
   {
-    // cancelled in Shopify after the ring was already cast: the run is
-    // flagged "Order cancelled" rather than quietly disappearing
+    // cancelled in Shopify after the ring was already cast: the run closes,
+    // "Order cancelled in Shopify", and leaves every list for Recent
     n: 1019,
     advance: 1,
     after: { cancelled: true },
     lineItems: [item("Signet ring", TAG.ring, 1, { Size: "5", Metal: "Gold" })],
   },
   {
-    // shipped in Shopify while the journal was still on the bench:
-    // "Already shipped"
+    // fulfilled in Shopify while the journal was still on the bench: the run
+    // closes, "Fulfilled in Shopify"
     n: 1020,
     advance: 1,
     after: { fulfillmentStatus: "FULFILLED" },
     lineItems: [item("Leather journal", TAG.journal, 1, { Initials: "C.L." })],
   },
   {
-    // one of the two units refunded after the work started: the run holds the
-    // ×2 it snapshotted and the order now says ×1 — "Quantity changed"
+    // one of the two units refunded after the work started: the run is
+    // resized to ×1 and wears "Quantity changed · 2 → 1" until the next Done
     n: 1021,
     started: true,
     after: { lineItems: [{ position: 1, currentQuantity: 1 }] },
@@ -739,8 +740,7 @@ const floorOrders: readonly SeedOrder[] = [
   },
   {
     // the line removed in Shopify while the board was on the bench: the run
-    // stays, flagged "Item removed", with Dismiss in its banner and no Mark
-    // done; Reassign still offered
+    // closes, "Item removed or refunded in Shopify", with the Removed badge
     n: 1031,
     advance: 1,
     after: { lineItems: [{ position: 1, currentQuantity: 0 }] },
@@ -749,8 +749,8 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // finished, then one of two units refunded: Done plus "Quantity
-    // changed", Dismiss in the banner, Reopen in Manage
+    // finished, then one of two units refunded: a done run is the record of
+    // what was made, so it stays Done at ×2 with no badge; Reopen in Manage
     n: 1032,
     done: true,
     after: { lineItems: [{ position: 1, currentQuantity: 1 }] },
@@ -772,9 +772,9 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // the merchant cancelled the run after a step was done: the Cancelled
-    // badge, "… workflow cancelled", and the picker to start one afresh;
-    // reconcile starts nothing on it
+    // the merchant cancelled the run after a step was done: Closed, "Cancelled
+    // by you", the finished step still on record, and the picker to start one
+    // afresh; reconcile starts nothing on it
     n: 1035,
     lineItems: [
       item(

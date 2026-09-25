@@ -652,7 +652,7 @@ describe("ShopAgent workflow run callables", () => {
   });
 
   /**
-   * The one thing manual attach does not override. `Domain.canAttachRun`
+   * The one thing manual attach does not override. `Domain.orderIsOpen`
    * carries the reasoning; this is the rule at the callable.
    */
   it("manual attach is refused on a cancelled or fulfilled order and allowed on an unpaid one", async () => {
@@ -744,7 +744,7 @@ describe("ShopAgent workflow run callables", () => {
     expect(await agent.merchantCancelRun({ runId: replaced.run.id })).toEqual({
       _tag: "Ok",
     });
-    // Rush again, the workflow just cancelled: a fresh run over the marker.
+    // Rush again, the workflow just cancelled: a fresh run over the closed one.
     const again = await agent.merchantAttachWorkflow({
       lineItemId: "gid://shopify/LineItem/1",
       workflowId: second.id,
@@ -957,16 +957,16 @@ describe("ShopAgent workflow run callables", () => {
     });
     expect(await engraver.completeTask({ runTaskId })).toEqual({ _tag: "Ok" });
     expect(await runListItems(agent, [team.id])).toHaveLength(0);
-    // A done run offers no Cancel (`Domain.runActions`), and has no flag to lift.
+    // A done run offers no Cancel (`Domain.runActions`), and has no block to lift.
     expect(await agent.merchantCancelRun({ runId })).toEqual({
       _tag: "NotAllowed",
     });
-    expect(await engraver.dismissFlag({ runId })).toEqual({
+    expect(await engraver.unblockRun({ runId })).toEqual({
       _tag: "NotAllowed",
     });
     engraver.close();
-    // Reopened, it is open again and cancels once; the marker left behind
-    // is no run to act on.
+    // Reopened, it is open again and cancels once; the closed run left
+    // behind offers no second Cancel.
     const merchant = await openMerchantSocket(shop);
     expect(await merchant.uncompleteTask({ runTaskId })).toEqual({
       _tag: "Ok",
@@ -974,8 +974,68 @@ describe("ShopAgent workflow run callables", () => {
     merchant.close();
     expect(await agent.merchantCancelRun({ runId })).toEqual({ _tag: "Ok" });
     expect(await agent.merchantCancelRun({ runId })).toEqual({
-      _tag: "NotFound",
+      _tag: "NotAllowed",
     });
+  });
+
+  it("unblock lifts a block for the team that holds a ready task or the merchant, and is refused once nothing is blocked", async () => {
+    const shop = "wf-unblock.myshopify.com";
+    const team = await seedTeam(shop, "Engraving");
+    await seedOrder(shop, Date.now());
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const created = await agent.createWorkflow({
+      name: "Engrave",
+      tag: "engrave",
+    });
+    if (created._tag !== "Ok") throw new Error(created._tag);
+    await agent.addStep({
+      workflowId: created.workflow.id,
+      name: "Engrave",
+      teamId: team.id,
+    });
+    await goLive(agent, created.workflow.id);
+    const attached = await agent.merchantAttachWorkflow({
+      lineItemId: "gid://shopify/LineItem/1",
+      workflowId: created.workflow.id,
+    });
+    if (attached._tag !== "Ok") throw new Error(attached._tag);
+    const runId = attached.run.id;
+    const engraver = await openMemberSocket(shop, {
+      memberId: "m1",
+      memberEmail: "m1@example.com",
+      teamIds: [team.id],
+    });
+    const stranger = await openMemberSocket(shop, {
+      memberId: "m2",
+      memberEmail: "m2@example.com",
+      teamIds: ["x"],
+    });
+    // Nothing is blocked yet: Unblock is not offered (`Domain.runActions`).
+    expect(await engraver.unblockRun({ runId })).toEqual({
+      _tag: "NotAllowed",
+    });
+    expect(await engraver.blockRun({ runId, reason: "no stock" })).toEqual({
+      _tag: "Ok",
+    });
+    expect(await stranger.unblockRun({ runId })).toEqual({
+      _tag: "NotAllowed",
+    });
+    expect(await engraver.unblockRun({ runId })).toEqual({ _tag: "Ok" });
+    const [unblocked] = await runListItems(agent, [team.id]);
+    strictEqual(unblocked?.run.blockedAt, null);
+    strictEqual(unblocked?.run.blockReason, null);
+    strictEqual(unblocked?.run.blockedBy, null);
+    expect(await engraver.blockRun({ runId, reason: null })).toEqual({
+      _tag: "Ok",
+    });
+    engraver.close();
+    stranger.close();
+    const merchant = await openMerchantSocket(shop);
+    expect(await merchant.unblockRun({ runId })).toEqual({ _tag: "Ok" });
+    expect(await merchant.unblockRun({ runId })).toEqual({
+      _tag: "NotAllowed",
+    });
+    merchant.close();
   });
 
   /**
@@ -1082,9 +1142,12 @@ describe("ShopAgent workflow run callables", () => {
     ).toEqual({ _tag: "Ok" });
     engraver.close();
     const [blocked] = await runListItems(agent, [team.id]);
-    strictEqual(blocked?.run.flag, "blocked");
-    strictEqual(blocked?.run.flagDetail?.reason, "waiting on stock");
-    deepStrictEqual<unknown>(blocked?.run.flagDetail?.by, {
+    strictEqual(
+      blocked !== undefined && Domain.runIsBlocked(blocked.run),
+      true,
+    );
+    strictEqual(blocked?.run.blockReason, "waiting on stock");
+    deepStrictEqual<unknown>(blocked?.run.blockedBy, {
       role: "member",
       memberId,
       email: memberEmail,
@@ -1317,7 +1380,7 @@ describe("ShopAgent seed callables", () => {
     const [chosen] = await ordersPage(agent);
     strictEqual(
       chosen === undefined ? null : Domain.productionState(chosen),
-      "in_production",
+      "making",
     );
     strictEqual(
       chosen === undefined
@@ -1327,7 +1390,7 @@ describe("ShopAgent seed callables", () => {
     );
   });
 
-  it("seedOrders applies `after` once the work has started, so the run carries the flag", async () => {
+  it("seedOrders applies `after` once the work has started, so a cancel closes the run and a quantity change resizes it", async () => {
     const shop = "seed-after.myshopify.com";
     const team = await seedTeam(shop, "Bench");
     const agent = await getAgentByName(env.SHOP_AGENT, shop);
@@ -1351,14 +1414,18 @@ describe("ShopAgent seed callables", () => {
         },
       ],
     });
-    const flagOf = async (n: number) => {
+    const runOf = async (n: number) => {
       const runs = await agent.merchantListRunsForOrder({
         orderId: seedOrderId(n),
       });
-      return runs[0]?.run.flag;
+      return runs[0]?.run;
     };
-    strictEqual(await flagOf(1), "order_cancelled");
-    strictEqual(await flagOf(2), "quantity_changed");
+    const cancelled = await runOf(1);
+    strictEqual(cancelled?.status, "closed");
+    strictEqual(cancelled?.closedReason, "order_cancelled");
+    const resized = await runOf(2);
+    strictEqual(resized?.quantity, 1);
+    strictEqual(resized?.quantityChangedFrom, 2);
   });
 
   it("seedOrders leaves the usage counter at one seed's worth however often it is reseeded", async () => {

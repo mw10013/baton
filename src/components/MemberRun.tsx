@@ -7,79 +7,87 @@ import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
 
 /**
- * Pieces the run list's rows and the work page both render, kept together so the
- * two screens describe one item and one flag in the same words.
+ * Pieces the run list's rows, the work page and the merchant's order page
+ * render, kept together so the screens describe one item, one block and one
+ * closed run in the same words.
  *
  * One fact, once. The pressed tab on the run list says which tier a row is in,
- * so nothing inside the card repeats it; the flag kind is said by the banner
- * *heading* and by nothing else, which is why {@link flagBody} carries only
- * the detail and is allowed to be null. {@link FlagBanner} takes the buttons
- * that act on the flag through its `actions` slot rather than rendering them
- * itself: Unblock and Dismiss mean different things (lift a hold, acknowledge
- * a reconcile) and each screen offers a different set, but both belong inside
- * the banner that states the flag rather than floating beneath it.
+ * so nothing inside the card repeats it. {@link BlockBanner} takes the buttons
+ * that act on the block through its `actions` slot rather than rendering them
+ * itself: each screen offers a different set, but all belong inside the
+ * banner that states the block rather than floating beneath it.
  */
-
-/** The banner heading: the flag kind, and the only place it is named. */
-export const flagHeading = (run: { readonly flag: Domain.RunFlag | null }) =>
-  run.flag === null
-    ? null
-    : Match.value(run.flag).pipe(
-        Match.withReturnType<string>(),
-        Match.when("item_removed", () => "No longer needed"),
-        Match.when("quantity_changed", () => "Quantity changed"),
-        Match.when("order_cancelled", () => "Order cancelled"),
-        Match.when("order_fulfilled", () => "Already shipped"),
-        Match.when("blocked", () => "Blocked"),
-        Match.exhaustive,
-      );
 
 /**
- * The banner body: the detail under the heading, or `null` when the heading
- * already says everything. A `blocked` run's body is the reason **as typed**,
- * with no prefix — the heading is the prefix.
+ * The reason a run closed, as a sentence ({@link Domain.ClosedReason}, whose
+ * table this is). Only `merchant_cancelled` depends on who reads it: the
+ * merchant did it, so their page says "you"; a member reads who did.
  */
-export const flagBody = (run: {
-  readonly flag: Domain.RunFlag | null;
-  readonly flagDetail: Domain.RunFlagDetail | null;
-  readonly quantity: number;
-}) =>
-  run.flag === null
-    ? null
-    : Match.value(run.flag).pipe(
-        Match.withReturnType<string | null>(),
-        // An edit that dropped the line or a full refund: both zero the units
-        // to make ({@link Domain.unitsToMake}), and the maker's response is
-        // the same. Shipping never sets this.
-        Match.when("item_removed", () => "Removed or refunded in Shopify."),
-        Match.when(
-          "quantity_changed",
-          () =>
-            `From ${formatNumber(run.flagDetail?.from ?? 0)} to ${formatNumber(run.flagDetail?.to ?? run.quantity)}.`,
-        ),
-        Match.when("order_cancelled", () => null),
-        Match.when("order_fulfilled", () => "Fulfilled in Shopify."),
-        Match.when("blocked", () => run.flagDetail?.reason ?? null),
-        Match.exhaustive,
-      );
+export const closedReasonText = (
+  reason: Domain.ClosedReason,
+  viewer: Domain.ConnectionRole,
+) =>
+  Match.value(reason).pipe(
+    Match.withReturnType<string>(),
+    Match.when("fulfilled", () => "Fulfilled in Shopify"),
+    Match.when("order_cancelled", () => "Order cancelled in Shopify"),
+    Match.when("item_removed", () => "Item removed or refunded in Shopify"),
+    Match.when("merchant_cancelled", () =>
+      viewer === "merchant" ? "Cancelled by you" : "Cancelled by the merchant",
+    ),
+    Match.exhaustive,
+  );
 
 /**
- * `critical` where the work must stop and someone outside the bench has to
- * act (a hold, a cancelled order); `warning` where the work has merely changed
- * under the maker and the response is to read and acknowledge.
+ * One subdued line naming why and when a closed run ended ("Fulfilled in
+ * Shopify · 3h ago"), or nothing on a run that is not closed. The one place
+ * every screen reads the reason from, so the words cannot drift.
  */
-export const flagTone = (run: { readonly flag: Domain.RunFlag | null }) =>
-  run.flag === null
-    ? null
-    : Match.value(run.flag).pipe(
-        Match.withReturnType<"critical" | "warning">(),
-        Match.when("blocked", () => "critical" as const),
-        Match.when("order_cancelled", () => "critical" as const),
-        Match.when("item_removed", () => "warning" as const),
-        Match.when("quantity_changed", () => "warning" as const),
-        Match.when("order_fulfilled", () => "warning" as const),
-        Match.exhaustive,
-      );
+export function ClosedLine({
+  run,
+  viewer,
+  prefix = false,
+}: {
+  readonly run: Domain.WorkflowRun;
+  readonly viewer: Domain.ConnectionRole;
+  /** "Closed · " first, where no badge beside the line already says Closed. */
+  readonly prefix?: boolean;
+}) {
+  if (!Domain.runIsClosed(run) || run.closedReason === null) return null;
+  return (
+    <s-text color="subdued">
+      {`${prefix ? "Closed · " : ""}${closedReasonText(run.closedReason, viewer)}`}
+      {run.closedAt !== null && (
+        <>
+          {" · "}
+          <LocalDateTime value={run.closedAt} format="relative" />
+        </>
+      )}
+    </s-text>
+  );
+}
+
+/**
+ * The quantity badge ({@link Domain.WorkflowRun} `quantityChangedFrom`, which
+ * states the rule): warning-toned, and the whole change, "Quantity changed ·
+ * 3 → 2", because a small "was 3" is easy to miss for the one person it
+ * matters to. It has no button: the next finished task clears it.
+ */
+export function QuantityBadge({
+  run,
+}: {
+  readonly run: {
+    readonly quantity: number;
+    readonly quantityChangedFrom: number | null;
+  };
+}) {
+  if (run.quantityChangedFrom === null) return null;
+  return (
+    <s-badge tone="warning">
+      {`Quantity changed · ${formatNumber(run.quantityChangedFrom)} → ${formatNumber(run.quantity)}`}
+    </s-badge>
+  );
+}
 
 /**
  * Free text exactly as a member typed it: `.member-prose` in `styles.css`
@@ -105,11 +113,10 @@ export function Prose({
   );
 }
 
-/** The person behind a `blocked` flag, as the banner's attribution line names them ("m2@m.com · 3m ago", "Merchant · 3m ago"). Reconcile flags have nobody. */
-export const flagActor = (run: Domain.WorkflowRun) => {
-  const by = run.flagDetail?.by;
-  return by === undefined ? null : Domain.actorLabel(by);
-};
+/** The person behind a block, as the banner's attribution line names them ("m2@m.com · 3m ago", "Merchant · 3m ago"). */
+export const blockedByLabel = (run: {
+  readonly blockedBy: Domain.Actor | null;
+}) => (run.blockedBy === null ? null : Domain.actorLabel(run.blockedBy));
 
 /**
  * A line item's properties as label / value rows rather than one joined string:
@@ -248,65 +255,51 @@ export function ClampedProse({
 }
 
 /**
- * The one banner both screens show for a flagged run: heading is the flag
- * kind, body is the detail ({@link ClampedProse}, three lines), and under both
- * a subdued line naming who and when. The reason is never edited in here: the
- * work page opens `BlockModal` for that, so the banner has one shape. The
- * button that does open it reads "Edit reason" on both screens, because the
- * run note's own button sits a few lines below and a bare "Edit" does not say
- * which of the two it opens.
+ * The one banner every screen shows for a blocked run
+ * ({@link Domain.runIsBlocked}): heading "Blocked", body the reason as typed
+ * ({@link ClampedProse}, three lines), and under both a subdued line naming
+ * who and when. Critical: the work has stopped and someone has to act. The
+ * reason is never edited in here: the screens open `BlockModal` for that, so
+ * the banner has one shape. The button that does open it reads "Edit reason"
+ * on every screen, because the run note's own button sits a few lines below
+ * and a bare "Edit" does not say which of the two it opens.
  *
  * `actions` are rendered as the banner's own children and the caller sets
- * `slot="secondary-actions"` on them; a button that lifts, acknowledges or
- * rewrites the flag belongs inside the thing that states it.
- *
- * The merchant's order page renders it too, for every flag, with the same
- * `actions` read from {@link Domain.runActions}, so the merchant sees the
- * banner the worker sees and every flag has its lift where it is stated. The
- * badge on the order page's title line keeps the merchant's own words for
- * the flag.
+ * `slot="secondary-actions"` on them; Unblock and Edit reason belong inside
+ * the thing that states the block. Each screen reads them from
+ * {@link Domain.runActions}.
  */
-export function FlagBanner({
+export function BlockBanner({
   run,
   actions,
 }: {
-  readonly run: Domain.WorkflowRun;
+  readonly run: {
+    readonly blockedAt: number | null;
+    readonly blockReason: string | null;
+    readonly blockedBy: Domain.Actor | null;
+  };
   readonly actions?: React.ReactNode;
 }) {
-  const heading = flagHeading(run);
-  const tone = flagTone(run);
-  if (heading === null || tone === null) return null;
-  const body = flagBody(run);
-  const actor = flagActor(run);
+  // The predicate is the gate; the null test only narrows for the time line.
+  if (!Domain.runIsBlocked(run) || run.blockedAt === null) return null;
+  const actor = blockedByLabel(run);
   return (
-    <s-banner tone={tone} heading={heading}>
+    <s-banner tone="critical" heading="Blocked">
       <s-stack gap="small-500">
-        {body !== null && (
-          <ClampedProse key={body} lines={3}>
-            {body}
+        {run.blockReason !== null && (
+          <ClampedProse key={run.blockReason} lines={3}>
+            {run.blockReason}
           </ClampedProse>
         )}
-        {run.flagAt !== null && (
-          <s-text color="subdued">
-            {actor === null ? "" : `${actor} · `}
-            <LocalDateTime value={run.flagAt} format="relative" />
-          </s-text>
-        )}
+        <s-text color="subdued">
+          {actor === null ? "" : `${actor} · `}
+          <LocalDateTime value={run.blockedAt} format="relative" />
+        </s-text>
       </s-stack>
       {actions}
     </s-banner>
   );
 }
-
-/**
- * The word on {@link Domain.runActions}' `liftFlag`, by who set the flag:
- * Unblock lifts a person's hold ({@link Domain.runIsBlocked}); Dismiss
- * acknowledges a reconcile flag, which is not a hold anybody set. One field,
- * two words, because both are one write. Every screen reads the word from
- * here so it cannot differ between them.
- */
-export const liftFlagLabel = (run: { readonly flag: Domain.RunFlag | null }) =>
-  Domain.runIsBlocked(run) ? "Unblock" : "Dismiss";
 
 /**
  * The run's note: the text as typed with an "Edit note" button under it, or

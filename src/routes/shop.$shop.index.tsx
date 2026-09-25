@@ -8,12 +8,7 @@ import { Effect, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { MemberBar } from "@/components/MemberBar";
-import {
-  flagBody,
-  flagHeading,
-  flagTone,
-  liftFlagLabel,
-} from "@/components/MemberRun";
+import { ClosedLine, QuantityBadge } from "@/components/MemberRun";
 import * as Domain from "@/lib/Domain";
 import { requireMember } from "@/lib/MemberAccess";
 import { memberServerFnMiddleware } from "@/lib/MemberServerFnMiddleware";
@@ -132,7 +127,7 @@ const insideRow = (event: {
 };
 
 /**
- * Who finished a Done-tier entry, spelled as the waiting rows spell an actor:
+ * Who finished a Recent task entry, spelled as the waiting rows spell an actor:
  * `you` for the reader, the email for anybody else, `Merchant` for the
  * merchant. Your own address repeated down a page is the noisiest text on the
  * tier and the least informative line on it. Empty rather than "nobody" for a
@@ -299,7 +294,8 @@ function RouteComponent() {
    * expanded row used to and the run history, the editors and a printable
    * ticket besides, for the same single tap.
    *
-   * Line one is the order, the item's title and the flag: what the row is.
+   * Line one is the order, the item's title and the quantity badge after a
+   * Shopify change ({@link QuantityBadge}): what the row is.
    * Line two is what to do on it ({@link Domain.runRowLine}): every ready task
    * by name, then the one thing the reader needs and no more — why it
    * stopped, who has it, or where it is in the run. Every name rather than
@@ -308,7 +304,7 @@ function RouteComponent() {
    */
   const renderItem = (item: Domain.RunListItem, first: boolean) => {
     const { run, tasks } = item;
-    const flagged = Domain.runIsFlagged(run);
+    const blocked = Domain.runIsBlocked(run);
     const [task, ...rest] = tasks;
     const started = task.startedAt !== null;
     const startedBy = Domain.taskStartedBy(task);
@@ -325,7 +321,7 @@ function RouteComponent() {
      * one, not necessarily theirs.
      */
     const detailLine = () => {
-      if (flagged) return flagBody(run) ?? line.step;
+      if (blocked) return run.blockReason ?? line.step;
       if (!started) return line.step;
       if (startedBy === null) return "In progress";
       return Domain.actorIsMember(startedBy, memberEmail)
@@ -344,10 +340,10 @@ function RouteComponent() {
      *
      * Every verb is a field of {@link Domain.runActions} or
      * {@link Domain.taskActions}; the row decides only which of the allowed
-     * verbs it lists. A flagged run lists the lift alone, and the action sets
-     * already refuse Start and Done under a flag: Start on a run whose order
-     * Shopify cancelled is the row arguing with itself. The fixer's extra step
-     * (Unblock, then Done) is the price, and they are the rare reader.
+     * verbs it lists. A blocked run lists Unblock alone, and the action sets
+     * already refuse Start and Done under a block: Start on a held run is the
+     * row arguing with itself. The fixer's extra step (Unblock, then Done) is
+     * the price, and they are the rare reader.
      *
      * An unstarted task lists Start and not Done, although Done is allowed
      * there: the row walks the member through the task one verb at a time,
@@ -362,21 +358,21 @@ function RouteComponent() {
      * team, so a row a teammate started offers it too.
      */
     const menuItems = () => {
-      if (flagged)
+      if (blocked)
         return Domain.runActions(
           actor,
           item.order,
           run,
           tasks.map((each) => ({ ...each, ready: true })),
-        ).liftFlag
+        ).unblock
           ? [
               <s-button
-                key="lift"
+                key="unblock"
                 onClick={() => {
-                  actions.dismiss.mutate(run.id);
+                  actions.unblock.mutate(run.id);
                 }}
               >
-                {liftFlagLabel(run)}
+                Unblock
               </s-button>,
             ]
           : [];
@@ -433,9 +429,9 @@ function RouteComponent() {
     const items = menuItems();
     return (
       /* The separator above every row but the list's first, and nothing else.
-         A flagged row used to draw a rule down its leading edge as well; it
+         A blocked row used to draw a rule down its leading edge as well; it
          went the way of the subdued surface that marked a row in hand, and
-         for the same reason. A flag puts the row in the Blocked tier
+         for the same reason. A block puts the row in the Blocked tier
          ({@link Domain.tierOf}) and nowhere else, so the mark fired on every
          row of the only tab it could appear on and separated nothing. It also
          ran past the list container's rounded corner, which a radius does not
@@ -459,17 +455,10 @@ function RouteComponent() {
               <s-stack direction="inline" gap="small-300" alignItems="center">
                 <s-text color="subdued">{run.orderName}</s-text>
                 <s-text type="strong">{run.lineItemTitle}</s-text>
-                {/* Every flag but a hold. A held run's badge would read
-                    "Blocked" under a pressed Blocked tab, beside an Unblock
-                    item, above the reason as typed — one fact said four
-                    times. The reconcile flags are the opposite: each names a
-                    different thing Shopify did, which is the content of the
-                    tab rather than a repeat of it. */}
-                {flagged && !Domain.runIsBlocked(run) && (
-                  <s-badge tone={flagTone(run) ?? "critical"}>
-                    {flagHeading(run) ?? ""}
-                  </s-badge>
-                )}
+                {/* No Blocked badge: it would read "Blocked" under a pressed
+                    Blocked tab, beside an Unblock item, above the reason as
+                    typed — one fact said four times. */}
+                <QuantityBadge run={run} />
               </s-stack>
               {/* `.run-detail-line` in `styles.css` cuts it to two lines. */}
               <div className="run-detail-line">
@@ -500,8 +489,8 @@ function RouteComponent() {
     );
   };
 
-  /** The same rule as the work page's Undo, {@link Domain.taskActions}' `reopen`, on the tier's own row. */
-  const doneUndo = (entry: Domain.DoneItem) =>
+  /** The same rule as the work page's Undo, {@link Domain.taskActions}' `reopen`, on the tab's own row. */
+  const doneUndo = (entry: Extract<Domain.RecentItem, { kind: "task" }>) =>
     Domain.taskActions(actor, entry.order, entry.run, {
       ...entry.task,
       ready: false,
@@ -523,7 +512,10 @@ function RouteComponent() {
    * kebab is the signal. The refusal is not lost — the work page the row
    * links to states it in full, for the reader who went looking.
    */
-  const renderDone = (entry: Domain.DoneItem, first: boolean) => {
+  const renderDone = (
+    entry: Extract<Domain.RecentItem, { kind: "task" }>,
+    first: boolean,
+  ) => {
     const menuId = `run-undo-${entry.task.id}`;
     const undoable = doneUndo(entry)?.blockedBy === null;
     return (
@@ -590,6 +582,47 @@ function RouteComponent() {
       </s-box>
     );
   };
+
+  /**
+   * A closed run's Recent row ({@link Domain.RecentItem}): the order and the
+   * item, then "Closed · <reason> · <time>" ({@link ClosedLine}). A link to
+   * the work page and nothing else: closing is a notice, not a to-do, and a
+   * closed run offers no verb but the note.
+   */
+  const renderClosed = (
+    entry: Extract<Domain.RecentItem, { kind: "closed" }>,
+    first: boolean,
+  ) => (
+    <s-box
+      key={`closed-${entry.run.id}`}
+      borderWidth={first ? "none" : "base none none none"}
+    >
+      <s-clickable
+        href={router.buildLocation(workLocation(entry.run.id)).href}
+        accessibilityLabel={`Open ${entry.run.orderName}`}
+        padding="small-100 base"
+        onClick={(event) => {
+          event.preventDefault();
+          void router.navigate(workLocation(entry.run.id));
+        }}
+      >
+        <s-stack gap="small-500">
+          <s-stack direction="inline" gap="small-300" alignItems="center">
+            <s-text color="subdued">{entry.run.orderName}</s-text>
+            <s-text type="strong">{entry.run.lineItemTitle}</s-text>
+          </s-stack>
+          <div className="run-detail-line">
+            <ClosedLine run={entry.run} viewer="member" prefix />
+          </div>
+        </s-stack>
+      </s-clickable>
+    </s-box>
+  );
+
+  const renderRecent = (entry: Domain.RecentItem, first: boolean) =>
+    entry.kind === "task"
+      ? renderDone(entry, first)
+      : renderClosed(entry, first);
 
   /**
    * "Show 25 more of N". The button is the only way past the open tab's cut
@@ -708,7 +741,7 @@ function RouteComponent() {
   );
 
   const total = view.counts[tab];
-  const rows = tab === "done" ? view.done : view.items;
+  const rows = tab === "done" ? view.recent : view.items;
   const hidden = total - rows.length;
   /**
    * The way out of an empty tab; `null` when there is nowhere worth sending
@@ -734,7 +767,7 @@ function RouteComponent() {
   const renderList = () => (
     <s-box borderWidth="base" borderRadius="base">
       {tab === "done"
-        ? view.done.map((entry, index) => renderDone(entry, index === 0))
+        ? view.recent.map((entry, index) => renderRecent(entry, index === 0))
         : view.items.map((item, index) => renderItem(item, index === 0))}
       {hidden > 0 && renderMore(hidden)}
     </s-box>

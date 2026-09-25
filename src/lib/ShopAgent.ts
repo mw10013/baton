@@ -69,7 +69,8 @@ import {
   type RunNotBlockedError,
   RunNotFoundError,
   type RunTerminalError,
-  type RunFlaggedError,
+  type RunBlockedError,
+  type RunOrderClosedError,
   type TaskNotReadyError,
   type TaskUndoBlockedError,
   WorkflowRunRepository,
@@ -393,9 +394,9 @@ const memberCallableEffect =
  * `lineItemId` is `unique`: **one row per line item**, enforced by the
  * database and not only by the write paths, so reconcile, manual attach and
  * replace all have to be correct under it. The constraint is total, not
- * partial over a status: Cancel run leaves one task-less `cancelled` marker
- * in the item's slot rather than a row beside a live one, and a manual
- * attach replaces it (`Domain.RunStatus`). `OrderLineItem.matchedWorkflowIds` is the other half:
+ * partial over a status: a closed run keeps the item's slot rather than
+ * sitting beside a live one, and a manual attach replaces it
+ * (`Domain.RunStatus`). `OrderLineItem.matchedWorkflowIds` is the other half:
  * the workflows whose tags matched at the last reconcile, from which
  * "ambiguous" (two or more, no run) is derived at read time. `status` is denormalized from the tasks for
  * the run list and the definitions badge; every task write recomputes it in
@@ -411,8 +412,11 @@ const memberCallableEffect =
  * `startedAt` / `startedBy` record Start and make the run `active` before
  * anything is completed. `WorkflowRun.note` is free text about the whole
  * item, one field per run with no author (`Domain.SetRunNoteCommand`).
- * `flag = 'blocked'` is the one flag a person sets (with an optional reason
- * and the actor under `by` in `flagDetail`) rather than reconcile.
+ * `blockedAt` / `blockReason` / `blockedBy` are the one hold a person sets
+ * (`Domain.runIsBlocked`); `blockedBy` is the JSON `Domain.Actor`.
+ * `closedAt` / `closedReason` are set together when a run closes
+ * (`Domain.ClosedReason`), and `quantityChangedFrom` is the quantity badge
+ * (`Domain.WorkflowRun`).
  *
  * `startedByRole` / `completedByRole` / `reopenedByRole` are the actor
  * discriminator (`Domain.Actor`): the merchant acts on these rows from the
@@ -551,19 +555,23 @@ const initializeSchema = Effect.gen(function* () {
       quantity integer not null,
       lineItemProperties text not null,
       source text not null check (source in ('tag', 'manual')),
-      status text not null check (status in ('pending', 'active', 'done', 'cancelled')),
-      flag text check (flag in ('item_removed', 'quantity_changed', 'order_cancelled', 'blocked', 'order_fulfilled')),
-      flagAt integer,
-      flagDetail text,
+      status text not null check (status in ('pending', 'active', 'done', 'closed')),
+      blockedAt integer,
+      blockReason text,
+      blockedBy text,
+      quantityChangedFrom integer,
       note text,
       createdAt integer not null,
       updatedAt integer not null,
-      cancelledAt integer
+      closedAt integer,
+      closedReason text check (closedReason in ('fulfilled', 'order_cancelled', 'item_removed', 'merchant_cancelled'))
     );
     create index if not exists WorkflowRun_orderId_idx on WorkflowRun (orderId);
     create index if not exists WorkflowRun_status_idx on WorkflowRun (status);
     create index if not exists WorkflowRun_open_age_idx
       on WorkflowRun (orderProcessedAt, lineItemId, id) where status in ('pending', 'active');
+    create index if not exists WorkflowRun_closed_idx
+      on WorkflowRun (closedAt) where status = 'closed';
     create table if not exists WorkflowRunTask (
       id text primary key,
       runId text not null references WorkflowRun (id) on delete cascade,
@@ -969,7 +977,8 @@ const runResult = <R>(
     void,
     | RunNotFoundError
     | RunTerminalError
-    | RunFlaggedError
+    | RunBlockedError
+    | RunOrderClosedError
     | RunNotAllowedError
     | RunNotBlockedError
     | TaskNotReadyError
@@ -997,8 +1006,10 @@ const runResult = <R>(
         Effect.succeed<Domain.RunResult>({ _tag: "NotFound" }),
       RunTerminalError: () =>
         Effect.succeed<Domain.RunResult>({ _tag: "Terminal" }),
-      RunFlaggedError: ({ flag }) =>
-        Effect.succeed<Domain.RunResult>({ _tag: "Flagged", flag }),
+      RunBlockedError: () =>
+        Effect.succeed<Domain.RunResult>({ _tag: "Blocked" }),
+      RunOrderClosedError: () =>
+        Effect.succeed<Domain.RunResult>({ _tag: "Terminal" }),
       RunNotAllowedError: () =>
         Effect.succeed<Domain.RunResult>({ _tag: "NotAllowed" }),
       RunNotBlockedError: () =>
@@ -2333,7 +2344,7 @@ export class ShopAgent extends Agent {
    * their resolved team names and member counts, and the roster the picker
    * needs. Both attention states are derived here and never stored: a task
    * whose `teamId` is null or names no team resolves to `teamName: null`
-   * (unassigned — flagged, never blocked in the editor, since the risk is
+   * (unassigned — warned, never blocked in the editor, since the risk is
    * when a run starts); a task on a team with no members carries
    * `memberCount: 0`. Assigning a team or adding a member clears either with
    * no other write.
@@ -2893,17 +2904,17 @@ export class ShopAgent extends Agent {
       const runs = yield* WorkflowRunRepository;
       return (order: Domain.ShopOrder) =>
         runs.reconcileOrder({ ...context, orderId: order.id }).pipe(
-          Effect.tap(({ created, removed, flagged, ambiguous }) =>
+          Effect.tap(({ created, resized, closed, ambiguous }) =>
             Effect.logInfo(
-              `ShopAgent.reconcileOrder: shop=${shop} orderId=${order.id} source=${source} created=${String(created)} removed=${String(removed)} flagged=${String(flagged)} ambiguous=${String(ambiguous)}`,
+              `ShopAgent.reconcileOrder: shop=${shop} orderId=${order.id} source=${source} created=${String(created)} resized=${String(resized)} closed=${String(closed)} ambiguous=${String(ambiguous)}`,
             ).pipe(
               Effect.annotateLogs({
                 shop,
                 orderId: order.id,
                 source,
                 created,
-                removed,
-                flagged,
+                resized,
+                closed,
                 ambiguous,
               }),
             ),
@@ -3023,13 +3034,13 @@ export class ShopAgent extends Agent {
    * workflow for a line item by hand is exactly the override for a missing
    * tag, a fulfilled line, or an order placed before the workflow was turned
    * on. What it is not is an override of the order itself being over, which
-   * is `Domain.canAttachRun`.
+   * is `Domain.orderIsOpen`.
    *
    * An item holds at most one run, so attaching over one is a replace: the
    * incumbent is deleted in the same transaction and comes back as
    * `replaced` for the toast. The same workflow again is `AlreadyExists`.
-   * Over a `cancelled` marker it is a fresh start, the cancelled workflow
-   * included, and `replaced` is null (`Domain.RunStatus`). An item with no
+   * Over a closed run it is a fresh start, the closed workflow included, and
+   * `replaced` is null (`Domain.RunStatus`). An item with no
    * units to make is `NothingToMake`, the same rule as `changeWorkflow` on
    * `Domain.runActions`. Confirmation is the UI's job, not this one's — the
    * server cannot know whether the merchant has seen the trail of work
@@ -3069,7 +3080,7 @@ export class ShopAgent extends Agent {
             return {
               _tag: "WorkflowCannotStart",
             } satisfies Domain.AttachResult;
-          if (!Domain.canAttachRun(target.value.order))
+          if (!Domain.orderIsOpen(target.value.order))
             return { _tag: "OrderClosed" } satisfies Domain.AttachResult;
           // The same rule as `changeWorkflow` ({@link Domain.runActions}), for
           // an item with no run too: nothing to make, nothing to start.
@@ -3077,15 +3088,15 @@ export class ShopAgent extends Agent {
             return { _tag: "NothingToMake" } satisfies Domain.AttachResult;
           // Over a run this is Change workflow, gated like every run write
           // ({@link requireRunAction}); the only way `changeWorkflow` is
-          // false on an open order is a done run. Over a `cancelled` marker
-          // it is the picker at rest, which the order gate above covers.
+          // false on an open order is a done run. Over a closed run it is the
+          // picker at rest, which the order gate above covers.
           const repository = yield* WorkflowRunRepository;
           const incumbent = (yield* repository.listRunsForOrder({
             orderId: target.value.order.id,
           })).find(({ run }) => run.lineItemId === lineItemId);
           if (
             incumbent !== undefined &&
-            !Domain.runIsCancelled(incumbent.run) &&
+            !Domain.runIsClosed(incumbent.run) &&
             !Domain.runActions(
               MERCHANT,
               target.value.order,
@@ -3129,10 +3140,11 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Turns the run into the item's `cancelled` marker
-   * (`WorkflowRunRepository.cancelRun`, rule on `Domain.RunStatus`). The team
-   * scope is read before the write, because the write deletes the run's
-   * tasks and {@link publishToTeams} finds a run's teams through them.
+   * Closes the run, reason `merchant_cancelled`
+   * (`WorkflowRunRepository.cancelRun`, rule on `Domain.RunStatus`). Gated by
+   * `Domain.runActions` `cancel`, which is false on a closed order: reconcile
+   * has already closed every open run there. The run leaves every team's
+   * lists, so the publish reaches every team on the order.
    */
   @callable()
   merchantCancelRun(
@@ -3164,8 +3176,8 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * The merchant's task and flag writes on a run, from the order page's
-   * Manage drawer and flag banner. Each is gated by {@link requireRunAction}
+   * The merchant's task and block writes on a run, from the order page's
+   * Manage drawer and block banner. Each is gated by {@link requireRunAction}
    * or {@link requireTaskAction} before the repository sees it. Separate methods rather than a role branch inside the member ones
    * because the role gate is declared *per method* — `CALLABLE_ROLES` in
    * `test/integration/shop-agent-callables.test.ts` enumerates the decorated
@@ -3366,24 +3378,24 @@ export class ShopAgent extends Agent {
   }
 
   @callable()
-  merchantDismissFlag(
+  merchantUnblockRun(
     input: typeof Domain.RunIdInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
     const publish = (runId: string) => this.publishToTeams({ runId });
     return this.runEffect(
-      callableEffect("ShopAgent.merchantDismissFlag", Domain.RunIdInput, {
+      callableEffect("ShopAgent.merchantUnblockRun", Domain.RunIdInput, {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })(({ runId }) =>
         runResult(
           Effect.gen(function* () {
-            yield* requireRunAction(runId, MERCHANT, "liftFlag");
-            yield* (yield* WorkflowRunRepository).dismissFlag({
+            yield* requireRunAction(runId, MERCHANT, "unblock");
+            yield* (yield* WorkflowRunRepository).unblockRun({
               runId,
-            } satisfies Domain.DismissFlagCommand);
+            } satisfies Domain.UnblockRunCommand);
             yield* Effect.logInfo(
-              `ShopAgent.merchantDismissFlag: shop=${shop} runId=${runId}`,
+              `ShopAgent.merchantUnblockRun: shop=${shop} runId=${runId}`,
             ).pipe(Effect.annotateLogs({ shop, runId }));
           }),
         ).pipe(Effect.tap(() => publish(runId))),
@@ -3432,14 +3444,14 @@ export class ShopAgent extends Agent {
    * comes from one call so the loader and the socket paint one snapshot: the
    * strip and the list under it are never two reads that can disagree.
    *
-   * The Done count is read on every tab (`listDone` with `limit: 0` counts
-   * without reading rows) because the strip shows it whatever is open; its
-   * rows are read only when `query.tab` is "done".
+   * The Recent count is read on every tab (`listRecent` with `limit: 0`
+   * counts without reading rows) because the strip shows it whatever is
+   * open; its rows are read only when `query.tab` is "done".
    *
-   * `query.team` narrows Done the same way it narrows the tiers, and a team
+   * `query.team` narrows Recent the same way it narrows the tiers, and a team
    * the member is not on narrows it to nothing — the same answer the
-   * repository gives for the tiers, reached here because `listDone` takes the
-   * team list already narrowed.
+   * repository gives for the tiers, reached here because `listRecent` takes
+   * the team list already narrowed.
    */
   private readRuns(
     teamIds: readonly Domain.TeamId[],
@@ -3455,12 +3467,12 @@ export class ShopAgent extends Agent {
         memberEmail,
         query,
       });
-      const doneTeamIds =
+      const recentTeamIds =
         query.team === null
           ? teamIds
           : teamIds.filter((teamId) => teamId === query.team);
-      const done = yield* repository.listDone({
-        teamIds: doneTeamIds,
+      const recent = yield* repository.listRecent({
+        teamIds: recentTeamIds,
         since: started - Domain.DONE_WINDOW_MS,
         limit: query.tab === "done" ? query.limit : 0,
       });
@@ -3469,7 +3481,7 @@ export class ShopAgent extends Agent {
        * `rows` is what left the object, and it must stay at or under
        * `query.limit`.
        */
-      const rows = query.tab === "done" ? done.items.length : items.length;
+      const rows = query.tab === "done" ? recent.items.length : items.length;
       const team = query.team ?? "all";
       const ms = (yield* Clock.currentTimeMillis) - started;
       yield* Effect.logInfo(
@@ -3485,9 +3497,9 @@ export class ShopAgent extends Agent {
         }),
       );
       return {
-        counts: { ...counts, done: done.total },
+        counts: { ...counts, done: recent.total },
         items,
-        done: done.items,
+        recent: recent.items,
       } satisfies Domain.RunListView;
     });
   }
@@ -3825,26 +3837,22 @@ export class ShopAgent extends Agent {
   }
 
   @callable()
-  memberDismissFlag(
-    input: typeof Domain.DismissFlagInput.Encoded,
+  memberUnblockRun(
+    input: typeof Domain.RunIdInput.Encoded,
   ): Promise<Domain.RunResult> {
     const publish = (runId: string) => this.publishToTeams({ runId });
     return this.runEffect(
-      memberCallableEffect(
-        "ShopAgent.memberDismissFlag",
-        Domain.DismissFlagInput,
-        {
-          onExcessProperty: "error",
-        },
-      )(({ runId }, { memberId, memberEmail, teamIds }) =>
+      memberCallableEffect("ShopAgent.memberUnblockRun", Domain.RunIdInput, {
+        onExcessProperty: "error",
+      })(({ runId }, { memberId, memberEmail, teamIds }) =>
         runResult(
           Effect.gen(function* () {
             const actor = memberActor({ memberId, memberEmail, teamIds });
-            yield* requireRunAction(runId, actor, "liftFlag");
-            yield* (yield* WorkflowRunRepository).dismissFlag({
+            yield* requireRunAction(runId, actor, "unblock");
+            yield* (yield* WorkflowRunRepository).unblockRun({
               runId,
               teamIds,
-            } satisfies Domain.DismissFlagCommand);
+            } satisfies Domain.UnblockRunCommand);
           }),
         ).pipe(Effect.tap(() => publish(runId))),
       )(input),
@@ -4258,8 +4266,8 @@ export class ShopAgent extends Agent {
    * each key means): upsert and reconcile; each item's `workflowId` through
    * `setRun`, the merchant's own Choose; progress, dispatched per run so one
    * order's items can be in different states; then the order's `after` state
-   * through a second upsert, which is the only way to reach the flags that
-   * need the change to land *after* a run exists.
+   * through a second upsert, which is the only way to reach the closed and
+   * resized runs that need the change to land *after* a run exists.
    */
   @callable()
   seedOrders(input: typeof Domain.SeedOrdersInput.Encoded): Promise<void> {
@@ -4403,6 +4411,7 @@ export class ShopAgent extends Agent {
                   Effect.catchTags({
                     RunNotFoundError: () => Effect.void,
                     RunTerminalError: () => Effect.void,
+                    RunOrderClosedError: () => Effect.void,
                   }),
                 );
             });

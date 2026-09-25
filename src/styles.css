@@ -242,7 +242,7 @@ details[open] > .live-value-summary .live-value-preview {
  *
  * Two columns on a phone (below 27rem), three on a tablet and up. `1fr` is
  * `minmax(auto, 1fr)`, so a cell will not shrink under its own button's
- * width: three columns of "Done today · 128" spill a 390px screen, and a
+ * width: three columns of "Teammates · 128" spill a 390px screen, and a
  * strip that spills is the scrollbar this layout exists to remove. Measured
  * against three-digit counts at 320, 360, 375, 390, 430 and 600.
  *

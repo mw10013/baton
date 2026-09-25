@@ -486,9 +486,9 @@ export class WorkflowRepository extends Context.Service<
     >;
     /**
      * The object-side half of a team delete: every workflow task, draft task,
-     * and *open* run task that points at `teamId` becomes unassigned, in one
-     * transaction. Finished run tasks keep the pointer and their `teamName`
-     * snapshot. Idempotent, so a retry after a failed first attempt (D1 row
+     * and *open* run task of an open run that points at `teamId` becomes
+     * unassigned, in one transaction. Finished run tasks and every task of a
+     * closed run keep the pointer and their `teamName` snapshot. Idempotent, so a retry after a failed first attempt (D1 row
      * already gone) still cleans up. Touches `WorkflowRunTask` from here
      * rather than from the run repository because the three updates must
      * share one transaction and Durable Object SQLite refuses to nest.
@@ -1726,9 +1726,16 @@ export class WorkflowRepository extends Context.Service<
             Effect.gen(function* () {
               yield* sql`update WorkflowTask set teamId = null where teamId = ${teamId}`;
               yield* sql`update WorkflowDraftTask set teamId = null where teamId = ${teamId}`;
+              // Open tasks of open runs only: a closed run's unfinished tasks
+              // are a record like finished ones (`Domain.RunStatus`), and
+              // nulling their team would drop the run from the Recent tab of
+              // the team that could see it.
               yield* sql`
                 update WorkflowRunTask set teamId = null
                 where teamId = ${teamId} and completedAt is null
+                  and runId in (
+                    select id from WorkflowRun where status in ('pending', 'active')
+                  )
               `;
             }),
           );

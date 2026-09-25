@@ -208,8 +208,8 @@ export const memberActions = (socket: AgentSocket) => ({
     socket.call<Domain.RunResult>("memberSetRunNote", input),
   blockRun: (input: typeof Domain.BlockRunInput.Encoded) =>
     socket.call<Domain.RunResult>("memberBlockRun", input),
-  dismissFlag: (input: typeof Domain.DismissFlagInput.Encoded) =>
-    socket.call<Domain.RunResult>("memberDismissFlag", input),
+  unblockRun: (input: typeof Domain.RunIdInput.Encoded) =>
+    socket.call<Domain.RunResult>("memberUnblockRun", input),
   setBlockReason: (input: typeof Domain.SetBlockReasonInput.Encoded) =>
     socket.call<Domain.RunResult>("memberSetBlockReason", input),
   uncompleteTask: (input: typeof Domain.UncompleteTaskInput.Encoded) =>
@@ -219,7 +219,7 @@ export const memberActions = (socket: AgentSocket) => ({
 });
 
 /**
- * The merchant's run writes on tasks and flags, typed, over an already-open merchant
+ * The merchant's run writes on tasks and blocks, typed, over an already-open merchant
  * socket. No identity on the wire and none on the connection either: the
  * merchant *is* the shop, so the object supplies `{ role: "merchant" }` and no
  * `teamIds` (`ShopAgent.merchantCompleteTask`).
@@ -233,8 +233,8 @@ export const merchantActions = (socket: AgentSocket) => ({
     socket.call<Domain.RunResult>("merchantSetRunNote", input),
   blockRun: (input: typeof Domain.BlockRunInput.Encoded) =>
     socket.call<Domain.RunResult>("merchantBlockRun", input),
-  dismissFlag: (input: typeof Domain.RunIdInput.Encoded) =>
-    socket.call<Domain.RunResult>("merchantDismissFlag", input),
+  unblockRun: (input: typeof Domain.RunIdInput.Encoded) =>
+    socket.call<Domain.RunResult>("merchantUnblockRun", input),
   setBlockReason: (input: typeof Domain.SetBlockReasonInput.Encoded) =>
     socket.call<Domain.RunResult>("merchantSetBlockReason", input),
   unstartTask: (input: typeof Domain.UnstartTaskInput.Encoded) =>

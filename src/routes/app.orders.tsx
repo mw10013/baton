@@ -31,7 +31,7 @@ declare module "@tanstack/react-router" {
  * left.
  *
  * `?q=` is the order-number search; `?status=` picks a lifecycle position
- * (`ready_to_ship` is the packer's view, `all` the whole history); `?need=`
+ * (`made` is the packer's view, `all` the whole history); `?need=`
  * keeps only open orders with that problem (`Domain.OrderNeed`); `?team=`
  * keeps only orders waiting on that team, which is the link the team detail
  * page drills in with; `?after=` is the page, as the keyset cursor it starts

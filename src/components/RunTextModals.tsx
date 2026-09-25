@@ -189,7 +189,10 @@ export function BlockModal({
   onSaveReason,
 }: {
   readonly id: string;
-  readonly run: Pick<Domain.WorkflowRun, "orderName" | "flag" | "flagDetail">;
+  readonly run: Pick<
+    Domain.WorkflowRun,
+    "orderName" | "blockedAt" | "blockReason"
+  >;
   readonly pending: boolean;
   readonly onBlock: (reason: string) => Promise<string | null>;
   readonly onSaveReason: (reason: string) => Promise<string | null>;
@@ -201,7 +204,7 @@ export function BlockModal({
       heading={blocked ? "Block reason" : `Block ${run.orderName}?`}
       label="Reason"
       placeholder="What is stopping this? Who needs to know?"
-      saved={blocked ? (run.flagDetail?.reason ?? "") : ""}
+      saved={blocked ? (run.blockReason ?? "") : ""}
       maxLength={Domain.BLOCK_REASON_MAX_LENGTH}
       pending={pending}
       submitLabel={blocked ? "Save" : "Block"}
