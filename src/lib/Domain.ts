@@ -3952,13 +3952,10 @@ export type TaskActions = typeof TaskActions.Type;
  * (`refs/shopify-docs/docs/apps/design/layout.md`, "Cards that offer
  * interactivity"), and a step with two current tasks would draw two.
  *
- * **Nothing on a member screen renders that blocker.** The run list drops the
- * row's menu and the work page lists the whole run, so the started task
- * standing in the way is already on screen wearing its own badge, and a
- * sentence naming it is the page arguing with itself. The merchant's order
- * page is the one screen that puts it in words, because it can reopen that
- * task and so has an instruction to give; the wording lives there, next to
- * the only thing that renders it.
+ * When reopen is blocked, the merchant sees which task is in the way,
+ * because the merchant can reopen or put back that task. A member sees
+ * no Reopen button and no explanation: they cannot change the other
+ * task, and it is already on their screen marked started.
  */
 export const taskActions = (
   actor: Actor,
