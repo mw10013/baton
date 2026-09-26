@@ -16,23 +16,19 @@ import type * as Domain from "@/lib/Domain";
 export const TABS = [
   "mine",
   "upNext",
-  "inProgress",
-  "attention",
+  "teammates",
+  "blocked",
   "done",
 ] as const satisfies readonly Domain.RunTab[];
 
 /**
- * The `attention` tab reads **Blocked**, because a block is the only thing it
- * holds (`Domain.RunTab`): a Shopify change never lands here.
+ * The `blocked` tab reads **Blocked**: a block is the only thing it holds
+ * (`Domain.RunTab`), and a Shopify change never lands here.
  *
- * The `inProgress` tab reads **Teammates** for the opposite reason: "In
- * progress" is already the state line on the member's own rows (`In progress
- * · you`) and the active item badge, so as a tab word it would name the
- * wrong thing twice over. What the tab is for is who is holding the work, and
- * that is what it says. The tier key stays `inProgress` — the object groups,
- * the strip labels.
+ * The `teammates` tab reads **Teammates**: the tab is about who holds the
+ * work, so it says so.
  *
- * The `done` tab reads **Recent**: it holds finished tasks and closed runs
+ * The `done` tab reads **Recent**: it holds done tasks and closed runs
  * (`Domain.RecentItem`), and "Done" would be wrong for a run Shopify closed.
  * The window is `Domain.DONE_WINDOW_MS`; the empty state says "in the last
  * day", which is where that precision belongs. The key stays `done`.
@@ -40,8 +36,8 @@ export const TABS = [
 export const TAB_LABEL: Record<Domain.RunTab, string> = {
   mine: "Mine",
   upNext: "Up next",
-  inProgress: "Teammates",
-  attention: "Blocked",
+  teammates: "Teammates",
+  blocked: "Blocked",
   done: "Recent",
 };
 
@@ -52,7 +48,7 @@ export const TAB_EMPTY: Record<
 > = {
   mine: { text: "Nothing in hand.", goTo: "upNext" },
   upNext: { text: "Nothing to start.", goTo: null },
-  inProgress: { text: "Nobody else has work.", goTo: null },
-  attention: { text: "Nothing is blocked.", goTo: null },
-  done: { text: "Nothing finished or closed in the last day.", goTo: null },
+  teammates: { text: "Nobody else has work.", goTo: null },
+  blocked: { text: "Nothing is blocked.", goTo: null },
+  done: { text: "Nothing done or closed in the last day.", goTo: null },
 };

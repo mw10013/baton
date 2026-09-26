@@ -160,7 +160,7 @@ const flushed = () =>
   }).pipe(Effect.provide(acceptingAppEvents));
 
 describe("OrderRepository.upsertOrder", () => {
-  it("stores an order with its line items", async () => {
+  it("stores an order with its items", async () => {
     const detail = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
@@ -179,7 +179,7 @@ describe("OrderRepository.upsertOrder", () => {
    * The guard that lets a retried webhook, a mid-stream bulk line, and a manual
    * resync all write the same row in any order.
    */
-  it("leaves the row and its line items alone for an older updatedAt", async () => {
+  it("leaves the row and its items alone for an older updatedAt", async () => {
     const detail = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
@@ -217,7 +217,7 @@ describe("OrderRepository.upsertOrder", () => {
    * The guard is `>=`, not `>`: both timestamps are Shopify's own version of
    * the order, so an equal one is the same version and rewriting it is free.
    * Refusing a tie would instead drop a redelivery of a write that failed
-   * halfway through its line items.
+   * halfway through its items.
    */
   it("accepts an equal updatedAt and rewrites the row", async () => {
     const { written, detail } = await runInRepository(
@@ -319,7 +319,7 @@ const seedStates = Effect.gen(function* () {
     readonly n: number;
     readonly order?: Partial<Domain.ShopOrder>;
     readonly statuses: readonly Domain.RunStatus[];
-    /** Written onto the order's own line item; two or more with no run on it is ambiguous. */
+    /** Written onto the order's own item; two or more with no run on it is ambiguous. */
     readonly matched?: readonly string[];
   }[] = [
     { n: 1, statuses: ["done"] }, // made
@@ -802,7 +802,7 @@ describe("OrderRepository.listOrders need team", () => {
   /**
    * `Domain.OrderRow.attention` against a roster the test hands in: #3's
    * active run has an open task on a deleted team, #4's unstarted run has a
-   * ready task on an empty team, #1's finished run keeps a stale pointer on
+   * current task on an empty team, #1's done run keeps a stale pointer on
    * a done task and never counts, and #8 is healthy.
    */
   it("keeps only orders with an unassigned or unstaffed open task, and counts them", async () => {
@@ -854,8 +854,8 @@ describe("OrderRepository.listOrders need team", () => {
 });
 
 /**
- * `Domain.OrderRow.waitingOn`: the teams with a ready task on an open run,
- * through the same `readyWhere` the member's run list runs on, so the cell and the
+ * `Domain.OrderRow.waitingOn`: the teams with a current task on an open run,
+ * through the same `currentWhere` the member's run list runs on, so the cell and the
  * filter are one fact rendered two ways. The fixture reuses `seedStates`'
  * runs and hangs tasks off them; on #1003 and #1004, `run-N-0` is done and
  * `run-N-1` is open.
@@ -872,7 +872,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
     const repository = yield* seedStates;
     const sql = yield* SqlClient.SqlClient;
     /* `position` is unique per run and only orders a list, so it comes off a
-       counter; `step` is what readiness is about and every case names it. */
+       counter; `step` decides which tasks are current and every case names it. */
     let position = 0;
     const task = (
       id: string,
@@ -888,7 +888,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
         values (${id}, ${runId}, ${position}, ${step}, 'Task', ${team}, 'Team', ${doneAt})
       `;
     };
-    /* #1003: two open item runs both ready on Cut, so the id is distinct
+    /* #1003: two open item runs both current on Cut, so the id is distinct
        across runs; the done run's task is on Cut too, and a run that is over
        holds nobody up. */
     yield* sql`
@@ -905,7 +905,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
     yield* task("s3a", "run-3-1", 1, "team-cut");
     yield* task("s3b", "run-3-0", 1, "team-cut");
     yield* task("s3e", "run-3-2", 1, "team-cut");
-    /* #1004: ready on Cut, with a later step on Anodize that is not ready.
+    /* #1004: current on Cut, with a later step on Anodize that is not current.
        Anodize sorts first by name, so it would show if it counted. */
     yield* task("s4a", "run-4-1", 1, "team-cut");
     yield* task("s4b", "run-4-1", 2, "team-polish");
@@ -928,7 +928,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
   /**
    * `#1007` is fulfilled and `#1006` cancelled. Reconcile closes every open
    * run on a closed order, but the rule does not lean on that: each is given
-   * a leftover active run with an unassigned ready task and a ready task on
+   * a leftover active run with an unassigned current task and a current task on
    * Cut, and neither order has a need or waits on anyone, in the cell or
    * under the filter, whichever status is showing.
    */
@@ -968,7 +968,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
     deepStrictEqual(names(cut), ["#1004", "#1003"]);
   });
 
-  it("names each team once, only for ready tasks on open runs", async () => {
+  it("names each team once, only for current tasks on open runs", async () => {
     const page = await runInRepository(
       Effect.gen(function* () {
         const { list } = yield* waitingFixture;
@@ -982,7 +982,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
   });
 
   /**
-   * A blocked run's ready task still satisfies `readyWhere` (the run list keeps
+   * A blocked run's current task still satisfies `currentWhere` (the run list keeps
    * showing it), but the team cannot move it, so the cell and the filter both
    * leave the team out; `RunCounts.blocked` is where that run is counted.
    */
@@ -1027,7 +1027,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
         return {
           all: yield* list(),
           cut: yield* list(aTeamId("team-cut")),
-          /* Anodize owns #1004's second step, which is not ready yet. */
+          /* Anodize owns #1004's second step, which is not current yet. */
           polish: yield* list(aTeamId("team-polish")),
           unknown: yield* list(aTeamId("team-nobody")),
         };

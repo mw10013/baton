@@ -551,7 +551,7 @@ describe("WorkflowRepository", () => {
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
-        // The seed's line items point at a workflow by id, and nothing else
+        // The seed's items point at a workflow by id, and nothing else
         // in this write path hands one back.
         const seeded = yield* repo.replaceWorkflows({
           workflows: [

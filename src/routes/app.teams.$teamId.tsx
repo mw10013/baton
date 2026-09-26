@@ -358,7 +358,7 @@ function RouteComponent() {
     if (current.length === 0)
       return emptyState(
         "No members yet",
-        "Nobody is on this team, so its tasks sit unclaimed until someone joins.",
+        "Nobody is on this team, so its tasks wait until a member joins.",
         addButton(false),
       );
     return (
@@ -423,7 +423,7 @@ function RouteComponent() {
       {/* The drill-in that makes the orders filter discoverable from the
           suspicion that prompts it — "is this team backed up?" — rather than
           from browsing a picker. `?team=` means waiting on: the orders whose
-          ready task is this team's right now (open orders only, see
+          current task is this team's right now (open orders only, see
           `Domain.OrderRow.waitingOn`), not every order it ever touched. Production state stays on Orders; this page is the roster
           (`UsedByCard` below is configuration, not run state). */}
       <s-button

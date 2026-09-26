@@ -5,9 +5,9 @@ import * as WorkflowLayout from "@/lib/WorkflowLayout";
 
 /**
  * The Change workflow modal's warning on a run that has work on it. Done
- * outranks started because it is the bigger loss: a finished task is work
+ * outranks started because it is the bigger loss: a done task is work
  * someone will have to do again under the new workflow, while a started one
- * is work in progress. Tasks do not carry over — the new run is copied from
+ * is someone's work in hand. Tasks do not carry over — the new run is copied from
  * its own definition — so the sentence says so rather than leaving the
  * merchant to assume otherwise.
  *
@@ -44,12 +44,17 @@ export const changeWarning = (
   return `${from} has ${progress}. Change to ${to} anyway? ${lost} will not carry over.`;
 };
 
+/** The Cancel workflow modal's heading: the question, naming the workflow and the item. */
+export const cancelHeading = (workflow: Domain.WorkflowName, item: string) =>
+  `Cancel ${workflow} on ${item}?`;
+
 /**
- * The Cancel run modal's body. Cancel run closes the run
+ * The Cancel workflow modal's body. Cancel workflow closes the run
  * (`merchant_cancelled`, `Domain.ClosedReason`): work on it stops, the steps
  * already done stay on the run as the record, and nothing starts on the item
  * until the merchant chooses a workflow (`Domain.RunStatus`). There is no way
- * back, so this is the guard against a mistaken cancel.
+ * back, so this is the guard against a mistaken cancel. The heading
+ * ({@link cancelHeading}) names what is cancelled, so the body does not.
  */
-export const cancelWarning = (workflow: Domain.WorkflowName, item: string) =>
-  `Cancel the ${workflow} run on ${item}? Work on it stops. Steps already done stay on record. You can start another workflow on the item afterwards.`;
+export const CANCEL_WARNING =
+  "Work on it stops. Steps already done stay on record. You can attach another workflow to the item afterwards.";

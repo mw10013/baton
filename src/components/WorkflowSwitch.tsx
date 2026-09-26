@@ -170,7 +170,7 @@ export function WorkflowSwitch({
 
   /**
    * Read when the dialog opens, not on page load: the count walks the open
-   * orders' line items, which is fine once per decision and wasteful on
+   * orders' items, which is fine once per decision and wasteful on
    * every visit to a page that mostly shows tasks.
    */
   const waiting = useQuery({
@@ -216,7 +216,7 @@ export function WorkflowSwitch({
            reassurance about work in progress is. */
         const turnedOff =
           result.started === 0
-            ? "Turned off. Open runs finish."
+            ? "Turned off. Items already on it keep going."
             : startedToast(TURNED_OFF, result.started);
         shopify.toast.show(
           Domain.isActive(result.workflow)
@@ -374,8 +374,8 @@ export function WorkflowSwitch({
       <s-modal id={CHANGE_ACTIVATED_AT_MODAL} heading="Change the start date">
         <s-stack gap="base">
           <s-paragraph>
-            Runs start on orders placed on or after this date. Earlier orders
-            are never touched.
+            It starts on orders placed on or after this date. Earlier orders are
+            never touched.
           </s-paragraph>
           <s-date-field
             label="Applies to orders placed since"

@@ -32,15 +32,15 @@ export const runResultMessage = Match.typeTags<
   /* Only the reason editor can reach this: somebody unblocked the run while
      it was open, so the edit has nothing to write on. */
   NotBlocked: () => "This work is no longer blocked.",
-  /* Also a Put back on a task someone else put back or finished just now. */
+  /* Also a Put back on a task whose Put back or Done by someone else landed just now. */
   NotReady: () =>
     "This task or an earlier one changed just now, or this task is waiting on another team. Refresh.",
-  /* A finished run, or one Shopify or the merchant closed under the page. */
-  Terminal: () => "This work is already finished or closed.",
+  /* A done run, or one Shopify or the merchant closed under the page. */
+  Terminal: () => "This work is already done or closed.",
   /* The page hides Start and Done behind the block; a block that landed
      after the render is the only way here. */
   Blocked: () => "This work was blocked just now. Unblock it first.",
-  UndoBlocked: ({ taskName, teamName }) =>
+  ReopenBlocked: ({ taskName, teamName }) =>
     `${teamName} already started ${taskName}. Ask them.`,
 });
 
@@ -90,17 +90,17 @@ export const useMemberRunActions = ({
     mutationFn: (runTaskId: string) =>
       call((stub) => stub.memberStartTask({ runTaskId })).then(settle),
   });
-  const complete = useMutation({
+  const markDone = useMutation({
     mutationFn: (runTaskId: string) =>
-      call((stub) => stub.memberCompleteTask({ runTaskId })).then(settle),
+      call((stub) => stub.memberMarkTaskDone({ runTaskId })).then(settle),
   });
-  const uncomplete = useMutation({
+  const reopen = useMutation({
     mutationFn: (runTaskId: string) =>
-      call((stub) => stub.memberUncompleteTask({ runTaskId })).then(settle),
+      call((stub) => stub.memberReopenTask({ runTaskId })).then(settle),
   });
-  const unstart = useMutation({
+  const putBack = useMutation({
     mutationFn: (runTaskId: string) =>
-      call((stub) => stub.memberUnstartTask({ runTaskId })).then(settle),
+      call((stub) => stub.memberPutBackTask({ runTaskId })).then(settle),
   });
   const note = useMutation({
     mutationFn: ({ runId, note }: { runId: string; note: string }) =>
@@ -126,9 +126,9 @@ export const useMemberRunActions = ({
   });
   const mutations = [
     start,
-    complete,
-    uncomplete,
-    unstart,
+    markDone,
+    reopen,
+    putBack,
     note,
     block,
     setBlockReason,
@@ -149,7 +149,7 @@ export const useMemberRunActions = ({
    * would print the same sentence twice, once behind the modal and again
    * after it closes, until the next write cleared it.
    */
-  const bannerMutations = [start, complete, uncomplete, unstart, unblock];
+  const bannerMutations = [start, markDone, reopen, putBack, unblock];
   const banner =
     bannerMutations.find((mutation) => mutation.error)?.error?.message ??
     bannerMutations
@@ -158,9 +158,9 @@ export const useMemberRunActions = ({
     null;
   return {
     start,
-    complete,
-    uncomplete,
-    unstart,
+    markDone,
+    reopen,
+    putBack,
     note,
     block,
     setBlockReason,

@@ -201,7 +201,7 @@ describe("member run list", () => {
           200,
         );
         strictEqual(
-          (yield* fetchWorker(`http://localhost/shop/${SHOP}/workflows/none`, {
+          (yield* fetchWorker(`http://localhost/shop/${SHOP}/work/none`, {
             headers: { cookie },
           })).status,
           200,
@@ -213,12 +213,9 @@ describe("member run list", () => {
           404,
         );
         strictEqual(
-          (yield* fetchWorker(
-            `http://localhost/shop/${OTHER_SHOP}/workflows/none`,
-            {
-              headers: { cookie },
-            },
-          )).status,
+          (yield* fetchWorker(`http://localhost/shop/${OTHER_SHOP}/work/none`, {
+            headers: { cookie },
+          })).status,
           404,
         );
       }),
@@ -283,7 +280,7 @@ describe("member run list", () => {
         });
         const cookie = yield* signInThroughWorker(MEMBER);
         const stranger = yield* signInThroughWorker(STRANGER);
-        for (const path of [`/shop/${SHOP}`, `/shop/${SHOP}/workflows/none`]) {
+        for (const path of [`/shop/${SHOP}`, `/shop/${SHOP}/work/none`]) {
           const response = yield* fetchWorker(`http://localhost${path}`, {
             headers: { cookie },
           });

@@ -64,7 +64,7 @@ test("a seeded member signs in by magic link, lands on their run list, and signs
 
   await expect(page).toHaveURL(new RegExp(`/shop/${config.shop}$`, "u"));
   await expect(
-    page.locator('s-section[accessibilityLabel="Workflows"]'),
+    page.locator('s-section[accessibilityLabel="Work"]'),
   ).toBeVisible();
   await expect(page.getByText(config.shop, { exact: true })).toBeVisible();
   await expect(page.getByText(MEMBER_EMAIL, { exact: true })).toBeVisible();
@@ -80,7 +80,7 @@ test("a seeded member signs in by magic link, lands on their run list, and signs
   ).toBeVisible();
   await page.getByRole("link", { name: config.shop }).click();
   await expect(
-    page.locator('s-section[accessibilityLabel="Workflows"]'),
+    page.locator('s-section[accessibilityLabel="Work"]'),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Sign out" }).click();
@@ -105,7 +105,7 @@ test("removing a member closes the shop page on their live session", async ({
   await requestMagicLink(page, MEMBER_EMAIL);
   await followMagicLink(page);
   await expect(
-    page.locator('s-section[accessibilityLabel="Workflows"]'),
+    page.locator('s-section[accessibilityLabel="Work"]'),
   ).toBeVisible();
 
   await seedMembers(config, []);
@@ -143,7 +143,7 @@ test("a member sees the teams they are on, and only those", async ({
   await requestMagicLink(page, MEMBER_EMAIL);
   await followMagicLink(page);
   await expect(
-    page.locator('s-section[accessibilityLabel="Workflows"]'),
+    page.locator('s-section[accessibilityLabel="Work"]'),
   ).toBeVisible();
 
   /* The filter is a button naming the chosen team with the list behind it;

@@ -1,6 +1,9 @@
 import { Result } from "effect";
 import { describe, expect, it } from "vitest";
 
+import * as Domain from "@/lib/Domain";
+import source from "@/lib/Domain.ts?raw";
+
 import * as ActionTable from "../../scripts/lib/action-table.ts";
 
 /**
@@ -148,5 +151,41 @@ describe("action table parser", () => {
       "export const RunTaskView = 2;",
     ].join("\n");
     expect(ActionTable.checkGlossary(source)).toEqual(["RunTask", "pending"]);
+  });
+
+  describe("the glossary's screen column is the label constant", () => {
+    const labels: ActionTable.ScreenLabels = {
+      taskStates: Domain.TASK_STATE_LABEL,
+      runStates: Domain.RUN_STATE_LABEL,
+      workflowStates: Domain.WORKFLOW_STATE_LABEL,
+      verbs: Domain.VERB_LABEL,
+    };
+
+    it("Domain.ts passes", () => {
+      expect(ActionTable.checkScreenColumns(source, labels)).toEqual([]);
+    });
+
+    it("a doctored cell is reported", () => {
+      const doctored = source.replace(
+        "| put back        | task | started → ready                     | Put back    | Put back        |",
+        "| put back        | task | started → ready                     | Put back    | Take back       |",
+      );
+      expect(doctored).not.toBe(source);
+      expect(ActionTable.checkScreenColumns(doctored, labels)).toEqual([
+        'Glossary: Verbs put back: merchant says "Take back", constant says "Put back"',
+      ]);
+    });
+
+    it("a constant with no row, and a row with no constant, are reported", () => {
+      const doctored = source.replace(
+        "| waiting | its step is not current            |",
+        "| idle    | its step is not current            |",
+      );
+      expect(doctored).not.toBe(source);
+      expect(ActionTable.checkScreenColumns(doctored, labels)).toEqual([
+        "Glossary: Task states idle: no constant",
+        "Glossary: Task states: no row for waiting",
+      ]);
+    });
   });
 });

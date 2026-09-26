@@ -35,8 +35,6 @@ import {
   RENAME_FIELD_LABEL,
   RENAME_HEADING,
   RENAMED_TOAST,
-  STATUS_ACTIVE,
-  STATUS_INACTIVE,
   turnOnBlocker,
   turnOnBody,
   workflowResultMessage,
@@ -289,10 +287,12 @@ function RouteComponent() {
         <>
           {active ? (
             <s-badge slot="accessory" tone="success">
-              {STATUS_ACTIVE}
+              {Domain.WORKFLOW_STATE_LABEL.on}
             </s-badge>
           ) : (
-            <s-badge slot="accessory">{STATUS_INACTIVE}</s-badge>
+            <s-badge slot="accessory">
+              {Domain.WORKFLOW_STATE_LABEL.off}
+            </s-badge>
           )}
           {hasDraft && (
             <s-badge slot="accessory" tone="info">

@@ -3,9 +3,9 @@ import type { SqlError } from "effect/unstable/sql";
 import { Clock, Context, Effect, Layer, Option, Schema, Struct } from "effect";
 import { SqlClient, type Statement } from "effect/unstable/sql";
 
+import * as CurrentWhere from "@/lib/currentWhere";
 import * as Domain from "@/lib/Domain";
 import { OrderRepository } from "@/lib/OrderRepository";
-import * as ReadyWhere from "@/lib/readyWhere";
 
 /**
  * Failure to map stored rows into domain types — a `Schema` decode error, the
@@ -45,7 +45,7 @@ export class RunBlockedError extends Schema.TaggedError<RunBlockedError>()(
 ) {}
 
 /**
- * Cancel run refused because Shopify has closed the order
+ * Cancel workflow refused because Shopify has closed the order
  * ({@link Domain.orderIsOpen}). Reconcile closes every open run on a closed
  * order in the same transaction as the order write, so this is a race with
  * that write, not a state a page should offer.
@@ -56,13 +56,13 @@ export class RunOrderClosedError extends Schema.TaggedError<RunOrderClosedError>
 ) {}
 
 /**
- * Attach refused: the line item's run is `done`. Finished work is a record,
- * and replacing it would delete a finished record for a rework the run cards
+ * Attach refused: the item's run is `done`. Done work is a record,
+ * and replacing it would delete a done record for a rework the run cards
  * do not model; the merchant reopens the last task and then changes it, or
  * leaves it. Names the incumbent so the page can.
  */
-export class RunFinishedError extends Schema.TaggedError<RunFinishedError>()(
-  "RunFinishedError",
+export class RunNotOpenError extends Schema.TaggedError<RunNotOpenError>()(
+  "RunNotOpenError",
   { runId: Schema.String, workflowName: Domain.WorkflowName },
 ) {}
 
@@ -71,7 +71,7 @@ export class RunFinishedError extends Schema.TaggedError<RunFinishedError>()(
  * ({@link Domain.runIsOpen}). A safety valve rather than a product limit: at the ceiling a shop
  * is far outside anything the app is designed for, and the alternative — a
  * Durable Object whose run table grows without bound — is worse than a refusal
- * the merchant can act on by finishing or cancelling work.
+ * the merchant can act on by marking work done or cancelling it.
  */
 export class RunLimitError extends Schema.TaggedError<RunLimitError>()(
   "RunLimitError",
@@ -95,19 +95,19 @@ export class RunNotBlockedError extends Schema.TaggedError<RunNotBlockedError>()
   { runId: Schema.String },
 ) {}
 
-/** The task is not ready ({@link Domain.readyTasks}) or is already done — or, for undo, not yet done; for put back, not yet started or already done. */
+/** The task is not current ({@link Domain.currentTasks}) or is already done — or, for reopen, not yet done; for put back, not yet started or already done. */
 export class TaskNotReadyError extends Schema.TaggedError<TaskNotReadyError>()(
   "TaskNotReadyError",
   { runTaskId: Schema.String },
 ) {}
 
 /**
- * `uncompleteTask` refused because someone downstream has already started
- * ({@link Domain.undoBlockedBy}). Names the task and team so the page can say
+ * `reopenTask` refused because someone downstream has already started
+ * ({@link Domain.reopenBlockedBy}). Names the task and team so the page can say
  * who to ask.
  */
-export class TaskUndoBlockedError extends Schema.TaggedError<TaskUndoBlockedError>()(
-  "TaskUndoBlockedError",
+export class TaskReopenBlockedError extends Schema.TaggedError<TaskReopenBlockedError>()(
+  "TaskReopenBlockedError",
   {
     runTaskId: Schema.String,
     taskName: Domain.TaskName,
@@ -120,8 +120,8 @@ export class TaskUndoBlockedError extends Schema.TaggedError<TaskUndoBlockedErro
  * started or not; a done task is refused because the write would overwrite
  * `teamName`, the record of which team did it.
  */
-export class TaskFinishedError extends Schema.TaggedError<TaskFinishedError>()(
-  "TaskFinishedError",
+export class TaskDoneError extends Schema.TaggedError<TaskDoneError>()(
+  "TaskDoneError",
   { runTaskId: Schema.String },
 ) {}
 
@@ -133,7 +133,7 @@ export interface ReconcileCounts {
   /** Open runs this pass closed: the order cancelled or fulfilled, or the line at zero units ({@link Domain.ClosedReason}). */
   readonly closed: number;
   /**
-   * Line items this pass left **ambiguous**: two or more startable workflows
+   * Items this pass left **ambiguous**: two or more startable workflows
    * matched and no run exists, so nothing was started and the merchant
    * has to choose. Not a fault — a count worth logging, and the number the
    * orders index turns into a step.
@@ -146,7 +146,7 @@ export interface ReconcileAllCounts {
   readonly orders: number;
   /** Runs created. */
   readonly created: number;
-  /** Line items left ambiguous; see {@link ReconcileCounts.ambiguous}. */
+  /** Items left ambiguous; see {@link ReconcileCounts.ambiguous}. */
   readonly ambiguous: number;
 }
 
@@ -165,7 +165,7 @@ export interface StartContext {
  * (`teamId` null, or an id the roster does not carry) all mean "starts
  * nothing". A team with no members does *not* block: the run is created and
  * its task waits on nobody's list until someone joins. Shared by the tag
- * match on upsert and by manual attach — the latter skips the line-item half
+ * match on upsert and by manual attach — the latter skips the item half
  * (tags, quantity, fulfilment, age) but never this half, and answers
  * separately to {@link Domain.orderIsOpen} for the state of the order as a
  * whole. Drafts never reach here: `WorkflowDetail` carries workflow tasks
@@ -183,7 +183,7 @@ export const canStart = (
   );
 
 /**
- * The line-item half: the tag test and the date rule. An order qualifies
+ * The item half: the tag test and the date rule. An order qualifies
  * only when it was placed (`processedAt`) on or after the workflow's
  * `activatedAt`: a bulk stream of thirty days of history, or an edit
  * webhook on an order fulfilled a month ago, must not start work on orders
@@ -257,9 +257,9 @@ export class RunRepository extends Context.Service<
     /**
      * Plain statements, no transaction of its own: called from inside
      * `OrderRepository.upsertOrder`'s transaction via `afterWrite`, and Durable
-     * Object SQLite refuses to nest. Reads the order and its stored line items
+     * Object SQLite refuses to nest. Reads the order and its stored items
      * back rather than trusting the caller's view, so a reconcile is against
-     * what is actually stored — including an order whose line items the write
+     * what is actually stored — including an order whose items the write
      * stored short (`Domain.ShopOrder.lineItemsTruncated`).
      */
     readonly reconcileOrder: (
@@ -299,7 +299,7 @@ export class RunRepository extends Context.Service<
      * start nothing on it. The last is why the whole {@link StartContext} is
      * taken rather than the one workflow: ambiguity is a property of the set.
      *
-     * Row cost: the open orders' line items, once per dialog open.
+     * Row cost: the open orders' items, once per dialog open.
      */
     readonly countWaitingOrders: (
       input: StartContext & {
@@ -319,8 +319,8 @@ export class RunRepository extends Context.Service<
      *   all, so the unique `lineItemId` is free before the insert, and comes
      *   back as `replaced`;
      * - a `closed` run is deleted the same way, tasks and all, whatever its
-     *   workflow, and `replaced` is null: nothing was running;
-     * - a `done` run is refused ({@link RunFinishedError}).
+     *   workflow, and `replaced` is null: nothing was open;
+     * - a `done` run is refused ({@link RunNotOpenError}).
      *
      * A workflow the item ran before, the closed one included, starts fresh
      * from its definition. Nothing of the earlier run is resumed: closed is
@@ -342,7 +342,7 @@ export class RunRepository extends Context.Service<
         /** The open run deleted to make room, or null when the item was free or its run was closed. */
         readonly replaced: Domain.Run | null;
       }>,
-      SqlError.SqlError | RunRepositoryError | RunLimitError | RunFinishedError
+      SqlError.SqlError | RunRepositoryError | RunLimitError | RunNotOpenError
     >;
     readonly listRunsForOrder: (input: {
       readonly orderId: string;
@@ -376,7 +376,7 @@ export class RunRepository extends Context.Service<
       SqlError.SqlError | RunRepositoryError
     >;
     /**
-     * The merchant's Cancel run: closes the run, reason `merchant_cancelled`
+     * The merchant's Cancel workflow: closes the run, reason `merchant_cancelled`
      * ({@link Domain.ClosedReason}), in one transaction. The tasks stay as the
      * record of who did what, the note stays, and the block and the quantity
      * badge are cleared with the rest of the run's open state. The row keeps
@@ -401,12 +401,12 @@ export class RunRepository extends Context.Service<
     >;
     /**
      * The member's run list, tiered and cut here rather than on the page: every run
-     * with at least one ready task owned by `teamIds`, grouped by
+     * with at least one current task owned by `teamIds`, grouped by
      * {@link Domain.tierOf} against `memberEmail`. **Every** tier is counted;
      * **one** is returned — the one `query.tab` names — sorted oldest first
      * and cut to `query.limit`. `tab: "done"` returns no items at all and the
      * caller reads `listRecent` for that tab's rows. Only open runs have
-     * ready tasks, so a closed or done run is never listed
+     * current tasks, so a closed or done run is never listed
      * ({@link Domain.RunStatus}).
      *
      * `teamCounts` and `total` are over all of `teamIds` whatever `query.team`
@@ -431,8 +431,8 @@ export class RunRepository extends Context.Service<
     >;
     /**
      * The Recent tab ({@link Domain.RecentItem}): tasks owned by `teamIds`
-     * done at or after `since`, each with its run and the undo verdict
-     * ({@link Domain.undoBlockedBy}), and runs with a task on `teamIds` that
+     * done at or after `since`, each with its run and the reopen verdict
+     * ({@link Domain.reopenBlockedBy}), and runs with a task on `teamIds` that
      * closed at or after `since`, newest first by `doneAt` or
      * `closedAt`. The team's, not the caller's: a colleague notices a mistake
      * as readily as its author, and a closed run is news to everyone who
@@ -451,23 +451,23 @@ export class RunRepository extends Context.Service<
       SqlError.SqlError | RunRepositoryError
     >;
     /**
-     * Undo returns a task to Ready: it clears the Done slot (`doneAt`,
+     * Reopen returns a task to Ready: it clears the Done slot (`doneAt`,
      * `doneBy*`) and every Start column, member or merchant, and writes the
      * `reopened*` slot (`reopenedAt` / `reopenedByRole` / `reopenedByEmail`)
      * with who sent it back, then recomputes the run's status. The task is Ready for a worker
-     * to Start. Keeping a member's Start would leave the task "In progress by
-     * A since <original time>": a claim A no longer makes and a time that is
+     * to Start. Keeping a member's Start would leave the task "Started · A ·
+     * since <original time>": a claim A no longer makes and a time that is
      * no longer true, and it would take Undo then Put back to reach Ready
      * from a single Done. The `reopened*` slot already says who and when, so
      * nothing is lost. Allowed
      * for the task's team while nothing downstream has started
-     * (`TaskUndoBlockedError` otherwise, naming the blocker). Gate: not
-     * {@link Domain.runIsClosed}, rather than `runIsOpen` — undoing a `done`
+     * (`TaskReopenBlockedError` otherwise, naming the blocker). Gate: not
+     * {@link Domain.runIsClosed}, rather than `runIsOpen` — reopening a `done`
      * run's last task is the point, while a closed run is final; see
      * {@link Domain.RunStatus}.
      */
-    readonly uncompleteTask: (
-      input: Domain.UncompleteTaskCommand,
+    readonly reopenTask: (
+      input: Domain.ReopenTaskCommand,
     ) => Effect.Effect<
       void,
       | SqlError.SqlError
@@ -476,12 +476,12 @@ export class RunRepository extends Context.Service<
       | RunNotAllowedError
       | RunTerminalError
       | TaskNotReadyError
-      | TaskUndoBlockedError
+      | TaskReopenBlockedError
     >;
     /**
      * Put back clears the Start record of a started task, and the run's
      * status is recomputed (a run whose only started task is put back is
-     * {@link Domain.runIsUnstarted} again). Refused on a finished task or an
+     * {@link Domain.runIsUnstarted} again). Refused on a done task or an
      * unstarted task
      * (`TaskNotReadyError`), a run that is not {@link Domain.runIsOpen}
      * (`RunTerminalError`), a blocked run (`RunBlockedError`), or, for a
@@ -492,12 +492,12 @@ export class RunRepository extends Context.Service<
      * records who put it back; the task is plain Ready and the next Start
      * writes a fresh record.
      *
-     * Undo is allowed under a block because it takes work back; Put back is
+     * Reopen is allowed under a block because it takes work back; Put back is
      * refused, because a held task is the one someone needs to write on, and
      * clearing who has it under a hold loses the one name the merchant needs.
      */
-    readonly unstartTask: (
-      input: Domain.UnstartTaskCommand,
+    readonly putBackTask: (
+      input: Domain.PutBackTaskCommand,
     ) => Effect.Effect<
       void,
       | SqlError.SqlError
@@ -509,8 +509,8 @@ export class RunRepository extends Context.Service<
       | RunBlockedError
     >;
     /**
-     * The work page's read: the run with every task decorated by readiness
-     * and the undo verdict, the order's live note and line items. `None`
+     * The work page's read: the run with every task decorated with whether it is current
+     * and the reopen verdict, the order's live note and items. `None`
      * when the run does not exist or the caller cannot see it
      * ({@link Domain.runIsVisibleTo}) — one answer for both, so a member
      * cannot probe run ids. A closed run is returned: a link to it lands on
@@ -524,7 +524,7 @@ export class RunRepository extends Context.Service<
       SqlError.SqlError | RunRepositoryError
     >;
     /**
-     * Marks a ready task in progress. Idempotent: a second Start leaves the
+     * Marks a ready task started. Idempotent: a second Start leaves the
      * original `startedAt` / `startedBy` / `startedByEmail` — no takeover, no
      * error — so two people pressing it does not rewrite who began. The
      * email is snapshotted so history reads after the member is deleted.
@@ -545,15 +545,15 @@ export class RunRepository extends Context.Service<
     /**
      * Sets the Done slot (`doneAt`, `doneBy*`). Also backfills the started
      * slot with the same actor when Done arrives without a Start, so every
-     * finished task records who. Clears the `reopened` slot: that slot says
+     * done task records who. Clears the `reopened` slot: that slot says
      * "sent back and not yet redone", and a Done is precisely the end of
      * that. Clears the run's quantity badge (`quantityChangedFrom`, rule on
-     * {@link Domain.Run}): a step finished after the change is proof someone
+     * {@link Domain.Run}): a step done after the change is proof someone
      * worked with the new number. Nothing is created here. Gates:
      * {@link Domain.runIsOpen}, and not {@link Domain.runIsBlocked}.
      */
-    readonly completeTask: (
-      input: Domain.CompleteTaskCommand,
+    readonly markTaskDone: (
+      input: Domain.MarkTaskDoneCommand,
     ) => Effect.Effect<
       void,
       | SqlError.SqlError
@@ -565,12 +565,12 @@ export class RunRepository extends Context.Service<
       | RunBlockedError
     >;
     /**
-     * Writes the run's note; `null` clears it. No readiness requirement — a
+     * Writes the run's note; `null` clears it. No requirement that the run have a current task — a
      * note on a done run is allowed: a note is a record, not work, and the
      * thing noticed after the last Done is exactly what wants writing down,
      * and a closed run keeps its record too; see {@link Domain.RunStatus}. A member
      * needs to see the run ({@link Domain.runIsVisibleTo}), not to hold a
-     * ready or started task as Block does: a done run has none and would
+     * current task as Block does: a done run has none and would
      * refuse every member. Last write wins; see
      * {@link Domain.SetRunNoteCommand}.
      */
@@ -585,7 +585,7 @@ export class RunRepository extends Context.Service<
     >;
     /**
      * Blocks the run ({@link Domain.runIsBlocked}): `blockedAt`, the optional
-     * reason, and the actor as `blockedBy`. Allowed when a ready or started
+     * reason, and the actor as `blockedBy`. Allowed when a current
      * task belongs to `teamIds`. Gate: {@link Domain.runIsOpen}; see {@link Domain.RunStatus}.
      */
     readonly blockRun: (
@@ -640,7 +640,7 @@ export class RunRepository extends Context.Service<
     >;
     /**
      * Lifts the block: nulls `blockedAt`, `blockReason` and `blockedBy`.
-     * Allowed when any ready or started task of the run belongs to one of
+     * Allowed when any current task of the run belongs to one of
      * `teamIds`, or unconditionally for the merchant (`teamIds` undefined). Fails
      * `RunNotBlockedError` when there is no block to lift (a second Unblock
      * racing the first), and `RunTerminalError` unless {@link Domain.runIsOpen}.
@@ -664,10 +664,10 @@ export class RunRepository extends Context.Service<
      * started or not — it is both the remedy that makes a team delete safe
      * and the merchant's way to move work between teams. Only `teamId` /
      * `teamName` are written, so a started task keeps `startedBy` /
-     * `startedByEmail` and history still names whoever began it. A finished
-     * task is refused (`TaskFinishedError`), and so is a task of a run that
+     * `startedByEmail` and history still names whoever began it. A done
+     * task is refused (`TaskDoneError`), and so is a task of a run that
      * is not {@link Domain.runIsOpen} (`RunTerminalError`): a `done` run's
-     * tasks are all finished, so this is the same refusal reached another way.
+     * tasks are all done, so this is the same refusal reached another way.
      */
     readonly assignRunTaskTeam: (input: {
       readonly runTaskId: string;
@@ -681,7 +681,7 @@ export class RunRepository extends Context.Service<
       | RunRepositoryError
       | RunNotFoundError
       | RunTerminalError
-      | TaskFinishedError
+      | TaskDoneError
     >;
   }
 >()("RunRepository") {
@@ -768,27 +768,27 @@ export class RunRepository extends Context.Service<
           ),
         );
 
-      /** The predicate itself is in `readyWhere.ts`; the JSDoc there says why it does not live in this layer. */
-      const readyWhere = (alias: string) =>
-        sql.literal(ReadyWhere.readyWhere(alias));
+      /** The predicate itself is in `currentWhere.ts`; the JSDoc there says why it does not live in this layer. */
+      const currentWhere = (alias: string) =>
+        sql.literal(CurrentWhere.currentWhere(alias));
 
-      const readyTasks = (runId: string) =>
+      const currentTasks = (runId: string) =>
         sql`
           select s.* from RunTask s
-          where s.runId = ${runId} and ${readyWhere("s")}
+          where s.runId = ${runId} and ${currentWhere("s")}
           order by s.position
         `.pipe(Effect.flatMap(decodeTasks));
 
-      const isReady = (runTaskId: string) =>
+      const isCurrent = (runTaskId: string) =>
         sql`
           select 1 from RunTask s
-          where s.id = ${runTaskId} and ${readyWhere("s")}
+          where s.id = ${runTaskId} and ${currentWhere("s")}
         `.pipe(Effect.map((rows) => rows.length > 0));
 
       /**
        * The guard every task action shares: task exists, the run passes
        * `gate` ({@link Domain.runIsOpen} for Start and Done; any status for
-       * Undo), task's team among the caller's.
+       * reopen), task's team among the caller's.
        *
        * `teamIds` undefined means the merchant, and then the team clause is
        * skipped whole — including the refusal for an unassigned task
@@ -819,24 +819,24 @@ export class RunRepository extends Context.Service<
         });
 
       /**
-       * `RunNotAllowedError` unless some ready or started task of the run
+       * `RunNotAllowedError` unless some current task of the run
        * belongs to `teamIds`. Undefined `teamIds` is the merchant and always passes, for
        * the reason on {@link requireActionable}.
        */
-      const requireReadyTeam = (
+      const requireCurrentTeam = (
         runId: string,
         teamIds: readonly string[] | undefined,
       ) =>
         teamIds === undefined
           ? Effect.void
-          : readyTasks(runId).pipe(
-              Effect.flatMap((ready) =>
-                Domain.runIsVisibleTo(ready, teamIds)
+          : currentTasks(runId).pipe(
+              Effect.flatMap((current) =>
+                Domain.runIsVisibleTo(current, teamIds)
                   ? Effect.void
                   : Effect.fail(
                       new RunNotAllowedError({
                         runId,
-                        teamId: ready[0]?.teamId ?? "",
+                        teamId: current[0]?.teamId ?? "",
                       }),
                     ),
               ),
@@ -905,11 +905,11 @@ export class RunRepository extends Context.Service<
 
       /**
        * Every run list row the teams own, unsorted and uncapped: one
-       * {@link Domain.RunListItem} per run with at least one ready task of
+       * {@link Domain.RunListItem} per run with at least one current task of
        * `teamIds`, carrying that run's last step. Actor emails are on the row
        * already, so no roster join and no D1 read.
        *
-       * The first statement still reads *every* ready task of a qualifying
+       * The first statement still reads *every* current task of a qualifying
        * run, including tasks owned by other teams: that is how it decides the
        * run qualifies at all, and it is why the row's own tasks are filtered
        * in TypeScript below rather than in SQL. Nothing about the other
@@ -923,23 +923,23 @@ export class RunRepository extends Context.Service<
         teamIds: readonly Domain.TeamId[],
       ) {
         if (teamIds.length === 0) return [];
-        const ready = yield* decodeTasks(
+        const current = yield* decodeTasks(
           yield* sql`
               select s.* from RunTask s
               join Run r on r.id = s.runId
               where r.status = 'active'
-                and ${readyWhere("s")}
+                and ${currentWhere("s")}
                 and exists (
                   select 1 from RunTask m
                   where m.runId = s.runId
                     and m.teamId in (select value from json_each(${json(teamIds)}))
-                    and ${readyWhere("m")}
+                    and ${currentWhere("m")}
                 )
               order by s.runId, s.position
             `,
         );
-        if (ready.length === 0) return [];
-        const runIds = [...new Set(ready.map((task) => task.runId))];
+        if (current.length === 0) return [];
+        const runIds = [...new Set(current.map((task) => task.runId))];
         const runs = yield* decodeRunListRuns(
           yield* sql`
               select r.*,
@@ -959,7 +959,7 @@ export class RunRepository extends Context.Service<
             orderFulfillmentStatus,
             ...run
           }): Domain.RunListItem[] => {
-            const [first, ...rest] = ready
+            const [first, ...rest] = current
               .filter(
                 (task) =>
                   task.runId === run.id && Domain.taskIsOnTeams(task, teamIds),
@@ -1013,7 +1013,7 @@ export class RunRepository extends Context.Service<
        *
        * Only ever called on an open run: every caller gates on
        * {@link Domain.runIsOpen}, or on not {@link Domain.runIsClosed} for
-       * Undo, so a closed run's status, which is written rather than derived,
+       * reopen, so a closed run's status, which is written rather than derived,
        * is never recomputed away.
        */
       const recomputeStatus = (runId: string, now: number) =>
@@ -1054,7 +1054,7 @@ export class RunRepository extends Context.Service<
        * Clears the banner once the shop is back under the ceiling. The column
        * is read first so the common case — never limited — is one row read and no
        * count, which matters because this runs on transitions as ordinary as
-       * completing a task.
+       * marking a task done.
        */
       const releaseOpenRunLimit = Effect.fn(
         "RunRepository.releaseOpenRunLimit",
@@ -1070,7 +1070,7 @@ export class RunRepository extends Context.Service<
       /**
        * Closes every open run the fragment selects, with `reason`
        * ({@link Domain.ClosedReason}), and returns how many. The one close
-       * write, for reconcile and Cancel run alike. The tasks and the note
+       * write, for reconcile and Cancel workflow alike. The tasks and the note
        * stay as the record; the block and the quantity badge go, because they
        * are about work that has stopped ({@link Domain.RunStatus}). Closing
        * frees open-run slots, so the ceiling banner is re-checked.
@@ -1186,7 +1186,7 @@ export class RunRepository extends Context.Service<
        * Two gates, deliberately split. `Domain.isCancelled` and
        * `Domain.isFulfilled` are the stop gates and return early;
        * `Domain.canStartRuns` (paid) gates only run *creation*. Adjusting
-       * open runs against their line items happens whether or not the order
+       * open runs against their items happens whether or not the order
        * is currently paid, so an edit that pushes a paid order back to
        * unpaid keeps its runs, still tracks removals and quantity changes,
        * and simply creates nothing new until the balance lands — a payment
@@ -1240,7 +1240,7 @@ export class RunRepository extends Context.Service<
           const lineItems = yield* decodeLineItems(
             yield* sql`select * from OrderLineItem where orderId = ${orderId}`,
           );
-          // Every run on the order, adjusted below against its line item.
+          // Every run on the order, adjusted below against its item.
           const runs = yield* decodeRuns(
             yield* sql`select * from Run where orderId = ${orderId}`,
           );
@@ -1248,7 +1248,7 @@ export class RunRepository extends Context.Service<
             canStart(workflow, teams),
           );
           /**
-           * One run per line item, not the cross product. Each item records
+           * One run per item, not the cross product. Each item records
            * every startable workflow that matched it, and only a *single*
            * match with no run starts anything:
            *
@@ -1309,7 +1309,7 @@ export class RunRepository extends Context.Service<
            * Auto-start yields to the ceiling rather than failing: this runs
            * inside the order's upsert transaction, so failing would fail the
            * webhook, Shopify would retry it for four hours, and no retry can
-           * fix a condition that only finishing work clears — the order write
+           * fix a condition that only marking work done clears — the order write
            * would be lost for nothing. The order is stored, shows on the index
            * with no workflow, `ShopUsage.openRunsLimitedAt` raises a persistent
            * banner naming the cause, and the next `reconcileAll` starts it once
@@ -1458,7 +1458,7 @@ export class RunRepository extends Context.Service<
             workflows,
             teams,
           }: StartContext & { readonly workflow: Domain.WorkflowDetail }) {
-            // The open orders' line items with no run on them. The tag
+            // The open orders' items with no run on them. The tag
             // test stays in TypeScript so this count and reconcile share one
             // predicate, even though `Workflow.tag` is a plain column.
             const rows = yield* decode(
@@ -1529,7 +1529,7 @@ export class RunRepository extends Context.Service<
                   !closed &&
                   !Domain.runIsOpen(incumbent)
                 )
-                  return yield* new RunFinishedError({
+                  return yield* new RunNotOpenError({
                     runId: incumbent.id,
                     workflowName: incumbent.workflowName,
                   });
@@ -1616,8 +1616,8 @@ export class RunRepository extends Context.Service<
         }),
 
         /**
-         * Two statements, then the grouping in TypeScript: every ready task of
-         * every run that has at least one ready task for the caller's teams
+         * Two statements, then the grouping in TypeScript: every current task of
+         * every run that has at least one current task for the caller's teams
          * (the other teams' tasks are what decide the run qualifies; they are
          * not shipped), then those runs with their last step. `json_each`
          * keeps the team list a single bound parameter.
@@ -1666,11 +1666,11 @@ export class RunRepository extends Context.Service<
               grouped[Domain.tierOf(item, memberEmail)].push(item);
               return grouped;
             },
-            { attention: [], mine: [], inProgress: [], upNext: [] },
+            { blocked: [], mine: [], teammates: [], upNext: [] },
           );
           const tier = (wanted: Domain.RunTier) => byTier[wanted];
           // "done" (Recent) is not a tier: its rows come from `listRecent`,
-          // which reads finished tasks and closed runs rather than the ready
+          // which reads done tasks and closed runs rather than the current
           // ones grouped here.
           const selected =
             query.tab === "done"
@@ -1680,8 +1680,8 @@ export class RunRepository extends Context.Service<
             counts: {
               mine: tier("mine").length,
               upNext: tier("upNext").length,
-              inProgress: tier("inProgress").length,
-              attention: tier("attention").length,
+              teammates: tier("teammates").length,
+              blocked: tier("blocked").length,
               total: items.length,
               teamCounts,
             },
@@ -1702,7 +1702,7 @@ export class RunRepository extends Context.Service<
           const teams = json(teamIds);
           /**
            * Two windows, each bounded by `since` and served by its own index:
-           * finished tasks by `RunTask_teamId_idx (teamId,
+           * done tasks by `RunTask_teamId_idx (teamId,
            * doneAt)`, closed runs by `Run_closed_idx (closedAt)`,
            * partial over `closed`. So each counts a day, not the table.
            */
@@ -1769,7 +1769,7 @@ export class RunRepository extends Context.Service<
                       kind: "task",
                       run,
                       task,
-                      undoBlockedBy: Domain.undoBlockedBy(
+                      reopenBlockedBy: Domain.reopenBlockedBy(
                         task,
                         tasks.filter((other) => other.runId === run.id),
                       ),
@@ -1794,14 +1794,14 @@ export class RunRepository extends Context.Service<
           return { items, total };
         }),
 
-        uncompleteTask: Effect.fn("RunRepository.uncompleteTask")(function* ({
+        reopenTask: Effect.fn("RunRepository.reopenTask")(function* ({
           runTaskId,
           actor,
           teamIds,
-        }: Domain.UncompleteTaskCommand) {
+        }: Domain.ReopenTaskCommand) {
           yield* sql.withTransaction(
             Effect.gen(function* () {
-              // Undoing a `done` run's last task is the point; a closed run
+              // Reopening a `done` run's last task is the point; a closed run
               // is final.
               const { task, run } = yield* requireActionable({
                 runTaskId,
@@ -1810,15 +1810,15 @@ export class RunRepository extends Context.Service<
               });
               if (task.doneAt === null)
                 yield* new TaskNotReadyError({ runTaskId });
-              const blocker = Domain.undoBlockedBy(
+              const blocker = Domain.reopenBlockedBy(
                 task,
                 yield* tasksForRuns([run.id]),
               );
               if (blocker !== null)
-                yield* new TaskUndoBlockedError({ runTaskId, ...blocker });
+                yield* new TaskReopenBlockedError({ runTaskId, ...blocker });
               const now = yield* Clock.currentTimeMillis;
               const by = actorColumns(actor);
-              // Undo returns the task to Ready. Who reopened it is the
+              // Reopen returns the task to Ready. Who reopened it is the
               // `reopened*` slot; the old Start is a claim the starter no
               // longer makes and a time that is no longer true.
               yield* sql`
@@ -1836,10 +1836,10 @@ export class RunRepository extends Context.Service<
           );
         }),
 
-        unstartTask: Effect.fn("RunRepository.unstartTask")(function* ({
+        putBackTask: Effect.fn("RunRepository.putBackTask")(function* ({
           runTaskId,
           teamIds,
-        }: Domain.UnstartTaskCommand) {
+        }: Domain.PutBackTaskCommand) {
           yield* sql.withTransaction(
             Effect.gen(function* () {
               const { task, run } = yield* requireActionable({
@@ -1850,10 +1850,10 @@ export class RunRepository extends Context.Service<
                 yield* new RunBlockedError({ runId: run.id });
               if (task.startedAt === null || task.doneAt !== null)
                 yield* new TaskNotReadyError({ runTaskId });
-              // A started task is ready by construction (Start required it,
+              // A started task is current by construction (Start required it,
               // and nothing behind it can reopen while it is started); the
               // check keeps the four task writes reading alike.
-              if (!(yield* isReady(runTaskId)))
+              if (!(yield* isCurrent(runTaskId)))
                 yield* new TaskNotReadyError({ runTaskId });
               const now = yield* Clock.currentTimeMillis;
               yield* sql`
@@ -1879,9 +1879,11 @@ export class RunRepository extends Context.Service<
           const run = found.value;
           const tasks = yield* tasksForRuns([run.id]);
           if (!Domain.runIsVisibleTo(tasks, teamIds)) return Option.none();
-          // `readyWhere` reads tasks alone, and a closed run keeps its open
-          // tasks as the record: nothing on it is ready ({@link Domain.readyTasks}).
-          const ready = Domain.runIsOpen(run) ? yield* readyTasks(run.id) : [];
+          // `currentWhere` reads tasks alone, and a closed run keeps its open
+          // tasks as the record: nothing on it is current ({@link Domain.currentTasks}).
+          const current = Domain.runIsOpen(run)
+            ? yield* currentTasks(run.id)
+            : [];
           const [orderRow] = yield* decode(
             Schema.Array(
               Schema.Struct({
@@ -1902,9 +1904,11 @@ export class RunRepository extends Context.Service<
             run,
             tasks: tasks.map((task): Domain.RunTaskView => ({
               ...task,
-              ready: ready.some((candidate) => candidate.id === task.id),
-              undoBlockedBy:
-                task.doneAt === null ? null : Domain.undoBlockedBy(task, tasks),
+              current: current.some((candidate) => candidate.id === task.id),
+              reopenBlockedBy:
+                task.doneAt === null
+                  ? null
+                  : Domain.reopenBlockedBy(task, tasks),
             })),
             orderNote: note,
             order,
@@ -1921,7 +1925,7 @@ export class RunRepository extends Context.Service<
               const { run } = yield* requireActionable({ runTaskId, teamIds });
               if (Domain.runIsBlocked(run))
                 yield* new RunBlockedError({ runId: run.id });
-              if (!(yield* isReady(runTaskId)))
+              if (!(yield* isCurrent(runTaskId)))
                 yield* new TaskNotReadyError({ runTaskId });
               const now = yield* Clock.currentTimeMillis;
               const by = actorColumns(actor);
@@ -1938,11 +1942,11 @@ export class RunRepository extends Context.Service<
           );
         }),
 
-        completeTask: Effect.fn("RunRepository.completeTask")(function* ({
+        markTaskDone: Effect.fn("RunRepository.markTaskDone")(function* ({
           runTaskId,
           actor,
           teamIds,
-        }: Domain.CompleteTaskCommand) {
+        }: Domain.MarkTaskDoneCommand) {
           yield* sql.withTransaction(
             Effect.gen(function* () {
               const { run } = yield* requireActionable({
@@ -1951,7 +1955,7 @@ export class RunRepository extends Context.Service<
               });
               if (Domain.runIsBlocked(run))
                 yield* new RunBlockedError({ runId: run.id });
-              if (!(yield* isReady(runTaskId)))
+              if (!(yield* isCurrent(runTaskId)))
                 yield* new TaskNotReadyError({ runTaskId });
               const now = yield* Clock.currentTimeMillis;
               const by = actorColumns(actor);
@@ -2003,7 +2007,7 @@ export class RunRepository extends Context.Service<
               const run = yield* requireRun(runId);
               if (!Domain.runIsOpen(run))
                 yield* new RunTerminalError({ runId, status: run.status });
-              yield* requireReadyTeam(runId, teamIds);
+              yield* requireCurrentTeam(runId, teamIds);
               const now = yield* Clock.currentTimeMillis;
               yield* sql`
                 update Run
@@ -2058,7 +2062,7 @@ export class RunRepository extends Context.Service<
               const run = yield* requireRun(runId);
               if (!Domain.runIsBlocked(run))
                 yield* new RunNotBlockedError({ runId });
-              yield* requireReadyTeam(runId, teamIds);
+              yield* requireCurrentTeam(runId, teamIds);
               const now = yield* Clock.currentTimeMillis;
               yield* sql`
                   update Run
@@ -2080,7 +2084,7 @@ export class RunRepository extends Context.Service<
                 yield* new RunTerminalError({ runId, status: run.status });
               if (!Domain.runIsBlocked(run))
                 yield* new RunNotBlockedError({ runId });
-              yield* requireReadyTeam(runId, teamIds);
+              yield* requireCurrentTeam(runId, teamIds);
               const now = yield* Clock.currentTimeMillis;
               yield* sql`
                 update Run
@@ -2106,10 +2110,10 @@ export class RunRepository extends Context.Service<
             yield* sql.withTransaction(
               Effect.gen(function* () {
                 const task = yield* requireTask(runTaskId);
-                // The task first: on a done run every task is finished, and
+                // The task first: on a done run every task is done, and
                 // "keeps its team" is the truer refusal than "run not open".
                 if (task.doneAt !== null)
-                  yield* new TaskFinishedError({ runTaskId });
+                  yield* new TaskDoneError({ runTaskId });
                 const run = yield* requireRun(task.runId);
                 if (!Domain.runIsOpen(run))
                   yield* new RunTerminalError({

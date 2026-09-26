@@ -2,7 +2,11 @@ import { strictEqual } from "@effect/vitest/utils";
 import { Schema } from "effect";
 import { describe, it } from "vitest";
 
-import { cancelWarning, changeWarning } from "@/lib/changeWarning";
+import {
+  CANCEL_WARNING,
+  cancelHeading,
+  changeWarning,
+} from "@/lib/changeWarning";
 import * as Domain from "@/lib/Domain";
 
 const task = (
@@ -53,11 +57,15 @@ describe("changeWarning", () => {
   });
 });
 
-describe("cancelWarning", () => {
-  it("the cancel warning says work stops, finished steps stay on record, and another workflow can start", () => {
+describe("cancelHeading", () => {
+  it("the cancel question names the workflow and the item; the warning says work stops, done steps stay on record, and another workflow can be attached", () => {
     strictEqual(
-      cancelWarning(from, "Leather journal — A5"),
-      "Cancel the Engraving run on Leather journal — A5? Work on it stops. Steps already done stay on record. You can start another workflow on the item afterwards.",
+      cancelHeading(from, "Leather journal — A5"),
+      "Cancel Engraving on Leather journal — A5?",
+    );
+    strictEqual(
+      CANCEL_WARNING,
+      "Work on it stops. Steps already done stay on record. You can attach another workflow to the item afterwards.",
     );
   });
 });

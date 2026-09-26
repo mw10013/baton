@@ -3,8 +3,8 @@ import type { SqlError } from "effect/unstable/sql";
 import { Clock, Context, Effect, Layer, Match, Option, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 
+import * as CurrentWhere from "@/lib/currentWhere";
 import * as Domain from "@/lib/Domain";
-import * as ReadyWhere from "@/lib/readyWhere";
 import { ShopifyAppEvents } from "@/lib/ShopifyAppEvents";
 
 /**
@@ -23,10 +23,10 @@ export interface OrderUpsert<E = never> {
   readonly order: Domain.ShopOrder;
   readonly lineItems: readonly Domain.OrderLineItem[];
   /**
-   * Runs inside the upsert's transaction, after the line items are written and
+   * Runs inside the upsert's transaction, after the items are written and
    * only when the write actually happened. The seam for run
    * reconciliation: runs must be created and adjusted against exactly the
-   * line-item set this write produced, and Durable Object SQLite refuses
+   * item set this write produced, and Durable Object SQLite refuses
    * nested transactions, so the caller composes plain statements here rather
    * than opening its own. Must not await anything but storage.
    */
@@ -230,7 +230,7 @@ export class OrderRepository extends Context.Service<
      * items still completes. `returning id` is what
      * reports that: SQLite emits a row only for an insert or an update that
      * actually ran, so an empty result means the write lost the race, and the
-     * line items are then left alone too. Writing them anyway would replace a
+     * items are then left alone too. Writing them anyway would replace a
      * fresh set with a stale one under a row that correctly refused to move.
      *
      * Line items are replaced wholesale on every accepted write, so a removed
@@ -537,7 +537,7 @@ export class OrderRepository extends Context.Service<
       );
 
       /**
-       * A single order with its line items, or `none`. Shared by the GID and
+       * A single order with its items, or `none`. Shared by the GID and
        * legacy-id lookups so both read the same shape.
        */
       const detailOf = Effect.fn("OrderRepository.detailOf")(function* (
@@ -968,7 +968,7 @@ export class OrderRepository extends Context.Service<
           /**
            * `Domain.OrderRow.attention` in SQL, bound to the roster the
            * caller read from D1: an open task is unassigned when its team id
-           * is null or not in the roster, and a ready task (`readyWhere`, the
+           * is null or not in the roster, and a current task (`currentWhere`, the
            * one definition the member's run list also runs on) on a team with no
            * members is stuck on nobody's list.
            */
@@ -983,16 +983,16 @@ export class OrderRepository extends Context.Service<
           const emptyReady =
             emptyIds.length === 0
               ? sql.literal("1 = 0")
-              : sql`(${sql.in("s.teamId", emptyIds)} and ${sql.literal(ReadyWhere.readyWhere("s"))})`;
-          const attentionTask = sql`exists (
+              : sql`(${sql.in("s.teamId", emptyIds)} and ${sql.literal(CurrentWhere.currentWhere("s"))})`;
+          const blockedTask = sql`exists (
             select 1 from RunTask s
             where s.runId = r.id and s.doneAt is null
               and ${sql.or([unassigned, emptyReady])}
           )`;
-          const attentionRun = sql`exists (
+          const blockedRun = sql`exists (
             select 1 from Run r
             where r.orderId = ShopOrder.id and r.status = 'active'
-              and ${attentionTask}
+              and ${blockedTask}
           )`;
           /**
            * The waiting-on column's membership test as a `where`, so a
@@ -1000,7 +1000,7 @@ export class OrderRepository extends Context.Service<
            * nothing to explain about why a row matched. It restates
            * `Domain.OrderRow.waitingOn` term for term, the open-order gate
            * included, and must move with `waitingRows` below. Aliased `wr`
-           * for the same reason as `waitingRows`: `readyWhere` binds `r`.
+           * for the same reason as `waitingRows`: `currentWhere` binds `r`.
            */
           const teamFilter =
             team === null
@@ -1012,12 +1012,12 @@ export class OrderRepository extends Context.Service<
                     and wr.status = 'active'
                     and wr.blockedAt is null
                     and s.teamId = ${team}
-                    and ${sql.literal(ReadyWhere.readyWhere("s"))}
+                    and ${sql.literal(CurrentWhere.currentWhere("s"))}
                 )`;
           /**
            * The open statuses partition the open orders by run state alone:
            * no open and no done run is `to_make`, any open run is `making`,
-           * only finished runs is `made`, as `Domain.productionState` says.
+           * only done runs is `made`, as `Domain.productionState` says.
            */
           const statusFilter = Match.value(status).pipe(
             Match.when("to_make", () =>
@@ -1064,7 +1064,7 @@ export class OrderRepository extends Context.Service<
             Match.when(null, () => sql.literal("1 = 1")),
             Match.when("no_workflow", () => sql.and([OPEN, NO_WORKFLOW])),
             Match.when("choose_workflow", () => sql.and([OPEN, CHOOSING])),
-            Match.when("team", () => sql.and([OPEN, attentionRun])),
+            Match.when("team", () => sql.and([OPEN, blockedRun])),
             Match.when("blocked", () =>
               sql.and([OPEN, `exists (${BLOCKED_RUN})`]),
             ),
@@ -1141,7 +1141,7 @@ export class OrderRepository extends Context.Service<
               ? []
               : yield* sql`
                   select id from ShopOrder
-                  where ${sql.in("id", ids)} and ${attentionRun}
+                  where ${sql.in("id", ids)} and ${blockedRun}
                 `.values;
           /**
            * `Domain.OrderRow.ambiguousItems`, restating `AMBIGUOUS_ITEM` per
@@ -1167,7 +1167,7 @@ export class OrderRepository extends Context.Service<
            * `ShopOrder` decoder wants exactly its own columns, and this one
            * returns several rows per order anyway. Gated on `liveIds` because
            * a task pointing at a deleted team is `attention`, and the outer
-           * run is aliased `wr`: `readyWhere` binds `r` for the task's own
+           * run is aliased `wr`: `currentWhere` binds `r` for the task's own
            * run inside its subqueries (see its JSDoc). `teamFilter` above
            * restates this read as a `where` and must move with it.
            */
@@ -1184,7 +1184,7 @@ export class OrderRepository extends Context.Service<
                     and wr.status = 'active'
                     and wr.blockedAt is null
                     and ${sql.in("s.teamId", liveIds)}
-                    and ${sql.literal(ReadyWhere.readyWhere("s"))}
+                    and ${sql.literal(CurrentWhere.currentWhere("s"))}
                 `.values;
           /**
            * Grouped through the roster rather than by re-branding the stored
@@ -1241,7 +1241,7 @@ export class OrderRepository extends Context.Service<
            * search and team leave. `run_summary` is the per-page `runRows`
            * aggregate hoisted over every open order, one grouped read of
            * `Run` in place of a correlated `exists` per fragment;
-           * `CHOOSING` and `attentionRun` stay correlated, walking line items
+           * `CHOOSING` and `blockedRun` stay correlated, walking items
            * and tasks. `facts` is materialised so each correlated term runs
            * once per order however many sums read it. The sums restate
            * `statusFilter` and `needFilter` over those facts and must move
@@ -1293,7 +1293,7 @@ export class OrderRepository extends Context.Service<
                   coalesce(rs.blockedRuns, 0) as blockedRuns,
                   coalesce(rs.closedRuns, 0) as closedRuns,
                   (${sql.literal(CHOOSING)}) as choosing,
-                  ${attentionRun} as team
+                  ${blockedRun} as team
                 from ShopOrder
                 left join run_summary rs on rs.orderId = ShopOrder.id
                 where ${sql.and([OPEN, searchFilter, teamFilter])}

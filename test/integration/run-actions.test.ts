@@ -51,7 +51,7 @@ const run = (status: Domain.RunStatus, blocked = false) => ({
   blockedAt: blocked ? 1 : null,
 });
 
-const BLOCKER: Domain.UndoBlocker = {
+const BLOCKER: Domain.ReopenBlocker = {
   taskName: Schema.decodeUnknownSync(Domain.TaskName)("Polish"),
   teamName: Schema.decodeUnknownSync(Domain.TeamName)("Finishing"),
 };
@@ -93,17 +93,17 @@ describe("Domain.runActions matrix", () => {
       }
     });
 
-  it("without the line item, Change workflow is not offered", () => {
+  it("without the item, Change workflow is not offered", () => {
     strictEqual(
       Domain.runActions(MERCHANT, OPEN_ORDER, run("active"), [
-        { teamId: T, ready: true },
+        { teamId: T, current: true },
       ]).changeWorkflow,
       false,
     );
   });
 
-  it("a member whose team holds no ready task gets only the note, and only if the run is theirs to see", () => {
-    const tasks = [{ teamId: T, ready: false }];
+  it("a member whose team holds no current task gets only the note, and only if the run is theirs to see", () => {
+    const tasks = [{ teamId: T, current: false }];
     deepStrictEqual(
       Domain.runActions(MEMBER, OPEN_ORDER, run("active", true), tasks),
       {
@@ -124,14 +124,17 @@ describe("Domain.runActions matrix", () => {
 
 const task = (
   overrides: Partial<
-    Pick<Domain.RunTaskView, "ready" | "startedAt" | "doneAt" | "undoBlockedBy">
+    Pick<
+      Domain.RunTaskView,
+      "current" | "startedAt" | "doneAt" | "reopenBlockedBy"
+    >
   > = {},
 ) => ({
   teamId: T,
-  ready: true,
+  current: true,
   startedAt: null,
   doneAt: null,
-  undoBlockedBy: null,
+  reopenBlockedBy: null,
   ...overrides,
 });
 
@@ -241,13 +244,13 @@ describe("Domain.lineItemState", () => {
       runs: readonly Domain.RunDetail[],
       offered: readonly Domain.Workflow[] = workflows,
     ) => kindOf(item, runs, offered);
-    strictEqual(kind(lineItemOf(), [detailOf("active")]), "running");
-    strictEqual(kind(lineItemOf(), [detailOf("done")]), "finished");
+    strictEqual(kind(lineItemOf(), [detailOf("active")]), "open");
+    strictEqual(kind(lineItemOf(), [detailOf("done")]), "done");
     strictEqual(kind(lineItemOf(), [detailOf("closed")]), "closed");
     // A run is the news even when the line went to zero under it.
     strictEqual(
       kind(lineItemOf({ currentQuantity: 0 }), [detailOf("active")]),
-      "running",
+      "open",
     );
     strictEqual(kind(lineItemOf({ currentQuantity: 0 }), []), "removed");
     strictEqual(kind(lineItemOf(), [], []), "unmatched");
@@ -394,28 +397,28 @@ interface LiveRun {
  * done run is Polish: Cut's downstream is done there, which is started.
  */
 const tasksFor = (
-  fixture: ActionTable.Fixture<Domain.TeamId, Domain.UndoBlocker>,
+  fixture: ActionTable.Fixture<Domain.TeamId, Domain.ReopenBlocker>,
 ): {
   readonly target: "cut" | "polish";
   readonly cut: Progress;
   readonly polish: Progress;
 } => {
-  const { ready, startedAt, doneAt, undoBlockedBy } = fixture.task;
+  const { current, startedAt, doneAt, reopenBlockedBy } = fixture.task;
   const runDone = Domain.runIsDone(fixture.run);
-  const finished = { startedAt: 1, doneAt: 2 };
+  const done = { startedAt: 1, doneAt: 2 };
   if (doneAt === null)
-    return ready
+    return current
       ? { target: "cut", cut: { startedAt, doneAt }, polish: IDLE }
       : { target: "polish", cut: IDLE, polish: IDLE };
-  if (undoBlockedBy !== null)
+  if (reopenBlockedBy !== null)
     return {
       target: "cut",
-      cut: finished,
+      cut: done,
       polish: { startedAt: 3, doneAt: runDone ? 4 : null },
     };
   return runDone
-    ? { target: "polish", cut: finished, polish: { startedAt: 3, doneAt: 4 } }
-    : { target: "cut", cut: finished, polish: IDLE };
+    ? { target: "polish", cut: done, polish: { startedAt: 3, doneAt: 4 } }
+    : { target: "cut", cut: done, polish: IDLE };
 };
 
 /**
@@ -429,7 +432,7 @@ const reset = (
   shop: string,
   live: LiveRun,
   teamId: string,
-  fixture: ActionTable.Fixture<Domain.TeamId, Domain.UndoBlocker>,
+  fixture: ActionTable.Fixture<Domain.TeamId, Domain.ReopenBlocker>,
   tasks: { readonly cut: Progress; readonly polish: Progress },
 ) =>
   runInDurableObject(
@@ -625,7 +628,7 @@ describe("ShopAgent refuses what the action set refuses", () => {
    */
   const checkChangeWorkflow = async (
     row: ActionTable.Row,
-    fixture: ActionTable.Fixture<Domain.TeamId, Domain.UndoBlocker>,
+    fixture: ActionTable.Fixture<Domain.TeamId, Domain.ReopenBlocker>,
     tasks: { readonly cut: Progress; readonly polish: Progress },
   ) => {
     const attached = await ctx.agent.merchantAttachWorkflow({
@@ -681,16 +684,16 @@ describe("ShopAgent refuses what the action set refuses", () => {
     entriesOf({
       start: { m: () => ctx.member.startTask({ runTaskId }) },
       done: {
-        M: () => ctx.merchant.completeTask({ runTaskId }),
-        m: () => ctx.member.completeTask({ runTaskId }),
+        M: () => ctx.merchant.markTaskDone({ runTaskId }),
+        m: () => ctx.member.markTaskDone({ runTaskId }),
       },
       putBack: {
-        M: () => ctx.merchant.unstartTask({ runTaskId }),
-        m: () => ctx.member.unstartTask({ runTaskId }),
+        M: () => ctx.merchant.putBackTask({ runTaskId }),
+        m: () => ctx.member.putBackTask({ runTaskId }),
       },
       reopen: {
-        M: () => ctx.merchant.uncompleteTask({ runTaskId }),
-        m: () => ctx.member.uncompleteTask({ runTaskId }),
+        M: () => ctx.merchant.reopenTask({ runTaskId }),
+        m: () => ctx.member.reopenTask({ runTaskId }),
       },
       assign: {
         M: () =>
@@ -704,13 +707,13 @@ describe("ShopAgent refuses what the action set refuses", () => {
   /**
    * The tag a filled task cell's callable answers. Two are not `Ok`:
    * `assign` answers `Assigned`, and a `blocker` cell under `reopen` answers
-   * `UndoBlocked`, because the table says the button is drawn with that
+   * `ReopenBlocked`, because the table says the button is drawn with that
    * sentence and the callable refuses for the downstream start rather than
    * the action set.
    */
   const taskOk = (cell: string, value: ActionTable.Cell | undefined) => {
     if (cell === "assign") return "Assigned";
-    if (value === "blocker") return "UndoBlocked";
+    if (value === "blocker") return "ReopenBlocked";
     return OK;
   };
 

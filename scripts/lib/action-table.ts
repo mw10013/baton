@@ -70,15 +70,15 @@ const WORDS = {
 } as const;
 
 interface TaskState {
-  readonly ready: boolean;
+  readonly current: boolean;
   readonly startedAt: number | null;
   readonly doneAt: number | null;
 }
 
-const READY: TaskState = { ready: true, startedAt: null, doneAt: null };
-const STARTED: TaskState = { ready: true, startedAt: 1, doneAt: null };
-const WAITING: TaskState = { ready: false, startedAt: null, doneAt: null };
-const DONE: TaskState = { ready: false, startedAt: 1, doneAt: 2 };
+const READY: TaskState = { current: true, startedAt: null, doneAt: null };
+const STARTED: TaskState = { current: true, startedAt: 1, doneAt: null };
+const WAITING: TaskState = { current: false, startedAt: null, doneAt: null };
+const DONE: TaskState = { current: false, startedAt: 1, doneAt: 2 };
 
 const ORDERS: Record<typeof OrderWord.Type, readonly OrderState[]> = {
   open: [{ cancelledAt: null, fulfillmentStatus: "UNFULFILLED" }],
@@ -114,7 +114,7 @@ const TASKS: Record<typeof TaskWord.Type, readonly TaskState[]> = {
 /**
  * One concrete input to `runActions` or `taskActions`. `task` is the task
  * under test for `taskActions`; for `runActions` it is the run's one task,
- * on the member's team and ready exactly when the run is open, which is who
+ * on the member's team and current exactly when the run is open, which is who
  * "m" is. `item` is present on `runActions` fixtures only.
  */
 export interface Fixture<TeamId, Blocker> {
@@ -125,7 +125,7 @@ export interface Fixture<TeamId, Blocker> {
   };
   readonly task: TaskState & {
     readonly teamId: TeamId;
-    readonly undoBlockedBy: Blocker | null;
+    readonly reopenBlockedBy: Blocker | null;
   };
   readonly item?: { readonly currentQuantity: number };
 }
@@ -146,19 +146,19 @@ export interface Fixture<TeamId, Blocker> {
  * | blocked    | yes / no     | `blockedAt` 1 / null                                                                 |
  * | blocked    | any          | both                                                                                 |
  * | units      | some / none  | `currentQuantity` 1 / 0 (runActions only)                                            |
- * | task       | ready        | `ready: true, startedAt: null, doneAt: null`                                         |
- * | task       | started      | `ready: true, startedAt: 1, doneAt: null`                                            |
- * | task       | waiting      | `ready: false, startedAt: null, doneAt: null`                                        |
- * | task       | done         | `ready: false, startedAt: 1, doneAt: 2`                                              |
+ * | task       | ready        | `current: true, startedAt: null, doneAt: null`                                       |
+ * | task       | started      | `current: true, startedAt: 1, doneAt: null`                                          |
+ * | task       | waiting      | `current: false, startedAt: null, doneAt: null`                                      |
+ * | task       | done         | `current: false, startedAt: 1, doneAt: 2`                                            |
  * | task       | any open     | ready; started; waiting                                                              |
  * | task       | any          | ready; started; waiting; done                                                        |
- * | downstream | none         | `undoBlockedBy: null`                                                                |
- * | downstream | started      | `undoBlockedBy: BLOCKER` (the caller's `blocker`)                                    |
+ * | downstream | none         | `reopenBlockedBy: null`                                                                |
+ * | downstream | started      | `reopenBlockedBy: BLOCKER` (the caller's `blocker`)                                    |
  * | downstream | -            | not applicable; fixture `null`                                                       |
  *
- * The `ready` and `started` words are the glossary's narrow ones. The
- * `ready` flag they set is the code's broader one, true for a started task
- * too, so both set it.
+ * The `ready` and `started` words are the glossary's narrow task states. The
+ * `current` flag they set is the broad one (`Domain.currentTasks`: the
+ * task's step is current, started or not), so both set it.
  */
 export const expand = <TeamId, Blocker>(
   name: TableName,
@@ -184,21 +184,21 @@ export const expand = <TeamId, Blocker>(
           teamId: context.teamId,
           // `Domain.runIsOpen`, spelled out: this module imports `Domain`
           // for types only, so the CLI runs without the app's runtime.
-          ready: run.status === "active",
+          current: run.status === "active",
           startedAt: null,
           doneAt: null,
-          undoBlockedBy: null,
+          reopenBlockedBy: null,
         },
         item: { currentQuantity },
       })),
     );
-  const undoBlockedBy =
+  const reopenBlockedBy =
     word("downstream") === "started" ? context.blocker : null;
   return states.flatMap(({ order, run }) =>
     TASKS[word("task")].map((task) => ({
       order,
       run,
-      task: { ...task, teamId: context.teamId, undoBlockedBy },
+      task: { ...task, teamId: context.teamId, reopenBlockedBy },
     })),
   );
 };
@@ -378,4 +378,134 @@ export const checkGlossary = (source: string): readonly string[] => {
   return [...words].filter(
     (word) => !new RegExp(`\\b${word}\\b`, "u").test(rest),
   );
+};
+
+/**
+ * The label constants the glossary's screen columns are checked against,
+ * passed in rather than imported so this module stays free of the app's
+ * runtime: `scripts/action-table.ts` and the test hand it `Domain`'s values.
+ */
+export interface ScreenLabels {
+  readonly taskStates: Readonly<Record<string, string | null>>;
+  readonly runStates: Readonly<Record<string, string>>;
+  readonly workflowStates: Readonly<Record<string, string>>;
+  readonly verbs: Readonly<
+    Record<
+      string,
+      { readonly member: string | null; readonly merchant: string | null }
+    >
+  >;
+}
+
+/** A glossary table: the first line of the paragraph that introduces it, and its body rows as cells by header. */
+interface GlossaryTable {
+  readonly intro: string;
+  readonly rows: readonly Readonly<Record<string, string>>[];
+}
+
+const glossaryTables = (source: string): readonly GlossaryTable[] => {
+  const start = source.indexOf("/**\n * Glossary.");
+  if (start === -1) return [];
+  const lines = source
+    .slice(start, source.indexOf("*/", start))
+    .split("\n")
+    .map((text) => text.replace(/^\s*\/?\*+ ?/u, "").trim());
+  const tables: GlossaryTable[] = [];
+  // The first line of the paragraph before a table names it ("Task
+  // states. `current` is the flag: ..."), so a paragraph's later lines do
+  // not replace it.
+  let intro = "";
+  for (let index = 0; index < lines.length; index++) {
+    const text = lines[index] ?? "";
+    if (!text.startsWith("|")) {
+      if (text !== "" && (lines[index - 1] ?? "") === "") intro = text;
+      continue;
+    }
+    const header = cellsOf(text);
+    const rows: Record<string, string>[] = [];
+    // Skip the separator, then read body rows until the table ends.
+    index += 2;
+    for (; (lines[index] ?? "").startsWith("|"); index++) {
+      const values = cellsOf(lines[index] ?? "");
+      rows.push(
+        Object.fromEntries(
+          header.map((column, at) => [column, values[at] ?? ""]),
+        ),
+      );
+    }
+    tables.push({ intro, rows });
+  }
+  return tables;
+};
+
+/** `put back` → `putBack`: a glossary word as the constants key it. */
+const camel = (word: string) =>
+  word.replace(/ (?<letter>[a-z])/gu, (_, letter: string) =>
+    letter.toUpperCase(),
+  );
+
+/**
+ * **The glossary's screen column is the label constant.** Each screen cell in
+ * the Task states, Run states, Workflow states and Verbs tables equals the
+ * constant's value for its word ("(none)" for `null`), every constant key
+ * has a row, and every row has a key. A run-state cell is compared up to its
+ * first " (" or " ·", because the open row carries the merchant's second
+ * word and the closed row its reason. Reports each mismatch.
+ */
+export const checkScreenColumns = (
+  source: string,
+  labels: ScreenLabels,
+): readonly string[] => {
+  const tables = glossaryTables(source);
+  const shown = (value: string | null) => value ?? "(none)";
+  const compare = (
+    name: string,
+    intro: string,
+    constants: Readonly<
+      Record<string, Readonly<Record<string, string | null>>>
+    >,
+    cellOf: (cell: string) => string = (cell) => cell,
+  ): readonly string[] => {
+    const table = tables.find((each) => each.intro.startsWith(intro));
+    if (table === undefined) return [`Glossary: no ${name} table`];
+    const words = table.rows.map((row) => camel(row["word"] ?? ""));
+    return [
+      ...table.rows.flatMap((row) => {
+        const word = row["word"] ?? "";
+        const constant = constants[camel(word)];
+        if (constant === undefined)
+          return [`Glossary: ${name} ${word}: no constant`];
+        return Object.entries(constant).flatMap(([column, value]) => {
+          const cell = cellOf(row[column] ?? "");
+          return cell === shown(value)
+            ? []
+            : [
+                `Glossary: ${name} ${word}: ${column} says "${cell}", constant says "${shown(value)}"`,
+              ];
+        });
+      }),
+      ...Object.keys(constants)
+        .filter((key) => !words.includes(key))
+        .map((key) => `Glossary: ${name}: no row for ${key}`),
+    ];
+  };
+  const screen = (values: Readonly<Record<string, string | null>>) =>
+    Object.fromEntries(
+      Object.entries(values).map(([word, value]) => [word, { screen: value }]),
+    );
+  return [
+    ...compare("Task states", "Task states", screen(labels.taskStates)),
+    ...compare(
+      "Run states",
+      "Run states",
+      screen(labels.runStates),
+      (cell) => cell.split(" (")[0]?.split(" ·")[0] ?? cell,
+    ),
+    ...compare(
+      "Workflow states",
+      "Workflow states",
+      screen(labels.workflowStates),
+    ),
+    ...compare("Verbs", "Verbs", labels.verbs),
+  ];
 };

@@ -202,8 +202,8 @@ export const agentSocket = (response: Response): AgentSocket => {
 export const memberActions = (socket: AgentSocket) => ({
   startTask: (input: typeof Domain.StartTaskInput.Encoded) =>
     socket.call<Domain.RunResult>("memberStartTask", input),
-  completeTask: (input: typeof Domain.CompleteTaskInput.Encoded) =>
-    socket.call<Domain.RunResult>("memberCompleteTask", input),
+  markTaskDone: (input: typeof Domain.MarkTaskDoneInput.Encoded) =>
+    socket.call<Domain.RunResult>("memberMarkTaskDone", input),
   setRunNote: (input: typeof Domain.SetRunNoteInput.Encoded) =>
     socket.call<Domain.RunResult>("memberSetRunNote", input),
   blockRun: (input: typeof Domain.BlockRunInput.Encoded) =>
@@ -212,23 +212,23 @@ export const memberActions = (socket: AgentSocket) => ({
     socket.call<Domain.RunResult>("memberUnblockRun", input),
   setBlockReason: (input: typeof Domain.SetBlockReasonInput.Encoded) =>
     socket.call<Domain.RunResult>("memberSetBlockReason", input),
-  uncompleteTask: (input: typeof Domain.UncompleteTaskInput.Encoded) =>
-    socket.call<Domain.RunResult>("memberUncompleteTask", input),
-  unstartTask: (input: typeof Domain.UnstartTaskInput.Encoded) =>
-    socket.call<Domain.RunResult>("memberUnstartTask", input),
+  reopenTask: (input: typeof Domain.ReopenTaskInput.Encoded) =>
+    socket.call<Domain.RunResult>("memberReopenTask", input),
+  putBackTask: (input: typeof Domain.PutBackTaskInput.Encoded) =>
+    socket.call<Domain.RunResult>("memberPutBackTask", input),
 });
 
 /**
  * The merchant's run writes on tasks and blocks, typed, over an already-open merchant
  * socket. No identity on the wire and none on the connection either: the
  * merchant *is* the shop, so the object supplies `{ role: "merchant" }` and no
- * `teamIds` (`ShopAgent.merchantCompleteTask`).
+ * `teamIds` (`ShopAgent.merchantMarkTaskDone`).
  */
 export const merchantActions = (socket: AgentSocket) => ({
-  completeTask: (input: typeof Domain.CompleteTaskInput.Encoded) =>
-    socket.call<Domain.RunResult>("merchantCompleteTask", input),
-  uncompleteTask: (input: typeof Domain.UncompleteTaskInput.Encoded) =>
-    socket.call<Domain.RunResult>("merchantUncompleteTask", input),
+  markTaskDone: (input: typeof Domain.MarkTaskDoneInput.Encoded) =>
+    socket.call<Domain.RunResult>("merchantMarkTaskDone", input),
+  reopenTask: (input: typeof Domain.ReopenTaskInput.Encoded) =>
+    socket.call<Domain.RunResult>("merchantReopenTask", input),
   setRunNote: (input: typeof Domain.SetRunNoteInput.Encoded) =>
     socket.call<Domain.RunResult>("merchantSetRunNote", input),
   blockRun: (input: typeof Domain.BlockRunInput.Encoded) =>
@@ -237,8 +237,8 @@ export const merchantActions = (socket: AgentSocket) => ({
     socket.call<Domain.RunResult>("merchantUnblockRun", input),
   setBlockReason: (input: typeof Domain.SetBlockReasonInput.Encoded) =>
     socket.call<Domain.RunResult>("merchantSetBlockReason", input),
-  unstartTask: (input: typeof Domain.UnstartTaskInput.Encoded) =>
-    socket.call<Domain.RunResult>("merchantUnstartTask", input),
+  putBackTask: (input: typeof Domain.PutBackTaskInput.Encoded) =>
+    socket.call<Domain.RunResult>("merchantPutBackTask", input),
 });
 
 /** A merchant socket plus its typed interventions, the order page's half of the wire. */

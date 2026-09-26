@@ -204,7 +204,7 @@ export function BlockModal({
       saved={blocked ? (run.blockReason ?? "") : ""}
       maxLength={Domain.BLOCK_REASON_MAX_LENGTH}
       pending={pending}
-      submitLabel={blocked ? "Save" : "Block"}
+      submitLabel={blocked ? "Save" : Domain.VERB_LABEL.block.member}
       critical={!blocked}
       allowUnchanged={!blocked}
       onSubmit={blocked ? onSaveReason : onBlock}

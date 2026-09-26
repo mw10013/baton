@@ -1,7 +1,7 @@
 // Checks and prints the action matrices in src/lib/Domain.ts (the JSDoc on
 // `runActions` and `taskActions`), which the test reads as the spec.
 //
-//   node scripts/action-table.ts check   parse both tables, refuse overlapping rows, check the glossary (exit 1 on any failure)
+//   node scripts/action-table.ts check   parse both tables, refuse overlapping rows, check the glossary and its screen columns (exit 1 on any failure)
 //   node scripts/action-table.ts print   render the parsed rows and how many fixtures each expands to
 
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
@@ -9,10 +9,18 @@ import { Console, Effect, Result } from "effect";
 import { CliError, Command } from "effect/unstable/cli";
 import { readFileSync } from "node:fs";
 
+import * as Domain from "../src/lib/Domain.ts";
 import * as ActionTable from "./lib/action-table.ts";
 
 const DOMAIN = new URL("../src/lib/Domain.ts", import.meta.url).pathname;
 const NAMES: readonly ActionTable.TableName[] = ["runActions", "taskActions"];
+
+const SCREEN_LABELS: ActionTable.ScreenLabels = {
+  taskStates: Domain.TASK_STATE_LABEL,
+  runStates: Domain.RUN_STATE_LABEL,
+  workflowStates: Domain.WORKFLOW_STATE_LABEL,
+  verbs: Domain.VERB_LABEL,
+};
 
 const readSource = Effect.sync(() => readFileSync(DOMAIN, "utf8"));
 
@@ -36,6 +44,7 @@ const checkCommand = Command.make(
         (word) =>
           `Glossary: \`${word}\` does not occur in src/lib/Domain.ts outside the glossary`,
       ),
+      ...ActionTable.checkScreenColumns(source, SCREEN_LABELS),
     ];
     for (const failure of failures) yield* Console.error(failure);
     if (failures.length > 0)

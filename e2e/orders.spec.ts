@@ -1,5 +1,7 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 
+import * as Domain from "@/lib/Domain";
+
 import { clickHoisted, gotoApp, hoistedEnabled } from "./app";
 import { seedConfig, seedMembers } from "./seed";
 
@@ -85,7 +87,7 @@ test("orders screen imports open orders and lists them", async ({ page }) => {
      properties and product tags are rendered — the
      fields the bulk path exists to collect. */
   await rows.first().getByRole("link").first().click();
-  /* One card per line item, each an unslotted top-level section headed by the
+  /* One card per item, each an unslotted top-level section headed by the
      item's own title — which is a real synced order's, so the selector is
      structural rather than a title this spec cannot know. The aside's sections
      are slotted, so the first unslotted one is the first item card. */
@@ -101,7 +103,7 @@ test("orders screen imports open orders and lists them", async ({ page }) => {
 
 /**
  * The waiting-on column on the orders index: the team holding each open
- * order, read from the same `readyWhere` the member's run list runs on.
+ * order, read from the same `currentWhere` the member's run list runs on.
  */
 test("the orders index names the team an open order is waiting on", async ({
   page,
@@ -220,7 +222,7 @@ test("the orders index searches by order number and clears back to the list", as
 
 /**
  * The merchant's interventions end to end, against a seeded two-step run:
- * Manage opens, Mark done records the merchant on the task, Reopen takes it
+ * Manage opens, Done records the merchant on the task, Reopen takes it
  * back, and Block / Unblock move the run's block. Each assertion reads the row's
  * own attribution rather than a toast, because the row is what the next person
  * to look at this order will see.
@@ -268,7 +270,12 @@ test("the merchant marks a task done, reopens it, and blocks the run", async ({
 
   /* Collapsed, the run offers nothing to click but the disclosure: the trail
      is a glance, and every action lives behind Manage. */
-  await expect(frame.getByRole("button", { name: "Mark done" })).toBeHidden();
+  await expect(
+    frame.getByRole("button", {
+      name: Domain.VERB_LABEL.done.merchant,
+      exact: true,
+    }),
+  ).toBeHidden();
   await frame.getByRole("button", { name: "Manage" }).click();
 
   /* The drawer draws the member page's step cards (`RunSteps`). A task that
@@ -295,7 +302,13 @@ test("the merchant marks a task done, reopens it, and blocks the run", async ({
   /* The badge carries the state; the line under it is the team, then who. */
   const doneByMerchant = frame.getByText(`${CUT_TEAM} \u00B7 Merchant`);
   await expect(frame.getByText("Ready", { exact: true })).toBeVisible();
-  await frame.getByRole("button", { name: "Mark done" }).first().click();
+  await frame
+    .getByRole("button", {
+      name: Domain.VERB_LABEL.done.merchant,
+      exact: true,
+    })
+    .first()
+    .click();
   await expect(doneByMerchant).toBeVisible();
 
   await frame.getByRole("button", { name: "Reopen" }).click();
@@ -306,9 +319,21 @@ test("the merchant marks a task done, reopens it, and blocks the run", async ({
   /* Both steps done takes the run to `done`. The card says it in merchant
      words, not `Run.status`: its badge, and the now line counting the
      steps. */
-  await frame.getByRole("button", { name: "Mark done" }).first().click();
+  await frame
+    .getByRole("button", {
+      name: Domain.VERB_LABEL.done.merchant,
+      exact: true,
+    })
+    .first()
+    .click();
   await expect(doneByMerchant).toBeVisible();
-  await frame.getByRole("button", { name: "Mark done" }).first().click();
+  await frame
+    .getByRole("button", {
+      name: Domain.VERB_LABEL.done.merchant,
+      exact: true,
+    })
+    .first()
+    .click();
   await expect(
     frame.getByText("Done \u00B7 2 steps", { exact: true }),
   ).toBeVisible();
@@ -316,7 +341,7 @@ test("the merchant marks a task done, reopens it, and blocks the run", async ({
 
 /**
  * Put back from Manage, the merchant's inverse of a worker's Start
- * (`RunRepository.unstartTask`). There is no merchant Start, so the
+ * (`RunRepository.putBackTask`). There is no merchant Start, so the
  * seed has the member start the task; Put back returns it to Ready.
  */
 test("the merchant puts back a task a member started", async ({ page }) => {
@@ -349,8 +374,8 @@ test("the merchant puts back a task a member started", async ({ page }) => {
   await frame.getByRole("link", { name: "#9304" }).click();
   await frame.getByRole("button", { name: "Manage" }).click();
 
-  /* The card's run badge also says In progress, so read the task's line:
-     team, who started it, since when. */
+  /* Read the task's line rather than its Started badge: team, who
+     started it, since when. */
   await expect(
     frame.getByText(`${CUT_TEAM} \u00B7 ${MEMBER} \u00B7 since`),
   ).toBeVisible();
@@ -361,12 +386,12 @@ test("the merchant puts back a task a member started", async ({ page }) => {
 
 /**
  * Reopen is not offered once someone downstream has moved — the same rule the
- * worker's Undo obeys (`Domain.undoBlockedBy`), but this is the only screen
+ * worker's Undo obeys (`Domain.reopenBlockedBy`), but this is the only screen
  * that puts the blocker into words, because it is the only one that can act
  * on it. The assertion is the whole rendered sentence, which is what pins the
  * wording now that it lives inline in the route rather than in `Domain`:
  * task first, team parenthetical, and the verb supplied by the prefix. Both
- * steps are marked done from this page, so Polish is the blocker on Cut's
+ * steps are done from this page, so Polish is the blocker on Cut's
  * row.
  */
 test("the merchant cannot reopen a task whose next step is done", async ({
@@ -634,7 +659,7 @@ test("the order card puts the run's badges on the title line, Manage above its d
 });
 
 /**
- * One workflow per line item, at the two places a merchant meets it.
+ * One workflow per item, at the two places a merchant meets it.
  *
  * Two active workflows with a tag each, both on the same product, is a state
  * the app refuses to *create* — Apply and Turn on hold one active workflow per
@@ -730,7 +755,12 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   await expect(options.nth(1)).toHaveText(RUSH);
 
   await picker.selectOption({ label: ENGRAVING });
-  await item.getByRole("button", { name: "Start", exact: true }).click();
+  await item
+    .getByRole("button", {
+      name: Domain.VERB_LABEL.attachWorkflow.merchant,
+      exact: true,
+    })
+    .click();
 
   /* The run replaces the ask, and with it the picker: an item with a live run
      carries no workflow control at rest, only the header's Manage. The
@@ -780,11 +810,16 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   await expect(item.getByText("Cancelled", { exact: true })).toHaveCount(0);
   await expect(item.getByRole("button", { name: "Manage" })).toHaveCount(1);
 
-  /* Cancel run asks first, because nothing brings the run back. After it
+  /* Cancel workflow asks first, because nothing brings the run back. After it
      the item's run is Closed, "Cancelled by you", and the item waits for the
      merchant: the picker offers every workflow, the closed one included, as
      a fresh run. */
-  await item.getByRole("button", { name: "Cancel run", exact: true }).click();
+  await item
+    .getByRole("button", {
+      name: Domain.VERB_LABEL.cancel.merchant,
+      exact: true,
+    })
+    .click();
   const cancelModal = frame.locator("s-modal#cancel-run");
   await expect(
     cancelModal.getByText("Steps already done stay on record.", {
@@ -792,7 +827,10 @@ test("an item matching two workflows waits for the merchant to choose, then chan
     }),
   ).toBeVisible();
   await cancelModal
-    .getByRole("button", { name: "Cancel run", exact: true })
+    .getByRole("button", {
+      name: Domain.VERB_LABEL.cancel.merchant,
+      exact: true,
+    })
     .click();
   await expect(item.getByText("Closed", { exact: true })).toBeVisible();
   await expect(
@@ -801,7 +839,12 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   await item
     .getByRole("combobox", { name: "Choose workflow" })
     .selectOption({ label: RUSH });
-  await item.getByRole("button", { name: "Start", exact: true }).click();
+  await item
+    .getByRole("button", {
+      name: Domain.VERB_LABEL.attachWorkflow.merchant,
+      exact: true,
+    })
+    .click();
   await expect(item.getByText("Closed", { exact: true })).toHaveCount(0);
   await expect(manage).toBeVisible();
 
@@ -814,7 +857,7 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   ).toHaveCount(0);
 });
 
-/** A button inside one line item's card, by its exact label. */
+/** A button inside one item's card, by its exact label. */
 const button = (scope: Locator, name: string) =>
   scope.getByRole("button", { name, exact: true });
 
@@ -929,7 +972,7 @@ test("each order-page state draws the controls its action set allows", async ({
     });
   };
   /* A closed run offers nothing but the note: no Dismiss anywhere, and no
-     Cancel run on a closed order (`Domain.runActions`). */
+     Cancel workflow on a closed order (`Domain.runActions`). */
   const removed = await open(9501, "E2E Removed");
   await expect(removed.getByText("Closed", { exact: true })).toBeVisible();
   await expect(
@@ -937,10 +980,12 @@ test("each order-page state draws the controls its action set allows", async ({
   ).toBeVisible();
   await expect(button(removed, "Dismiss")).toHaveCount(0);
   await button(removed, "Manage").click();
-  await expect(button(removed, "Mark done")).toHaveCount(0);
+  await expect(button(removed, Domain.VERB_LABEL.done.merchant)).toHaveCount(0);
   await expect(button(removed, "Block")).toHaveCount(0);
   await expect(button(removed, "Assign team")).toHaveCount(0);
-  await expect(button(removed, "Cancel run")).toHaveCount(0);
+  await expect(button(removed, Domain.VERB_LABEL.cancel.merchant)).toHaveCount(
+    0,
+  );
 
   const closed = await open(9502, "E2E Closed");
   await expect(closed.getByText("Closed", { exact: true })).toBeVisible();
@@ -949,8 +994,10 @@ test("each order-page state draws the controls its action set allows", async ({
   ).toBeVisible();
   await expect(button(closed, "Dismiss")).toHaveCount(0);
   await button(closed, "Manage").click();
-  await expect(button(closed, "Cancel run")).toHaveCount(0);
-  await expect(button(closed, "Mark done")).toHaveCount(0);
+  await expect(button(closed, Domain.VERB_LABEL.cancel.merchant)).toHaveCount(
+    0,
+  );
+  await expect(button(closed, Domain.VERB_LABEL.done.merchant)).toHaveCount(0);
   await expect(button(closed, "Reopen")).toHaveCount(0);
   await expect(button(closed, "Assign team")).toHaveCount(0);
   await expect(button(closed, "Block")).toHaveCount(0);
@@ -965,13 +1012,15 @@ test("each order-page state draws the controls its action set allows", async ({
   await expect(button(resized, "Dismiss")).toHaveCount(0);
   await button(resized, "Manage").click();
   await expect(button(resized, "Reopen")).toBeVisible();
-  await expect(button(resized, "Cancel run")).toHaveCount(0);
+  await expect(button(resized, Domain.VERB_LABEL.cancel.merchant)).toHaveCount(
+    0,
+  );
 
   const held = await open(9504, "E2E Held");
   await expect(button(held, "Edit reason")).toBeVisible();
   await expect(button(held, "Unblock")).toBeVisible();
   await button(held, "Manage").click();
-  await expect(button(held, "Mark done")).toHaveCount(0);
+  await expect(button(held, Domain.VERB_LABEL.done.merchant)).toHaveCount(0);
   await expect(button(held, "Block")).toHaveCount(0);
   await expect(button(held, "Assign team").first()).toBeVisible();
 
@@ -991,7 +1040,7 @@ test("each order-page state draws the controls its action set allows", async ({
   await expect(
     stopped.getByRole("combobox", { name: "Choose workflow" }),
   ).toBeVisible();
-  /* The finished step stays on record under Manage, with no buttons. */
+  /* The done step stays on record under Manage, with no buttons. */
   await button(stopped, "Manage").click();
   await expect(stopped.getByText("E2E State A one")).toBeVisible();
   await expect(button(stopped, "Reopen")).toHaveCount(0);
@@ -1002,7 +1051,7 @@ test("each order-page state draws the controls its action set allows", async ({
     shrunk.getByText("Quantity changed · 2 → 1", { exact: true }),
   ).toBeVisible();
   await button(shrunk, "Manage").click();
-  await button(shrunk, "Mark done").first().click();
+  await button(shrunk, Domain.VERB_LABEL.done.merchant).first().click();
   await expect(shrunk.getByText(/^Quantity changed/u)).toHaveCount(0);
 });
 

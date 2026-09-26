@@ -52,7 +52,7 @@ import {
   type RunBlockedError,
   type RunOrderClosedError,
   type TaskNotReadyError,
-  type TaskUndoBlockedError,
+  type TaskReopenBlockedError,
   RunRepository,
   type RunRepositoryError,
 } from "@/lib/RunRepository";
@@ -386,12 +386,12 @@ const memberCallableEffect =
  * ISO text: the two stores already differ, and one store should not mix.
  *
  * `Run` / `RunTask` are the *instances*: one workflow applied
- * to one line item, with the definition's tasks copied
+ * to one item, with the definition's tasks copied
  * in. Every display field is a snapshot and there is no foreign key to
  * `ShopOrder`, `OrderLineItem`, or `Workflow` — a run must survive an order
- * delete, a line item dropped by an edit, and a definition edit or rename,
+ * delete, an item dropped by an edit, and a definition edit or rename,
  * because it is the record of work someone may already have started.
- * `lineItemId` is `unique`: **one row per line item**, enforced by the
+ * `lineItemId` is `unique`: **one row per item**, enforced by the
  * database and not only by the write paths, so reconcile, manual attach and
  * replace all have to be correct under it. The constraint is total, not
  * partial over a status: a closed run keeps the item's slot rather than
@@ -404,11 +404,11 @@ const memberCallableEffect =
  * asks for open tasks by team. `RunTask.teamId` is nullable for the
  * same reason as `WorkflowTask.teamId`: a team delete nulls it on open tasks
  * (unassigned, on nobody's list until a person assigns a team) and leaves
- * finished tasks alone, whose `teamName` snapshot is all history needs.
+ * done tasks alone, whose `teamName` snapshot is all history needs.
  * `startedByEmail` / `doneByEmail` snapshot the actor the same way, so
  * a member delete never leaves history resolving to nobody. A run task is
- * *ready* by `readyWhere`'s rule, so several tasks of one run can be ready
- * at once; `startedAt` / `startedBy` record Start. A run is `active` from
+ * *current* by `currentWhere`'s rule, so several tasks of one run can be
+ * current at once; `startedAt` / `startedBy` record Start. A run is `active` from
  * creation, and `Domain.runIsUnstarted` reads the tasks. `Run.note` is free
  * text about the whole item, one field per run with no author
  * (`Domain.SetRunNoteCommand`).
@@ -422,7 +422,7 @@ const memberCallableEffect =
  * discriminator (`Domain.Actor`): the merchant acts on these rows from the
  * order page and has no `Member` row, so the id and email columns beside a
  * `'merchant'` role are null. `reopenedAt` / `reopenedBy*` hold the most
- * recent Undo only; a later Done clears the three together.
+ * recent reopen only; a later Done clears the three together.
  */
 const initializeSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -982,7 +982,7 @@ const runResult = <R>(
     | RunNotAllowedError
     | RunNotBlockedError
     | TaskNotReadyError
-    | TaskUndoBlockedError
+    | TaskReopenBlockedError
     | SqlError.SqlError
     | RunRepositoryError
     | WorkflowRepositoryError
@@ -1016,9 +1016,9 @@ const runResult = <R>(
         Effect.succeed<Domain.RunResult>({ _tag: "NotBlocked" }),
       TaskNotReadyError: () =>
         Effect.succeed<Domain.RunResult>({ _tag: "NotReady" }),
-      TaskUndoBlockedError: ({ taskName, teamName }) =>
+      TaskReopenBlockedError: ({ taskName, teamName }) =>
         Effect.succeed<Domain.RunResult>({
-          _tag: "UndoBlocked",
+          _tag: "ReopenBlocked",
           taskName,
           teamName,
         }),
@@ -1182,14 +1182,14 @@ const requireTaskAction = (
   });
 
 /**
- * Readiness decided on a snapshot taken before any task of the
- * round is completed: completing step 1 makes step 2 ready at
- * once, so asking `completeTask` as the loop goes would run the
- * whole order to done in one round. The rule is `Domain.readyTasks`.
+ * Which tasks are current is decided on a snapshot taken before any
+ * task of the round is done: marking step 1 done makes step 2 current at
+ * once, so asking `markTaskDone` as the loop goes would run the
+ * whole order to done in one round. The rule is `Domain.currentTasks`.
  */
 /**
  * A seeded task write recorded as the merchant: no `teamIds`, which is the one
- * rule a merchant skips (`Domain.CompleteTaskCommand`). Module scope because
+ * rule a merchant skips (`Domain.MarkTaskDoneCommand`). Module scope because
  * it captures nothing — oxlint's `unicorn(consistent-function-scoping)`.
  */
 const merchantTaskCommand = (task: Domain.RunTask) => ({
@@ -1200,7 +1200,7 @@ const merchantTaskCommand = (task: Domain.RunTask) => ({
 const seedReadyTasks = (
   details: readonly Domain.RunDetail[],
 ): Domain.RunTask[] =>
-  details.flatMap(({ run, tasks }) => Domain.readyTasks(run, tasks));
+  details.flatMap(({ run, tasks }) => Domain.currentTasks(run, tasks));
 
 export class ShopAgent extends Agent {
   declare private readonly runEffect: ReturnType<typeof makeRunEffect>;
@@ -1483,7 +1483,7 @@ export class ShopAgent extends Agent {
    * is their run list, which is scoped by team rather than by order, so an order
    * GID says nothing about whether their view changed. The five member
    * mutations name the teams their write could have affected — every team
-   * owning a task on any run of that order, because readiness crosses runs
+   * owning a task on any run of that order, because which tasks are current depends on every run of the order
    * (`RunRepository.listOrderTeamIds`) — and everything else publishes
    * `"all"`, which reaches every member. Over-broad costs a refetch;
    * under-broad costs a list that silently stops updating, so `"all"` is the
@@ -2923,7 +2923,7 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * The detail page's `subscribe<Feature>` read: the order, its line items, and
+   * The detail page's `subscribe<Feature>` read: the order, its items, and
    * every run on them, and the calling connection subscribed to pushes in the
    * same round trip (the convention documented on `subscribeOrders`). Without
    * the attach, a webhook landing on the open order would update SQLite and
@@ -3029,7 +3029,7 @@ export class ShopAgent extends Agent {
   /**
    * Manual attach, read as **set this item's workflow**. It applies only the
    * definition half of the start predicate (`canStart`): an admin choosing a
-   * workflow for a line item by hand is exactly the override for a missing
+   * workflow for an item by hand is exactly the override for a missing
    * tag, a fulfilled line, or an order placed before the workflow was turned
    * on. What it is not is an override of the order itself being over, which
    * is `Domain.orderIsOpen`.
@@ -3126,7 +3126,7 @@ export class ShopAgent extends Agent {
           Effect.catchTags({
             RunLimitError: ({ limit }) =>
               Effect.succeed<Domain.AttachResult>({ _tag: "RunLimit", limit }),
-            RunFinishedError: ({ workflowName }) =>
+            RunNotOpenError: ({ workflowName }) =>
               Effect.succeed<Domain.AttachResult>({
                 _tag: "ItemDone",
                 workflowName,
@@ -3184,42 +3184,42 @@ export class ShopAgent extends Agent {
    * re-derive that decision at runtime from the connection.
    *
    * Each builds `actor: { role: "merchant" }` and passes **no** `teamIds`,
-   * which is the entire permission difference (`Domain.CompleteTaskCommand`):
+   * which is the entire permission difference (`Domain.MarkTaskDoneCommand`):
    * the task's team need not be one of the caller's, because the merchant has
    * none, and an unassigned task is exactly the case they are here to fix.
-   * Step order, the run's status, and the downstream undo guard still apply.
+   * Step order, the run's status, and the downstream reopen guard still apply.
    *
    * They publish with {@link publishToTeams}, not `publish("all")`: the
    * merchant's own order page is subscribed by order and the workers by team,
    * and the team fan-out for the touched order already reaches both. There is
    * no merchant Start: "started" records that a worker picked the task up,
    * and a merchant marking it started on their behalf would put a name on
-   * work nobody has begun. The merchant either completes it outright or leaves
+   * work nobody has begun. The merchant either marks it done outright or leaves
    * it for the team.
    *
    * No member id in the log line: there isn't one.
    */
   @callable()
-  merchantCompleteTask(
-    input: typeof Domain.CompleteTaskInput.Encoded,
+  merchantMarkTaskDone(
+    input: typeof Domain.MarkTaskDoneInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
     const publish = (runTaskId: string) => this.publishToTeams({ runTaskId });
     return this.runEffect(
       callableEffect(
-        "ShopAgent.merchantCompleteTask",
-        Domain.CompleteTaskInput,
+        "ShopAgent.merchantMarkTaskDone",
+        Domain.MarkTaskDoneInput,
         { role: "merchant", parse: { onExcessProperty: "error" } },
       )(({ runTaskId }) =>
         runResult(
           Effect.gen(function* () {
             yield* requireTaskAction(runTaskId, MERCHANT, ({ done }) => done);
-            yield* (yield* RunRepository).completeTask({
+            yield* (yield* RunRepository).markTaskDone({
               runTaskId,
               actor: { role: "merchant" },
-            } satisfies Domain.CompleteTaskCommand);
+            } satisfies Domain.MarkTaskDoneCommand);
             yield* Effect.logInfo(
-              `ShopAgent.merchantCompleteTask: shop=${shop} task=${runTaskId}`,
+              `ShopAgent.merchantMarkTaskDone: shop=${shop} task=${runTaskId}`,
             ).pipe(Effect.annotateLogs({ shop, task: runTaskId }));
           }),
         ).pipe(Effect.tap(() => publish(runTaskId))),
@@ -3228,17 +3228,16 @@ export class ShopAgent extends Agent {
   }
 
   @callable()
-  merchantUncompleteTask(
-    input: typeof Domain.UncompleteTaskInput.Encoded,
+  merchantReopenTask(
+    input: typeof Domain.ReopenTaskInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
     const publish = (runTaskId: string) => this.publishToTeams({ runTaskId });
     return this.runEffect(
-      callableEffect(
-        "ShopAgent.merchantUncompleteTask",
-        Domain.UncompleteTaskInput,
-        { role: "merchant", parse: { onExcessProperty: "error" } },
-      )(({ runTaskId }) =>
+      callableEffect("ShopAgent.merchantReopenTask", Domain.ReopenTaskInput, {
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
+      })(({ runTaskId }) =>
         runResult(
           Effect.gen(function* () {
             yield* requireTaskAction(
@@ -3246,12 +3245,12 @@ export class ShopAgent extends Agent {
               MERCHANT,
               ({ reopen }) => reopen !== null,
             );
-            yield* (yield* RunRepository).uncompleteTask({
+            yield* (yield* RunRepository).reopenTask({
               runTaskId,
               actor: { role: "merchant" },
-            } satisfies Domain.UncompleteTaskCommand);
+            } satisfies Domain.ReopenTaskCommand);
             yield* Effect.logInfo(
-              `ShopAgent.merchantUncompleteTask: shop=${shop} task=${runTaskId}`,
+              `ShopAgent.merchantReopenTask: shop=${shop} task=${runTaskId}`,
             ).pipe(Effect.annotateLogs({ shop, task: runTaskId }));
           }),
         ).pipe(Effect.tap(() => publish(runTaskId))),
@@ -3259,15 +3258,15 @@ export class ShopAgent extends Agent {
     );
   }
 
-  /** Put back from the order page; the rule is on `RunRepository.unstartTask`. */
+  /** Put back from the order page; the rule is on `RunRepository.putBackTask`. */
   @callable()
-  merchantUnstartTask(
-    input: typeof Domain.UnstartTaskInput.Encoded,
+  merchantPutBackTask(
+    input: typeof Domain.PutBackTaskInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
     const publish = (runTaskId: string) => this.publishToTeams({ runTaskId });
     return this.runEffect(
-      callableEffect("ShopAgent.merchantUnstartTask", Domain.UnstartTaskInput, {
+      callableEffect("ShopAgent.merchantPutBackTask", Domain.PutBackTaskInput, {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })(({ runTaskId }) =>
@@ -3278,12 +3277,12 @@ export class ShopAgent extends Agent {
               MERCHANT,
               ({ putBack }) => putBack,
             );
-            yield* (yield* RunRepository).unstartTask({
+            yield* (yield* RunRepository).putBackTask({
               runTaskId,
               actor: { role: "merchant" },
-            } satisfies Domain.UnstartTaskCommand);
+            } satisfies Domain.PutBackTaskCommand);
             yield* Effect.logInfo(
-              `ShopAgent.merchantUnstartTask: shop=${shop} task=${runTaskId}`,
+              `ShopAgent.merchantPutBackTask: shop=${shop} task=${runTaskId}`,
             ).pipe(Effect.annotateLogs({ shop, task: runTaskId }));
           }),
         ).pipe(Effect.tap(() => publish(runTaskId))),
@@ -3422,7 +3421,7 @@ export class ShopAgent extends Agent {
    * A publish scoped to the teams a member's write could have changed the
    * run list of — see `publish`. The read is one indexed query against the
    * object's own SQLite, and it runs after the write so a task that just
-   * became ready for another team is included.
+   * became current for another team is included.
    */
   private publishToTeams(
     target:
@@ -3585,17 +3584,17 @@ export class ShopAgent extends Agent {
     );
   }
 
-  /** Put back; the rule is on `RunRepository.unstartTask`. */
+  /** Put back; the rule is on `RunRepository.putBackTask`. */
   @callable()
-  memberUnstartTask(
-    input: typeof Domain.UnstartTaskInput.Encoded,
+  memberPutBackTask(
+    input: typeof Domain.PutBackTaskInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
     const publish = (runTaskId: string) => this.publishToTeams({ runTaskId });
     return this.runEffect(
       memberCallableEffect(
-        "ShopAgent.memberUnstartTask",
-        Domain.UnstartTaskInput,
+        "ShopAgent.memberPutBackTask",
+        Domain.PutBackTaskInput,
         {
           onExcessProperty: "error",
         },
@@ -3608,13 +3607,13 @@ export class ShopAgent extends Agent {
               actor,
               ({ putBack }) => putBack,
             );
-            yield* (yield* RunRepository).unstartTask({
+            yield* (yield* RunRepository).putBackTask({
               runTaskId,
               actor: { role: "member", memberId, email: memberEmail },
               teamIds,
-            } satisfies Domain.UnstartTaskCommand);
+            } satisfies Domain.PutBackTaskCommand);
             yield* Effect.logInfo(
-              `ShopAgent.memberUnstartTask: shop=${shop} task=${runTaskId} memberId=${memberId}`,
+              `ShopAgent.memberPutBackTask: shop=${shop} task=${runTaskId} memberId=${memberId}`,
             ).pipe(Effect.annotateLogs({ shop, task: runTaskId, memberId }));
           }),
         ).pipe(Effect.tap(() => publish(runTaskId))),
@@ -3715,15 +3714,15 @@ export class ShopAgent extends Agent {
   }
 
   @callable()
-  memberCompleteTask(
-    input: typeof Domain.CompleteTaskInput.Encoded,
+  memberMarkTaskDone(
+    input: typeof Domain.MarkTaskDoneInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
     const publish = (runTaskId: string) => this.publishToTeams({ runTaskId });
     return this.runEffect(
       memberCallableEffect(
-        "ShopAgent.memberCompleteTask",
-        Domain.CompleteTaskInput,
+        "ShopAgent.memberMarkTaskDone",
+        Domain.MarkTaskDoneInput,
         {
           onExcessProperty: "error",
         },
@@ -3732,13 +3731,13 @@ export class ShopAgent extends Agent {
           Effect.gen(function* () {
             const actor = memberActor({ memberId, memberEmail, teamIds });
             yield* requireTaskAction(runTaskId, actor, ({ done }) => done);
-            yield* (yield* RunRepository).completeTask({
+            yield* (yield* RunRepository).markTaskDone({
               runTaskId,
               actor: { role: "member", memberId, email: memberEmail },
               teamIds,
-            } satisfies Domain.CompleteTaskCommand);
+            } satisfies Domain.MarkTaskDoneCommand);
             yield* Effect.logInfo(
-              `ShopAgent.memberCompleteTask: shop=${shop} task=${runTaskId} memberId=${memberId}`,
+              `ShopAgent.memberMarkTaskDone: shop=${shop} task=${runTaskId} memberId=${memberId}`,
             ).pipe(Effect.annotateLogs({ shop, task: runTaskId, memberId }));
           }),
         ).pipe(Effect.tap(() => publish(runTaskId))),
@@ -3747,19 +3746,19 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Undo. Publishes to the order's teams like the others: the merchant's
+   * Reopen, the member's Undo. Publishes to the order's teams like the others: the merchant's
    * order page shows every run of the order.
    */
   @callable()
-  memberUncompleteTask(
-    input: typeof Domain.UncompleteTaskInput.Encoded,
+  memberReopenTask(
+    input: typeof Domain.ReopenTaskInput.Encoded,
   ): Promise<Domain.RunResult> {
     const shop = this.name;
     const publish = (runTaskId: string) => this.publishToTeams({ runTaskId });
     return this.runEffect(
       memberCallableEffect(
-        "ShopAgent.memberUncompleteTask",
-        Domain.UncompleteTaskInput,
+        "ShopAgent.memberReopenTask",
+        Domain.ReopenTaskInput,
         { onExcessProperty: "error" },
       )(({ runTaskId }, { memberId, memberEmail, teamIds }) =>
         runResult(
@@ -3770,13 +3769,13 @@ export class ShopAgent extends Agent {
               actor,
               ({ reopen }) => reopen !== null,
             );
-            yield* (yield* RunRepository).uncompleteTask({
+            yield* (yield* RunRepository).reopenTask({
               runTaskId,
               actor: { role: "member", memberId, email: memberEmail },
               teamIds,
-            } satisfies Domain.UncompleteTaskCommand);
+            } satisfies Domain.ReopenTaskCommand);
             yield* Effect.logInfo(
-              `ShopAgent.memberUncompleteTask: shop=${shop} task=${runTaskId} memberId=${memberId}`,
+              `ShopAgent.memberReopenTask: shop=${shop} task=${runTaskId} memberId=${memberId}`,
             ).pipe(Effect.annotateLogs({ shop, task: runTaskId, memberId }));
           }),
         ).pipe(Effect.tap(() => publish(runTaskId))),
@@ -4132,7 +4131,7 @@ export class ShopAgent extends Agent {
    * between teams. The team is checked against the live D1 roster here, as
    * `addStep` does, and its name is snapshotted onto the task from that same
    * read. Only `teamId` / `teamName` change, so a started task keeps
-   * `startedBy*`; a finished task is refused (`TaskFinished`).
+   * `startedBy*`; a done task is refused (`TaskDone`).
    */
   @callable()
   merchantAssignRunTaskTeam(
@@ -4177,9 +4176,9 @@ export class ShopAgent extends Agent {
               Effect.succeed<Domain.AssignRunTaskTeamResult>({
                 _tag: "NotFound",
               }),
-            TaskFinishedError: () =>
+            TaskDoneError: () =>
               Effect.succeed<Domain.AssignRunTaskTeamResult>({
-                _tag: "TaskFinished",
+                _tag: "TaskDone",
               }),
             RunTerminalError: () =>
               Effect.succeed<Domain.AssignRunTaskTeamResult>({
@@ -4218,7 +4217,7 @@ export class ShopAgent extends Agent {
    * delete, runs and all, so the work would be thrown away a moment later.
    * `api.dev.seed.ts` always calls both, in that order.
    *
-   * Returns each workflow's minted id so the caller can point a line item at
+   * Returns each workflow's minted id so the caller can point an item at
    * one; the fixture speaks names, `api.dev.seed.ts` does the mapping.
    */
   @callable()
@@ -4248,11 +4247,12 @@ export class ShopAgent extends Agent {
   /**
    * Development seed for orders, same gate and reasoning as `seedWorkflows`.
    * Goes through `upsertOrder` + `reconcileOrder` rather than raw inserts so
-   * the fixture exercises run creation, and `done` finishes tasks through
-   * `completeTask` with the task's own team so the readiness gate is
-   * exercised the way it is on the floor. `advance`, `started`, and
+   * the fixture exercises run creation, and `done` marks tasks done through
+   * `markTaskDone` with the task's own team so the check of which tasks
+   * are current is exercised the way it is on the floor. `advance`, `started`, and
    * `blocked` go through the same actions for the same reason: a seeded
-   * "Step 2 of 3, in progress, blocked" card is indistinguishable from one a
+   * card reading "Step 2 of 3" with In progress and Blocked badges is
+   * indistinguishable from one a
    * worker produced. Only rows under `SEED_ORDER_ID_PREFIX` are replaced;
    * synced orders are left alone.
    *
@@ -4311,7 +4311,7 @@ export class ShopAgent extends Agent {
           const taskCommand = (task: Domain.RunTask, merchant: boolean) =>
             merchant ? merchantTaskCommand(task) : actor(task);
           // Reloaded before every phase rather than carried: each phase
-          // completes tasks, which changes what the next one may touch.
+          // marks tasks done, which changes what the next one may touch.
           const openRun = (runId: string) =>
             runs
               .getRun({ runId })
@@ -4322,13 +4322,13 @@ export class ShopAgent extends Agent {
                     : null,
                 ),
               );
-          const completeRun = (runId: string, merchant: boolean) =>
+          const markRunDone = (runId: string, merchant: boolean) =>
             Effect.gen(function* () {
               const detail = yield* openRun(runId);
               if (detail === null) return;
               yield* Effect.forEach(
                 detail.tasks,
-                (task) => runs.completeTask(taskCommand(task, merchant)),
+                (task) => runs.markTaskDone(taskCommand(task, merchant)),
                 { discard: true },
               );
               yield* Effect.logInfo(
@@ -4337,14 +4337,14 @@ export class ShopAgent extends Agent {
                 Effect.annotateLogs({ orderId: detail.run.orderId, runId }),
               );
             });
-          /** One round: every task ready at the start of the round gets completed; what that makes ready waits for the next. */
+          /** One round: every task current at the start of the round gets done; what that makes current waits for the next. */
           const advanceRun = (runId: string, merchant: boolean) =>
             Effect.gen(function* () {
               const detail = yield* openRun(runId);
               if (detail === null) return;
               yield* Effect.forEach(
                 seedReadyTasks([detail]),
-                (task) => runs.completeTask(taskCommand(task, merchant)),
+                (task) => runs.markTaskDone(taskCommand(task, merchant)),
                 { discard: true },
               );
             });
@@ -4392,7 +4392,7 @@ export class ShopAgent extends Agent {
           ) =>
             Effect.gen(function* () {
               const merchant = progress.byMerchant === true;
-              if (progress.done === true) yield* completeRun(runId, merchant);
+              if (progress.done === true) yield* markRunDone(runId, merchant);
               for (let round = 0; round < (progress.advance ?? 0); round += 1)
                 yield* advanceRun(runId, merchant);
               if (progress.started === true) yield* startRun(runId);
@@ -4408,7 +4408,7 @@ export class ShopAgent extends Agent {
                 );
             });
           /**
-           * The merchant's own Choose, on a line item the seed wrote moments
+           * The merchant's own Choose, on an item the seed wrote moments
            * ago: the same `setRun` the attach callable makes, so the run it
            * leaves carries `manual` and is indistinguishable from a chosen one.
            * A fixture naming a workflow that cannot start the item is a
@@ -4446,7 +4446,7 @@ export class ShopAgent extends Agent {
                     source: "manual",
                   });
             });
-          // Orders, line items, runs and the usage they counted, together;
+          // Orders, items, runs and the usage they counted, together;
           // the upserts below then count each fresh paid order the ordinary
           // way, so a reseed lands on the number one seed would have produced.
           yield* orderRepository.deleteSeedOrders();

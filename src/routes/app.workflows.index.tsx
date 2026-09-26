@@ -18,11 +18,7 @@ import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
 import { useWorkflowEditorWindow } from "@/lib/workflowEditorWindow";
-import {
-  STATUS_ACTIVE,
-  STATUS_INACTIVE,
-  workflowResultMessage,
-} from "@/lib/workflowShared";
+import { workflowResultMessage } from "@/lib/workflowShared";
 
 const CREATE_MODAL = "create-workflow";
 
@@ -37,9 +33,9 @@ const decodeWorkflowResult = Schema.decodeUnknownPromise(
 export const statusBadges = (workflow: Domain.WorkflowSummary) => (
   <s-stack direction="inline" gap="small-300">
     {Domain.isActive(workflow) ? (
-      <s-badge tone="success">{STATUS_ACTIVE}</s-badge>
+      <s-badge tone="success">{Domain.WORKFLOW_STATE_LABEL.on}</s-badge>
     ) : (
-      <s-badge>{STATUS_INACTIVE}</s-badge>
+      <s-badge>{Domain.WORKFLOW_STATE_LABEL.off}</s-badge>
     )}
     {workflow.stepCount === 0 && <s-badge tone="warning">No steps</s-badge>}
     {workflow.needsAttention && (
@@ -306,7 +302,7 @@ function RouteComponent() {
           inside a padded box instead of a slotted heading. The card carries no
           description: the badges and the Turn on / Turn off buttons already
           say what a workflow is and what its state means. */}
-      <s-section padding="none" accessibilityLabel="Item workflows">
+      <s-section padding="none" accessibilityLabel="Workflows">
         {workflows.length > 0 && (
           <s-box padding="base">
             <s-stack gap="small-300">
@@ -317,8 +313,8 @@ function RouteComponent() {
               >
                 <s-stack direction="inline" gap="small-300">
                   {statusButton("All")}
-                  {statusButton(STATUS_ACTIVE, "active")}
-                  {statusButton(STATUS_INACTIVE, "inactive")}
+                  {statusButton(Domain.WORKFLOW_STATE_LABEL.on, "active")}
+                  {statusButton(Domain.WORKFLOW_STATE_LABEL.off, "inactive")}
                 </s-stack>
                 <s-search-field
                   label="Search workflows by name"
@@ -332,7 +328,7 @@ function RouteComponent() {
               </s-grid>
               {filtered && (
                 <s-paragraph color="subdued">
-                  {`Showing ${String(rows.length)} of ${String(workflows.length)} item workflows.`}
+                  {`Showing ${String(rows.length)} of ${String(workflows.length)} workflows.`}
                 </s-paragraph>
               )}
             </s-stack>

@@ -17,7 +17,7 @@ const SeedTaskByTeamName = Schema.Struct({
 
 /**
  * The route's own order shape. Identical to `Domain.SeedOrdersInput`'s orders
- * except that a line item names the workflow it wants set on it, for the same
+ * except that an item names the workflow it wants set on it, for the same
  * reason a task names its team: workflow ids are minted by this request
  * moments earlier, so a caller could not know one.
  */
@@ -76,8 +76,8 @@ const DevSeedInput = Schema.Struct({
     ),
   ),
   /**
-   * Seeded after workflows so they route. `done` orders are completed as the
-   * first listed member, so every finished task names a real member.
+   * Seeded after workflows so they route. `done` orders are marked done as the
+   * first listed member, so every done task names a real member.
    */
   orders: Schema.optionalKey(Schema.Array(SeedOrderByWorkflowName)),
   /**

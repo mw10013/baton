@@ -62,7 +62,7 @@ import type {
  * the sandbox products tagged with the workflow tags by hand.
  *
  * Two order vocabularies the rows below lean on, both documented on
- * `e2e/seed.ts`: a line item's own `progress` overrides the order's, which is
+ * `e2e/seed.ts`: an item's own `progress` overrides the order's, which is
  * what puts one order's items in four different states; and `after` is a second
  * state for the order written *after* the work started, which is the only way
  * to reach the closed and resized runs a late cancel, fulfilment or refund
@@ -406,8 +406,8 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // two items, each one task in, and both next tasks in progress at
-    // Engraving: "In progress" over "Engraving · lead@m.com · since …" on two cards
+    // two items, each one task in, and both next tasks started at
+    // Engraving: "Started" over "Engraving · lead@m.com · since …" on two cards
     n: 1002,
     advance: 1,
     started: true,
@@ -417,7 +417,7 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // parallel step ready: Engraving and Leather each hold a card for the
+    // parallel step current: Engraving and Leather each hold a card for the
     // same journal and see each other as "together with"
     n: 1003,
     advance: 1,
@@ -427,7 +427,7 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // every item made: the order run is ready, so Quality check has a card
+    // every item made: the order run is current, so Quality check has a card
     // listing both items as Done
     n: 1004,
     advance: 2,
@@ -445,7 +445,7 @@ const floorOrders: readonly SeedOrder[] = [
   },
   {
     // inspected (three rounds make the board, a fourth passes Inspect):
-    // Pack and Print label ready together, Packing and Shipping each see
+    // Pack and Print label current together, Packing and Shipping each see
     // the other
     n: 1005,
     advance: 4,
@@ -557,7 +557,7 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // four items in four states at once — made, blocked, in progress, not
+    // four items in four states at once — made, blocked, started, not
     // started — which is the row the order summary line and the per-item
     // badges are written for
     n: 1015,
@@ -625,7 +625,7 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // nothing on the order at all: "No line items." on the order page
+    // nothing on the order at all: "No items." on the order page
     n: 1018,
     lineItems: [],
   },
@@ -749,7 +749,7 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // finished, then one of two units refunded: a done run is the record of
+    // done, then one of two units refunded: a done run is the record of
     // what was made, so it stays Done at ×2 with no badge; Reopen in Manage
     n: 1032,
     done: true,
@@ -758,7 +758,7 @@ const floorOrders: readonly SeedOrder[] = [
   },
   {
     // blocked before anyone started: Not started plus Blocked, Edit reason
-    // and Unblock in the banner, Assign team in Manage, no Mark done
+    // and Unblock in the banner, Assign team in Manage, no Done
     n: 1033,
     blocked: "Waiting on the customer's photo.",
     lineItems: [item("Wall clock", TAG.clock, 1, { Numerals: "Arabic" })],
@@ -773,7 +773,7 @@ const floorOrders: readonly SeedOrder[] = [
   },
   {
     // the merchant cancelled the run after a step was done: Closed, "Cancelled
-    // by you", the finished step still on record, and the picker to start one
+    // by you", the done step still on record, and the picker to start one
     // afresh; reconcile starts nothing on it
     n: 1035,
     lineItems: [

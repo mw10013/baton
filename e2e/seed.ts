@@ -37,7 +37,7 @@ export interface SeedTeam {
 /**
  * A task of a seeded workflow; `team` names one of the seeded `teams`, or is
  * `null` to seed the task unassigned. A task with no `step` follows the
- * previous one; give several tasks the same `step` to make them ready
+ * previous one; give several tasks the same `step` to make them current
  * together.
  */
 export interface SeedWorkflowTask {
@@ -48,10 +48,10 @@ export interface SeedWorkflowTask {
 }
 
 /**
- * Progress for one seeded run. `done` completes every task; `advance`
- * completes that many rounds of ready tasks instead (`done` and `advance`
+ * Progress for one seeded run. `done` marks every task done; `advance`
+ * marks that many rounds of current tasks done instead (`done` and `advance`
  * together are refused); `started` then Starts whatever is ready; `blocked`
- * blocks the run with that reason. `byMerchant` records the completions and the
+ * blocks the run with that reason. `byMerchant` records those Dones and the
  * block as the merchant instead of the seed member, which is the fixture for
  * what a worker sees after an intervention; `started` stays the member's
  * either way.
@@ -62,11 +62,11 @@ export interface SeedProgress {
   readonly started?: boolean;
   readonly blocked?: string;
   readonly byMerchant?: boolean;
-  /** Last, Cancel run as the merchant: the run closes (`merchant_cancelled`), keeps its tasks, and nothing starts on the item. */
+  /** Last, Cancel workflow as the merchant: the run closes (`merchant_cancelled`), keeps its tasks, and nothing starts on the item. */
   readonly cancelled?: boolean;
 }
 
-/** A line item of a seeded order; `tags` are the product tags a workflow matches on. `currentQuantity` defaults to `quantity`. */
+/** An item of a seeded order; `tags` are the product tags a workflow matches on. `currentQuantity` defaults to `quantity`. */
 export interface SeedLineItem {
   readonly title: string;
   readonly quantity: number;
@@ -106,7 +106,7 @@ export interface SeedOrderChange {
 
 /**
  * An order to seed; `n` becomes `#n`. The order's own progress keys apply to
- * every run on it that its line item does not override with a `progress` of
+ * every run on it that its item does not override with a `progress` of
  * its own, which is how one order's items end up in different states.
  */
 export interface SeedOrder extends SeedProgress {

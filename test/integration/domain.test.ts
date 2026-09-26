@@ -55,7 +55,7 @@ describe("Domain.productionState", () => {
       row({ open: 1 }, {}, 1),
       "making",
     ],
-    ["only finished runs is made", row({ done: 2 }), "made"],
+    ["only done runs is made", row({ done: 2 }), "made"],
     [
       "made stays made when an edit leaves the order unpaid",
       row({ done: 2 }, { fullyPaid: false }),
@@ -232,7 +232,7 @@ const runOn = (lineItemId: string, status: Domain.RunStatus): Domain.Run => ({
 describe("Domain.ambiguousItems", () => {
   /**
    * The same three conditions `OrderRepository`'s `AMBIGUOUS_ITEM` spells out
-   * in SQL. A `done` run counts on purpose: a finished item does not get a
+   * in SQL. A `done` run counts on purpose: a done item does not get a
    * second route, so it is not a decision anyone is waiting on. A cancelled
    * run is deleted (`Domain.RunStatus`), so a cancel makes the item a
    * decision again with no rule of its own: the "two matches and no run"
@@ -268,7 +268,7 @@ describe("Domain.ambiguousItems", () => {
         [runOn("a", "done")],
       ),
       0,
-      "a done run owns the item: a finished item gets no second route",
+      "a done run owns the item: a done item gets no second route",
     );
     strictEqual(
       Domain.ambiguousItems(
@@ -374,7 +374,7 @@ const line = (item: Domain.RunListItem, showTeam: boolean) => {
 };
 
 describe("Domain.runRowLine", () => {
-  it("a member row lists every ready task by name, then step k of n, and names a team per task only when they differ", () => {
+  it("a member row lists every current task by name, then step k of n, and names a team per task only when they differ", () => {
     const one = withTasks([["Stamp monogram", "Engraving"]]);
     const shared = withTasks([
       ["Stamp monogram", "Engraving"],
@@ -411,13 +411,13 @@ const runIds = (items: readonly Domain.RunListItem[]) =>
 const ME = Schema.decodeUnknownSync(Domain.Email)("me@example.com");
 
 describe("Domain.tierOf", () => {
-  it("a blocked run is in attention; then mine, then a teammate's, then untouched", () => {
+  it("a blocked run is in blocked; then mine, then a teammate's, then untouched", () => {
     strictEqual(
       Domain.tierOf(
         runListItem("blocked-mine", 40, { blocked: true, startedBy: "me" }),
         ME,
       ),
-      "attention",
+      "blocked",
     );
     strictEqual(
       Domain.tierOf(runListItem("mine", 20, { startedBy: "me" }), ME),
@@ -425,7 +425,7 @@ describe("Domain.tierOf", () => {
     );
     strictEqual(
       Domain.tierOf(runListItem("theirs", 5, { startedBy: "them" }), ME),
-      "inProgress",
+      "teammates",
     );
     strictEqual(Domain.tierOf(runListItem("early-next", 10), ME), "upNext");
   });
@@ -449,7 +449,7 @@ describe("Domain.tierOf", () => {
     );
     strictEqual(
       Domain.tierOf(runListItem("someone-else", 10, { startedBy: "them" }), ME),
-      "inProgress",
+      "teammates",
     );
   });
 });
@@ -460,7 +460,7 @@ const withLine = (item: Domain.RunListItem, lineItemId: string) => ({
 });
 
 describe("Domain.byAge", () => {
-  it("oldest order first, then line item, then run id", () => {
+  it("oldest order first, then item, then run id", () => {
     strictEqual(
       runIds(
         [
@@ -599,18 +599,18 @@ const taskView = (
   overrides: Partial<
     Pick<
       Domain.RunTaskView,
-      "teamId" | "ready" | "startedAt" | "doneAt" | "undoBlockedBy"
+      "teamId" | "current" | "startedAt" | "doneAt" | "reopenBlockedBy"
     >
   > = {},
 ): Pick<
   Domain.RunTaskView,
-  "teamId" | "ready" | "startedAt" | "doneAt" | "undoBlockedBy"
+  "teamId" | "current" | "startedAt" | "doneAt" | "reopenBlockedBy"
 > => ({
   teamId: TEAM,
-  ready: true,
+  current: true,
   startedAt: null,
   doneAt: null,
-  undoBlockedBy: null,
+  reopenBlockedBy: null,
   ...overrides,
 });
 
@@ -650,7 +650,7 @@ describe("Domain.taskActions", () => {
     deepStrictEqual(
       memberActions(
         run("done"),
-        taskView({ ready: false, startedAt: 1, doneAt: 2 }),
+        taskView({ current: false, startedAt: 1, doneAt: 2 }),
         [TEAM],
       ),
       { ...NOTHING, reopen: { blockedBy: null } },
@@ -658,7 +658,7 @@ describe("Domain.taskActions", () => {
   });
 
   it("reopening a task is refused once any task in a later step has started, naming the blocker", () => {
-    const blocker: Domain.UndoBlocker = {
+    const blocker: Domain.ReopenBlocker = {
       taskName: Schema.decodeUnknownSync(Domain.TaskName)("Polish"),
       teamName: Schema.decodeUnknownSync(Domain.TeamName)("Finishing"),
     };
@@ -666,10 +666,10 @@ describe("Domain.taskActions", () => {
       memberActions(
         run("active"),
         taskView({
-          ready: false,
+          current: false,
           startedAt: 1,
           doneAt: 2,
-          undoBlockedBy: blocker,
+          reopenBlockedBy: blocker,
         }),
         [TEAM],
       ),
@@ -684,7 +684,7 @@ describe("Domain.taskActions", () => {
     deepStrictEqual(
       memberActions(
         run("active", true),
-        taskView({ ready: false, startedAt: 1, doneAt: 2 }),
+        taskView({ current: false, startedAt: 1, doneAt: 2 }),
         [TEAM],
       ),
       { ...NOTHING, reopen: { blockedBy: null } },
@@ -721,7 +721,7 @@ describe("Domain.taskActions", () => {
       },
     );
     deepStrictEqual(
-      memberActions(run("active"), taskView({ ready: false }), [TEAM]),
+      memberActions(run("active"), taskView({ current: false }), [TEAM]),
       { ...NOTHING },
     );
   });
@@ -738,7 +738,7 @@ describe("Domain.taskActions Put back", () => {
       false,
     );
     strictEqual(
-      memberActions(run("active"), taskView({ ready: false, startedAt: 1 }), [
+      memberActions(run("active"), taskView({ current: false, startedAt: 1 }), [
         TEAM,
       ]).putBack,
       false,
@@ -761,11 +761,11 @@ describe("Domain.taskActions Put back", () => {
     );
   });
 
-  it("a finished task offers no Put back", () => {
+  it("a done task offers no Put back", () => {
     strictEqual(
       memberActions(
         run("active"),
-        taskView({ ready: false, startedAt: 1, doneAt: 2 }),
+        taskView({ current: false, startedAt: 1, doneAt: 2 }),
         [TEAM],
       ).putBack,
       false,
@@ -807,7 +807,7 @@ const runTask = (
 });
 
 describe("Domain.runIsVisibleTo", () => {
-  it("a member's access to a run is any task of it on one of their teams, ready or not", () => {
+  it("a member's access to a run is any task of it on one of their teams, current or not", () => {
     const unassigned = { ...runTask(2, 2, false), teamId: null };
     const tasks = [runTask(1, 1, true), unassigned];
     strictEqual(Domain.runIsVisibleTo(tasks, [TEAM]), true);
@@ -817,8 +817,23 @@ describe("Domain.runIsVisibleTo", () => {
   });
 });
 
-describe("Domain.readyTasks", () => {
-  it("a task is ready when open and no task of an earlier step is open; every task of a step is ready together", () => {
+describe("Domain.taskStateOf", () => {
+  it("a task is done, else started, else ready when current, else waiting; a started task on a closed run still reads started", () => {
+    const state = (
+      current: boolean,
+      startedAt: number | null,
+      doneAt: number | null,
+    ) => Domain.taskStateOf({ current, startedAt, doneAt });
+    strictEqual(state(false, 1, 2), "done");
+    strictEqual(state(true, 1, null), "started");
+    strictEqual(state(false, 1, null), "started");
+    strictEqual(state(true, null, null), "ready");
+    strictEqual(state(false, null, null), "waiting");
+  });
+});
+
+describe("Domain.currentTasks", () => {
+  it("a task is current when open and no task of an earlier step is open; every task of a step is current together", () => {
     const tasks = [
       runTask(1, 1, true),
       runTask(2, 2, false),
@@ -826,11 +841,11 @@ describe("Domain.readyTasks", () => {
       runTask(4, 3, false),
     ];
     deepStrictEqual(
-      Domain.readyTasks(run("active"), tasks).map((task) => task.position),
+      Domain.currentTasks(run("active"), tasks).map((task) => task.position),
       [2, 3],
     );
     deepStrictEqual(
-      Domain.readyTasks(run("active"), [
+      Domain.currentTasks(run("active"), [
         runTask(1, 1, false),
         runTask(2, 2, false),
       ]).map((task) => task.position),
@@ -838,8 +853,11 @@ describe("Domain.readyTasks", () => {
     );
   });
 
-  it("a run that is not open has no ready task", () => {
-    deepStrictEqual(Domain.readyTasks(run("done"), [runTask(1, 1, true)]), []);
+  it("a run that is not open has no current task", () => {
+    deepStrictEqual(
+      Domain.currentTasks(run("done"), [runTask(1, 1, true)]),
+      [],
+    );
   });
 });
 

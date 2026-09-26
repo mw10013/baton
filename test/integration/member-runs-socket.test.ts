@@ -35,8 +35,8 @@ import {
  * The fan-out is the interesting part. A member's subscription is scoped by
  * their teams, not by an order, so `publish` cannot use the order GIDs that
  * scope a merchant's. The five member mutations name the teams instead — every
- * team owning a task on any run of the touched order, because completing the
- * last item task makes the *order* run ready for a different team
+ * team owning a task on any run of the touched order, because marking the
+ * last item task done makes the *order* run current for a different team
  * (`RunRepository.listOrderTeamIds`). A team with no work on that order
  * hears nothing.
  */
@@ -188,7 +188,7 @@ const subscribeView = (
 ) => socket.call<Domain.RunListView>("subscribeRuns", { subscriberId, query });
 
 /**
- * The ready rows of one tab. Every test here seeds a single untouched task on
+ * The current rows of one tab. Every test here seeds a single untouched task on
  * one team, which is Up next for whoever reads it.
  */
 const subscribe = (
@@ -283,7 +283,7 @@ describe("member run list socket", () => {
     await subscribe(teammate.socket, "sub-bob");
     await subscribe(elsewhere.socket, "sub-carol");
 
-    expect(await acting.completeTask({ runTaskId })).toEqual({ _tag: "Ok" });
+    expect(await acting.markTaskDone({ runTaskId })).toEqual({ _tag: "Ok" });
 
     await teammate.socket.waitForMessage(isInvalidated);
     await expect(
@@ -295,7 +295,7 @@ describe("member run list socket", () => {
   });
 
   /**
-   * The merchant's half of the same fan-out. `merchantCompleteTask` carries no
+   * The merchant's half of the same fan-out. `merchantMarkTaskDone` carries no
    * identity and no `teamIds` — the order page has neither — yet lands on a
    * task owned by a team it is not on, and the worker watching that team hears
    * about it over their own socket. The rules the merchant is still held to are
@@ -313,7 +313,7 @@ describe("member run list socket", () => {
     await subscribe(worker.socket, "sub-alice");
 
     const merchant = await openMerchantSocket(shop);
-    expect(await merchant.completeTask({ runTaskId })).toEqual({ _tag: "Ok" });
+    expect(await merchant.markTaskDone({ runTaskId })).toEqual({ _tag: "Ok" });
 
     await worker.socket.waitForMessage(isInvalidated);
     expect(await subscribe(worker.socket, "sub-alice")).toHaveLength(0);
@@ -343,7 +343,7 @@ describe("member run list socket", () => {
     await socket.waitForMessage((data) => data.includes("cf_agent_identity"));
     // Nothing here names Alice, her team, or her id: the gate put all three on
     // the connection, and the object read them from there.
-    expect(await memberActions(socket).completeTask({ runTaskId })).toEqual({
+    expect(await memberActions(socket).markTaskDone({ runTaskId })).toEqual({
       _tag: "Ok",
     });
     socket.close();

@@ -97,7 +97,7 @@ export const Route = createFileRoute("/shop/$shop/")({
    * three are in the URL, is every way back to this screen.
    */
   staleTime: Infinity,
-  head: () => ({ meta: [{ title: "Workflows — Baton" }] }),
+  head: () => ({ meta: [{ title: "Work — Baton" }] }),
   component: RouteComponent,
 });
 
@@ -127,7 +127,7 @@ const insideRow = (event: {
 };
 
 /**
- * Who finished a Recent task entry, spelled as the waiting rows spell an actor:
+ * Who did a Recent task entry, spelled as the waiting rows spell an actor:
  * `you` for the reader, the email for anybody else, `Merchant` for the
  * merchant. Your own address repeated down a page is the noisiest text on the
  * tier and the least informative line on it. Empty rather than "nobody" for a
@@ -179,7 +179,7 @@ function RouteComponent() {
   /**
    * The subscribe pattern (`Domain.Subscription`): the loader's rows paint
    * first, then `subscribeRuns` re-reads them over the socket and registers
-   * this connection for pushes, so work another member finishes lands here
+   * this connection for pushes, so another member's Done lands here
    * without a reload. The subscription's scope is the teams on the connection,
    * so nothing about it is named by the browser — `query` only chooses among
    * them, and the object bounds what it can ask for.
@@ -270,7 +270,7 @@ function RouteComponent() {
    * (`MemberSearch` in `shop.$shop.tsx`).
    */
   const workLocation = (runId: string) =>
-    ({ to: "/shop/$shop/workflows/$runId", params: { shop, runId } }) as const;
+    ({ to: "/shop/$shop/work/$runId", params: { shop, runId } }) as const;
 
   /**
    * Whether a row names its team. The team name is on the row for the one
@@ -293,7 +293,7 @@ function RouteComponent() {
    *
    * Line one is the order, the item's title and the quantity badge after a
    * Shopify change ({@link QuantityBadge}): what the row is.
-   * Line two is what to do on it ({@link Domain.runRowLine}): every ready task
+   * Line two is what to do on it ({@link Domain.runRowLine}): every current task
    * by name, then the one thing the reader needs and no more — why it
    * stopped, who has it, or where it is in the run. Every name rather than
    * the first and a `+n`, because a count says there is more work without
@@ -308,22 +308,22 @@ function RouteComponent() {
     const menuId = `run-actions-${run.id}`;
     const line = Domain.runRowLine(item, showTeam);
     /**
-     * A row you started says where it is in the run, not "In progress · you".
+     * A row you started says where it is in the run, not "Started · you".
      * Starting a task is what puts the row in Mine ({@link Domain.tierOf}),
      * and Put back is the inverse that takes it out again, so those words are true of every row under that pressed tab and so
      * distinguish none of them. A row a teammate started says who instead,
      * which is the whole of what the Teammates tab is for. The test is the
-     * starter rather than the open tab because a run can have several ready
+     * starter rather than the open tab because a run can have several current
      * tasks on the member's teams and `tasks[0]` is the lowest-positioned
      * one, not necessarily theirs.
      */
     const detailLine = () => {
       if (blocked) return run.blockReason ?? line.step;
       if (!started) return line.step;
-      if (startedBy === null) return "In progress";
+      if (startedBy === null) return Domain.RUN_STATE_LABEL.open;
       return Domain.actorIsMember(startedBy, memberEmail)
         ? line.step
-        : `In progress · ${Domain.actorLabel(startedBy)}`;
+        : `${Domain.TASK_STATE_LABEL.started} · ${Domain.actorLabel(startedBy)}`;
     };
     /**
      * Every verb the row offers, inside the row's menu — the shape Polaris's
@@ -346,7 +346,7 @@ function RouteComponent() {
      * there: the row walks the member through the task one verb at a time,
      * and Done straight from the list is one tap on the work page.
      *
-     * A single ready task gives the bare verb: the task is named on line two
+     * A single current task gives the bare verb: the task is named on line two
      * of the row this menu belongs to. Several give one item each, because a
      * single verb would act on the first and say nothing about the rest.
      *
@@ -360,7 +360,7 @@ function RouteComponent() {
           actor,
           item.order,
           run,
-          tasks.map((each) => ({ ...each, ready: true })),
+          tasks.map((each) => ({ ...each, current: true })),
         ).unblock
           ? [
               <s-button
@@ -369,20 +369,25 @@ function RouteComponent() {
                   actions.unblock.mutate(run.id);
                 }}
               >
-                Unblock
+                {Domain.VERB_LABEL.unblock.member}
               </s-button>,
             ]
           : [];
-      const named = (verb: string, each: Domain.RunListTask) =>
-        rest.length > 0 ? `${verb} · ${each.name}` : verb;
+      const named = (
+        verb: "start" | "done" | "putBack",
+        each: Domain.RunListTask,
+      ) => {
+        const label = Domain.VERB_LABEL[verb].member;
+        return rest.length > 0 ? `${label} · ${each.name}` : label;
+      };
       return tasks.flatMap((each) => {
-        /* Every task on a row is open and ready: that is what put it on the
+        /* Every task on a row is current: that is what put it on the
            list (`RunRepository.listRuns`). */
         const can = Domain.taskActions(actor, item.order, run, {
           ...each,
-          ready: true,
+          current: true,
           doneAt: null,
-          undoBlockedBy: null,
+          reopenBlockedBy: null,
         });
         if (can.start)
           return [
@@ -392,7 +397,7 @@ function RouteComponent() {
                 actions.start.mutate(each.id);
               }}
             >
-              {named("Start", each)}
+              {named("start", each)}
             </s-button>,
           ];
         return [
@@ -401,10 +406,10 @@ function RouteComponent() {
                 <s-button
                   key={each.id}
                   onClick={() => {
-                    actions.complete.mutate(each.id);
+                    actions.markDone.mutate(each.id);
                   }}
                 >
-                  {named("Done", each)}
+                  {named("done", each)}
                 </s-button>,
               ]
             : []),
@@ -413,10 +418,10 @@ function RouteComponent() {
                 <s-button
                   key={`${each.id}-put-back`}
                   onClick={() => {
-                    actions.unstart.mutate(each.id);
+                    actions.putBack.mutate(each.id);
                   }}
                 >
-                  {named("Put back", each)}
+                  {named("putBack", each)}
                 </s-button>,
               ]
             : []),
@@ -487,23 +492,23 @@ function RouteComponent() {
   };
 
   /** The same rule as the work page's Undo, {@link Domain.taskActions}' `reopen`, on the tab's own row. */
-  const doneUndo = (entry: Extract<Domain.RecentItem, { kind: "task" }>) =>
+  const reopenOf = (entry: Extract<Domain.RecentItem, { kind: "task" }>) =>
     Domain.taskActions(actor, entry.order, entry.run, {
       ...entry.task,
-      ready: false,
-      undoBlockedBy: entry.undoBlockedBy,
+      current: false,
+      reopenBlockedBy: entry.reopenBlockedBy,
     }).reopen;
 
   /**
-   * A finished task's row, the same shape as a waiting one: the row is a link
+   * A done task's row, the same shape as a waiting one: the row is a link
    * to the work page and a kebab beside it holds Undo.
    *
    * The kebab is there only while Undo is allowed. The rule used to be the
    * other way — a disabled button beside the clause naming its blocker, on
    * the reasoning that a missing control reads as a row that was never
-   * undoable while a disabled one reads as the refusal it is. That holds
-   * while refusal is the exception. Here it is the rule: undo is blocked the
-   * moment anything downstream starts, so a running shop's tier was mostly
+   * reopenable while a disabled one reads as the refusal it is. That holds
+   * while refusal is the exception. Here it is the rule: reopen is blocked the
+   * moment anything downstream starts, so a busy shop's Recent tab was mostly
    * dead buttons each explaining itself in a third line. When most rows can
    * offer nothing, absence is the norm a reader learns in two rows and the
    * kebab is the signal. The refusal is not lost — the work page the row
@@ -513,8 +518,8 @@ function RouteComponent() {
     entry: Extract<Domain.RecentItem, { kind: "task" }>,
     first: boolean,
   ) => {
-    const menuId = `run-undo-${entry.task.id}`;
-    const undoable = doneUndo(entry)?.blockedBy === null;
+    const menuId = `run-reopen-${entry.task.id}`;
+    const reopenable = reopenOf(entry)?.blockedBy === null;
     return (
       <s-box
         key={entry.task.id}
@@ -547,7 +552,7 @@ function RouteComponent() {
                 </s-text>
               </div>
             </s-stack>
-            {undoable && (
+            {reopenable && (
               <s-button
                 icon="menu-horizontal"
                 variant="tertiary"
@@ -559,17 +564,17 @@ function RouteComponent() {
             )}
           </s-grid>
         </s-clickable>
-        {undoable && (
+        {reopenable && (
           <s-menu
             id={menuId}
             accessibilityLabel={`Actions for ${entry.run.orderName}`}
           >
             <s-button
               onClick={() => {
-                actions.uncomplete.mutate(entry.task.id);
+                actions.reopen.mutate(entry.task.id);
               }}
             >
-              Undo
+              {Domain.VERB_LABEL.reopen.member}
             </s-button>
           </s-menu>
         )}
@@ -719,9 +724,7 @@ function RouteComponent() {
           variant={each === tab ? "primary" : "secondary"}
           inlineSize="fill"
           tone={
-            each === "attention" && view.counts.attention > 0
-              ? "critical"
-              : "auto"
+            each === "blocked" && view.counts.blocked > 0 ? "critical" : "auto"
           }
           aria-pressed={each === tab}
           onClick={() => {
@@ -778,11 +781,11 @@ function RouteComponent() {
       <MemberBar shop={shop} email={memberEmail} filter={teamMenu} />
       {/* No `heading`: the strip below says the same word and says more with
           it, and a heading block above the fold is what a bench tablet has
-          least of. The document title says "Workflows" — that is the
+          least of. The document title says "Work" — that is the
           browser tab, which is the one place the app's own noun does work. */}
       <s-page inlineSize="small">
         <SocketBanner />
-        <s-section accessibilityLabel="Workflows">
+        <s-section accessibilityLabel="Work">
           <s-stack gap="base">
             {actions.banner !== null && (
               <s-banner tone="critical">{actions.banner}</s-banner>

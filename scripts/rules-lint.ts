@@ -13,6 +13,8 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
+import { retiredCopyHits } from "./lib/rules-lint.ts";
+
 const ROOT = new URL("../src/", import.meta.url).pathname;
 const ALLOWED = new Set(["lib/Domain.ts", "routeTree.gen.ts"]);
 const PATTERNS: readonly RegExp[] = [
@@ -44,5 +46,43 @@ if (hits.length > 0) {
     "rules-lint: inline status/flag/role comparison outside src/lib/Domain.ts; use a Domain predicate:",
   );
   for (const hit of hits) console.error(`  ${hit}`);
-  process.exit(1);
 }
+
+/**
+ * The glossary's screen rule: `scripts/lib/rules-lint.ts` says which words
+ * are retired and how a line's copy is read. The screens are the merchant's
+ * and the member's: `src/components/`, the routes that render them, and the
+ * modules that hold their copy. The operator console (`admin.*`), the API
+ * routes (`api.*`), and the public home and privacy pages (`index.tsx`,
+ * `privacy.tsx`) are not glossary screens and are left out.
+ */
+const COPY_FILES = [
+  ...walk(join(ROOT, "routes")).filter(
+    (path) =>
+      !/\/routes\/(?:admin\.|api\.|index\.tsx$|privacy\.tsx$)/u.test(path) &&
+      !path.endsWith("routeTree.gen.ts"),
+  ),
+  ...walk(join(ROOT, "components")),
+  ...[
+    "useMemberRunActions.ts",
+    "changeWarning.ts",
+    "workflowShared.ts",
+    "runTabs.ts",
+  ].map((name) => join(ROOT, "lib", name)),
+];
+
+const copyHits = COPY_FILES.flatMap((path) => {
+  const file = relative(ROOT, path);
+  return retiredCopyHits(readFileSync(path, "utf8"), path.endsWith(".tsx")).map(
+    ({ line, text }) => `src/${file}:${String(line)}: ${text}`,
+  );
+});
+
+if (copyHits.length > 0) {
+  console.error(
+    "rules-lint: retired word in screen copy; use the glossary word:",
+  );
+  for (const hit of copyHits) console.error(`  ${hit}`);
+}
+
+if (hits.length > 0 || copyHits.length > 0) process.exit(1);

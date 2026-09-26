@@ -102,7 +102,7 @@ afterEach(async () => {
  * tests in the same worker, so sharing a shop would leak workflows between cases.
  */
 /**
- * The ready half of the run list view, flattened back into one list in strip
+ * The current half of the run list view, flattened back into one list in strip
  * order because one read now returns one tab; the Done tab and the tiering
  * itself are covered by the repository tests. `memberEmail` defaults to
  * nobody these tests started work as, so every started task reads as a
@@ -125,7 +125,7 @@ const runListItems = async (
     return view.items;
   };
   if (tab !== undefined) return await read(tab);
-  const tabs = ["mine", "upNext", "inProgress", "attention"] as const;
+  const tabs = ["mine", "upNext", "teammates", "blocked"] as const;
   const reads = await Promise.all(tabs.map(read));
   return reads.flat();
 };
@@ -571,7 +571,7 @@ const seedOrder = (
   );
 
 describe("ShopAgent workflow run callables", () => {
-  it("attachWorkflow validates the line item and the workflow, then refuses a duplicate", async () => {
+  it("attachWorkflow validates the item and the workflow, then refuses a duplicate", async () => {
     const shop = "wf-attach.myshopify.com";
     const team = await seedTeam(shop, "Engraving");
     await seedOrder(shop, Date.now() - 24 * 60 * 60 * 1000);
@@ -909,7 +909,7 @@ describe("ShopAgent workflow run callables", () => {
     expect(runs.map((d) => d.run.workflowId)).toEqual([workflowId]);
   });
 
-  it("merchantCancelRun / memberCompleteTask map refusals to results", async () => {
+  it("merchantCancelRun / memberMarkTaskDone map refusals to results", async () => {
     const shop = "wf-cancel.myshopify.com";
     const team = await seedTeam(shop, "Engraving");
     await seedOrder(shop, Date.now());
@@ -945,7 +945,7 @@ describe("ShopAgent workflow run callables", () => {
       memberEmail: "m1@example.com",
       teamIds: ["x"],
     });
-    expect(await stranger.completeTask({ runTaskId })).toEqual({
+    expect(await stranger.markTaskDone({ runTaskId })).toEqual({
       _tag: "NotAllowed",
     });
     stranger.close();
@@ -955,7 +955,7 @@ describe("ShopAgent workflow run callables", () => {
       memberEmail: "m1@example.com",
       teamIds: [team.id],
     });
-    expect(await engraver.completeTask({ runTaskId })).toEqual({ _tag: "Ok" });
+    expect(await engraver.markTaskDone({ runTaskId })).toEqual({ _tag: "Ok" });
     expect(await runListItems(agent, [team.id])).toHaveLength(0);
     // A done run offers no Cancel (`Domain.runActions`), and has no block to lift.
     expect(await agent.merchantCancelRun({ runId })).toEqual({
@@ -968,7 +968,7 @@ describe("ShopAgent workflow run callables", () => {
     // Reopened, it is open again and cancels once; the closed run left
     // behind offers no second Cancel.
     const merchant = await openMerchantSocket(shop);
-    expect(await merchant.uncompleteTask({ runTaskId })).toEqual({
+    expect(await merchant.reopenTask({ runTaskId })).toEqual({
       _tag: "Ok",
     });
     merchant.close();
@@ -978,7 +978,7 @@ describe("ShopAgent workflow run callables", () => {
     });
   });
 
-  it("unblock lifts a block for the team that holds a ready task or the merchant, and is refused once nothing is blocked", async () => {
+  it("unblock lifts a block for the team that holds a current task or the merchant, and is refused once nothing is blocked", async () => {
     const shop = "wf-unblock.myshopify.com";
     const team = await seedTeam(shop, "Engraving");
     await seedOrder(shop, Date.now());
@@ -1203,7 +1203,7 @@ describe("ShopAgent workflow run callables", () => {
       ["B", 0],
     ]);
     // A *started* task can be assigned too: only teamId/teamName move, so history
-    // keeps whoever began it and the new team finishes what they started.
+    // keeps whoever began it and the new team takes it to done.
     const inB = await openMemberSocket(shop, {
       memberId: "m1",
       memberEmail: "m1@example.com",
@@ -1229,12 +1229,12 @@ describe("ShopAgent workflow run callables", () => {
       memberEmail: "m2@example.com",
       teamIds: [c.id],
     });
-    expect(await inC.completeTask({ runTaskId })).toEqual({ _tag: "Ok" });
+    expect(await inC.markTaskDone({ runTaskId })).toEqual({ _tag: "Ok" });
     inC.close();
     const finished = await agent.getOrderDetail({ legacyId: "1" });
     strictEqual(finished?.runs[0]?.tasks[0]?.doneByEmail, "m2@example.com");
     strictEqual(finished?.runs[0]?.tasks[0]?.startedByEmail, "m1@example.com");
-    // A finished task keeps its team: `Domain.taskActions`' `assign` is
+    // A done task keeps its team: `Domain.taskActions`' `assign` is
     // false, so the action set refuses before the repository's own guard.
     expect(
       await agent.merchantAssignRunTaskTeam({ runTaskId, teamId: c.id }),

@@ -4,7 +4,7 @@
  *
  * - A rule is stated once, on the symbol that *is* the concept (a
  *   `Schema.Literals` such as {@link RunStatus}) or the function that
- *   enforces it ({@link undoBlockedBy}, {@link readyTasks}). A concept with
+ *   enforces it ({@link reopenBlockedBy}, {@link currentTasks}). A concept with
  *   more than one rule carries a table naming each rule's predicate.
  * - Every other site calls the predicate ({@link runIsOpen},
  *   {@link runIsBlocked}, {@link userIsAdmin}, ...) rather than comparing a
@@ -18,7 +18,7 @@
  * status, not a button: a table can say a run offers nothing and a list can
  * still show it, so which rows a list holds is decided by {@link RunStatus}
  * (open runs only) and nothing else, the same rule for every list. A page
- * never decides a gate itself: what a line item's card is comes from
+ * never decides a gate itself: what an item's card is comes from
  * {@link lineItemState}, and which writes an actor may make comes from
  * {@link runActions} and {@link taskActions}, which the page and `ShopAgent`
  * both read.
@@ -27,23 +27,39 @@
 /**
  * Glossary. These are the words for code, JSDoc, research and screen; a
  * symbol named here is an export of this file, or a field of one. A row
- * says what a word means and where it lives; the rule stays on the symbol.
+ * says what a word means, where it lives, and what a screen calls it; the
+ * rule stays on the symbol. The screen columns are checked: each cell is
+ * the value of the label constant beside the table ({@link TASK_STATE_LABEL},
+ * {@link RUN_STATE_LABEL}, {@link WORKFLOW_STATE_LABEL}, {@link VERB_LABEL}),
+ * and `pnpm action-table check` refuses a cell that differs, so a label
+ * change starts here.
  *
- * Nouns:
+ * Nouns. "(none)" means no screen says the word; the cell says what a
+ * screen shows instead:
  *
- * | word     | meaning                                                  | symbol                          |
- * | -------- | -------------------------------------------------------- | ------------------------------- |
- * | merchant | the shop's owner, acting from the Shopify admin          | `Actor` role `merchant`         |
- * | member   | a person at the bench, on one or more teams              | `Actor` role `member`, `Member` |
- * | team     | the group a task is assigned to                          | `Team`                          |
- * | order    | a Shopify order                                          | `ShopOrder`                     |
- * | item     | one line item of an order                                | `OrderLineItem`                 |
- * | workflow | the definition: steps of tasks                           | `Workflow`, `WorkflowTask`      |
- * | step     | a position in a workflow; its tasks are done in parallel | `WorkflowTask`, `RunTask` field |
- * | run      | one item going through one workflow                      | `Run`                           |
- * | task     | one unit of work on a run, on one team                   | `RunTask`                       |
- * | block    | a person's hold on a run                                 | `runIsBlocked`                  |
- * | note     | free text on a run                                       | `RunNote`                       |
+ * | word     | meaning                                                  | symbol                          | screen                                                         |
+ * | -------- | -------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------- |
+ * | merchant | the shop's owner, acting from the Shopify admin          | `Actor` role `merchant`         | "you" to the merchant, "the merchant" to a member              |
+ * | member   | a person at the bench, on one or more teams              | `Actor` role `member`, `Member` | member (merchant screens); "you" or a name (member screens)    |
+ * | team     | the group a task is assigned to                          | `Team`                          | team, or its name                                              |
+ * | order    | a Shopify order                                          | `ShopOrder`                     | its name (#1001)                                               |
+ * | item     | one line item of an order                                | `OrderLineItem`                 | item; never "line item"                                        |
+ * | workflow | the definition: steps of tasks                           | `Workflow`, `WorkflowTask`      | workflow, or its name                                          |
+ * | step     | a position in a workflow; its tasks are done in parallel | `WorkflowTask`, `RunTask` field | Step k of n                                                    |
+ * | run      | one item going through one workflow                      | `Run`                           | (none): the merchant sees the item's workflow, the member work |
+ * | task     | one unit of work on a run, on one team                   | `RunTask`                       | task, or its name                                              |
+ * | block    | a person's hold on a run                                 | `runIsBlocked`                  | Blocked                                                        |
+ * | note     | free text on a run                                       | `RunNote`                       | Note                                                           |
+ *
+ * An item is always shown under its order, on the merchant's order page
+ * and in the member's `<order> · <item>` row, so the order carries the
+ * disambiguation and the word stays short. Copy with no order beside it
+ * qualifies the word ("items on open orders", "N items in production")
+ * rather than saying "items" bare. "run" is an implementation noun a
+ * merchant or member would have to learn; the merchant already has the
+ * item and its workflow (Change workflow replaces the run without naming
+ * it), and the member has their work and its tasks. `scripts/rules-lint.ts`
+ * refuses "run", "line item" and the other retired words in screen strings.
  *
  * Run states:
  *
@@ -51,36 +67,155 @@
  * | ------- | ------------------------------------------------- | --------------- | ------------------------------------------------------- |
  * | open    | work can be recorded                              | `active`        | In progress (merchant: Not started until a task starts) |
  * | blocked | open, and a person holds it                       | `blockedAt` set | Blocked                                                 |
- * | done    | a person finished the last task                   | `done`          | Done                                                    |
+ * | done    | a person marked the last task done                | `done`          | Done                                                    |
  * | closed  | something else ended it; `closedReason` says what | `closed`        | Closed · <reason>                                       |
  *
- * Task states:
+ * Task states. `current` is the flag: the task's step is the lowest with
+ * an open task ({@link currentTasks}), whether or not someone has it. The
+ * one derivation is {@link taskStateOf}; it reads `startedAt` before
+ * `current`, so a task someone had when its run closed still reads started:
  *
- * | word    | meaning                            | derived from            | screen                       |
- * | ------- | ---------------------------------- | ----------------------- | ---------------------------- |
- * | waiting | its step is not current            | not ready               | (none)                       |
- * | ready   | its step is current, nobody has it | ready, `startedAt` null | Ready                        |
- * | started | a person has it                    | ready, `startedAt` set  | Started (today: In progress) |
- * | done    | finished                           | `doneAt` set            | Done                         |
+ * | word    | meaning                            | derived from                          | screen  |
+ * | ------- | ---------------------------------- | ------------------------------------- | ------- |
+ * | waiting | its step is not current            | not current, `startedAt` null         | (none)  |
+ * | ready   | its step is current, nobody has it | current, `startedAt` null             | Ready   |
+ * | started | a person has it                    | `startedAt` set (current on an open run) | Started |
+ * | done    | a person marked it done            | `doneAt` set                          | Done    |
+ *
+ * "In progress" is the run's screen word and only the run's: a started
+ * task reads Started so the merchant never reads one word for two facts
+ * on one card. "waiting" is a code word; the orders index's "Waiting on"
+ * column means teams holding a current task, a fact about orders, and the
+ * two never render together.
+ *
+ * Workflow states:
+ *
+ * | word | meaning                             | stored         | screen |
+ * | ---- | ----------------------------------- | -------------- | ------ |
+ * | on   | new items get runs from it          | `active` true  | On     |
+ * | off  | it starts nothing; open runs carry on | `active` false | Off    |
  *
  * Verbs. Who may do each, and in which state, is the matrix on
- * {@link taskActions} or {@link runActions}, not here:
+ * {@link taskActions} or {@link runActions}, not here. The two screen
+ * columns are the member's and the merchant's label; "(none)" means that
+ * screen never offers the verb. Undo and Reopen are two words for one
+ * verb on purpose: the member takes back their own Done, the merchant
+ * reopens someone's record.
  *
- * | word            | on a | effect                              |
- * | --------------- | ---- | ----------------------------------- |
- * | start           | task | ready → started                     |
- * | done            | task | ready or started → done             |
- * | put back        | task | started → ready                     |
- * | reopen          | task | done → ready                        |
- * | assign          | task | moves it to a team                  |
- * | note            | run  | writes the note                     |
- * | block           | run  | open → blocked                      |
- * | edit reason     | run  | changes the block's reason          |
- * | unblock         | run  | blocked → open                      |
- * | cancel          | run  | open → closed, `merchant_cancelled` |
- * | change workflow | item | replaces the run                    |
+ * | word            | on a | effect                              | member      | merchant        |
+ * | --------------- | ---- | ----------------------------------- | ----------- | --------------- |
+ * | start           | task | ready → started                     | Start       | (none)          |
+ * | done            | task | ready or started → done             | Done        | Done            |
+ * | put back        | task | started → ready                     | Put back    | Put back        |
+ * | reopen          | task | done → ready                        | Undo        | Reopen          |
+ * | assign          | task | moves it to a team                  | (none)      | Assign team     |
+ * | note            | run  | writes the note                     | Edit note   | Edit note       |
+ * | block           | run  | open → blocked                      | Block       | Block           |
+ * | edit reason     | run  | changes the block's reason          | Edit reason | Edit reason     |
+ * | unblock         | run  | blocked → open                      | Unblock     | Unblock         |
+ * | cancel          | run  | open → closed, `merchant_cancelled` | (none)      | Cancel workflow |
+ * | attach workflow | item | creates the run                     | (none)      | Attach          |
+ * | change workflow | item | replaces the run                    | (none)      | Change workflow |
  */
 import { Match, Option, Schema, SchemaGetter, Struct } from "effect";
+
+/**
+ * The glossary's task-state words. Derived, never stored: {@link taskStateOf}
+ * reads them off a task's row and its `current` flag.
+ */
+export const TaskState = Schema.Literals([
+  "waiting",
+  "ready",
+  "started",
+  "done",
+]);
+export type TaskState = typeof TaskState.Type;
+
+/**
+ * One task's state ({@link TaskState}) from its row and the `current` flag
+ * ({@link RunTaskView}). The one derivation: a page that draws a task's
+ * badge reads this rather than testing the columns itself.
+ *
+ * `startedAt` is read before `current`. On an open run the order does not
+ * matter, because a started task is always current: nothing behind it can
+ * reopen while it is started ({@link reopenBlockedBy}). On a closed run no
+ * task is current ({@link currentTasks}), and a task someone had when the run
+ * closed still reads started, because the closed card is the record of who
+ * had what.
+ */
+export const taskStateOf = (
+  task: Pick<RunTaskView, "current" | "startedAt" | "doneAt">,
+): TaskState => {
+  if (task.doneAt !== null) return "done";
+  if (task.startedAt !== null) return "started";
+  return task.current ? "ready" : "waiting";
+};
+
+/** The glossary's task-states screen column. `null` is "(none)". */
+export const TASK_STATE_LABEL = {
+  waiting: null,
+  ready: "Ready",
+  started: "Started",
+  done: "Done",
+} as const satisfies Record<TaskState, string | null>;
+
+/**
+ * The glossary's run-states screen column. `open` is the member's word for
+ * an open run and the merchant's once a task has started; the merchant's
+ * word before that is {@link RUN_UNSTARTED_LABEL} ({@link runIsUnstarted}).
+ * `closed` is the prefix of `Closed · <reason>` ({@link ClosedReason}).
+ */
+export const RUN_STATE_LABEL = {
+  open: "In progress",
+  blocked: "Blocked",
+  done: "Done",
+  closed: "Closed",
+} as const;
+
+/** The merchant's word for an open run nobody has touched ({@link runIsUnstarted}); the glossary's run-states `open` row names it. */
+export const RUN_UNSTARTED_LABEL = "Not started";
+
+/** The glossary's workflow-states screen column, for `Workflow.active`. */
+export const WORKFLOW_STATE_LABEL = { on: "On", off: "Off" } as const;
+
+/**
+ * The glossary's verbs, as the action structs name them ({@link RunActions},
+ * {@link TaskActions}), plus the two item verbs.
+ */
+export const Verb = Schema.Literals([
+  "start",
+  "done",
+  "putBack",
+  "reopen",
+  "assign",
+  "note",
+  "block",
+  "editReason",
+  "unblock",
+  "cancel",
+  "attachWorkflow",
+  "changeWorkflow",
+]);
+export type Verb = typeof Verb.Type;
+
+/** The glossary's two screen columns for verbs. `null` is "(none)": that screen never offers the verb. */
+export const VERB_LABEL = {
+  start: { member: "Start", merchant: null },
+  done: { member: "Done", merchant: "Done" },
+  putBack: { member: "Put back", merchant: "Put back" },
+  reopen: { member: "Undo", merchant: "Reopen" },
+  assign: { member: null, merchant: "Assign team" },
+  note: { member: "Edit note", merchant: "Edit note" },
+  block: { member: "Block", merchant: "Block" },
+  editReason: { member: "Edit reason", merchant: "Edit reason" },
+  unblock: { member: "Unblock", merchant: "Unblock" },
+  cancel: { member: null, merchant: "Cancel workflow" },
+  attachWorkflow: { member: null, merchant: "Attach" },
+  changeWorkflow: { member: null, merchant: "Change workflow" },
+} as const satisfies Record<
+  Verb,
+  { readonly member: string | null; readonly merchant: string | null }
+>;
 
 const SqliteBoolean = Schema.Number.pipe(
   Schema.decodeTo(Schema.Boolean, {
@@ -456,7 +591,7 @@ export type TeamName = typeof TeamName.Type;
  * A shop-scoped grouping of members. Merchant copy: **delete a team and
  * its tasks become unassigned until you assign a team.**
  * Every `WorkflowTask`, `WorkflowDraftTask`, and *open* `RunTask` of
- * an open run that pointed at the team gets `teamId = null`; finished run
+ * an open run that pointed at the team gets `teamId = null`; done run
  * tasks and every task of a closed run keep the id and their `teamName`
  * snapshot, which is why history never needs the row.
  * A team with nobody on it is valid and shows **No members**: its tasks can
@@ -569,7 +704,7 @@ export const WorkflowLimits = {
 export const ShopLimits = {
   /** `Team` rows per shop. */
   maxTeams: 25,
-  /** `Run` rows that are {@link runIsOpen} per shop; a safety valve, not a product limit. A `done` run still holds its line item but frees this slot. */
+  /** `Run` rows that are {@link runIsOpen} per shop; a safety valve, not a product limit. A `done` run still holds its item but frees this slot. */
   maxOpenRuns: 5000,
   /** {@link ShopUsage.ordersThisCycle} at which syncing of *new* orders stops for the rest of the cycle. Provisional; enterprise fencing, not a tier — see {@link cycleAtOrderCeiling}. */
   maxOrdersPerCycle: 100,
@@ -909,7 +1044,7 @@ export type BlockReason = typeof BlockReason.Type;
  * The workflow's one tag: its identity in a form a product can carry. Every
  * workflow has exactly one, from birth, and no two workflows share one. Baton
  * mints it (the create dialog prefills it from the workflow name) and the
- * merchant puts it on products in Shopify; a line item whose product carries
+ * merchant puts it on products in Shopify; an item whose product carries
  * it follows the workflow. It is not a *product* tag — that is
  * `OrderLineItem.productTags`, the product's own merchandising facets, which
  * this is matched against.
@@ -958,7 +1093,7 @@ export type WorkflowTag = typeof WorkflowTag.Type;
  *
  * - a workflow **starts when** an order **contains** a product **tagged with**
  *   its tag;
- * - an order or line item that no workflow's tag **matches** shows
+ * - an order or item that no workflow's tag **matches** shows
  *   **"No workflow"**;
  * - the order page says a workflow **started for** N items;
  * - a workflow **applies to orders placed since** it was turned on; the
@@ -970,11 +1105,11 @@ export type WorkflowTag = typeof WorkflowTag.Type;
  * "product tag" for the workflow's own field.
  *
  * Merchant copy, the whole model in five sentences: **delete a
- * workflow and its runs stay on their orders**, open ones finish; **turn
- * off** stops new runs and open ones finish; **a workflow needs at least one task before it
+ * workflow and its runs stay on their orders**, open ones carry on; **turn
+ * off** stops new runs and open ones carry on; **a workflow needs at least one task before it
  * can be applied or turned on**, so zero tasks is the state before the first
  * Apply and only that; **any open task on a run can be assigned to another
- * team**, a finished task is history; **deleting configuration never deletes
+ * team**, a done task is history; **deleting configuration never deletes
  * work**. Delete removes the definition, its tasks, and its draft, nothing
  * else — a run is self-sufficient, so it needs no confirm counts and the
  * dialog says only what survives. The id is identity, the tag is the one
@@ -1019,7 +1154,7 @@ const WorkflowFields = {
 export const isActive = (workflow: { readonly activatedAt: number | null }) =>
   workflow.activatedAt !== null;
 
-/** A workflow: chosen by its tag, running once per matching line item. */
+/** A workflow: chosen by its tag, running once per matching item. */
 export const Workflow = Schema.Struct({
   ...WorkflowFields,
   tag: WorkflowTag,
@@ -1055,10 +1190,10 @@ export type WorkflowDraft = typeof WorkflowDraft.Type;
  * the workflow; Edit copies workflow tasks into the draft under new ids.
  *
  * A workflow is a sequence of numbered steps. Each step holds one or more
- * tasks, and a task is the unit a team starts and finishes: it has a name, a
+ * tasks, and a task is the unit a team starts and marks done: it has a name, a
  * team, and instructions. Along `position` the `step` values are dense `1..m`
  * and non-decreasing (`1 1 2 3 3`), so every task belongs to exactly one step,
- * and a step of one task is the plain linear case. Step k is ready when every
+ * and a step of one task is the plain linear case. Step k is current when every
  * task of step k-1 is done. The invariant is owned by `WorkflowLayout`, which
  * recomputes the whole layout on every edit. The two nouns exist because
  * parallel work needs a wait that is not a task; the member and merchant UI
@@ -1255,7 +1390,7 @@ export const AddStepInput = Schema.Struct({
 });
 export type AddStepInput = typeof AddStepInput.Type;
 
-/** Same as {@link AddStepInput} but into an existing step: the new task lands after that step's last task and is ready together with it. */
+/** Same as {@link AddStepInput} but into an existing step: the new task lands after that step's last task and is current together with it. */
 export const AddTaskInput = Schema.Struct({
   workflowId: BoundedId,
   step: Schema.Number,
@@ -1518,17 +1653,17 @@ export type AssignRunTaskTeamInput = typeof AssignRunTaskTeamInput.Type;
 /**
  * Any open task can be assigned, started or not: only `teamId` / `teamName`
  * move, so `startedBy` / `startedByEmail` stay and history keeps whoever
- * began it. `TaskFinished` refuses a done task because the write would
+ * began it. `TaskDone` refuses a done task because the write would
  * overwrite `teamName`, the record of which team did it.
  */
 export const AssignRunTaskTeamResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Assigned") }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("TeamNotFound") }),
-  Schema.Struct({ _tag: Schema.Literal("TaskFinished") }),
+  Schema.Struct({ _tag: Schema.Literal("TaskDone") }),
   /** The task's run is not {@link runIsOpen}; see the {@link RunStatus} table. */
   Schema.Struct({ _tag: Schema.Literal("RunNotOpen") }),
-  /** {@link taskActions}' `assign` is false: the task is finished, its run is done, or the order is closed. */
+  /** {@link taskActions}' `assign` is false: the task is done, its run is done, or the order is closed. */
   Schema.Struct({ _tag: Schema.Literal("NotAllowed") }),
 ]);
 export type AssignRunTaskTeamResult = typeof AssignRunTaskTeamResult.Type;
@@ -1647,7 +1782,7 @@ export type ShopOrder = typeof ShopOrder.Type;
  * only — the order sync writes `[]`, because matching happens after the write,
  * inside `afterWrite`.
  *
- * `properties` is the line item's own list, every key stored and shown as
+ * `properties` is the item's own list, every key stored and shown as
  * Shopify sends it, underscore-prefixed app keys included; Baton is a
  * back-office view and hides nothing the merchant can already see in the
  * admin.
@@ -1765,20 +1900,20 @@ export const orderIsSeeded = (orderId: string) =>
   orderId.startsWith(SEED_ORDER_ID_PREFIX);
 
 /**
- * Progress for one seeded run: `done` completes every task; `advance`
- * completes that many rounds of ready tasks; `started` then Starts what is
+ * Progress for one seeded run: `done` marks every task done; `advance`
+ * marks that many rounds of current tasks done; `started` then Starts what is
  * ready; `blocked` blocks the run.
  */
 const SeedProgressFields = {
   done: Schema.optionalKey(Schema.Boolean),
   /**
-   * Rounds of progress before the run is left alone: each round completes
-   * every task that was *ready* when the round began, and what that makes
-   * ready waits for the next. `advance: 1` on a three-step item is "step 1
+   * Rounds of progress before the run is left alone: each round marks done
+   * every task that was *current* when the round began, and what that makes
+   * current waits for the next. `advance: 1` on a three-step item is "step 1
    * done, step 2 up next". `done` is the limit of this.
    */
   advance: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
-  /** After `advance`, Start what is ready so the run list shows "In progress since … by <seed member>". */
+  /** After `advance`, Start what is ready so the run list shows "Started · <seed member>" on a teammate's list. */
   started: Schema.optionalKey(Schema.Boolean),
   /**
    * Record the `done` / `advance` / `blocked` progress as the **merchant**
@@ -1790,13 +1925,13 @@ const SeedProgressFields = {
   byMerchant: Schema.optionalKey(Schema.Boolean),
   /** After `advance`, block the run with this reason, the state a worker's Block leaves. */
   blocked: Schema.optionalKey(BlockReason),
-  /** Last, Cancel run as the merchant: the run closes, reason `merchant_cancelled` ({@link ClosedReason}). */
+  /** Last, Cancel workflow as the merchant: the run closes, reason `merchant_cancelled` ({@link ClosedReason}). */
   cancelled: Schema.optionalKey(Schema.Boolean),
 } as const;
 
 /**
  * `done` and `advance` are exclusive rather than merely undocumented
- * together: the seed runs `done` first, which leaves nothing ready, so
+ * together: the seed runs `done` first, which leaves nothing current, so
  * `advance` beside it is a silent no-op and the fixture row would read as
  * something it is not.
  */
@@ -2089,8 +2224,8 @@ export const ListOrdersInput = Schema.Struct({
   /**
    * `null` is any team; an id keeps only orders waiting on that team
    * ({@link OrderRow} `waitingOn`, open orders only) — the run list's own
-   * readiness predicate, not "owns a task somewhere in the run". The looser reading pulls in orders the team
-   * finished days ago and orders it will not touch for two more steps, so
+   * predicate for which tasks are current, not "owns a task somewhere in the run". The looser reading pulls in orders the team
+   * done days ago and orders it will not touch for two more steps, so
    * the label carries the predicate.
    *
    * Always send the key. `subscribeOrders` parses with
@@ -2115,7 +2250,7 @@ export type ResyncOrderInput = typeof ResyncOrderInput.Type;
 /**
  * Per-order production state for the index table, aggregated from
  * `Run` rows in the same read. Counts every run on the order.
- * `open` counts {@link runIsOpen} runs, `done` the finished ones.
+ * `open` counts {@link runIsOpen} runs, `done` the done ones.
  * `closed` counts {@link runIsClosed} runs: an item whose run was closed is
  * decided, so an order whose only runs were closed is not "No workflow"
  * ({@link orderNeeds}), though it reads as to make ({@link productionState}).
@@ -2131,9 +2266,9 @@ export type RunCounts = typeof RunCounts.Type;
 
 /**
  * One index row. `itemUnits` is the sum of `currentQuantity`, not the number
- * of line-item rows: a cancelled or edited-down order keeps its line items and
+ * of item rows: a cancelled or edited-down order keeps its items and
  * drops their current quantity to zero, and the admin shows those as
- * "0 items". Line items themselves are not carried; the detail page reads them.
+ * "0 items". Items themselves are not carried; the detail page reads them.
  */
 export const OrderRow = Schema.Struct({
   order: ShopOrder,
@@ -2142,7 +2277,7 @@ export const OrderRow = Schema.Struct({
   /**
    * **Needs a team**, derived at read time against the live D1 roster and
    * never stored: an open run has an open task that is unassigned (`teamId`
-   * null or no longer in the roster) or a ready task on a team with no
+   * null or no longer in the roster) or a current task on a team with no
    * members. The order page's "Assign team" picker and the members screen
    * are the remedies; either clears this with no further write.
    *
@@ -2151,24 +2286,24 @@ export const OrderRow = Schema.Struct({
    */
   attention: Schema.Boolean,
   /**
-   * Teams with a ready task on an open run of this order, distinct, as ids:
+   * Teams with a current task on an open run of this order, distinct, as ids:
    * "who is holding it", answered at the altitude the list grows with — a
    * shop has a handful of teams, while its runs are a cross product of line
    * items and matching workflows.
    *
    * **Only an open order waits on a team**: a fulfilled or cancelled
    * order's list is empty by the status rule, because reconcile closed every
-   * open run on it and only open runs have ready tasks ({@link readyTasks}).
+   * open run on it and only open runs have current tasks ({@link currentTasks}).
    * This is the same line {@link OrderNeed} draws: needs are open-only too.
    *
-   * Unassigned ready tasks contribute nothing, and neither does a team that
+   * Unassigned current tasks contribute nothing, and neither does a team that
    * has left the roster: both are `attention`, and rendering one fault in two
    * cells makes it look like two alarms. A blocked run contributes nothing
    * either: its team cannot move it, and `RunCounts.blocked` is its alarm. A
    * team still on the roster but with
    * no members does contribute: it is `attention` too, but the badge names
    * the team the merchant has to staff. So an order in production with an
-   * empty list is exactly an order whose every ready task is unassigned or
+   * empty list is exactly an order whose every current task is unassigned or
    * on a deleted team, which is when the critical badge is showing.
    *
    * Ids, not names: the Durable Object has no team names. The route resolves
@@ -2176,7 +2311,7 @@ export const OrderRow = Schema.Struct({
    */
   waitingOn: Schema.Array(TeamId),
   /**
-   * How many of the order's line items are **ambiguous**: two or more
+   * How many of the order's items are **ambiguous**: two or more
    * `matchedWorkflowIds`, units still to make, and no run of any status.
    * Derived per read like {@link RunCounts}, never stored, so a Change
    * workflow that leaves an item with two matches and nothing on it reads as
@@ -2195,7 +2330,7 @@ export type OrderRow = typeof OrderRow.Type;
  * reads as fulfilled (and one fulfilled with runs open cannot exist past the
  * next reconcile, which closes them). The open positions then follow the run
  * counts alone: no open and no done run is `to_make`, any open run is
- * `making`, only finished runs is `made`. An order whose runs are all closed
+ * `making`, only done runs is `made`. An order whose runs are all closed
  * reads `to_make`, which is right: nothing is being made, and the items may
  * take a new workflow from the picker. Whether `to_make` is a problem is
  * {@link orderNeeds}' question (`no_workflow`), not this one's. The SQL forms
@@ -2263,7 +2398,7 @@ export const orderNeeds = ({
  * `OrderRepository.listOrders` restates it and must move with it.
  *
  * Any run counts, `done` and `closed` included: a `done` run means the item
- * was routed and finished, and a closed run still holds the item's slot
+ * was routed and done, and a closed run still holds the item's slot
  * ({@link RunStatus}).
  */
 export const ambiguousItems = (
@@ -2613,7 +2748,7 @@ export interface RunListLoaderData {
   readonly view: RunListView;
 }
 
-/** `/shop/$shop/workflows/$runId` (`shop.$shop.workflows.$runId`). `view` is null when the run is not the member's to see. */
+/** `/shop/$shop/work/$runId` (`shop.$shop.work.$runId`). `view` is null when the run is not the member's to see. */
 export interface RunLoaderData {
   readonly shop: Shop;
   readonly memberId: MemberId;
@@ -2853,20 +2988,20 @@ export type RunSource = typeof RunSource.Type;
 /**
  * The run lifecycle, stated once. What a merchant reads:
  *
- * > A run is one item's trip through a workflow. It is **in progress** while
- * > your team works on it, **done** when the last step is finished, and
+ * > An item goes through its workflow. It is **in progress** while
+ * > your team works on it, **done** when the last step is done, and
  * > **closed** if Shopify ends it first (the order was fulfilled or
  * > cancelled, or the item was removed). A member can **block** a run that
  * > needs attention; unblock it to continue. Nothing else needs your action.
  *
- * The merchant's own Cancel run closes a run too, with its own reason
+ * The merchant's own Cancel workflow closes a run too, with its own reason
  * ({@link ClosedReason}). So a run ends one of two ways: `done`, a person
- * finished the last task, or `closed`, something else ended it and
+ * did the last task, or `closed`, something else ended it and
  * `closedReason` says what.
  *
  * `active` and `done` are derived from the run's tasks and stored for
  * querying; every task write on an open run recomputes them in the same
- * transaction. `closed` is written, never derived: reconcile or Cancel run
+ * transaction. `closed` is written, never derived: reconcile or Cancel workflow
  * sets it with `closedAt` and `closedReason`, and nothing moves a run out of
  * it. There is no reopen: Shopify's own model is that a cancel or a
  * fulfilment is final, and the way forward is to start again. The merchant
@@ -2883,15 +3018,17 @@ export type RunSource = typeof RunSource.Type;
  * closed item, the order's retention delete) removes tasks.
  *
  * **Every work list holds open runs only.** Closed and done runs leave the
- * member's Mine, Up next, In progress and Blocked tabs, and stop counting on
+ * member's Mine, Up next, Teammates and Blocked tabs, and stop counting on
  * the orders index, by this status and no other rule: the list reads select
- * `status = 'active'`. A closed run shows on the member's
- * Recent tab with its reason ({@link RecentItem}).
+ * `status = 'active'`. The fifth tab, Recent, holds done tasks and closed
+ * runs, a closed run with its reason ({@link RecentItem}).
  *
  * What each status allows. The gate column is the rule; the enforcing write
  * refuses with `RunTerminalError` when it fails. Which buttons a page shows
  * is {@link runActions} and {@link taskActions}, which read these same
- * predicates.
+ * predicates. `pnpm action-table check` does not read this table: it names
+ * the predicate per action, not a result per state, and the action matrices
+ * pin each result it describes.
  *
  * | action                               | gate                                                                          |
  * | ------------------------------------ | ----------------------------------------------------------------------------- |
@@ -2902,15 +3039,15 @@ export type RunSource = typeof RunSource.Type;
  * | Put back                             | {@link runIsOpen}, task started, not blocked                                   |
  * | assign a task's team                 | {@link runIsOpen}, task open                                                   |
  * | Cancel (close, `merchant_cancelled`) | {@link runIsOpen}, order open ({@link orderIsOpen})                            |
- * | Reopen a finished task               | {@link runIsOpen} or {@link runIsDone}, order open; see {@link undoBlockedBy}  |
+ * | Reopen a done task               | {@link runIsOpen} or {@link runIsDone}, order open; see {@link reopenBlockedBy}  |
  * | reconcile resizes                    | {@link runIsOpen}; badge only if a task has started ({@link runIsUnstarted})   |
  * | reconcile closes                     | {@link runIsOpen}                                                              |
- * | holds the line item's slot           | always, `done` and `closed` included                                           |
+ * | holds the item's slot           | always, `done` and `closed` included                                           |
  * | replaced by a manual attach          | {@link runIsOpen} or {@link runIsClosed}; a `done` run is a record             |
  * | counts against the shop ceiling      | {@link runIsOpen}                                                              |
  *
- * A `done` run holds its line item — a finished item is not rerouted — but
- * is not open: finished work does not count against
+ * A `done` run holds its item — a done item is not rerouted — but
+ * is not open: done work does not count against
  * `ShopLimits.maxOpenRuns`, is never resized or closed by reconcile (it is
  * the record of what was made), and what is left on it is Reopen and a note.
  * A closed run holds the slot too, so reconcile starts nothing on the item: a
@@ -2930,12 +3067,12 @@ export type RunStatus = typeof RunStatus.Type;
  * | `fulfilled`          | reconcile, the order reached `FULFILLED` ({@link isFulfilled}) | Closed · Fulfilled in Shopify         | Fulfilled in Shopify                 |
  * | `order_cancelled`    | reconcile, the order was cancelled ({@link isCancelled})        | Closed · Order cancelled in Shopify   | Order cancelled in Shopify           |
  * | `item_removed`       | reconcile, the line's {@link unitsToMake} reached zero          | Closed · Item removed or refunded in Shopify | Item removed or refunded in Shopify |
- * | `merchant_cancelled` | the merchant's Cancel run                                     | Closed · Cancelled by the merchant    | Cancelled by you                     |
+ * | `merchant_cancelled` | the merchant's Cancel workflow                                | Closed · Cancelled by the merchant    | Cancelled by you                     |
  *
- * A fulfilled order closes its runs rather than finishing them because the
+ * A fulfilled order closes its runs rather than marking them done because the
  * work may not have been done in Baton at all: the bench skipped the last
  * Done, the merchant took a rush order off the bench, or the item was made
- * elsewhere. Completing tasks on the team's behalf would put a name on work
+ * elsewhere. Marking tasks done on the team's behalf would put a name on work
  * nobody recorded; closing says what happened.
  */
 export const ClosedReason = Schema.Literals([
@@ -2946,7 +3083,7 @@ export const ClosedReason = Schema.Literals([
 ]);
 export type ClosedReason = typeof ClosedReason.Type;
 
-/** Ended by something other than a person finishing it; `closedReason` says what ({@link ClosedReason}). */
+/** Ended by something other than a person's Done on its last task; `closedReason` says what ({@link ClosedReason}). */
 export const runIsClosed = (run: { readonly status: RunStatus }) =>
   run.status === "closed";
 
@@ -2974,12 +3111,15 @@ export const runIsDone = (run: { readonly status: RunStatus }) =>
 
 /**
  * A person holds the run, with an optional reason: the one flag Baton has.
- * A member whose team holds a ready or started task, or the merchant, sets
+ * A member whose team holds a current task, or the merchant, sets
  * it with Block and lifts it with Unblock; nothing else sets or clears it (a
  * Shopify change never does, and closing a run clears it with the rest of
  * the run's open state).
  *
  * What a block changes. Every site reads this predicate, never the column.
+ * `pnpm action-table check` does not read this table: it names the enforcer
+ * per rule, not a result per state, and the action matrices pin each result
+ * it describes.
  *
  * | rule                                                              | enforcer                                  |
  * | ----------------------------------------------------------------- | ----------------------------------------- |
@@ -2996,18 +3136,18 @@ export const runIsBlocked = (run: { readonly blockedAt: number | null }) =>
   run.blockedAt !== null;
 
 /**
- * One workflow applied to one line item. Every display field
+ * One workflow applied to one item. Every display field
  * is a snapshot taken at creation — `workflowName`, `orderName`, the line
  * item's title and properties — so a run's row reads only this row
- * and the run survives a definition rename or a line item dropped from the
+ * and the run survives a definition rename or an item dropped from the
  * order. No foreign keys to `ShopOrder`, `OrderLineItem`, or `Workflow` for
  * that reason. An order delete takes its runs with it
  * (`OrderRepository` retention), and the member's views join `ShopOrder`
  * for {@link OrderState} and drop a run whose order is gone; the snapshots
  * are for reading, not for outliving the order.
  *
- * `lineItemId` is unique: **one row per line item**, `done` and `closed`
- * included — a finished item does not get a second route, and a closed one
+ * `lineItemId` is unique: **one row per item**, `done` and `closed`
+ * included — a done item does not get a second route, and a closed one
  * waits for the merchant — so replacing a workflow means deleting the
  * incumbent in the same transaction ({@link RunStatus}).
  */
@@ -3029,7 +3169,7 @@ export const Run = Schema.Struct({
   sku: Schema.NullOr(Schema.String),
   quantity: Schema.Number,
   /**
-   * The line item's `properties` at creation. Prefixed like `lineItemTitle`
+   * The item's `properties` at creation. Prefixed like `lineItemTitle`
    * because on a run the bare word would read as the run's own.
    */
   lineItemProperties: Schema.fromJsonString(Schema.Array(LineItemProperty)),
@@ -3045,7 +3185,7 @@ export const Run = Schema.Struct({
   blockedBy: Schema.NullOr(Schema.fromJsonString(Actor)),
   /**
    * The run's `quantity` before the last Shopify change, while nobody has
-   * finished a task since: the badge **Quantity changed · 3 → 2**.
+   * done a task since: the badge **Quantity changed · 3 → 2**.
    *
    * Reconcile writes the new units onto an open run. When a task has
    * started or is done (not {@link runIsUnstarted}) it also sets this to the
@@ -3054,7 +3194,7 @@ export const Run = Schema.Struct({
    * to hear about. An unstarted run is resized silently, since nobody has
    * worked to the old number, and a `done` run is never resized, because it
    * is the record of what was made.
-   * `completeTask` on the run clears it: finishing a step after the change is
+   * `markTaskDone` on the run clears it: a Done after the change is
    * proof someone worked with the new number.
    *
    * Never a gate. No action reads it, because a quantity change is a notice,
@@ -3078,7 +3218,7 @@ export type Run = typeof Run.Type;
  * snapshotted alongside `teamId` so the run list never joins D1. `teamId` is
  * the live pointer that puts the task on a team's list; a team delete nulls
  * it on *open* tasks only (**unassigned**: red on the order page, on nobody's
- * list, waiting for **assign a team**), while a finished task keeps both the
+ * list, waiting for **assign a team**), while a done task keeps both the
  * id and the name. `startedBy` / `doneBy` are D1 `Member.id`s,
  * cross-store and unreferenced; `startedByEmail` / `doneByEmail` are
  * the snapshots taken at the action that keep history readable after the
@@ -3092,15 +3232,15 @@ export type Run = typeof Run.Type;
  * rather than inferred from a null email.
  *
  * `reopened*` is a *last-actor slot*, not a history: it records the most
- * recent Undo and the next `completeTask` clears it, so the line only shows
+ * recent reopen and the next `markTaskDone` clears it, so the line only shows
  * while the task is genuinely back open. There is no `reopenedBy` id
- * column — the reopener is only ever displayed, never joined. Undo also
+ * column — the reopener is only ever displayed, never joined. A reopen also
  * clears the whole Start slot, so a reopened task reads Ready. Put back
  * clears the Start slot with no slot of its own: a put-back task is plain
  * Ready and the next Start writes a fresh record.
  *
- * A task is *ready* by {@link readyTasks}; several tasks of one run can be
- * ready at once. `startedAt` is set by Start (and backfilled by a Done without
+ * A task is *current* by {@link currentTasks}; several tasks of one run can be
+ * current at once. `startedAt` is set by Start (and backfilled by a Done without
  * Start); it and `doneAt` are what {@link runIsUnstarted} reads, since the
  * run's status is `active` from creation.
  */
@@ -3149,7 +3289,7 @@ const actorFrom = (
 /**
  * Each of these takes the slot it reads rather than a whole
  * {@link RunTask}, so a {@link RunListTask} — which carries no
- * `done*` slot at all — is as good an argument as a finished one.
+ * `done*` slot at all — is as good an argument as a done one.
  */
 export const taskStartedBy = (
   task: Pick<RunTask, "startedByRole" | "startedBy" | "startedByEmail">,
@@ -3193,11 +3333,11 @@ export const taskIsOnTeams = (
 
 /**
  * **A member's access to a run is any task of it on one of their teams**,
- * ready or not, done or not. It is what shows them the run page
+ * current or not, done or not. It is what shows them the run page
  * (`RunRepository.getRunView`) and what lets them write the run's
  * note (`setRunNote`), the one write that is not about a particular task.
  * Acting on a task needs that task's team ({@link taskIsOnTeams}); Block
- * needs a ready one, because a hold is placed by whoever is stuck.
+ * needs a current one, because a hold is placed by whoever is stuck.
  */
 export const runIsVisibleTo = (
   tasks: readonly { readonly teamId: string | null }[],
@@ -3212,21 +3352,21 @@ export const RunDetail = Schema.Struct({
 export type RunDetail = typeof RunDetail.Type;
 
 /**
- * One ready task the member may act on, cut to what a run's row renders.
+ * One current task the member may act on, cut to what a run's row renders.
  * `startedByEmail` is read off the row — the snapshot taken at Start, never a
  * live join — and it is load-bearing beyond display: {@link tierOf} decides
  * "Mine" with it.
  *
  * Two groups of columns are omitted rather than carried as nulls. The four
- * `done*` ones can never say anything here: readiness is `doneAt is
- * null` (`readyWhere`) and Undo clears the whole slot, so on a list task
+ * `done*` ones can never say anything here: `currentWhere` requires `doneAt is
+ * null` and a reopen clears the whole slot, so on a list task
  * every one of them is null by construction. The rest — instructions and the
  * reopened slot — say something, but only on the work
  * page: a row shows the task's name and one state clause, and everything
  * behind that is one tap away. Either way they are fields per task on every
  * SSR paint and every refetch.
  *
- * A finished task is a {@link RecentItem}, which carries the whole
+ * A done task is a {@link RecentItem}, which carries the whole
  * {@link RunTask} because there the slot is the point.
  */
 export const RunListTask = Schema.Struct(
@@ -3275,8 +3415,8 @@ export const RunListRun = Schema.Struct(
 export type RunListRun = typeof RunListRun.Type;
 
 /**
- * One row of a member's run list: a run with every *ready* task
- * ({@link readyTasks}) that belongs to one of the member's teams. `stepCount` is the run's last step, for "Step k of n" ({@link runRowLine}).
+ * One row of a member's run list: a run with every *current* task
+ * ({@link currentTasks}) that belongs to one of the member's teams. `stepCount` is the run's last step, for "Step k of n" ({@link runRowLine}).
  *
  * The order's live note is not here. It is the work page's, along with the
  * task instructions and the item's attributes: the row is a list entry that
@@ -3294,9 +3434,9 @@ export type RunListItem = typeof RunListItem.Type;
 
 /**
  * Line two of a member's run row, in two parts so the row can swap the second
- * for a block or "In progress" and keep the first. `names` is every ready task
+ * for a block or "Started · <who>" and keep the first. `names` is every current task
  * in `position` order, so a parallel step shows all of its tasks rather than
- * one name and a count. `step` is `Step k of n`, where k is the step the ready
+ * one name and a count. `step` is `Step k of n`, where k is the step the current
  * tasks share and n is {@link RunListItem}'s `stepCount`.
  *
  * The team is printed only where it tells the reader something. When the
@@ -3334,18 +3474,18 @@ export const runRowLine = (
  * keys, because it is the side that groups, sorts, and caps.
  */
 export const RunTier = Schema.Literals([
-  "attention",
+  "blocked",
   "mine",
-  "inProgress",
+  "teammates",
   "upNext",
 ]);
 export type RunTier = typeof RunTier.Type;
 
 /**
- * The five screens of the member's run list, in strip order: what I am
- * finishing, what I can start, what a teammate is holding, what a person has
+ * The five screens of the member's run list, in strip order: what I have
+ * started, what I can start, what a teammate is holding, what a person has
  * blocked, and what left my lists lately. Four are the tiers of
- * {@link tierOf}, and hold open runs only ({@link RunStatus}); the attention
+ * {@link tierOf}, and hold open runs only ({@link RunStatus}); the blocked
  * tab (Blocked) holds blocks and nothing else, since a Shopify change is
  * never a to-do. `done` is the Recent window ({@link RecentItem}); the key
  * keeps its old name, the label is the route's (`runTabs.ts`). The tab is the
@@ -3354,8 +3494,8 @@ export type RunTier = typeof RunTier.Type;
 export const RunTab = Schema.Literals([
   "mine",
   "upNext",
-  "inProgress",
-  "attention",
+  "teammates",
+  "blocked",
   "done",
 ]);
 export type RunTab = typeof RunTab.Type;
@@ -3374,8 +3514,8 @@ export const DEFAULT_RUN_TAB: RunTab = "mine";
  * task has no email at all and so is nobody's, which is right: `Merchant` is
  * not a member of this shop.
  *
- * Put back and Undo both clear `startedByEmail`, so they are the two ways a
- * run leaves Mine without being finished.
+ * Put back and reopen both clear `startedByEmail`, so they are the two ways a
+ * run leaves Mine without being done.
  *
  * Here rather than beside the route's labels because the object tiers the
  * rows now: one read counts every tier and returns one of them, so the
@@ -3385,17 +3525,17 @@ export const tierOf = (
   { run, tasks }: RunListItem,
   memberEmail: Email,
 ): RunTier => {
-  if (runIsBlocked(run)) return "attention";
+  if (runIsBlocked(run)) return "blocked";
   if (tasks.some((task) => task.startedByEmail === memberEmail)) return "mine";
-  if (tasks.some((task) => task.startedAt !== null)) return "inProgress";
+  if (tasks.some((task) => task.startedAt !== null)) return "teammates";
   return "upNext";
 };
 
 /**
  * Within a tier, oldest order first by `run.orderProcessedAt` (the snapshot
- * on the run, so no join), then by line item, then by run id. Two runs of one
+ * on the run, so no join), then by item, then by run id. Two runs of one
  * order share the first key, and `createdAt` would not split them either (one
- * reconcile inserts them in the same millisecond), so the line item id is the
+ * reconcile inserts them in the same millisecond), so the item id is the
  * tiebreak: Shopify mints them in the order the customer added the lines, and
  * it is the order `listRunsForOrder` already uses. The run id only separates
  * two workflows on one line. The triple is a key an index can serve and a
@@ -3407,15 +3547,15 @@ export const byAge = (a: RunListItem, b: RunListItem) =>
   a.run.id.localeCompare(b.run.id);
 
 /**
- * What stands between a finished task and Undo ({@link undoBlockedBy}). Once
+ * What stands between a done task and reopening it ({@link reopenBlockedBy}). Once
  * downstream has moved the fix is a conversation, so the page names who to
  * ask rather than offering a button that would pull work out from under them.
  */
-export const UndoBlocker = Schema.Struct({
+export const ReopenBlocker = Schema.Struct({
   taskName: TaskName,
   teamName: TeamName,
 });
-export type UndoBlocker = typeof UndoBlocker.Type;
+export type ReopenBlocker = typeof ReopenBlocker.Type;
 
 /**
  * The lowest step with an open task — where the run is — or `null` once
@@ -3431,17 +3571,19 @@ export const lowestOpenStep = (tasks: readonly RunTask[]) =>
     );
 
 /**
- * The readiness rule on rows already in hand: step k is ready when every task
- * of step k-1 is done ({@link WorkflowTask}), so a task is ready when its run
- * is {@link runIsOpen}, it is open, and its step is the lowest with an open
- * task. Several are ready at once on a step of several tasks, so this is a
- * list and every caller copes with more than one. `readyWhere.ts`
- * is the same rule as SQL for the run list and the task guards; this is the one
- * TypeScript copy, for the merchant's order page (which holds every task of
+ * The `current` rule on rows already in hand: step k is current when every
+ * task of step k-1 is done ({@link WorkflowTask}), so a task is current when
+ * its run is {@link runIsOpen}, it is open, and its step is the lowest with an
+ * open task. Several are current at once on a step of several tasks, so this
+ * is a list and every caller copes with more than one. A current task is
+ * ready or started (the glossary's narrow words); this is the flag under
+ * both. `currentWhere.ts` is the step half of the rule as SQL for the run
+ * list and the task guards, and leaves the run's status to its callers; this
+ * is the one TypeScript copy, for the merchant's order page (which holds every task of
  * the order) and the dev seeder (which walks runs a step at a time), and the
  * test on it pins that the two agree.
  */
-export const readyTasks = (
+export const currentTasks = (
   run: { readonly status: RunStatus },
   tasks: readonly RunTask[],
 ): RunTask[] => {
@@ -3456,8 +3598,8 @@ const firstStarted = (tasks: readonly RunTask[]) =>
     .toSorted((a, b) => a.step - b.step || a.position - b.position)[0];
 
 /**
- * The undo rule, on rows already in hand: the first task in a later step of
- * the same run that anyone has started. A `startedAt` test covers finished
+ * The reopen rule, on rows already in hand: the first task in a later step of
+ * the same run that anyone has started. A `startedAt` test covers done
  * tasks too, because Done backfills `startedAt`.
  *
  * Pure and here rather than in `RunRepository` so the three readers
@@ -3467,10 +3609,10 @@ const firstStarted = (tasks: readonly RunTask[]) =>
  * browser cannot import the repository module — it carries the SQL service —
  * and a second copy of this rule is exactly the drift to avoid.
  */
-export const undoBlockedBy = (
+export const reopenBlockedBy = (
   task: RunTask,
   runTasks: readonly RunTask[],
-): UndoBlocker | null => {
+): ReopenBlocker | null => {
   const blocker = firstStarted(
     runTasks.filter(
       (other) => other.runId === task.runId && other.step > task.step,
@@ -3486,11 +3628,11 @@ export const undoBlockedBy = (
  * {@link DONE_WINDOW_MS}, newest first. Two kinds:
  *
  * - `task`: a task one of the member's teams did, with its run for the
- *   card line and the undo verdict precomputed by the object, which is the
+ *   card line and the reopen verdict precomputed by the object, which is the
  *   only side that can see the downstream tasks.
  * - `closed`: a run one of the member's teams could see ({@link runIsVisibleTo})
  *   that closed ({@link runIsClosed}), with its reason. A closed run leaves
- *   Mine and Up next the moment it closes, and without this entry it would
+ *   Mine, Up next, Teammates and Blocked the moment it closes, and without this entry it would
  *   just vanish; Recent is where the member reads why ("Fulfilled in
  *   Shopify", "Order cancelled in Shopify"). It is a notice, not a to-do: the
  *   row offers nothing.
@@ -3500,7 +3642,7 @@ export const RecentItem = Schema.Union([
     kind: Schema.Literal("task"),
     run: Run,
     task: RunTask,
-    undoBlockedBy: Schema.NullOr(UndoBlocker),
+    reopenBlockedBy: Schema.NullOr(ReopenBlocker),
     /** The order's open or closed state, for {@link taskActions}. */
     order: OrderState,
   }),
@@ -3593,7 +3735,7 @@ export const RunListTeamCount = Schema.Struct({
 export type RunListTeamCount = typeof RunListTeamCount.Type;
 
 /**
- * The strip. `mine`, `upNext`, `inProgress`, `attention` and `done` are the
+ * The strip. `mine`, `upNext`, `teammates`, `blocked` and `done` are the
  * counts of the five tabs **after** `query.team` narrows them, because they
  * describe the lists the member can switch to. `total` and `teamCounts` are
  * over every team on the connection regardless of `query.team`, so the team
@@ -3602,8 +3744,8 @@ export type RunListTeamCount = typeof RunListTeamCount.Type;
 export const RunListCounts = Schema.Struct({
   mine: Schema.Number,
   upNext: Schema.Number,
-  inProgress: Schema.Number,
-  attention: Schema.Number,
+  teammates: Schema.Number,
+  blocked: Schema.Number,
   done: Schema.Number,
   total: Schema.Number,
   teamCounts: Schema.Array(RunListTeamCount),
@@ -3634,15 +3776,15 @@ export const DONE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
  * A run task on the work page, decorated with what the page needs to offer
- * the right button: `ready` is the run list's readiness rule evaluated for this
- * task, and `undoBlockedBy` is the undo verdict for a finished one. Both are
+ * the right button: `current` is {@link currentTasks}' rule evaluated for this
+ * task, and `reopenBlockedBy` is the reopen verdict for a done one. Both are
  * facts about *other* rows (earlier and later steps of the run), which is
  * why the object computes them rather than the page.
  */
 export const RunTaskView = Schema.Struct({
   ...RunTask.fields,
-  ready: Schema.Boolean,
-  undoBlockedBy: Schema.NullOr(UndoBlocker),
+  current: Schema.Boolean,
+  reopenBlockedBy: Schema.NullOr(ReopenBlocker),
 });
 export type RunTaskView = typeof RunTaskView.Type;
 
@@ -3657,13 +3799,18 @@ export const RunActions = Schema.Struct({
 });
 export type RunActions = typeof RunActions.Type;
 
-/** The "m" in {@link runActions}' table: the merchant, or a member whose team holds a ready or started task on the run. */
-const holdsReadyTask = (
+/** The "m" in {@link runActions}' table: the merchant, or a member whose team holds a current task on the run. */
+const holdsCurrentTask = (
   actor: Actor,
-  tasks: readonly { readonly teamId: string | null; readonly ready: boolean }[],
+  tasks: readonly {
+    readonly teamId: string | null;
+    readonly current: boolean;
+  }[],
 ) =>
   actor.role === "merchant" ||
-  tasks.some((task) => task.ready && taskIsOnTeams(task, actor.teamIds ?? []));
+  tasks.some(
+    (task) => task.current && taskIsOnTeams(task, actor.teamIds ?? []),
+  );
 
 /**
  * What an actor may do to one run, as the page and the server both read it.
@@ -3679,8 +3826,8 @@ const holdsReadyTask = (
  * and the test names the cell until the formula follows. `pnpm lint`
  * refuses a malformed table.
  *
- * "M" is the merchant. "m" is a member whose team holds a ready or started
- * task on the run ({@link readyTasks}, {@link taskIsOnTeams}), the team gate
+ * "M" is the merchant. "m" is a member whose team holds a current
+ * task on the run ({@link currentTasks}, {@link taskIsOnTeams}), the team gate
  * `RunRepository` applies to Block, Edit reason and Unblock; for the
  * note it is a member who can see the run ({@link runIsVisibleTo}). Blank is
  * never. Each state column is one input; a row is one fixture, and a word
@@ -3714,7 +3861,7 @@ const holdsReadyTask = (
  *   work behind it, and reconcile would close it as `item_removed` on its
  *   next pass. A done run is a record ({@link RunStatus}). A closed item
  *   takes a new workflow from its picker instead ({@link lineItemState}).
- *   Reading it needs the line item, which only the merchant's callers
+ *   Reading it needs the item, which only the merchant's callers
  *   hold, so `item` is optional and its absence answers false: member
  *   pages never offer Change workflow.
  * - There is no member `cancel` or `changeWorkflow`: those are the
@@ -3726,17 +3873,17 @@ export const runActions = (
   run: { readonly status: RunStatus; readonly blockedAt: number | null },
   tasks: readonly {
     readonly teamId: string | null;
-    readonly ready: boolean;
+    readonly current: boolean;
   }[],
   item?: Pick<OrderLineItem, "currentQuantity">,
 ): RunActions => {
   const merchant = actor.role === "merchant";
   const working = orderIsOpen(order) && runIsOpen(run);
-  const ready = holdsReadyTask(actor, tasks);
-  const held = working && runIsBlocked(run) && ready;
+  const holds = holdsCurrentTask(actor, tasks);
+  const held = working && runIsBlocked(run) && holds;
   return {
     note: merchant || runIsVisibleTo(tasks, actor.teamIds ?? []),
-    block: working && !runIsBlocked(run) && ready,
+    block: working && !runIsBlocked(run) && holds,
     editReason: held,
     unblock: held,
     cancel: merchant && working,
@@ -3754,7 +3901,7 @@ export const TaskActions = Schema.Struct({
   putBack: Schema.Boolean,
   /** `null` when Reopen is not offered; otherwise the blocker, `null` meaning the button. */
   reopen: Schema.NullOr(
-    Schema.Struct({ blockedBy: Schema.NullOr(UndoBlocker) }),
+    Schema.Struct({ blockedBy: Schema.NullOr(ReopenBlocker) }),
   ),
   assign: Schema.Boolean,
 });
@@ -3779,7 +3926,7 @@ export type TaskActions = typeof TaskActions.Type;
  * | closed | open or done | any     | any      | -          |       |      |         |         |        |
  *
  * `blocker` under `reopen` is the button with a sentence: the started
- * downstream task ({@link undoBlockedBy}) is carried so the merchant page
+ * downstream task ({@link reopenBlockedBy}) is carried so the merchant page
  * can say what stands in the way.
  *
  * - `start` is member only. "Started" records that a worker picked the task
@@ -3787,13 +3934,13 @@ export type TaskActions = typeof TaskActions.Type;
  *   on work nobody has begun.
  * - `done` and `putBack` stop under a block: a block means stop
  *   ({@link runIsBlocked}). Put back goes to the whole team, not only the
- *   starter (`RunRepository.unstartTask`).
+ *   starter (`RunRepository.putBackTask`).
  * - `reopen` is offered under a block because it takes work back rather
- *   than doing more, and on a done run because undoing its last Done is
+ *   than doing more, and on a done run because reopening its last task is
  *   the point. Not on a closed run: closed is final ({@link RunStatus}),
- *   and reopening a task would put work back on a run nothing can finish.
+ *   and reopening a task would put work back on a run that can never be done.
  * - `assign` is blank on a done task: it keeps the team that did it
- *   (`TaskFinishedError`). One verb for a task with no team and for moving
+ *   (`TaskDoneError`). One verb for a task with no team and for moving
  *   one that has a team.
  * - Everything is blank on a closed order ({@link orderIsOpen}) and a
  *   closed run: Shopify, or the merchant, says the work is over.
@@ -3803,7 +3950,7 @@ export type TaskActions = typeof TaskActions.Type;
  * page's hierarchy, held in `s-page`'s action slots; a task has neither.
  * Polaris allows one primary per card and per page
  * (`refs/shopify-docs/docs/apps/design/layout.md`, "Cards that offer
- * interactivity"), and a step with two ready tasks would draw two.
+ * interactivity"), and a step with two current tasks would draw two.
  *
  * **Nothing on a member screen renders that blocker.** The run list drops the
  * row's menu and the work page lists the whole run, so the started task
@@ -3819,7 +3966,7 @@ export const taskActions = (
   run: { readonly status: RunStatus; readonly blockedAt: number | null },
   task: Pick<
     RunTaskView,
-    "teamId" | "ready" | "startedAt" | "doneAt" | "undoBlockedBy"
+    "teamId" | "current" | "startedAt" | "doneAt" | "reopenBlockedBy"
   >,
 ): TaskActions => {
   const merchant = actor.role === "merchant";
@@ -3830,7 +3977,7 @@ export const taskActions = (
     mine &&
     runIsOpen(run) &&
     !runIsBlocked(run) &&
-    task.ready &&
+    task.current &&
     task.doneAt === null;
   return {
     start: workable && !merchant && task.startedAt === null,
@@ -3838,19 +3985,19 @@ export const taskActions = (
     putBack: workable && task.startedAt !== null,
     reopen:
       mine && !runIsClosed(run) && task.doneAt !== null
-        ? { blockedBy: task.undoBlockedBy }
+        ? { blockedBy: task.reopenBlockedBy }
         : null,
     assign: merchant && orderOpen && runIsOpen(run) && task.doneAt === null,
   };
 };
 
 /**
- * What one line item's card is, as the order page switches on it: one kind
+ * What one item's card is, as the order page switches on it: one kind
  * per layout.
  *
- * - `running` and `finished`: the item has a run, open or `done`. Checked
- *   first, so an item whose units dropped to zero under a `done` run still
- *   shows the finished work.
+ * - `open` and `done`: the item has a run, open or `done`. Checked first,
+ *   so an item whose units dropped to zero under a `done` run still shows
+ *   the work that was done.
  * - `closed`: the item's run is {@link runIsClosed}. The run card shows with
  *   its tasks as the record, one line gives the reason and when, and the
  *   picker offers every workflow, the closed one included, as a fresh run.
@@ -3895,28 +4042,28 @@ export const LineItemState = Schema.Union([
     startable: Schema.Boolean,
   }),
   Schema.Struct({
-    kind: Schema.Literal("running"),
+    kind: Schema.Literal("open"),
     run: Run,
     tasks: Schema.Array(RunTaskView),
   }),
   Schema.Struct({
-    kind: Schema.Literal("finished"),
+    kind: Schema.Literal("done"),
     run: Run,
     tasks: Schema.Array(RunTaskView),
   }),
 ]);
 export type LineItemState = typeof LineItemState.Type;
 
-/** A run's tasks as {@link RunTaskView}s, from the rows alone: readiness by {@link readyTasks}, the undo verdict by {@link undoBlockedBy}. */
+/** A run's tasks as {@link RunTaskView}s, from the rows alone: the `current` flag by {@link currentTasks}, the reopen verdict by {@link reopenBlockedBy}. */
 export const runTaskViews = (
   run: { readonly status: RunStatus },
   tasks: readonly RunTask[],
 ): RunTaskView[] => {
-  const ready = new Set(readyTasks(run, tasks).map((task) => task.id));
+  const current = new Set(currentTasks(run, tasks).map((task) => task.id));
   return tasks.map((task) => ({
     ...task,
-    ready: ready.has(task.id),
-    undoBlockedBy: task.doneAt === null ? null : undoBlockedBy(task, tasks),
+    current: current.has(task.id),
+    reopenBlockedBy: task.doneAt === null ? null : reopenBlockedBy(task, tasks),
   }));
 };
 
@@ -3946,7 +4093,7 @@ export const lineItemState = (
             startable: unitsToMake(item) > 0,
           }
         : {
-            kind: runIsOpen(run) ? "running" : "finished",
+            kind: runIsOpen(run) ? "open" : "done",
             run,
             tasks: runTaskViews(run, tasks),
           },
@@ -3966,12 +4113,12 @@ export const lineItemState = (
 };
 
 /**
- * Everything `/shop/$shop/workflows/$runId` renders: one run, its tasks, and the
+ * Everything `/shop/$shop/work/$runId` renders: one run, its tasks, and the
  * order's live note.
  *
- * The other line items on the order are deliberately **not** here. A workflow
- * is attached to a product and runs once per matching line item
- * ({@link Workflow}), so a member's unit of work is the line item and its
+ * The other items on the order are deliberately **not** here. A workflow
+ * is attached to a product and runs once per matching item
+ * ({@link Workflow}), so a member's unit of work is the item and its
  * tasks. Nothing on this page acts on the order as a whole, and an order can
  * carry an unbounded number of lines to render.
  */
@@ -4043,7 +4190,7 @@ export type SubscribeRunsInput = typeof SubscribeRunsInput.Type;
 /**
  * The work page's loader read, Worker-resolved for the same reason as
  * {@link ListRunsInput}. The guard is "any task of the run on one of my
- * teams", not "a ready task": a member may open work they have finished.
+ * teams", not "a current task": a member may open work they have done.
  */
 export const GetRunForMemberInput = Schema.Struct({
   runId: BoundedId,
@@ -4071,21 +4218,21 @@ export type SubscribeRunInput = typeof SubscribeRunInput.Type;
  * `memberEmail` could sign someone else's name to it. The object pairs the two
  * halves into the `*Command` shapes below before touching the repository.
  */
-export const CompleteTaskInput = Schema.Struct({
+export const MarkTaskDoneInput = Schema.Struct({
   runTaskId: BoundedId,
 });
-export type CompleteTaskInput = typeof CompleteTaskInput.Type;
+export type MarkTaskDoneInput = typeof MarkTaskDoneInput.Type;
 
-export const StartTaskInput = CompleteTaskInput;
+export const StartTaskInput = MarkTaskDoneInput;
 export type StartTaskInput = typeof StartTaskInput.Type;
 
-/** Undo: re-opens a finished task. Same shape; the rule is on `RunRepository.uncompleteTask`. */
-export const UncompleteTaskInput = CompleteTaskInput;
-export type UncompleteTaskInput = typeof UncompleteTaskInput.Type;
+/** Reopen: returns a done task to Ready. Same shape; the rule is on `RunRepository.reopenTask`. */
+export const ReopenTaskInput = MarkTaskDoneInput;
+export type ReopenTaskInput = typeof ReopenTaskInput.Type;
 
-/** Put back: clears a started task's Start record. Same shape; the rule is on `RunRepository.unstartTask`. */
-export const UnstartTaskInput = CompleteTaskInput;
-export type UnstartTaskInput = typeof UnstartTaskInput.Type;
+/** Put back: clears a started task's Start record. Same shape; the rule is on `RunRepository.putBackTask`. */
+export const PutBackTaskInput = MarkTaskDoneInput;
+export type PutBackTaskInput = typeof PutBackTaskInput.Type;
 
 /** `note: null` clears. The rule is on {@link SetRunNoteCommand}. */
 export const SetRunNoteInput = Schema.Struct({
@@ -4128,7 +4275,7 @@ export type SetBlockReasonInput = typeof SetBlockReasonInput.Type;
  * difference: present, it is the member's membership and the task's team must
  * be in it; absent, the caller is the merchant and the team clause is skipped
  * entirely. Every other rule — step order, terminal runs, the downstream
- * undo guard — applies to both.
+ * reopen guard — applies to both.
  */
 export interface StartTaskCommand {
   readonly runTaskId: string;
@@ -4137,7 +4284,7 @@ export interface StartTaskCommand {
   readonly teamIds?: readonly string[] | undefined;
 }
 
-export interface CompleteTaskCommand {
+export interface MarkTaskDoneCommand {
   readonly runTaskId: string;
   readonly actor: Actor;
   readonly teamIds?: readonly string[] | undefined;
@@ -4179,8 +4326,8 @@ export interface SetBlockReasonCommand {
   readonly reason: BlockReason | null;
 }
 
-/** The actor lands in the task's `reopened` slot: undo is a fact worth showing, and the next Done clears it. */
-export interface UncompleteTaskCommand {
+/** The actor lands in the task's `reopened` slot: a reopen is a fact worth showing, and the next Done clears it. */
+export interface ReopenTaskCommand {
   readonly runTaskId: string;
   readonly actor: Actor;
   readonly teamIds?: readonly string[] | undefined;
@@ -4191,7 +4338,7 @@ export interface UncompleteTaskCommand {
  * ({@link RunTask}). `actor` is taken for the log line and for
  * symmetry with the other task commands.
  */
-export interface UnstartTaskCommand {
+export interface PutBackTaskCommand {
   readonly runTaskId: string;
   readonly actor: Actor;
   readonly teamIds?: readonly string[] | undefined;
@@ -4217,14 +4364,14 @@ export const AttachResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("WorkflowCannotStart") }),
   /** The shop is at `ShopLimits.maxOpenRuns`; the attach started nothing. */
   Schema.Struct({ _tag: Schema.Literal("RunLimit"), limit: Schema.Number }),
-  /** The item's run is `done`; finished work is not replaced. Names it. */
+  /** The item's run is `done`; done work is not replaced. Names it. */
   Schema.Struct({
     _tag: Schema.Literal("ItemDone"),
     workflowName: WorkflowName,
   }),
   /** The order is cancelled or fully fulfilled, so there is nothing to attach work to ({@link orderIsOpen}). */
   Schema.Struct({ _tag: Schema.Literal("OrderClosed") }),
-  /** The line item has no units to make ({@link unitsToMake}): removed or refunded to zero in Shopify. */
+  /** The item has no units to make ({@link unitsToMake}): removed or refunded to zero in Shopify. */
   Schema.Struct({ _tag: Schema.Literal("NothingToMake") }),
 ]);
 export type AttachResult = typeof AttachResult.Type;
@@ -4232,12 +4379,12 @@ export type AttachResult = typeof AttachResult.Type;
 /**
  * `NotAllowed` = the caller's action set refuses the write
  * ({@link runActions}, {@link taskActions}), or the task's team is not among
- * the caller's; `NotReady` = the task is not ready ({@link readyTasks}) or is
- * already done (for undo, not yet done; for put back, not yet started or
+ * the caller's; `NotReady` = the task is not current ({@link currentTasks}) or is
+ * already done (for reopen, not yet done; for put back, not yet started or
  * already done); `Terminal` = the run's status refuses this write, done
  * where it needs an open run, see the table on {@link RunStatus};
- * `UndoBlocked` = someone downstream
- * has started, and names them ({@link UndoBlocker}).
+ * `ReopenBlocked` = someone downstream
+ * has started, and names them ({@link ReopenBlocker}).
  *
  * `NotBlocked` = a write that only a standing block admits (rewriting its
  * reason) found no block. Separate from `NotAllowed` because the cause is a
@@ -4257,6 +4404,9 @@ export const RunResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Terminal") }),
   /** Start, Done or Put back on a blocked run ({@link runIsBlocked}). */
   Schema.Struct({ _tag: Schema.Literal("Blocked") }),
-  Schema.Struct({ _tag: Schema.Literal("UndoBlocked"), ...UndoBlocker.fields }),
+  Schema.Struct({
+    _tag: Schema.Literal("ReopenBlocked"),
+    ...ReopenBlocker.fields,
+  }),
 ]);
 export type RunResult = typeof RunResult.Type;

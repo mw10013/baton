@@ -4,12 +4,19 @@ import { LocalDateTime } from "@/components/LocalDateTime";
 import * as Domain from "@/lib/Domain";
 import * as WorkflowLayout from "@/lib/WorkflowLayout";
 
-/** What a step card needs of a task: the row itself and the readiness rule's verdict on it. */
-export type RunStepTask = Domain.RunTask & { readonly ready: boolean };
+/** What a step card needs of a task: the row itself and the `current` flag ({@link Domain.currentTasks}). */
+export type RunStepTask = Domain.RunTask & { readonly current: boolean };
+
+/** Each state's badge tone; the label is `Domain.TASK_STATE_LABEL`, and a waiting task has none. */
+const BADGE_TONE = {
+  ready: "info",
+  started: "success",
+  done: "neutral",
+} as const;
 
 /**
  * A task's badge and the subdued line under it, in the order a worker asks:
- * done, under way, ready, waiting.
+ * done, under way, ready, waiting. The state is {@link Domain.taskStateOf}.
  *
  * **The badge states the task's state and the line never repeats it.** The
  * line is the team, then who and when — "Jewelry · lead@m.com · Sep 21, 3:52
@@ -26,35 +33,38 @@ const taskState = (
     readonly tone: "neutral" | "success" | "info";
   } | null;
 } => {
+  const state = Domain.taskStateOf(task);
+  const badge =
+    state === "waiting"
+      ? null
+      : { label: Domain.TASK_STATE_LABEL[state], tone: BADGE_TONE[state] };
   const doneBy = Domain.taskDoneBy(task);
   const startedBy = Domain.taskStartedBy(task);
-  if (task.doneAt !== null)
+  if (state === "done")
     return {
-      badge: { label: "Done", tone: "neutral" },
+      badge,
       text: (
         <>
           {doneBy === null
             ? `${task.teamName} · `
             : `${task.teamName} · ${Domain.actorLabel(doneBy)} · `}
-          <LocalDateTime value={task.doneAt} />
+          <LocalDateTime value={task.doneAt ?? 0} />
         </>
       ),
     };
-  if (task.startedAt !== null)
+  if (state === "started")
     return {
-      badge: { label: "In progress", tone: "success" },
+      badge,
       text: (
         <>
           {startedBy === null
             ? `${task.teamName} · since `
             : `${task.teamName} · ${Domain.actorLabel(startedBy)} · since `}
-          <LocalDateTime value={task.startedAt} format="time" />
+          <LocalDateTime value={task.startedAt ?? 0} format="time" />
         </>
       ),
     };
-  if (task.ready)
-    return { badge: { label: "Ready", tone: "info" }, text: task.teamName };
-  return { badge: null, text: task.teamName };
+  return { badge, text: task.teamName };
 };
 
 /**

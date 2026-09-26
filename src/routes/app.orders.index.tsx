@@ -282,7 +282,7 @@ export const Route = createFileRoute("/app/orders/")({
 /**
  * The orders index: one table of what the Durable Object has stored, with
  * production state per order, and the window-sync button as a header action.
- * Everything per order — line items, their properties, workflows — lives on
+ * Everything per order — items, their properties, workflows — lives on
  * `/app/orders/$orderId`.
  *
  * A subscribed page (the socket half of the loader-versus-socket rule on
@@ -481,7 +481,7 @@ function RouteComponent() {
   );
 
   /**
-   * Who is holding the order: the teams with a ready step on one of its open
+   * Who is holding the order: the teams with a current task on one of its open
    * runs, collapsed and capped like `tagBadges`. `"Unknown team"` should
    * never render — the repository only emits ids that were in the roster it
    * read — but the lookup is nullable and a blank badge is worse than a

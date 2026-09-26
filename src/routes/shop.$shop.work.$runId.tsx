@@ -65,7 +65,7 @@ const getLoaderData = createServerFn({ method: "GET" })
     ),
   );
 
-export const Route = createFileRoute("/shop/$shop/workflows/$runId")({
+export const Route = createFileRoute("/shop/$shop/work/$runId")({
   loader: ({ params }) =>
     getLoaderData({ data: { shop: params.shop, runId: params.runId } }),
   /** The browser tab says what the heading says: the order, or that there is none. */
@@ -120,8 +120,8 @@ function RouteComponent() {
    * field is `reopen`: on the bench the verb takes back the member's own
    * Done. Undo and Put back are offered where they are allowed and nowhere
    * else: a blocked undo draws no disabled button and no sentence explaining
-   * itself, because the task standing in the way is on this same page with an
-   * `In progress` badge on it.
+   * itself, because the task standing in the way is on this same page with a
+   * `Started` badge on it.
    */
   const taskButtons = (task: Domain.RunTaskView) => {
     if (view === null) return null;
@@ -138,7 +138,7 @@ function RouteComponent() {
               actions.start.mutate(task.id);
             }}
           >
-            Start
+            {Domain.VERB_LABEL.start.member}
           </s-button>
         )}
         {can.done && (
@@ -146,10 +146,10 @@ function RouteComponent() {
             variant="secondary"
             disabled={actions.pending}
             onClick={() => {
-              actions.complete.mutate(task.id);
+              actions.markDone.mutate(task.id);
             }}
           >
-            Done
+            {Domain.VERB_LABEL.done.member}
           </s-button>
         )}
         {can.putBack && (
@@ -157,10 +157,10 @@ function RouteComponent() {
             variant="secondary"
             disabled={actions.pending}
             onClick={() => {
-              actions.unstart.mutate(task.id);
+              actions.putBack.mutate(task.id);
             }}
           >
-            Put back
+            {Domain.VERB_LABEL.putBack.member}
           </s-button>
         )}
         {can.reopen?.blockedBy === null && (
@@ -168,10 +168,10 @@ function RouteComponent() {
             variant="secondary"
             disabled={actions.pending}
             onClick={() => {
-              actions.uncomplete.mutate(task.id);
+              actions.reopen.mutate(task.id);
             }}
           >
-            Undo
+            {Domain.VERB_LABEL.reopen.member}
           </s-button>
         )}
       </>
@@ -201,7 +201,7 @@ function RouteComponent() {
    * is in fact done. It takes one tap and no confirmation: Block undoes it.
    *
    * A block the member cannot lift still shows its banner, when none of the
-   * member's tasks is ready yet ({@link Domain.runActions}' `unblock`). The
+   * member's tasks is current yet ({@link Domain.runActions}' `unblock`). The
    * banner then says who acts, so a banner with no button does not read as a
    * broken one.
    */
@@ -220,7 +220,7 @@ function RouteComponent() {
               showModal(BLOCK_MODAL);
             }}
           >
-            Edit reason
+            {Domain.VERB_LABEL.editReason.member}
           </s-button>
         )}
         {can.unblock && (
@@ -232,7 +232,7 @@ function RouteComponent() {
               actions.unblock.mutate(run.id);
             }}
           >
-            Unblock
+            {Domain.VERB_LABEL.unblock.member}
           </s-button>
         )}
       </>
@@ -262,7 +262,7 @@ function RouteComponent() {
               showModal(BLOCK_MODAL);
             }}
           >
-            Block
+            {Domain.VERB_LABEL.block.member}
           </s-button>
         )}
         {/* No `s-section` on this page: a top-level section is a card
@@ -283,7 +283,7 @@ function RouteComponent() {
               be, why it ended and when ({@link Domain.ClosedReason}). Only
               the note is left to do on it ({@link Domain.runActions}). */}
             {Domain.runIsClosed(run) && (
-              <s-banner tone="info" heading="Closed">
+              <s-banner tone="info" heading={Domain.RUN_STATE_LABEL.closed}>
                 <ClosedLine run={run} viewer="member" />
               </s-banner>
             )}
@@ -292,12 +292,14 @@ function RouteComponent() {
               list carries the age. No border, because two bordered blocks on
               one page compete. The Done badge stays: it is the only sign the
               page is read-only. The quantity badge sits beside it after a
-              Shopify change, until the next finished task clears it. */}
+              Shopify change, until the next Done clears it. */}
             <s-stack gap="small-300">
               {(Domain.runIsDone(run) || run.quantityChangedFrom !== null) && (
                 <s-stack direction="inline" gap="small-300">
                   {Domain.runIsDone(run) && (
-                    <s-badge tone="neutral">Done</s-badge>
+                    <s-badge tone="neutral">
+                      {Domain.RUN_STATE_LABEL.done}
+                    </s-badge>
                   )}
                   <QuantityBadge run={run} />
                 </s-stack>

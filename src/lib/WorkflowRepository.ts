@@ -142,10 +142,10 @@ export class WorkflowRepository extends Context.Service<
     /**
      * Deletes the definition only: the workflow row, and its tasks, draft,
      * and draft tasks by cascade. Every run stays, open
-     * and finished, and keeps working — a run snapshots `workflowName`
+     * and done, and keeps working — a run snapshots `workflowName`
      * and each task's `name`, `step`, `instructions`, and `teamName`, and
      * no read joins a run back to `Workflow`, so an orphan run renders,
-     * lists, starts, completes, blocks, and cancels unchanged.
+     * lists, starts, marks done, blocks, and cancels unchanged.
      * `Run.workflowId` stays `not null` because it is the conflict
      * key of `unique (lineItemId, workflowId)`.
      * No turn-off-first rule.
@@ -166,7 +166,7 @@ export class WorkflowRepository extends Context.Service<
     /**
      * Every switched-on workflow with its tasks, in two statements rather
      * than one per workflow: this is what an order upsert
-     * loads before starting runs for its line items, and a bulk stream loads
+     * loads before starting runs for its items, and a bulk stream loads
      * it once for thousands of orders. Drafts are invisible here by
      * construction — nothing in run creation reads `WorkflowDraft*`.
      */
@@ -487,7 +487,7 @@ export class WorkflowRepository extends Context.Service<
     /**
      * The object-side half of a team delete: every workflow task, draft task,
      * and *open* run task of an open run that points at `teamId` becomes
-     * unassigned, in one transaction. Finished run tasks and every task of a
+     * unassigned, in one transaction. Done run tasks and every task of a
      * closed run keep the pointer and their `teamName` snapshot. Idempotent, so a retry after a failed first attempt (D1 row
      * already gone) still cleans up. Touches `RunTask` from here
      * rather than from the run repository because the three updates must
@@ -1015,7 +1015,7 @@ export class WorkflowRepository extends Context.Service<
          *
          * Returns each workflow's minted id beside its name: this is the only
          * write path that creates workflows without the caller naming them one
-         * at a time, and the seed's line items have to be able to point at one.
+         * at a time, and the seed's items have to be able to point at one.
          */
         replaceWorkflows: Effect.fn("WorkflowRepository.replaceWorkflows")(
           function* ({ workflows }: Domain.SeedWorkflowsInput) {
@@ -1726,8 +1726,8 @@ export class WorkflowRepository extends Context.Service<
             Effect.gen(function* () {
               yield* sql`update WorkflowTask set teamId = null where teamId = ${teamId}`;
               yield* sql`update WorkflowDraftTask set teamId = null where teamId = ${teamId}`;
-              // Open tasks of open runs only: a closed run's unfinished tasks
-              // are a record like finished ones (`Domain.RunStatus`), and
+              // Open tasks of open runs only: a closed run's open tasks
+              // are a record like done ones (`Domain.RunStatus`), and
               // nulling their team would drop the run from the Recent tab of
               // the team that could see it.
               yield* sql`

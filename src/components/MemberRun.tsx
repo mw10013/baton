@@ -71,7 +71,7 @@ export function ClosedLine({
  * The quantity badge ({@link Domain.Run} `quantityChangedFrom`, which
  * states the rule): warning-toned, and the whole change, "Quantity changed ·
  * 3 → 2", because a small "was 3" is easy to miss for the one person it
- * matters to. It has no button: the next finished task clears it.
+ * matters to. It has no button: the next done task clears it.
  */
 export function QuantityBadge({
   run,
@@ -119,7 +119,7 @@ export const blockedByLabel = (run: {
 }) => (run.blockedBy === null ? null : Domain.actorLabel(run.blockedBy));
 
 /**
- * A line item's properties as label / value rows rather than one joined string:
+ * An item's properties as label / value rows rather than one joined string:
  * "Engraving: The Millers · est. 2019" is the thing the worker will make and
  * deserves a line of its own. A two-column `s-grid` keeps labels aligned; at
  * phone width the value column still wraps inside its cell.
@@ -133,7 +133,7 @@ export const blockedByLabel = (run: {
  * Every property is drawn, underscore-prefixed app keys included: Baton is a
  * back-office view and the merchant sees the same keys in the admin, so there
  * is nothing to hide from either screen. The merchant's order page renders
- * this too under a Properties heading, so both screens show a line item's
+ * this too under a Properties heading, so both screens show an item's
  * properties alike.
  */
 export function LineItemProperties({
@@ -284,7 +284,7 @@ export function BlockBanner({
   if (!Domain.runIsBlocked(run) || run.blockedAt === null) return null;
   const actor = blockedByLabel(run);
   return (
-    <s-banner tone="critical" heading="Blocked">
+    <s-banner tone="critical" heading={Domain.RUN_STATE_LABEL.blocked}>
       <s-stack gap="small-500">
         {run.blockReason !== null && (
           <ClampedProse key={run.blockReason} lines={3}>
@@ -332,7 +332,7 @@ export function RunNote({
       {canEdit && (
         <s-stack direction="inline">
           <s-button variant="secondary" disabled={pending} onClick={onEdit}>
-            Edit note
+            {Domain.VERB_LABEL.note.member}
           </s-button>
         </s-stack>
       )}

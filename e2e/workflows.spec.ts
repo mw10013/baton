@@ -2,6 +2,8 @@ import type { FrameLocator, Page } from "@playwright/test";
 
 import { expect, test } from "@playwright/test";
 
+import * as Domain from "@/lib/Domain";
+
 import { clickHoisted, editorFrame, gotoApp } from "./app";
 import { awaitHydration } from "./hydration";
 import { seedConfig, seedMembers } from "./seed";
@@ -184,7 +186,7 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
      both halves. */
   await clickHoisted(page.getByRole("button", { name: "Turn on" }));
   await expect(
-    editor.getByText("will start a run of this workflow", { exact: false }),
+    editor.getByText("will start this workflow on that item", { exact: false }),
   ).toBeVisible();
   await expect(
     editor.getByText("Your tasks are applied at the same time.", {
@@ -302,7 +304,7 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
   /* Turn off confirms too, and says what keeps going. */
   await clickHoisted(page.getByRole("button", { name: "Turn off" }));
   await expect(
-    frame.getByText("Runs already in progress keep going.", { exact: false }),
+    frame.getByText("Items already on it keep going.", { exact: false }),
   ).toBeVisible();
   await frame.getByRole("button", { name: "Turn off", exact: true }).click();
   await expect(page.getByRole("button", { name: "Turn on" })).toBeVisible();
@@ -355,7 +357,7 @@ test("turning on a workflow offers to include earlier unfulfilled orders, and in
   await frame.getByRole("button", { name: "Turn on", exact: true }).click();
   await expect(page.getByRole("button", { name: "Turn off" })).toBeVisible();
 
-  /* The order page shows the run that Include them started: the line item's
+  /* The order page shows the run that Include them started: the item's
      section carries Manage, whose drawer names the workflow, and with a run on
      it the card carries no workflow picker at rest. Scoped to the section
      because another item's picker on the same page lists every workflow by
@@ -481,7 +483,9 @@ test("duplicate asks for a name and a tag, and the copy is off with the given ta
   await expect(
     copyRow.getByText("e2e-ring-copy", { exact: true }),
   ).toBeVisible();
-  await expect(copyRow.getByText("Inactive", { exact: true })).toBeVisible();
+  await expect(
+    copyRow.getByText(Domain.WORKFLOW_STATE_LABEL.off, { exact: true }),
+  ).toBeVisible();
 });
 
 /** Edit tag: on the detail page, immediate, and it makes no draft. */
@@ -576,7 +580,12 @@ test("the workflows list keeps its status filter across the workflow page", asyn
   await expect(frame.getByRole("link", { name: OFF })).toBeVisible();
   const status = () => new URL(page.url()).searchParams.get("status");
 
-  await frame.getByRole("button", { name: "Active", exact: true }).click();
+  await frame
+    .getByRole("button", {
+      name: Domain.WORKFLOW_STATE_LABEL.on,
+      exact: true,
+    })
+    .click();
   await expect.poll(status).toBe("active");
   await expect(frame.getByRole("link", { name: OFF })).toHaveCount(0);
 

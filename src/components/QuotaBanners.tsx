@@ -35,7 +35,7 @@ export function QuotaBanners({ usage }: { readonly usage: Domain.ShopUsage }) {
       )}
       {usage.openRunsLimitedAt !== null && (
         <s-banner tone="critical">
-          {`Baton stopped starting new runs because ${formatNumber(Domain.ShopLimits.maxOpenRuns)} are already in progress. Finish or cancel runs to resume.`}
+          {`Baton stopped attaching workflows because ${formatNumber(Domain.ShopLimits.maxOpenRuns)} items are in production. Cancel a workflow, or wait until an item is done or closed.`}
         </s-banner>
       )}
     </>

@@ -276,7 +276,7 @@ function RouteComponent() {
       setBanner(applyResultMessage(result));
       if (result._tag !== "Ok") return;
       hideModal(APPLY_MODAL);
-      shopify.toast.show("Changes applied. This is what runs now.");
+      shopify.toast.show("Changes applied. New items get this version.");
       if (inWindow) {
         postEditorWindowMessage({ type: "applied", workflowId });
         return;

@@ -64,18 +64,16 @@ export const neverApplied = (detail: {
  */
 export const APPLY_HEADING = "Apply changes?";
 export const APPLY_BODY =
-  "This workflow is turned on. Once you apply changes, they'll take effect immediately. Runs already open keep the tasks they started with.";
+  "This workflow is turned on. Once you apply changes, they'll take effect immediately. Items already on it keep the tasks they started with.";
 export const DISCARD_HEADING = "Discard changes?";
 export const DISCARD_BODY = "Are you sure you want to discard these changes?";
 export const TURN_OFF_HEADING = "Turn off workflow?";
 export const TURN_OFF_BODY =
-  "New orders won't start this workflow. Runs already in progress keep going.";
+  "New orders won't start this workflow. Items already on it keep going.";
 export const RENAME_HEADING = "Rename workflow";
 export const RENAME_FIELD_LABEL = "New name";
 export const RENAMED_TOAST = "Workflow renamed";
 export const DELETED_TOAST = "Workflow deleted";
-export const STATUS_ACTIVE = "Active";
-export const STATUS_INACTIVE = "Inactive";
 
 /**
  * The delete dialog's body, both surfaces. It names what survives rather than
@@ -83,7 +81,7 @@ export const STATUS_INACTIVE = "Inactive";
  * and every run stays on its order (the merchant copy of `Domain.Workflow`).
  */
 export const DELETE_WORKFLOW_WARNING =
-  "This workflow will be permanently deleted. Runs already on orders are kept.";
+  "This workflow will be permanently deleted. Items already on it keep their tasks.";
 
 /**
  * The trigger line: what has to be true of an order for this workflow to
@@ -96,7 +94,7 @@ export const itemTriggerLine = (tag: string) =>
 
 /** The Turn on dialog's first line, both surfaces: the rule that will start runs once the switch is on. */
 export const turnOnBody = (tag: string) =>
-  `Every order placed from now with a line item tagged \u201C${tag}\u201D will start a run of this workflow.`;
+  `Every order placed from now with an item tagged \u201C${tag}\u201D will start this workflow on that item.`;
 
 export const changeActivatedAtResultMessage = Match.typeTags<
   Domain.ChangeActivatedAtResult,
@@ -121,8 +119,10 @@ export const waitingOrdersLine = ({ count }: Domain.WaitingOrders) =>
 export const TURNED_OFF = "Turned off";
 
 /**
- * The toast after Turn on, Turn off or Change: names the runs the reconcile-all
- * started, when it started any.
+ * The toast after Turn on, Turn off or Change: counts the runs the
+ * reconcile-all started, when it started any. The screen has no word for a
+ * run, so the count is of items, qualified by their orders as the glossary
+ * asks ("items on waiting orders").
  *
  * Turn **off** can start runs too, which is why the sentence does not say
  * "waiting orders": an item matched by two active workflows carries no run, so
@@ -134,7 +134,7 @@ export const startedToast = (verb: string, started: number) => {
   const orders = `${String(started)} ${started === 1 ? "order" : "orders"}`;
   return verb === TURNED_OFF
     ? `${verb}. ${orders} moved to the workflow that still matches.`
-    : `${verb}. Started ${String(started)} ${started === 1 ? "run" : "runs"} on waiting orders.`;
+    : `${verb}. Attached to ${String(started)} ${started === 1 ? "item" : "items"} on waiting orders.`;
 };
 
 const taskList = (tasks: readonly Domain.TaskWithTeamName[]) =>
@@ -194,7 +194,7 @@ export const attentionLines = (
       ? [
           `Nobody is on ${teamNames.join(", ")}. ${
             empty.length === 1 ? "That task" : "Those tasks"
-          } will sit unclaimed until someone joins.`,
+          } will wait until a member joins.`,
         ]
       : []),
   ];
