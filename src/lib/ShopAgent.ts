@@ -43,6 +43,20 @@ import {
 import { ORDERS_SYNC_WORKFLOW_NAME } from "@/lib/orderSyncConstants";
 import { Repository, type RepositoryError } from "@/lib/Repository";
 import {
+  canStart,
+  type StartContext,
+  RunNotAllowedError,
+  type RunNotBlockedError,
+  RunNotFoundError,
+  type RunTerminalError,
+  type RunBlockedError,
+  type RunOrderClosedError,
+  type TaskNotReadyError,
+  type TaskUndoBlockedError,
+  RunRepository,
+  type RunRepositoryError,
+} from "@/lib/RunRepository";
+import {
   type OrdersStreamCounts,
   runShopAgentOrdersStream,
 } from "@/lib/ShopAgentOrdersStream";
@@ -62,20 +76,6 @@ import {
   WorkflowRepository,
   WorkflowRepositoryError,
 } from "@/lib/WorkflowRepository";
-import {
-  canStart,
-  type StartContext,
-  RunNotAllowedError,
-  type RunNotBlockedError,
-  RunNotFoundError,
-  type RunTerminalError,
-  type RunBlockedError,
-  type RunOrderClosedError,
-  type TaskNotReadyError,
-  type TaskUndoBlockedError,
-  WorkflowRunRepository,
-  type WorkflowRunRepositoryError,
-} from "@/lib/WorkflowRunRepository";
 
 class ShopAgentNotifyError extends Schema.TaggedError<ShopAgentNotifyError>()(
   "ShopAgentNotifyError",
@@ -385,7 +385,7 @@ const memberCallableEffect =
  * copied onto each run. Epoch-ms integers like `ShopOrder`, not D1 `Team`'s
  * ISO text: the two stores already differ, and one store should not mix.
  *
- * `WorkflowRun` / `WorkflowRunTask` are the *instances*: one workflow applied
+ * `Run` / `RunTask` are the *instances*: one workflow applied
  * to one line item, with the definition's tasks copied
  * in. Every display field is a snapshot and there is no foreign key to
  * `ShopOrder`, `OrderLineItem`, or `Workflow` — a run must survive an order
@@ -400,25 +400,25 @@ const memberCallableEffect =
  * the workflows whose tags matched at the last reconcile, from which
  * "ambiguous" (two or more, no run) is derived at read time. `status` is denormalized from the tasks for
  * the run list and the definitions badge; every task write recomputes it in
- * the same transaction. `(teamId, completedAt)` serves the member's run list, which
- * asks for open tasks by team. `WorkflowRunTask.teamId` is nullable for the
+ * the same transaction. `(teamId, doneAt)` serves the member's run list, which
+ * asks for open tasks by team. `RunTask.teamId` is nullable for the
  * same reason as `WorkflowTask.teamId`: a team delete nulls it on open tasks
  * (unassigned, on nobody's list until a person assigns a team) and leaves
  * finished tasks alone, whose `teamName` snapshot is all history needs.
- * `startedByEmail` / `completedByEmail` snapshot the actor the same way, so
+ * `startedByEmail` / `doneByEmail` snapshot the actor the same way, so
  * a member delete never leaves history resolving to nobody. A run task is
  * *ready* by `readyWhere`'s rule, so several tasks of one run can be ready
- * at once;
- * `startedAt` / `startedBy` record Start and make the run `active` before
- * anything is completed. `WorkflowRun.note` is free text about the whole
- * item, one field per run with no author (`Domain.SetRunNoteCommand`).
+ * at once; `startedAt` / `startedBy` record Start. A run is `active` from
+ * creation, and `Domain.runIsUnstarted` reads the tasks. `Run.note` is free
+ * text about the whole item, one field per run with no author
+ * (`Domain.SetRunNoteCommand`).
  * `blockedAt` / `blockReason` / `blockedBy` are the one hold a person sets
  * (`Domain.runIsBlocked`); `blockedBy` is the JSON `Domain.Actor`.
  * `closedAt` / `closedReason` are set together when a run closes
  * (`Domain.ClosedReason`), and `quantityChangedFrom` is the quantity badge
- * (`Domain.WorkflowRun`).
+ * (`Domain.Run`).
  *
- * `startedByRole` / `completedByRole` / `reopenedByRole` are the actor
+ * `startedByRole` / `doneByRole` / `reopenedByRole` are the actor
  * discriminator (`Domain.Actor`): the merchant acts on these rows from the
  * order page and has no `Member` row, so the id and email columns beside a
  * `'merchant'` role are null. `reopenedAt` / `reopenedBy*` hold the most
@@ -541,7 +541,7 @@ const initializeSchema = Effect.gen(function* () {
       unique (workflowId, position)
     );
     create index if not exists WorkflowDraftTask_teamId_idx on WorkflowDraftTask (teamId);
-    create table if not exists WorkflowRun (
+    create table if not exists Run (
       id text primary key,
       workflowId text not null,
       workflowName text not null,
@@ -555,7 +555,7 @@ const initializeSchema = Effect.gen(function* () {
       quantity integer not null,
       lineItemProperties text not null,
       source text not null check (source in ('tag', 'manual')),
-      status text not null check (status in ('pending', 'active', 'done', 'closed')),
+      status text not null check (status in ('active', 'done', 'closed')),
       blockedAt integer,
       blockReason text,
       blockedBy text,
@@ -566,15 +566,15 @@ const initializeSchema = Effect.gen(function* () {
       closedAt integer,
       closedReason text check (closedReason in ('fulfilled', 'order_cancelled', 'item_removed', 'merchant_cancelled'))
     );
-    create index if not exists WorkflowRun_orderId_idx on WorkflowRun (orderId);
-    create index if not exists WorkflowRun_status_idx on WorkflowRun (status);
-    create index if not exists WorkflowRun_open_age_idx
-      on WorkflowRun (orderProcessedAt, lineItemId, id) where status in ('pending', 'active');
-    create index if not exists WorkflowRun_closed_idx
-      on WorkflowRun (closedAt) where status = 'closed';
-    create table if not exists WorkflowRunTask (
+    create index if not exists Run_orderId_idx on Run (orderId);
+    create index if not exists Run_status_idx on Run (status);
+    create index if not exists Run_open_age_idx
+      on Run (orderProcessedAt, lineItemId, id) where status = 'active';
+    create index if not exists Run_closed_idx
+      on Run (closedAt) where status = 'closed';
+    create table if not exists RunTask (
       id text primary key,
-      runId text not null references WorkflowRun (id) on delete cascade,
+      runId text not null references Run (id) on delete cascade,
       position integer not null,
       step integer not null,
       name text not null,
@@ -584,18 +584,18 @@ const initializeSchema = Effect.gen(function* () {
       startedAt integer,
       startedBy text,
       startedByEmail text,
-      completedAt integer,
-      completedBy text,
-      completedByEmail text,
+      doneAt integer,
+      doneBy text,
+      doneByEmail text,
       startedByRole text check (startedByRole in ('merchant', 'member')),
-      completedByRole text check (completedByRole in ('merchant', 'member')),
+      doneByRole text check (doneByRole in ('merchant', 'member')),
       reopenedAt integer,
       reopenedByRole text check (reopenedByRole in ('merchant', 'member')),
       reopenedByEmail text,
       unique (runId, position)
     );
-    create index if not exists WorkflowRunTask_teamId_idx
-      on WorkflowRunTask (teamId, completedAt);
+    create index if not exists RunTask_teamId_idx
+      on RunTask (teamId, doneAt);
   `;
 });
 
@@ -637,7 +637,7 @@ const makeRunEffect = (env: Env, storage: DurableObjectStorage) => {
   const shopifyLayer = Layer.provideMerge(Shopify.layerNoDeps, repositoryLayer);
   const durableRepositoryLayer = Layer.mergeAll(
     WorkflowRepository.layer,
-    WorkflowRunRepository.layer,
+    RunRepository.layer,
   ).pipe(
     Layer.provideMerge(OrderRepository.layer),
     Layer.provideMerge(SqliteClient.layer({ storage })),
@@ -742,7 +742,7 @@ const workflowResult = <R>(
     | WorkflowLimitError
     | SqlError.SqlError
     | WorkflowRepositoryError
-    | WorkflowRunRepositoryError
+    | RunRepositoryError
     | RepositoryError
     | Schema.SchemaError,
     R
@@ -751,7 +751,7 @@ const workflowResult = <R>(
   Domain.WorkflowResult,
   | SqlError.SqlError
   | WorkflowRepositoryError
-  | WorkflowRunRepositoryError
+  | RunRepositoryError
   | RepositoryError
   | Schema.SchemaError,
   R
@@ -782,7 +782,7 @@ const applyResult = <R>(
     | TaskUnassignedError
     | SqlError.SqlError
     | WorkflowRepositoryError
-    | WorkflowRunRepositoryError
+    | RunRepositoryError
     | RepositoryError
     | Schema.SchemaError,
     R
@@ -791,7 +791,7 @@ const applyResult = <R>(
   Domain.ApplyResult,
   | SqlError.SqlError
   | WorkflowRepositoryError
-  | WorkflowRunRepositoryError
+  | RunRepositoryError
   | RepositoryError
   | Schema.SchemaError,
   R
@@ -864,7 +864,7 @@ const activateResult = <R>(
     | TaskUnassignedError
     | SqlError.SqlError
     | WorkflowRepositoryError
-    | WorkflowRunRepositoryError
+    | RunRepositoryError
     | RepositoryError
     | Schema.SchemaError,
     R
@@ -873,7 +873,7 @@ const activateResult = <R>(
   Domain.ActivateResult,
   | SqlError.SqlError
   | WorkflowRepositoryError
-  | WorkflowRunRepositoryError
+  | RunRepositoryError
   | RepositoryError
   | Schema.SchemaError,
   R
@@ -904,7 +904,7 @@ const changeActivatedAtResult = <R>(
     | WorkflowOffError
     | SqlError.SqlError
     | WorkflowRepositoryError
-    | WorkflowRunRepositoryError
+    | RunRepositoryError
     | RepositoryError
     | Schema.SchemaError,
     R
@@ -913,7 +913,7 @@ const changeActivatedAtResult = <R>(
   Domain.ChangeActivatedAtResult,
   | SqlError.SqlError
   | WorkflowRepositoryError
-  | WorkflowRunRepositoryError
+  | RunRepositoryError
   | RepositoryError
   | Schema.SchemaError,
   R
@@ -984,7 +984,7 @@ const runResult = <R>(
     | TaskNotReadyError
     | TaskUndoBlockedError
     | SqlError.SqlError
-    | WorkflowRunRepositoryError
+    | RunRepositoryError
     | WorkflowRepositoryError
     | RepositoryError
     | Schema.SchemaError,
@@ -993,7 +993,7 @@ const runResult = <R>(
 ): Effect.Effect<
   Domain.RunResult,
   | SqlError.SqlError
-  | WorkflowRunRepositoryError
+  | RunRepositoryError
   | WorkflowRepositoryError
   | RepositoryError
   | Schema.SchemaError,
@@ -1104,7 +1104,7 @@ const orderTeamIds = (
     | { readonly runId: string }
     | { readonly orderId: string },
 ) =>
-  WorkflowRunRepository.pipe(
+  RunRepository.pipe(
     Effect.flatMap(
       (repository): Effect.Effect<PublishTeams, SqlError.SqlError> =>
         repository.listOrderTeamIds(target),
@@ -1152,7 +1152,7 @@ const requireRunAction = (
   field: keyof Domain.RunActions,
 ) =>
   Effect.gen(function* () {
-    const gate = yield* (yield* WorkflowRunRepository).getRunGate({ runId });
+    const gate = yield* (yield* RunRepository).getRunGate({ runId });
     if (Option.isNone(gate)) return yield* new RunNotFoundError({ id: runId });
     const { run, tasks, order } = gate.value;
     if (!Domain.runActions(actor, order, run, tasks)[field])
@@ -1167,7 +1167,7 @@ const requireTaskAction = (
   allowed: (actions: Domain.TaskActions) => boolean,
 ) =>
   Effect.gen(function* () {
-    const gate = yield* (yield* WorkflowRunRepository).getRunGate({
+    const gate = yield* (yield* RunRepository).getRunGate({
       runTaskId,
     });
     const task = Option.isSome(gate)
@@ -1192,14 +1192,14 @@ const requireTaskAction = (
  * rule a merchant skips (`Domain.CompleteTaskCommand`). Module scope because
  * it captures nothing — oxlint's `unicorn(consistent-function-scoping)`.
  */
-const merchantTaskCommand = (task: Domain.WorkflowRunTask) => ({
+const merchantTaskCommand = (task: Domain.RunTask) => ({
   runTaskId: task.id,
   actor: { role: "merchant" } as const,
 });
 
 const seedReadyTasks = (
-  details: readonly Domain.WorkflowRunDetail[],
-): Domain.WorkflowRunTask[] =>
+  details: readonly Domain.RunDetail[],
+): Domain.RunTask[] =>
   details.flatMap(({ run, tasks }) => Domain.readyTasks(run, tasks));
 
 export class ShopAgent extends Agent {
@@ -1484,7 +1484,7 @@ export class ShopAgent extends Agent {
    * GID says nothing about whether their view changed. The five member
    * mutations name the teams their write could have affected — every team
    * owning a task on any run of that order, because readiness crosses runs
-   * (`WorkflowRunRepository.listOrderTeamIds`) — and everything else publishes
+   * (`RunRepository.listOrderTeamIds`) — and everything else publishes
    * `"all"`, which reaches every member. Over-broad costs a refetch;
    * under-broad costs a list that silently stops updating, so `"all"` is the
    * right default for a writer that cannot name them.
@@ -2743,7 +2743,7 @@ export class ShopAgent extends Agent {
           });
           if (Option.isNone(found))
             return { count: 0, earliestProcessedAt: null };
-          return yield* (yield* WorkflowRunRepository).countWaitingOrders({
+          return yield* (yield* RunRepository).countWaitingOrders({
             ...(yield* startContext()),
             workflow: {
               workflow: found.value.workflow,
@@ -2862,9 +2862,7 @@ export class ShopAgent extends Agent {
     const startContext = () => this.startContext();
     return Effect.gen(function* () {
       const { orders, created, ambiguous } =
-        yield* (yield* WorkflowRunRepository).reconcileAll(
-          yield* startContext(),
-        );
+        yield* (yield* RunRepository).reconcileAll(yield* startContext());
       yield* Effect.logInfo(
         `ShopAgent.reconcileAll: shop=${shop} caller=${caller} workflowId=${workflowId} orders=${String(orders)} created=${String(created)} ambiguous=${String(ambiguous)}`,
       ).pipe(
@@ -2901,7 +2899,7 @@ export class ShopAgent extends Agent {
     const startContext = () => this.startContext();
     return Effect.gen(function* () {
       const context = yield* startContext();
-      const runs = yield* WorkflowRunRepository;
+      const runs = yield* RunRepository;
       return (order: Domain.ShopOrder) =>
         runs.reconcileOrder({ ...context, orderId: order.id }).pipe(
           Effect.tap(({ created, resized, closed, ambiguous }) =>
@@ -2937,7 +2935,7 @@ export class ShopAgent extends Agent {
     const teams = () => this.teams();
     return Effect.gen(function* () {
       const orders = yield* OrderRepository;
-      const runs = yield* WorkflowRunRepository;
+      const runs = yield* RunRepository;
       const detail = yield* orders.getOrderByLegacyId(legacyId);
       if (Option.isNone(detail)) return null;
       const { order, lineItems } = detail.value;
@@ -3012,14 +3010,14 @@ export class ShopAgent extends Agent {
   @callable()
   merchantListRunsForOrder(
     input: typeof Domain.ListRunsForOrderInput.Encoded,
-  ): Promise<readonly Domain.WorkflowRunDetail[]> {
+  ): Promise<readonly Domain.RunDetail[]> {
     return this.runEffect(
       callableEffect(
         "ShopAgent.merchantListRunsForOrder",
         Domain.ListRunsForOrderInput,
         { role: "merchant", parse: { onExcessProperty: "error" } },
       )(({ orderId }) =>
-        WorkflowRunRepository.pipe(
+        RunRepository.pipe(
           Effect.flatMap((repository) =>
             repository.listRunsForOrder({ orderId }),
           ),
@@ -3090,7 +3088,7 @@ export class ShopAgent extends Agent {
           // ({@link requireRunAction}); the only way `changeWorkflow` is
           // false on an open order is a done run. Over a closed run it is the
           // picker at rest, which the order gate above covers.
-          const repository = yield* WorkflowRunRepository;
+          const repository = yield* RunRepository;
           const incumbent = (yield* repository.listRunsForOrder({
             orderId: target.value.order.id,
           })).find(({ run }) => run.lineItemId === lineItemId);
@@ -3126,7 +3124,7 @@ export class ShopAgent extends Agent {
           } satisfies Domain.AttachResult;
         }).pipe(
           Effect.catchTags({
-            WorkflowRunLimitError: ({ limit }) =>
+            RunLimitError: ({ limit }) =>
               Effect.succeed<Domain.AttachResult>({ _tag: "RunLimit", limit }),
             RunFinishedError: ({ workflowName }) =>
               Effect.succeed<Domain.AttachResult>({
@@ -3141,7 +3139,7 @@ export class ShopAgent extends Agent {
 
   /**
    * Closes the run, reason `merchant_cancelled`
-   * (`WorkflowRunRepository.cancelRun`, rule on `Domain.RunStatus`). Gated by
+   * (`RunRepository.cancelRun`, rule on `Domain.RunStatus`). Gated by
    * `Domain.runActions` `cancel`, which is false on a closed order: reconcile
    * has already closed every open run there. The run leaves every team's
    * lists, so the publish reaches every team on the order.
@@ -3162,7 +3160,7 @@ export class ShopAgent extends Agent {
           const result = yield* runResult(
             Effect.gen(function* () {
               yield* requireRunAction(runId, MERCHANT, "cancel");
-              yield* (yield* WorkflowRunRepository).cancelRun({ runId });
+              yield* (yield* RunRepository).cancelRun({ runId });
               yield* Effect.logInfo(
                 `ShopAgent.merchantCancelRun: shop=${shop} runId=${runId}`,
               ).pipe(Effect.annotateLogs({ shop, runId }));
@@ -3216,7 +3214,7 @@ export class ShopAgent extends Agent {
         runResult(
           Effect.gen(function* () {
             yield* requireTaskAction(runTaskId, MERCHANT, ({ done }) => done);
-            yield* (yield* WorkflowRunRepository).completeTask({
+            yield* (yield* RunRepository).completeTask({
               runTaskId,
               actor: { role: "merchant" },
             } satisfies Domain.CompleteTaskCommand);
@@ -3248,7 +3246,7 @@ export class ShopAgent extends Agent {
               MERCHANT,
               ({ reopen }) => reopen !== null,
             );
-            yield* (yield* WorkflowRunRepository).uncompleteTask({
+            yield* (yield* RunRepository).uncompleteTask({
               runTaskId,
               actor: { role: "merchant" },
             } satisfies Domain.UncompleteTaskCommand);
@@ -3261,7 +3259,7 @@ export class ShopAgent extends Agent {
     );
   }
 
-  /** Put back from the order page; the rule is on `WorkflowRunRepository.unstartTask`. */
+  /** Put back from the order page; the rule is on `RunRepository.unstartTask`. */
   @callable()
   merchantUnstartTask(
     input: typeof Domain.UnstartTaskInput.Encoded,
@@ -3280,7 +3278,7 @@ export class ShopAgent extends Agent {
               MERCHANT,
               ({ putBack }) => putBack,
             );
-            yield* (yield* WorkflowRunRepository).unstartTask({
+            yield* (yield* RunRepository).unstartTask({
               runTaskId,
               actor: { role: "merchant" },
             } satisfies Domain.UnstartTaskCommand);
@@ -3308,7 +3306,7 @@ export class ShopAgent extends Agent {
         runResult(
           Effect.gen(function* () {
             yield* requireRunAction(runId, MERCHANT, "note");
-            yield* (yield* WorkflowRunRepository).setRunNote({
+            yield* (yield* RunRepository).setRunNote({
               runId,
               note,
             } satisfies Domain.SetRunNoteCommand);
@@ -3335,7 +3333,7 @@ export class ShopAgent extends Agent {
         runResult(
           Effect.gen(function* () {
             yield* requireRunAction(runId, MERCHANT, "block");
-            yield* (yield* WorkflowRunRepository).blockRun({
+            yield* (yield* RunRepository).blockRun({
               runId,
               actor: { role: "merchant" },
               reason,
@@ -3364,7 +3362,7 @@ export class ShopAgent extends Agent {
         runResult(
           Effect.gen(function* () {
             yield* requireRunAction(runId, MERCHANT, "editReason");
-            yield* (yield* WorkflowRunRepository).setBlockReason({
+            yield* (yield* RunRepository).setBlockReason({
               runId,
               reason,
             } satisfies Domain.SetBlockReasonCommand);
@@ -3391,7 +3389,7 @@ export class ShopAgent extends Agent {
         runResult(
           Effect.gen(function* () {
             yield* requireRunAction(runId, MERCHANT, "unblock");
-            yield* (yield* WorkflowRunRepository).unblockRun({
+            yield* (yield* RunRepository).unblockRun({
               runId,
             } satisfies Domain.UnblockRunCommand);
             yield* Effect.logInfo(
@@ -3460,7 +3458,7 @@ export class ShopAgent extends Agent {
   ) {
     const shop = this.name;
     return Effect.gen(function* () {
-      const repository = yield* WorkflowRunRepository;
+      const repository = yield* RunRepository;
       const started = yield* Clock.currentTimeMillis;
       const { counts, items } = yield* repository.listRuns({
         teamIds,
@@ -3573,7 +3571,7 @@ export class ShopAgent extends Agent {
           Effect.gen(function* () {
             const actor = memberActor({ memberId, memberEmail, teamIds });
             yield* requireTaskAction(runTaskId, actor, ({ start }) => start);
-            yield* (yield* WorkflowRunRepository).startTask({
+            yield* (yield* RunRepository).startTask({
               runTaskId,
               actor: { role: "member", memberId, email: memberEmail },
               teamIds,
@@ -3587,7 +3585,7 @@ export class ShopAgent extends Agent {
     );
   }
 
-  /** Put back; the rule is on `WorkflowRunRepository.unstartTask`. */
+  /** Put back; the rule is on `RunRepository.unstartTask`. */
   @callable()
   memberUnstartTask(
     input: typeof Domain.UnstartTaskInput.Encoded,
@@ -3610,7 +3608,7 @@ export class ShopAgent extends Agent {
               actor,
               ({ putBack }) => putBack,
             );
-            yield* (yield* WorkflowRunRepository).unstartTask({
+            yield* (yield* RunRepository).unstartTask({
               runTaskId,
               actor: { role: "member", memberId, email: memberEmail },
               teamIds,
@@ -3643,7 +3641,7 @@ export class ShopAgent extends Agent {
           Effect.gen(function* () {
             const actor = memberActor({ memberId, memberEmail, teamIds });
             yield* requireRunAction(runId, actor, "note");
-            yield* (yield* WorkflowRunRepository).setRunNote({
+            yield* (yield* RunRepository).setRunNote({
               runId,
               teamIds,
               note,
@@ -3671,7 +3669,7 @@ export class ShopAgent extends Agent {
           Effect.gen(function* () {
             const actor = memberActor({ memberId, memberEmail, teamIds });
             yield* requireRunAction(runId, actor, "block");
-            yield* (yield* WorkflowRunRepository).blockRun({
+            yield* (yield* RunRepository).blockRun({
               runId,
               actor: { role: "member", memberId, email: memberEmail },
               teamIds,
@@ -3702,7 +3700,7 @@ export class ShopAgent extends Agent {
           Effect.gen(function* () {
             const actor = memberActor({ memberId, memberEmail, teamIds });
             yield* requireRunAction(runId, actor, "editReason");
-            yield* (yield* WorkflowRunRepository).setBlockReason({
+            yield* (yield* RunRepository).setBlockReason({
               runId,
               teamIds,
               reason,
@@ -3734,7 +3732,7 @@ export class ShopAgent extends Agent {
           Effect.gen(function* () {
             const actor = memberActor({ memberId, memberEmail, teamIds });
             yield* requireTaskAction(runTaskId, actor, ({ done }) => done);
-            yield* (yield* WorkflowRunRepository).completeTask({
+            yield* (yield* RunRepository).completeTask({
               runTaskId,
               actor: { role: "member", memberId, email: memberEmail },
               teamIds,
@@ -3772,7 +3770,7 @@ export class ShopAgent extends Agent {
               actor,
               ({ reopen }) => reopen !== null,
             );
-            yield* (yield* WorkflowRunRepository).uncompleteTask({
+            yield* (yield* RunRepository).uncompleteTask({
               runTaskId,
               actor: { role: "member", memberId, email: memberEmail },
               teamIds,
@@ -3790,7 +3788,7 @@ export class ShopAgent extends Agent {
     readonly runId: string;
     readonly teamIds: readonly string[];
   }) {
-    return WorkflowRunRepository.pipe(
+    return RunRepository.pipe(
       Effect.flatMap((repository) => repository.getRunView(input)),
       Effect.map(Option.getOrNull),
     );
@@ -3849,7 +3847,7 @@ export class ShopAgent extends Agent {
           Effect.gen(function* () {
             const actor = memberActor({ memberId, memberEmail, teamIds });
             yield* requireRunAction(runId, actor, "unblock");
-            yield* (yield* WorkflowRunRepository).unblockRun({
+            yield* (yield* RunRepository).unblockRun({
               runId,
               teamIds,
             } satisfies Domain.UnblockRunCommand);
@@ -4150,11 +4148,7 @@ export class ShopAgent extends Agent {
         { role: "merchant", parse: { onExcessProperty: "error" } },
       )(({ runTaskId, teamId }) =>
         Effect.gen(function* () {
-          yield* requireTaskAction(
-            runTaskId,
-            MERCHANT,
-            ({ reassign }) => reassign,
-          );
+          yield* requireTaskAction(runTaskId, MERCHANT, ({ assign }) => assign);
           const team = yield* teamExists(teamId);
           if (team === null)
             return {
@@ -4166,7 +4160,7 @@ export class ShopAgent extends Agent {
            * lists that change are the union of the two reads.
            */
           const before = yield* orderTeamIds({ runTaskId });
-          yield* (yield* WorkflowRunRepository).assignRunTaskTeam({
+          yield* (yield* RunRepository).assignRunTaskTeam({
             runTaskId,
             team: { id: team.id, name: team.name },
           });
@@ -4292,7 +4286,7 @@ export class ShopAgent extends Agent {
             );
           const orderRepository = yield* OrderRepository;
           const workflowRepository = yield* WorkflowRepository;
-          const runs = yield* WorkflowRunRepository;
+          const runs = yield* RunRepository;
           const reconcile = yield* reconciler();
           const roster = yield* teams();
           const now = yield* Clock.currentTimeMillis;
@@ -4309,15 +4303,13 @@ export class ShopAgent extends Agent {
             memberId,
             email: memberEmail,
           } satisfies Domain.MemberActor;
-          const actor = (task: Domain.WorkflowRunTask) => ({
+          const actor = (task: Domain.RunTask) => ({
             runTaskId: task.id,
             actor: memberActor,
             teamIds: task.teamId === null ? [] : [task.teamId],
           });
-          const taskCommand = (
-            task: Domain.WorkflowRunTask,
-            merchant: boolean,
-          ) => (merchant ? merchantTaskCommand(task) : actor(task));
+          const taskCommand = (task: Domain.RunTask, merchant: boolean) =>
+            merchant ? merchantTaskCommand(task) : actor(task);
           // Reloaded before every phase rather than carried: each phase
           // completes tasks, which changes what the next one may touch.
           const openRun = (runId: string) =>
@@ -4361,7 +4353,7 @@ export class ShopAgent extends Agent {
               const detail = yield* openRun(runId);
               if (detail === null) return;
               yield* Effect.forEach(
-                detail.tasks.filter((task) => task.completedAt === null),
+                detail.tasks.filter((task) => task.doneAt === null),
                 (task) =>
                   runs
                     .startTask(actor(task))

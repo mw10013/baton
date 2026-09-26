@@ -90,7 +90,7 @@ const RECENT = "Recent";
  * One workflow per team and one order for each, so every assertion about who
  * sees what is a fact about the seeded team rather than about ordering. Both
  * workflows are fully assigned, which turns them on, and both orders are
- * seeded fresh (`pending`, nothing started), so each carries exactly one ready
+ * seeded fresh (`active`, nothing started), so each carries exactly one ready
  * task.
  */
 const seedRuns = (
@@ -980,7 +980,7 @@ test("a value the search schema cannot read falls back to the default", async ({
 /**
  * Recent and Undo. The finished task leaves the list for the Recent tab;
  * Undo puts it back, and because Undo returns the task to Ready
- * (`WorkflowRunRepository.uncompleteTask`) the card lands in "Up next", not
+ * (`RunRepository.uncompleteTask`) the card lands in "Up next", not
  * "Mine".
  */
 test("undo puts a finished task back to Ready", async ({ browser }) => {
@@ -1024,7 +1024,7 @@ test("undo puts a finished task back to Ready", async ({ browser }) => {
 });
 
 /**
- * Put back, the inverse of Start (`WorkflowRunRepository.unstartTask`). The
+ * Put back, the inverse of Start (`RunRepository.unstartTask`). The
  * row leaves the starter's Mine and returns to Up next for everyone on the
  * team: the mate, who saw it under Teammates, sees it under Up next again.
  */
@@ -1602,7 +1602,7 @@ test("a merchant's completion reads as Merchant on the run list and the work pag
 
   /* The maker takes it back: the same line the merchant's reopen writes, with
      the member in the slot, and Cut is ready again. Start is offered because
-     Undo returns the task to Ready (`WorkflowRunRepository.uncompleteTask`),
+     Undo returns the task to Ready (`RunRepository.uncompleteTask`),
      clearing the merchant's backfilled start along with everything else — the
      task is nobody's, not "in progress by Merchant". */
   await clickWhenEnabled(page.getByRole("button", { name: "Undo" }));

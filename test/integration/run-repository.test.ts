@@ -8,18 +8,18 @@ import { describe, it } from "vitest";
 
 import * as Domain from "@/lib/Domain";
 import { OrderRepository } from "@/lib/OrderRepository";
-import { runShopAgentMigrations } from "@/lib/ShopAgent";
-import { WorkflowRepository } from "@/lib/WorkflowRepository";
 import {
   type ReconcileCounts,
   type StartContext,
-  WorkflowRunRepository,
-} from "@/lib/WorkflowRunRepository";
+  RunRepository,
+} from "@/lib/RunRepository";
+import { runShopAgentMigrations } from "@/lib/ShopAgent";
+import { WorkflowRepository } from "@/lib/WorkflowRepository";
 
 type Services =
   | OrderRepository
   | WorkflowRepository
-  | WorkflowRunRepository
+  | RunRepository
   | SqlClient.SqlClient;
 
 const runInRepository = <A, E>(
@@ -34,10 +34,7 @@ const runInRepository = <A, E>(
           return yield* program;
         }).pipe(
           Effect.provide(
-            Layer.mergeAll(
-              WorkflowRepository.layer,
-              WorkflowRunRepository.layer,
-            ).pipe(
+            Layer.mergeAll(WorkflowRepository.layer, RunRepository.layer).pipe(
               Layer.provideMerge(OrderRepository.layer),
               Layer.provideMerge(
                 SqliteClient.layer({ storage: state.storage }),
@@ -104,7 +101,7 @@ const runListRows = Effect.fn("runListRows")(function* ({
   readonly team?: Domain.TeamId | null;
   readonly limit?: number;
 }) {
-  const repository = yield* WorkflowRunRepository;
+  const repository = yield* RunRepository;
   const read = (wanted: Domain.RunTab) =>
     repository.listRuns({
       teamIds,
@@ -283,7 +280,7 @@ const upsertAndReconcile = (
   teams: StartContext["teams"] = TEAMS,
 ) =>
   Effect.gen(function* () {
-    const runs = yield* WorkflowRunRepository;
+    const runs = yield* RunRepository;
     const orders = yield* OrderRepository;
     const context = { ...(yield* loadStartContext), teams };
     const counts = yield* Ref.make<ReconcileCounts>({
@@ -303,16 +300,16 @@ const upsertAndReconcile = (
   });
 
 const runsForOrder = () =>
-  WorkflowRunRepository.pipe(
+  RunRepository.pipe(
     Effect.flatMap((runs) => runs.listRunsForOrder({ orderId: ORDER_ID })),
   );
 
 const complete = (
-  detail: Domain.WorkflowRunDetail,
+  detail: Domain.RunDetail,
   position: number,
   teamIds: readonly string[],
 ) =>
-  WorkflowRunRepository.pipe(
+  RunRepository.pipe(
     Effect.flatMap((runs) =>
       runs.completeTask({
         runTaskId: detail.tasks[position - 1]?.id ?? "",
@@ -322,12 +319,12 @@ const complete = (
     ),
   );
 
-describe("WorkflowRunRepository.countWaitingOrders", () => {
+describe("RunRepository.countWaitingOrders", () => {
   it("counts open orders that would match if the date allowed, paid or not, with the earliest placed date; Include them starts the paid ones", () =>
     runInRepository(
       Effect.gen(function* () {
         const { a } = yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const workflows = yield* WorkflowRepository;
         const orders = yield* OrderRepository;
         const detail = yield* savedDetail(a.id);
@@ -408,7 +405,7 @@ const matchedIds = (lineItemId: string) =>
  * `unique (lineItemId)`, so these cover both halves: what the write paths do
  * about it, and that the index itself is really there.
  */
-describe("WorkflowRunRepository one row per item", () => {
+describe("RunRepository one row per item", () => {
   /** A second workflow whose tag also lands on item 1, so the item matches two. */
   const rivalOn = (tag: string) =>
     Effect.gen(function* () {
@@ -502,7 +499,7 @@ describe("WorkflowRunRepository one row per item", () => {
     runInRepository(
       Effect.gen(function* () {
         const { a, b } = yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const items = [lineItem(1, ["a"])];
         yield* upsertAndReconcile(order(), items);
         const [before] = yield* runsForOrder();
@@ -519,7 +516,7 @@ describe("WorkflowRunRepository one row per item", () => {
         );
         strictEqual(set.replaced?.id, before.run.id);
         strictEqual(set.run.workflowId, b.id);
-        strictEqual(set.run.status, "pending");
+        strictEqual(set.run.status, "active");
         const after = yield* runsForOrder();
         deepStrictEqual(
           after.map((d) => d.run.id),
@@ -532,7 +529,7 @@ describe("WorkflowRunRepository one row per item", () => {
     runInRepository(
       Effect.gen(function* () {
         const { a, b } = yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const items = [lineItem(1, ["a"])];
         yield* upsertAndReconcile(order(), items);
         const [detail] = yield* runsForOrder();
@@ -560,7 +557,7 @@ describe("WorkflowRunRepository one row per item", () => {
     runInRepository(
       Effect.gen(function* () {
         const { a } = yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const items = [lineItem(1, ["a"])];
         yield* upsertAndReconcile(order(), items);
         const [first] = yield* runsForOrder();
@@ -590,13 +587,13 @@ describe("WorkflowRunRepository one row per item", () => {
         // A new row from the definition, even of the closed workflow:
         // nothing of the closed run comes back, and it was not running.
         strictEqual(set.replaced, null);
-        strictEqual(set.run.status, "pending");
+        strictEqual(set.run.status, "active");
         const [fresh, ...rest] = yield* runsForOrder();
         strictEqual(rest.length, 0);
         strictEqual(fresh?.run.id, set.run.id);
         strictEqual(fresh?.run.id === first.run.id, false);
         strictEqual(
-          fresh?.tasks.filter((task) => task.completedAt !== null).length,
+          fresh?.tasks.filter((task) => task.doneAt !== null).length,
           0,
         );
       }),
@@ -613,7 +610,7 @@ describe("WorkflowRunRepository one row per item", () => {
         if (live === undefined) throw new Error("no run");
         // Raw insert, bypassing every write path: the database itself refuses.
         const raw = yield* Effect.flip(sql`
-          insert into WorkflowRun (
+          insert into Run (
             id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
             lineItemId, lineItemTitle, variantTitle, sku, quantity,
             lineItemProperties, source, status,
@@ -621,7 +618,7 @@ describe("WorkflowRunRepository one row per item", () => {
           ) values (
             'raw', ${b.id}, 'Workflow b', ${ORDER_ID}, '#1001', 0,
             ${live.run.lineItemId}, 'Item', null, null, 1,
-            '[]', 'manual', 'pending', 0, 0
+            '[]', 'manual', 'active', 0, 0
           )
         `);
         strictEqual(raw._tag, "SqlError");
@@ -629,11 +626,11 @@ describe("WorkflowRunRepository one row per item", () => {
         strictEqual(live.run.workflowId, a.id);
         // The closed run Cancel run leaves is the item's one row, not a row
         // beside it: the same insert is still refused.
-        yield* (yield* WorkflowRunRepository).cancelRun({
+        yield* (yield* RunRepository).cancelRun({
           runId: live.run.id,
         });
         const again = yield* Effect.flip(sql`
-          insert into WorkflowRun (
+          insert into Run (
             id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
             lineItemId, lineItemTitle, variantTitle, sku, quantity,
             lineItemProperties, source, status,
@@ -641,7 +638,7 @@ describe("WorkflowRunRepository one row per item", () => {
           ) values (
             'raw', ${b.id}, 'Workflow b', ${ORDER_ID}, '#1001', 0,
             ${live.run.lineItemId}, 'Item', null, null, 1,
-            '[]', 'manual', 'pending', 0, 0
+            '[]', 'manual', 'active', 0, 0
           )
         `);
         strictEqual(again._tag, "SqlError");
@@ -653,7 +650,7 @@ describe("WorkflowRunRepository one row per item", () => {
     runInRepository(
       Effect.gen(function* () {
         const { a } = yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const orders = yield* OrderRepository;
         const sql = yield* SqlClient.SqlClient;
         yield* rivalOn("rush");
@@ -674,7 +671,7 @@ describe("WorkflowRunRepository one row per item", () => {
         // o2's item is already routed — by whom does not matter, one run per
         // item means Include them would not start a second.
         yield* sql`
-          insert into WorkflowRun (
+          insert into Run (
             id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
             lineItemId, lineItemTitle, variantTitle, sku, quantity,
             lineItemProperties, source, status,
@@ -682,7 +679,7 @@ describe("WorkflowRunRepository one row per item", () => {
           ) values (
             'busy', 'other', 'Other', 'o2', 'o2', 0,
             'o2/li', 'Item', null, null, 1,
-            '[]', 'manual', 'pending', 0, 0
+            '[]', 'manual', 'active', 0, 0
           )
         `;
         // o3 would come out ambiguous — the rival's tag is on it too — and
@@ -698,7 +695,7 @@ describe("WorkflowRunRepository one row per item", () => {
     ));
 });
 
-describe("WorkflowRunRepository.reconcileOrder", () => {
+describe("RunRepository.reconcileOrder", () => {
   it("creates one run per matching line item with copied tasks and team names", () =>
     runInRepository(
       Effect.gen(function* () {
@@ -717,7 +714,8 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         strictEqual(runs.length, 2);
         const [first] = runs;
         strictEqual(first?.run.source, "tag");
-        strictEqual(first?.run.status, "pending");
+        strictEqual(first?.run.status, "active");
+        strictEqual(Domain.runIsUnstarted(first?.tasks ?? []), true);
         strictEqual(first?.run.quantity, 2);
         strictEqual(first?.run.lineItemProperties?.[0]?.value, "Hello 1");
         deepStrictEqual(
@@ -750,7 +748,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const items = [lineItem(1, ["a"]), lineItem(2, ["b"])];
         yield* upsertAndReconcile(order(), items);
         const again = yield* upsertAndReconcile(
@@ -816,7 +814,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
     runInRepository(
       Effect.gen(function* () {
         const { a } = yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const old = order({ processedAt: (a.activatedAt ?? 0) - 1 });
         const items = [lineItem(1, ["a"])];
         const counts = yield* upsertAndReconcile(old, items);
@@ -860,8 +858,8 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
         yield* seed;
         const items = [lineItem(1, ["a"]), lineItem(2, ["b"])];
         yield* upsertAndReconcile(order(), items);
-        const [pendingRun, activeRun] = yield* runsForOrder();
-        if (pendingRun === undefined || activeRun === undefined)
+        const [unstartedRun, activeRun] = yield* runsForOrder();
+        if (unstartedRun === undefined || activeRun === undefined)
           throw new Error("expected two runs");
         yield* complete(activeRun, 1, [TEAM_A.id]);
 
@@ -879,16 +877,16 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           ambiguous: 0,
         });
         const after = yield* runsForOrder();
-        const p = after.find((d) => d.run.id === pendingRun.run.id);
+        const p = after.find((d) => d.run.id === unstartedRun.run.id);
         const a = after.find((d) => d.run.id === activeRun.run.id);
-        // Pending or active, one rule: both close, and both keep their tasks.
+        // Started or not, one rule: both close, and both keep their tasks.
         strictEqual(p?.run.status, "closed");
         strictEqual(p?.run.closedReason, "item_removed");
         strictEqual(p?.tasks.length, 2);
         strictEqual(a?.run.status, "closed");
         strictEqual(a?.run.closedReason, "item_removed");
         strictEqual(a?.tasks.length, 2);
-        strictEqual(a?.tasks[0]?.completedAt !== null, true);
+        strictEqual(a?.tasks[0]?.doneAt !== null, true);
 
         // The lines leaving the order closes nothing more: the runs are
         // over already, and they keep their snapshots.
@@ -927,7 +925,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
       }),
     ));
 
-  it("a pending run is resized silently", () =>
+  it("an unstarted run is resized silently", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -943,7 +941,8 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           ambiguous: 0,
         });
         const [p] = yield* runsForOrder();
-        strictEqual(p?.run.status, "pending");
+        strictEqual(p?.run.status, "active");
+        strictEqual(Domain.runIsUnstarted(p?.tasks ?? []), true);
         strictEqual(p?.run.quantity, 3);
         strictEqual(p?.run.quantityChangedFrom, null);
       }),
@@ -1081,8 +1080,8 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
             lineItem(1, ["a"]),
             lineItem(2, ["b"]),
           ]);
-          const [pendingRun, activeRun] = yield* runsForOrder();
-          if (pendingRun === undefined || activeRun === undefined)
+          const [unstartedRun, activeRun] = yield* runsForOrder();
+          if (unstartedRun === undefined || activeRun === undefined)
             throw new Error("expected two runs");
           yield* complete(activeRun, 1, [TEAM_A.id]);
           const threeLines = [
@@ -1107,8 +1106,8 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           const during = yield* runsForOrder();
           strictEqual(during.length, 2);
           strictEqual(
-            during.find((d) => d.run.id === pendingRun.run.id)?.run.status,
-            "pending",
+            during.find((d) => d.run.id === unstartedRun.run.id)?.run.status,
+            "active",
           );
           const active = during.find((d) => d.run.id === activeRun.run.id);
           strictEqual(active?.run.status, "active");
@@ -1130,8 +1129,8 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
             lineItem(1, ["a"]),
             lineItem(2, ["b"]),
           ]);
-          const [pendingRun, activeRun] = yield* runsForOrder();
-          if (pendingRun === undefined || activeRun === undefined)
+          const [unstartedRun, activeRun] = yield* runsForOrder();
+          if (unstartedRun === undefined || activeRun === undefined)
             throw new Error("expected two runs");
           yield* complete(activeRun, 1, [TEAM_A.id]);
           const counts = yield* upsertAndReconcile(
@@ -1161,7 +1160,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
   });
 
   describe("units to make", () => {
-    it("a refund that lowers currentQuantity reads like an edit: pending resized silently, active resized with the badge", () =>
+    it("a refund that lowers currentQuantity reads like an edit: unstarted resized silently, active resized with the badge", () =>
       runInRepository(
         Effect.gen(function* () {
           yield* seed;
@@ -1169,10 +1168,10 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
             lineItem(1, ["a"]),
             lineItem(2, ["b"]),
           ]);
-          const [pendingRun, activeRun] = yield* runsForOrder();
-          if (pendingRun === undefined || activeRun === undefined)
+          const [unstartedRun, activeRun] = yield* runsForOrder();
+          if (unstartedRun === undefined || activeRun === undefined)
             throw new Error("expected two runs");
-          strictEqual(pendingRun.run.quantity, 2);
+          strictEqual(unstartedRun.run.quantity, 2);
           yield* complete(activeRun, 1, [TEAM_A.id]);
           const counts = yield* upsertAndReconcile(
             order({ updatedAt: PROCESSED_AT + 1 }),
@@ -1188,7 +1187,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
             ambiguous: 0,
           });
           const after = yield* runsForOrder();
-          const p = after.find((d) => d.run.id === pendingRun.run.id);
+          const p = after.find((d) => d.run.id === unstartedRun.run.id);
           const a = after.find((d) => d.run.id === activeRun.run.id);
           strictEqual(p?.run.quantity, 1);
           strictEqual(p?.run.quantityChangedFrom, null);
@@ -1252,7 +1251,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
       runInRepository(
         Effect.gen(function* () {
           yield* seed;
-          const runs = yield* WorkflowRunRepository;
+          const runs = yield* RunRepository;
           yield* upsertAndReconcile(order(), [
             lineItem(1, ["a"]),
             lineItem(2, ["b"]),
@@ -1267,8 +1266,8 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
             actor: memberActor("member-1"),
             teamIds: [TEAM_A.id],
           });
-          // A third, untouched run is pending, and closes all the same.
-          const pendingRun = Option.getOrThrow(
+          // A third, untouched run is unstarted, and closes all the same.
+          const unstartedRun = Option.getOrThrow(
             yield* runs.setRun({
               workflow: yield* savedDetail(activeRun.run.workflowId),
               teams: TEAMS,
@@ -1292,9 +1291,9 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           });
           const after = yield* runsForOrder();
           strictEqual(after.length, 3);
-          const pending = after.find((d) => d.run.id === pendingRun.id);
-          strictEqual(pending?.run.status, "closed");
-          strictEqual(pending?.run.closedReason, "fulfilled");
+          const unstarted = after.find((d) => d.run.id === unstartedRun.id);
+          strictEqual(unstarted?.run.status, "closed");
+          strictEqual(unstarted?.run.closedReason, "fulfilled");
           const active = after.find((d) => d.run.id === activeRun.run.id);
           strictEqual(active?.run.status, "closed");
           strictEqual(active?.run.closedReason, "fulfilled");
@@ -1339,7 +1338,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           strictEqual(shipped?.run.status, "active");
           strictEqual(shipped?.run.quantityChangedFrom, null);
           const other = after.find((d) => d.run.id === otherRun.run.id);
-          strictEqual(other?.run.status, "pending");
+          strictEqual(other?.run.status, "active");
           strictEqual(other?.run.quantityChangedFrom, null);
         }),
       ));
@@ -1355,9 +1354,9 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           lineItem(3, ["a"]),
         ]);
         const before = yield* runsForOrder();
-        const [pendingRun, activeRun, doneRun] = before;
+        const [unstartedRun, activeRun, doneRun] = before;
         if (
-          pendingRun === undefined ||
+          unstartedRun === undefined ||
           activeRun === undefined ||
           doneRun === undefined
         )
@@ -1376,7 +1375,7 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
           ambiguous: 0,
         });
         const after = yield* runsForOrder();
-        for (const open of [pendingRun, activeRun]) {
+        for (const open of [unstartedRun, activeRun]) {
           const closed = after.find((d) => d.run.id === open.run.id);
           strictEqual(closed?.run.status, "closed");
           strictEqual(closed?.run.closedReason, "order_cancelled");
@@ -1445,12 +1444,12 @@ describe("WorkflowRunRepository.reconcileOrder", () => {
     ));
 });
 
-describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
-  it("completeTask enforces team, order, and terminal state and records completedBy", () =>
+describe("RunRepository tasks, run list, blocks, delete", () => {
+  it("completeTask enforces team, order, and terminal state and records doneBy", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
         const [detail] = yield* runsForOrder();
         if (detail === undefined) throw new Error("no run");
@@ -1469,7 +1468,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
           yield* runs.getRun({ runId: detail.run.id }),
         );
         strictEqual(active.run.status, "active");
-        strictEqual(active.tasks[0]?.completedBy, "member-1");
+        strictEqual(active.tasks[0]?.doneBy, "member-1");
 
         const repeat = yield* complete(detail, 1, [TEAM_A.id]).pipe(
           Effect.flip,
@@ -1497,7 +1496,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
         const [detail] = yield* runsForOrder();
         if (detail === undefined) throw new Error("no run");
@@ -1520,7 +1519,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
         strictEqual(closed.run.blockedAt, null);
         strictEqual(closed.run.blockedBy, null);
         strictEqual(closed.tasks.length, 2);
-        strictEqual(closed.tasks[0]?.completedAt !== null, true);
+        strictEqual(closed.tasks[0]?.doneAt !== null, true);
         const refused = yield* complete(detail, 2, [TEAM_B.id]).pipe(
           Effect.flip,
         );
@@ -1536,7 +1535,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const orders = yield* OrderRepository;
         yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
         const [detail] = yield* runsForOrder();
@@ -1562,7 +1561,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         yield* upsertAndReconcile(order(), [
           lineItem(1, ["a"]),
           lineItem(2, ["b"]),
@@ -1637,7 +1636,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         yield* upsertAndReconcile(order(), [
           lineItem(1, ["a"]),
           lineItem(2, ["b"]),
@@ -1689,7 +1688,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
         const [detail] = yield* runsForOrder();
         if (detail === undefined) throw new Error("no run");
@@ -1704,7 +1703,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         deepStrictEqual(
           detail.tasks.map((s) => [s.name, s.step, s.instructions]),
@@ -1738,7 +1737,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         yield* upsertAndReconcile(order(), [
           lineItem(1, ["a"]),
           lineItem(2, ["b"]),
@@ -1815,7 +1814,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         yield* upsertAndReconcile(
           order(),
           Array.from({ length: 12 }, (_, index) => lineItem(index + 1, ["a"])),
@@ -1852,7 +1851,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
 
         const done = yield* runs.listRuns({
@@ -1872,7 +1871,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         yield* steppedRun();
         const teamIds = [TEAM_A.id, TEAM_B.id];
 
@@ -1955,7 +1954,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         const artwork = detail.tasks[0]?.id ?? "";
         const produce = detail.tasks[2]?.id ?? "";
@@ -1988,7 +1987,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
         strictEqual(started.run.status, "active");
         strictEqual(started.tasks[0]?.startedBy, "m1");
         strictEqual(started.tasks[0]?.startedAt !== null, true);
-        strictEqual(started.tasks[0]?.completedAt, null);
+        strictEqual(started.tasks[0]?.doneAt, null);
 
         yield* runs.startTask({
           runTaskId: artwork,
@@ -2006,8 +2005,8 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
           yield* runs.getRun({ runId: detail.run.id }),
         ).tasks[1];
         strictEqual(materials?.startedBy, "member-1");
-        strictEqual(materials?.completedBy, "member-1");
-        strictEqual(materials?.startedAt, materials?.completedAt);
+        strictEqual(materials?.doneBy, "member-1");
+        strictEqual(materials?.startedAt, materials?.doneAt);
       }),
     ));
 
@@ -2015,7 +2014,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         const artwork = detail.tasks[0]?.id ?? "";
         const materials = detail.tasks[1]?.id ?? "";
@@ -2056,8 +2055,8 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
         const undone = Option.getOrThrow(
           yield* runs.getRun({ runId: detail.run.id }),
         );
-        strictEqual(undone.tasks[0]?.completedAt, null);
-        strictEqual(undone.tasks[0]?.completedBy, null);
+        strictEqual(undone.tasks[0]?.doneAt, null);
+        strictEqual(undone.tasks[0]?.doneBy, null);
         strictEqual(undone.tasks[0]?.startedAt, null);
         strictEqual(undone.tasks[0]?.startedBy, null);
         strictEqual(undone.tasks[0]?.startedByEmail, null);
@@ -2128,7 +2127,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         const artwork = detail.tasks[0]?.id ?? "";
         yield* runs.startTask({
@@ -2157,7 +2156,8 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
         strictEqual(task?.startedByRole, null);
         strictEqual(task?.reopenedAt, null);
         // The only started task put back: the run is untouched again.
-        strictEqual(after.run.status, "pending");
+        strictEqual(after.run.status, "active");
+        strictEqual(Domain.runIsUnstarted(after.tasks), true);
         // Ready again: it is on Team A's list as a Start.
         const view = Option.getOrThrow(
           yield* runs.getRunView({
@@ -2176,7 +2176,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         const artwork = detail.tasks[0]?.id ?? "";
         const materials = detail.tasks[1]?.id ?? "";
@@ -2227,7 +2227,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         const artwork = detail.tasks[0]?.id ?? "";
         yield* runs.startTask({
@@ -2248,7 +2248,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         const since = Date.now() - 1000;
         const taskItems = (items: readonly Domain.RecentItem[]) =>
@@ -2352,7 +2352,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const since = Date.now() - 1000;
         yield* upsertAndReconcile(order(), [
           lineItem(1, ["a"]),
@@ -2421,7 +2421,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
         const [detail] = yield* runsForOrder();
         if (detail === undefined) throw new Error("no run");
@@ -2456,7 +2456,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
           yield* runs.getRun({ runId: detail.run.id }),
         );
         strictEqual(closed.run.status, "closed");
-        strictEqual(closed.tasks[0]?.completedAt !== null, true);
+        strictEqual(closed.tasks[0]?.doneAt !== null, true);
       }),
     ));
 
@@ -2464,7 +2464,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         // Nothing finished: step 1's two tasks were ready a moment ago.
         yield* runs.cancelRun({ runId: detail.run.id });
@@ -2490,7 +2490,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         const set = (value: Domain.RunNote | null, teamIds = [TEAM_A.id]) =>
           runs.setRunNote({ runId: detail.run.id, teamIds, note: value });
@@ -2534,7 +2534,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         // Team C's task is two steps out: nothing of theirs is ready.
         yield* runs.setRunNote({
@@ -2562,7 +2562,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         const artwork = detail.tasks[0]?.id ?? "";
         const materials = detail.tasks[1]?.id ?? "";
@@ -2598,8 +2598,8 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
         const after = Option.getOrThrow(
           yield* runs.getRun({ runId: detail.run.id }),
         );
-        strictEqual(after.tasks[0]?.completedAt, null);
-        strictEqual(after.tasks[1]?.completedAt !== null, true);
+        strictEqual(after.tasks[0]?.doneAt, null);
+        strictEqual(after.tasks[1]?.doneAt !== null, true);
       }),
     ));
 
@@ -2607,7 +2607,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         const wrongTeam = yield* runs
           .blockRun({
@@ -2687,7 +2687,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         const blockOf = () =>
           runs.getRun({ runId: detail.run.id }).pipe(
@@ -2756,13 +2756,13 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const sql = yield* SqlClient.SqlClient;
         const detail = yield* steppedRun();
         const artwork = detail.tasks[0]?.id ?? "";
         // The state a team delete leaves behind: on nobody's list, which is
         // the very run the merchant is there to unstick.
-        yield* sql`update WorkflowRunTask set teamId = null where id = ${artwork}`;
+        yield* sql`update RunTask set teamId = null where id = ${artwork}`;
         const refused = yield* runs
           .completeTask({
             runTaskId: artwork,
@@ -2775,13 +2775,13 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
         const task = Option.getOrThrow(
           yield* runs.getRun({ runId: detail.run.id }),
         ).tasks[0];
-        strictEqual(task?.completedByRole, "merchant");
-        strictEqual(task?.completedBy, null);
-        strictEqual(task?.completedByEmail, null);
+        strictEqual(task?.doneByRole, "merchant");
+        strictEqual(task?.doneBy, null);
+        strictEqual(task?.doneByEmail, null);
         strictEqual(task?.startedByRole, "merchant");
         strictEqual(task?.startedBy, null);
         strictEqual(task?.startedByEmail, null);
-        deepStrictEqual<unknown>(Domain.taskCompletedBy(task), {
+        deepStrictEqual<unknown>(Domain.taskDoneBy(task), {
           role: "merchant",
         });
       }),
@@ -2791,7 +2791,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         const artwork = detail.tasks[0]?.id ?? "";
         yield* runs.startTask({
@@ -2805,8 +2805,8 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
         ).tasks[0];
         strictEqual(task?.startedByRole, "member");
         strictEqual(task?.startedByEmail, "m1@example.com");
-        strictEqual(task?.completedByRole, "merchant");
-        strictEqual(task?.completedByEmail, null);
+        strictEqual(task?.doneByRole, "merchant");
+        strictEqual(task?.doneByEmail, null);
       }),
     ));
 
@@ -2814,7 +2814,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         const artwork = detail.tasks[0]?.id ?? "";
         const taskNow = () =>
@@ -2847,7 +2847,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
         strictEqual(ready.startedBy, null);
         strictEqual(ready.startedByEmail, null);
         strictEqual(ready.startedByRole, null);
-        strictEqual(ready.completedAt, null);
+        strictEqual(ready.doneAt, null);
         strictEqual(ready.reopenedByRole, "merchant");
       }),
     ));
@@ -2856,7 +2856,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         const artwork = detail.tasks[0]?.id ?? "";
         const taskNow = () =>
@@ -2899,8 +2899,8 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
         const byMerchant = yield* taskNow();
         strictEqual(byMerchant.reopenedByRole, "merchant");
         strictEqual(byMerchant.reopenedByEmail, null);
-        strictEqual(byMerchant.completedAt, null);
-        strictEqual(byMerchant.completedByRole, null);
+        strictEqual(byMerchant.doneAt, null);
+        strictEqual(byMerchant.doneByRole, null);
       }),
     ));
 
@@ -2908,7 +2908,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         const [artwork, materials, produce] = [
           detail.tasks[0]?.id ?? "",
@@ -2956,7 +2956,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         yield* runs.setRunNote({
           runId: detail.run.id,
@@ -2982,7 +2982,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         yield* runs.blockRun({
           runId: detail.run.id,
@@ -3072,7 +3072,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
       Effect.gen(function* () {
         const { a, b } = yield* seed;
         const workflows = yield* WorkflowRepository;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         yield* upsertAndReconcile(order(), [
           lineItem(1, ["a"]),
           lineItem(2, ["a"]),
@@ -3110,7 +3110,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
         const done = remaining.find((d) => d.run.id === finished.run.id);
         strictEqual(done?.run.status, "done");
         strictEqual(
-          done?.tasks.every((task) => task.completedAt !== null),
+          done?.tasks.every((task) => task.doneAt !== null),
           true,
         );
 
@@ -3138,8 +3138,8 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
           runTaskId: finish.id,
           team: TEAM_C,
         });
-        const [reassigned] = yield* runListRows({ teamIds: [TEAM_C.id] });
-        strictEqual(reassigned?.tasks[0]?.id, finish.id);
+        const [moved] = yield* runListRows({ teamIds: [TEAM_C.id] });
+        strictEqual(moved?.tasks[0]?.id, finish.id);
         yield* runs.blockRun({
           runId: stillOpen.run.id,
           actor: memberActor("m1"),
@@ -3170,7 +3170,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
       Effect.gen(function* () {
         const { a } = yield* seed;
         const workflows = yield* WorkflowRepository;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const items = [lineItem(1, ["a"])];
         yield* upsertAndReconcile(order(), items);
         const [orphaned] = yield* runsForOrder();
@@ -3213,7 +3213,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         const artwork = detail.tasks[0]?.id ?? "";
         const materials = detail.tasks[1]?.id ?? "";
@@ -3232,9 +3232,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
           yield* runs.getRun({ runId: detail.run.id }),
         );
         deepStrictEqual(
-          after.tasks
-            .slice(0, 2)
-            .map((s) => [s.startedByEmail, s.completedByEmail]),
+          after.tasks.slice(0, 2).map((s) => [s.startedByEmail, s.doneByEmail]),
           [
             ["m1@example.com", null],
             ["m2@example.com", "m2@example.com"],
@@ -3249,7 +3247,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const workflows = yield* WorkflowRepository;
         const since = Date.now() - 1000;
         yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
@@ -3281,7 +3279,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
     runInRepository(
       Effect.gen(function* () {
         const { a } = yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const workflows = yield* WorkflowRepository;
         yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
         const [run] = yield* runsForOrder();
@@ -3344,7 +3342,7 @@ describe("WorkflowRunRepository tasks, run list, blocks, delete", () => {
           actor: memberActor("m3"),
           teamIds: [TEAM_C.id],
         });
-        // A finished task is never reassigned; a missing task is not found.
+        // A done task is never assigned; a missing task is not found.
         strictEqual(
           (yield* runs
             .assignRunTaskTeam({ runTaskId: finish.id, team: TEAM_A })
@@ -3385,7 +3383,7 @@ const usageRow = () =>
     Effect.map((rows) => rows[0]?.[0] ?? null),
   );
 
-describe("WorkflowRunRepository open-run ceiling", () => {
+describe("RunRepository open-run ceiling", () => {
   it("auto-start yields to the ceiling and records it; finishing the run clears the flag", () =>
     withMaxOpenRuns(1, () =>
       runInRepository(
@@ -3403,7 +3401,7 @@ describe("WorkflowRunRepository open-run ceiling", () => {
           // webhook, and Shopify would retry it for four hours.
           const stored = yield* (yield* OrderRepository).getOrder(ORDER_ID);
           strictEqual(Option.isSome(stored), true);
-          // Finish the one run: both tasks done takes it out of `pending`/
+          // Finish the one run: both tasks done takes it out of
           // `active`, which is what releases the flag.
           const [detail] = yield* runsForOrder();
           if (detail === undefined) throw new Error("no run");
@@ -3419,7 +3417,7 @@ describe("WorkflowRunRepository open-run ceiling", () => {
       runInRepository(
         Effect.gen(function* () {
           const { a, b } = yield* seed;
-          const runs = yield* WorkflowRunRepository;
+          const runs = yield* RunRepository;
           const orders = yield* OrderRepository;
           yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
           const target = Option.getOrThrow(
@@ -3453,7 +3451,7 @@ describe("WorkflowRunRepository open-run ceiling", () => {
               source: "manual",
             }),
           );
-          strictEqual(refused._tag, "WorkflowRunLimitError");
+          strictEqual(refused._tag, "RunLimitError");
         }),
       ),
     ));
@@ -3469,7 +3467,7 @@ const usageEvents = () =>
 const usage = () =>
   OrderRepository.pipe(Effect.flatMap((orders) => orders.getUsage()));
 
-describe("WorkflowRunRepository metering", () => {
+describe("RunRepository metering", () => {
   it("an order is counted once, when its first run is created", () =>
     runInRepository(
       Effect.gen(function* () {
@@ -3514,7 +3512,7 @@ describe("WorkflowRunRepository metering", () => {
     runInRepository(
       Effect.gen(function* () {
         const { a } = yield* seed;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const orders = yield* OrderRepository;
         // Unpaid, so reconcile starts nothing and counts nothing; the
         // merchant attaches a workflow by hand.

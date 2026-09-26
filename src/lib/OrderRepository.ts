@@ -24,7 +24,7 @@ export interface OrderUpsert<E = never> {
   readonly lineItems: readonly Domain.OrderLineItem[];
   /**
    * Runs inside the upsert's transaction, after the line items are written and
-   * only when the write actually happened. The seam for workflow-run
+   * only when the write actually happened. The seam for run
    * reconciliation: runs must be created and adjusted against exactly the
    * line-item set this write produced, and Durable Object SQLite refuses
    * nested transactions, so the caller composes plain statements here rather
@@ -140,7 +140,7 @@ const json = (value: unknown) => JSON.stringify(value);
  * partial index when the query's `where` provably implies the index's, and it
  * proves that by matching terms, not by reasoning about them. The run
  * fragments are correlated to the outer `ShopOrder` row and served by
- * `WorkflowRun_orderId_idx`. A closed run still holds its item
+ * `Run_orderId_idx`. A closed run still holds its item
  * (`Domain.RunStatus`): it is in `ANY_RUN` and `RUN_FOR_ITEM`, so an item
  * whose run closed is neither "No workflow" nor "Choose a workflow", and it
  * is in no status fragment but `to_make`'s, which asks for no open and no
@@ -149,20 +149,20 @@ const json = (value: unknown) => JSON.stringify(value);
 const OPEN = "fulfillmentStatus <> 'FULFILLED' and cancelledAt is null";
 /**
  * {@link OPEN} on an aliased `ShopOrder`, for statements that also read
- * `WorkflowRun`: qualified so the predicate cannot bind to a run column of
+ * `Run`: qualified so the predicate cannot bind to a run column of
  * the same name (both tables carry a `closedAt`).
  */
 const openAs = (alias: string) =>
   `${alias}.fulfillmentStatus <> 'FULFILLED' and ${alias}.cancelledAt is null`;
-const ANY_RUN = `select 1 from WorkflowRun r
+const ANY_RUN = `select 1 from Run r
   where r.orderId = ShopOrder.id`;
-const OPEN_RUN = `select 1 from WorkflowRun r
-  where r.orderId = ShopOrder.id and r.status in ('pending', 'active')`;
-const DONE_RUN = `select 1 from WorkflowRun r
+const OPEN_RUN = `select 1 from Run r
+  where r.orderId = ShopOrder.id and r.status = 'active'`;
+const DONE_RUN = `select 1 from Run r
   where r.orderId = ShopOrder.id and r.status = 'done'`;
 /** The `blocked` {@link Domain.OrderNeed}: an open run a worker or the merchant blocked. */
-const BLOCKED_RUN = `select 1 from WorkflowRun r
-  where r.orderId = ShopOrder.id and r.status in ('pending', 'active')
+const BLOCKED_RUN = `select 1 from Run r
+  where r.orderId = ShopOrder.id and r.status = 'active'
     and r.blockedAt is not null`;
 /**
  * `Domain.ambiguousItems` in SQL: an item with units still to make, two or
@@ -173,7 +173,7 @@ const BLOCKED_RUN = `select 1 from WorkflowRun r
  * `json_array_length` is SQLite's JSON1, compiled into Durable Object SQLite;
  * `order-repository.test.ts` is the proof.
  */
-const RUN_FOR_ITEM = `select 1 from WorkflowRun r
+const RUN_FOR_ITEM = `select 1 from Run r
   where r.lineItemId = li.id`;
 const AMBIGUOUS_ITEM = `select 1 from OrderLineItem li
   where li.orderId = ShopOrder.id and li.currentQuantity > 0
@@ -276,7 +276,7 @@ export class OrderRepository extends Context.Service<
      * The billing meter, and the whole of it: an order is worth one unit the
      * first time Baton creates a run for it, and nothing ever gives that back.
      *
-     * Called by `WorkflowRunRepository.insertRun` — the single door through
+     * Called by `RunRepository.insertRun` — the single door through
      * which a run is created — so the predicate is "Baton started work on this
      * order", not "the order looks billable". That is deliberately narrower
      * than paid: a paid order no workflow matches costs the merchant nothing,
@@ -985,13 +985,13 @@ export class OrderRepository extends Context.Service<
               ? sql.literal("1 = 0")
               : sql`(${sql.in("s.teamId", emptyIds)} and ${sql.literal(ReadyWhere.readyWhere("s"))})`;
           const attentionTask = sql`exists (
-            select 1 from WorkflowRunTask s
-            where s.runId = r.id and s.completedAt is null
+            select 1 from RunTask s
+            where s.runId = r.id and s.doneAt is null
               and ${sql.or([unassigned, emptyReady])}
           )`;
           const attentionRun = sql`exists (
-            select 1 from WorkflowRun r
-            where r.orderId = ShopOrder.id and r.status in ('pending', 'active')
+            select 1 from Run r
+            where r.orderId = ShopOrder.id and r.status = 'active'
               and ${attentionTask}
           )`;
           /**
@@ -1006,10 +1006,10 @@ export class OrderRepository extends Context.Service<
             team === null
               ? sql.literal("1 = 1")
               : sql`${sql.literal(OPEN)} and exists (
-                  select 1 from WorkflowRun wr
-                  join WorkflowRunTask s on s.runId = wr.id
+                  select 1 from Run wr
+                  join RunTask s on s.runId = wr.id
                   where wr.orderId = ShopOrder.id
-                    and wr.status in ('pending', 'active')
+                    and wr.status = 'active'
                     and wr.blockedAt is null
                     and s.teamId = ${team}
                     and ${sql.literal(ReadyWhere.readyWhere("s"))}
@@ -1109,9 +1109,9 @@ export class OrderRepository extends Context.Service<
           const ids = orders.map(({ id }) => id);
           /**
            * Two aggregates keyed by the page's ids rather than a join: the
-           * decoder for `ShopOrder` wants exactly its columns, and `WorkflowRun`
+           * decoder for `ShopOrder` wants exactly its columns, and `Run`
            * lives in the same Durable Object SQLite but belongs to
-           * `WorkflowRunRepository`, so this read touches it for counts only.
+           * `RunRepository`, so this read touches it for counts only.
            */
           const unitRows =
             ids.length === 0
@@ -1128,11 +1128,11 @@ export class OrderRepository extends Context.Service<
               : yield* sql`
                   select
                     orderId,
-                    sum(status in ('pending', 'active')) as open,
+                    sum(status = 'active') as open,
                     sum(status = 'done') as done,
-                    sum(blockedAt is not null and status in ('pending', 'active')) as blocked,
+                    sum(blockedAt is not null and status = 'active') as blocked,
                     sum(status = 'closed') as closed
-                  from WorkflowRun
+                  from Run
                   where ${sql.in("orderId", ids)}
                   group by orderId
                 `.values;
@@ -1176,12 +1176,12 @@ export class OrderRepository extends Context.Service<
               ? []
               : yield* sql`
                   select distinct wr.orderId, s.teamId
-                  from WorkflowRunTask s
-                  join WorkflowRun wr on wr.id = s.runId
+                  from RunTask s
+                  join Run wr on wr.id = s.runId
                   join ShopOrder o on o.id = wr.orderId
                   where ${sql.in("wr.orderId", ids)}
                     and ${sql.literal(openAs("o"))}
-                    and wr.status in ('pending', 'active')
+                    and wr.status = 'active'
                     and wr.blockedAt is null
                     and ${sql.in("s.teamId", liveIds)}
                     and ${sql.literal(ReadyWhere.readyWhere("s"))}
@@ -1240,7 +1240,7 @@ export class OrderRepository extends Context.Service<
            * `Domain.OrderCounts` in one statement over the open orders the
            * search and team leave. `run_summary` is the per-page `runRows`
            * aggregate hoisted over every open order, one grouped read of
-           * `WorkflowRun` in place of a correlated `exists` per fragment;
+           * `Run` in place of a correlated `exists` per fragment;
            * `CHOOSING` and `attentionRun` stay correlated, walking line items
            * and tasks. `facts` is materialised so each correlated term runs
            * once per order however many sums read it. The sums restate
@@ -1250,9 +1250,9 @@ export class OrderRepository extends Context.Service<
            * `run_summary` is a `cross join`, which SQLite reads as "keep this
            * table order" (https://www.sqlite.org/optoverview.html#crossjoin):
            * with no `sqlite_stat1` the planner otherwise drives from
-           * `WorkflowRun_status_idx` and reads every run the retention window
+           * `Run_status_idx` and reads every run the retention window
            * keeps, closed orders included. Driven from `ShopOrder_open_idx`
-           * through `WorkflowRun_orderId_idx`, the read is the open orders'
+           * through `Run_orderId_idx`, the read is the open orders'
            * runs only. The `ShopOrder` columns are qualified for the reason
            * on {@link openAs}.
            *
@@ -1276,12 +1276,12 @@ export class OrderRepository extends Context.Service<
           const [countRow] = yield* sql`
               with run_summary as (
                 select r.orderId,
-                  sum(r.status in ('pending', 'active')) as openRuns,
+                  sum(r.status = 'active') as openRuns,
                   sum(r.status = 'done') as doneRuns,
-                  sum(r.status in ('pending', 'active') and r.blockedAt is not null) as blockedRuns,
+                  sum(r.status = 'active' and r.blockedAt is not null) as blockedRuns,
                   sum(r.status = 'closed') as closedRuns
                 from ShopOrder o
-                cross join WorkflowRun r on r.orderId = o.id
+                cross join Run r on r.orderId = o.id
                 where ${sql.literal(openAs("o"))}
                 group by r.orderId
               ),
@@ -1643,7 +1643,7 @@ export class OrderRepository extends Context.Service<
                 if (!Domain.cycleAtOrderCeiling(Number(after?.[0] ?? 0)))
                   yield* sql`update ShopUsage set ordersLimitedAt = null where id = 1`;
                 yield* sql`delete from UsageEvent where orderId like ${seedPrefix}`;
-                yield* sql`delete from WorkflowRun where orderId like ${seedPrefix}`;
+                yield* sql`delete from Run where orderId like ${seedPrefix}`;
                 yield* sql`delete from OrderLineItem where orderId like ${seedPrefix}`;
                 yield* sql`delete from ShopOrder where id like ${seedPrefix}`;
               }),
@@ -1690,9 +1690,9 @@ export class OrderRepository extends Context.Service<
                      * is read by nobody.
                      */
                     const deletedRuns =
-                      yield* sql`delete from WorkflowRun where ${sql.in("orderId", chunk)} returning id`;
+                      yield* sql`delete from Run where ${sql.in("orderId", chunk)} returning id`;
                     runs += deletedRuns.length;
-                    // `OrderLineItem` cascades; `WorkflowRunTask` cascaded
+                    // `OrderLineItem` cascades; `RunTask` cascaded
                     // with the runs above.
                     yield* sql`delete from ShopOrder where ${sql.in("id", chunk)}`;
                   }
@@ -1708,9 +1708,9 @@ export class OrderRepository extends Context.Service<
                  * has one.
                  */
                 const orphaned = yield* sql`
-                  delete from WorkflowRun
+                  delete from Run
                   where id in (
-                    select id from WorkflowRun
+                    select id from Run
                     where updatedAt < ${expiredBefore}
                       and orderId not in (select id from ShopOrder)
                     limit ${Domain.ShopLimits.sweepBatch}

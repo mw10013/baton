@@ -298,7 +298,7 @@ describe("OrderRepository.listOrders", () => {
  * Every SQL fragment against `Domain.productionState` and `Domain.orderNeeds`:
  * the fixture covers each branch, and each filter must return exactly the
  * names the TypeScript functions give that status or need. Runs are written
- * directly because `WorkflowRunRepository` is not in this test's layer and
+ * directly because `RunRepository` is not in this test's layer and
  * the filters only read status. `#1005`, `#1009`, `#1010` and `#1012` are
  * open with no open and no done run: `to_make`. `#1010`'s only run is
  * closed, which still reads `to_make` but decides the item, so it is not
@@ -306,7 +306,7 @@ describe("OrderRepository.listOrders", () => {
  *
  * `#1012` and `#1013` are the ambiguity cases, written with
  * `matchedWorkflowIds` directly because reconcile is the only writer of that
- * column and this test has no `WorkflowRunRepository`. `#1013` has an open
+ * column and this test has no `RunRepository`. `#1013` has an open
  * run *and* an item still waiting on a choice: `making` with need
  * `choose_workflow`. Between them they are also the proof that
  * `json_array_length` exists in Durable Object SQLite — every
@@ -325,7 +325,7 @@ const seedStates = Effect.gen(function* () {
     { n: 1, statuses: ["done"] }, // made
     { n: 2, statuses: ["done", "closed"] }, // made
     { n: 3, statuses: ["done", "active"] }, // making
-    { n: 4, statuses: ["done", "pending"] }, // making
+    { n: 4, statuses: ["done", "active"] }, // making
     { n: 5, statuses: [] }, // to make, needs a workflow
     { n: 6, order: { cancelledAt: 5 }, statuses: ["done"] }, // cancelled
     { n: 7, order: { fulfillmentStatus: "FULFILLED" }, statuses: ["done"] }, // fulfilled
@@ -369,7 +369,7 @@ const seedStates = Effect.gen(function* () {
     );
     for (const [index, status] of statuses.entries())
       yield* sql`
-        insert into WorkflowRun (
+        insert into Run (
           id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
           lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
           source, status, closedAt, closedReason, createdAt, updatedAt
@@ -396,11 +396,11 @@ const seedNeeds = Effect.gen(function* () {
   const repository = yield* seedStates;
   const sql = yield* SqlClient.SqlClient;
   const task = (id: string, runId: string, teamId: string) => sql`
-    insert into WorkflowRunTask
-      (id, runId, position, step, name, teamId, teamName, completedAt)
+    insert into RunTask
+      (id, runId, position, step, name, teamId, teamName, doneAt)
     values (${id}, ${runId}, 1, 1, 'Task', ${teamId}, 'Team', null)
   `;
-  yield* sql`update WorkflowRun set blockedAt = 1 where id = 'run-3-1'`;
+  yield* sql`update Run set blockedAt = 1 where id = 'run-3-1'`;
   yield* task("s4", "run-4-1", "team-gone");
   yield* task("s13", "run-13-0", "team-cut");
   yield* task("s14", "run-14-0", "team-cut");
@@ -643,7 +643,7 @@ describe("OrderRepository.listOrders filters", () => {
         const repository = yield* seedStates;
         const sql = yield* SqlClient.SqlClient;
         // A stale block on a fulfilled order's run is not a to-do.
-        yield* sql`update WorkflowRun set status = 'active', blockedAt = 1 where id = 'run-7-0'`;
+        yield* sql`update Run set status = 'active', blockedAt = 1 where id = 'run-7-0'`;
         return yield* repository.listOrders({
           limit: 20,
           cursor: null,
@@ -669,7 +669,7 @@ describe("OrderRepository.listOrders filters", () => {
         const repository = yield* seedStates;
         const sql = yield* SqlClient.SqlClient;
         const block = (runId: string) =>
-          sql`update WorkflowRun set blockedAt = 1 where id = ${runId}`;
+          sql`update Run set blockedAt = 1 where id = ${runId}`;
         yield* block("run-3-1");
         yield* block("run-1-0");
         return {
@@ -801,9 +801,9 @@ describe("OrderRepository.listOrders q", () => {
 describe("OrderRepository.listOrders need team", () => {
   /**
    * `Domain.OrderRow.attention` against a roster the test hands in: #3's
-   * active run has an open task on a deleted team, #4's pending run has a
+   * active run has an open task on a deleted team, #4's unstarted run has a
    * ready task on an empty team, #1's finished run keeps a stale pointer on
-   * a completed task and never counts, and #8 is healthy.
+   * a done task and never counts, and #8 is healthy.
    */
   it("keeps only orders with an unassigned or unstaffed open task, and counts them", async () => {
     const teams = Schema.decodeUnknownSync(Schema.Array(Domain.TeamRoster))([
@@ -819,11 +819,11 @@ describe("OrderRepository.listOrders need team", () => {
           runId: string,
           step: number,
           teamId: string | null,
-          completedAt: number | null,
+          doneAt: number | null,
         ) => sql`
-          insert into WorkflowRunTask
-            (id, runId, position, step, name, teamId, teamName, completedAt)
-          values (${id}, ${runId}, ${step}, ${step}, 'Task', ${teamId}, 'Team', ${completedAt})
+          insert into RunTask
+            (id, runId, position, step, name, teamId, teamName, doneAt)
+          values (${id}, ${runId}, ${step}, ${step}, 'Task', ${teamId}, 'Team', ${doneAt})
         `;
         yield* task("s3", "run-3-1", 1, "team-gone", null);
         yield* task("s4a", "run-4-1", 1, "team-cut", 1);
@@ -879,20 +879,20 @@ describe("OrderRepository.listOrders waitingOn", () => {
       runId: string,
       step: number,
       team: string,
-      completedAt: number | null = null,
+      doneAt: number | null = null,
     ) => {
       position += 1;
       return sql`
-        insert into WorkflowRunTask
-          (id, runId, position, step, name, teamId, teamName, completedAt)
-        values (${id}, ${runId}, ${position}, ${step}, 'Task', ${team}, 'Team', ${completedAt})
+        insert into RunTask
+          (id, runId, position, step, name, teamId, teamName, doneAt)
+        values (${id}, ${runId}, ${position}, ${step}, 'Task', ${team}, 'Team', ${doneAt})
       `;
     };
     /* #1003: two open item runs both ready on Cut, so the id is distinct
        across runs; the done run's task is on Cut too, and a run that is over
        holds nobody up. */
     yield* sql`
-      insert into WorkflowRun (
+      insert into Run (
         id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
         lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
         source, status, createdAt, updatedAt
@@ -936,8 +936,8 @@ describe("OrderRepository.listOrders waitingOn", () => {
     const { all, cut, needs } = await runInRepository(
       Effect.gen(function* () {
         const { sql, task, list } = yield* waitingFixture;
-        yield* sql`update WorkflowRun set status = 'active', blockedAt = 1 where id = 'run-7-0'`;
-        yield* sql`update WorkflowRun set status = 'active' where id = 'run-6-0'`;
+        yield* sql`update Run set status = 'active', blockedAt = 1 where id = 'run-7-0'`;
+        yield* sql`update Run set status = 'active' where id = 'run-6-0'`;
         yield* task("s7", "run-7-0", 1, "team-cut");
         yield* task("s6", "run-6-0", 1, "team-cut");
         yield* task("s6b", "run-6-0", 1, "team-gone");
@@ -990,7 +990,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
     const { page, filtered } = await runInRepository(
       Effect.gen(function* () {
         const { sql, list } = yield* waitingFixture;
-        yield* sql`update WorkflowRun set blockedAt = 1 where id = 'run-4-1'`;
+        yield* sql`update Run set blockedAt = 1 where id = 'run-4-1'`;
         return {
           page: yield* list(),
           filtered: yield* list(aTeamId("team-cut")),
@@ -1007,7 +1007,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
     const page = await runInRepository(
       Effect.gen(function* () {
         const { sql, list } = yield* waitingFixture;
-        yield* sql`update WorkflowRunTask set teamId = 'team-gone' where id in ('s3a', 's3e')`;
+        yield* sql`update RunTask set teamId = 'team-gone' where id in ('s3a', 's3e')`;
         return yield* list();
       }),
     );
@@ -1154,10 +1154,10 @@ describe("OrderRepository usage", () => {
     });
 
   /**
-   * What `WorkflowRunRepository.insertRun` does after it creates the order's
+   * What `RunRepository.insertRun` does after it creates the order's
    * first run. Called directly here so the meter is tested as the rule it is,
    * rather than through a reconcile that would have to be staged first;
-   * `workflow-run-repository.test.ts` owns the other half — that a run is what
+   * `run-repository.test.ts` owns the other half — that a run is what
    * fires it, and that a second run does not.
    */
   const count = (
@@ -1822,7 +1822,7 @@ const runWith =
   (orderId: string, status: string, updatedAt: number) =>
   (sql: SqlClient.SqlClient) =>
     sql`
-      insert into WorkflowRun (
+      insert into Run (
         id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
         lineItemId, lineItemTitle, variantTitle, sku, quantity,
         lineItemProperties, source, status, createdAt, updatedAt
@@ -1847,7 +1847,7 @@ describe("OrderRepository.sweepExpiredOrders", () => {
           [],
         );
         yield* runWith(orderId(1), "active", EXPIRED)(sql);
-        // Expired, closed, with a pending run: goes.
+        // Expired, closed, with an unstarted run: goes.
         yield* upsert(
           repository,
           anOrder({
@@ -1858,7 +1858,7 @@ describe("OrderRepository.sweepExpiredOrders", () => {
           }),
           [],
         );
-        yield* runWith(orderId(2), "pending", EXPIRED)(sql);
+        yield* runWith(orderId(2), "active", EXPIRED)(sql);
         // Closed, but inside the window: stays. Closing an order is not what
         // ages it out.
         yield* upsert(
@@ -1888,8 +1888,9 @@ describe("OrderRepository.sweepExpiredOrders", () => {
         const swept = yield* repository.sweepExpiredOrders({ now: NOW });
         const orders = (yield* sql`select id from ShopOrder order by id`
           .values).map((row) => String(row[0]));
-        const runs = (yield* sql`select id from WorkflowRun order by id`
-          .values).map((row) => String(row[0]));
+        const runs = (yield* sql`select id from Run order by id`.values).map(
+          (row) => String(row[0]),
+        );
         return { swept, orders, runs, usage: yield* repository.getUsage() };
       }),
     );

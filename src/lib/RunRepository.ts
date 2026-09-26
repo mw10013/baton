@@ -11,8 +11,8 @@ import * as ReadyWhere from "@/lib/readyWhere";
  * Failure to map stored rows into domain types — a `Schema` decode error, the
  * repository's own invariant, kept distinct from `SqlError.SqlError`.
  */
-export class WorkflowRunRepositoryError extends Schema.TaggedError<WorkflowRunRepositoryError>()(
-  "WorkflowRunRepositoryError",
+export class RunRepositoryError extends Schema.TaggedError<RunRepositoryError>()(
+  "RunRepositoryError",
   {
     message: Schema.String,
     cause: Schema.Defect(),
@@ -67,14 +67,14 @@ export class RunFinishedError extends Schema.TaggedError<RunFinishedError>()(
 ) {}
 
 /**
- * The shop already holds `Domain.ShopLimits.maxOpenRuns` runs in `pending` or
- * `active`. A safety valve rather than a product limit: at the ceiling a shop
+ * The shop already holds `Domain.ShopLimits.maxOpenRuns` open runs
+ * ({@link Domain.runIsOpen}). A safety valve rather than a product limit: at the ceiling a shop
  * is far outside anything the app is designed for, and the alternative — a
  * Durable Object whose run table grows without bound — is worse than a refusal
  * the merchant can act on by finishing or cancelling work.
  */
-export class WorkflowRunLimitError extends Schema.TaggedError<WorkflowRunLimitError>()(
-  "WorkflowRunLimitError",
+export class RunLimitError extends Schema.TaggedError<RunLimitError>()(
+  "RunLimitError",
   { limit: Schema.Number },
 ) {}
 
@@ -95,7 +95,7 @@ export class RunNotBlockedError extends Schema.TaggedError<RunNotBlockedError>()
   { runId: Schema.String },
 ) {}
 
-/** The task is not ready ({@link Domain.readyTasks}) or is already completed — or, for undo, not yet completed; for put back, not yet started or already completed. */
+/** The task is not ready ({@link Domain.readyTasks}) or is already done — or, for undo, not yet done; for put back, not yet started or already done. */
 export class TaskNotReadyError extends Schema.TaggedError<TaskNotReadyError>()(
   "TaskNotReadyError",
   { runTaskId: Schema.String },
@@ -116,9 +116,9 @@ export class TaskUndoBlockedError extends Schema.TaggedError<TaskUndoBlockedErro
 ) {}
 
 /**
- * `assignRunTaskTeam` on a completed task. Any *open* task reassigns,
- * started or not; a finished task is refused because the write would
- * overwrite `teamName`, the record of which team completed it.
+ * `assignRunTaskTeam` on a done task. Any *open* task can be assigned,
+ * started or not; a done task is refused because the write would overwrite
+ * `teamName`, the record of which team did it.
  */
 export class TaskFinishedError extends Schema.TaggedError<TaskFinishedError>()(
   "TaskFinishedError",
@@ -128,7 +128,7 @@ export class TaskFinishedError extends Schema.TaggedError<TaskFinishedError>()(
 export interface ReconcileCounts {
   /** Runs created by this pass. */
   readonly created: number;
-  /** Open runs whose quantity this pass rewrote to the line's units ({@link Domain.WorkflowRun} `quantityChangedFrom`). */
+  /** Open runs whose quantity this pass rewrote to the line's units ({@link Domain.Run} `quantityChangedFrom`). */
   readonly resized: number;
   /** Open runs this pass closed: the order cancelled or fulfilled, or the line at zero units ({@link Domain.ClosedReason}). */
   readonly closed: number;
@@ -251,8 +251,8 @@ const attribution = (actor: Domain.Actor): Domain.Actor =>
     ? actor
     : { role: "member", memberId: actor.memberId, email: actor.email };
 
-export class WorkflowRunRepository extends Context.Service<
-  WorkflowRunRepository,
+export class RunRepository extends Context.Service<
+  RunRepository,
   {
     /**
      * Plain statements, no transaction of its own: called from inside
@@ -264,10 +264,7 @@ export class WorkflowRunRepository extends Context.Service<
      */
     readonly reconcileOrder: (
       input: StartContext & { readonly orderId: string },
-    ) => Effect.Effect<
-      ReconcileCounts,
-      SqlError.SqlError | WorkflowRunRepositoryError
-    >;
+    ) => Effect.Effect<ReconcileCounts, SqlError.SqlError | RunRepositoryError>;
     /**
      * `reconcileOrder` over every open, paid order, one transaction each:
      * what runs after a definition changes on an on workflow (Turn on, its
@@ -286,7 +283,7 @@ export class WorkflowRunRepository extends Context.Service<
       input: StartContext,
     ) => Effect.Effect<
       ReconcileAllCounts,
-      SqlError.SqlError | WorkflowRunRepositoryError
+      SqlError.SqlError | RunRepositoryError
     >;
     /**
      * What the Turn on dialog asks: how many stored, open (unfulfilled, not
@@ -310,7 +307,7 @@ export class WorkflowRunRepository extends Context.Service<
       },
     ) => Effect.Effect<
       Domain.WaitingOrders,
-      SqlError.SqlError | WorkflowRunRepositoryError
+      SqlError.SqlError | RunRepositoryError
     >;
     /**
      * Manual attach, read as **set this item's workflow**. An item holds at
@@ -341,20 +338,17 @@ export class WorkflowRunRepository extends Context.Service<
       readonly source: Domain.RunSource;
     }) => Effect.Effect<
       Option.Option<{
-        readonly run: Domain.WorkflowRun;
+        readonly run: Domain.Run;
         /** The open run deleted to make room, or null when the item was free or its run was closed. */
-        readonly replaced: Domain.WorkflowRun | null;
+        readonly replaced: Domain.Run | null;
       }>,
-      | SqlError.SqlError
-      | WorkflowRunRepositoryError
-      | WorkflowRunLimitError
-      | RunFinishedError
+      SqlError.SqlError | RunRepositoryError | RunLimitError | RunFinishedError
     >;
     readonly listRunsForOrder: (input: {
       readonly orderId: string;
     }) => Effect.Effect<
-      readonly Domain.WorkflowRunDetail[],
-      SqlError.SqlError | WorkflowRunRepositoryError
+      readonly Domain.RunDetail[],
+      SqlError.SqlError | RunRepositoryError
     >;
     /**
      * What an action set reads ({@link Domain.runActions},
@@ -368,18 +362,18 @@ export class WorkflowRunRepository extends Context.Service<
       input: { readonly runId: string } | { readonly runTaskId: string },
     ) => Effect.Effect<
       Option.Option<{
-        readonly run: Domain.WorkflowRun;
+        readonly run: Domain.Run;
         readonly tasks: readonly Domain.RunTaskView[];
         readonly order: Domain.OrderState;
       }>,
-      SqlError.SqlError | WorkflowRunRepositoryError
+      SqlError.SqlError | RunRepositoryError
     >;
     /** The run with its tasks, by its own id or by one of its tasks' ids. */
     readonly getRun: (
       input: { readonly runId: string } | { readonly runTaskId: string },
     ) => Effect.Effect<
-      Option.Option<Domain.WorkflowRunDetail>,
-      SqlError.SqlError | WorkflowRunRepositoryError
+      Option.Option<Domain.RunDetail>,
+      SqlError.SqlError | RunRepositoryError
     >;
     /**
      * The merchant's Cancel run: closes the run, reason `merchant_cancelled`
@@ -400,7 +394,7 @@ export class WorkflowRunRepository extends Context.Service<
     }) => Effect.Effect<
       void,
       | SqlError.SqlError
-      | WorkflowRunRepositoryError
+      | RunRepositoryError
       | RunNotFoundError
       | RunTerminalError
       | RunOrderClosedError
@@ -433,13 +427,13 @@ export class WorkflowRunRepository extends Context.Service<
         readonly counts: Omit<Domain.RunListCounts, "done">;
         readonly items: readonly Domain.RunListItem[];
       },
-      SqlError.SqlError | WorkflowRunRepositoryError
+      SqlError.SqlError | RunRepositoryError
     >;
     /**
      * The Recent tab ({@link Domain.RecentItem}): tasks owned by `teamIds`
-     * completed at or after `since`, each with its run and the undo verdict
+     * done at or after `since`, each with its run and the undo verdict
      * ({@link Domain.undoBlockedBy}), and runs with a task on `teamIds` that
-     * closed at or after `since`, newest first by `completedAt` or
+     * closed at or after `since`, newest first by `doneAt` or
      * `closedAt`. The team's, not the caller's: a colleague notices a mistake
      * as readily as its author, and a closed run is news to everyone who
      * could see it.
@@ -454,13 +448,13 @@ export class WorkflowRunRepository extends Context.Service<
       readonly limit: number;
     }) => Effect.Effect<
       { readonly items: readonly Domain.RecentItem[]; readonly total: number },
-      SqlError.SqlError | WorkflowRunRepositoryError
+      SqlError.SqlError | RunRepositoryError
     >;
     /**
-     * Undo returns a task to Ready: it clears the completed slot and every
-     * Start column, member or merchant, and writes the `reopened*` slot
-     * (`reopenedAt` / `reopenedByRole` / `reopenedByEmail`) with who sent it
-     * back, then recomputes the run's status. The task is Ready for a worker
+     * Undo returns a task to Ready: it clears the Done slot (`doneAt`,
+     * `doneBy*`) and every Start column, member or merchant, and writes the
+     * `reopened*` slot (`reopenedAt` / `reopenedByRole` / `reopenedByEmail`)
+     * with who sent it back, then recomputes the run's status. The task is Ready for a worker
      * to Start. Keeping a member's Start would leave the task "In progress by
      * A since <original time>": a claim A no longer makes and a time that is
      * no longer true, and it would take Undo then Put back to reach Ready
@@ -477,7 +471,7 @@ export class WorkflowRunRepository extends Context.Service<
     ) => Effect.Effect<
       void,
       | SqlError.SqlError
-      | WorkflowRunRepositoryError
+      | RunRepositoryError
       | RunNotFoundError
       | RunNotAllowedError
       | RunTerminalError
@@ -485,9 +479,10 @@ export class WorkflowRunRepository extends Context.Service<
       | TaskUndoBlockedError
     >;
     /**
-     * Put back clears the Start record of an in-progress task, and the run's
+     * Put back clears the Start record of a started task, and the run's
      * status is recomputed (a run whose only started task is put back is
-     * `pending` again). Refused on a finished task or an unstarted task
+     * {@link Domain.runIsUnstarted} again). Refused on a finished task or an
+     * unstarted task
      * (`TaskNotReadyError`), a run that is not {@link Domain.runIsOpen}
      * (`RunTerminalError`), a blocked run (`RunBlockedError`), or, for a
      * member, a task not on one of their teams (`RunNotAllowedError`).
@@ -506,7 +501,7 @@ export class WorkflowRunRepository extends Context.Service<
     ) => Effect.Effect<
       void,
       | SqlError.SqlError
-      | WorkflowRunRepositoryError
+      | RunRepositoryError
       | RunNotFoundError
       | RunNotAllowedError
       | TaskNotReadyError
@@ -526,7 +521,7 @@ export class WorkflowRunRepository extends Context.Service<
       readonly teamIds: readonly string[];
     }) => Effect.Effect<
       Option.Option<Domain.RunView>,
-      SqlError.SqlError | WorkflowRunRepositoryError
+      SqlError.SqlError | RunRepositoryError
     >;
     /**
      * Marks a ready task in progress. Idempotent: a second Start leaves the
@@ -540,7 +535,7 @@ export class WorkflowRunRepository extends Context.Service<
     ) => Effect.Effect<
       void,
       | SqlError.SqlError
-      | WorkflowRunRepositoryError
+      | RunRepositoryError
       | RunNotFoundError
       | RunNotAllowedError
       | TaskNotReadyError
@@ -548,21 +543,21 @@ export class WorkflowRunRepository extends Context.Service<
       | RunBlockedError
     >;
     /**
-     * Also backfills the started slot with the same actor when Done arrives
-     * without a Start, so every finished task records who. Clears the
-     * `reopened` slot: that slot says "sent back and not yet redone", and a
-     * Done is precisely the end of that. Clears the run's quantity badge
-     * (`quantityChangedFrom`, rule on {@link Domain.WorkflowRun}): a step
-     * finished after the change is proof someone worked with the new number.
-     * Nothing is created here. Gates: {@link Domain.runIsOpen}, and not
-     * {@link Domain.runIsBlocked}.
+     * Sets the Done slot (`doneAt`, `doneBy*`). Also backfills the started
+     * slot with the same actor when Done arrives without a Start, so every
+     * finished task records who. Clears the `reopened` slot: that slot says
+     * "sent back and not yet redone", and a Done is precisely the end of
+     * that. Clears the run's quantity badge (`quantityChangedFrom`, rule on
+     * {@link Domain.Run}): a step finished after the change is proof someone
+     * worked with the new number. Nothing is created here. Gates:
+     * {@link Domain.runIsOpen}, and not {@link Domain.runIsBlocked}.
      */
     readonly completeTask: (
       input: Domain.CompleteTaskCommand,
     ) => Effect.Effect<
       void,
       | SqlError.SqlError
-      | WorkflowRunRepositoryError
+      | RunRepositoryError
       | RunNotFoundError
       | RunNotAllowedError
       | TaskNotReadyError
@@ -584,7 +579,7 @@ export class WorkflowRunRepository extends Context.Service<
     ) => Effect.Effect<
       void,
       | SqlError.SqlError
-      | WorkflowRunRepositoryError
+      | RunRepositoryError
       | RunNotFoundError
       | RunNotAllowedError
     >;
@@ -598,7 +593,7 @@ export class WorkflowRunRepository extends Context.Service<
     ) => Effect.Effect<
       void,
       | SqlError.SqlError
-      | WorkflowRunRepositoryError
+      | RunRepositoryError
       | RunNotFoundError
       | RunNotAllowedError
       | RunTerminalError
@@ -638,7 +633,7 @@ export class WorkflowRunRepository extends Context.Service<
     ) => Effect.Effect<
       void,
       | SqlError.SqlError
-      | WorkflowRunRepositoryError
+      | RunRepositoryError
       | RunNotFoundError
       | RunNotAllowedError
       | RunNotBlockedError
@@ -655,7 +650,7 @@ export class WorkflowRunRepository extends Context.Service<
     ) => Effect.Effect<
       void,
       | SqlError.SqlError
-      | WorkflowRunRepositoryError
+      | RunRepositoryError
       | RunNotFoundError
       | RunNotAllowedError
       | RunNotBlockedError
@@ -683,13 +678,13 @@ export class WorkflowRunRepository extends Context.Service<
     }) => Effect.Effect<
       void,
       | SqlError.SqlError
-      | WorkflowRunRepositoryError
+      | RunRepositoryError
       | RunNotFoundError
       | RunTerminalError
       | TaskFinishedError
     >;
   }
->()("WorkflowRunRepository") {
+>()("RunRepository") {
   /**
    * Depends on {@link OrderRepository} because {@link insertRun} is where the
    * billing meter fires (`OrderRepository.countOrder`). The direction is one
@@ -698,11 +693,11 @@ export class WorkflowRunRepository extends Context.Service<
    * nothing here closes a cycle.
    */
   static readonly layer: Layer.Layer<
-    WorkflowRunRepository,
+    RunRepository,
     never,
     SqlClient.SqlClient | OrderRepository
   > = Layer.effect(
-    WorkflowRunRepository,
+    RunRepository,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const orderRepository = yield* OrderRepository;
@@ -712,17 +707,14 @@ export class WorkflowRunRepository extends Context.Service<
         (rows: unknown) =>
           Schema.decodeUnknownEffect(schema)(rows).pipe(
             Effect.mapError(
-              (cause) => new WorkflowRunRepositoryError({ message, cause }),
+              (cause) => new RunRepositoryError({ message, cause }),
             ),
           );
 
-      const decodeRuns = decode(
-        Schema.Array(Domain.WorkflowRun),
-        "Invalid WorkflowRun row",
-      );
+      const decodeRuns = decode(Schema.Array(Domain.Run), "Invalid Run row");
       const decodeTasks = decode(
-        Schema.Array(Domain.WorkflowRunTask),
-        "Invalid WorkflowRunTask row",
+        Schema.Array(Domain.RunTask),
+        "Invalid RunTask row",
       );
       const decodeOrders = decode(
         Schema.Array(Domain.ShopOrder),
@@ -751,7 +743,7 @@ export class WorkflowRunRepository extends Context.Service<
       );
 
       const findRun = (runId: string) =>
-        sql`select * from WorkflowRun where id = ${runId}`.pipe(
+        sql`select * from Run where id = ${runId}`.pipe(
           Effect.flatMap(decodeRuns),
           Effect.map(([run]) => Option.fromUndefinedOr(run)),
         );
@@ -767,7 +759,7 @@ export class WorkflowRunRepository extends Context.Service<
         );
 
       const requireTask = (runTaskId: string) =>
-        sql`select * from WorkflowRunTask where id = ${runTaskId}`.pipe(
+        sql`select * from RunTask where id = ${runTaskId}`.pipe(
           Effect.flatMap(decodeTasks),
           Effect.flatMap(([task]) =>
             task === undefined
@@ -782,14 +774,14 @@ export class WorkflowRunRepository extends Context.Service<
 
       const readyTasks = (runId: string) =>
         sql`
-          select s.* from WorkflowRunTask s
+          select s.* from RunTask s
           where s.runId = ${runId} and ${readyWhere("s")}
           order by s.position
         `.pipe(Effect.flatMap(decodeTasks));
 
       const isReady = (runTaskId: string) =>
         sql`
-          select 1 from WorkflowRunTask s
+          select 1 from RunTask s
           where s.id = ${runTaskId} and ${readyWhere("s")}
         `.pipe(Effect.map((rows) => rows.length > 0));
 
@@ -811,7 +803,7 @@ export class WorkflowRunRepository extends Context.Service<
       }: {
         readonly runTaskId: string;
         readonly teamIds: readonly string[] | undefined;
-        readonly gate?: (run: Domain.WorkflowRun) => boolean;
+        readonly gate?: (run: Domain.Run) => boolean;
       }) =>
         Effect.gen(function* () {
           const task = yield* requireTask(runTaskId);
@@ -854,7 +846,7 @@ export class WorkflowRunRepository extends Context.Service<
         runIds.length === 0
           ? Effect.succeed([])
           : sql`
-              select * from WorkflowRunTask
+              select * from RunTask
               where runId in (select value from json_each(${json(runIds)}))
               order by runId, position
             `.pipe(Effect.flatMap(decodeTasks));
@@ -864,29 +856,28 @@ export class WorkflowRunRepository extends Context.Service<
        * its order (`OrderRepository` retention), so a run whose order is
        * missing here is not one a reader is offered: the callers drop it.
        */
-      const orderStates = Effect.fn("WorkflowRunRepository.orderStates")(
-        function* (orderIds: readonly string[]) {
-          if (orderIds.length === 0)
-            return new Map<string, Domain.OrderState>();
-          const rows = yield* decode(
-            Schema.Array(
-              Schema.Struct({ id: Schema.String, ...Domain.OrderState.fields }),
-            ),
-            "Invalid order state row",
-          )(
-            yield* sql`
+      const orderStates = Effect.fn("RunRepository.orderStates")(function* (
+        orderIds: readonly string[],
+      ) {
+        if (orderIds.length === 0) return new Map<string, Domain.OrderState>();
+        const rows = yield* decode(
+          Schema.Array(
+            Schema.Struct({ id: Schema.String, ...Domain.OrderState.fields }),
+          ),
+          "Invalid order state row",
+        )(
+          yield* sql`
               select id, cancelledAt, fulfillmentStatus from ShopOrder
               where id in (select value from json_each(${json([...new Set(orderIds)])}))
             `,
-          );
-          return new Map(
-            rows.map(({ id, ...state }): [string, Domain.OrderState] => [
-              id,
-              state,
-            ]),
-          );
-        },
-      );
+        );
+        return new Map(
+          rows.map(({ id, ...state }): [string, Domain.OrderState] => [
+            id,
+            state,
+          ]),
+        );
+      });
 
       /**
        * `RunNotAllowedError` unless the caller can see the run
@@ -928,88 +919,87 @@ export class WorkflowRunRepository extends Context.Service<
        * decisions about the rows rather than about the query: keeping them
        * apart means the two statements below are read once, in one place.
        */
-      const runListItems = Effect.fn("WorkflowRunRepository.runListItems")(
-        function* (teamIds: readonly Domain.TeamId[]) {
-          if (teamIds.length === 0) return [];
-          const ready = yield* decodeTasks(
-            yield* sql`
-              select s.* from WorkflowRunTask s
-              join WorkflowRun r on r.id = s.runId
-              where r.status in ('pending', 'active')
+      const runListItems = Effect.fn("RunRepository.runListItems")(function* (
+        teamIds: readonly Domain.TeamId[],
+      ) {
+        if (teamIds.length === 0) return [];
+        const ready = yield* decodeTasks(
+          yield* sql`
+              select s.* from RunTask s
+              join Run r on r.id = s.runId
+              where r.status = 'active'
                 and ${readyWhere("s")}
                 and exists (
-                  select 1 from WorkflowRunTask m
+                  select 1 from RunTask m
                   where m.runId = s.runId
                     and m.teamId in (select value from json_each(${json(teamIds)}))
                     and ${readyWhere("m")}
                 )
               order by s.runId, s.position
             `,
-          );
-          if (ready.length === 0) return [];
-          const runIds = [...new Set(ready.map((task) => task.runId))];
-          const runs = yield* decodeRunListRuns(
-            yield* sql`
+        );
+        if (ready.length === 0) return [];
+        const runIds = [...new Set(ready.map((task) => task.runId))];
+        const runs = yield* decodeRunListRuns(
+          yield* sql`
               select r.*,
-                (select max(step) from WorkflowRunTask c where c.runId = r.id) as stepCount,
+                (select max(step) from RunTask c where c.runId = r.id) as stepCount,
                 o.cancelledAt as orderCancelledAt,
                 o.fulfillmentStatus as orderFulfillmentStatus
-              from WorkflowRun r
+              from Run r
               join ShopOrder o on o.id = r.orderId
               where r.id in (select value from json_each(${json(runIds)}))
               order by r.orderProcessedAt, r.lineItemId, r.id
             `,
-          );
-          return runs.flatMap(
-            ({
-              stepCount,
-              orderCancelledAt,
-              orderFulfillmentStatus,
-              ...run
-            }): Domain.RunListItem[] => {
-              const [first, ...rest] = ready
-                .filter(
-                  (task) =>
-                    task.runId === run.id &&
-                    Domain.taskIsOnTeams(task, teamIds),
-                )
-                // Whatever the row does not render is dropped rather than
-                // nulled or carried: the shape is {@link Domain.RunListTask} and
-                // its JSDoc is why.
-                .map((task) =>
-                  Struct.omit(task, [
-                    "completedAt",
-                    "completedBy",
-                    "completedByEmail",
-                    "completedByRole",
-                    "instructions",
-                    "reopenedAt",
-                    "reopenedByRole",
-                    "reopenedByEmail",
-                  ]),
-                );
-              return first === undefined
-                ? []
-                : [
-                    {
-                      run,
-                      tasks: [first, ...rest],
-                      stepCount,
-                      order: {
-                        cancelledAt: orderCancelledAt,
-                        fulfillmentStatus: orderFulfillmentStatus,
-                      },
+        );
+        return runs.flatMap(
+          ({
+            stepCount,
+            orderCancelledAt,
+            orderFulfillmentStatus,
+            ...run
+          }): Domain.RunListItem[] => {
+            const [first, ...rest] = ready
+              .filter(
+                (task) =>
+                  task.runId === run.id && Domain.taskIsOnTeams(task, teamIds),
+              )
+              // Whatever the row does not render is dropped rather than
+              // nulled or carried: the shape is {@link Domain.RunListTask} and
+              // its JSDoc is why.
+              .map((task) =>
+                Struct.omit(task, [
+                  "doneAt",
+                  "doneBy",
+                  "doneByEmail",
+                  "doneByRole",
+                  "instructions",
+                  "reopenedAt",
+                  "reopenedByRole",
+                  "reopenedByEmail",
+                ]),
+              );
+            return first === undefined
+              ? []
+              : [
+                  {
+                    run,
+                    tasks: [first, ...rest],
+                    stepCount,
+                    order: {
+                      cancelledAt: orderCancelledAt,
+                      fulfillmentStatus: orderFulfillmentStatus,
                     },
-                  ];
-            },
-          );
-        },
-      );
+                  },
+                ];
+          },
+        );
+      });
 
-      const withTasks = (runs: readonly Domain.WorkflowRun[]) =>
+      const withTasks = (runs: readonly Domain.Run[]) =>
         Effect.gen(function* () {
           const tasks = yield* tasksForRuns(runs.map((run) => run.id));
-          return runs.map((run): Domain.WorkflowRunDetail => ({
+          return runs.map((run): Domain.RunDetail => ({
             run,
             tasks: tasks.filter((task) => task.runId === run.id),
           }));
@@ -1018,9 +1008,8 @@ export class WorkflowRunRepository extends Context.Service<
       /**
        * `status` is a function of the tasks; recomputing it in SQL from the
        * same rows the task write just touched is what keeps the two in one
-       * transaction with nothing to drift. A started task counts as `active`
-       * on its own: "someone has started work" is what puts the quantity
-       * badge on a run reconcile resizes.
+       * transaction with nothing to drift. Two statuses are derived: `done`
+       * when every task is done, `active` otherwise.
        *
        * Only ever called on an open run: every caller gates on
        * {@link Domain.runIsOpen}, or on not {@link Domain.runIsClosed} for
@@ -1030,14 +1019,13 @@ export class WorkflowRunRepository extends Context.Service<
       const recomputeStatus = (runId: string, now: number) =>
         Effect.andThen(
           sql`
-          update WorkflowRun set
+          update Run set
             status = (
               select case
-                when count(*) = sum(completedAt is not null) then 'done'
-                when sum(completedAt is not null) > 0 or sum(startedAt is not null) > 0 then 'active'
-                else 'pending'
+                when count(*) = sum(doneAt is not null) then 'done'
+                else 'active'
               end
-              from WorkflowRunTask s where s.runId = WorkflowRun.id
+              from RunTask s where s.runId = Run.id
             ),
             updatedAt = ${now}
           where id = ${runId}
@@ -1048,17 +1036,16 @@ export class WorkflowRunRepository extends Context.Service<
         );
 
       /**
-       * `WorkflowRun_status_idx` serves this; the scan it costs is bounded by
+       * `Run_status_idx` serves this; the scan it costs is bounded by
        * the ceiling itself, which is the whole reason the ceiling exists. A
        * second maintained counter would be cheaper per insert and would have
        * to stay correct across cancel, reconcile and every task write — one
        * derived count beats three places that must agree.
        */
-      const openRunCount = Effect.fn("WorkflowRunRepository.openRunCount")(
+      const openRunCount = Effect.fn("RunRepository.openRunCount")(
         function* () {
           const rows =
-            yield* sql`select count(*) from WorkflowRun where status in ('pending', 'active')`
-              .values;
+            yield* sql`select count(*) from Run where status = 'active'`.values;
           return Number(rows[0]?.[0] ?? 0);
         },
       );
@@ -1070,7 +1057,7 @@ export class WorkflowRunRepository extends Context.Service<
        * completing a task.
        */
       const releaseOpenRunLimit = Effect.fn(
-        "WorkflowRunRepository.releaseOpenRunLimit",
+        "RunRepository.releaseOpenRunLimit",
       )(function* () {
         const rows =
           yield* sql`select openRunsLimitedAt from ShopUsage where id = 1`
@@ -1094,11 +1081,11 @@ export class WorkflowRunRepository extends Context.Service<
         now: number,
       ) =>
         sql`
-          update WorkflowRun
+          update Run
           set status = 'closed', closedAt = ${now}, closedReason = ${reason},
               blockedAt = null, blockReason = null, blockedBy = null,
               quantityChangedFrom = null, updatedAt = ${now}
-          where ${where} and status in ('pending', 'active')
+          where ${where} and status = 'active'
           returning id
         `.pipe(
           Effect.tap(() => releaseOpenRunLimit()),
@@ -1115,25 +1102,24 @@ export class WorkflowRunRepository extends Context.Service<
        * returned is `Option.none()`, which every caller already reads as
        * "nothing created".
        */
-      const insertRun = Effect.fn("WorkflowRunRepository.insertRun")(
-        function* ({
-          workflow: { workflow, tasks },
-          teams,
-          order,
-          lineItem,
-          source,
-        }: {
-          readonly workflow: Domain.WorkflowDetail;
-          readonly teams: StartContext["teams"];
-          readonly order: Domain.ShopOrder;
-          readonly lineItem: Domain.OrderLineItem;
-          readonly source: Domain.RunSource;
-        }) {
-          const now = yield* Clock.currentTimeMillis;
-          const runId = crypto.randomUUID();
-          const [run] = yield* decodeRuns(
-            yield* sql`
-              insert into WorkflowRun (
+      const insertRun = Effect.fn("RunRepository.insertRun")(function* ({
+        workflow: { workflow, tasks },
+        teams,
+        order,
+        lineItem,
+        source,
+      }: {
+        readonly workflow: Domain.WorkflowDetail;
+        readonly teams: StartContext["teams"];
+        readonly order: Domain.ShopOrder;
+        readonly lineItem: Domain.OrderLineItem;
+        readonly source: Domain.RunSource;
+      }) {
+        const now = yield* Clock.currentTimeMillis;
+        const runId = crypto.randomUUID();
+        const [run] = yield* decodeRuns(
+          yield* sql`
+              insert into Run (
                 id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
                 lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
                 source, status, createdAt, updatedAt
@@ -1144,24 +1130,24 @@ export class WorkflowRunRepository extends Context.Service<
                 ${lineItem.variantTitle}, ${lineItem.sku},
                 ${Domain.unitsToMake(lineItem)},
                 ${json(lineItem.properties)},
-                ${source}, 'pending', ${now}, ${now}
+                ${source}, 'active', ${now}, ${now}
               )
               on conflict do nothing
               returning *
             `,
-          );
-          if (run === undefined) return Option.none();
-          // The meter, and the only place it fires. Inside the caller's
-          // transaction, which for the reconcile path is the upsert's:
-          // `OrderRepository.countOrder` carries the rule.
-          yield* orderRepository.countOrder(order.id, now);
-          yield* Effect.forEach(
-            tasks,
-            (task) => sql`
-              insert into WorkflowRunTask
+        );
+        if (run === undefined) return Option.none();
+        // The meter, and the only place it fires. Inside the caller's
+        // transaction, which for the reconcile path is the upsert's:
+        // `OrderRepository.countOrder` carries the rule.
+        yield* orderRepository.countOrder(order.id, now);
+        yield* Effect.forEach(
+          tasks,
+          (task) => sql`
+              insert into RunTask
                 (id, runId, position, step, name, teamId, teamName, instructions,
-                 startedAt, startedBy, startedByEmail, completedAt, completedBy,
-                 completedByEmail)
+                 startedAt, startedBy, startedByEmail, doneAt, doneBy,
+                 doneByEmail)
               values (
                 ${crypto.randomUUID()}, ${runId}, ${task.position}, ${task.step},
                 ${task.name}, ${task.teamId},
@@ -1169,11 +1155,10 @@ export class WorkflowRunRepository extends Context.Service<
                 ${task.instructions}, null, null, null, null, null, null
               )
             `,
-            { discard: true },
-          );
-          return Option.some(run);
-        },
-      );
+          { discard: true },
+        );
+        return Option.some(run);
+      });
 
       const openOrders = sql`
         select id from ShopOrder
@@ -1207,7 +1192,7 @@ export class WorkflowRunRepository extends Context.Service<
        * and simply creates nothing new until the balance lands — a payment
        * wobble must never cancel work in progress.
        */
-      const reconcileOrder = Effect.fn("WorkflowRunRepository.reconcileOrder")(
+      const reconcileOrder = Effect.fn("RunRepository.reconcileOrder")(
         function* ({
           orderId,
           workflows,
@@ -1220,7 +1205,7 @@ export class WorkflowRunRepository extends Context.Service<
           if (order === undefined) return NO_COUNTS;
           const earlyExit = (status: "cancelled" | "fulfilled") =>
             Effect.logInfo(
-              `WorkflowRunRepository.reconcileOrder: orderId=${orderId} status=${status}`,
+              `RunRepository.reconcileOrder: orderId=${orderId} status=${status}`,
             ).pipe(Effect.annotateLogs({ orderId, status }));
           if (Domain.isCancelled(order)) {
             yield* earlyExit("cancelled");
@@ -1234,9 +1219,8 @@ export class WorkflowRunRepository extends Context.Service<
             };
           }
           /**
-           * Nothing left to make: every open run closes, pending or active,
-           * one rule for both, because the work is over whether or not anyone
-           * started it. Partial fulfillment changes nothing anywhere:
+           * Nothing left to make: every open run closes, started or not,
+           * because the work is over whether or not anyone started it. Partial fulfillment changes nothing anywhere:
            * fulfilling a line leaves its `currentQuantity` alone, so neither
            * this branch nor `adjust` below sees a difference
            * ({@link Domain.unitsToMake}).
@@ -1258,7 +1242,7 @@ export class WorkflowRunRepository extends Context.Service<
           );
           // Every run on the order, adjusted below against its line item.
           const runs = yield* decodeRuns(
-            yield* sql`select * from WorkflowRun where orderId = ${orderId}`,
+            yield* sql`select * from Run where orderId = ${orderId}`,
           );
           const startable = workflows.filter((workflow) =>
             canStart(workflow, teams),
@@ -1304,7 +1288,7 @@ export class WorkflowRunRepository extends Context.Service<
             ambiguous,
             ({ lineItem, matched }) =>
               Effect.logInfo(
-                `WorkflowRunRepository.reconcileOrder: orderId=${orderId} lineItemId=${lineItem.id} matched=${String(matched.length)}: ambiguous, no run started`,
+                `RunRepository.reconcileOrder: orderId=${orderId} lineItemId=${lineItem.id} matched=${String(matched.length)}: ambiguous, no run started`,
               ).pipe(
                 Effect.annotateLogs({
                   orderId,
@@ -1345,7 +1329,7 @@ export class WorkflowRunRepository extends Context.Service<
               where id = 1
             `;
             yield* Effect.logError(
-              `WorkflowRunRepository.reconcileOrder: orderId=${orderId} declined=${String(declined)} limit=${String(Domain.ShopLimits.maxOpenRuns)}: open-run ceiling reached, runs not started`,
+              `RunRepository.reconcileOrder: orderId=${orderId} declined=${String(declined)} limit=${String(Domain.ShopLimits.maxOpenRuns)}: open-run ceiling reached, runs not started`,
             ).pipe(
               Effect.annotateLogs({
                 orderId,
@@ -1378,15 +1362,15 @@ export class WorkflowRunRepository extends Context.Service<
            * the ordinary end of that work; a closed run is over.
            *
            * Zero units closes the run as `item_removed`. Any other change
-           * writes the new units onto the run; on an `active` run it also
-           * keeps the original quantity in `quantityChangedFrom` for the
+           * writes the new units onto the run; unless the run is
+           * {@link Domain.runIsUnstarted} it also keeps the original
+           * quantity in `quantityChangedFrom` for the
            * badge, and a change back to that quantity clears the badge, since
            * there is nothing left to tell. The rule is on
-           * {@link Domain.WorkflowRun}.
+           * {@link Domain.Run}.
            */
-          const adjust = (run: Domain.WorkflowRun) => {
+          const adjust = ({ run, tasks }: Domain.RunDetail) => {
             const unchanged = Effect.succeed({ resized: 0, closed: 0 });
-            if (!Domain.runIsOpen(run)) return unchanged;
             const lineItem = lineItems.find(
               (item) => item.id === run.lineItemId,
             );
@@ -1399,18 +1383,19 @@ export class WorkflowRunRepository extends Context.Service<
                 now,
               ).pipe(Effect.map((closed) => ({ resized: 0, closed })));
             if (units === run.quantity) return unchanged;
-            const original = Domain.runIsUnstarted(run)
+            const original = Domain.runIsUnstarted(tasks)
               ? run.quantityChangedFrom
               : (run.quantityChangedFrom ?? run.quantity);
             const from = original === units ? null : original;
             return sql`
-                update WorkflowRun
+                update Run
                 set quantity = ${units}, quantityChangedFrom = ${from},
                     updatedAt = ${now}
                 where id = ${run.id}
               `.pipe(Effect.as({ resized: 1, closed: 0 }));
           };
-          const adjusted = yield* Effect.all(runs.map(adjust));
+          const open = yield* withTasks(runs.filter(Domain.runIsOpen));
+          const adjusted = yield* Effect.all(open.map(adjust));
           return adjusted.reduce<ReconcileCounts>(
             (counts, delta) => ({
               ...counts,
@@ -1427,13 +1412,13 @@ export class WorkflowRunRepository extends Context.Service<
         },
       );
 
-      const getRun = Effect.fn("WorkflowRunRepository.getRun")(function* (
+      const getRun = Effect.fn("RunRepository.getRun")(function* (
         input: { readonly runId: string } | { readonly runTaskId: string },
       ) {
         const runId =
           "runId" in input
             ? input.runId
-            : (yield* sql`select runId from WorkflowRunTask where id = ${input.runTaskId}`)[0]
+            : (yield* sql`select runId from RunTask where id = ${input.runTaskId}`)[0]
                 ?.runId;
         if (typeof runId !== "string") return Option.none();
         const run = yield* findRun(runId);
@@ -1442,90 +1427,92 @@ export class WorkflowRunRepository extends Context.Service<
         return Option.fromUndefinedOr(detail);
       });
 
-      return WorkflowRunRepository.of({
+      return RunRepository.of({
         reconcileOrder,
 
-        reconcileAll: Effect.fn("WorkflowRunRepository.reconcileAll")(
-          function* (context: StartContext) {
-            const ids = yield* openOrders.pipe(
-              Effect.map((rows) => rows.map((row) => String(row.id))),
-            );
-            const counts = yield* Effect.forEach(
-              ids,
-              (orderId) =>
-                sql.withTransaction(reconcileOrder({ ...context, orderId })),
-              { concurrency: 1 },
-            );
-            return {
-              orders: ids.length,
-              created: counts.reduce((sum, { created }) => sum + created, 0),
-              ambiguous: counts.reduce(
-                (sum, { ambiguous }) => sum + ambiguous,
-                0,
-              ),
-            } satisfies ReconcileAllCounts;
-          },
-        ),
-
-        countWaitingOrders: Effect.fn(
-          "WorkflowRunRepository.countWaitingOrders",
-        )(function* ({
-          workflow,
-          workflows,
-          teams,
-        }: StartContext & { readonly workflow: Domain.WorkflowDetail }) {
-          // The open orders' line items with no run on them. The tag
-          // test stays in TypeScript so this count and reconcile share one
-          // predicate, even though `Workflow.tag` is a plain column.
-          const rows = yield* decode(
-            Schema.Array(
-              Schema.Struct({
-                orderId: Schema.String,
-                processedAt: Schema.Number,
-                currentQuantity: Schema.Number,
-                productTags: Schema.fromJsonString(Schema.Array(Schema.String)),
-              }),
+        reconcileAll: Effect.fn("RunRepository.reconcileAll")(function* (
+          context: StartContext,
+        ) {
+          const ids = yield* openOrders.pipe(
+            Effect.map((rows) => rows.map((row) => String(row.id))),
+          );
+          const counts = yield* Effect.forEach(
+            ids,
+            (orderId) =>
+              sql.withTransaction(reconcileOrder({ ...context, orderId })),
+            { concurrency: 1 },
+          );
+          return {
+            orders: ids.length,
+            created: counts.reduce((sum, { created }) => sum + created, 0),
+            ambiguous: counts.reduce(
+              (sum, { ambiguous }) => sum + ambiguous,
+              0,
             ),
-            "Invalid waiting line item row",
-          )(
-            yield* sql`
+          } satisfies ReconcileAllCounts;
+        }),
+
+        countWaitingOrders: Effect.fn("RunRepository.countWaitingOrders")(
+          function* ({
+            workflow,
+            workflows,
+            teams,
+          }: StartContext & { readonly workflow: Domain.WorkflowDetail }) {
+            // The open orders' line items with no run on them. The tag
+            // test stays in TypeScript so this count and reconcile share one
+            // predicate, even though `Workflow.tag` is a plain column.
+            const rows = yield* decode(
+              Schema.Array(
+                Schema.Struct({
+                  orderId: Schema.String,
+                  processedAt: Schema.Number,
+                  currentQuantity: Schema.Number,
+                  productTags: Schema.fromJsonString(
+                    Schema.Array(Schema.String),
+                  ),
+                }),
+              ),
+              "Invalid waiting line item row",
+            )(
+              yield* sql`
               select li.orderId, o.processedAt, li.currentQuantity, li.productTags
               from OrderLineItem li
               join ShopOrder o on o.id = li.orderId
               where o.cancelledAt is null and o.fulfillmentStatus <> 'FULFILLED'
                 and li.currentQuantity > 0
                 and not exists (
-                  select 1 from WorkflowRun r
+                  select 1 from Run r
                   where r.lineItemId = li.id
                 )
             `,
-          );
-          // Rivals: the other startable workflows. An item any of them also
-          // matches is ambiguous the moment this one goes on, and ambiguity
-          // starts nothing, so it is not a waiting order.
-          const rivals = workflows.filter(
-            (candidate) =>
-              candidate.workflow.id !== workflow.workflow.id &&
-              canStart(candidate, teams),
-          );
-          const matching = rows.filter(
-            (row) =>
-              matchesTag(workflow, row) &&
-              !rivals.some((rival) => matchesTag(rival, row)),
-          );
-          const byOrder = [
-            ...new Map(matching.map((row) => [row.orderId, row])).values(),
-          ];
-          return summarise(byOrder);
-        }),
+            );
+            // Rivals: the other startable workflows. An item any of them also
+            // matches is ambiguous the moment this one goes on, and ambiguity
+            // starts nothing, so it is not a waiting order.
+            const rivals = workflows.filter(
+              (candidate) =>
+                candidate.workflow.id !== workflow.workflow.id &&
+                canStart(candidate, teams),
+            );
+            const matching = rows.filter(
+              (row) =>
+                matchesTag(workflow, row) &&
+                !rivals.some((rival) => matchesTag(rival, row)),
+            );
+            const byOrder = [
+              ...new Map(matching.map((row) => [row.orderId, row])).values(),
+            ];
+            return summarise(byOrder);
+          },
+        ),
 
-        setRun: Effect.fn("WorkflowRunRepository.setRun")(
+        setRun: Effect.fn("RunRepository.setRun")(
           (input: Parameters<typeof insertRun>[0]) =>
             sql.withTransaction(
               Effect.gen(function* () {
                 const existing = yield* decodeRuns(
                   yield* sql`
-                    select * from WorkflowRun
+                    select * from Run
                     where lineItemId = ${input.lineItem.id}
                   `,
                 );
@@ -1549,7 +1536,7 @@ export class WorkflowRunRepository extends Context.Service<
                 // Delete first: the unique `lineItemId` must be free before
                 // the insert.
                 if (incumbent !== undefined)
-                  yield* sql`delete from WorkflowRun where id = ${incumbent.id}`;
+                  yield* sql`delete from Run where id = ${incumbent.id}`;
                 const replaced = closed ? null : (incumbent ?? null);
                 // The item's one run was deleted above, so the insert's
                 // `on conflict do nothing` cannot fire here.
@@ -1560,7 +1547,7 @@ export class WorkflowRunRepository extends Context.Service<
                 // deleted any incumbent, so swapping one item's workflow at
                 // the ceiling still works.
                 if ((yield* openRunCount()) >= Domain.ShopLimits.maxOpenRuns)
-                  return yield* new WorkflowRunLimitError({
+                  return yield* new RunLimitError({
                     limit: Domain.ShopLimits.maxOpenRuns,
                   });
                 const inserted = yield* insertRun(input);
@@ -1571,12 +1558,12 @@ export class WorkflowRunRepository extends Context.Service<
             ),
         ),
 
-        listRunsForOrder: Effect.fn("WorkflowRunRepository.listRunsForOrder")(
+        listRunsForOrder: Effect.fn("RunRepository.listRunsForOrder")(
           function* ({ orderId }: { readonly orderId: string }) {
             return yield* withTasks(
               yield* decodeRuns(
                 yield* sql`
-                  select * from WorkflowRun
+                  select * from Run
                   where orderId = ${orderId}
                   order by lineItemId, createdAt
                 `,
@@ -1587,7 +1574,7 @@ export class WorkflowRunRepository extends Context.Service<
 
         getRun,
 
-        getRunGate: Effect.fn("WorkflowRunRepository.getRunGate")(function* (
+        getRunGate: Effect.fn("RunRepository.getRunGate")(function* (
           input: { readonly runId: string } | { readonly runTaskId: string },
         ) {
           const found = yield* getRun(input);
@@ -1603,7 +1590,7 @@ export class WorkflowRunRepository extends Context.Service<
               });
         }),
 
-        cancelRun: Effect.fn("WorkflowRunRepository.cancelRun")(function* ({
+        cancelRun: Effect.fn("RunRepository.cancelRun")(function* ({
           runId,
         }: {
           readonly runId: string;
@@ -1640,7 +1627,7 @@ export class WorkflowRunRepository extends Context.Service<
          * SQL would make each selection a different read whose totals
          * disagreed with the one beside it.
          */
-        listRuns: Effect.fn("WorkflowRunRepository.listRuns")(function* ({
+        listRuns: Effect.fn("RunRepository.listRuns")(function* ({
           teamIds,
           memberEmail,
           query,
@@ -1702,7 +1689,7 @@ export class WorkflowRunRepository extends Context.Service<
           };
         }),
 
-        listRecent: Effect.fn("WorkflowRunRepository.listRecent")(function* ({
+        listRecent: Effect.fn("RunRepository.listRecent")(function* ({
           teamIds,
           since,
           limit,
@@ -1715,26 +1702,25 @@ export class WorkflowRunRepository extends Context.Service<
           const teams = json(teamIds);
           /**
            * Two windows, each bounded by `since` and served by its own index:
-           * finished tasks by `WorkflowRunTask_teamId_idx (teamId,
-           * completedAt)`, closed runs by `WorkflowRun_closed_idx (closedAt)`,
+           * finished tasks by `RunTask_teamId_idx (teamId,
+           * doneAt)`, closed runs by `Run_closed_idx (closedAt)`,
            * partial over `closed`. So each counts a day, not the table.
            */
           const closedWhere = sql`
             r.status = 'closed' and r.closedAt >= ${since}
               and exists (
-                select 1 from WorkflowRunTask t
+                select 1 from RunTask t
                 where t.runId = r.id
                   and t.teamId in (select value from json_each(${teams}))
               )
           `;
           const countedTasks = yield* sql`
-            select count(*) from WorkflowRunTask s
-            where s.completedAt >= ${since}
+            select count(*) from RunTask s
+            where s.doneAt >= ${since}
               and s.teamId in (select value from json_each(${teams}))
           `.values;
           const countedClosed =
-            yield* sql`select count(*) from WorkflowRun r where ${closedWhere}`
-              .values;
+            yield* sql`select count(*) from Run r where ${closedWhere}`.values;
           const total =
             Number(countedTasks[0]?.[0] ?? 0) +
             Number(countedClosed[0]?.[0] ?? 0);
@@ -1743,16 +1729,16 @@ export class WorkflowRunRepository extends Context.Service<
           if (limit === 0) return { items: [], total };
           const done = yield* decodeTasks(
             yield* sql`
-              select s.* from WorkflowRunTask s
-              where s.completedAt >= ${since}
+              select s.* from RunTask s
+              where s.doneAt >= ${since}
                 and s.teamId in (select value from json_each(${teams}))
-              order by s.completedAt desc, s.position desc
+              order by s.doneAt desc, s.position desc
               limit ${limit}
             `,
           );
           const closed = yield* decodeRuns(
             yield* sql`
-              select r.* from WorkflowRun r where ${closedWhere}
+              select r.* from Run r where ${closedWhere}
               order by r.closedAt desc, r.id desc
               limit ${limit}
             `,
@@ -1764,7 +1750,7 @@ export class WorkflowRunRepository extends Context.Service<
               runIds.length === 0
                 ? []
                 : yield* sql`
-                    select * from WorkflowRun
+                    select * from Run
                     where id in (select value from json_each(${json(runIds)}))
                   `,
             )),
@@ -1788,7 +1774,7 @@ export class WorkflowRunRepository extends Context.Service<
                         tasks.filter((other) => other.runId === run.id),
                       ),
                       order,
-                      at: task.completedAt ?? 0,
+                      at: task.doneAt ?? 0,
                     },
                   ];
             },
@@ -1808,51 +1794,49 @@ export class WorkflowRunRepository extends Context.Service<
           return { items, total };
         }),
 
-        uncompleteTask: Effect.fn("WorkflowRunRepository.uncompleteTask")(
-          function* ({
-            runTaskId,
-            actor,
-            teamIds,
-          }: Domain.UncompleteTaskCommand) {
-            yield* sql.withTransaction(
-              Effect.gen(function* () {
-                // Undoing a `done` run's last task is the point; a closed run
-                // is final.
-                const { task, run } = yield* requireActionable({
-                  runTaskId,
-                  teamIds,
-                  gate: (candidate) => !Domain.runIsClosed(candidate),
-                });
-                if (task.completedAt === null)
-                  yield* new TaskNotReadyError({ runTaskId });
-                const blocker = Domain.undoBlockedBy(
-                  task,
-                  yield* tasksForRuns([run.id]),
-                );
-                if (blocker !== null)
-                  yield* new TaskUndoBlockedError({ runTaskId, ...blocker });
-                const now = yield* Clock.currentTimeMillis;
-                const by = actorColumns(actor);
-                // Undo returns the task to Ready. Who reopened it is the
-                // `reopened*` slot; the old Start is a claim the starter no
-                // longer makes and a time that is no longer true.
-                yield* sql`
-                  update WorkflowRunTask
-                  set completedAt = null, completedBy = null,
-                      completedByEmail = null, completedByRole = null,
+        uncompleteTask: Effect.fn("RunRepository.uncompleteTask")(function* ({
+          runTaskId,
+          actor,
+          teamIds,
+        }: Domain.UncompleteTaskCommand) {
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              // Undoing a `done` run's last task is the point; a closed run
+              // is final.
+              const { task, run } = yield* requireActionable({
+                runTaskId,
+                teamIds,
+                gate: (candidate) => !Domain.runIsClosed(candidate),
+              });
+              if (task.doneAt === null)
+                yield* new TaskNotReadyError({ runTaskId });
+              const blocker = Domain.undoBlockedBy(
+                task,
+                yield* tasksForRuns([run.id]),
+              );
+              if (blocker !== null)
+                yield* new TaskUndoBlockedError({ runTaskId, ...blocker });
+              const now = yield* Clock.currentTimeMillis;
+              const by = actorColumns(actor);
+              // Undo returns the task to Ready. Who reopened it is the
+              // `reopened*` slot; the old Start is a claim the starter no
+              // longer makes and a time that is no longer true.
+              yield* sql`
+                  update RunTask
+                  set doneAt = null, doneBy = null,
+                      doneByEmail = null, doneByRole = null,
                       startedAt = null, startedBy = null,
                       startedByEmail = null, startedByRole = null,
                       reopenedAt = ${now}, reopenedByRole = ${by.role},
                       reopenedByEmail = ${by.email}
                   where id = ${runTaskId}
                 `;
-                yield* recomputeStatus(run.id, now);
-              }),
-            );
-          },
-        ),
+              yield* recomputeStatus(run.id, now);
+            }),
+          );
+        }),
 
-        unstartTask: Effect.fn("WorkflowRunRepository.unstartTask")(function* ({
+        unstartTask: Effect.fn("RunRepository.unstartTask")(function* ({
           runTaskId,
           teamIds,
         }: Domain.UnstartTaskCommand) {
@@ -1864,7 +1848,7 @@ export class WorkflowRunRepository extends Context.Service<
               });
               if (Domain.runIsBlocked(run))
                 yield* new RunBlockedError({ runId: run.id });
-              if (task.startedAt === null || task.completedAt !== null)
+              if (task.startedAt === null || task.doneAt !== null)
                 yield* new TaskNotReadyError({ runTaskId });
               // A started task is ready by construction (Start required it,
               // and nothing behind it can reopen while it is started); the
@@ -1873,7 +1857,7 @@ export class WorkflowRunRepository extends Context.Service<
                 yield* new TaskNotReadyError({ runTaskId });
               const now = yield* Clock.currentTimeMillis;
               yield* sql`
-                update WorkflowRunTask
+                update RunTask
                 set startedAt = null, startedBy = null,
                     startedByEmail = null, startedByRole = null
                 where id = ${runTaskId}
@@ -1883,7 +1867,7 @@ export class WorkflowRunRepository extends Context.Service<
           );
         }),
 
-        getRunView: Effect.fn("WorkflowRunRepository.getRunView")(function* ({
+        getRunView: Effect.fn("RunRepository.getRunView")(function* ({
           runId,
           teamIds,
         }: {
@@ -1920,16 +1904,14 @@ export class WorkflowRunRepository extends Context.Service<
               ...task,
               ready: ready.some((candidate) => candidate.id === task.id),
               undoBlockedBy:
-                task.completedAt === null
-                  ? null
-                  : Domain.undoBlockedBy(task, tasks),
+                task.doneAt === null ? null : Domain.undoBlockedBy(task, tasks),
             })),
             orderNote: note,
             order,
           } satisfies Domain.RunView);
         }),
 
-        startTask: Effect.fn("WorkflowRunRepository.startTask")(function* ({
+        startTask: Effect.fn("RunRepository.startTask")(function* ({
           runTaskId,
           actor,
           teamIds,
@@ -1944,7 +1926,7 @@ export class WorkflowRunRepository extends Context.Service<
               const now = yield* Clock.currentTimeMillis;
               const by = actorColumns(actor);
               yield* sql`
-                update WorkflowRunTask
+                update RunTask
                 set startedAt = coalesce(startedAt, ${now}),
                     startedBy = coalesce(startedBy, ${by.id}),
                     startedByEmail = coalesce(startedByEmail, ${by.email}),
@@ -1956,29 +1938,28 @@ export class WorkflowRunRepository extends Context.Service<
           );
         }),
 
-        completeTask: Effect.fn("WorkflowRunRepository.completeTask")(
-          function* ({
-            runTaskId,
-            actor,
-            teamIds,
-          }: Domain.CompleteTaskCommand) {
-            yield* sql.withTransaction(
-              Effect.gen(function* () {
-                const { run } = yield* requireActionable({
-                  runTaskId,
-                  teamIds,
-                });
-                if (Domain.runIsBlocked(run))
-                  yield* new RunBlockedError({ runId: run.id });
-                if (!(yield* isReady(runTaskId)))
-                  yield* new TaskNotReadyError({ runTaskId });
-                const now = yield* Clock.currentTimeMillis;
-                const by = actorColumns(actor);
-                yield* sql`
-                  update WorkflowRunTask
-                  set completedAt = ${now}, completedBy = ${by.id},
-                      completedByEmail = ${by.email},
-                      completedByRole = ${by.role},
+        completeTask: Effect.fn("RunRepository.completeTask")(function* ({
+          runTaskId,
+          actor,
+          teamIds,
+        }: Domain.CompleteTaskCommand) {
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              const { run } = yield* requireActionable({
+                runTaskId,
+                teamIds,
+              });
+              if (Domain.runIsBlocked(run))
+                yield* new RunBlockedError({ runId: run.id });
+              if (!(yield* isReady(runTaskId)))
+                yield* new TaskNotReadyError({ runTaskId });
+              const now = yield* Clock.currentTimeMillis;
+              const by = actorColumns(actor);
+              yield* sql`
+                  update RunTask
+                  set doneAt = ${now}, doneBy = ${by.id},
+                      doneByEmail = ${by.email},
+                      doneByRole = ${by.role},
                       startedAt = coalesce(startedAt, ${now}),
                       startedBy = coalesce(startedBy, ${by.id}),
                       startedByEmail = coalesce(startedByEmail, ${by.email}),
@@ -1987,14 +1968,13 @@ export class WorkflowRunRepository extends Context.Service<
                       reopenedByEmail = null
                   where id = ${runTaskId}
                 `;
-                yield* sql`update WorkflowRun set quantityChangedFrom = null where id = ${run.id}`;
-                yield* recomputeStatus(run.id, now);
-              }),
-            );
-          },
-        ),
+              yield* sql`update Run set quantityChangedFrom = null where id = ${run.id}`;
+              yield* recomputeStatus(run.id, now);
+            }),
+          );
+        }),
 
-        setRunNote: Effect.fn("WorkflowRunRepository.setRunNote")(function* ({
+        setRunNote: Effect.fn("RunRepository.setRunNote")(function* ({
           runId,
           teamIds,
           note,
@@ -2005,14 +1985,14 @@ export class WorkflowRunRepository extends Context.Service<
               yield* requireRunTeam(runId, teamIds);
               const now = yield* Clock.currentTimeMillis;
               yield* sql`
-                update WorkflowRun set note = ${note}, updatedAt = ${now}
+                update Run set note = ${note}, updatedAt = ${now}
                 where id = ${runId}
               `;
             }),
           );
         }),
 
-        blockRun: Effect.fn("WorkflowRunRepository.blockRun")(function* ({
+        blockRun: Effect.fn("RunRepository.blockRun")(function* ({
           runId,
           actor,
           teamIds,
@@ -2026,7 +2006,7 @@ export class WorkflowRunRepository extends Context.Service<
               yield* requireReadyTeam(runId, teamIds);
               const now = yield* Clock.currentTimeMillis;
               yield* sql`
-                update WorkflowRun
+                update Run
                 set blockedAt = ${now}, blockReason = ${reason},
                     blockedBy = ${json(attribution(actor))}, updatedAt = ${now}
                 where id = ${runId}
@@ -2035,7 +2015,7 @@ export class WorkflowRunRepository extends Context.Service<
           );
         }),
 
-        listOrderTeamIds: Effect.fn("WorkflowRunRepository.listOrderTeamIds")(
+        listOrderTeamIds: Effect.fn("RunRepository.listOrderTeamIds")(
           function* (
             input:
               | { readonly runTaskId: string }
@@ -2049,17 +2029,17 @@ export class WorkflowRunRepository extends Context.Service<
               if ("orderId" in input) return sql`select ${input.orderId}`;
               if ("runTaskId" in input)
                 return sql`
-                  select r0.orderId from WorkflowRun r0
-                  join WorkflowRunTask s0 on s0.runId = r0.id
+                  select r0.orderId from Run r0
+                  join RunTask s0 on s0.runId = r0.id
                   where s0.id = ${input.runTaskId}
                 `;
-              return sql`select r0.orderId from WorkflowRun r0 where r0.id = ${input.runId}`;
+              return sql`select r0.orderId from Run r0 where r0.id = ${input.runId}`;
             };
             const order = orderOf();
             const rows = yield* sql`
               select distinct rs.teamId as teamId
-              from WorkflowRunTask rs
-              join WorkflowRun r on r.id = rs.runId
+              from RunTask rs
+              join Run r on r.id = rs.runId
               where rs.teamId is not null and r.orderId in (${order})
             `;
             return rows.flatMap((row) =>
@@ -2068,26 +2048,28 @@ export class WorkflowRunRepository extends Context.Service<
           },
         ),
 
-        setBlockReason: Effect.fn("WorkflowRunRepository.setBlockReason")(
-          function* ({ runId, teamIds, reason }: Domain.SetBlockReasonCommand) {
-            yield* sql.withTransaction(
-              Effect.gen(function* () {
-                const run = yield* requireRun(runId);
-                if (!Domain.runIsBlocked(run))
-                  yield* new RunNotBlockedError({ runId });
-                yield* requireReadyTeam(runId, teamIds);
-                const now = yield* Clock.currentTimeMillis;
-                yield* sql`
-                  update WorkflowRun
+        setBlockReason: Effect.fn("RunRepository.setBlockReason")(function* ({
+          runId,
+          teamIds,
+          reason,
+        }: Domain.SetBlockReasonCommand) {
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              const run = yield* requireRun(runId);
+              if (!Domain.runIsBlocked(run))
+                yield* new RunNotBlockedError({ runId });
+              yield* requireReadyTeam(runId, teamIds);
+              const now = yield* Clock.currentTimeMillis;
+              yield* sql`
+                  update Run
                   set blockReason = ${reason}, updatedAt = ${now}
                   where id = ${run.id}
                 `;
-              }),
-            );
-          },
-        ),
+            }),
+          );
+        }),
 
-        unblockRun: Effect.fn("WorkflowRunRepository.unblockRun")(function* ({
+        unblockRun: Effect.fn("RunRepository.unblockRun")(function* ({
           runId,
           teamIds,
         }: Domain.UnblockRunCommand) {
@@ -2101,7 +2083,7 @@ export class WorkflowRunRepository extends Context.Service<
               yield* requireReadyTeam(runId, teamIds);
               const now = yield* Clock.currentTimeMillis;
               yield* sql`
-                update WorkflowRun
+                update Run
                 set blockedAt = null, blockReason = null, blockedBy = null,
                     updatedAt = ${now}
                 where id = ${run.id}
@@ -2110,7 +2092,7 @@ export class WorkflowRunRepository extends Context.Service<
           );
         }),
 
-        assignRunTaskTeam: Effect.fn("WorkflowRunRepository.assignRunTaskTeam")(
+        assignRunTaskTeam: Effect.fn("RunRepository.assignRunTaskTeam")(
           function* ({
             runTaskId,
             team,
@@ -2126,7 +2108,7 @@ export class WorkflowRunRepository extends Context.Service<
                 const task = yield* requireTask(runTaskId);
                 // The task first: on a done run every task is finished, and
                 // "keeps its team" is the truer refusal than "run not open".
-                if (task.completedAt !== null)
+                if (task.doneAt !== null)
                   yield* new TaskFinishedError({ runTaskId });
                 const run = yield* requireRun(task.runId);
                 if (!Domain.runIsOpen(run))
@@ -2136,11 +2118,11 @@ export class WorkflowRunRepository extends Context.Service<
                   });
                 const now = yield* Clock.currentTimeMillis;
                 yield* sql`
-                  update WorkflowRunTask
+                  update RunTask
                   set teamId = ${team.id}, teamName = ${team.name}
                   where id = ${runTaskId}
                 `;
-                yield* sql`update WorkflowRun set updatedAt = ${now} where id = ${task.runId}`;
+                yield* sql`update Run set updatedAt = ${now} where id = ${task.runId}`;
               }),
             );
           },

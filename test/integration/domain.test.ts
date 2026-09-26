@@ -160,11 +160,8 @@ describe("Domain.orderNeeds", () => {
   });
 });
 
-const run = (
-  status: Domain.RunStatus,
-  blocked = false,
-): Domain.WorkflowRun => ({
-  id: Schema.decodeUnknownSync(Domain.WorkflowRunId)("r"),
+const run = (status: Domain.RunStatus, blocked = false): Domain.Run => ({
+  id: Schema.decodeUnknownSync(Domain.RunId)("r"),
   workflowId: Schema.decodeUnknownSync(Domain.WorkflowId)("w"),
   workflowName: Schema.decodeUnknownSync(Domain.WorkflowName)("W"),
   orderId: "o",
@@ -193,7 +190,7 @@ describe("Domain.runCounts", () => {
   it("counts open, done, blocked-open and closed the way the index SQL does", () => {
     deepStrictEqual(
       Domain.runCounts([
-        run("pending"),
+        run("active"),
         run("active", true),
         run("active"),
         run("done"),
@@ -227,10 +224,10 @@ const lineItem = (
   requiresShipping: true,
 });
 
-const runOn = (
-  lineItemId: string,
-  status: Domain.RunStatus,
-): Domain.WorkflowRun => ({ ...run(status), lineItemId });
+const runOn = (lineItemId: string, status: Domain.RunStatus): Domain.Run => ({
+  ...run(status),
+  lineItemId,
+});
 
 describe("Domain.ambiguousItems", () => {
   /**
@@ -260,7 +257,7 @@ describe("Domain.ambiguousItems", () => {
     strictEqual(
       Domain.ambiguousItems(
         [lineItem("a", ["w1", "w2"])],
-        [runOn("a", "pending")],
+        [runOn("a", "active")],
       ),
       0,
       "a run owns the item",
@@ -324,14 +321,14 @@ const runListItem = (
 ): Domain.RunListItem => ({
   run: {
     ...run("active", overrides.blocked ?? false),
-    id: Schema.decodeUnknownSync(Domain.WorkflowRunId)(id),
+    id: Schema.decodeUnknownSync(Domain.RunId)(id),
     orderName: `#${id}`,
     orderProcessedAt,
   },
   tasks: [
     {
-      id: Schema.decodeUnknownSync(Domain.WorkflowRunTaskId)(`${id}-s`),
-      runId: Schema.decodeUnknownSync(Domain.WorkflowRunId)(id),
+      id: Schema.decodeUnknownSync(Domain.RunTaskId)(`${id}-s`),
+      runId: Schema.decodeUnknownSync(Domain.RunId)(id),
       position: 1,
       step: 1,
       name: Schema.decodeUnknownSync(Domain.TaskName)("Cut"),
@@ -362,7 +359,7 @@ const withTasks = (
   const [base] = item.tasks;
   const [first, ...rest] = tasks.map(([name, team], index) => ({
     ...base,
-    id: Schema.decodeUnknownSync(Domain.WorkflowRunTaskId)(`t${String(index)}`),
+    id: Schema.decodeUnknownSync(Domain.RunTaskId)(`t${String(index)}`),
     position: index + 2,
     step: 2,
     name: Schema.decodeUnknownSync(Domain.TaskName)(name),
@@ -555,21 +552,43 @@ describe("Domain.SeedOrdersInput", () => {
 });
 
 describe("Domain.runIsOpen / Domain.runIsDone / Domain.runIsClosed", () => {
-  it("open is pending or active; done is the last task's Done; closed is ended by something else", () => {
+  it("open is active; done is the last task's Done; closed is ended by something else", () => {
     deepStrictEqual(
       Domain.RunStatus.literals.map((status) => Domain.runIsOpen(run(status))),
-      [true, true, false, false],
+      [true, false, false],
     );
     deepStrictEqual(
       Domain.RunStatus.literals.map((status) => Domain.runIsDone(run(status))),
-      [false, false, true, false],
+      [false, true, false],
     );
     deepStrictEqual(
       Domain.RunStatus.literals.map((status) =>
         Domain.runIsClosed(run(status)),
       ),
-      [false, false, false, true],
+      [false, false, true],
     );
+  });
+});
+
+describe("Domain.runIsUnstarted", () => {
+  it("unstarted is no task started or done", () => {
+    const task = (startedAt: number | null, doneAt: number | null) => ({
+      startedAt,
+      doneAt,
+    });
+    strictEqual(
+      Domain.runIsUnstarted([task(null, null), task(null, null)]),
+      true,
+    );
+    strictEqual(
+      Domain.runIsUnstarted([task(null, null), task(1, null)]),
+      false,
+    );
+    strictEqual(
+      Domain.runIsUnstarted([task(null, null), task(null, 1)]),
+      false,
+    );
+    strictEqual(Domain.runIsUnstarted([]), true);
   });
 });
 
@@ -580,17 +599,17 @@ const taskView = (
   overrides: Partial<
     Pick<
       Domain.RunTaskView,
-      "teamId" | "ready" | "startedAt" | "completedAt" | "undoBlockedBy"
+      "teamId" | "ready" | "startedAt" | "doneAt" | "undoBlockedBy"
     >
   > = {},
 ): Pick<
   Domain.RunTaskView,
-  "teamId" | "ready" | "startedAt" | "completedAt" | "undoBlockedBy"
+  "teamId" | "ready" | "startedAt" | "doneAt" | "undoBlockedBy"
 > => ({
   teamId: TEAM,
   ready: true,
   startedAt: null,
-  completedAt: null,
+  doneAt: null,
   undoBlockedBy: null,
   ...overrides,
 });
@@ -600,7 +619,7 @@ const NOTHING = {
   done: false,
   putBack: false,
   reopen: null,
-  reassign: false,
+  assign: false,
 };
 
 const OPEN_ORDER: Domain.OrderState = {
@@ -631,7 +650,7 @@ describe("Domain.taskActions", () => {
     deepStrictEqual(
       memberActions(
         run("done"),
-        taskView({ ready: false, startedAt: 1, completedAt: 2 }),
+        taskView({ ready: false, startedAt: 1, doneAt: 2 }),
         [TEAM],
       ),
       { ...NOTHING, reopen: { blockedBy: null } },
@@ -649,7 +668,7 @@ describe("Domain.taskActions", () => {
         taskView({
           ready: false,
           startedAt: 1,
-          completedAt: 2,
+          doneAt: 2,
           undoBlockedBy: blocker,
         }),
         [TEAM],
@@ -665,7 +684,7 @@ describe("Domain.taskActions", () => {
     deepStrictEqual(
       memberActions(
         run("active", true),
-        taskView({ ready: false, startedAt: 1, completedAt: 2 }),
+        taskView({ ready: false, startedAt: 1, doneAt: 2 }),
         [TEAM],
       ),
       { ...NOTHING, reopen: { blockedBy: null } },
@@ -684,12 +703,12 @@ describe("Domain.taskActions", () => {
   });
 
   it("Start is offered only before the task is started; Done while it is ready", () => {
-    deepStrictEqual(memberActions(run("pending"), taskView(), [TEAM]), {
+    deepStrictEqual(memberActions(run("active"), taskView(), [TEAM]), {
       start: true,
       done: true,
       putBack: false,
       reopen: null,
-      reassign: false,
+      assign: false,
     });
     deepStrictEqual(
       memberActions(run("active"), taskView({ startedAt: 1 }), [TEAM]),
@@ -698,7 +717,7 @@ describe("Domain.taskActions", () => {
         done: true,
         putBack: true,
         reopen: null,
-        reassign: false,
+        assign: false,
       },
     );
     deepStrictEqual(
@@ -715,7 +734,7 @@ describe("Domain.taskActions Put back", () => {
       true,
     );
     strictEqual(
-      memberActions(run("pending"), taskView(), [TEAM]).putBack,
+      memberActions(run("active"), taskView(), [TEAM]).putBack,
       false,
     );
     strictEqual(
@@ -746,7 +765,7 @@ describe("Domain.taskActions Put back", () => {
     strictEqual(
       memberActions(
         run("active"),
-        taskView({ ready: false, startedAt: 1, completedAt: 2 }),
+        taskView({ ready: false, startedAt: 1, doneAt: 2 }),
         [TEAM],
       ).putBack,
       false,
@@ -764,26 +783,24 @@ describe("Domain.runIsBlocked", () => {
 const runTask = (
   position: number,
   step: number,
-  completed: boolean,
-): Domain.WorkflowRunTask => ({
-  id: Schema.decodeUnknownSync(Domain.WorkflowRunTaskId)(
-    `s${String(position)}`,
-  ),
-  runId: Schema.decodeUnknownSync(Domain.WorkflowRunId)("r"),
+  done: boolean,
+): Domain.RunTask => ({
+  id: Schema.decodeUnknownSync(Domain.RunTaskId)(`s${String(position)}`),
+  runId: Schema.decodeUnknownSync(Domain.RunId)("r"),
   position,
   step,
   name: Schema.decodeUnknownSync(Domain.TaskName)(`Task ${String(position)}`),
   teamId: TEAM,
   teamName: Schema.decodeUnknownSync(Domain.TeamName)("T"),
   instructions: null,
-  startedAt: completed ? 1 : null,
+  startedAt: done ? 1 : null,
   startedBy: null,
   startedByEmail: null,
   startedByRole: null,
-  completedAt: completed ? 2 : null,
-  completedBy: null,
-  completedByEmail: null,
-  completedByRole: null,
+  doneAt: done ? 2 : null,
+  doneBy: null,
+  doneByEmail: null,
+  doneByRole: null,
   reopenedAt: null,
   reopenedByRole: null,
   reopenedByEmail: null,

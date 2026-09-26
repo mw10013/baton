@@ -55,7 +55,7 @@ const run = (status: Domain.RunStatus, blocked = false) => ({
 
 /** The run's one task, ready exactly when the run is open. */
 const tasksOf = (status: Domain.RunStatus) => [
-  { teamId: T, ready: status === "pending" || status === "active" },
+  { teamId: T, ready: status === "active" },
 ];
 
 type Cell = "" | "M" | "M m";
@@ -262,16 +262,13 @@ const BLOCKER: Domain.UndoBlocker = {
 
 const task = (
   overrides: Partial<
-    Pick<
-      Domain.RunTaskView,
-      "ready" | "startedAt" | "completedAt" | "undoBlockedBy"
-    >
+    Pick<Domain.RunTaskView, "ready" | "startedAt" | "doneAt" | "undoBlockedBy">
   > = {},
 ) => ({
   teamId: T,
   ready: true,
   startedAt: null,
-  completedAt: null,
+  doneAt: null,
   undoBlockedBy: null,
   ...overrides,
 });
@@ -286,7 +283,7 @@ const NOTHING: Domain.TaskActions = {
   done: false,
   putBack: false,
   reopen: null,
-  reassign: false,
+  assign: false,
 };
 
 const TASK_MATRIX: readonly (readonly [
@@ -300,9 +297,9 @@ const TASK_MATRIX: readonly (readonly [
 ])[] = [
   [
     "run open, not blocked, task ready, not started",
-    [[OPEN_ORDER, run("pending"), task()]],
+    [[OPEN_ORDER, run("active"), task()]],
     {
-      M: { ...NOTHING, done: true, reassign: true },
+      M: { ...NOTHING, done: true, assign: true },
       m: { ...NOTHING, start: true, done: true },
     },
   ],
@@ -310,40 +307,40 @@ const TASK_MATRIX: readonly (readonly [
     "run open, not blocked, task ready, started",
     [[OPEN_ORDER, run("active"), task({ startedAt: 1 })]],
     {
-      M: { ...NOTHING, done: true, putBack: true, reassign: true },
+      M: { ...NOTHING, done: true, putBack: true, assign: true },
       m: { ...NOTHING, done: true, putBack: true },
     },
   ],
   [
     "run open, not blocked, task waiting",
     [[OPEN_ORDER, run("active"), task({ ready: false })]],
-    { M: { ...NOTHING, reassign: true }, m: NOTHING },
+    { M: { ...NOTHING, assign: true }, m: NOTHING },
   ],
   [
     "run open, blocked, any open task",
     [
       [OPEN_ORDER, run("active", true), task({ startedAt: 1 })],
-      [OPEN_ORDER, run("pending", true), task()],
+      [OPEN_ORDER, run("active", true), task()],
     ],
-    { M: { ...NOTHING, reassign: true }, m: NOTHING },
+    { M: { ...NOTHING, assign: true }, m: NOTHING },
   ],
   [
-    "run open or done, task completed, no downstream start",
+    "run open or done, task done, no downstream start",
     [
       [
         OPEN_ORDER,
         run("active"),
-        task({ ready: false, startedAt: 1, completedAt: 2 }),
+        task({ ready: false, startedAt: 1, doneAt: 2 }),
       ],
       [
         OPEN_ORDER,
         run("done"),
-        task({ ready: false, startedAt: 1, completedAt: 2 }),
+        task({ ready: false, startedAt: 1, doneAt: 2 }),
       ],
       [
         OPEN_ORDER,
         run("active", true),
-        task({ ready: false, startedAt: 1, completedAt: 2 }),
+        task({ ready: false, startedAt: 1, doneAt: 2 }),
       ],
     ],
     {
@@ -352,7 +349,7 @@ const TASK_MATRIX: readonly (readonly [
     },
   ],
   [
-    "run open or done, task completed, downstream started",
+    "run open or done, task done, downstream started",
     [
       [
         OPEN_ORDER,
@@ -360,7 +357,7 @@ const TASK_MATRIX: readonly (readonly [
         task({
           ready: false,
           startedAt: 1,
-          completedAt: 2,
+          doneAt: 2,
           undoBlockedBy: BLOCKER,
         }),
       ],
@@ -378,7 +375,7 @@ const TASK_MATRIX: readonly (readonly [
       [
         OPEN_ORDER,
         run("closed"),
-        task({ ready: false, startedAt: 1, completedAt: 2 }),
+        task({ ready: false, startedAt: 1, doneAt: 2 }),
       ],
     ],
     { M: NOTHING, m: NOTHING },
@@ -390,7 +387,7 @@ const TASK_MATRIX: readonly (readonly [
       [
         FULFILLED_ORDER,
         run("done"),
-        task({ ready: false, startedAt: 1, completedAt: 2 }),
+        task({ ready: false, startedAt: 1, doneAt: 2 }),
       ],
     ],
     { M: NOTHING, m: NOTHING },
@@ -426,7 +423,7 @@ describe("Domain.taskActions matrix", () => {
           actor,
           OPEN_ORDER,
           run("closed"),
-          task({ ready: false, startedAt: 1, completedAt: 2 }),
+          task({ ready: false, startedAt: 1, doneAt: 2 }),
         ).reopen,
         null,
       );
@@ -464,9 +461,9 @@ const lineItemOf = (
 const detailOf = (
   status: Domain.RunStatus,
   lineItemId = "li",
-): Domain.WorkflowRunDetail => ({
+): Domain.RunDetail => ({
   run: {
-    id: Schema.decodeUnknownSync(Domain.WorkflowRunId)("r"),
+    id: Schema.decodeUnknownSync(Domain.RunId)("r"),
     workflowId: Schema.decodeUnknownSync(Domain.WorkflowId)("w1"),
     workflowName: Schema.decodeUnknownSync(Domain.WorkflowName)("Engrave"),
     orderId: "o",
@@ -495,7 +492,7 @@ const detailOf = (
 
 const kindOf = (
   item: Domain.OrderLineItem,
-  runs: readonly Domain.WorkflowRunDetail[],
+  runs: readonly Domain.RunDetail[],
   offered: readonly Domain.Workflow[],
 ) => Domain.lineItemState(item, runs, offered).kind;
 
@@ -506,10 +503,9 @@ describe("Domain.lineItemState", () => {
     const workflows = [polish, engrave];
     const kind = (
       item: Domain.OrderLineItem,
-      runs: readonly Domain.WorkflowRunDetail[],
+      runs: readonly Domain.RunDetail[],
       offered: readonly Domain.Workflow[] = workflows,
     ) => kindOf(item, runs, offered);
-    strictEqual(kind(lineItemOf(), [detailOf("pending")]), "running");
     strictEqual(kind(lineItemOf(), [detailOf("active")]), "running");
     strictEqual(kind(lineItemOf(), [detailOf("done")]), "finished");
     strictEqual(kind(lineItemOf(), [detailOf("closed")]), "closed");

@@ -12,7 +12,7 @@ import * as WorkflowLayout from "@/lib/WorkflowLayout";
  * merchant to assume otherwise.
  *
  * The note does not carry over either: it is a column on the run, and the
- * replacement run is inserted without one (`WorkflowRunRepository.insertRun`).
+ * replacement run is inserted without one (`RunRepository.insertRun`).
  * When the old run has a note the last sentence names it, so the merchant
  * hears it before pressing Change rather than finding a blank note after.
  *
@@ -25,12 +25,12 @@ import * as WorkflowLayout from "@/lib/WorkflowLayout";
 export const changeWarning = (
   from: Domain.WorkflowName,
   to: string,
-  tasks: readonly Domain.WorkflowRunTask[],
+  tasks: readonly Domain.RunTask[],
   hasNote: boolean,
 ) => {
   const steps = WorkflowLayout.stepsOf(tasks);
   const done = steps.filter((step) =>
-    step.every((task) => task.completedAt !== null),
+    step.every((task) => task.doneAt !== null),
   ).length;
   const started = steps.filter((step) =>
     step.some((task) => task.startedAt !== null),

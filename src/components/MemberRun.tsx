@@ -48,7 +48,7 @@ export function ClosedLine({
   viewer,
   prefix = false,
 }: {
-  readonly run: Domain.WorkflowRun;
+  readonly run: Domain.Run;
   readonly viewer: Domain.ConnectionRole;
   /** "Closed · " first, where no badge beside the line already says Closed. */
   readonly prefix?: boolean;
@@ -68,7 +68,7 @@ export function ClosedLine({
 }
 
 /**
- * The quantity badge ({@link Domain.WorkflowRun} `quantityChangedFrom`, which
+ * The quantity badge ({@link Domain.Run} `quantityChangedFrom`, which
  * states the rule): warning-toned, and the whole change, "Quantity changed ·
  * 3 → 2", because a small "was 3" is easy to miss for the one person it
  * matters to. It has no button: the next finished task clears it.
@@ -167,7 +167,7 @@ export const itemLabel = ({
   `${title}${variantTitle === null ? "" : ` — ${variantTitle}`} ×${formatNumber(quantity)}`;
 
 /** An item run's own line: what this run makes. */
-export function RunItem({ run }: { readonly run: Domain.WorkflowRun }) {
+export function RunItem({ run }: { readonly run: Domain.Run }) {
   return (
     <s-stack gap="small-500">
       <s-text type="strong">

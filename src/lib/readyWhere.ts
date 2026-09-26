@@ -21,9 +21,9 @@
  * the task's alias and name the outer run something else.
  */
 export const readyWhere = (alias: string): string => `(
-  ${alias}.completedAt is null
+  ${alias}.doneAt is null
   and not exists (
-    select 1 from WorkflowRunTask p
-    where p.runId = ${alias}.runId and p.completedAt is null and p.step < ${alias}.step
+    select 1 from RunTask p
+    where p.runId = ${alias}.runId and p.doneAt is null and p.step < ${alias}.step
   )
 )`;

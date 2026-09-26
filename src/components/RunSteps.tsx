@@ -5,7 +5,7 @@ import * as Domain from "@/lib/Domain";
 import * as WorkflowLayout from "@/lib/WorkflowLayout";
 
 /** What a step card needs of a task: the row itself and the readiness rule's verdict on it. */
-export type RunStepTask = Domain.WorkflowRunTask & { readonly ready: boolean };
+export type RunStepTask = Domain.RunTask & { readonly ready: boolean };
 
 /**
  * A task's badge and the subdued line under it, in the order a worker asks:
@@ -26,17 +26,17 @@ const taskState = (
     readonly tone: "neutral" | "success" | "info";
   } | null;
 } => {
-  const completedBy = Domain.taskCompletedBy(task);
+  const doneBy = Domain.taskDoneBy(task);
   const startedBy = Domain.taskStartedBy(task);
-  if (task.completedAt !== null)
+  if (task.doneAt !== null)
     return {
       badge: { label: "Done", tone: "neutral" },
       text: (
         <>
-          {completedBy === null
+          {doneBy === null
             ? `${task.teamName} · `
-            : `${task.teamName} · ${Domain.actorLabel(completedBy)} · `}
-          <LocalDateTime value={task.completedAt} />
+            : `${task.teamName} · ${Domain.actorLabel(doneBy)} · `}
+          <LocalDateTime value={task.doneAt} />
         </>
       ),
     };
@@ -100,7 +100,7 @@ export function RunSteps<T extends RunStepTask>({
 }) {
   const renderTask = (task: T, first: boolean) => {
     const state = taskState(task);
-    /** Shown only while the slot is filled: the next Done clears it (`Domain.WorkflowRunTask`). */
+    /** Shown only while the slot is filled: the next Done clears it (`Domain.RunTask`). */
     const reopenedBy = Domain.taskReopenedBy(task);
     const actions = renderActions(task);
     const extra = renderExtra?.(task);

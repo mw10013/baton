@@ -189,10 +189,7 @@ export function BlockModal({
   onSaveReason,
 }: {
   readonly id: string;
-  readonly run: Pick<
-    Domain.WorkflowRun,
-    "orderName" | "blockedAt" | "blockReason"
-  >;
+  readonly run: Pick<Domain.Run, "orderName" | "blockedAt" | "blockReason">;
   readonly pending: boolean;
   readonly onBlock: (reason: string) => Promise<string | null>;
   readonly onSaveReason: (reason: string) => Promise<string | null>;

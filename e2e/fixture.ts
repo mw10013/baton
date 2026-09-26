@@ -758,7 +758,7 @@ const floorOrders: readonly SeedOrder[] = [
   },
   {
     // blocked before anyone started: Not started plus Blocked, Edit reason
-    // and Unblock in the banner, Reassign in Manage, no Mark done
+    // and Unblock in the banner, Assign team in Manage, no Mark done
     n: 1033,
     blocked: "Waiting on the customer's photo.",
     lineItems: [item("Wall clock", TAG.clock, 1, { Numerals: "Arabic" })],

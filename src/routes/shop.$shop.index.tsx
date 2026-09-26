@@ -133,11 +133,8 @@ const insideRow = (event: {
  * tier and the least informative line on it. Empty rather than "nobody" for a
  * row written before the role column.
  */
-const doneActorLabel = (
-  task: Domain.WorkflowRunTask,
-  memberEmail: Domain.Email,
-) => {
-  const actor = Domain.taskCompletedBy(task);
+const doneActorLabel = (task: Domain.RunTask, memberEmail: Domain.Email) => {
+  const actor = Domain.taskDoneBy(task);
   if (actor === null) return "";
   return Domain.actorIsMember(actor, memberEmail)
     ? "you"
@@ -380,11 +377,11 @@ function RouteComponent() {
         rest.length > 0 ? `${verb} · ${each.name}` : verb;
       return tasks.flatMap((each) => {
         /* Every task on a row is open and ready: that is what put it on the
-           list (`WorkflowRunRepository.listRuns`). */
+           list (`RunRepository.listRuns`). */
         const can = Domain.taskActions(actor, item.order, run, {
           ...each,
           ready: true,
-          completedAt: null,
+          doneAt: null,
           undoBlockedBy: null,
         });
         if (can.start)
@@ -545,10 +542,7 @@ function RouteComponent() {
               <div className="run-detail-line">
                 <s-text color="subdued">
                   {`${entry.run.lineItemTitle} · by ${doneActorLabel(entry.task, memberEmail)} at `}
-                  <LocalDateTime
-                    value={entry.task.completedAt ?? 0}
-                    format="time"
-                  />
+                  <LocalDateTime value={entry.task.doneAt ?? 0} format="time" />
                   {entry.run.note === null ? "" : ` · Note: ${entry.run.note}`}
                 </s-text>
               </div>

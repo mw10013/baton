@@ -1,6 +1,7 @@
 # AGENTS.md
 
 - Prefer JSDoc for complex and subtle behavior the code cannot show, and for rules: any behaviour more than one site must agree on is stated once, normatively, on the symbol that enforces it or the symbol that is the concept. Other sites `{@link}` it rather than restate it; a site that follows a different rule says so and why. Each rule has a test whose title is the rule.
+- The glossary at the top of `src/lib/Domain.ts` is the vocabulary. Use its words in code, JSDoc, tests and research, and update it in the same change as any rename.
 - Status, flag and role predicates are `Domain` functions, never inline comparisons in routes or the object (`scripts/rules-lint.ts`, run by `pnpm lint`, refuses them).
 - A JSDoc must carry its reasoning inline and never reference files under `docs/` — research docs go stale and get deleted. External URLs are acceptable. A `refs/` path is acceptable because `refs/` is pinned to the dependency versions in use (`pnpm refs:check`); cite the file and, if needed, a heading or symbol name, never a line number, which does not survive a version bump.
 - Do not git commit unless you are explicitly instructed.

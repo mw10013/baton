@@ -8,11 +8,9 @@ import * as Domain from "@/lib/Domain";
 const task = (
   position: number,
   state: "open" | "started" | "done",
-): Domain.WorkflowRunTask => ({
-  id: Schema.decodeUnknownSync(Domain.WorkflowRunTaskId)(
-    `t${String(position)}`,
-  ),
-  runId: Schema.decodeUnknownSync(Domain.WorkflowRunId)("r"),
+): Domain.RunTask => ({
+  id: Schema.decodeUnknownSync(Domain.RunTaskId)(`t${String(position)}`),
+  runId: Schema.decodeUnknownSync(Domain.RunId)("r"),
   position,
   step: position,
   name: Schema.decodeUnknownSync(Domain.TaskName)(`Task ${String(position)}`),
@@ -23,10 +21,10 @@ const task = (
   startedBy: null,
   startedByEmail: null,
   startedByRole: null,
-  completedAt: state === "done" ? 2 : null,
-  completedBy: null,
-  completedByEmail: null,
-  completedByRole: null,
+  doneAt: state === "done" ? 2 : null,
+  doneBy: null,
+  doneByEmail: null,
+  doneByRole: null,
   reopenedAt: null,
   reopenedByRole: null,
   reopenedByEmail: null,

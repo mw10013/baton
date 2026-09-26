@@ -8,10 +8,10 @@ import { describe, it } from "vitest";
 
 import * as Domain from "@/lib/Domain";
 import { OrderRepository } from "@/lib/OrderRepository";
+import { RunRepository } from "@/lib/RunRepository";
 import { runShopAgentMigrations } from "@/lib/ShopAgent";
 import { runShopAgentOrdersStream } from "@/lib/ShopAgentOrdersStream";
 import { WorkflowRepository } from "@/lib/WorkflowRepository";
-import { WorkflowRunRepository } from "@/lib/WorkflowRunRepository";
 
 const BULK_URL = "https://storage.googleapis.test/bulk-orders.jsonl";
 
@@ -247,7 +247,7 @@ describe("runShopAgentOrdersStream with afterWrite", () => {
       E,
       | OrderRepository
       | WorkflowRepository
-      | WorkflowRunRepository
+      | RunRepository
       | HttpClient.HttpClient
     >,
   ): Promise<A> =>
@@ -263,7 +263,7 @@ describe("runShopAgentOrdersStream with afterWrite", () => {
               Layer.merge(
                 Layer.mergeAll(
                   WorkflowRepository.layer,
-                  WorkflowRunRepository.layer,
+                  RunRepository.layer,
                 ).pipe(
                   Layer.provideMerge(OrderRepository.layer),
                   Layer.provideMerge(
@@ -289,7 +289,7 @@ describe("runShopAgentOrdersStream with afterWrite", () => {
       body,
       Effect.gen(function* () {
         const workflows = yield* WorkflowRepository;
-        const runs = yield* WorkflowRunRepository;
+        const runs = yield* RunRepository;
         const team = {
           id: Schema.decodeUnknownSync(Domain.TeamId)("t1"),
           name: Schema.decodeUnknownSync(Domain.TeamName)("Engravers"),

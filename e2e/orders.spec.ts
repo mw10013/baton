@@ -273,7 +273,7 @@ test("the merchant marks a task done, reopens it, and blocks the run", async ({
 
   /* The drawer draws the member page's step cards (`RunSteps`). A task that
      has a team shows it as a line, not an open picker: a filled slot is
-     changed in the Reassign modal, which opens on the current team and
+     changed in the Assign team modal, which opens on the current team and
      offers to keep it. */
   await expect(frame.getByText("Step 1", { exact: true })).toBeVisible();
   await expect(
@@ -282,12 +282,12 @@ test("the merchant marks a task done, reopens it, and blocks the run", async ({
   const item = frame.locator("s-section").filter({
     has: frame.getByRole("heading", { name: "E2E Cuff", exact: true }),
   });
-  await item.getByRole("button", { name: "Reassign" }).first().click();
-  const reassign = frame.locator("s-modal#reassign-task");
-  const team = reassign.getByRole("combobox", { name: "Team" });
+  await item.getByRole("button", { name: "Assign team" }).first().click();
+  const assign = frame.locator("s-modal#assign-task");
+  const team = assign.getByRole("combobox", { name: "Team" });
   await expect(team).toBeVisible();
   await expect(team.locator("option:checked")).toHaveText(CUT_TEAM);
-  await reassign
+  await assign
     .getByRole("button", { name: `Keep ${CUT_TEAM}`, exact: true })
     .click();
   await expect(team).toBeHidden();
@@ -304,7 +304,7 @@ test("the merchant marks a task done, reopens it, and blocks the run", async ({
   await expect(frame.getByText("Ready", { exact: true })).toBeVisible();
 
   /* Both steps done takes the run to `done`. The card says it in merchant
-     words, not `WorkflowRun.status`: its badge, and the now line counting the
+     words, not `Run.status`: its badge, and the now line counting the
      steps. */
   await frame.getByRole("button", { name: "Mark done" }).first().click();
   await expect(doneByMerchant).toBeVisible();
@@ -316,7 +316,7 @@ test("the merchant marks a task done, reopens it, and blocks the run", async ({
 
 /**
  * Put back from Manage, the merchant's inverse of a worker's Start
- * (`WorkflowRunRepository.unstartTask`). There is no merchant Start, so the
+ * (`RunRepository.unstartTask`). There is no merchant Start, so the
  * seed has the member start the task; Put back returns it to Ready.
  */
 test("the merchant puts back a task a member started", async ({ page }) => {
@@ -746,8 +746,8 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   ).toBeVisible();
 
   /* Changing is a rare intervention, so its button is inside the disclosure
-     with the other ones, and it opens a modal holding the select. A pending
-     run with nothing started loses nothing, so the modal says nothing beyond
+     with the other ones, and it opens a modal holding the select. A run
+     with nothing started loses nothing, so the modal says nothing beyond
      its heading: the warning is for work already done. */
   const change = item.getByRole("button", {
     name: "Change workflow",
@@ -939,7 +939,7 @@ test("each order-page state draws the controls its action set allows", async ({
   await button(removed, "Manage").click();
   await expect(button(removed, "Mark done")).toHaveCount(0);
   await expect(button(removed, "Block")).toHaveCount(0);
-  await expect(button(removed, "Reassign")).toHaveCount(0);
+  await expect(button(removed, "Assign team")).toHaveCount(0);
   await expect(button(removed, "Cancel run")).toHaveCount(0);
 
   const closed = await open(9502, "E2E Closed");
@@ -952,7 +952,7 @@ test("each order-page state draws the controls its action set allows", async ({
   await expect(button(closed, "Cancel run")).toHaveCount(0);
   await expect(button(closed, "Mark done")).toHaveCount(0);
   await expect(button(closed, "Reopen")).toHaveCount(0);
-  await expect(button(closed, "Reassign")).toHaveCount(0);
+  await expect(button(closed, "Assign team")).toHaveCount(0);
   await expect(button(closed, "Block")).toHaveCount(0);
   await expect(button(closed, "Change workflow")).toHaveCount(0);
 
@@ -973,7 +973,7 @@ test("each order-page state draws the controls its action set allows", async ({
   await button(held, "Manage").click();
   await expect(button(held, "Mark done")).toHaveCount(0);
   await expect(button(held, "Block")).toHaveCount(0);
-  await expect(button(held, "Reassign").first()).toBeVisible();
+  await expect(button(held, "Assign team").first()).toBeVisible();
 
   const triple = await open(9505, "E2E Triple");
   const options = triple

@@ -751,7 +751,7 @@ describe("ShopAgent workflow run callables", () => {
     });
     if (again._tag !== "Ok") throw new Error(again._tag);
     strictEqual(again.replaced, null);
-    strictEqual(again.run.status, "pending");
+    strictEqual(again.run.status, "active");
     expect(again.run.id).not.toBe(replaced.run.id);
   });
 
@@ -1202,7 +1202,7 @@ describe("ShopAgent workflow run callables", () => {
     expect(after?.teams.map((t) => [t.name, t.memberCount])).toEqual([
       ["B", 0],
     ]);
-    // A *started* task reassigns too: only teamId/teamName move, so history
+    // A *started* task can be assigned too: only teamId/teamName move, so history
     // keeps whoever began it and the new team finishes what they started.
     const inB = await openMemberSocket(shop, {
       memberId: "m1",
@@ -1232,12 +1232,9 @@ describe("ShopAgent workflow run callables", () => {
     expect(await inC.completeTask({ runTaskId })).toEqual({ _tag: "Ok" });
     inC.close();
     const finished = await agent.getOrderDetail({ legacyId: "1" });
-    strictEqual(
-      finished?.runs[0]?.tasks[0]?.completedByEmail,
-      "m2@example.com",
-    );
+    strictEqual(finished?.runs[0]?.tasks[0]?.doneByEmail, "m2@example.com");
     strictEqual(finished?.runs[0]?.tasks[0]?.startedByEmail, "m1@example.com");
-    // A finished task keeps its team: `Domain.taskActions`' `reassign` is
+    // A finished task keeps its team: `Domain.taskActions`' `assign` is
     // false, so the action set refuses before the repository's own guard.
     expect(
       await agent.merchantAssignRunTaskTeam({ runTaskId, teamId: c.id }),
@@ -1325,7 +1322,7 @@ describe("ShopAgent seed callables", () => {
         .map(({ run, tasks }) => ({
           workflow: run.workflowName,
           status: run.status,
-          done: tasks.filter((task) => task.completedAt !== null).length,
+          done: tasks.filter((task) => task.doneAt !== null).length,
         }))
         .toSorted((a, b) => a.workflow.localeCompare(b.workflow)),
     ).toEqual([

@@ -37,7 +37,7 @@ import {
  * scope a merchant's. The five member mutations name the teams instead — every
  * team owning a task on any run of the touched order, because completing the
  * last item task makes the *order* run ready for a different team
- * (`WorkflowRunRepository.listOrderTeamIds`). A team with no work on that order
+ * (`RunRepository.listOrderTeamIds`). A team with no work on that order
  * hears nothing.
  */
 const ORDER_ID = "gid://shopify/Order/1";

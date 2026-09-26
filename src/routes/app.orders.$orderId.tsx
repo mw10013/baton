@@ -80,7 +80,7 @@ const assignResultMessage = Match.typeTags<
   TeamNotFound: () => "That team no longer exists. Choose another.",
   TaskFinished: () => "That task is already done and keeps its team.",
   RunNotOpen: () => "That workflow run is finished.",
-  NotAllowed: () => "That task can no longer be reassigned.",
+  NotAllowed: () => "That task can no longer be assigned.",
 });
 
 const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
@@ -109,22 +109,35 @@ const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
 });
 
 /**
- * Merchant words, not `WorkflowRun.status`: "pending" reads as "waiting for
- * approval". Closed is neutral, not red: the work ended and nothing waits on
- * anyone ({@link Domain.RunStatus}); red stays for a hold. The reason is the
- * line under it ({@link ClosedLine}), not a badge of its own.
+ * Merchant words, not `Run.status`. An open run nobody has touched
+ * ({@link Domain.runIsUnstarted}) reads "Not started", not "In progress":
+ * the merchant is asking whether the bench has picked it up yet, and the
+ * stored status cannot say, since a run is `active` from creation. Closed is
+ * neutral, not red: the work ended and nothing waits on anyone
+ * ({@link Domain.RunStatus}); red stays for a hold. The reason is the line
+ * under it ({@link ClosedLine}), not a badge of its own.
  */
 const RUN_STATUS_BADGE = {
-  pending: { label: "Not started", tone: "neutral" },
   active: { label: "In progress", tone: "info" },
   done: { label: "Done", tone: "success" },
   closed: { label: "Closed", tone: "neutral" },
 } as const satisfies Record<Domain.RunStatus, { label: string; tone: string }>;
 
+/** {@link RUN_STATUS_BADGE}'s open run before any task is started or done. */
+const NOT_STARTED_BADGE = { label: "Not started", tone: "neutral" } as const;
+
+const runStatusBadge = (
+  run: Domain.Run,
+  tasks: readonly Domain.RunTaskView[],
+) =>
+  Domain.runIsOpen(run) && Domain.runIsUnstarted(tasks)
+    ? NOT_STARTED_BADGE
+    : RUN_STATUS_BADGE[run.status];
+
 /** The one modal that both asks and confirms: the select and, on a touched run, the warning. */
 const CHANGE_WORKFLOW_MODAL = "change-workflow";
 const CANCEL_RUN_MODAL = "cancel-run";
-const REASSIGN_MODAL = "reassign-task";
+const ASSIGN_MODAL = "assign-task";
 const NOTE_MODAL = "run-note";
 const BLOCK_MODAL = "run-block";
 
@@ -177,7 +190,7 @@ const fact = (label: string, value: React.ReactNode) =>
     </React.Fragment>
   );
 
-const stepCount = (tasks: readonly Domain.WorkflowRunTask[]) =>
+const stepCount = (tasks: readonly Domain.RunTask[]) =>
   tasks.reduce((max, task) => Math.max(max, task.step), 0);
 
 /**
@@ -201,7 +214,7 @@ const stepCount = (tasks: readonly Domain.WorkflowRunTask[]) =>
  * ({@link Domain.runIsOpen}), so its ready tasks are the ones the hold
  * stopped.
  */
-const nowLine = ({ run, tasks }: Domain.WorkflowRunDetail): React.ReactNode => {
+const nowLine = ({ run, tasks }: Domain.RunDetail): React.ReactNode => {
   /* A closed run's line is its reason ({@link ClosedLine}), not a position. */
   if (Domain.runIsClosed(run)) return null;
   /* Counts steps, like the open form's `of M`: the number the merchant saw
@@ -249,12 +262,12 @@ const nowLine = ({ run, tasks }: Domain.WorkflowRunDetail): React.ReactNode => {
  * picker (the remedy that makes a team delete safe), and a ready task on a
  * team with no members warns, linking to the team so the fix is one click.
  * Both are about work that can still move, so both follow
- * {@link Domain.taskActions}' `reassign`: the picker is that write, and the
+ * {@link Domain.taskActions}' `assign`: the picker is that write, and the
  * warning's remedy is either it or a new member.
  *
  * They render on the card, outside the Manage disclosure, because they are the
  * one thing that must be acted on and a disclosure would hide it. Every other
- * intervention — reassigning an already-assigned task, notes, block, cancel —
+ * intervention — moving a task to another team, notes, block, cancel —
  * is inside Manage: one place to act on a run rather than two, and nothing on
  * the card is a click target, so scanning an order never risks a stray "done".
  */
@@ -265,7 +278,7 @@ const attentionRows = (
   teams: readonly Domain.TeamRoster[],
   assign: (runTaskId: string) => React.ReactNode,
 ) => {
-  const assignable = tasks.filter(({ actions }) => actions.reassign);
+  const assignable = tasks.filter(({ actions }) => actions.assign);
   const unassigned = assignable.filter((task) =>
     Domain.isRunTaskUnassigned(task, teams),
   );
@@ -380,7 +393,7 @@ function RouteComponent() {
     readonly from: Domain.WorkflowName;
     readonly hasNote: boolean;
     readonly options: readonly Domain.Workflow[];
-    readonly tasks: readonly Domain.WorkflowRunTask[];
+    readonly tasks: readonly Domain.RunTask[];
     readonly workflowId: string | null;
   } | null>(null);
   /** The run the Cancel run modal asks about, with what its sentence names. */
@@ -390,10 +403,10 @@ function RouteComponent() {
     readonly item: string;
   } | null>(null);
   /**
-   * The task the Reassign modal is about: its name for the heading, its
+   * The task the Assign team modal is about: its name for the heading, its
    * current team for the default and for "Keep …", and the modal's own pick.
    */
-  const [reassigning, setReassigning] = React.useState<{
+  const [assigning, setAssigning] = React.useState<{
     readonly runTaskId: string;
     readonly taskName: Domain.TaskName;
     readonly teamName: Domain.TeamName;
@@ -559,7 +572,7 @@ function RouteComponent() {
     },
   });
 
-  const reassign = useMutation({
+  const assign = useMutation({
     mutationFn: (input: typeof Domain.AssignRunTaskTeamInput.Encoded) =>
       call((stub) => stub.merchantAssignRunTaskTeam(input)).then(
         decodeAssignResult,
@@ -568,12 +581,12 @@ function RouteComponent() {
       const message = assignResultMessage(result);
       /* The attention row's picker has no modal to hold a message, so its
          refusal goes to the page banner; the modal keeps its own. */
-      if (reassigning?.runTaskId === runTaskId) {
+      if (assigning?.runTaskId === runTaskId) {
         if (message === null) {
-          setReassigning(null);
-          hideModal(REASSIGN_MODAL);
+          setAssigning(null);
+          hideModal(ASSIGN_MODAL);
         } else
-          setReassigning((current) =>
+          setAssigning((current) =>
             current === null ? null : { ...current, error: message },
           );
       } else setBanner(message);
@@ -632,7 +645,7 @@ function RouteComponent() {
     runs: Domain.runCounts(runs.map(({ run }) => run)),
   });
   /** See `managing`: an id with no run on this order is stale and answers `false`. */
-  const managingRun = (run: Domain.WorkflowRun) =>
+  const managingRun = (run: Domain.Run) =>
     managing.has(run.id) && runs.some((other) => other.run.id === run.id);
   const busy = [
     attachMutation,
@@ -644,7 +657,7 @@ function RouteComponent() {
     editReason,
     unblock,
     cancel,
-    reassign,
+    assign,
   ].some((mutation) => mutation.isPending);
   const pending = !identified || busy;
   /** A modal's write: `null` closes it, a message stays under its field. */
@@ -656,7 +669,7 @@ function RouteComponent() {
           : (runResultMessage(result) ?? "Nothing changed."),
       )
       .catch(errorMessage);
-  const openModal = (modalId: string, run: Domain.WorkflowRun) => {
+  const openModal = (modalId: string, run: Domain.Run) => {
     setModalRunId(run.id);
     showModal(modalId);
   };
@@ -668,7 +681,7 @@ function RouteComponent() {
   const changingWarning = (() => {
     if (changing === null || changing.workflowId === null) return "";
     const touched = changing.tasks.some(
-      (task) => task.startedAt !== null || task.completedAt !== null,
+      (task) => task.startedAt !== null || task.doneAt !== null,
     );
     if (!touched) return "";
     const to =
@@ -685,7 +698,7 @@ function RouteComponent() {
    * The team picker and Assign button beside an unassigned task in
    * `attentionRows`, open at rest because a task with no team is a required
    * slot left empty, the one thing on the card that must be acted on. A task
-   * that has a team changes it through the Reassign modal instead: a filled
+   * that has a team changes it through the Assign team modal instead: a filled
    * slot is changed in a modal, an empty one is filled at rest.
    *
    * The picker starts empty so Assign stays disabled until a team is chosen.
@@ -715,7 +728,7 @@ function RouteComponent() {
         disabled={pending || !assignChoice[runTaskId]}
         onClick={() => {
           const teamId = assignChoice[runTaskId];
-          if (teamId) reassign.mutate({ runTaskId, teamId });
+          if (teamId) assign.mutate({ runTaskId, teamId });
         }}
       >
         Assign
@@ -738,14 +751,14 @@ function RouteComponent() {
    * "this is what you came here to do", which is false here. Nothing here is
    * red either: Polaris puts the critical tone on the button that performs a
    * destructive action, not on the one that opens the question, and Cancel
-   * run and Change workflow each open a modal whose submit is red. Reassign
-   * is tertiary: it opens a modal rather than writing, and it sits on every
+   * run and Change workflow each open a modal whose submit is red. Assign
+   * team is tertiary: it opens a modal rather than writing, and it sits on every
    * open task.
    *
    * The note is on the card ({@link RunNote}) and has no button here.
    */
   const manageRows = (
-    run: Domain.WorkflowRun,
+    run: Domain.Run,
     tasks: readonly (Domain.RunTaskView & {
       readonly actions: Domain.TaskActions;
     })[],
@@ -773,7 +786,7 @@ function RouteComponent() {
               const can = byId.get(task.id);
               if (can === undefined) return null;
               const canReopen = can.reopen?.blockedBy === null;
-              if (!can.done && !can.putBack && !canReopen && !can.reassign)
+              if (!can.done && !can.putBack && !canReopen && !can.assign)
                 return null;
               return (
                 <>
@@ -819,12 +832,12 @@ function RouteComponent() {
                       Reopen
                     </s-button>
                   )}
-                  {can.reassign && (
+                  {can.assign && (
                     <s-button
                       variant="tertiary"
                       disabled={pending}
                       onClick={() => {
-                        setReassigning({
+                        setAssigning({
                           runTaskId: task.id,
                           taskName: task.name,
                           teamName: task.teamName,
@@ -835,10 +848,10 @@ function RouteComponent() {
                               : "",
                           error: null,
                         });
-                        showModal(REASSIGN_MODAL);
+                        showModal(ASSIGN_MODAL);
                       }}
                     >
-                      Reassign
+                      Assign team
                     </s-button>
                   )}
                 </>
@@ -860,7 +873,7 @@ function RouteComponent() {
                  reader who does not already know the team names takes the
                  first word as the subject and the second as a verb.
 
-                 Reopen only clears a finished blocker; an in-progress one
+                 Reopen only clears a done blocker; a started one
                  is cleared with Put back on its own row, hence both verbs. */
               return (
                 <s-text color="subdued">
@@ -926,10 +939,10 @@ function RouteComponent() {
    * the badge is the glance, and the banner, with the reason and Unblock, is
    * the detail further down.
    */
-  const runBadges = (run: Domain.WorkflowRun) => (
+  const runBadges = (run: Domain.Run, tasks: readonly Domain.RunTaskView[]) => (
     <>
-      <s-badge tone={RUN_STATUS_BADGE[run.status].tone}>
-        {RUN_STATUS_BADGE[run.status].label}
+      <s-badge tone={runStatusBadge(run, tasks).tone}>
+        {runStatusBadge(run, tasks).label}
       </s-badge>
       {Domain.runIsBlocked(run) && <s-badge tone="critical">Blocked</s-badge>}
       <QuantityBadge run={run} />
@@ -977,7 +990,7 @@ function RouteComponent() {
    */
   const renderRun = (
     item: Domain.OrderLineItem,
-    run: Domain.WorkflowRun,
+    run: Domain.Run,
     views: readonly Domain.RunTaskView[],
   ) => {
     const tasks = views.map((task) => ({
@@ -1237,11 +1250,11 @@ function RouteComponent() {
         }
       }
     })();
-    const run =
+    const withRun =
       itemState.kind === "running" ||
       itemState.kind === "finished" ||
       itemState.kind === "closed"
-        ? itemState.run
+        ? itemState
         : null;
     /* No `accessibilityLabel` on the section: with no `heading`, `s-section`
        renders the label as a second, hidden heading and screen readers hear
@@ -1260,7 +1273,7 @@ function RouteComponent() {
               {item.currentQuantity === 0 && (
                 <s-badge tone="critical">Removed</s-badge>
               )}
-              {run !== null && runBadges(run)}
+              {withRun !== null && runBadges(withRun.run, withRun.tasks)}
             </s-stack>
           </s-stack>
 
@@ -1459,28 +1472,30 @@ function RouteComponent() {
         </s-button>
       </s-modal>
 
-      {/* Reassign changes a filled slot, so it is a modal like Change
+      {/* Assign team changes a filled slot, so it is a modal like Change
           workflow; the select opens on the current team so the merchant
           sees what they are replacing. */}
       <s-modal
-        id={REASSIGN_MODAL}
+        id={ASSIGN_MODAL}
         heading={
-          reassigning === null ? "Reassign" : `Reassign ${reassigning.taskName}`
+          assigning === null
+            ? "Assign team"
+            : `Assign team: ${assigning.taskName}`
         }
         onAfterHide={() => {
-          setReassigning(null);
+          setAssigning(null);
         }}
       >
         <s-select
           label="Team"
-          value={reassigning?.teamId ?? ""}
+          value={assigning?.teamId ?? ""}
           disabled={pending}
-          {...(reassigning === null || reassigning.error === null
+          {...(assigning === null || assigning.error === null
             ? {}
-            : { error: reassigning.error })}
+            : { error: assigning.error })}
           onChange={(event) => {
             const teamId = event.currentTarget.value;
-            setReassigning((current) =>
+            setAssigning((current) =>
               current === null ? null : { ...current, teamId, error: null },
             );
           }}
@@ -1489,23 +1504,21 @@ function RouteComponent() {
         </s-select>
         <s-button
           slot="secondary-actions"
-          commandFor={REASSIGN_MODAL}
+          commandFor={ASSIGN_MODAL}
           command="--hide"
         >
-          {reassigning === null ? "Cancel" : `Keep ${reassigning.teamName}`}
+          {assigning === null ? "Cancel" : `Keep ${assigning.teamName}`}
         </s-button>
         <s-button
           slot="primary-action"
           variant="primary"
-          loading={reassign.isPending}
-          disabled={
-            pending || reassigning === null || reassigning.teamId === ""
-          }
+          loading={assign.isPending}
+          disabled={pending || assigning === null || assigning.teamId === ""}
           onClick={() => {
-            if (reassigning !== null && reassigning.teamId !== "")
-              reassign.mutate({
-                runTaskId: reassigning.runTaskId,
-                teamId: reassigning.teamId,
+            if (assigning !== null && assigning.teamId !== "")
+              assign.mutate({
+                runTaskId: assigning.runTaskId,
+                teamId: assigning.teamId,
               });
           }}
         >

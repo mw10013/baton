@@ -146,7 +146,7 @@ export class WorkflowRepository extends Context.Service<
      * and each task's `name`, `step`, `instructions`, and `teamName`, and
      * no read joins a run back to `Workflow`, so an orphan run renders,
      * lists, starts, completes, blocks, and cancels unchanged.
-     * `WorkflowRun.workflowId` stays `not null` because it is the conflict
+     * `Run.workflowId` stays `not null` because it is the conflict
      * key of `unique (lineItemId, workflowId)`.
      * No turn-off-first rule.
      */
@@ -181,7 +181,7 @@ export class WorkflowRepository extends Context.Service<
      * reseed exists to discard whatever the last one left behind, and
      * skipping existing names would preserve it.
      *
-     * `WorkflowRun` needs its own delete: it deliberately has no foreign key
+     * `Run` needs its own delete: it deliberately has no foreign key
      * to `Workflow` (a run snapshots its definition so it survives a rename),
      * so nothing cascades from the `Workflow` delete to it.
      *
@@ -489,7 +489,7 @@ export class WorkflowRepository extends Context.Service<
      * and *open* run task of an open run that points at `teamId` becomes
      * unassigned, in one transaction. Finished run tasks and every task of a
      * closed run keep the pointer and their `teamName` snapshot. Idempotent, so a retry after a failed first attempt (D1 row
-     * already gone) still cleans up. Touches `WorkflowRunTask` from here
+     * already gone) still cleans up. Touches `RunTask` from here
      * rather than from the run repository because the three updates must
      * share one transaction and Durable Object SQLite refuses to nest.
      */
@@ -891,7 +891,7 @@ export class WorkflowRepository extends Context.Service<
        * name the holder, which a constraint failure cannot. Tags are stored
        * folded (`Domain.WorkflowTag` trims and lowercases), so plain equality
        * is the whole comparison — the same equality
-       * `WorkflowRunRepository.matchesTag` uses. Runs inside the caller's
+       * `RunRepository.matchesTag` uses. Runs inside the caller's
        * transaction on the Durable Object's synchronous SQLite, so nothing can
        * interleave between it and the write that follows. The holder's id and
        * name both ride back: the merchant decides whether to change this tag
@@ -1135,7 +1135,7 @@ export class WorkflowRepository extends Context.Service<
               );
             return yield* sql.withTransaction(
               Effect.gen(function* () {
-                yield* sql`delete from WorkflowRun`;
+                yield* sql`delete from Run`;
                 yield* sql`delete from Workflow`;
                 const seeded: { name: Domain.WorkflowName; id: string }[] = [];
                 for (const workflow of staged) {
@@ -1665,10 +1665,10 @@ export class WorkflowRepository extends Context.Service<
                   from WorkflowDraftTask where teamId is not null
                   union all
                   select s.teamId, 0, 0, 1
-                  from WorkflowRunTask s
-                  join WorkflowRun r on r.id = s.runId
-                  where s.teamId is not null and s.completedAt is null
-                    and r.status in ('pending', 'active')
+                  from RunTask s
+                  join Run r on r.id = s.runId
+                  where s.teamId is not null and s.doneAt is null
+                    and r.status = 'active'
                 )
                 group by teamId
                 order by teamId
@@ -1731,10 +1731,10 @@ export class WorkflowRepository extends Context.Service<
               // nulling their team would drop the run from the Recent tab of
               // the team that could see it.
               yield* sql`
-                update WorkflowRunTask set teamId = null
-                where teamId = ${teamId} and completedAt is null
+                update RunTask set teamId = null
+                where teamId = ${teamId} and doneAt is null
                   and runId in (
-                    select id from WorkflowRun where status in ('pending', 'active')
+                    select id from Run where status = 'active'
                   )
               `;
             }),
