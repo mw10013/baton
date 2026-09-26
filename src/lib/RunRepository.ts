@@ -570,7 +570,7 @@ export class RunRepository extends Context.Service<
      * thing noticed after the last Done is exactly what wants writing down,
      * and a closed run keeps its record too; see {@link Domain.RunStatus}. A member
      * needs to see the run ({@link Domain.runIsVisibleTo}), not to hold a
-     * ready task as Block does: a done run has no ready task and would
+     * ready or started task as Block does: a done run has none and would
      * refuse every member. Last write wins; see
      * {@link Domain.SetRunNoteCommand}.
      */
@@ -585,8 +585,8 @@ export class RunRepository extends Context.Service<
     >;
     /**
      * Blocks the run ({@link Domain.runIsBlocked}): `blockedAt`, the optional
-     * reason, and the actor as `blockedBy`. Allowed when a ready task belongs
-     * to `teamIds`. Gate: {@link Domain.runIsOpen}; see {@link Domain.RunStatus}.
+     * reason, and the actor as `blockedBy`. Allowed when a ready or started
+     * task belongs to `teamIds`. Gate: {@link Domain.runIsOpen}; see {@link Domain.RunStatus}.
      */
     readonly blockRun: (
       input: Domain.BlockRunCommand,
@@ -640,8 +640,8 @@ export class RunRepository extends Context.Service<
     >;
     /**
      * Lifts the block: nulls `blockedAt`, `blockReason` and `blockedBy`.
-     * Allowed when any ready task of the run belongs to one of `teamIds`, or
-     * unconditionally for the merchant (`teamIds` undefined). Fails
+     * Allowed when any ready or started task of the run belongs to one of
+     * `teamIds`, or unconditionally for the merchant (`teamIds` undefined). Fails
      * `RunNotBlockedError` when there is no block to lift (a second Unblock
      * racing the first), and `RunTerminalError` unless {@link Domain.runIsOpen}.
      */
@@ -819,8 +819,8 @@ export class RunRepository extends Context.Service<
         });
 
       /**
-       * `RunNotAllowedError` unless some ready task of the run belongs to
-       * `teamIds`. Undefined `teamIds` is the merchant and always passes, for
+       * `RunNotAllowedError` unless some ready or started task of the run
+       * belongs to `teamIds`. Undefined `teamIds` is the merchant and always passes, for
        * the reason on {@link requireActionable}.
        */
       const requireReadyTeam = (

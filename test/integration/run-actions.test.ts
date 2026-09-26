@@ -3,26 +3,32 @@ import { deepStrictEqual, strictEqual } from "@effect/vitest/utils";
 import { getAgentByName } from "agents";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { Effect, Layer, Schema } from "effect";
-import { afterEach, describe, expect, it } from "vitest";
+import { Effect, Layer, Result, Schema } from "effect";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { D1Primary } from "@/lib/D1Primary";
 import { D1Session } from "@/lib/D1Session";
 import * as Domain from "@/lib/Domain";
+import source from "@/lib/Domain.ts?raw";
 import { makeEnvLayer } from "@/lib/LayerEx";
 import { OrderRepository } from "@/lib/OrderRepository";
 import { Repository } from "@/lib/Repository";
 import { runShopAgentMigrations } from "@/lib/ShopAgent";
 
+import * as ActionTable from "../../scripts/lib/action-table.ts";
 import { openMemberSocket, openMerchantSocket } from "./agent-socket";
 
 /**
- * The action matrices on `Domain.runActions` and `Domain.taskActions`, one
- * test per row, titled with the row's label from the JSDoc table so a failing
- * test names the cell. The second half drives the `ShopAgent` callables into
- * the blank cells and asserts they refuse: the page and the server read one
+ * The action matrices on `Domain.runActions` and `Domain.taskActions`, read
+ * out of their JSDoc in `Domain.ts` rather than copied here, one test per
+ * row, titled with the row rendered back so a failing test names the cell.
+ * The second half drives every `ShopAgent` callable into every row's state
+ * and asserts it answers as the cell says: the page and the server read one
  * function, and these are the proof that the server does.
  */
+
+const RUN_ROWS = Result.getOrThrow(ActionTable.parse(source, "runActions"));
+const TASK_ROWS = Result.getOrThrow(ActionTable.parse(source, "taskActions"));
 
 const T = Schema.decodeUnknownSync(Domain.TeamId)("t");
 const MERCHANT: Domain.Actor = { role: "merchant" };
@@ -39,151 +45,59 @@ const OPEN_ORDER: Domain.OrderState = {
   cancelledAt: null,
   fulfillmentStatus: "UNFULFILLED",
 };
-const CANCELLED_ORDER: Domain.OrderState = {
-  cancelledAt: 1,
-  fulfillmentStatus: "UNFULFILLED",
-};
-const FULFILLED_ORDER: Domain.OrderState = {
-  cancelledAt: null,
-  fulfillmentStatus: "FULFILLED",
-};
 
 const run = (status: Domain.RunStatus, blocked = false) => ({
   status,
   blockedAt: blocked ? 1 : null,
 });
 
-/** The run's one task, ready exactly when the run is open. */
-const tasksOf = (status: Domain.RunStatus) => [
-  { teamId: T, ready: status === "active" },
-];
+const BLOCKER: Domain.UndoBlocker = {
+  taskName: Schema.decodeUnknownSync(Domain.TaskName)("Polish"),
+  teamName: Schema.decodeUnknownSync(Domain.TeamName)("Finishing"),
+};
 
-type Cell = "" | "M" | "M m";
+/** Whether a cell offers the action to "M" or "m". `blocker` is offered to both. */
+const offered = (cell: ActionTable.Cell | undefined, who: "M" | "m") =>
+  cell === "blocker" || (cell ?? "").split(" ").includes(who);
 
-/** The line item as the merchant's callers pass it: units still to make, unless a row says otherwise. */
-const ITEM = { currentQuantity: 1 };
+/** The `reopen` field a cell says `who` gets: `null` when not offered, otherwise the blocker, `null` meaning the button. */
+const reopenOf = (cell: ActionTable.Cell | undefined, who: "M" | "m") => {
+  if (!offered(cell, who)) return null;
+  return { blockedBy: cell === "blocker" ? BLOCKER : null };
+};
 
-const RUN_MATRIX: readonly (readonly [
-  label: string,
-  order: Domain.OrderState,
-  run: ReturnType<typeof run>,
-  cells: Record<keyof Domain.RunActions, Cell>,
-])[] = [
-  [
-    "open, not blocked",
-    OPEN_ORDER,
-    run("active"),
-    {
-      note: "M m",
-      block: "M m",
-      editReason: "",
-      unblock: "",
-      cancel: "M",
-      changeWorkflow: "M",
-    },
-  ],
-  [
-    "open, blocked",
-    OPEN_ORDER,
-    run("active", true),
-    {
-      note: "M m",
-      block: "",
-      editReason: "M m",
-      unblock: "M m",
-      cancel: "M",
-      changeWorkflow: "M",
-    },
-  ],
-  [
-    "done",
-    OPEN_ORDER,
-    run("done"),
-    {
-      note: "M m",
-      block: "",
-      editReason: "",
-      unblock: "",
-      cancel: "",
-      changeWorkflow: "",
-    },
-  ],
-  [
-    "closed",
-    OPEN_ORDER,
-    run("closed"),
-    {
-      note: "M m",
-      block: "",
-      editReason: "",
-      unblock: "",
-      cancel: "",
-      changeWorkflow: "",
-    },
-  ],
-  [
-    "order closed",
-    CANCELLED_ORDER,
-    run("active"),
-    {
-      note: "M m",
-      block: "",
-      editReason: "",
-      unblock: "",
-      cancel: "",
-      changeWorkflow: "",
-    },
-  ],
-];
-
-const expected = (cells: Record<string, Cell>, who: "M" | "m") =>
+/** The result object a row's cells say `who` gets. */
+const expectedOf = (row: ActionTable.Row, who: "M" | "m") =>
   Object.fromEntries(
-    Object.entries(cells).map(([field, cell]) => [
+    Object.entries(row.cells).map(([field, cell]) => [
       field,
-      cell.split(" ").includes(who),
+      field === "reopen" ? reopenOf(cell, who) : offered(cell, who),
     ]),
   );
 
-describe("Domain.runActions matrix", () => {
-  for (const [label, order, state, cells] of RUN_MATRIX)
-    it(label, () => {
-      const tasks = tasksOf(state.status);
-      deepStrictEqual(
-        Domain.runActions(MERCHANT, order, state, tasks, ITEM),
-        expected(cells, "M"),
-      );
-      deepStrictEqual(
-        Domain.runActions(MEMBER, order, state, tasks, ITEM),
-        expected(cells, "m"),
-      );
-    });
+const CONTEXT = { teamId: T, blocker: BLOCKER };
 
-  it("open, nothing to make", () => {
-    const cells = {
-      note: "M m",
-      block: "M m",
-      editReason: "",
-      unblock: "",
-      cancel: "M",
-      changeWorkflow: "",
-    } as const;
-    const state = run("active");
-    const tasks = tasksOf("active");
-    const zero = { currentQuantity: 0 };
-    deepStrictEqual(
-      Domain.runActions(MERCHANT, OPEN_ORDER, state, tasks, zero),
-      expected(cells, "M"),
-    );
-    deepStrictEqual(
-      Domain.runActions(MEMBER, OPEN_ORDER, state, tasks, zero),
-      expected(cells, "m"),
-    );
-  });
+describe("Domain.runActions matrix", () => {
+  for (const row of RUN_ROWS)
+    it(ActionTable.renderRow("runActions", row), () => {
+      for (const fixture of ActionTable.expand("runActions", row, CONTEXT)) {
+        const { order, run: state, task, item } = fixture;
+        deepStrictEqual(
+          Domain.runActions(MERCHANT, order, state, [task], item),
+          expectedOf(row, "M"),
+        );
+        deepStrictEqual(
+          Domain.runActions(MEMBER, order, state, [task], item),
+          expectedOf(row, "m"),
+        );
+      }
+    });
 
   it("without the line item, Change workflow is not offered", () => {
     strictEqual(
-      Domain.runActions(MERCHANT, OPEN_ORDER, run("active"), tasksOf("active"))
-        .changeWorkflow,
+      Domain.runActions(MERCHANT, OPEN_ORDER, run("active"), [
+        { teamId: T, ready: true },
+      ]).changeWorkflow,
       false,
     );
   });
@@ -206,59 +120,7 @@ describe("Domain.runActions matrix", () => {
       false,
     );
   });
-
-  it("a fulfilled order is closed the same way as a cancelled one", () => {
-    for (const state of [run("active"), run("done"), run("closed")])
-      deepStrictEqual(
-        Domain.runActions(
-          MERCHANT,
-          FULFILLED_ORDER,
-          state,
-          tasksOf(state.status),
-          ITEM,
-        ),
-        expected(RUN_MATRIX[4]?.[3] ?? {}, "M"),
-      );
-  });
-
-  it("a closed run offers only the note", () => {
-    for (const [actor, tasks] of [
-      [MERCHANT, [{ teamId: T, ready: false }]],
-      [MEMBER, [{ teamId: T, ready: false }]],
-    ] as const)
-      deepStrictEqual(
-        Domain.runActions(actor, OPEN_ORDER, run("closed"), tasks, ITEM),
-        {
-          note: true,
-          block: false,
-          editReason: false,
-          unblock: false,
-          cancel: false,
-          changeWorkflow: false,
-        },
-      );
-  });
-
-  it("cancel is not offered on a closed order", () => {
-    for (const order of [CANCELLED_ORDER, FULFILLED_ORDER])
-      for (const blocked of [false, true])
-        strictEqual(
-          Domain.runActions(
-            MERCHANT,
-            order,
-            run("active", blocked),
-            tasksOf("active"),
-            ITEM,
-          ).cancel,
-          false,
-        );
-  });
 });
-
-const BLOCKER: Domain.UndoBlocker = {
-  taskName: Schema.decodeUnknownSync(Domain.TaskName)("Polish"),
-  teamName: Schema.decodeUnknownSync(Domain.TeamName)("Finishing"),
-};
 
 const task = (
   overrides: Partial<
@@ -273,138 +135,18 @@ const task = (
   ...overrides,
 });
 
-interface TaskCell {
-  readonly M: Domain.TaskActions;
-  readonly m: Domain.TaskActions;
-}
-
-const NOTHING: Domain.TaskActions = {
-  start: false,
-  done: false,
-  putBack: false,
-  reopen: null,
-  assign: false,
-};
-
-const TASK_MATRIX: readonly (readonly [
-  label: string,
-  cases: readonly (readonly [
-    order: Domain.OrderState,
-    run: ReturnType<typeof run>,
-    task: ReturnType<typeof task>,
-  ])[],
-  cells: TaskCell,
-])[] = [
-  [
-    "run open, not blocked, task ready, not started",
-    [[OPEN_ORDER, run("active"), task()]],
-    {
-      M: { ...NOTHING, done: true, assign: true },
-      m: { ...NOTHING, start: true, done: true },
-    },
-  ],
-  [
-    "run open, not blocked, task ready, started",
-    [[OPEN_ORDER, run("active"), task({ startedAt: 1 })]],
-    {
-      M: { ...NOTHING, done: true, putBack: true, assign: true },
-      m: { ...NOTHING, done: true, putBack: true },
-    },
-  ],
-  [
-    "run open, not blocked, task waiting",
-    [[OPEN_ORDER, run("active"), task({ ready: false })]],
-    { M: { ...NOTHING, assign: true }, m: NOTHING },
-  ],
-  [
-    "run open, blocked, any open task",
-    [
-      [OPEN_ORDER, run("active", true), task({ startedAt: 1 })],
-      [OPEN_ORDER, run("active", true), task()],
-    ],
-    { M: { ...NOTHING, assign: true }, m: NOTHING },
-  ],
-  [
-    "run open or done, task done, no downstream start",
-    [
-      [
-        OPEN_ORDER,
-        run("active"),
-        task({ ready: false, startedAt: 1, doneAt: 2 }),
-      ],
-      [
-        OPEN_ORDER,
-        run("done"),
-        task({ ready: false, startedAt: 1, doneAt: 2 }),
-      ],
-      [
-        OPEN_ORDER,
-        run("active", true),
-        task({ ready: false, startedAt: 1, doneAt: 2 }),
-      ],
-    ],
-    {
-      M: { ...NOTHING, reopen: { blockedBy: null } },
-      m: { ...NOTHING, reopen: { blockedBy: null } },
-    },
-  ],
-  [
-    "run open or done, task done, downstream started",
-    [
-      [
-        OPEN_ORDER,
-        run("active"),
-        task({
-          ready: false,
-          startedAt: 1,
-          doneAt: 2,
-          undoBlockedBy: BLOCKER,
-        }),
-      ],
-    ],
-    {
-      M: { ...NOTHING, reopen: { blockedBy: BLOCKER } },
-      m: { ...NOTHING, reopen: { blockedBy: BLOCKER } },
-    },
-  ],
-  [
-    "run closed",
-    [
-      [OPEN_ORDER, run("closed"), task({ ready: false })],
-      [OPEN_ORDER, run("closed"), task({ ready: false, startedAt: 1 })],
-      [
-        OPEN_ORDER,
-        run("closed"),
-        task({ ready: false, startedAt: 1, doneAt: 2 }),
-      ],
-    ],
-    { M: NOTHING, m: NOTHING },
-  ],
-  [
-    "order closed",
-    [
-      [CANCELLED_ORDER, run("active"), task({ startedAt: 1 })],
-      [
-        FULFILLED_ORDER,
-        run("done"),
-        task({ ready: false, startedAt: 1, doneAt: 2 }),
-      ],
-    ],
-    { M: NOTHING, m: NOTHING },
-  ],
-];
-
 describe("Domain.taskActions matrix", () => {
-  for (const [label, cases, cells] of TASK_MATRIX)
-    it(label, () => {
-      for (const [order, state, view] of cases) {
+  for (const row of TASK_ROWS)
+    it(ActionTable.renderRow("taskActions", row), () => {
+      for (const fixture of ActionTable.expand("taskActions", row, CONTEXT)) {
+        const { order, run: state, task: view } = fixture;
         deepStrictEqual(
           Domain.taskActions(MERCHANT, order, state, view),
-          cells.M,
+          expectedOf(row, "M"),
         );
         deepStrictEqual(
           Domain.taskActions(MEMBER, order, state, view),
-          cells.m,
+          expectedOf(row, "m"),
         );
       }
     });
@@ -412,21 +154,14 @@ describe("Domain.taskActions matrix", () => {
   it("a task on none of the member's teams offers the member nothing", () => {
     deepStrictEqual(
       Domain.taskActions(OUTSIDER, OPEN_ORDER, run("active"), task()),
-      NOTHING,
+      {
+        start: false,
+        done: false,
+        putBack: false,
+        reopen: null,
+        assign: false,
+      },
     );
-  });
-
-  it("reopen is not offered on a closed run", () => {
-    for (const actor of [MERCHANT, MEMBER])
-      strictEqual(
-        Domain.taskActions(
-          actor,
-          OPEN_ORDER,
-          run("closed"),
-          task({ ready: false, startedAt: 1, doneAt: 2 }),
-        ).reopen,
-        null,
-      );
   });
 });
 
@@ -567,13 +302,6 @@ const layer = Repository.layerNoDeps.pipe(
   ),
 );
 
-afterEach(async () => {
-  await env.D1.exec("delete from TeamMember");
-  await env.D1.exec("delete from Team");
-  await env.D1.exec("delete from Member");
-  await env.D1.exec("delete from ShopSession");
-});
-
 const ORDER_ID = "gid://shopify/Order/1";
 const LINE_ITEM_ID = "gid://shopify/LineItem/1";
 
@@ -641,20 +369,148 @@ const seedOrder = (shop: string) =>
       ),
   );
 
-/** Writes the object's SQLite directly: the states reconcile or Shopify would produce, without a webhook. */
-const exec = (shop: string, query: string, ...bindings: unknown[]) =>
+type Who = "M" | "m";
+type Call = () => Promise<{ readonly _tag: string }>;
+
+/** One task's recorded progress, as the reset writes it. */
+interface Progress {
+  readonly startedAt: number | null;
+  readonly doneAt: number | null;
+}
+const IDLE: Progress = { startedAt: null, doneAt: null };
+
+/** A live run's ids. Change workflow replaces the run, so this is re-read after it. */
+interface LiveRun {
+  readonly runId: string;
+  readonly workflowId: string;
+  readonly cut: string;
+  readonly polish: string;
+}
+
+/**
+ * The seeded run's two tasks for a fixture, and which one is under test.
+ * Cut is step 0 and Polish step 1, so Polish is waiting while Cut is open,
+ * and Cut's downstream is Polish. A done task with no downstream start on a
+ * done run is Polish: Cut's downstream is done there, which is started.
+ */
+const tasksFor = (
+  fixture: ActionTable.Fixture<Domain.TeamId, Domain.UndoBlocker>,
+): {
+  readonly target: "cut" | "polish";
+  readonly cut: Progress;
+  readonly polish: Progress;
+} => {
+  const { ready, startedAt, doneAt, undoBlockedBy } = fixture.task;
+  const runDone = Domain.runIsDone(fixture.run);
+  const finished = { startedAt: 1, doneAt: 2 };
+  if (doneAt === null)
+    return ready
+      ? { target: "cut", cut: { startedAt, doneAt }, polish: IDLE }
+      : { target: "polish", cut: IDLE, polish: IDLE };
+  if (undoBlockedBy !== null)
+    return {
+      target: "cut",
+      cut: finished,
+      polish: { startedAt: 3, doneAt: runDone ? 4 : null },
+    };
+  return runDone
+    ? { target: "polish", cut: finished, polish: { startedAt: 3, doneAt: 4 } }
+    : { target: "cut", cut: finished, polish: IDLE };
+};
+
+/**
+ * Puts the live run into a fixture's state by writing the object's SQLite,
+ * every column the fixture touches set from scratch so no fixture inherits
+ * the last call's writes. These are states reconcile, Shopify or a replay of
+ * callables would produce; writing them is faster and names the state
+ * exactly.
+ */
+const reset = (
+  shop: string,
+  live: LiveRun,
+  teamId: string,
+  fixture: ActionTable.Fixture<Domain.TeamId, Domain.UndoBlocker>,
+  tasks: { readonly cut: Progress; readonly polish: Progress },
+) =>
   runInDurableObject(
     env.SHOP_AGENT.get(env.SHOP_AGENT.idFromName(shop)),
     (_instance, state) => {
-      state.storage.sql.exec(query, ...bindings);
+      const sql = state.storage.sql;
+      const { order, run: target, item } = fixture;
+      const closed = Domain.runIsClosed(target);
+      sql.exec(
+        "update ShopOrder set cancelledAt = ?, fulfillmentStatus = ? where id = ?",
+        order.cancelledAt,
+        order.fulfillmentStatus,
+        ORDER_ID,
+      );
+      sql.exec(
+        "update OrderLineItem set currentQuantity = ? where id = ?",
+        item?.currentQuantity ?? 1,
+        LINE_ITEM_ID,
+      );
+      sql.exec(
+        "update Run set status = ?, blockedAt = ?, blockedBy = ?, blockReason = null, closedAt = ?, closedReason = ?, quantityChangedFrom = null where id = ?",
+        target.status,
+        target.blockedAt,
+        target.blockedAt === null ? null : JSON.stringify(MERCHANT),
+        closed ? 1 : null,
+        closed ? "merchant_cancelled" : null,
+        live.runId,
+      );
+      for (const [id, progress] of [
+        [live.cut, tasks.cut],
+        [live.polish, tasks.polish],
+      ] as const) {
+        const started = progress.startedAt !== null;
+        const done = progress.doneAt !== null;
+        sql.exec(
+          "update RunTask set teamId = ?, startedAt = ?, startedBy = ?, startedByEmail = ?, startedByRole = ?, doneAt = ?, doneBy = ?, doneByEmail = ?, doneByRole = ?, reopenedAt = null, reopenedByRole = null, reopenedByEmail = null where id = ?",
+          teamId,
+          progress.startedAt,
+          started ? "m1" : null,
+          started ? "m1@example.com" : null,
+          started ? "member" : null,
+          progress.doneAt,
+          done ? "m1" : null,
+          done ? "m1@example.com" : null,
+          done ? "member" : null,
+          id,
+        );
+      }
     },
   );
 
-const NOT_ALLOWED = { _tag: "NotAllowed" };
+/** Each callable in a cell map with its cell and actor; an actor with no callable for a cell has no entry. */
+const entriesOf = (
+  calls: Readonly<Record<string, Partial<Record<Who, Call>>>>,
+) =>
+  Object.entries(calls).flatMap(([cell, byWho]) =>
+    (["M", "m"] as const).flatMap((who) => {
+      const call = byWho[who];
+      return call === undefined ? [] : [{ cell, who, call }];
+    }),
+  );
+
+/** The tag a filled cell's callable answers, except where `taskOk` names another. */
+const OK = "Ok";
+const NOT_ALLOWED = "NotAllowed";
+
+const ACTION_SHOP = "run-actions-refuse.myshopify.com";
 
 describe("ShopAgent refuses what the action set refuses", () => {
-  it("every blank cell of the run and task matrices is refused by its callable", async () => {
-    const shop = "run-actions-refuse.myshopify.com";
+  /**
+   * Every callable is driven into every expanded row of {@link
+   * Domain.runActions}' and {@link Domain.taskActions}' tables, as the
+   * merchant and as a member on the run's team, and must answer as the cell
+   * says: success on a filled cell, `NotAllowed` on a blank one. The pure
+   * half above proves the formula matches the table; this half proves each
+   * callable reads that formula with the right inputs in every state. A
+   * cell with no callable for an actor (member Cancel, merchant Start) is
+   * skipped for that actor; the pure half covers its false side.
+   */
+  const setup = async () => {
+    const shop = ACTION_SHOP;
     const team = await seedTeam(shop);
     await seedOrder(shop);
     const agent = await getAgentByName(env.SHOP_AGENT, shop);
@@ -679,179 +535,208 @@ describe("ShopAgent refuses what the action set refuses", () => {
         active: true,
       });
       if (on._tag !== "Ok") throw new Error(on._tag);
-      return created.workflow;
+      return created.workflow.id;
     };
-    const engrave = await build("Engrave");
-    const rush = await build("Rush");
+    const workflowIds = [await build("Engrave"), await build("Rush")] as const;
     const attached = await agent.merchantAttachWorkflow({
       lineItemId: LINE_ITEM_ID,
-      workflowId: engrave.id,
+      workflowId: workflowIds[0],
     });
     if (attached._tag !== "Ok") throw new Error(attached._tag);
-    const runId = attached.run.id;
-    const [detail] = await agent.merchantListRunsForOrder({
-      orderId: ORDER_ID,
-    });
-    const [cut, polish] = detail?.tasks ?? [];
-    if (cut === undefined || polish === undefined) throw new Error("tasks");
+    const readLive = async (): Promise<LiveRun> => {
+      const [detail] = await agent.merchantListRunsForOrder({
+        orderId: ORDER_ID,
+      });
+      const [cut, polish] = detail?.tasks ?? [];
+      if (detail === undefined || cut === undefined || polish === undefined)
+        throw new Error("run");
+      return {
+        runId: detail.run.id,
+        workflowId: detail.run.workflowId,
+        cut: cut.id,
+        polish: polish.id,
+      };
+    };
     const merchant = await openMerchantSocket(shop);
     const member = await openMemberSocket(shop, {
       memberId: "m1",
       memberEmail: "m1@example.com",
       teamIds: [team.id],
     });
-
-    // open, not blocked: no reason to edit, no block to lift; the waiting
-    // task takes no Done.
-    expect(await merchant.setBlockReason({ runId, reason: "x" })).toEqual(
-      NOT_ALLOWED,
-    );
-    expect(await merchant.unblockRun({ runId })).toEqual(NOT_ALLOWED);
-    expect(await member.unblockRun({ runId })).toEqual(NOT_ALLOWED);
-    expect(await member.setBlockReason({ runId, reason: "x" })).toEqual(
-      NOT_ALLOWED,
-    );
-    expect(await merchant.completeTask({ runTaskId: polish.id })).toEqual(
-      NOT_ALLOWED,
-    );
-    expect(await member.startTask({ runTaskId: polish.id })).toEqual(
-      NOT_ALLOWED,
-    );
-
-    // open, blocked: no second Block; no work under the hold.
-    expect(await merchant.blockRun({ runId, reason: null })).toEqual({
-      _tag: "Ok",
-    });
-    expect(await merchant.blockRun({ runId, reason: null })).toEqual(
-      NOT_ALLOWED,
-    );
-    expect(await member.blockRun({ runId, reason: null })).toEqual(NOT_ALLOWED);
-    expect(await member.startTask({ runTaskId: cut.id })).toEqual(NOT_ALLOWED);
-    expect(await merchant.completeTask({ runTaskId: cut.id })).toEqual(
-      NOT_ALLOWED,
-    );
-    expect(await member.unblockRun({ runId })).toEqual({ _tag: "Ok" });
-
-    // open, nothing to make: the line went to zero, so no workflow replaces
-    // the run; the units come back before the next row.
-    await exec(
+    return {
       shop,
-      "update OrderLineItem set currentQuantity = 0 where id = ?",
-      LINE_ITEM_ID,
-    );
-    const onEmpty = await agent.merchantAttachWorkflow({
-      lineItemId: LINE_ITEM_ID,
-      workflowId: rush.id,
-    });
-    strictEqual(onEmpty._tag, "NothingToMake");
-    await exec(
-      shop,
-      "update OrderLineItem set currentQuantity = 1 where id = ?",
-      LINE_ITEM_ID,
-    );
+      team,
+      agent,
+      workflowIds,
+      merchant,
+      member,
+      readLive,
+      live: await readLive(),
+    };
+  };
+  let ctx: Awaited<ReturnType<typeof setup>>;
 
-    // done: nothing but the note and Reopen.
-    expect(await member.completeTask({ runTaskId: cut.id })).toEqual({
-      _tag: "Ok",
-    });
-    expect(await member.completeTask({ runTaskId: polish.id })).toEqual({
-      _tag: "Ok",
-    });
-    expect(await agent.merchantCancelRun({ runId })).toEqual(NOT_ALLOWED);
-    expect(await merchant.blockRun({ runId, reason: null })).toEqual(
-      NOT_ALLOWED,
-    );
-    expect(await merchant.unblockRun({ runId })).toEqual(NOT_ALLOWED);
-    expect(
-      await agent.merchantAssignRunTaskTeam({
-        runTaskId: cut.id,
-        teamId: team.id,
-      }),
-    ).toEqual(NOT_ALLOWED);
-    const change = await agent.merchantAttachWorkflow({
-      lineItemId: LINE_ITEM_ID,
-      workflowId: rush.id,
-    });
-    strictEqual(change._tag, "ItemDone");
-    expect(await merchant.setRunNote({ runId, note: "after" })).toEqual({
-      _tag: "Ok",
-    });
-
-    // order closed: Polish reopened first so the run is open again, then
-    // Shopify cancels the order. Only the note remains; there is nothing to
-    // cancel.
-    expect(await merchant.uncompleteTask({ runTaskId: polish.id })).toEqual({
-      _tag: "Ok",
-    });
-    await exec(
-      shop,
-      "update ShopOrder set cancelledAt = ? where id = ?",
-      Date.now(),
-      ORDER_ID,
-    );
-    expect(await merchant.completeTask({ runTaskId: polish.id })).toEqual(
-      NOT_ALLOWED,
-    );
-    expect(await member.startTask({ runTaskId: polish.id })).toEqual(
-      NOT_ALLOWED,
-    );
-    expect(await member.uncompleteTask({ runTaskId: cut.id })).toEqual(
-      NOT_ALLOWED,
-    );
-    expect(await merchant.blockRun({ runId, reason: null })).toEqual(
-      NOT_ALLOWED,
-    );
-    expect(await agent.merchantCancelRun({ runId })).toEqual(NOT_ALLOWED);
-    expect(
-      await agent.merchantAssignRunTaskTeam({
-        runTaskId: polish.id,
-        teamId: team.id,
-      }),
-    ).toEqual(NOT_ALLOWED);
-    const onClosed = await agent.merchantAttachWorkflow({
-      lineItemId: LINE_ITEM_ID,
-      workflowId: rush.id,
-    });
-    strictEqual(onClosed._tag, "OrderClosed");
-    expect(await member.setRunNote({ runId, note: "closed" })).toEqual({
-      _tag: "Ok",
-    });
-
-    // closed: the order reopens and the merchant cancels the run. Only the
-    // note is left on it.
-    await exec(
-      shop,
-      "update ShopOrder set cancelledAt = null where id = ?",
-      ORDER_ID,
-    );
-    expect(await agent.merchantCancelRun({ runId })).toEqual({ _tag: "Ok" });
-    expect(await merchant.setRunNote({ runId, note: "x" })).toEqual({
-      _tag: "Ok",
-    });
-    expect(await member.setRunNote({ runId, note: "y" })).toEqual({
-      _tag: "Ok",
-    });
-    expect(await agent.merchantCancelRun({ runId })).toEqual(NOT_ALLOWED);
-    expect(await merchant.blockRun({ runId, reason: null })).toEqual(
-      NOT_ALLOWED,
-    );
-    expect(await merchant.unblockRun({ runId })).toEqual(NOT_ALLOWED);
-    expect(await merchant.completeTask({ runTaskId: polish.id })).toEqual(
-      NOT_ALLOWED,
-    );
-    expect(await merchant.uncompleteTask({ runTaskId: cut.id })).toEqual(
-      NOT_ALLOWED,
-    );
-    expect(await member.uncompleteTask({ runTaskId: cut.id })).toEqual(
-      NOT_ALLOWED,
-    );
-    expect(
-      await agent.merchantAssignRunTaskTeam({
-        runTaskId: polish.id,
-        teamId: team.id,
-      }),
-    ).toEqual(NOT_ALLOWED);
-    merchant.close();
-    member.close();
+  beforeAll(async () => {
+    ctx = await setup();
   });
+
+  afterAll(async () => {
+    ctx.merchant.close();
+    ctx.member.close();
+    await env.D1.exec("delete from TeamMember");
+    await env.D1.exec("delete from Team");
+    await env.D1.exec("delete from Member");
+    await env.D1.exec("delete from ShopSession");
+  });
+
+  /** The run-level callables by cell. Each answers `Ok` on a filled cell. */
+  const runCalls = (runId: string) =>
+    entriesOf({
+      note: {
+        M: () => ctx.merchant.setRunNote({ runId, note: "x" }),
+        m: () => ctx.member.setRunNote({ runId, note: "x" }),
+      },
+      block: {
+        M: () => ctx.merchant.blockRun({ runId, reason: null }),
+        m: () => ctx.member.blockRun({ runId, reason: null }),
+      },
+      editReason: {
+        M: () => ctx.merchant.setBlockReason({ runId, reason: "x" }),
+        m: () => ctx.member.setBlockReason({ runId, reason: "x" }),
+      },
+      unblock: {
+        M: () => ctx.merchant.unblockRun({ runId }),
+        m: () => ctx.member.unblockRun({ runId }),
+      },
+      cancel: { M: () => ctx.agent.merchantCancelRun({ runId }) },
+    });
+
+  const otherWorkflow = () => {
+    const other = ctx.workflowIds.find((id) => id !== ctx.live.workflowId);
+    if (other === undefined) throw new Error("workflow");
+    return other;
+  };
+
+  /**
+   * Change workflow answers with the attach result, not `NotAllowed`:
+   * `ItemDone`, `OrderClosed` or `NothingToMake` on a blank cell. A
+   * successful attach replaces the run, so the live ids are re-read and the
+   * fixture applied to the new run.
+   */
+  const checkChangeWorkflow = async (
+    row: ActionTable.Row,
+    fixture: ActionTable.Fixture<Domain.TeamId, Domain.UndoBlocker>,
+    tasks: { readonly cut: Progress; readonly polish: Progress },
+  ) => {
+    const attached = await ctx.agent.merchantAttachWorkflow({
+      lineItemId: LINE_ITEM_ID,
+      workflowId: otherWorkflow(),
+    });
+    const label = `changeWorkflow by M on ${JSON.stringify(fixture)}`;
+    if (!offered(row.cells.changeWorkflow, "M")) {
+      expect(["ItemDone", "OrderClosed", "NothingToMake"], label).toContain(
+        attached._tag,
+      );
+      return;
+    }
+    expect(attached._tag, label).toBe(OK);
+    expect(attached._tag === "Ok" && attached.replaced, label).not.toBe(null);
+    ctx.live = await ctx.readLive();
+    await reset(ctx.shop, ctx.live, ctx.team.id, fixture, tasks);
+  };
+
+  const checkRunRow = async (row: ActionTable.Row) => {
+    for (const fixture of ActionTable.expand("runActions", row, {
+      teamId: ctx.team.id,
+      blocker: BLOCKER,
+    })) {
+      const tasks = Domain.runIsDone(fixture.run)
+        ? {
+            cut: { startedAt: 1, doneAt: 2 },
+            polish: { startedAt: 3, doneAt: 4 },
+          }
+        : { cut: IDLE, polish: IDLE };
+      await reset(ctx.shop, ctx.live, ctx.team.id, fixture, tasks);
+      for (const { cell, who, call } of runCalls(ctx.live.runId)) {
+        const result = await call();
+        expect(
+          result._tag,
+          `${cell} by ${who} on ${JSON.stringify(fixture)}`,
+        ).toBe(offered(row.cells[cell], who) ? OK : NOT_ALLOWED);
+        await reset(ctx.shop, ctx.live, ctx.team.id, fixture, tasks);
+      }
+      // On a closed run attach is the closed item's picker, whose rule is
+      // `Domain.lineItemState`, not this table, so it is not called there.
+      if (!Domain.runIsClosed(fixture.run))
+        await checkChangeWorkflow(row, fixture, tasks);
+    }
+  };
+
+  for (const row of RUN_ROWS)
+    it(`callables: ${ActionTable.renderRow("runActions", row)}`, () =>
+      checkRunRow(row));
+
+  /** The task callables by cell. */
+  const taskCalls = (runTaskId: string) =>
+    entriesOf({
+      start: { m: () => ctx.member.startTask({ runTaskId }) },
+      done: {
+        M: () => ctx.merchant.completeTask({ runTaskId }),
+        m: () => ctx.member.completeTask({ runTaskId }),
+      },
+      putBack: {
+        M: () => ctx.merchant.unstartTask({ runTaskId }),
+        m: () => ctx.member.unstartTask({ runTaskId }),
+      },
+      reopen: {
+        M: () => ctx.merchant.uncompleteTask({ runTaskId }),
+        m: () => ctx.member.uncompleteTask({ runTaskId }),
+      },
+      assign: {
+        M: () =>
+          ctx.agent.merchantAssignRunTaskTeam({
+            runTaskId,
+            teamId: ctx.team.id,
+          }),
+      },
+    });
+
+  /**
+   * The tag a filled task cell's callable answers. Two are not `Ok`:
+   * `assign` answers `Assigned`, and a `blocker` cell under `reopen` answers
+   * `UndoBlocked`, because the table says the button is drawn with that
+   * sentence and the callable refuses for the downstream start rather than
+   * the action set.
+   */
+  const taskOk = (cell: string, value: ActionTable.Cell | undefined) => {
+    if (cell === "assign") return "Assigned";
+    if (value === "blocker") return "UndoBlocked";
+    return OK;
+  };
+
+  const checkTaskRow = async (row: ActionTable.Row) => {
+    for (const fixture of ActionTable.expand("taskActions", row, {
+      teamId: ctx.team.id,
+      blocker: BLOCKER,
+    })) {
+      const tasks = tasksFor(fixture);
+      await reset(ctx.shop, ctx.live, ctx.team.id, fixture, tasks);
+      for (const { cell, who, call } of taskCalls(ctx.live[tasks.target])) {
+        const result = await call();
+        expect(
+          result._tag,
+          `${cell} by ${who} on ${tasks.target} in ${JSON.stringify(fixture)}`,
+        ).toBe(
+          offered(row.cells[cell], who)
+            ? taskOk(cell, row.cells[cell])
+            : NOT_ALLOWED,
+        );
+        await reset(ctx.shop, ctx.live, ctx.team.id, fixture, tasks);
+      }
+    }
+  };
+
+  for (const row of TASK_ROWS)
+    it(`callables: ${ActionTable.renderRow("taskActions", row)}`, () =>
+      checkTaskRow(row));
 });

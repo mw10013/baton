@@ -1,0 +1,381 @@
+import type { OrderState, RunStatus } from "../../src/lib/Domain.ts";
+
+/**
+ * Reads the action matrices out of the JSDoc on `runActions` and
+ * `taskActions` in `src/lib/Domain.ts`, so the table a person edits is the
+ * table the test asserts. Pure: it takes the source text as a parameter,
+ * because the test runs inside workerd (no `node:fs`) and gets the text
+ * through Vite's `?raw` import, while `scripts/action-table.ts` reads the
+ * file from disk.
+ */
+import { Data, Result, Schema } from "effect";
+
+/** An action cell: blank is never, `blocker` is Reopen offered with the downstream blocker. */
+export const Cell = Schema.Literals(["", "M", "m", "M m", "blocker"]);
+export type Cell = typeof Cell.Type;
+
+/** One parsed row: the state words by column, the cell by action, and the source line it came from. */
+export interface Row {
+  readonly line: number;
+  readonly state: Readonly<Record<string, string>>;
+  readonly cells: Readonly<Record<string, Cell>>;
+}
+
+/** Which columns are state and which are actions, per table. */
+export const TABLES = {
+  runActions: {
+    state: ["order", "run", "blocked", "units"],
+    actions: [
+      "note",
+      "block",
+      "editReason",
+      "unblock",
+      "cancel",
+      "changeWorkflow",
+    ],
+  },
+  taskActions: {
+    state: ["order", "run", "blocked", "task", "downstream"],
+    actions: ["start", "done", "putBack", "reopen", "assign"],
+  },
+} as const;
+export type TableName = keyof typeof TABLES;
+
+export class ParseError extends Data.TaggedError("ParseError")<{
+  readonly message: string;
+}> {}
+
+const OrderWord = Schema.Literals(["open", "closed"]);
+const RunWord = Schema.Literals(["open", "done", "closed", "open or done"]);
+const BlockedWord = Schema.Literals(["yes", "no", "any"]);
+const UnitsWord = Schema.Literals(["some", "none"]);
+const TaskWord = Schema.Literals([
+  "ready",
+  "started",
+  "waiting",
+  "done",
+  "any open",
+  "any",
+]);
+const DownstreamWord = Schema.Literals(["none", "started", "-"]);
+
+/** The words each state column accepts. */
+const WORDS = {
+  order: OrderWord,
+  run: RunWord,
+  blocked: BlockedWord,
+  units: UnitsWord,
+  task: TaskWord,
+  downstream: DownstreamWord,
+} as const;
+
+interface TaskState {
+  readonly ready: boolean;
+  readonly startedAt: number | null;
+  readonly doneAt: number | null;
+}
+
+const READY: TaskState = { ready: true, startedAt: null, doneAt: null };
+const STARTED: TaskState = { ready: true, startedAt: 1, doneAt: null };
+const WAITING: TaskState = { ready: false, startedAt: null, doneAt: null };
+const DONE: TaskState = { ready: false, startedAt: 1, doneAt: 2 };
+
+const ORDERS: Record<typeof OrderWord.Type, readonly OrderState[]> = {
+  open: [{ cancelledAt: null, fulfillmentStatus: "UNFULFILLED" }],
+  closed: [
+    { cancelledAt: 1, fulfillmentStatus: "UNFULFILLED" },
+    { cancelledAt: null, fulfillmentStatus: "FULFILLED" },
+  ],
+};
+const RUNS: Record<typeof RunWord.Type, readonly RunStatus[]> = {
+  open: ["active"],
+  done: ["done"],
+  closed: ["closed"],
+  "open or done": ["active", "done"],
+};
+const BLOCKED: Record<typeof BlockedWord.Type, readonly (number | null)[]> = {
+  yes: [1],
+  no: [null],
+  any: [null, 1],
+};
+const UNITS: Record<typeof UnitsWord.Type, readonly number[]> = {
+  some: [1],
+  none: [0],
+};
+const TASKS: Record<typeof TaskWord.Type, readonly TaskState[]> = {
+  ready: [READY],
+  started: [STARTED],
+  waiting: [WAITING],
+  done: [DONE],
+  "any open": [READY, STARTED, WAITING],
+  any: [READY, STARTED, WAITING, DONE],
+};
+
+/**
+ * One concrete input to `runActions` or `taskActions`. `task` is the task
+ * under test for `taskActions`; for `runActions` it is the run's one task,
+ * on the member's team and ready exactly when the run is open, which is who
+ * "m" is. `item` is present on `runActions` fixtures only.
+ */
+export interface Fixture<TeamId, Blocker> {
+  readonly order: OrderState;
+  readonly run: {
+    readonly status: RunStatus;
+    readonly blockedAt: number | null;
+  };
+  readonly task: TaskState & {
+    readonly teamId: TeamId;
+    readonly undoBlockedBy: Blocker | null;
+  };
+  readonly item?: { readonly currentQuantity: number };
+}
+
+/**
+ * Expand one row's state words into every concrete fixture it names. A word
+ * that names several states ("closed" under `order`, "any", "or") multiplies
+ * the fixtures, so one row covers every combination it claims.
+ *
+ * | column     | word         | fixture                                                                              |
+ * | ---------- | ------------ | ------------------------------------------------------------------------------------ |
+ * | order      | open         | `{ cancelledAt: null, fulfillmentStatus: "UNFULFILLED" }`                            |
+ * | order      | closed       | cancelled `{ cancelledAt: 1, ... "UNFULFILLED" }`; fulfilled `{ null, "FULFILLED" }` |
+ * | run        | open         | status `active`                                                                      |
+ * | run        | done         | status `done`                                                                        |
+ * | run        | closed       | status `closed`                                                                      |
+ * | run        | open or done | `active`; `done`                                                                     |
+ * | blocked    | yes / no     | `blockedAt` 1 / null                                                                 |
+ * | blocked    | any          | both                                                                                 |
+ * | units      | some / none  | `currentQuantity` 1 / 0 (runActions only)                                            |
+ * | task       | ready        | `ready: true, startedAt: null, doneAt: null`                                         |
+ * | task       | started      | `ready: true, startedAt: 1, doneAt: null`                                            |
+ * | task       | waiting      | `ready: false, startedAt: null, doneAt: null`                                        |
+ * | task       | done         | `ready: false, startedAt: 1, doneAt: 2`                                              |
+ * | task       | any open     | ready; started; waiting                                                              |
+ * | task       | any          | ready; started; waiting; done                                                        |
+ * | downstream | none         | `undoBlockedBy: null`                                                                |
+ * | downstream | started      | `undoBlockedBy: BLOCKER` (the caller's `blocker`)                                    |
+ * | downstream | -            | not applicable; fixture `null`                                                       |
+ *
+ * The `ready` and `started` words are the glossary's narrow ones. The
+ * `ready` flag they set is the code's broader one, true for a started task
+ * too, so both set it.
+ */
+export const expand = <TeamId, Blocker>(
+  name: TableName,
+  row: Row,
+  context: { readonly teamId: TeamId; readonly blocker: Blocker },
+): readonly Fixture<TeamId, Blocker>[] => {
+  const word = <K extends keyof typeof WORDS>(column: K) =>
+    Schema.decodeUnknownSync(WORDS[column])(row.state[column]);
+  const states = ORDERS[word("order")].flatMap((order) =>
+    RUNS[word("run")].flatMap((status) =>
+      BLOCKED[word("blocked")].map((blockedAt) => ({
+        order,
+        run: { status, blockedAt },
+      })),
+    ),
+  );
+  if (name === "runActions")
+    return states.flatMap(({ order, run }) =>
+      UNITS[word("units")].map((currentQuantity) => ({
+        order,
+        run,
+        task: {
+          teamId: context.teamId,
+          // `Domain.runIsOpen`, spelled out: this module imports `Domain`
+          // for types only, so the CLI runs without the app's runtime.
+          ready: run.status === "active",
+          startedAt: null,
+          doneAt: null,
+          undoBlockedBy: null,
+        },
+        item: { currentQuantity },
+      })),
+    );
+  const undoBlockedBy =
+    word("downstream") === "started" ? context.blocker : null;
+  return states.flatMap(({ order, run }) =>
+    TASKS[word("task")].map((task) => ({
+      order,
+      run,
+      task: { ...task, teamId: context.teamId, undoBlockedBy },
+    })),
+  );
+};
+
+/** Where the JSDoc before `export const <name> =` starts and ends, or a message saying why there is none. */
+const jsdocBefore = (
+  source: string,
+  name: string,
+): Result.Result<
+  { readonly start: number; readonly end: number },
+  ParseError
+> => {
+  const at = source.indexOf(`\nexport const ${name} =`);
+  if (at === -1)
+    return Result.fail(
+      new ParseError({ message: `${name}: no \`export const ${name} =\`` }),
+    );
+  const end = source.slice(0, at).trimEnd().length;
+  const start = source.lastIndexOf("/**", end);
+  if (!source.slice(0, end).endsWith("*/") || start === -1)
+    return Result.fail(
+      new ParseError({ message: `${name}: no JSDoc before the export` }),
+    );
+  return Result.succeed({ start, end });
+};
+
+const cellsOf = (line: string) =>
+  line
+    .split("|")
+    .slice(1, -1)
+    .map((cell) => cell.trim());
+
+const decodeRow = (
+  name: TableName,
+  header: readonly string[],
+  line: number,
+  text: string,
+): Result.Result<Row, ParseError> => {
+  const { state, actions } = TABLES[name];
+  const fail = (message: string) =>
+    Result.fail(
+      new ParseError({ message: `${name}, line ${String(line)}: ${message}` }),
+    );
+  const values = cellsOf(text);
+  if (values.length !== header.length)
+    return fail(
+      `${String(values.length)} cells, expected ${String(header.length)}: ${text}`,
+    );
+  const words: Record<string, string> = {};
+  for (const [index, column] of state.entries()) {
+    const value = values[index] ?? "";
+    const schema = WORDS[column];
+    if (!Schema.is(schema)(value))
+      return fail(
+        `unknown word "${value}" under ${column}; expected one of: ${schema.literals.join(", ")}`,
+      );
+    words[column] = value;
+  }
+  const cells: Record<string, Cell> = {};
+  for (const [index, column] of actions.entries()) {
+    const value = values[state.length + index] ?? "";
+    if (!Schema.is(Cell)(value))
+      return fail(
+        `cell "${value}" under ${column}; expected one of: ${Cell.literals.map((cell) => (cell === "" ? "blank" : cell)).join(", ")}`,
+      );
+    if (value === "blocker" && column !== "reopen")
+      return fail(`cell "blocker" under ${column}; it is only a reopen cell`);
+    cells[column] = value;
+  }
+  return Result.succeed({ line, state: words, cells });
+};
+
+/**
+ * Find the JSDoc immediately preceding `export const <name> =` in `source`,
+ * take its first markdown table, and decode it. The header must be the
+ * table's state columns then its action columns, in {@link TABLES}' order.
+ * Fails with a message that names the line and the offending word or cell.
+ */
+export const parse = (
+  source: string,
+  name: TableName,
+): Result.Result<readonly Row[], ParseError> =>
+  Result.flatMap(jsdocBefore(source, name), ({ start, end }) => {
+    const firstLine = source.slice(0, start).split("\n").length;
+    const lines = source
+      .slice(start, end)
+      .split("\n")
+      .map((text, index) => ({
+        line: firstLine + index,
+        text: text.replace(/^\s*\*? ?/u, "").trim(),
+      }));
+    const from = lines.findIndex(({ text }) => text.startsWith("|"));
+    if (from === -1)
+      return Result.fail(
+        new ParseError({ message: `${name}: no table in its JSDoc` }),
+      );
+    const to = lines.findIndex(
+      ({ text }, index) => index > from && !text.startsWith("|"),
+    );
+    const [head, separator, ...body] = lines.slice(
+      from,
+      to === -1 ? undefined : to,
+    );
+    const expected = [...TABLES[name].state, ...TABLES[name].actions];
+    const header = cellsOf(head?.text ?? "");
+    if (header.join("|") !== expected.join("|"))
+      return Result.fail(
+        new ParseError({
+          message: `${name}, line ${String(head?.line)}: header is ${header.join(", ")}; expected ${expected.join(", ")}`,
+        }),
+      );
+    // The second line is skipped as the separator, so it must be one: a
+    // table without it would lose its first row silently.
+    if (!cellsOf(separator?.text ?? "").every((cell) => /^:?-+:?$/u.test(cell)))
+      return Result.fail(
+        new ParseError({
+          message: `${name}, line ${String(separator?.line)}: expected the separator row after the header`,
+        }),
+      );
+    return Result.all(
+      body.map(({ line, text }) => decodeRow(name, header, line, text)),
+    );
+  });
+
+/** The row rendered back as one line, for `it` titles and `print`. Blank cells are left out. */
+export const renderRow = (name: TableName, row: Row): string => {
+  const { state, actions } = TABLES[name];
+  const offered = actions
+    .filter((action) => row.cells[action] !== "")
+    .map((action) => `${action} ${row.cells[action]}`);
+  return `${state.map((column) => `${column} ${row.state[column]}`).join(", ")} → ${offered.length === 0 ? "nothing" : offered.join(", ")}`;
+};
+
+/**
+ * No two rows of a table expand to a common fixture. Independence is what
+ * makes a row safe to edit alone: a fixture claimed by two rows would pass
+ * or fail by whichever the test read last.
+ */
+export const overlaps = (
+  name: TableName,
+  rows: readonly Row[],
+): readonly (readonly [Row, Row])[] => {
+  const keys = rows.map(
+    (row) =>
+      new Set(
+        expand(name, row, { teamId: "t", blocker: "b" }).map((fixture) =>
+          JSON.stringify(fixture),
+        ),
+      ),
+  );
+  return rows.flatMap((row, i) =>
+    rows
+      .slice(i + 1)
+      .filter((_, offset) =>
+        [...(keys[i] ?? [])].some((key) => keys[i + 1 + offset]?.has(key)),
+      )
+      .map((other) => [row, other] as const),
+  );
+};
+
+/**
+ * Every backticked identifier in the Glossary block occurs as a word
+ * elsewhere in the source. A rename that skipped the glossary is the
+ * failure this catches; it does not prove the word is the right kind of
+ * thing (a literal, an export). Reports the missing words.
+ */
+export const checkGlossary = (source: string): readonly string[] => {
+  const start = source.indexOf("/**\n * Glossary.");
+  if (start === -1) return ["(no Glossary block)"];
+  const end = source.indexOf("*/", start) + 2;
+  const rest = source.slice(0, start) + source.slice(end);
+  const words = new Set(
+    [...source.slice(start, end).matchAll(/`(?<word>[^`]+)`/gu)]
+      .map((match) => match.groups?.word ?? "")
+      .filter((word) => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(word)),
+  );
+  return [...words].filter(
+    (word) => !new RegExp(`\\b${word}\\b`, "u").test(rest),
+  );
+};
