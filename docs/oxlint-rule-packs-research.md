@@ -19,10 +19,10 @@ The best additions are narrow rather than entire packs:
 3. Consider a small native Vitest override for focused or disabled tests and
    structurally invalid suites. Do not enable the whole pack, and do not assume
    its normal `expect` rules understand `@effect/vitest`.
-4. If E2E linting is worth accepting Oxlint's alpha JavaScript-plugin boundary,
-   `eslint-plugin-playwright` is the strongest external-plugin candidate. It
-   catches missing `await`, stale page APIs, unsafe `evaluate` references, and
-   weak locator/assertion patterns. Oxlint explicitly conformance-tests it.
+4. Defer `eslint-plugin-playwright`. It is the strongest external-plugin
+   candidate and Oxlint explicitly conformance-tests it, but Oxlint has no
+   native Playwright pack. Using it requires the alpha JavaScript-plugin
+   interface or a second ESLint pass, neither of which Baton wants to add now.
 5. For Effect, evaluate `@effect/language-service` rather than an Oxlint rule
    pack. Effect's useful diagnostics are type-aware and cannot run through
    Oxlint JavaScript plugins.
@@ -34,8 +34,9 @@ types, which Baton's `typecheck` script already regenerates.
 
 Recommendation: if this research leads to implementation, make one small
 change at a time in this order: `react/unsupported-syntax`, selected import
-rules, selected Vitest rules, then an isolated Playwright plugin trial. Treat
-Effect language-service adoption as a separate type-checking decision.
+rules, then selected Vitest rules. Treat Effect language-service adoption as a
+separate type-checking decision. Revisit Playwright rules when Oxlint provides
+native support or its JavaScript-plugin interface is stable.
 
 ## Scope and date
 
@@ -420,7 +421,7 @@ Recommendation: add a minimal native override only if preventing `.only` and
 `.skip` from entering the tree is an explicit policy. Do not enable the Vitest
 recommended or all preset wholesale.
 
-### Playwright: strongest external plugin candidate
+### Playwright: strong rules, deferred integration
 
 Oxlint has no native Playwright pack. The community-maintained
 `eslint-plugin-playwright` is nevertheless a credible JavaScript-plugin
@@ -459,6 +460,13 @@ Recommendation: this is worth a separate trial. Start with the recommended
 rules in report-only mode, classify every finding, then retain only defect
 prevention rules. Avoid regex options for `valid-test-tags` until tested against
 the exact pair of versions.
+
+Decision: defer this trial. Oxlint 1.82.0 can run the plugin only through its
+alpha JavaScript-plugin interface. The compatibility results reduce rule-level
+risk but do not make that interface stable. Running the plugin through regular
+ESLint would avoid Oxlint's alpha interface but would introduce a second linter.
+Baton will do neither now. Revisit this pack if Oxlint adds native Playwright
+rules or stabilizes JavaScript plugins.
 
 ## Native packs not recommended broadly
 
@@ -579,8 +587,7 @@ These use stable native Oxlint facilities and add no package dependency.
 
 ### Tier 2: valuable but separate evaluation
 
-1. Trial `eslint-plugin-playwright` against only `e2e/` and retain defect rules.
-2. Trial `@effect/language-service` with the exact Effect and TypeScript pins,
+1. Trial `@effect/language-service` with the exact Effect and TypeScript pins,
    deciding separately whether TypeScript patching is acceptable.
 
 These have higher potential value, but also introduce new runtime or tooling
@@ -590,6 +597,7 @@ boundaries.
 
 - TanStack Query strict style
 - typed TanStack Start ESLint pass
+- `eslint-plugin-playwright` while JavaScript plugins remain alpha
 - community Effect Oxlint packs
 - React performance rules
 - Promise, JSDoc, Node, or security presets
@@ -621,12 +629,14 @@ Playwright `no-skipped-test` are errors, warnings, or omitted.
 
 ### 3. Is an alpha JavaScript-plugin dependency acceptable for E2E correctness?
 
-**Recommendation: yes for a measured Playwright pilot, not by default for its
-whole recommended preset.** Oxlint explicitly tests this plugin, and the
-missing-await and web-first assertion rules target real browser-test defects.
+**Decision: no for now.** Oxlint explicitly tests this plugin, and the
+missing-await and web-first assertion rules target real browser-test defects,
+but the plugin still crosses an alpha interface. A second ESLint pass is not
+worth adding as a workaround.
 
-Decision effect: a yes leads to a report-only trial and curated rule set. A no
-keeps the current E2E type checking and runtime tests without another plugin.
+Decision effect: keep the current E2E type checking and runtime tests. Revisit
+the curated rule set when native Playwright support appears or JavaScript
+plugins become stable.
 
 ### 4. Should Effect diagnostics run only in editors or also fail CI?
 
@@ -659,5 +669,5 @@ and Query lists. Its main gaps are more specific:
 - Effect diagnostics that require the TypeScript type system
 
 The right next step is not to enable more categories. It is to add a few
-high-signal rules with clean baselines and evaluate Playwright and Effect in
-their proper execution models.
+high-signal native rules with clean baselines and evaluate Effect in its proper
+type-aware execution model. Playwright lint integration is explicitly deferred.
