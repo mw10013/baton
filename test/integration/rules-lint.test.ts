@@ -4,7 +4,7 @@ import * as RulesLint from "../../scripts/lib/rules-lint.ts";
 
 /**
  * `scripts/lib/rules-lint.ts` on inline sources. Pure, so it runs in the
- * workers pool like `action-table.test.ts`.
+ * workers pool like `spec.test.ts`.
  */
 
 const hits = (source: string, tsx = true) =>

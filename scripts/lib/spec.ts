@@ -5,8 +5,10 @@ import type { OrderState, RunStatus } from "../../src/lib/Domain.ts";
  * `taskActions` in `src/lib/Domain.ts`, so the table a person edits is the
  * table the test asserts. Pure: it takes the source text as a parameter,
  * because the test runs inside workerd (no `node:fs`) and gets the text
- * through Vite's `?raw` import, while `scripts/action-table.ts` reads the
- * file from disk.
+ * through Vite's `?raw` import, while `scripts/spec.ts` reads the
+ * file from disk. The same module checks the glossary and reads the two
+ * data-model tables, on `initializeSchema` (`src/lib/ShopAgentSchema.ts`)
+ * and on `D1_TABLES` (`src/lib/D1Schema.ts`).
  */
 import { Data, Result, Schema } from "effect";
 
@@ -412,7 +414,7 @@ export const checkGlossary = (source: string): readonly string[] => {
 /**
  * The label constants the glossary's screen columns are checked against,
  * passed in rather than imported so this module stays free of the app's
- * runtime: `scripts/action-table.ts` and the test hand it `Domain`'s values.
+ * runtime: `scripts/spec.ts` and the test hand it `Domain`'s values.
  */
 export interface ScreenLabels {
   readonly taskStates: Readonly<Record<string, string | null>>;
@@ -581,7 +583,7 @@ export const checkScreens = (
   ];
 };
 
-/** One parsed row of the data-model table on `initializeSchema`. */
+/** One parsed row of a data-model table (`initializeSchema`, `D1_TABLES`). */
 export interface DataModelRow {
   readonly line: number;
   readonly about: string;
@@ -603,39 +605,83 @@ export const DATA_MODEL_NOUNS = [
   "step",
   "task",
   "run",
+  "shop",
+  "member",
+  "team",
 ] as const;
 
 /** The `pinned by` cell of a rule no test asserts by name yet. */
 export const NONE_YET = "(none yet)";
 
-const DATA_MODEL = "initializeSchema";
+const escapeRegExp = (text: string) =>
+  text.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
 
-/**
- * Read the data-model table out of the JSDoc on `initializeSchema` in
- * `source` (`src/lib/ShopAgentSchema.ts`). The header is `about | rule |
- * holds by | pinned by`. `about` is a glossary noun ({@link
- * DATA_MODEL_NOUNS}) or a backticked name some `create table if not exists`
- * in the same source declares; `rule` is non-empty; `holds by` is a
- * {@link HoldsBy}; `pinned by` is a test title or {@link NONE_YET}. Fails
- * with a message naming the line and the offending cell.
- */
-export const parseDataModel = (
-  source: string,
-): Result.Result<readonly DataModelRow[], ParseError> => {
-  const tables = new Set(
+/** Where a data-model table is and which table names its `about` may use. */
+export interface DataModelOptions {
+  /** The exported symbol whose JSDoc carries the table. */
+  readonly symbol: string;
+  /** The table names a backticked `about` may name. */
+  readonly tables: ReadonlySet<string>;
+}
+
+/** The names every `create table if not exists <name>` in `source` declares: the object's tables, read from `ShopAgentSchema.ts`. */
+export const tablesDeclared = (source: string): ReadonlySet<string> =>
+  new Set(
     [...source.matchAll(/create table if not exists (?<name>\w+)/gu)].map(
       (match) => match.groups?.name ?? "",
     ),
   );
-  return Result.flatMap(
-    firstTable(source, DATA_MODEL, ["about", "rule", "holds by", "pinned by"]),
+
+/**
+ * The string literals of the arrays assigned at `export const <symbol> =`
+ * in `source`, for each of `symbols`: D1's tables, read from `D1Schema.ts`,
+ * whose DDL is in `migrations/` where no symbol owns it. A regex over the
+ * array literal, because its elements are plain identifiers.
+ */
+export const tablesNamed = (
+  source: string,
+  symbols: readonly string[],
+): ReadonlySet<string> =>
+  new Set(
+    symbols.flatMap((symbol) => {
+      const literal = new RegExp(
+        `\\nexport const ${escapeRegExp(symbol)} = \\[(?<body>[^\\]]*)\\]`,
+        "u",
+      ).exec(source)?.groups?.body;
+      return [...(literal ?? "").matchAll(/"(?<name>\w+)"/gu)].map(
+        (match) => match.groups?.name ?? "",
+      );
+    }),
+  );
+
+/**
+ * Read the data-model table out of the JSDoc on `options.symbol` in
+ * `source`: `initializeSchema` in `src/lib/ShopAgentSchema.ts` for the
+ * object, `D1_TABLES` in `src/lib/D1Schema.ts` for D1. The header is `about
+ * | rule | holds by | pinned by`. `about` is a glossary noun ({@link
+ * DATA_MODEL_NOUNS}) or a backticked name in `options.tables`; `rule` is
+ * non-empty; `holds by` is a {@link HoldsBy}; `pinned by` is a test title or
+ * {@link NONE_YET}. Fails with a message naming the symbol, the line and the
+ * offending cell.
+ */
+export const parseDataModel = (
+  source: string,
+  options: DataModelOptions,
+): Result.Result<readonly DataModelRow[], ParseError> =>
+  Result.flatMap(
+    firstTable(source, options.symbol, [
+      "about",
+      "rule",
+      "holds by",
+      "pinned by",
+    ]),
     ({ body }) =>
       Result.all(
         body.map(({ line, text }): Result.Result<DataModelRow, ParseError> => {
           const fail = (message: string) =>
             Result.fail(
               new ParseError({
-                message: `${DATA_MODEL}, line ${String(line)}: ${message}`,
+                message: `${options.symbol}, line ${String(line)}: ${message}`,
               }),
             );
           const values = cellsOf(text);
@@ -645,7 +691,7 @@ export const parseDataModel = (
           const table = /^`(?<name>\w+)`$/u.exec(about)?.groups?.name;
           if (
             !(DATA_MODEL_NOUNS as readonly string[]).includes(about) &&
-            (table === undefined || !tables.has(table))
+            (table === undefined || !options.tables.has(table))
           )
             return fail(
               `unknown about "${about}"; expected one of: ${DATA_MODEL_NOUNS.join(", ")}, or a backticked table name`,
@@ -660,34 +706,33 @@ export const parseDataModel = (
         }),
       ),
   );
-};
-
-const escapeRegExp = (text: string) =>
-  text.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
 
 /**
  * **Every `pinned by` title is carried by a test.** A row whose cell is not
- * {@link NONE_YET} needs an `it(` in some test source followed, after
- * optional whitespace, by the title as a whole quoted string. A string
- * search, not a TypeScript parse: the titles are plain strings. `testSources`
- * maps each test file to its text. Reports each missing title.
+ * {@link NONE_YET} needs an `it(`, `it.effect(`, `it.live(` or any other
+ * `it.<name>(` in some test source followed, after optional whitespace, by
+ * the title as a whole quoted string. A string search, not a TypeScript
+ * parse: the titles are plain strings. `testSources` maps each test file to
+ * its text; `symbol` names the table in the messages. Reports each missing
+ * title.
  */
 export const checkPinned = (
   rows: readonly DataModelRow[],
   testSources: Readonly<Record<string, string>>,
+  symbol: string,
 ): readonly string[] => {
   const texts = Object.values(testSources);
   return rows
     .filter((row) => row.pinnedBy !== NONE_YET)
     .filter((row) => {
       const title = new RegExp(
-        `\\bit\\(\\s*(["'\`])${escapeRegExp(row.pinnedBy)}\\1`,
+        `\\bit(?:\\.\\w+)?\\(\\s*(["'\`])${escapeRegExp(row.pinnedBy)}\\1`,
         "u",
       );
       return !texts.some((text) => title.test(text));
     })
     .map(
       (row) =>
-        `${DATA_MODEL}, line ${String(row.line)}: no test titled "${row.pinnedBy}"`,
+        `${symbol}, line ${String(row.line)}: no test titled "${row.pinnedBy}"`,
     );
 };

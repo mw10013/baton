@@ -15,7 +15,7 @@ import { OrderRepository } from "@/lib/OrderRepository";
 import { Repository } from "@/lib/Repository";
 import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
 
-import * as ActionTable from "../../scripts/lib/action-table.ts";
+import * as ActionTable from "../../scripts/lib/spec.ts";
 import { openMemberSocket, openMerchantSocket } from "./agent-socket";
 
 /**

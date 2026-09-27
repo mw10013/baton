@@ -39,7 +39,7 @@
  * rule stays on the symbol. The screen columns are checked: each cell is
  * the value of the label constant beside the table ({@link TASK_STATE_LABEL},
  * {@link RUN_STATE_LABEL}, {@link WORKFLOW_STATE_LABEL}, {@link VERB_LABEL}),
- * and `pnpm action-table check` refuses a cell that differs, so a label
+ * and `pnpm spec check` refuses a cell that differs, so a label
  * change starts here.
  *
  * Nouns. "(none)" means no screen says the word; the cell says what a
@@ -48,6 +48,7 @@
  * | word     | meaning                                                  | symbol                          | screen                                                         |
  * | -------- | -------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------- |
  * | merchant | the shop's owner, acting from the Shopify admin          | `Actor` role `merchant`         | "you" to the merchant, "the merchant" to a member              |
+ * | shop     | one Shopify store, the tenant                            | `ShopSession`, `Shop`           | its domain                                                     |
  * | member   | a person at the bench, on one or more teams              | `Actor` role `member`, `Member` | member (merchant screens); "you" or a name (member screens)    |
  * | team     | the group a task is assigned to                          | `Team`                          | team, or its name                                              |
  * | order    | a Shopify order                                          | `ShopOrder`                     | its name (#1001)                                               |
@@ -583,13 +584,8 @@ export type MemberId = typeof MemberId.Type;
 
 /**
  * Merchant copy: **delete a member and they leave their teams.**
- * `TeamMember` cascades; nothing else structural points here.
- * Run history survives the delete because `RunTask` snapshots the
- * actor's email (`startedByEmail` / `doneByEmail`, and the run's
- * `blockedBy`) at the moment of the action, so no live join is ever needed. The
- * bare `startedBy` / `doneBy` ids stay as text with no foreign key and
- * simply stop resolving. Re-adding the same email mints a new id; history
- * keeps the old email as text.
+ * Structure on {@link D1_TABLES}; how run history survives the delete is a
+ * row on {@link initializeSchema}.
  */
 export const Member = Schema.Struct({
   id: MemberId,
@@ -625,10 +621,9 @@ export type TeamName = typeof TeamName.Type;
 /**
  * A shop-scoped grouping of members. Merchant copy: **delete a team and
  * its tasks become unassigned until you assign a team.**
- * Every `WorkflowTask`, `WorkflowDraftTask`, and *open* `RunTask` of
- * an open run that pointed at the team gets `teamId = null`; done run
- * tasks and every task of a closed run keep the id and their `teamName`
- * snapshot, which is why history never needs the row.
+ * The order of the delete is the team-delete row on {@link D1_TABLES};
+ * which task pointers it nulls and why history never needs the row are the
+ * cross-store rows on {@link initializeSchema}.
  * A team with nobody on it is valid and shows **No members**: its tasks can
  * still start runs, nobody can work them until someone joins, and adding one
  * member fixes everything with no data change.
@@ -2914,8 +2909,9 @@ export const actorLabel = (actor: ActorDisplay) =>
 /**
  * Whether an actor slot is this member, by email: the durable identity, since
  * a removed and re-added member mints a new id but keeps the address (the
- * same reason {@link tierOf} matches Mine by email). The merchant has no email
- * and is never "you" on a member page.
+ * member row on {@link D1_TABLES}; the same reason {@link tierOf} matches
+ * Mine by email). The merchant has no email and is never "you" on a member
+ * page.
  */
 export const actorIsMember = (actor: Actor, email: Email) =>
   actor.role === "member" && actor.email === email;
@@ -3063,7 +3059,7 @@ export type RunSource = typeof RunSource.Type;
  * What each status allows. The gate column is the rule; the enforcing write
  * refuses with `RunTerminalError` when it fails. Which buttons a page shows
  * is {@link runActions} and {@link taskActions}, which read these same
- * predicates. `pnpm action-table check` does not read this table: it names
+ * predicates. `pnpm spec check` does not read this table: it names
  * the predicate per action, not a result per state, and the action matrices
  * pin each result it describes.
  *
@@ -3155,7 +3151,7 @@ export const runIsDone = (run: { readonly status: RunStatus }) =>
  * the run's open state).
  *
  * What a block changes. Every site reads this predicate, never the column.
- * `pnpm action-table check` does not read this table: it names the enforcer
+ * `pnpm spec check` does not read this table: it names the enforcer
  * per rule, not a result per state, and the action matrices pin each result
  * it describes.
  *
@@ -3541,12 +3537,13 @@ export const DEFAULT_RUN_TAB: RunTab = "mine";
  * here is an open run already: closed and done runs never reach a tier.
  *
  * "Mine" is by `startedByEmail`, not by the `startedBy` member id. Removing a
- * member and re-adding the same address mints a **new** `Member.id`
- * (`migrations/0001_init.sql`), so the id on a row taken before that stops
- * matching the person still standing at the bench, while the email — the
- * snapshot the migration calls the durable one — keeps matching. A merchant's
- * task has no email at all and so is nobody's, which is right: `Merchant` is
- * not a member of this shop.
+ * member and re-adding the same address mints a **new** `Member.id` (the
+ * member row on {@link D1_TABLES}), so the id on a row taken before that
+ * stops matching the person still standing at the bench, while the email —
+ * the snapshot the run task keeps, the snapshot row on
+ * {@link initializeSchema} — keeps matching. A merchant's task has no email
+ * at all and so is nobody's, which is right: `Merchant` is not a member of
+ * this shop.
  *
  * Put back and reopen both clear `startedByEmail`, so they are the two ways a
  * run leaves Mine without being done.

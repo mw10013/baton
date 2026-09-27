@@ -1,14 +1,15 @@
 import { Result } from "effect";
 import { describe, expect, it } from "vitest";
 
+import d1Source from "@/lib/D1Schema.ts?raw";
 import * as Domain from "@/lib/Domain";
 import source from "@/lib/Domain.ts?raw";
 import schemaSource from "@/lib/ShopAgentSchema.ts?raw";
 
-import * as ActionTable from "../../scripts/lib/action-table.ts";
+import * as ActionTable from "../../scripts/lib/spec.ts";
 
 /**
- * `scripts/lib/action-table.ts` on inline sources. It is pure, so it runs in
+ * `scripts/lib/spec.ts` on inline sources. It is pure, so it runs in
  * the workers pool like everything else; there is no Node-pool project.
  */
 
@@ -44,9 +45,22 @@ const parseError = (source: string) => {
   return parsed.failure.message;
 };
 
+const OBJECT: ActionTable.DataModelOptions = {
+  symbol: "initializeSchema",
+  tables: ActionTable.tablesDeclared(schemaSource),
+};
+
+const D1: ActionTable.DataModelOptions = {
+  symbol: "D1_TABLES",
+  tables: ActionTable.tablesNamed(d1Source, [
+    "D1_TABLES",
+    "BETTER_AUTH_TABLES",
+  ]),
+};
+
 const dataModelError = (doctored: string) => {
   expect(doctored).not.toBe(schemaSource);
-  const parsed = ActionTable.parseDataModel(doctored);
+  const parsed = ActionTable.parseDataModel(doctored, OBJECT);
   if (Result.isSuccess(parsed)) throw new Error("parsed");
   return parsed.failure.message;
 };
@@ -254,7 +268,9 @@ describe("action table parser", () => {
     );
 
     it("the real table parses", () => {
-      const rows = Result.getOrThrow(ActionTable.parseDataModel(schemaSource));
+      const rows = Result.getOrThrow(
+        ActionTable.parseDataModel(schemaSource, OBJECT),
+      );
       expect(rows.length).toBeGreaterThan(0);
       expect(rows.map((row) => row.about)).toContain("`SyncState`");
     });
@@ -290,18 +306,56 @@ describe("action table parser", () => {
     });
 
     it("every pinned title is carried by a test, and a doctored one is reported", () => {
-      const rows = Result.getOrThrow(ActionTable.parseDataModel(schemaSource));
-      expect(ActionTable.checkPinned(rows, testSources)).toEqual([]);
+      const rows = Result.getOrThrow(
+        ActionTable.parseDataModel(schemaSource, OBJECT),
+      );
+      expect(ActionTable.checkPinned(rows, testSources, OBJECT.symbol)).toEqual(
+        [],
+      );
       const doctored = rows.map((row) =>
         row.pinnedBy === "deleteWorkflow cascades its draft and tasks"
           ? { ...row, pinnedBy: "deleteWorkflow cascades nothing" }
           : row,
       );
-      expect(ActionTable.checkPinned(doctored, testSources)).toEqual([
+      expect(
+        ActionTable.checkPinned(doctored, testSources, OBJECT.symbol),
+      ).toEqual([
         expect.stringMatching(
-          /no test titled "deleteWorkflow cascades nothing"/u,
+          /^initializeSchema, line \d+: no test titled "deleteWorkflow cascades nothing"/u,
         ),
       ]);
+    });
+
+    it("a pinned title written with it.effect or it.live is found", () => {
+      const row = {
+        line: 1,
+        about: "member",
+        rule: "a rule",
+        holdsBy: "app",
+      } as const;
+      const sources = {
+        "a.test.ts": `it.effect("pinned by effect", () => Effect.void);`,
+        "b.test.ts": `it.live(\n  "pinned by live",\n  () => Effect.void,\n);`,
+      };
+      expect(
+        ActionTable.checkPinned(
+          [
+            { ...row, pinnedBy: "pinned by effect" },
+            { ...row, pinnedBy: "pinned by live" },
+            { ...row, pinnedBy: "pinned by nothing" },
+          ],
+          sources,
+          "D1_TABLES",
+        ),
+      ).toEqual([`D1_TABLES, line 1: no test titled "pinned by nothing"`]);
+    });
+
+    it("the D1 table parses and every pinned title is carried by a test", () => {
+      const rows = Result.getOrThrow(ActionTable.parseDataModel(d1Source, D1));
+      expect(rows.map((row) => row.about)).toEqual(
+        expect.arrayContaining(["shop", "member", "team", "`User`"]),
+      );
+      expect(ActionTable.checkPinned(rows, testSources, D1.symbol)).toEqual([]);
     });
   });
 });

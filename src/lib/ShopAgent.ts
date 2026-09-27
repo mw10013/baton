@@ -3747,8 +3747,9 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Delete a team and its tasks become unassigned. Two stores, two writes,
-   * D1 first: the two cannot share a transaction, and the order is what
+   * Delete a team and its tasks become unassigned: the team-delete row on
+   * {@link D1_TABLES}. Two stores, two writes, D1 first: the two cannot
+   * share a transaction, and the order is what
    * closes the race with a concurrent `addStep` / `updateTask` pointing at
    * this team. Its `teamExists` check reads D1; if that read lands after the
    * D1 delete the write is refused, and if it lands before but the task

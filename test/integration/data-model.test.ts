@@ -15,7 +15,7 @@ import { WorkflowRepository } from "@/lib/WorkflowRepository";
 /**
  * The `schema` and `schema+app` rows of the data-model table on
  * `initializeSchema` (`src/lib/ShopAgentSchema.ts`). Each title is the row's
- * rule verbatim, which is what `pnpm action-table check` looks for. Each test
+ * rule verbatim, which is what `pnpm spec check` looks for. Each test
  * writes the forbidden row with raw SQL, bypassing the repositories, so it
  * proves the database refuses it and not merely that the write paths tried so
  * far avoid it.

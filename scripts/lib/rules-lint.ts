@@ -1,7 +1,7 @@
 /**
  * The copy half of `scripts/rules-lint.ts`, pure so the test can run it on
  * inline sources inside workerd (no `node:fs`), the way
- * `scripts/lib/action-table.ts` is split from its command.
+ * `scripts/lib/spec.ts` is split from its command.
  *
  * The glossary's screen rule (`src/lib/Domain.ts`), for the copy its label
  * constants cannot reach (toasts, error sentences, empty states): the words

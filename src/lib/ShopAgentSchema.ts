@@ -12,7 +12,7 @@ import { causeToErrorMessage } from "@/lib/LayerEx";
  * guarantees the rule: `schema` when the database refuses a violating row,
  * `app` when a write path or transaction does, `schema+app` when both are
  * needed. `pinned by` is the title of the test that asserts the rule.
- * `pnpm action-table check` parses the table, refuses an unknown word, and
+ * `pnpm spec check` parses the table, refuses an unknown word, and
  * refuses a title no test carries.
  *
  * A structural change starts at the row: change the sentence, then the DDL
@@ -26,7 +26,10 @@ import { causeToErrorMessage } from "@/lib/LayerEx";
  * "exactly one", "at most one", "one or more", "zero or more"; a reference
  * "snapshots" (copied at write, never re-read), "points to" (live; follows a
  * rename) or "references none"; a pointer into D1 "points to a D1 row;
- * dangling reads as null", since no foreign key can cross stores; lifetime
+ * dangling reads as null", since no foreign key can cross stores, and its
+ * counterpart, a delete that cannot share the object's transaction, "deletes
+ * here first, then nulls every object pointer", stated on the D1 side
+ * ({@link D1_TABLES}); lifetime
  * is "goes with" (cascades), "survives", "only X deletes"; history is "no
  * history", "latest only", "one row per event"; derivation is "stored, never
  * derived", "derived and stored", "derived, never stored"; consistency is
@@ -65,6 +68,8 @@ import { causeToErrorMessage } from "@/lib/LayerEx";
  * Two rows are provisional: "billed at most once, on its first run" and "a
  * team delete nulls the team on open run tasks" are the current behaviour,
  * to be confirmed once billing and team delete firm up.
+ *
+ * The other half of each cross-store row is on {@link D1_TABLES}.
  *
  * Versioned through `SqliteMigrator` rather than a bare `create table if not
  * exists` block, so the next migration has somewhere to go.

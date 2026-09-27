@@ -1,3 +1,4 @@
+-- shopAgentId is set once; upsertShopSession never rewrites it. Rules on D1_TABLES.
 create table if not exists ShopSession (
   shop text primary key,
   shopGid text not null,
@@ -13,13 +14,9 @@ create table if not exists ShopSession (
   planCycleStartAt integer
 );
 
--- A row is access and membership, nothing more: deleting it cascades
--- TeamMember and revokes sign-in on the next request.
--- Run history in the ShopAgent's SQLite survives because WorkflowRunTask
--- snapshots the actor's email (startedByEmail / completedByEmail, the block
--- flag's byEmail) at the moment of the action; the bare startedBy /
--- completedBy ids carry no FK and simply stop resolving. Uniqueness is among
--- existing rows only, so re-adding an email mints a new id.
+-- No soft delete: uniqueness is among existing rows only, so re-adding an
+-- email mints a new id.
+-- The rules are on D1_TABLES (src/lib/D1Schema.ts).
 create table if not exists Member (
   id text primary key,
   shop text not null references ShopSession (shop) on delete cascade,
@@ -37,14 +34,8 @@ create index if not exists Member_shop_createdAt_idx on Member (shop, createdAt,
 -- buys real referential integrity in both directions (deleting a shop or a
 -- member cleans up its edges) at the cost of a hard FK from Durable Object rows
 -- to a team, which is deliberately left as an opaque id.
---
--- Every pointer from the ShopAgent's SQLite
--- (WorkflowTask, WorkflowDraftTask, open WorkflowRunTask) is nulled by
--- ShopAgent.deleteTeam right after this row goes -- D1 first, then the object,
--- and every object read treats an id no row carries exactly like null, so the
--- cross-store window is harmless. History keeps reading because finished run
--- tasks snapshot teamName; nothing resolves a deleted team by id. Uniqueness is
--- among existing rows only.
+-- The rules, including what a team delete does to the object, are on
+-- D1_TABLES (src/lib/D1Schema.ts).
 create table if not exists Team (
   id text primary key,
   shop text not null references ShopSession (shop) on delete cascade,
@@ -54,9 +45,10 @@ create table if not exists Team (
 
 create unique index if not exists Team_shop_name_uidx on Team (shop, name collate nocase);
 
--- Edges point at Member.id, not at an email: a memberId belongs to exactly one
--- shop, so "a team never crosses shops" holds by construction and both cascades
--- (member removed, team removed) come free.
+-- Edges point at Member.id, not at an email, so both cascades (member removed,
+-- team removed) come free. The two foreign keys give each side one shop but
+-- nothing here compares them: setTeamMember does, which is the app half of
+-- the team row on D1_TABLES (src/lib/D1Schema.ts).
 create table if not exists TeamMember (
   teamId text not null references Team (id) on delete cascade,
   memberId text not null references Member (id) on delete cascade,

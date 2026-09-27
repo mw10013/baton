@@ -196,11 +196,11 @@ export class Repository extends Context.Service<
       shop: Domain.Shop,
     ) => Effect.Effect<number, SqlError.SqlError>;
     /**
-     * The merchant-facing delete: the row goes, `TeamMember` cascades,
-     * `ShopSession` is untouched. Returns the deleted member's id, which the
-     * caller hands to `ShopAgent.revokeMemberConnections` so an open socket
-     * carrying the old membership is closed rather than left working until it
-     * next reconnects.
+     * The merchant-facing delete: the row goes, `ShopSession` is untouched;
+     * what goes with it is the member rows on {@link D1_TABLES}. Returns the
+     * deleted member's id, which the caller hands to
+     * `ShopAgent.revokeMemberConnections` so an open socket carrying the old
+     * membership is closed rather than left working until it next reconnects.
      */
     readonly deleteMember: (
       member: Pick<Domain.Member, "shop" | "email">,
@@ -258,9 +258,7 @@ export class Repository extends Context.Service<
       | TeamNotFoundError
     >;
     /**
-     * The D1 half of a team delete: the row goes and `TeamMember` cascades.
-     * Run history keeps the team's name as a snapshot on each run task
-     * (the data model on `initializeSchema`, `ShopAgentSchema.ts`).
+     * The D1 half of a team delete, the team-delete row on {@link D1_TABLES}.
      * Only `ShopAgent.deleteTeam` calls this, because the object's SQLite
      * pointers must be nulled right after and the two cannot share a
      * transaction. Returns the members who were on the team, whose open member
@@ -345,11 +343,13 @@ export class Repository extends Context.Service<
 
       /**
        * The conflict branch deliberately omits `shopAgentId` from the `SET`
-       * list. `shopAgentId` is `idFromName(shop)` — deterministic and immutable
-       * after insert — so re-assigning it is a no-op value-wise, but SQLite
-       * decides which indexes to rewrite by which columns appear in `SET`, not
-       * by whether the value changed. Including it would delete and re-insert
-       * the `shopAgentId` unique-index entry on every conflict-update.
+       * list, which is also the `app` half of the shop row on
+       * {@link D1_TABLES}: the object id is never rewritten. `shopAgentId` is
+       * `idFromName(shop)` — deterministic and immutable after insert — so
+       * re-assigning it is a no-op value-wise, but SQLite decides which
+       * indexes to rewrite by which columns appear in `SET`, not by whether
+       * the value changed. Including it would delete and re-insert the
+       * `shopAgentId` unique-index entry on every conflict-update.
        *
        * D1 bills index B-tree writes as `rows_written`, and this upsert runs on
        * the hot auth path (every expiring-token re-exchange in
@@ -616,11 +616,10 @@ export class Repository extends Context.Service<
       });
 
       /**
-       * `TeamMember` cascades. Existing better-auth sessions are not revoked
-       * — the member-area guard (`findMemberAccess`) rejects them on the next
-       * request. Run history is untouched: the actor email is a snapshot on
-       * the run task, not a join against this row (the data model on
-       * `initializeSchema`, `ShopAgentSchema.ts`).
+       * Existing better-auth sessions are not revoked — the member-area guard
+       * (`findMemberAccess`) rejects them on the next request. Run history is
+       * untouched: the member row on {@link D1_TABLES} and the snapshot row on
+       * {@link initializeSchema}.
        */
       const deleteMember = Effect.fn("Repository.deleteMember")(function* (
         member: Pick<Domain.Member, "shop" | "email">,
@@ -679,7 +678,8 @@ export class Repository extends Context.Service<
        *
        * Both statements scope through `Member.shop`/`Team.shop`, so a forged
        * cross-shop id matches no row and is silently dropped — the same
-       * posture as {@link setTeamMember}.
+       * posture as {@link setTeamMember}, which is what holds the cross-shop
+       * half of the team row on {@link D1_TABLES}.
        */
       const setMemberTeams = Effect.fn("Repository.setMemberTeams")(
         function* (params: {
@@ -894,7 +894,8 @@ export class Repository extends Context.Service<
        * The add is an insert-select, so the same-shop invariant is asserted by
        * the join rather than trusted from the caller: a forged
        * `(teamId, memberId)` pair spanning two shops matches no source row and
-       * inserts nothing.
+       * inserts nothing. This is what holds the cross-shop half of the team
+       * row on {@link D1_TABLES}; the database does not.
        *
        * `on conflict do nothing` makes a repeat add a no-op, which also makes
        * "no rows returned" ambiguous with a genuine miss; the existence check
