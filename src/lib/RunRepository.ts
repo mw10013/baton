@@ -400,7 +400,7 @@ export class RunRepository extends Context.Service<
       | RunOrderClosedError
     >;
     /**
-     * The member's run list, tiered and cut here rather than on the page: every run
+     * The member's workflows list, tiered and cut here rather than on the page: every run
      * with at least one current task owned by `teamIds`, grouped by
      * {@link Domain.tierOf} against `memberEmail`. **Every** tier is counted;
      * **one** is returned — the one `query.tab` names — sorted oldest first
@@ -509,7 +509,7 @@ export class RunRepository extends Context.Service<
       | RunBlockedError
     >;
     /**
-     * The work page's read: the run with every task decorated with whether it is current
+     * The workflow page's read: the run with every task decorated with whether it is current
      * and the reopen verdict, the order's live note and items. `None`
      * when the run does not exist or the caller cannot see it
      * ({@link Domain.runIsVisibleTo}) — one answer for both, so a member
@@ -733,7 +733,7 @@ export class RunRepository extends Context.Service<
             orderFulfillmentStatus: Schema.String,
           }),
         ),
-        "Invalid run list row",
+        "Invalid RunListRun row",
       );
 
       const orderColumns = sql.literal(
@@ -904,7 +904,7 @@ export class RunRepository extends Context.Service<
             );
 
       /**
-       * Every run list row the teams own, unsorted and uncapped: one
+       * Every workflows list row the teams own, unsorted and uncapped: one
        * {@link Domain.RunListItem} per run with at least one current task of
        * `teamIds`, carrying that run's last step. Actor emails are on the row
        * already, so no roster join and no D1 read.

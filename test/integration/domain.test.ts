@@ -283,7 +283,7 @@ describe("Domain.ambiguousItems", () => {
 
 /**
  * The copy is the contract between the order page, the Recent tab and the
- * work page, which all read the reason from one function
+ * workflow page, which all read the reason from one function
  * ({@link Domain.ClosedReason}).
  */
 describe("closedReasonText", () => {
@@ -570,12 +570,15 @@ describe("Domain.runIsOpen / Domain.runIsDone / Domain.runIsClosed", () => {
   });
 });
 
+/** A task's two timestamps, all `Domain.runIsUnstarted` reads. */
+const progressOf = (startedAt: number | null, doneAt: number | null) => ({
+  startedAt,
+  doneAt,
+});
+
 describe("Domain.runIsUnstarted", () => {
+  const task = progressOf;
   it("unstarted is no task started or done", () => {
-    const task = (startedAt: number | null, doneAt: number | null) => ({
-      startedAt,
-      doneAt,
-    });
     strictEqual(
       Domain.runIsUnstarted([task(null, null), task(null, null)]),
       true,
@@ -817,13 +820,16 @@ describe("Domain.runIsVisibleTo", () => {
   });
 });
 
+/** `Domain.taskStateOf` on positional arguments, for a table of cases. */
+const stateOf = (
+  current: boolean,
+  startedAt: number | null,
+  doneAt: number | null,
+) => Domain.taskStateOf({ current, startedAt, doneAt });
+
 describe("Domain.taskStateOf", () => {
+  const state = stateOf;
   it("a task is done, else started, else ready when current, else waiting; a started task on a closed run still reads started", () => {
-    const state = (
-      current: boolean,
-      startedAt: number | null,
-      doneAt: number | null,
-    ) => Domain.taskStateOf({ current, startedAt, doneAt });
     strictEqual(state(false, 1, 2), "done");
     strictEqual(state(true, 1, null), "started");
     strictEqual(state(false, 1, null), "started");

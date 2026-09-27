@@ -1,18 +1,19 @@
 // Checks and prints the action matrices in src/lib/Domain.ts (the JSDoc on
 // `runActions` and `taskActions`), which the test reads as the spec.
 //
-//   node scripts/action-table.ts check   parse both tables, refuse overlapping rows, check the glossary and its screen columns (exit 1 on any failure)
+//   node scripts/action-table.ts check   parse both tables, refuse overlapping rows, check the glossary, its screen columns and its Screens table (exit 1 on any failure)
 //   node scripts/action-table.ts print   render the parsed rows and how many fixtures each expands to
 
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import { Console, Effect, Result } from "effect";
 import { CliError, Command } from "effect/unstable/cli";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
 import * as Domain from "../src/lib/Domain.ts";
 import * as ActionTable from "./lib/action-table.ts";
 
 const DOMAIN = new URL("../src/lib/Domain.ts", import.meta.url).pathname;
+const ROUTES = new URL("../src/routes/", import.meta.url).pathname;
 const NAMES: readonly ActionTable.TableName[] = ["runActions", "taskActions"];
 
 const SCREEN_LABELS: ActionTable.ScreenLabels = {
@@ -24,11 +25,21 @@ const SCREEN_LABELS: ActionTable.ScreenLabels = {
 
 const readSource = Effect.sync(() => readFileSync(DOMAIN, "utf8"));
 
+const readRouteFiles = Effect.sync(() =>
+  Object.fromEntries(
+    readdirSync(ROUTES).map((file) => [
+      file,
+      readFileSync(`${ROUTES}${file}`, "utf8"),
+    ]),
+  ),
+);
+
 const checkCommand = Command.make(
   "check",
   {},
   Effect.fn(function* () {
     const source = yield* readSource;
+    const routeFiles = yield* readRouteFiles;
     const failures = [
       ...NAMES.flatMap((name) =>
         Result.match(ActionTable.parse(source, name), {
@@ -45,6 +56,7 @@ const checkCommand = Command.make(
           `Glossary: \`${word}\` does not occur in src/lib/Domain.ts outside the glossary`,
       ),
       ...ActionTable.checkScreenColumns(source, SCREEN_LABELS),
+      ...ActionTable.checkScreens(source, routeFiles),
     ];
     for (const failure of failures) yield* Console.error(failure);
     if (failures.length > 0)

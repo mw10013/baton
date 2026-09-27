@@ -14,11 +14,11 @@ import { signOutFn } from "@/lib/memberSignOut";
  * phone page that scrolls its heading away at once. Polaris `s-page` has no
  * slot for chrome above the heading, so this is a plain bordered `div`
  * (`.member-bar` in `styles.css`) holding an inline `s-stack`. Hidden in
- * print (`.print-hide`): a printed work page is a job ticket, and the ticket
+ * print (`.print-hide`): a printed workflow page is a job ticket, and the ticket
  * needs no sign-out button.
  *
- * **The mark is home.** The link around it goes to `/shop/$shop`, the run
- * list, and it lands on the list the member left — same tab, same team, same
+ * **The mark is home.** The link around it goes to `/shop/$shop/workflows`,
+ * the workflows list, and it lands on the list the member left — same tab, same team, same
  * depth — because the layout's middleware puts their context on every link
  * built under `/shop/$shop` (`MemberSearch` in `src/routes/shop.$shop.tsx`).
  * This bar is the only chrome the member area has, so the mark is the only
@@ -36,9 +36,9 @@ import { signOutFn } from "@/lib/memberSignOut";
  * picks it up has to know whose session they are about to press Done in.
  *
  * `filter` is a slot beside the shop for a control that belongs to the screen
- * below rather than to the bar. The run list passes its team filter there and
+ * below rather than to the bar. The workflows list passes its team filter there and
  * every other member screen passes nothing, so the bar does change shape by
- * route — that is the price of keeping the run list's one filter off a line of
+ * route — that is the price of keeping the workflows list's one filter off a line of
  * its own on the screen with least room for one. Nothing the bar owns moves
  * either way, which is what the "where am I, who am I" job actually needs.
  */
@@ -62,7 +62,11 @@ export function MemberBar({
         justifyContent="space-between"
       >
         <s-stack direction="inline" gap="small-300" alignItems="center">
-          <Link to="/shop/$shop" params={{ shop }} className="member-bar-home">
+          <Link
+            to="/shop/$shop/workflows"
+            params={{ shop }}
+            className="member-bar-home"
+          >
             <s-stack direction="inline" gap="small-300" alignItems="center">
               <BatonMark />
               <s-text type="strong">{shop}</s-text>

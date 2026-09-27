@@ -28,7 +28,7 @@ import {
 } from "./member-fixtures";
 
 /**
- * The member socket end to end: the run list read that registers a subscription,
+ * The member socket end to end: the workflows list read that registers a subscription,
  * the push fan-out that decides who hears about a write, and one full hop
  * through the Worker's gate with a real sign-in cookie.
  *
@@ -201,8 +201,8 @@ afterEach(async () => {
   await resetMemberTables();
 });
 
-describe("member run list socket", () => {
-  it("reads the run list for the connection's teams and subscribes", async () => {
+describe("member workflows list socket", () => {
+  it("reads the workflows list for the connection's teams and subscribes", async () => {
     const { shop, working, alice, idle, carol } = await seedShopWithWork(
       "runs-read.myshopify.com",
     );

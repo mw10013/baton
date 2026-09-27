@@ -194,7 +194,7 @@ function RouteComponent() {
  *
  * Polaris is loaded globally by the root route.
  *
- * `href`, not `to`: an `s-link` href may carry a query (the orders list's
+ * `href`, not `to`: an `s-link` href may carry a query (the orders index's
  * row links do), and `to` is a path, while `href` is parsed into path and
  * search. The bridge adds no search of its own. A subtree whose links must
  * keep the merchant's context does so with `retainSearchParams` on its layout

@@ -44,7 +44,8 @@ import { Route as ShopShopLapsedRouteImport } from './routes/shop.$shop_.lapsed'
 import { Route as WebhooksAppScopes_updateRouteImport } from './routes/webhooks.app.scopes_update'
 import { Route as WebhooksAppUninstalledRouteImport } from './routes/webhooks.app.uninstalled'
 import { Route as AppWorkflowsWorkflowIdEditRouteImport } from './routes/app.workflows.$workflowId_.edit'
-import { Route as ShopShopWorkRunIdRouteImport } from './routes/shop.$shop.work.$runId'
+import { Route as ShopShopWorkflowsIndexRouteImport } from './routes/shop.$shop.workflows.index'
+import { Route as ShopShopWorkflowsRunIdRouteImport } from './routes/shop.$shop.workflows.$runId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -224,9 +225,14 @@ const AppWorkflowsWorkflowIdEditRoute =
     path: '/$workflowId/edit',
     getParentRoute: () => AppWorkflowsRoute,
   } as any)
-const ShopShopWorkRunIdRoute = ShopShopWorkRunIdRouteImport.update({
-  id: '/work/$runId',
-  path: '/work/$runId',
+const ShopShopWorkflowsIndexRoute = ShopShopWorkflowsIndexRouteImport.update({
+  id: '/workflows/',
+  path: '/workflows/',
+  getParentRoute: () => ShopShopRoute,
+} as any)
+const ShopShopWorkflowsRunIdRoute = ShopShopWorkflowsRunIdRouteImport.update({
+  id: '/workflows/$runId',
+  path: '/workflows/$runId',
   getParentRoute: () => ShopShopRoute,
 } as any)
 
@@ -266,7 +272,8 @@ export interface FileRoutesByFullPath {
   '/app/workflows/': typeof AppWorkflowsIndexRoute
   '/shop/$shop/': typeof ShopShopIndexRoute
   '/app/workflows/$workflowId/edit': typeof AppWorkflowsWorkflowIdEditRoute
-  '/shop/$shop/work/$runId': typeof ShopShopWorkRunIdRoute
+  '/shop/$shop/workflows/$runId': typeof ShopShopWorkflowsRunIdRoute
+  '/shop/$shop/workflows/': typeof ShopShopWorkflowsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -298,7 +305,8 @@ export interface FileRoutesByTo {
   '/app/workflows': typeof AppWorkflowsIndexRoute
   '/shop/$shop': typeof ShopShopIndexRoute
   '/app/workflows/$workflowId/edit': typeof AppWorkflowsWorkflowIdEditRoute
-  '/shop/$shop/work/$runId': typeof ShopShopWorkRunIdRoute
+  '/shop/$shop/workflows/$runId': typeof ShopShopWorkflowsRunIdRoute
+  '/shop/$shop/workflows': typeof ShopShopWorkflowsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -337,7 +345,8 @@ export interface FileRoutesById {
   '/app/workflows/': typeof AppWorkflowsIndexRoute
   '/shop/$shop/': typeof ShopShopIndexRoute
   '/app/workflows/$workflowId_/edit': typeof AppWorkflowsWorkflowIdEditRoute
-  '/shop/$shop/work/$runId': typeof ShopShopWorkRunIdRoute
+  '/shop/$shop/workflows/$runId': typeof ShopShopWorkflowsRunIdRoute
+  '/shop/$shop/workflows/': typeof ShopShopWorkflowsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -377,7 +386,8 @@ export interface FileRouteTypes {
     | '/app/workflows/'
     | '/shop/$shop/'
     | '/app/workflows/$workflowId/edit'
-    | '/shop/$shop/work/$runId'
+    | '/shop/$shop/workflows/$runId'
+    | '/shop/$shop/workflows/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -409,7 +419,8 @@ export interface FileRouteTypes {
     | '/app/workflows'
     | '/shop/$shop'
     | '/app/workflows/$workflowId/edit'
-    | '/shop/$shop/work/$runId'
+    | '/shop/$shop/workflows/$runId'
+    | '/shop/$shop/workflows'
   id:
     | '__root__'
     | '/'
@@ -447,7 +458,8 @@ export interface FileRouteTypes {
     | '/app/workflows/'
     | '/shop/$shop/'
     | '/app/workflows/$workflowId_/edit'
-    | '/shop/$shop/work/$runId'
+    | '/shop/$shop/workflows/$runId'
+    | '/shop/$shop/workflows/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -714,11 +726,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppWorkflowsWorkflowIdEditRouteImport
       parentRoute: typeof AppWorkflowsRoute
     }
-    '/shop/$shop/work/$runId': {
-      id: '/shop/$shop/work/$runId'
-      path: '/work/$runId'
-      fullPath: '/shop/$shop/work/$runId'
-      preLoaderRoute: typeof ShopShopWorkRunIdRouteImport
+    '/shop/$shop/workflows/': {
+      id: '/shop/$shop/workflows/'
+      path: '/workflows'
+      fullPath: '/shop/$shop/workflows/'
+      preLoaderRoute: typeof ShopShopWorkflowsIndexRouteImport
+      parentRoute: typeof ShopShopRoute
+    }
+    '/shop/$shop/workflows/$runId': {
+      id: '/shop/$shop/workflows/$runId'
+      path: '/workflows/$runId'
+      fullPath: '/shop/$shop/workflows/$runId'
+      preLoaderRoute: typeof ShopShopWorkflowsRunIdRouteImport
       parentRoute: typeof ShopShopRoute
     }
   }
@@ -796,12 +815,14 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 interface ShopShopRouteChildren {
   ShopShopIndexRoute: typeof ShopShopIndexRoute
-  ShopShopWorkRunIdRoute: typeof ShopShopWorkRunIdRoute
+  ShopShopWorkflowsRunIdRoute: typeof ShopShopWorkflowsRunIdRoute
+  ShopShopWorkflowsIndexRoute: typeof ShopShopWorkflowsIndexRoute
 }
 
 const ShopShopRouteChildren: ShopShopRouteChildren = {
   ShopShopIndexRoute: ShopShopIndexRoute,
-  ShopShopWorkRunIdRoute: ShopShopWorkRunIdRoute,
+  ShopShopWorkflowsRunIdRoute: ShopShopWorkflowsRunIdRoute,
+  ShopShopWorkflowsIndexRoute: ShopShopWorkflowsIndexRoute,
 }
 
 const ShopShopRouteWithChildren = ShopShopRoute._addFileChildren(

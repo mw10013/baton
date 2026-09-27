@@ -15,6 +15,7 @@ describe("a retired word stays off every merchant and member screen", () => {
     const source = [
       'const a = "Cancel run";',
       "const b = `No runs.`;",
+      // oxlint-disable-next-line no-template-curly-in-string -- source under test, not a template
       'const c = `Started ${n} ${n === 1 ? "run" : "runs"} on orders.`;',
       'const d = "That line item is done.";',
       'const e = "Every task is finished.";',
@@ -43,7 +44,9 @@ describe("a retired word stays off every merchant and member screen", () => {
       "/* the run",
       " * is done */",
       "{/* Every run */}",
+      // oxlint-disable-next-line no-template-curly-in-string -- source under test, not a template
       'const key = ["shop-runs", run.status, "run-actions-1", `${run}`];',
+      // oxlint-disable-next-line no-template-curly-in-string -- source under test, not a template
       "<s-link href={`/work/${runId}`}>",
       "const run = runs.find(isRun);",
     ].join("\n");

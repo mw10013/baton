@@ -68,13 +68,13 @@ const taskState = (
 };
 
 /**
- * A run's tasks as step cards: the one shape the member's work page and the
+ * A run's tasks as step cards: the one shape the member's workflow page and the
  * merchant's Manage drawer both draw, so a worker and a merchant looking at
  * the same run see the same thing. The rules both pages agree on:
  *
  * - **One caption and one box per step.** A subdued `Step n` caption over a
  *   bordered box; parallel tasks share the box, separated by rules the way the
- *   run list separates rows, so a step reads as one stop before the caption is
+ *   workflows list separates rows, so a step reads as one stop before the caption is
  *   read. A single-task step is a caption over one row. The steps are an
  *   ordered list, which is what they are.
  * - **The badge states the task's state and the line never repeats it** (see
@@ -94,7 +94,7 @@ const taskState = (
  *
  * `showInstructions` is a prop because the two pages differ on it: the worker
  * reads a task's instructions here, at the bench, while the merchant wrote
- * them and reads them on the workflow page, so the Manage drawer leaves them
+ * them and reads them on the merchant's workflow page, so the Manage drawer leaves them
  * out rather than repeat the definition under every run.
  */
 export function RunSteps<T extends RunStepTask>({

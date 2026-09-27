@@ -35,7 +35,7 @@ const ParamsInput = Schema.Struct({
 });
 
 /**
- * The work page's first paint, SSR like the run list's. `memberGetRun`
+ * The workflow page's first paint, SSR like the workflows list's. `memberGetRun`
  * answers `null` for a run that is not there *or* not on one of the member's
  * teams — one answer, so a member cannot probe run ids — and the page renders
  * its not-found state for both.
@@ -65,14 +65,14 @@ const getLoaderData = createServerFn({ method: "GET" })
     ),
   );
 
-export const Route = createFileRoute("/shop/$shop/work/$runId")({
+export const Route = createFileRoute("/shop/$shop/workflows/$runId")({
   loader: ({ params }) =>
     getLoaderData({ data: { shop: params.shop, runId: params.runId } }),
-  /** The browser tab says what the heading says: the order, or that there is none. */
+  /** The browser tab says what the heading says: the item, or that there is none. */
   head: ({ loaderData }) => ({
     meta: [
       {
-        title: `${loaderData?.view?.run.orderName ?? "Not found"} — Baton`,
+        title: `${loaderData?.view?.run.lineItemTitle ?? "Not found"} — Baton`,
       },
     ],
   }),
@@ -185,7 +185,7 @@ function RouteComponent() {
         <s-page heading="Not found" inlineSize="small">
           <s-section accessibilityLabel="Not found">
             <s-paragraph color="subdued">
-              This work is not on one of your teams, or it no longer exists.
+              This workflow is not on one of your teams, or it no longer exists.
             </s-paragraph>
           </s-section>
         </s-page>
@@ -244,12 +244,12 @@ function RouteComponent() {
     <>
       <MemberBar shop={shop} email={memberEmail} />
       {/* No breadcrumb: `MemberBar` sits directly above this heading and its
-          mark is the link to `/shop/$shop`, which is the run list. A second
+          mark is the link to `/shop/$shop/workflows`, the workflows list. A second
           link to the same place, a stride below the first, is one link too
           many — and the mark's link lands on the list the member left, tab,
           team and depth included, because this page's URL carries their
           context too (`MemberSearch` in `shop.$shop.tsx`). */}
-      <s-page heading={run.orderName} inlineSize="small">
+      <s-page heading={run.lineItemTitle} inlineSize="small">
         {/* Block stays a visible page action, not an overflow item: it says
             the worker can stop the line. It opens a modal, so no field is
             mounted for it on the visits that do not use it. */}
@@ -272,6 +272,11 @@ function RouteComponent() {
             `.member-work` the phone inset (`styles.css`). */}
         <div className="member-work">
           <s-stack gap="base">
+            {/* Under the item heading, the run as both sides name it: the
+              workflow name is the noun the merchant's order page uses for
+              the same run, so a member and a merchant talking about one
+              thing say the same words, and the order is the qualifier. */}
+            <s-text color="subdued">{`${run.workflowName} workflow · ${run.orderName}`}</s-text>
             <SocketBanner />
             {/* Page-wide banners sit at page level, above the content they
               concern and outside any card, as Polaris places them. */}
@@ -287,9 +292,9 @@ function RouteComponent() {
                 <ClosedLine run={run} viewer="member" />
               </s-banner>
             )}
-            {/* Item first: what to make is why the page was opened. No workflow
-              name or age, because a member cannot act on either and the run
-              list carries the age. No border, because two bordered blocks on
+            {/* Item first: what to make is why the page was opened. No age,
+              because a member cannot act on it and the workflows list
+              carries it. No border, because two bordered blocks on
               one page compete. The Done badge stays: it is the only sign the
               page is read-only. The quantity badge sits beside it after a
               Shopify change, until the next Done clears it. */}

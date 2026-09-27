@@ -13,11 +13,19 @@
  * - A site that follows a different rule from its siblings says so and why,
  *   in its own JSDoc, and links the rule it departs from.
  * - Each rule is pinned by a test whose title is the rule in plain words.
+ * - Which tier a site speaks. Identifiers, types, callables, route
+ *   parameters (`$runId`), log messages, JSDoc, tests and research speak
+ *   the domain tier: "run" is the word there. Route segments, string
+ *   literals, JSX text, headings and labels speak the screen tier: the
+ *   glossary's screen columns, and `scripts/rules-lint.ts` refuses the
+ *   retired words in them. A JSDoc that explains copy quotes the copy.
+ *   A JSDoc that names a screen uses the Screens table's spec name.
  *
- * The action tables cover buttons, and a run leaving the work lists is its
- * status, not a button: a table can say a run offers nothing and a list can
- * still show it, so which rows a list holds is decided by {@link RunStatus}
- * (open runs only) and nothing else, the same rule for every list. A page
+ * The action tables cover buttons, and a run leaving Mine, Up next,
+ * Teammates and Blocked is its status, not a button: a table can say a run
+ * offers nothing and a list can still show it, so which rows a list holds is
+ * decided by {@link RunStatus} (open runs only) and nothing else, the same
+ * rule for every list. A page
  * never decides a gate itself: what an item's card is comes from
  * {@link lineItemState}, and which writes an actor may make comes from
  * {@link runActions} and {@link taskActions}, which the page and `ShopAgent`
@@ -46,20 +54,25 @@
  * | item     | one line item of an order                                | `OrderLineItem`                 | item; never "line item"                                        |
  * | workflow | the definition: steps of tasks                           | `Workflow`, `WorkflowTask`      | workflow, or its name                                          |
  * | step     | a position in a workflow; its tasks are done in parallel | `WorkflowTask`, `RunTask` field | Step k of n                                                    |
- * | run      | one item going through one workflow                      | `Run`                           | (none): the merchant sees the item's workflow, the member work |
+ * | run      | one item going through one workflow                      | `Run`                           | the item's workflow, on both sides; never bare, never "run"    |
  * | task     | one unit of work on a run, on one team                   | `RunTask`                       | task, or its name                                              |
  * | block    | a person's hold on a run                                 | `runIsBlocked`                  | Blocked                                                        |
  * | note     | free text on a run                                       | `RunNote`                       | Note                                                           |
  *
- * An item is always shown under its order, on the merchant's order page
- * and in the member's `<order> · <item>` row, so the order carries the
- * disambiguation and the word stays short. Copy with no order beside it
- * qualifies the word ("items on open orders", "N items in production")
- * rather than saying "items" bare. "run" is an implementation noun a
- * merchant or member would have to learn; the merchant already has the
- * item and its workflow (Change workflow replaces the run without naming
- * it), and the member has their work and its tasks. `scripts/rules-lint.ts`
- * refuses "run", "line item" and the other retired words in screen strings.
+ * An item is always shown under its order on the merchant's order page,
+ * and beside it in the member's row (`<item> · <workflow> · <order>`), so
+ * the order carries the disambiguation and the word stays short. Copy with
+ * no order beside it qualifies the word ("items on open orders", "N items
+ * in production") rather than saying "items" bare. "run" is an
+ * implementation noun a merchant or member would have to learn; the
+ * merchant already has the item and its workflow (Change workflow replaces
+ * the run without naming it), and the member has the item's workflow and
+ * its tasks. `scripts/rules-lint.ts` refuses "run", "line item" and the
+ * other retired words in screen strings. The run's screen word is
+ * "workflow" with the item beside it ("Brass hinge ×2 · Finishing",
+ * "Finishing workflow · #1001"). On the merchant's Workflows pages a bare
+ * workflow name is the definition; on the member's Workflows list, which
+ * never shows a definition, every row is a run and names its item.
  *
  * Run states:
  *
@@ -116,6 +129,28 @@
  * | cancel          | run  | open → closed, `merchant_cancelled` | (none)      | Cancel workflow |
  * | attach workflow | item | creates the run                     | (none)      | Attach          |
  * | change workflow | item | replaces the run                    | (none)      | Change workflow |
+ *
+ * Screens. A JSDoc, a test or a research doc names a screen by its spec
+ * name, never by its route segment and never with "run". The heading is
+ * what the person sees on the page. Two screens share the spec name
+ * "workflow page", one per side; a JSDoc that mentions both sides
+ * qualifies with "the merchant's" or "the member's".
+ *
+ * | side     | route file                        | heading                      | spec name                   |
+ * | -------- | --------------------------------- | ---------------------------- | --------------------------- |
+ * | merchant | `app.index`                       | Baton                        | the home page               |
+ * | merchant | `app.orders.index`                | Orders                       | the orders index            |
+ * | merchant | `app.orders.$orderId`             | the order's name             | the order page              |
+ * | merchant | `app.workflows.index`             | Workflows                    | the workflows index         |
+ * | merchant | `app.workflows.$workflowId`       | the workflow's name          | the workflow page           |
+ * | merchant | `app.workflows.$workflowId_.edit` | the workflow's name          | the workflow editor         |
+ * | merchant | `app.teams.index`                 | Teams                        | the teams index             |
+ * | merchant | `app.teams.$teamId`               | the team's name              | the team page               |
+ * | merchant | `app.members`                     | Members                      | the members page            |
+ * | member   | `shop.index`                      | Your shops                   | the shop picker             |
+ * | member   | `shop.$shop.workflows.index`      | Workflows                    | the workflows list          |
+ * | member   | `shop.$shop.workflows.$runId`     | the item's title             | the workflow page           |
+ * | member   | `shop.$shop_.lapsed`              | the shop's domain            | the lapsed page             |
  */
 import { Match, Option, Schema, SchemaGetter, Struct } from "effect";
 
@@ -1913,7 +1948,7 @@ const SeedProgressFields = {
    * done, step 2 up next". `done` is the limit of this.
    */
   advance: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
-  /** After `advance`, Start what is ready so the run list shows "Started · <seed member>" on a teammate's list. */
+  /** After `advance`, Start what is ready so the workflows list shows "Started · <seed member>" on a teammate's list. */
   started: Schema.optionalKey(Schema.Boolean),
   /**
    * Record the `done` / `advance` / `blocked` progress as the **merchant**
@@ -2223,7 +2258,7 @@ export const ListOrdersInput = Schema.Struct({
   need: Schema.NullOr(OrderNeed),
   /**
    * `null` is any team; an id keeps only orders waiting on that team
-   * ({@link OrderRow} `waitingOn`, open orders only) — the run list's own
+   * ({@link OrderRow} `waitingOn`, open orders only) — the workflows list's own
    * predicate for which tasks are current, not "owns a task somewhere in the run". The looser reading pulls in orders the team
    * done days ago and orders it will not touch for two more steps, so
    * the label carries the predicate.
@@ -2338,7 +2373,7 @@ export type OrderRow = typeof OrderRow.Type;
  * them.
  *
  * Takes the two fields it reads rather than a whole `OrderRow`, so the order
- * page — which rebuilds the aggregate from its own run list — does not have
+ * page — which rebuilds the aggregate from its own runs — does not have
  * to invent a value for every row field the index adds later.
  */
 export const productionState = ({
@@ -2394,7 +2429,7 @@ export const orderNeeds = ({
 
 /**
  * The index's per-order ambiguity count, recomputed from a detail page's line
- * items and run list so both pages share one definition — the SQL in
+ * items and runs so both pages share one definition — the SQL in
  * `OrderRepository.listOrders` restates it and must move with it.
  *
  * Any run counts, `done` and `closed` included: a `done` run means the item
@@ -2412,7 +2447,7 @@ export const ambiguousItems = (
       !runs.some((run) => run.lineItemId === lineItem.id),
   ).length;
 
-/** The index's per-order aggregate, recomputed from a detail page's run list so both pages share one definition. */
+/** The index's per-order aggregate, recomputed from a detail page's runs so both pages share one definition. */
 export const runCounts = (runs: readonly Run[]): RunCounts =>
   runs.reduce<RunCounts>(
     (counts, run) => ({
@@ -2728,8 +2763,9 @@ export interface TeamLoaderData extends TeamDetail {
 }
 
 /**
- * `/shop/$shop` (`shop.$shop.index`): the member's run list, which is the
- * member area's landing page. `view` is the read of `query` — the tab from the URL, every
+ * `/shop/$shop/workflows` (`shop.$shop.workflows.index`): the member's
+ * workflows list, which is the member area's landing page (`/shop/$shop`
+ * redirects to it). `view` is the read of `query` — the tab from the URL, every
  * team, one page deep — which is why `memberEmail` is here to be *sent* on
  * the socket's later reads rather than to group rows the page holds; it and
  * `memberId` come out of the same `requireMember` that resolved `teams`.
@@ -2748,7 +2784,7 @@ export interface RunListLoaderData {
   readonly view: RunListView;
 }
 
-/** `/shop/$shop/work/$runId` (`shop.$shop.work.$runId`). `view` is null when the run is not the member's to see. */
+/** `/shop/$shop/workflows/$runId` (`shop.$shop.workflows.$runId`). `view` is null when the run is not the member's to see. */
 export interface RunLoaderData {
   readonly shop: Shop;
   readonly memberId: MemberId;
@@ -3017,7 +3053,7 @@ export type RunSource = typeof RunSource.Type;
  * what; only deleting the row (Change workflow, a manual attach over a
  * closed item, the order's retention delete) removes tasks.
  *
- * **Every work list holds open runs only.** Closed and done runs leave the
+ * **Mine, Up next, Teammates and Blocked hold open runs only.** Closed and done runs leave the
  * member's Mine, Up next, Teammates and Blocked tabs, and stop counting on
  * the orders index, by this status and no other rule: the list reads select
  * `status = 'active'`. The fifth tab, Recent, holds done tasks and closed
@@ -3159,7 +3195,7 @@ export const Run = Schema.Struct({
   orderName: Schema.String,
   /**
    * `ShopOrder.processedAt` snapshotted at creation, like `orderName`: the
-   * run list sorts every tier oldest-order-first from the run rows alone,
+   * workflows list sorts every tier oldest-order-first from the run rows alone,
    * before it joins `ShopOrder` for the order's open state.
    */
   orderProcessedAt: Schema.Number,
@@ -3215,7 +3251,7 @@ export type Run = typeof Run.Type;
 
 /**
  * A task copied from the definition at run creation. `teamName` is
- * snapshotted alongside `teamId` so the run list never joins D1. `teamId` is
+ * snapshotted alongside `teamId` so the workflows list never joins D1. `teamId` is
  * the live pointer that puts the task on a team's list; a team delete nulls
  * it on *open* tasks only (**unassigned**: red on the order page, on nobody's
  * list, waiting for **assign a team**), while a done task keeps both the
@@ -3361,7 +3397,7 @@ export type RunDetail = typeof RunDetail.Type;
  * `done*` ones can never say anything here: `currentWhere` requires `doneAt is
  * null` and a reopen clears the whole slot, so on a list task
  * every one of them is null by construction. The rest — instructions and the
- * reopened slot — say something, but only on the work
+ * reopened slot — say something, but only on the workflow
  * page: a row shows the task's name and one state clause, and everything
  * behind that is one tap away. Either way they are fields per task on every
  * SSR paint and every refetch.
@@ -3389,18 +3425,18 @@ export type RunListTask = typeof RunListTask.Type;
  * {@link byAge}, which is the order every tier is in. `quantity` and
  * `quantityChangedFrom` stay because the row wears the quantity badge
  * ("Quantity changed · 3 → 2"), and the block columns stay because a blocked
- * row prints its reason and who.
+ * row prints its reason and who. `workflowName` stays because the row
+ * names the item's workflow, the noun both sides use for a run.
  *
- * What goes is everything only the work page reads — the workflow's name,
- * the order id, the variant, the SKU, the timestamps, and
- * `lineItemProperties`, which is the one that matters: a JSON blob on every row
- * of every read, parsed on arrival, to render nothing. The run `note` stays:
+ * What goes is everything only the workflow page reads — the order id, the
+ * variant, the SKU, the timestamps, and `lineItemProperties`, which is the
+ * one that matters: a JSON blob on every row of every read, parsed on
+ * arrival, to render nothing. The run `note` stays:
  * the row prints it.
  */
 export const RunListRun = Schema.Struct(
   Struct.omit(Run.fields, [
     "workflowId",
-    "workflowName",
     "orderId",
     "variantTitle",
     "sku",
@@ -3415,10 +3451,10 @@ export const RunListRun = Schema.Struct(
 export type RunListRun = typeof RunListRun.Type;
 
 /**
- * One row of a member's run list: a run with every *current* task
+ * One row of a member's workflows list: a run with every *current* task
  * ({@link currentTasks}) that belongs to one of the member's teams. `stepCount` is the run's last step, for "Step k of n" ({@link runRowLine}).
  *
- * The order's live note is not here. It is the work page's, along with the
+ * The order's live note is not here. It is the workflow page's, along with the
  * task instructions and the item's attributes: the row is a list entry that
  * names the piece and its state, and the page one tap behind it is where a
  * maker reads anything.
@@ -3482,7 +3518,7 @@ export const RunTier = Schema.Literals([
 export type RunTier = typeof RunTier.Type;
 
 /**
- * The five screens of the member's run list, in strip order: what I have
+ * The five screens of the member's workflows list, in strip order: what I have
  * started, what I can start, what a teammate is holding, what a person has
  * blocked, and what left my lists lately. Four are the tiers of
  * {@link tierOf}, and hold open runs only ({@link RunStatus}); the blocked
@@ -3577,8 +3613,8 @@ export const lowestOpenStep = (tasks: readonly RunTask[]) =>
  * open task. Several are current at once on a step of several tasks, so this
  * is a list and every caller copes with more than one. A current task is
  * ready or started (the glossary's narrow words); this is the flag under
- * both. `currentWhere.ts` is the step half of the rule as SQL for the run
- * list and the task guards, and leaves the run's status to its callers; this
+ * both. `currentWhere.ts` is the step half of the rule as SQL for the
+ * workflows list and the task guards, and leaves the run's status to its callers; this
  * is the one TypeScript copy, for the merchant's order page (which holds every task of
  * the order) and the dev seeder (which walks runs a step at a time), and the
  * test on it pins that the two agree.
@@ -3704,12 +3740,12 @@ export const clampRunLimit = (value: number) =>
     : RUN_PAGE;
 
 /**
- * What the browser may choose about its run list: one of its own teams to narrow
+ * What the browser may choose about its workflows list: one of its own teams to narrow
  * to (`null` is every team on the connection), which tab, and how many rows of
  * that tab. `team` is validated against the connection's `teamIds` by the
  * object; a team the member is not on reads as an empty list, never as an
  * error. The screen resolves a URL's team against the roster before it gets
- * here (`shop.$shop.index.tsx`), so that empty list is reserved for a caller
+ * here (`shop.$shop.workflows.index.tsx`), so that empty list is reserved for a caller
  * that ignored the roster. The counts of every tab come back regardless of
  * `tab`, so the strip is always current.
  */
@@ -3753,7 +3789,7 @@ export const RunListCounts = Schema.Struct({
 export type RunListCounts = typeof RunListCounts.Type;
 
 /**
- * One read of the member's run list: every tab's count and one tab's rows. Exactly
+ * One read of the member's workflows list: every tab's count and one tab's rows. Exactly
  * one of `items` and `recent` is populated: `items` when `query.tab` is a tier,
  * `recent` when it is "done". The selected tab's total is `counts[query.tab]`.
  * One value rather than two reads so the loader and the socket paint the same
@@ -3775,7 +3811,7 @@ export type RunListView = typeof RunListView.Type;
 export const DONE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * A run task on the work page, decorated with what the page needs to offer
+ * A run task on the workflow page, decorated with what the page needs to offer
  * the right button: `current` is {@link currentTasks}' rule evaluated for this
  * task, and `reopenBlockedBy` is the reopen verdict for a done one. Both are
  * facts about *other* rows (earlier and later steps of the run), which is
@@ -3945,9 +3981,9 @@ export type TaskActions = typeof TaskActions.Type;
  * - Everything is blank on a closed order ({@link orderIsOpen}) and a
  *   closed run: Shopify, or the merchant, says the work is over.
  *
- * **The verbs a task offers are the same on the run list and the work page,
- * and neither screen styles one as primary.** Primary and secondary are a
- * page's hierarchy, held in `s-page`'s action slots; a task has neither.
+ * **The verbs a task offers are the same on the workflows list and the
+ * workflow page, and neither screen styles one as primary.** Primary and
+ * secondary are a page's hierarchy, held in `s-page`'s action slots; a task has neither.
  * Polaris allows one primary per card and per page
  * (`refs/shopify-docs/docs/apps/design/layout.md`, "Cards that offer
  * interactivity"), and a step with two current tasks would draw two.
@@ -4017,7 +4053,7 @@ export const taskActions = (
  * outside those sets, the picker at rest, is the page's to hide with
  * {@link orderIsOpen}.
  *
- * `tasks` are decorated as the work page's are ({@link RunTaskView}), from
+ * `tasks` are decorated as the workflow page's are ({@link RunTaskView}), from
  * rows the order page already holds, so {@link taskActions} reads the same
  * shape on both pages.
  */
@@ -4110,7 +4146,7 @@ export const lineItemState = (
 };
 
 /**
- * Everything `/shop/$shop/work/$runId` renders: one run, its tasks, and the
+ * Everything `/shop/$shop/workflows/$runId` renders: one run, its tasks, and the
  * order's live note.
  *
  * The other items on the order are deliberately **not** here. A workflow
@@ -4158,7 +4194,7 @@ export const OrderDetailView = Schema.Struct({
 export type OrderDetailView = typeof OrderDetailView.Type;
 
 /**
- * The member run list's loader read. Still Worker-resolved: `teamIds` comes
+ * The member workflows list's loader read. Still Worker-resolved: `teamIds` comes
  * from `requireMember`, and the list's first paint is SSR, where there is no socket
  * to carry an identity — so this one stays plain RPC through `ShopAgentClient`
  * while the mutations below moved onto the socket.
@@ -4171,7 +4207,7 @@ export const ListRunsInput = Schema.Struct({
 export type ListRunsInput = typeof ListRunsInput.Type;
 
 /**
- * The socket half of the member run list's read: the same rows `listRuns`
+ * The socket half of the member workflows list's read: the same rows `listRuns`
  * returns, plus a subscription registered on the connection in the same round
  * trip. `teamIds` and `memberEmail` are absent on purpose — the list is
  * scoped by the membership on the connection, which the member cannot name
@@ -4185,7 +4221,7 @@ export const SubscribeRunsInput = Schema.Struct({
 export type SubscribeRunsInput = typeof SubscribeRunsInput.Type;
 
 /**
- * The work page's loader read, Worker-resolved for the same reason as
+ * The workflow page's loader read, Worker-resolved for the same reason as
  * {@link ListRunsInput}. The guard is "any task of the run on one of my
  * teams", not "a current task": a member may open work they have done.
  */

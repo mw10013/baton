@@ -443,7 +443,62 @@ The glossary's Nouns paragraph says the member's row is
 Record here anything done differently from this plan, with the reason.
 One bullet each. Empty means the plan was followed exactly.
 
--
+- Screens table, lapsed row: the heading cell is "the shop's domain", not
+  "Subscription inactive". The `s-page` heading is `shop`; "Subscription
+  inactive" is the section heading and the document title.
+- `checkScreens` takes `routeFiles` as file name → source, not a name list,
+  and defines a screen as an `app.*`/`shop.*` file that renders `<s-page`
+  and no `<Outlet`. That makes the exclusion list unnecessary: the layouts
+  and redirects the plan listed are excluded by the rule, including
+  `shop.$shop.tsx`, whose not-found `s-page` belongs to the layout. The
+  test reads the route files with `import.meta.glob` because the workers
+  pool has no `readdirSync`.
+- `login-callback.tsx` redirects a one-shop member to
+  `/shop/$shop/workflows` directly (the plan listed the bar and the picker
+  links only); same reason, one hop fewer.
+- The shop-root redirect's rule test is in e2e as planned; the integration
+  tests in `member-area.test.ts` that fetched `/shop/<shop>` now fetch
+  `/shop/<shop>/workflows` and `/shop/<shop>/workflows/none`.
+- The row's `Open <item> on <order>` label broke every e2e locator that
+  found a row by exact order text. `rowLink` now matches
+  `^Open .+ on <order>$`, `getByText(<ORDER>, { exact: true })` became
+  `rowLink(...)`, and workflow-page heading assertions use new `*_ITEM`
+  constants.
+- Stage 4: the heading repeated the item line ("Rush gift wrap" over
+  "Rush gift wrap ×1"). `RunItem` is used only on the member's workflow
+  page, so it dropped the title there and reads "<variant> · Quantity n"
+  or "Quantity n". A bare "×1" read orphaned; "Quantity" is the word the
+  quantity badge already uses. `itemLabel` lost its only caller and was
+  removed.
+- Workflow page not-found copy: "This work is not on one of your teams"
+  became "This workflow is not on one of your teams".
+- 5c: the `taskActions` paragraph had already been rewritten since the plan
+  ("...and neither screen styles one as primary."); only the screen names
+  changed.
+- Sweep extras: "work list(s)" in `Domain.ts` and one e2e test title
+  became "Mine, Up next, Teammates and Blocked"; the order page's "run
+  list" (its list of runs, domain tier) became "runs"; the
+  "Invalid run list row" decode message became "Invalid RunListRun row";
+  merchant-side mentions qualify as "the member's workflows list/workflow
+  page"; `app.workflows.tsx` and `app.orders.tsx` said "workflows list" and
+  "orders list" for merchant screens and now say "workflows index" and
+  "orders index". Line-wrapped "run / list" and "work / page" were found
+  and fixed separately.
+- Review (second pass): the Recent tab's closed-run row still read
+  `<order> · <item>`, and the done-task row put the order before the task.
+  Both now name the run as every row does: the closed row is `<item>`,
+  `<workflow> · <order>`; the done row is `<task>`, `<item> · <workflow> ·
+<order>`, with "by <who> at <time>" on line two. Their JSDocs say so.
+- Review: the glossary sentence "Bare "workflow" is the definition, which
+  only the merchant's Workflows pages show" contradicted the member's list
+  heading "Workflows". Rewritten: a bare workflow name is the definition on
+  the merchant's pages; the member's list never shows a definition and every
+  row names its item.
+- Review: the `/shop/$shop` layout JSDoc still said the landing content lives
+  in the index route; it now says the index redirects to the workflows list.
+- Review: merchant-side "orders list" / "workflows list" in two e2e titles,
+  `app.tsx`, `app.orders.tsx` and `ShopAgent.removeWorkflow` now say "orders
+  index" / "workflows index", the Screens-table names.
 
 ## Issues
 
@@ -452,4 +507,24 @@ at baseline, a screen that reads wrong after Stage 4, a phrase the sweep
 could not translate, a check that could not be written as specified. One
 bullet each, with the file and what you did or did not do about it.
 
--
+- Baseline was green (typecheck, lint, 479 tests).
+- Seed data named most workflows after their product, so rows read
+  "Leather journal Leather journal · #1003". Closed: the fixture's workflows
+  (`e2e/fixture.ts`) are now named after the process ("Stamp and bind"),
+  products keep their names, and the fixture's JSDoc says why. No screen rule
+  hides a workflow name equal to the item title: a merchant who names them
+  the same sees the repeat, which is what they typed.
+- The merchant's order page was checked in source, not in the browser
+  (the embedded app needs the Shopify admin): the item card reads
+  "<workflow> workflow", matching the member page's line.
+- The Recent tab's done-task row still leads with the task name and puts
+  the order before it; only its accessibility label changed.
+- `BlockModal` asked "Block #<order>?". Closed: it asks "Block <item> on
+  <order>?", the run as the member's row names it, on both sides; the order
+  page's stand-in for a run that left under an open modal says "this item".
+- Lint: the `checkScreenColumns` helpers and the pre-existing nine warnings
+  (test helpers not capturing scope, `continue`, `replace` with a global
+  regex, `${` in plain strings that are lint fixtures) are fixed or, for the
+  fixtures and `Effect.forEach`, disabled on the line with the reason.
+  `pnpm lint` reports zero warnings.
+- The workflows list's "to see work." (not-on-a-team copy) was left as is.

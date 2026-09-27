@@ -103,7 +103,7 @@ test("orders screen imports open orders and lists them", async ({ page }) => {
 
 /**
  * The waiting-on column on the orders index: the team holding each open
- * order, read from the same `currentWhere` the member's run list runs on.
+ * order, read from the same `currentWhere` the member's workflows list runs on.
  */
 test("the orders index names the team an open order is waiting on", async ({
   page,
@@ -494,7 +494,7 @@ test("the merchant blocks a run with a reason, edits it, notes the run, and unbl
 
   const blockModal = frame.locator("s-modal#run-block");
   await frame.getByRole("button", { name: "Block", exact: true }).click();
-  await expect(blockModal.getByText("Block #9303?")).toBeVisible();
+  await expect(blockModal.getByText("Block E2E Cuff on #9303?")).toBeVisible();
   await blockModal
     .getByRole("textbox", { name: "Reason" })
     .fill("Out of walnut stock");
@@ -1164,7 +1164,7 @@ const seedTwoPages = async (team: string) => {
   );
 };
 
-/** The orders list's context as the admin's URL mirrors it from the app. */
+/** The orders index's context as the admin's URL mirrors it from the app. */
 const listContext = (page: Page) => {
   const url = new URL(page.url());
   return {
@@ -1179,7 +1179,7 @@ const listContext = (page: Page) => {
  * the order page's URL, so the breadcrumb and the browser's history both
  * return to them. Previous on a page Next pushed is the browser's Back.
  */
-test("the orders list keeps its filters and page across the order page", async ({
+test("the orders index keeps its filters and page across the order page", async ({
   page,
 }) => {
   test.setTimeout(180_000);

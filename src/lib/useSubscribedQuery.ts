@@ -65,7 +65,7 @@ const connecting = () =>
  * identify invalidation then performs the first subscribing read. Without it
  * the page shows its own connecting state until `identified`.
  *
- * It may be `undefined`, because a key can outrun the loader: the member's run list
+ * It may be `undefined`, because a key can outrun the loader: the member's workflows list
  * puts its `Domain.RunQuery` in the key, and a chip press or a Show more
  * asks for rows the SSR read never fetched. Claiming the loader's rows for
  * that key would paint the wrong list as if it were fresh, so that caller

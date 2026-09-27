@@ -21,7 +21,7 @@ import { ShopAgentSocketProvider } from "@/lib/ShopAgentSocketHost";
  * `retainSearchParams` copies them onto every link and navigation built to
  * `/shop/$shop` or anything under it, so the two ways home — the browser's
  * Back and the bar's mark (`MemberBar`) — land on the screen the member
- * left rather than on the default one. A row's link to the work page carries
+ * left rather than on the default one. A row's link to the workflow page carries
  * them without the row knowing they exist, and so will any later child of this
  * layout. `limit` is one of them because a return that lands on page one is a
  * member scrolling back to the row they were standing on. The embedded app's
@@ -39,8 +39,8 @@ import { ShopAgentSocketProvider } from "@/lib/ShopAgentSocketHost";
  * one becomes a page, and `team` is carried as plain text, because which ids
  * mean anything is the roster's answer and not this schema's — the screen
  * resolves it and reads an id the member is not on as All teams
- * (`shop.$shop.index.tsx`). Failing any of them would put the router's error
- * boundary over the whole member area, work page included, for a typo.
+ * (`shop.$shop.workflows.index.tsx`). Failing any of them would put the router's error
+ * boundary over the whole member area, workflow page included, for a typo.
  *
  * **A recovery has to name a value, not drop the key.** Returning
  * `Option.none` from `catchDecoding` reads as "no such key", and the router
@@ -48,8 +48,8 @@ import { ShopAgentSocketProvider } from "@/lib/ShopAgentSocketHost";
  * arrive at the loader as the string a member typed. Every recovery here
  * answers with the default instead.
  *
- * `stripSearchParams` keeps the defaults out of the URL, so the bare
- * `/shop/$shop` stays the canonical way home.
+ * `stripSearchParams` keeps the defaults out of the URL, so
+ * `/shop/$shop/workflows` with no search stays the canonical way home.
  */
 const MemberSearch = Schema.Struct({
   tab: Schema.optionalKey(
@@ -81,9 +81,10 @@ const MemberSearch = Schema.Struct({
 
 /**
  * Layout for one shop's member area. It owns the `$shop` URL segment and the
- * member's search context ({@link MemberSearch}) and nothing else: the landing
- * content lives in the index route and children such as the run list render as
- * full pages through the Outlet. Authorization is not here either; each
+ * member's search context ({@link MemberSearch}) and nothing else: the index
+ * route redirects to the workflows list, and children such as the workflows
+ * list and the workflow page render as full pages through the Outlet.
+ * Authorization is not here either; each
  * child's server fn calls `requireMember` itself, so a layout guard would only
  * duplicate the authoritative check.
  */
@@ -127,7 +128,7 @@ function NotFoundComponent() {
 /**
  * Opens the member's single `ShopAgent` socket for this shop and shares it
  * with every child, the same way `/app` does for merchants
- * (`src/lib/ShopAgentSocketHost.tsx`). One socket per shop tab: the run list's
+ * (`src/lib/ShopAgentSocketHost.tsx`). One socket per shop tab: the workflows list's
  * actions and its live updates both ride it, and no child opens a second.
  *
  * No `query`: a member has no App Bridge and cannot mint an ID token. Their

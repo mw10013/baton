@@ -855,7 +855,7 @@ describe("OrderRepository.listOrders need team", () => {
 
 /**
  * `Domain.OrderRow.waitingOn`: the teams with a current task on an open run,
- * through the same `currentWhere` the member's run list runs on, so the cell and the
+ * through the same `currentWhere` the member's workflows list runs on, so the cell and the
  * filter are one fact rendered two ways. The fixture reuses `seedStates`'
  * runs and hangs tasks off them; on #1003 and #1004, `run-N-0` is done and
  * `run-N-1` is open.
@@ -945,6 +945,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
         return {
           all: yield* list(null, "all"),
           cut: yield* list(aTeamId("team-cut"), "all"),
+          // oxlint-disable-next-line unicorn/no-array-method-this-argument -- Effect.forEach, not Array#forEach; the third argument is options
           needs: yield* Effect.forEach(Domain.OrderNeed.literals, (need) =>
             repository.listOrders({
               limit: 20,
@@ -982,7 +983,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
   });
 
   /**
-   * A blocked run's current task still satisfies `currentWhere` (the run list keeps
+   * A blocked run's current task still satisfies `currentWhere` (the workflows list keeps
    * showing it), but the team cannot move it, so the cell and the filter both
    * leave the team out; `RunCounts.blocked` is where that run is counted.
    */

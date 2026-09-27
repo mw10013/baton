@@ -399,8 +399,8 @@ const memberCallableEffect =
  * (`Domain.RunStatus`). `OrderLineItem.matchedWorkflowIds` is the other half:
  * the workflows whose tags matched at the last reconcile, from which
  * "ambiguous" (two or more, no run) is derived at read time. `status` is denormalized from the tasks for
- * the run list and the definitions badge; every task write recomputes it in
- * the same transaction. `(teamId, doneAt)` serves the member's run list, which
+ * the workflows list and the definitions badge; every task write recomputes it in
+ * the same transaction. `(teamId, doneAt)` serves the member's workflows list, which
  * asks for open tasks by team. `RunTask.teamId` is nullable for the
  * same reason as `WorkflowTask.teamId`: a team delete nulls it on open tasks
  * (unassigned, on nobody's list until a person assigns a team) and leaves
@@ -1091,7 +1091,7 @@ type PublishScope = "all" | readonly string[];
 type PublishTeams = "all" | readonly string[];
 
 /**
- * The teams whose run lists a write to this order could have changed, as a value
+ * The teams whose workflows lists a write to this order could have changed, as a value
  * a caller can read on both sides of the write. A failed read answers `"all"`,
  * never `[]`: an over-broad publish costs each member one refetch, while an
  * under-broad one leaves a list that silently stops updating until the tab's
@@ -1480,7 +1480,7 @@ export class ShopAgent extends Agent {
    * publish `"all"`.
    *
    * `teams` is the same idea for the other population. A member's subscription
-   * is their run list, which is scoped by team rather than by order, so an order
+   * is their workflows list, which is scoped by team rather than by order, so an order
    * GID says nothing about whether their view changed. The five member
    * mutations name the teams their write could have affected — every team
    * owning a task on any run of that order, because which tasks are current depends on every run of the order
@@ -2761,7 +2761,7 @@ export class ShopAgent extends Agent {
    * SDK base class already has a `deleteWorkflow(workflowId)` that drops a
    * Cloudflare Workflow instance's tracking row (`onWorkflowComplete` calls
    * it), the same collision `getWorkflowDetail` sidesteps. Publishes because
-   * the workflows list and any order page's attach picker — which lists
+   * the workflows index and any order page's attach picker — which lists
    * workflows — must repaint.
    *
    * Reconciles afterwards for the same reason Turn off does: the deleted
@@ -3403,7 +3403,7 @@ export class ShopAgent extends Agent {
   /**
    * Member-area methods. Two idioms, split by whether the call has a socket:
    *
-   * `listRuns` stays plain RPC, not `@callable()`. It is the run list's
+   * `listRuns` stays plain RPC, not `@callable()`. It is the workflows list's
    * loader read and paints during SSR, where there is no connection to carry
    * an identity, so `teamIds` arrives from `requireMember` through
    * `ShopAgentClient` exactly as before. Decoded lax: the caller is the
@@ -3419,7 +3419,7 @@ export class ShopAgent extends Agent {
    */
   /**
    * A publish scoped to the teams a member's write could have changed the
-   * run list of — see `publish`. The read is one indexed query against the
+   * workflows list of — see `publish`. The read is one indexed query against the
    * object's own SQLite, and it runs after the write so a task that just
    * became current for another team is included.
    */
@@ -3793,7 +3793,7 @@ export class ShopAgent extends Agent {
     );
   }
 
-  /** The work page's loader read; plain RPC for the same reason as {@link listRuns}. */
+  /** The workflow page's loader read; plain RPC for the same reason as {@link listRuns}. */
   memberGetRun(
     input: typeof Domain.GetRunForMemberInput.Encoded,
   ): Promise<Domain.RunView | null> {
@@ -3808,7 +3808,7 @@ export class ShopAgent extends Agent {
 
   /**
    * The socket twin of {@link memberGetRun}, as `subscribeRuns` is of
-   * `listRuns`. The subscription is the same team-scoped one the run list
+   * `listRuns`. The subscription is the same team-scoped one the workflows list
    * registers (`orderId: null`): a member's pushes are decided by team, so
    * any write touching one of their teams' orders refetches this run too.
    * Over-broad by an order or two; the read is one run.

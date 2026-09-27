@@ -102,7 +102,7 @@ afterEach(async () => {
  * tests in the same worker, so sharing a shop would leak workflows between cases.
  */
 /**
- * The current half of the run list view, flattened back into one list in strip
+ * The current half of the workflows list view, flattened back into one list in strip
  * order because one read now returns one tab; the Done tab and the tiering
  * itself are covered by the repository tests. `memberEmail` defaults to
  * nobody these tests started work as, so every started task reads as a

@@ -124,6 +124,12 @@ const REFS: readonly Ref[] = [
     version: { from: ".", dep: "vitest" },
   },
   {
+    name: "oxlint",
+    repo: "oxc-project/oxc",
+    tag: "oxlint_v{v}",
+    version: { from: ".", dep: "oxlint" },
+  },
+  {
     name: "playwright",
     repo: "microsoft/playwright",
     tag: "v{v}",

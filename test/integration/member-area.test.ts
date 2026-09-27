@@ -118,7 +118,7 @@ describe("member area", () => {
         });
         const cookie = yield* signInThroughWorker(MEMBER);
         const response = yield* fetchWorker(
-          `http://localhost/shop/${OTHER_SHOP}`,
+          `http://localhost/shop/${OTHER_SHOP}/workflows`,
           { headers: { cookie } },
         );
         strictEqual(response.status, 404);
@@ -143,7 +143,7 @@ describe("member area", () => {
           email: MEMBER,
         });
         const cookie = yield* signInThroughWorker(MEMBER);
-        const shopUrl = `http://localhost/shop/${SHOP}`;
+        const shopUrl = `http://localhost/shop/${SHOP}/workflows`;
         const page = yield* fetchWorker(shopUrl, { headers: { cookie } });
         strictEqual(page.status, 200);
         assertTrue((yield* Effect.promise(() => page.text())).includes(SHOP));
@@ -173,13 +173,14 @@ describe("member area", () => {
   );
 });
 
-describe("member run list", () => {
+describe("member workflows list", () => {
   /**
-   * The run list is `/shop/$shop` itself, the index under the `/shop/$shop`
-   * layout, which owns no loader of its own — each child's server fn calls
-   * `requireMember` itself. The run list read hits only the Durable Object and
-   * renders `200`; the `404` on another shop proves the route is behind the
-   * same gate. The work page is a sibling and is gated the same way. The page's own actions are socket callables and are covered
+   * The workflows list is `/shop/$shop/workflows`, a child of the
+   * `/shop/$shop` layout, which owns no loader of its own — each child's
+   * server fn calls `requireMember` itself. The list read hits only the
+   * Durable Object and renders `200`; the `404` on another shop proves the
+   * route is behind the same gate. The workflow page is a sibling and is
+   * gated the same way. The page's own actions are socket callables and are covered
    * against the object in `member-runs-socket.test.ts` and
    * `shop-agent-workflows.test.ts`.
    */
@@ -195,27 +196,30 @@ describe("member run list", () => {
         });
         const cookie = yield* signInThroughWorker(MEMBER);
         strictEqual(
-          (yield* fetchWorker(`http://localhost/shop/${SHOP}`, {
+          (yield* fetchWorker(`http://localhost/shop/${SHOP}/workflows`, {
             headers: { cookie },
           })).status,
           200,
         );
         strictEqual(
-          (yield* fetchWorker(`http://localhost/shop/${SHOP}/work/none`, {
+          (yield* fetchWorker(`http://localhost/shop/${SHOP}/workflows/none`, {
             headers: { cookie },
           })).status,
           200,
         );
         strictEqual(
-          (yield* fetchWorker(`http://localhost/shop/${OTHER_SHOP}`, {
+          (yield* fetchWorker(`http://localhost/shop/${OTHER_SHOP}/workflows`, {
             headers: { cookie },
           })).status,
           404,
         );
         strictEqual(
-          (yield* fetchWorker(`http://localhost/shop/${OTHER_SHOP}/work/none`, {
-            headers: { cookie },
-          })).status,
+          (yield* fetchWorker(
+            `http://localhost/shop/${OTHER_SHOP}/workflows/none`,
+            {
+              headers: { cookie },
+            },
+          )).status,
           404,
         );
       }),
@@ -238,7 +242,7 @@ describe("member run list", () => {
         for (const email of emails) {
           const cookie = yield* signInThroughWorker(email);
           strictEqual(
-            (yield* fetchWorker(`http://localhost/shop/${SHOP}`, {
+            (yield* fetchWorker(`http://localhost/shop/${SHOP}/workflows`, {
               headers: { cookie },
             })).status,
             200,
@@ -280,7 +284,10 @@ describe("member run list", () => {
         });
         const cookie = yield* signInThroughWorker(MEMBER);
         const stranger = yield* signInThroughWorker(STRANGER);
-        for (const path of [`/shop/${SHOP}`, `/shop/${SHOP}/work/none`]) {
+        for (const path of [
+          `/shop/${SHOP}/workflows`,
+          `/shop/${SHOP}/workflows/none`,
+        ]) {
           const response = yield* fetchWorker(`http://localhost${path}`, {
             headers: { cookie },
           });
@@ -294,7 +301,7 @@ describe("member run list", () => {
           200,
         );
         strictEqual(
-          (yield* fetchWorker(`http://localhost/shop/${SHOP}`, {
+          (yield* fetchWorker(`http://localhost/shop/${SHOP}/workflows`, {
             headers: { cookie: stranger },
           })).status,
           404,
@@ -359,12 +366,12 @@ describe("admin console", () => {
 
 describe("login-callback", () => {
   /**
-   * One membership lands on that shop's run list; two land on the picker. The
+   * One membership lands on that shop's workflows list; two land on the picker. The
    * picker is a page with one link when there is one shop, and a bench wants
    * the work, not a menu.
    */
   it.effect(
-    "sends a one-shop member to their run list and a two-shop member to /shop",
+    "sends a one-shop member to their workflows list and a two-shop member to /shop",
     () =>
       run(
         Effect.gen(function* () {
@@ -379,7 +386,7 @@ describe("login-callback", () => {
             headers: { cookie },
           });
           strictEqual(one.status, 307);
-          strictEqual(one.headers.get("location"), `/shop/${SHOP}`);
+          strictEqual(one.headers.get("location"), `/shop/${SHOP}/workflows`);
 
           yield* seedShop(OTHER_SHOP);
           yield* repository.addMember({

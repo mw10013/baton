@@ -7,7 +7,7 @@
  * wants the mark renders this rather than pasting a fifth copy of the paths.
  *
  * It is inlined rather than an `<img src="/favicon.svg">` so a screen costs one
- * request fewer and still prints: a printed member work page is a job ticket,
+ * request fewer and still prints: a printed workflow page is a job ticket,
  * and a ticket whose header image was dropped by the print path is harder to
  * identify on a bench.
  *

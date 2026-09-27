@@ -15,7 +15,7 @@ import type {
  * test data.
  *
  * Deliberately NOT adopted by the existing specs: each seeds the exact shape
- * its assertions compute (a run list with N cards, a team with M members). Pinning
+ * its assertions compute (a workflows list with N cards, a team with M members). Pinning
  * those to this shared fixture would make one edit here silently retune
  * unrelated assertions. `pnpm seed` and manual exploration are its consumers.
  *
@@ -32,8 +32,8 @@ import type {
  *   fixture data, not `ADMIN_EMAILS` — that env var grants the better-auth
  *   admin role and is deliberately not coupled to a reseed.
  * - `m1@m.com` is on two maker teams, Engraving and Finishing: the one
- *   login whose run list is grouped by team.
- * - `m2@m.com` is on Rush alone: the one persona whose run list is the
+ *   login whose workflows list is grouped by team.
+ * - `m2@m.com` is on Rush alone: the one persona whose workflows list is the
  *   cross-cutting workflow rather than a product's.
  *
  * Three, which is Basic's `membersIncluded`, so a seeded shop bills no seat
@@ -48,17 +48,17 @@ import type {
  * The derived attention states are all seeded so every warning is visible
  * after one `pnpm seed`, and each carries its reading in its name so the row
  * cannot be mistaken for a mistake: `Retired team (empty)` has nobody on it,
- * `Pet tag (unassigned task)` has a task with no team (what a team delete
- * leaves behind) and one on the empty team, `Wholesale sample (no steps)`
- * has none, and `Photo frame` is seeded off.
+ * `Tag stamping (unassigned task)` has a task with no team (what a team delete
+ * leaves behind) and one on the empty team, `Sample pull (no steps)`
+ * has none, and `Frame and glaze` is seeded off.
  *
  * An invariant the ordinary write path enforces and the seed only checks in
  * part, so the fixture must honour it by construction: a workflow with an
  * unassigned task cannot be on; the seed defaults it off.
  *
  * Orders are written straight into the shop's object, bypassing Shopify, so
- * every lifecycle state a run list or order page can show exists without tagging
- * sandbox products. A populated run list from *real* orders additionally needs
+ * every lifecycle state a workflows list or order page can show exists without tagging
+ * sandbox products. A populated workflows list from *real* orders additionally needs
  * the sandbox products tagged with the workflow tags by hand.
  *
  * Two order vocabularies the rows below lean on, both documented on
@@ -74,7 +74,7 @@ import type {
  * a merchant makes — "rush" was meant as an order label, not a workflow.
  *
  * The rows from `#2001` are generated rather than hand-written, and are always
- * seeded: the member's run list and the orders index are only honest at a few
+ * seeded: the member's workflows list and the orders index are only honest at a few
  * hundred cards and more than one page, and a second fixture without them would
  * only leave it unclear which one a screen was judged against.
  */
@@ -154,15 +154,20 @@ const AT_CAP_WORKFLOW =
   "Heirloom leather journal, hand-stitched spine, embossed monogram";
 
 /**
- * Each workflow is a distinct shape so the editor, run list, and order page each
+ * Each workflow is a distinct shape so the editor, workflows list, and order page each
  * have one row per case to look at: linear, a parallel step in the middle
  * with the first team returning, a parallel first step, instructions with a
  * pending draft, the off / unassigned / no-tasks rows, and one at the caps.
+ *
+ * Named after the process, not the product ("Stamp and bind" for the leather
+ * journal): the member's row and workflow page print the item beside its
+ * workflow, and a workflow named like its product reads as the item said
+ * twice. The comment on each says which product it is for.
  */
 export const workflows: readonly SeedWorkflow[] = [
   {
-    // three-task linear, the bread-and-butter product
-    name: "Engraved cutting board",
+    // the cutting board: three-task linear, the bread-and-butter product
+    name: "Cut, engrave and oil",
     tag: TAG.board,
     tasks: [
       task("Cut and sand", WOODSHOP, {
@@ -177,8 +182,8 @@ export const workflows: readonly SeedWorkflow[] = [
     ],
   },
   {
-    // parallel middle step; Leather starts and returns at the end
-    name: "Leather journal",
+    // the leather journal: parallel middle step; Leather starts and returns at the end
+    name: "Stamp and bind",
     tag: TAG.journal,
     tasks: [
       task("Cut leather", LEATHER, { step: 1 }),
@@ -191,8 +196,8 @@ export const workflows: readonly SeedWorkflow[] = [
     ],
   },
   {
-    // linear; instructions on every task; Jewelry starts and returns
-    name: "Signet ring",
+    // the signet ring: linear; instructions on every task; Jewelry starts and returns
+    name: "Cast and engrave",
     tag: TAG.ring,
     tasks: [
       task("Cast", JEWELRY, {
@@ -207,9 +212,9 @@ export const workflows: readonly SeedWorkflow[] = [
     ],
   },
   {
-    // two-task; a pending draft adds a third task so the detail page shows
+    // the blanket: two-task; a pending draft adds a third task so the detail page shows
     // both sides
-    name: "Embroidered blanket",
+    name: "Embroider and fold",
     tag: TAG.blanket,
     tasks: [
       task("Embroider", TEXTILES, {
@@ -228,9 +233,9 @@ export const workflows: readonly SeedWorkflow[] = [
     },
   },
   {
-    // parallel first step, three wide; seeded off so the list has an "Off"
+    // the photo frame: parallel first step, three wide; seeded off so the list has an "Off"
     // row and it starts nothing until it is turned on
-    name: "Photo frame",
+    name: "Frame and glaze",
     active: false,
     tag: TAG.frame,
     tasks: [
@@ -241,16 +246,16 @@ export const workflows: readonly SeedWorkflow[] = [
     ],
   },
   {
-    // one unassigned task (what a team delete leaves) and one on the empty
+    // the pet tag: one unassigned task (what a team delete leaves) and one on the empty
     // team: "Needs a team" in the list, both banners on the detail page,
     // Turn on refused until the task is assigned
-    name: "Pet tag (unassigned task)",
+    name: "Tag stamping (unassigned task)",
     tag: TAG.petTag,
     tasks: [task("Stamp", null), task("Attach ring", RETIRED_TEAM_EMPTY)],
   },
   {
-    // zero tasks: "No tasks"
-    name: "Wholesale sample (no steps)",
+    // the wholesale sample: zero tasks, "No tasks"
+    name: "Sample pull (no steps)",
     tag: TAG.sample,
     tasks: [],
   },
@@ -268,10 +273,10 @@ export const workflows: readonly SeedWorkflow[] = [
     ],
   },
   {
-    // the long one: twelve tasks over eight steps, two of them three wide,
+    // the gift box, the long one: twelve tasks over eight steps, two of them three wide,
     // so the editor, a card's sibling list, and "task 4 of 12" each have a
     // row that is not three tasks long
-    name: "Gift box (many tasks)",
+    name: "Box assembly (many tasks)",
     tag: TAG.giftBox,
     tasks: [
       task("Cut box panels", WOODSHOP, { step: 1 }),
@@ -295,10 +300,10 @@ export const workflows: readonly SeedWorkflow[] = [
     ],
   },
   {
-    // a draft that MOVES a task to another team rather than adding one: runs
+    // the wall clock: a draft that MOVES a task to another team rather than adding one: runs
     // open when it is applied keep the team they snapshotted, which is the
     // thing the blanket's add-a-task draft cannot show
-    name: "Wall clock",
+    name: "Clock assembly",
     tag: TAG.clock,
     tasks: [
       task("Cut face", WOODSHOP),
@@ -320,9 +325,9 @@ export const workflows: readonly SeedWorkflow[] = [
   {
     // on, and it starts runs: an empty team does not block a start, so the
     // second task lands on a team nobody is on — the order page's card names it
-    // and no run list anywhere shows the card. Distinct from
+    // and no workflows list anywhere shows the card. Distinct from
     // Pet tag, which is off because a task has no team at all.
-    name: "Keychain (empty team task)",
+    name: "Ring and stamp (empty team task)",
     active: true,
     tag: TAG.keychain,
     tasks: [task("Cut", LEATHER), task("Attach ring", RETIRED_TEAM_EMPTY)],
@@ -532,7 +537,7 @@ const floorOrders: readonly SeedOrder[] = [
         [TAG.board, TAG.rush],
         1,
         { Engraving: "Rush — anniversary" },
-        { workflow: "Engraved cutting board" },
+        { workflow: "Cut, engrave and oil" },
       ),
     ],
   },
@@ -681,7 +686,7 @@ const floorOrders: readonly SeedOrder[] = [
   },
   {
     // the cut is done and the next task belongs to a team with nobody on it:
-    // the order page's card names the team and no run list shows it
+    // the order page's card names the team and no workflows list shows it
     n: 1024,
     advance: 1,
     lineItems: [item("Keychain", TAG.keychain, 1, { Initials: "D.V." })],
@@ -699,7 +704,7 @@ const floorOrders: readonly SeedOrder[] = [
     lineItems: [item(LONG_TITLE, TAG.board, 1, { "Gift note": null })],
   },
   {
-    // a product that is only ever a rush job, so Rush has a run list of its own
+    // a product that is only ever a rush job, so Rush has a workflows list of its own
     // and `m9` is not looking at an empty page
     n: 1027,
     lineItems: [item("Rush gift wrap", TAG.rush, 1, { Note: "Same-day" })],
@@ -789,9 +794,9 @@ const floorOrders: readonly SeedOrder[] = [
 ];
 
 /**
- * The startable product workflows, cycled by the generated rows below. Photo
- * frame (off), Pet tag (unassigned task) and Wholesale sample (no steps) are
- * left out because they start nothing, and `rush` because a second tag would
+ * The startable products and their workflows' tags, cycled by the generated
+ * rows below. Frame and glaze (off), Tag stamping (unassigned task) and
+ * Sample pull (no steps) are left out because they start nothing, and `rush` because a second tag would
  * make every generated row ambiguous.
  */
 const MAKER_PRODUCTS = [
@@ -809,7 +814,7 @@ const productAt = (index: number) =>
 /**
  * The biggest single order the fixture holds: 25 items, every one
  * personalized differently so the cards are tellable apart, which is both the
- * longest order page and the largest "together with" group on a run list.
+ * longest order page and the largest "together with" group on a workflows list.
  */
 const bigOrder = (n: number): SeedOrder => ({
   n,
@@ -822,7 +827,7 @@ const bigOrder = (n: number): SeedOrder => ({
   }),
 });
 
-/** Cycled over the generated orders so every tier of the run list is populated, not only Up next. */
+/** Cycled over the generated orders so every tier of the workflows list is populated, not only Up next. */
 const SCALE_PROGRESS: readonly SeedProgress[] = [
   {},
   { advance: 1 },
@@ -832,7 +837,7 @@ const SCALE_PROGRESS: readonly SeedProgress[] = [
 ];
 
 /**
- * Volume, always seeded: the run list's tiers are uncapped apart from Up next and
+ * Volume, always seeded: the workflows list's tiers are uncapped apart from Up next and
  * the orders index pages at 25, so neither can be judged at ten orders. Kept
  * to a few hundred runs — every one is a real reconcile and every round a real
  * write, and the reseed has to stay quick enough that people still run it.

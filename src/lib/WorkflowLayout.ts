@@ -174,7 +174,7 @@ export const isValid = (layout: Layout): boolean => {
   });
 };
 
-/** Tasks grouped by step in step order, each group in position order — the shape the editor and the run list render. */
+/** Tasks grouped by step in step order, each group in position order — the shape the editor and the workflows list render. */
 export const stepsOf = <P extends Placed>(
   layout: readonly P[],
 ): readonly (readonly P[])[] => {

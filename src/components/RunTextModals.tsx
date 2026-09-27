@@ -177,7 +177,8 @@ export function RunNoteModal({
 /**
  * Block, and the edit of a standing block's reason, in one modal driven by
  * {@link Domain.runIsBlocked}. Not blocked, it sets the hold: the heading
- * asks the question and the primary is a critical Block. Blocked, it rewrites
+ * asks the question, naming the run as the member's row does ("Block <item>
+ * on <order>?"), and the primary is a critical Block. Blocked, it rewrites
  * the reason and nothing else: there is no Block to press on a run that is
  * already held.
  */
@@ -189,7 +190,10 @@ export function BlockModal({
   onSaveReason,
 }: {
   readonly id: string;
-  readonly run: Pick<Domain.Run, "orderName" | "blockedAt" | "blockReason">;
+  readonly run: Pick<
+    Domain.Run,
+    "lineItemTitle" | "orderName" | "blockedAt" | "blockReason"
+  >;
   readonly pending: boolean;
   readonly onBlock: (reason: string) => Promise<string | null>;
   readonly onSaveReason: (reason: string) => Promise<string | null>;
@@ -198,7 +202,11 @@ export function BlockModal({
   return (
     <TextModal
       id={id}
-      heading={blocked ? "Block reason" : `Block ${run.orderName}?`}
+      heading={
+        blocked
+          ? "Block reason"
+          : `Block ${run.lineItemTitle} on ${run.orderName}?`
+      }
       label="Reason"
       placeholder="What is stopping this? Who needs to know?"
       saved={blocked ? (run.blockReason ?? "") : ""}

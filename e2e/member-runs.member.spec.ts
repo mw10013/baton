@@ -10,7 +10,7 @@ import { awaitEnabled, clickWhenEnabled, gotoMember, signIn } from "./member";
 import { seedConfig, seedMembers } from "./seed";
 
 /**
- * The member's run list through a real browser: cookie → Worker gate → member
+ * The member's workflows list through a real browser: cookie → Worker gate → member
  * socket → `@callable()`. The integration suite already proves the object's
  * side; what only a browser can prove is that a member holding nothing but a
  * better-auth cookie reaches the Durable Object at all, that the page's
@@ -39,15 +39,19 @@ const RING_TAG = "e2e-runs-ring";
 const BOX_TAG = "e2e-runs-box";
 /** Routed to `CUT_TEAM`, so both members see it. */
 const RING_ORDER = "#9401";
+/** The ring order's item, which heads its workflow page. */
+const RING_ITEM = "E2E Ring Band";
 /** Routed to `PACK_TEAM`, so only the mate sees it. */
 const BOX_ORDER = "#9402";
 /** Routed Cut → Polish across the two teams; seeded only where a test needs downstream work. */
 const BAND_ORDER = "#9403";
+/** The band order's item, which heads its workflow page. */
+const BAND_ITEM = "E2E Cuff";
 const BAND_TAG = "e2e-runs-band";
-/** A run's row names the task and nothing else: progress is the work page's. */
+/** A run's row names the task and nothing else: progress is the workflow page's. */
 const CUT_TASK = "Cut";
 /**
- * The work page's started line. The badge beside the task name states the
+ * The workflow page's started line. The badge beside the task name states the
  * state, so the line under it is team, actor and when, with no "Started" in
  * it. A teammate's row says `Started · <who>` instead.
  */
@@ -68,9 +72,10 @@ const EMPTY_DONE = "Nothing done or closed in the last day.";
 /**
  * Every seeded order is `#94xx`, which is how a row is counted rather than
  * read. The row itself is the link, so what it announces is its
- * `accessibilityLabel` rather than the order number printed inside it.
+ * `accessibilityLabel`, `Open <item> on <order>`, rather than the text
+ * printed inside it.
  */
-const ORDER_LINK = /^Open #94\d\d$/u;
+const ORDER_LINK = /^Open .+ on #94\d\d$/u;
 /**
  * Filler Cut orders, numbered clear of the three named ones. Twenty-five and
  * not twenty-four: the ring order is a Cut order too, so the mate's Up next
@@ -150,7 +155,7 @@ const seedRuns = (
     [
       {
         n: 9401,
-        lineItems: [{ title: "E2E Ring Band", quantity: 1, tags: [RING_TAG] }],
+        lineItems: [{ title: RING_ITEM, quantity: 1, tags: [RING_TAG] }],
       },
       {
         n: 9402,
@@ -160,7 +165,7 @@ const seedRuns = (
         ? [
             {
               n: 9403,
-              lineItems: [{ title: "E2E Cuff", quantity: 1, tags: [BAND_TAG] }],
+              lineItems: [{ title: BAND_ITEM, quantity: 1, tags: [BAND_TAG] }],
               ...(options.bandDoneByMerchant === true
                 ? { advance: 1, byMerchant: true }
                 : {}),
@@ -227,7 +232,7 @@ const memberContext = (
 const contexts: BrowserContext[] = [];
 
 /**
- * Land a signed-in member on their run list. `tab` goes in the URL rather than
+ * Land a signed-in member on their workflows list. `tab` goes in the URL rather than
  * through a click, because the tab is a search param and most tests here are
  * about the rows rather than about getting to them; the default landing tab
  * is Mine, which is empty until somebody starts something.
@@ -243,12 +248,12 @@ const openRuns = async (
   const page = await context.newPage();
   await gotoMember(
     page,
-    `/shop/${config.shop}${tab === undefined ? "" : `?tab=${tab}`}`,
+    `/shop/${config.shop}/workflows${tab === undefined ? "" : `?tab=${tab}`}`,
   );
   /* The section, not an `s-page` heading: the page has none, and the section's
      accessibility label is what names the landmark now. */
   await expect(
-    page.locator('s-section[accessibilityLabel="Work"]'),
+    page.locator('s-section[accessibilityLabel="Workflows"]'),
   ).toBeVisible();
   return page;
 };
@@ -274,7 +279,7 @@ const DEFAULT_TAB = "mine";
  * side that cannot be ambiguous.
  *
  * The default tab is the absence of the key: `stripSearchParams` keeps it out
- * of the URL so the bare `/shop/$shop` stays the canonical way home
+ * of the URL so `/shop/$shop/workflows` with no search stays the canonical way home
  * (`MemberSearch` in `src/routes/shop.$shop.tsx`).
  */
 const selectTab = async (
@@ -308,16 +313,18 @@ const serverRows = async (page: Page, path: string): Promise<number> => {
   const response = await page.request.get(path);
   expect(response.ok()).toBe(true);
   const html = await response.text();
-  return html.match(/Open #94\d\d/gu)?.length ?? 0;
+  return html.match(/Open [^"<>]+ on #94\d\d/gu)?.length ?? 0;
 };
 
 /**
- * A row's own link to the work page. The whole row is one `s-clickable href`,
- * so it announces itself by its label rather than by the order number printed
- * inside it.
+ * A row's own link to the workflow page, found by its order. The whole row
+ * is one `s-clickable href`, so it announces itself by its label,
+ * `Open <item> on <order>`, rather than by the text printed inside it.
  */
 const rowLink = (page: Page, orderName: string) =>
-  page.getByRole("link", { name: `Open ${orderName}`, exact: true });
+  page.getByRole("link", {
+    name: new RegExp(`^Open .+ on ${orderName}$`, "u"),
+  });
 
 /**
  * The row for one order: the innermost `s-box` holding that order's
@@ -376,9 +383,9 @@ test.beforeAll(async ({ browser }) => {
     });
     const page = await context.newPage();
     await signIn(page, email);
-    // A one-shop member lands on the run list itself, not the picker.
+    // A one-shop member lands on the workflows list itself, not the picker.
     await expect(
-      page.locator('s-section[accessibilityLabel="Work"]'),
+      page.locator('s-section[accessibilityLabel="Workflows"]'),
     ).toBeVisible();
     const state = await context.storageState();
     await context.close();
@@ -406,7 +413,7 @@ test("a member starts and completes their team's current task over the socket", 
   await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
   const page = await openRuns(browser, config, makerState, "upNext");
 
-  await expect(page.getByText(RING_ORDER, { exact: true })).toBeVisible();
+  await expect(rowLink(page, RING_ORDER)).toBeVisible();
   await expect(page.getByText(`${CUT_TASK} · ${MINE_STATE}`)).toBeVisible();
   await markDocument(page);
 
@@ -419,10 +426,10 @@ test("a member starts and completes their team's current task over the socket", 
   await expect(
     page.getByRole("button", { name: `${UP_NEXT} · 0` }),
   ).toBeVisible();
-  await expect(page.getByText(RING_ORDER, { exact: true })).toBeHidden();
+  await expect(rowLink(page, RING_ORDER)).toBeHidden();
 
   await selectTab(page, "mine", MINE);
-  await expect(page.getByText(RING_ORDER, { exact: true })).toBeVisible();
+  await expect(rowLink(page, RING_ORDER)).toBeVisible();
   /* The row says where it is in the run and not that it is the reader's own,
      which the pressed tab already said; what changed is the verb in its menu,
      where Start has given way to Done. */
@@ -433,42 +440,42 @@ test("a member starts and completes their team's current task over the socket", 
     ring.getByRole("menuitem", { name: "Start", exact: true }),
   ).toHaveCount(0);
   await ring.getByRole("menuitem", { name: "Done", exact: true }).click();
-  await expect(page.getByText(RING_ORDER, { exact: true })).toBeHidden();
+  await expect(rowLink(page, RING_ORDER)).toBeHidden();
   await expect(page.getByText(EMPTY_MINE)).toBeVisible();
   await expectSameDocument(page);
 });
 
 /**
  * The row has one link and one menu, and each does only its own job. Both
- * halves matter: the row body opens the work page, while the kebab and the
+ * halves matter: the row body opens the workflow page, while the kebab and the
  * item it opens write without moving the reader — a row that navigated under
  * a thumb reaching for Done would cost the member their place in the list on
  * every piece they mark done.
  */
-test("a run's row opens the work page and its menu does not", async ({
+test("a run's row opens the workflow page and its menu does not", async ({
   browser,
 }) => {
   const config = seedConfig();
   await seedRuns(config, { cutMembers: [MAKER], keepIdentities: true });
   const page = await openRuns(browser, config, makerState, "upNext");
-  await expect(page.getByText(RING_ORDER, { exact: true })).toBeVisible();
+  await expect(rowLink(page, RING_ORDER)).toBeVisible();
 
   /* The row body, not the order number: the number is plain text now and the
      whole row is the target. */
   await rowLink(page, RING_ORDER).click();
-  await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
+  await expect(page.locator(`s-page[heading="${RING_ITEM}"]`)).toBeVisible();
 
   await page.goBack();
-  /* Wait for the run list itself, not for the order number: until Back lands,
-     the order number on the work page's own heading matches too. */
+  /* Wait for the workflows list itself, not for the row's text: until Back
+     lands, the item and order on the workflow page match too. */
   await expect(
-    page.locator('s-section[accessibilityLabel="Work"]'),
+    page.locator('s-section[accessibilityLabel="Workflows"]'),
   ).toBeVisible();
   await expect(card(page, RING_ORDER)).toBeVisible();
   const runsUrl = page.url();
   await rowAction(page, RING_ORDER, "Start");
   /* The write landed and the reader stayed put: the strip renumbered and the
-     address bar still says the run list. */
+     address bar still says the workflows list. */
   await expect(page.getByRole("button", { name: `${MINE} · 1` })).toBeVisible();
   await expect(page).toHaveURL(runsUrl);
 });
@@ -487,21 +494,21 @@ test("a run's row opens the work page and its menu does not", async ({
  * plain sight on the mate's, and it must still be there after the ring work is
  * done.
  */
-test("a task one member marks done lands on another member's run list without a reload", async ({
+test("a task one member marks done lands on another member's workflows list without a reload", async ({
   browser,
 }) => {
   const config = seedConfig();
   await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
 
   const mate = await openRuns(browser, config, mateState, "upNext");
-  await expect(mate.getByText(RING_ORDER, { exact: true })).toBeVisible();
-  await expect(mate.getByText(BOX_ORDER, { exact: true })).toBeVisible();
+  await expect(rowLink(mate, RING_ORDER)).toBeVisible();
+  await expect(rowLink(mate, BOX_ORDER)).toBeVisible();
   await awaitEnabled(rowMenu(mate, RING_ORDER));
   await markDocument(mate);
 
   const maker = await openRuns(browser, config, makerState, "upNext");
-  await expect(maker.getByText(RING_ORDER, { exact: true })).toBeVisible();
-  await expect(maker.getByText(BOX_ORDER, { exact: true })).toBeHidden();
+  await expect(rowLink(maker, RING_ORDER)).toBeVisible();
+  await expect(rowLink(maker, BOX_ORDER)).toBeHidden();
   await expect(maker.getByText("Pack")).toBeHidden();
 
   await rowAction(maker, RING_ORDER, "Start");
@@ -514,7 +521,7 @@ test("a task one member marks done lands on another member's run list without a 
     mate.getByRole("button", { name: `${UP_NEXT} · 1` }),
   ).toBeVisible();
 
-  /* The mate's row says who has it; the start time is on the work page the
+  /* The mate's row says who has it; the start time is on the workflow page the
      row links to, which is one tap away and not on the list. */
   await selectTab(mate, "teammates", TEAMMATES);
   await expect(
@@ -523,7 +530,7 @@ test("a task one member marks done lands on another member's run list without a 
 
   await selectTab(maker, "mine", MINE);
   await rowAction(maker, RING_ORDER, "Done");
-  await expect(mate.getByText(RING_ORDER, { exact: true })).toBeHidden();
+  await expect(rowLink(mate, RING_ORDER)).toBeHidden();
   /* The mate's other team is untouched by the ring order's fan-out, so the
      refetch must not have emptied the page wholesale. */
   await expect(
@@ -536,7 +543,7 @@ test("a task one member marks done lands on another member's run list without a 
 });
 
 /**
- * Taking a member off a team while they are standing on the run list. The seed
+ * Taking a member off a team while they are standing on the workflows list. The seed
  * ends by revoking the connections of the members it replaced, which is what
  * `app.members` and `app.teams.$teamId` do after their own roster writes, so
  * this is the same close a merchant edit produces: code 4401, `/shop/$shop`
@@ -550,19 +557,19 @@ test("a task one member marks done lands on another member's run list without a 
  * "not on a team yet" state rather than not-found; `member-area.member.spec.ts`
  * owns the removed-from-the-shop case.
  */
-test("removing a member from a team empties their open run list", async ({
+test("removing a member from a team empties their open workflows list", async ({
   browser,
 }) => {
   const config = seedConfig();
   await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
   const page = await openRuns(browser, config, makerState, "upNext");
-  await expect(page.getByText(RING_ORDER, { exact: true })).toBeVisible();
+  await expect(rowLink(page, RING_ORDER)).toBeVisible();
   await awaitEnabled(rowMenu(page, RING_ORDER));
   await markDocument(page);
 
   await seedRuns(config, { cutMembers: [MATE], keepIdentities: true });
 
-  await expect(page.getByText(RING_ORDER, { exact: true })).toBeHidden();
+  await expect(rowLink(page, RING_ORDER)).toBeHidden();
   await expect(page.getByText("You’re not on a team yet.")).toBeVisible();
   await expectSameDocument(page);
 });
@@ -753,7 +760,7 @@ test("a row names its team only for a member on several teams looking at all of 
  * The tab is a search param, so it survives a paste into the address bar and
  * it is what the back button walks out of. `replace: true` on the switch is
  * the second half: a member who glanced at three tabs presses Back once and
- * is out of the run list, not walked back through them.
+ * is out of the workflows list, not walked back through them.
  */
 test("the tab is in the URL and switching tabs replaces it", async ({
   browser,
@@ -763,14 +770,38 @@ test("the tab is in the URL and switching tabs replaces it", async ({
   const page = await openRuns(browser, config, makerState);
   await expect(page.getByText(EMPTY_MINE)).toBeVisible();
 
-  await gotoMember(page, `/shop/${config.shop}?tab=upNext`);
+  await gotoMember(page, `/shop/${config.shop}/workflows?tab=upNext`);
   /* First paint, no click: the loader read the tab out of the URL. */
-  await expect(page.getByText(RING_ORDER, { exact: true })).toBeVisible();
+  await expect(rowLink(page, RING_ORDER)).toBeVisible();
 
   await selectTab(page, "blocked", BLOCKED);
   await page.goBack();
-  await expect(page).toHaveURL(new RegExp(`/shop/${config.shop}$`, "u"));
+  await expect(page).toHaveURL(
+    new RegExp(`/shop/${config.shop}/workflows$`, "u"),
+  );
   await expect(page.getByText(EMPTY_MINE)).toBeVisible();
+});
+
+/**
+ * `/shop/$shop` is the member's home by URL, and it answers with a redirect
+ * to the workflows list rather than rendering the list itself, so the
+ * address bar names the noun. A bookmark from before the list had its own
+ * path carries the member's context, and the redirect keeps it.
+ */
+test("the shop root redirects to the workflows list and keeps the search", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
+  const page = await openRuns(browser, config, makerState);
+
+  await gotoMember(page, `/shop/${config.shop}?tab=blocked`);
+  await expect(page).toHaveURL(
+    new RegExp(`/shop/${config.shop}/workflows\\?tab=blocked$`, "u"),
+  );
+  await expect(
+    page.locator('s-section[accessibilityLabel="Workflows"]'),
+  ).toBeVisible();
 });
 
 /**
@@ -786,7 +817,7 @@ test("the team is in the URL and switching teams replaces it", async ({
   const config = seedConfig();
   await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
   const page = await openRuns(browser, config, mateState);
-  await gotoMember(page, `/shop/${config.shop}?tab=upNext`);
+  await gotoMember(page, `/shop/${config.shop}/workflows?tab=upNext`);
 
   await page.getByRole("button", { name: "All teams", exact: true }).click();
   await page.getByRole("menuitem", { name: `${CUT_TEAM} · 1` }).click();
@@ -797,13 +828,15 @@ test("the team is in the URL and switching teams replaces it", async ({
   /* One press, out: the team switch replaced the entry the tab switch made,
      so Back is the way out of the list rather than back through the filter. */
   await page.goBack();
-  await expect(page).toHaveURL(new RegExp(`/shop/${config.shop}$`, "u"));
+  await expect(page).toHaveURL(
+    new RegExp(`/shop/${config.shop}/workflows$`, "u"),
+  );
   await expect(page.getByText(EMPTY_MINE)).toBeVisible();
 
   /* Cold, with the team in the URL: the loader reads it, so the narrowed list
      is what the server paints — one Cut row, not two rows corrected after the
      socket answers. */
-  const narrowed = `/shop/${config.shop}?tab=upNext&team=${String(team)}`;
+  const narrowed = `/shop/${config.shop}/workflows?tab=upNext&team=${String(team)}`;
   expect(await serverRows(page, narrowed)).toBe(1);
   await gotoMember(page, narrowed);
   await expect(
@@ -845,7 +878,7 @@ test("depth is in the URL and a return lands on the same depth", async ({
 
   /* Cold at that depth: all 27 in the SSR paint, and no button offering rows
      that are already there. */
-  const deep = `/shop/${config.shop}?tab=upNext&limit=50`;
+  const deep = `/shop/${config.shop}/workflows?tab=upNext&limit=50`;
   expect(await serverRows(page, deep)).toBe(27);
   await gotoMember(page, deep);
   await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(27);
@@ -856,13 +889,16 @@ test("depth is in the URL and a return lands on the same depth", async ({
   /* Below the floor and far above the ceiling: both are lists, neither is an
      error page. `limit=0` clamps to one row, which is the sharp end of the
      rule — the tab still counts 27 and offers the rest. */
-  await gotoMember(page, `/shop/${config.shop}?tab=upNext&limit=0`);
+  await gotoMember(page, `/shop/${config.shop}/workflows?tab=upNext&limit=0`);
   await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(1);
   await expect(
     page.getByRole("button", { name: "Show 25 more of 26" }),
   ).toBeVisible();
 
-  await gotoMember(page, `/shop/${config.shop}?tab=upNext&limit=1000`);
+  await gotoMember(
+    page,
+    `/shop/${config.shop}/workflows?tab=upNext&limit=1000`,
+  );
   await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(27);
   await expect(
     page.getByRole("button", { name: `${UP_NEXT} · 27` }),
@@ -877,7 +913,7 @@ test("depth is in the URL and a return lands on the same depth", async ({
  *
  * Nothing in `MemberBar` or in the row's link names a search key: the layout's
  * middleware puts the context on every link built under `/shop/$shop`
- * (`MemberSearch` in `src/routes/shop.$shop.tsx`), which is why the work page's
+ * (`MemberSearch` in `src/routes/shop.$shop.tsx`), which is why the workflow page's
  * URL carries filters it does not itself read.
  */
 test("the bar's mark returns to the screen the member left", async ({
@@ -891,7 +927,7 @@ test("the bar's mark returns to the screen the member left", async ({
   const team = teamParam(page);
 
   await rowLink(page, RING_ORDER).click();
-  await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
+  await expect(page.locator(`s-page[heading="${RING_ITEM}"]`)).toBeVisible();
   await expect(page).toHaveURL(/[?&]tab=upNext(?:&|$)/u);
   await expect(page).toHaveURL(
     new RegExp(`[?&]team=${String(team)}(&|$)`, "u"),
@@ -899,7 +935,7 @@ test("the bar's mark returns to the screen the member left", async ({
 
   const expectLeftScreen = async (): Promise<void> => {
     await expect(
-      page.locator('s-section[accessibilityLabel="Work"]'),
+      page.locator('s-section[accessibilityLabel="Workflows"]'),
     ).toBeVisible();
     await expect(page).toHaveURL(/[?&]tab=upNext(?:&|$)/u);
     expect(teamParam(page)).toBe(team);
@@ -915,7 +951,7 @@ test("the bar's mark returns to the screen the member left", async ({
   await expectLeftScreen();
 
   await rowLink(page, RING_ORDER).click();
-  await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
+  await expect(page.locator(`s-page[heading="${RING_ITEM}"]`)).toBeVisible();
   await page.goBack();
   await expectLeftScreen();
 });
@@ -936,7 +972,7 @@ test("a team the member is no longer on reads as all teams", async ({
   const page = await openRuns(browser, config, mateState);
   await gotoMember(
     page,
-    `/shop/${config.shop}?tab=upNext&team=not-a-team-of-theirs`,
+    `/shop/${config.shop}/workflows?tab=upNext&team=not-a-team-of-theirs`,
   );
 
   await expect(
@@ -954,7 +990,7 @@ test("a team the member is no longer on reads as all teams", async ({
  * a `tab` the schema cannot read is the default tab, a `limit` that is not a
  * number is a page, and an empty `team` is every team (`MemberSearch` in
  * `src/routes/shop.$shop.tsx`). The schema guards the whole member area now,
- * work page included, so the alternative to a default is the router's error
+ * workflow page included, so the alternative to a default is the router's error
  * boundary over a shop's work because somebody mistyped one character.
  */
 test("a value the search schema cannot read falls back to the default", async ({
@@ -968,13 +1004,13 @@ test("a value the search schema cannot read falls back to the default", async ({
   });
   const page = await openRuns(browser, config, mateState);
 
-  await gotoMember(page, `/shop/${config.shop}?tab=bogus`);
+  await gotoMember(page, `/shop/${config.shop}/workflows?tab=bogus`);
   await expect(page.getByText(EMPTY_MINE)).toBeVisible();
 
-  await gotoMember(page, `/shop/${config.shop}?tab=upNext&limit=abc`);
+  await gotoMember(page, `/shop/${config.shop}/workflows?tab=upNext&limit=abc`);
   await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(25);
 
-  await gotoMember(page, `/shop/${config.shop}?tab=upNext&team=`);
+  await gotoMember(page, `/shop/${config.shop}/workflows?tab=upNext&team=`);
   await expect(
     page.getByRole("button", { name: "All teams", exact: true }),
   ).toBeVisible();
@@ -1085,19 +1121,19 @@ test("put back returns a started task to Up next for everyone", async ({
 });
 
 /**
- * A `done` run is only its last task's Done, and the work page must offer
- * Undo there just as the run list's Recent tab does (`Domain.taskActions`:
+ * A `done` run is only its last task's Done, and the workflow page must offer
+ * Undo there just as the workflows list's Recent tab does (`Domain.taskActions`:
  * `reopen` does not need `runIsOpen`). The ring order has one task, so Done
  * on it makes the run done, and the page it links to is the page under test.
  */
-test("a done run's work page offers Undo on its last task", async ({
+test("a done run's workflow page offers Undo on its last task", async ({
   browser,
 }) => {
   const config = seedConfig();
   await seedRuns(config, { cutMembers: [MAKER], keepIdentities: true });
   const page = await openRuns(browser, config, makerState, "upNext");
   await rowLink(page, RING_ORDER).click();
-  await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
+  await expect(page.locator(`s-page[heading="${RING_ITEM}"]`)).toBeVisible();
 
   await clickWhenEnabled(
     page.getByRole("button", { name: "Done", exact: true }),
@@ -1127,14 +1163,14 @@ test("a done run's work page offers Undo on its last task", async ({
 /**
  * Once downstream has started the fix is a conversation, and **neither member
  * screen says so in words**: the mate (on the Polish team) starts the next
- * step, the maker's Recent entry loses its menu, and the work page the
+ * step, the maker's Recent entry loses its menu, and the workflow page the
  * row still links to simply stops offering Undo.
  *
  * The rule used to be a disabled Undo beside a clause naming the blocker, so
  * that the control read as a refusal rather than as one that was never
  * reopenable. That holds while refusal is the exception, and in a busy shop
  * it is the rule: a done task is nearly always downstream of something
- * already started. The run list dropped both on that argument, deferring the
+ * already started. The workflows list dropped both on that argument, deferring the
  * explanation to this page — and this page is where the explanation is least
  * needed, because it lists the whole run: the task standing in the way is on
  * screen, directly below, wearing a `Started` badge. A sentence naming
@@ -1144,7 +1180,7 @@ test("a done run's work page offers Undo on its last task", async ({
  * `app.orders.$orderId.tsx`, because that screen can reopen the blocker and
  * so has an instruction to give (`e2e/orders.spec.ts`).
  */
-test("a blocked undo offers nothing and explains nothing, on the row or the work page", async ({
+test("a blocked undo offers nothing and explains nothing, on the row or the workflow page", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -1171,7 +1207,7 @@ test("a blocked undo offers nothing and explains nothing, on the row or the work
 
   await expect(rowMenu(maker, BAND_ORDER)).toHaveCount(0);
   await rowLink(maker, BAND_ORDER).click();
-  await expect(maker.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
+  await expect(maker.locator(`s-page[heading="${BAND_ITEM}"]`)).toBeVisible();
   /* The blocker itself is the explanation: Polish is on the page, under the
      task that cannot be undone, with the badge that says why. */
   await expect(maker.getByText(`${PACK_TEAM} · ${MATE} · since`)).toBeVisible();
@@ -1180,7 +1216,7 @@ test("a blocked undo offers nothing and explains nothing, on the row or the work
 });
 
 /**
- * Two shapes the work page holds to, neither of which any other assertion
+ * Two shapes the workflow page holds to, neither of which any other assertion
  * here would catch.
  *
  * **The badge states the task's state and the line under it never repeats
@@ -1204,7 +1240,7 @@ test("the run note opens in a modal and the task cards carry no note button", as
   await seedRuns(config, { cutMembers: [MAKER], keepIdentities: true });
   const page = await openRuns(browser, config, makerState, "upNext");
   await rowLink(page, RING_ORDER).click();
-  await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
+  await expect(page.locator(`s-page[heading="${RING_ITEM}"]`)).toBeVisible();
 
   /* The task sits under its `Step 1` label and its header line is the task
      alone; the team is the line under it, and the badge's word appears
@@ -1261,12 +1297,12 @@ test("the run note opens in a modal and the task cards carry no note button", as
 });
 
 /**
- * The work page: opened from the card's order number, it lists every task
+ * The workflow page: opened from the card's order number, it lists every task
  * with its state, takes a note and a block, marks the task done, and reads the
  * actor back. Block comes before Done because blocking needs a current task on
  * the member's team, and Cut is the maker's only one.
  */
-test("the work page shows the task history and takes a note, a block, and Done", async ({
+test("the workflow page shows the task history and takes a note, a block, and Done", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -1277,8 +1313,8 @@ test("the work page shows the task history and takes a note, a block, and Done",
   });
   const page = await openRuns(browser, config, makerState, "upNext");
   await rowLink(page, BAND_ORDER).click();
-  await expect(page.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
-  await expect(page.getByText("E2E Cuff ×1")).toBeVisible();
+  await expect(page.locator(`s-page[heading="${BAND_ITEM}"]`)).toBeVisible();
+  await expect(page.getByText("Quantity 1", { exact: true })).toBeVisible();
 
   const noteModal = page.locator("s-modal#run-note");
   await clickWhenEnabled(
@@ -1301,7 +1337,9 @@ test("the work page shows the task history and takes a note, a block, and Done",
   await clickWhenEnabled(
     page.getByRole("button", { name: "Block", exact: true }),
   );
-  await expect(blockModal.getByText(`Block ${BAND_ORDER}?`)).toBeVisible();
+  await expect(
+    blockModal.getByText(`Block ${BAND_ITEM} on ${BAND_ORDER}?`),
+  ).toBeVisible();
   await blockModal
     .getByRole("textbox", { name: "Reason" })
     .fill("Waiting on stones");
@@ -1313,7 +1351,7 @@ test("the work page shows the task history and takes a note, a block, and Done",
   await expect(
     page
       .locator('s-banner[heading="Blocked"] ~ s-stack')
-      .filter({ hasText: "E2E Cuff ×1" }),
+      .filter({ hasText: "Quantity 1" }),
   ).toHaveCount(1);
   await expect(page.getByText("Waiting on stones")).toBeVisible();
   await expect(
@@ -1338,12 +1376,12 @@ test("the work page shows the task history and takes a note, a block, and Done",
   await expect(page.getByText("Called the supplier")).toBeVisible();
   await expect(page.locator('s-banner[heading="Blocked"]')).toBeVisible();
 
-  /* The same hold as the run list reads it: the card carries its one action
+  /* The same hold as the workflows list reads it: the card carries its one action
      inside the banner and offers no task buttons at all, which is the whole
      of "blocked means stop". */
   await homeLink(page).click();
   await expect(
-    page.locator('s-section[accessibilityLabel="Work"]'),
+    page.locator('s-section[accessibilityLabel="Workflows"]'),
   ).toBeVisible();
   /* The mark lands back on Up next, the tab this test came from; the held run
      is on Blocked, which the strip counts from wherever the reader is. */
@@ -1365,7 +1403,7 @@ test("the work page shows the task history and takes a note, a block, and Done",
   ).toHaveCount(0);
   await page.keyboard.press("Escape");
   await rowLink(page, BAND_ORDER).click();
-  await expect(page.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
+  await expect(page.locator(`s-page[heading="${BAND_ITEM}"]`)).toBeVisible();
 
   await clickWhenEnabled(page.getByRole("button", { name: "Unblock" }));
   await clickWhenEnabled(
@@ -1376,7 +1414,7 @@ test("the work page shows the task history and takes a note, a block, and Done",
 
   await homeLink(page).click();
   await expect(
-    page.locator('s-section[accessibilityLabel="Work"]'),
+    page.locator('s-section[accessibilityLabel="Workflows"]'),
   ).toBeVisible();
   /* Cut is done and Polish is the packer's, so the run is no card of the
      maker's any more; what remains of it on this page is the Done entry. */
@@ -1390,7 +1428,7 @@ test("the work page shows the task history and takes a note, a block, and Done",
  * fulfilment or cancel closed leaves Mine, Up next, Teammates and Blocked by its status,
  * and Recent says why, with no verb on the row.
  */
-test("closed runs leave every work list and show on Recent with their reason", async ({
+test("closed runs leave Mine, Up next, Teammates and Blocked and show on Recent with their reason", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -1451,7 +1489,7 @@ test("closed runs leave every work list and show on Recent with their reason", a
     page.getByRole("button", { name: "Actions for #9451" }),
   ).toHaveCount(0);
 
-  /* The work page on a closed run says why where a block would be, and
+  /* The workflow page on a closed run says why where a block would be, and
      offers nothing but the note. */
   await rowLink(page, "#9451").click();
   await expect(page.locator('s-banner[heading="Closed"]')).toBeVisible();
@@ -1468,6 +1506,7 @@ test("closed runs leave every work list and show on Recent with their reason", a
 
 /** A workflow whose first step is two parallel Cut tasks and whose second is Pack's. */
 const PAIR_ORDER = "#9404";
+const PAIR_ITEM = "E2E Pair";
 const ENGRAVE_TASK = "Engrave";
 const POLISH_TASK = "Polish";
 
@@ -1493,21 +1532,19 @@ const seedPair = (config: SeedConfig) =>
     [
       {
         n: 9404,
-        lineItems: [
-          { title: "E2E Pair", quantity: 1, tags: ["e2e-runs-pair"] },
-        ],
+        lineItems: [{ title: PAIR_ITEM, quantity: 1, tags: ["e2e-runs-pair"] }],
       },
     ],
     { keepIdentities: true },
   );
 
-/** Open the pair run's work page as the maker; returns the page and its step boxes. */
+/** Open the pair run's workflow page as the maker; returns the page and its step boxes. */
 const openPair = async (browser: Browser) => {
   const config = seedConfig();
   await seedPair(config);
   const page = await openRuns(browser, config, makerState, "upNext");
   await rowLink(page, PAIR_ORDER).click();
-  await expect(page.locator(`s-page[heading="${PAIR_ORDER}"]`)).toBeVisible();
+  await expect(page.locator(`s-page[heading="${PAIR_ITEM}"]`)).toBeVisible();
   const boxes = page
     .locator('s-stack[accessibilityRole="ordered-list"]')
     .locator('s-box[borderWidth="base"]');
@@ -1584,7 +1621,7 @@ test("task buttons are all secondary and the advancing one comes first", async (
  * "Reopened by …" line is one rendering, and a merchant reopen exercising it
  * is asserted on the order page instead.
  */
-test("a merchant's completion reads as Merchant on the run list and the work page", async ({
+test("a merchant's completion reads as Merchant on the workflows list and the workflow page", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -1603,7 +1640,7 @@ test("a merchant's completion reads as Merchant on the run list and the work pag
   await expect(page.getByText("by Merchant at")).toBeVisible();
 
   await rowLink(page, BAND_ORDER).click();
-  await expect(page.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
+  await expect(page.locator(`s-page[heading="${BAND_ITEM}"]`)).toBeVisible();
   await expect(page.getByText(`${CUT_TEAM} · Merchant`)).toBeVisible();
 
   /* The maker takes it back: the same line the merchant's reopen writes, with

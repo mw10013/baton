@@ -7,11 +7,11 @@ import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
 
 /**
- * Pieces the run list's rows, the work page and the merchant's order page
- * render, kept together so the screens describe one item, one block and one
+ * Pieces the workflows list's rows, the member's workflow page and the
+ * merchant's order page render, kept together so the screens describe one item, one block and one
  * closed run in the same words.
  *
- * One fact, once. The pressed tab on the run list says which tier a row is in,
+ * One fact, once. The pressed tab on the workflows list says which tier a row is in,
  * so nothing inside the card repeats it. {@link BlockBanner} takes the buttons
  * that act on the block through its `actions` slot rather than rendering them
  * itself: each screen offers a different set, but all belong inside the
@@ -154,28 +154,17 @@ export function LineItemProperties({
   );
 }
 
-/** Title, variant, and the units to make, e.g. "Leather journal — A5 ×2". */
-export const itemLabel = ({
-  title,
-  variantTitle,
-  quantity,
-}: {
-  readonly title: string;
-  readonly variantTitle: string | null;
-  readonly quantity: number;
-}) =>
-  `${title}${variantTitle === null ? "" : ` — ${variantTitle}`} ×${formatNumber(quantity)}`;
-
-/** An item run's own line: what this run makes. */
+/**
+ * An item run's own line under the member's workflow page heading: what this
+ * run makes, less the title, which is the heading a stride above it: the
+ * variant and the units, "A5 · Quantity 2", or "Quantity 2" for an item with
+ * no variant. "Quantity" is the word the quantity badge beside it uses.
+ */
 export function RunItem({ run }: { readonly run: Domain.Run }) {
   return (
     <s-stack gap="small-500">
       <s-text type="strong">
-        {itemLabel({
-          title: run.lineItemTitle,
-          variantTitle: run.variantTitle,
-          quantity: run.quantity,
-        })}
+        {`${run.variantTitle === null ? "" : `${run.variantTitle} · `}Quantity ${formatNumber(run.quantity)}`}
       </s-text>
       {run.sku !== null && <s-text color="subdued">{`SKU ${run.sku}`}</s-text>}
       <LineItemProperties properties={run.lineItemProperties} />

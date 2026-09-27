@@ -11,7 +11,7 @@ import { lenientSearchKey } from "@/lib/searchParams";
 declare module "@tanstack/react-router" {
   interface HistoryState {
     /**
-     * Set on the entry the orders list's Next pushes: the entry before this
+     * Set on the entry the orders index's Next pushes: the entry before this
      * one is the same list one page up, so Previous can be the browser's Back.
      * See `previousPage` in `app.orders.index.tsx`.
      */
@@ -20,7 +20,7 @@ declare module "@tanstack/react-router" {
 }
 
 /**
- * **The merchant's context on the orders list, and it travels.** The same
+ * **The merchant's context on the orders index, and it travels.** The same
  * rule as the member area's {@link MemberSearch} (`shop.$shop.tsx`), which
  * carries the reasoning: the keys live on the layout so every page under it,
  * the order page included, may carry them, and `retainSearchParams` puts them
@@ -40,13 +40,13 @@ declare module "@tanstack/react-router" {
  *
  * What differs from the member area:
  *
- * - The layout is `/app/orders`, not `/app`. The workflows list has its own
+ * - The layout is `/app/orders`, not `/app`. The workflows index has its own
  *   `status` key (`app.workflows.tsx`) and the two would collide, and an
  *   orders filter has no business on a `/app/teams` URL.
  * - No `stripSearchParams`: none of the keys has a default value; absence is
  *   the default, and the index writes it by leaving the key out.
- * - `after` is a page, where the run list's `limit` is a depth. A depth only
- *   grows, so one number says everything; a keyset cursor pages forward only,
+ * - `after` is a page, where the member's workflows list's `limit` is a
+ *   depth. A depth only grows, so one number says everything; a keyset cursor pages forward only,
  *   and the page before it is not in the URL. Previous is the browser's Back
  *   when the entry before is that page, which is what {@link HistoryState}'s
  *   `ordersNextPage` records.

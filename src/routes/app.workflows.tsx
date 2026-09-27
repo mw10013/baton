@@ -8,9 +8,9 @@ import { Schema } from "effect";
 import { lenientSearchKey } from "@/lib/searchParams";
 
 /**
- * **The merchant's filter on the workflows list, and it travels.** The same
+ * **The merchant's filter on the workflows index, and it travels.** The same
  * rule as the member area's {@link MemberSearch} (`shop.$shop.tsx`) and the
- * orders list's `OrdersSearch` (`app.orders.tsx`): `status` lives on the
+ * orders index's `OrdersSearch` (`app.orders.tsx`): `status` lives on the
  * layout and `retainSearchParams` puts it on every link and navigation under
  * `/app/workflows`, so the workflow page's breadcrumb, the navigation back
  * after a delete, and the Workflows nav link land on the filtered list. The
@@ -23,7 +23,7 @@ import { lenientSearchKey } from "@/lib/searchParams";
  * identity, not a grouping dimension, and one filter button per tag made it
  * look like one.
  *
- * The layout is `/app/workflows` rather than `/app` because the orders list
+ * The layout is `/app/workflows` rather than `/app` because the orders index
  * has its own `status` key. No `stripSearchParams`: absence is the default.
  * A value the page does not know — a stale link, a hand-edited URL — reads as
  * no filter ({@link lenientSearchKey}): a wrong filter is not an error

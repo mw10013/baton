@@ -57,7 +57,7 @@ export class ShopAgentClientError extends Schema.TaggedError<ShopAgentClientErro
  * the object:
  *
  * - **Configuration a page reads and one person edits** (members, teams, the
- *   tasks a team owns, the member's run list) goes through a route `loader` — via
+ *   tasks a team owns, the member's workflows list) goes through a route `loader` — via
  *   `Repository` for D1 rows, via this service for Durable Object rows. The
  *   page paints during SSR, and its own mutations refresh it with
  *   `router.invalidate()`. The route's server function is the module-private
@@ -74,7 +74,7 @@ export class ShopAgentClientError extends Schema.TaggedError<ShopAgentClientErro
  * The `@callable()` set on `ShopAgent` is exactly what the browser may reach
  * over the socket; a read that only loaders need is plain RPC and lives here.
  *
- * The member's run list is the rule's clearest case, and the reason the five member
+ * The member's workflows list is the rule's clearest case, and the reason the five member
  * mutations are *not* here: `listRuns` is the SSR paint and stays on this
  * path, while Start, Done, Note, Block, and Unblock became `@callable()` once
  * `/shop/*` got a socket. Their privileged inputs did not become less
@@ -89,7 +89,7 @@ export class ShopAgentClient extends Context.Service<
       shop: string,
       input: Domain.ListRunsInput,
     ) => Effect.Effect<Domain.RunListView, ShopAgentClientError>;
-    /** The work page's loader read; `null` is "not yours or not there", one answer on purpose. */
+    /** The workflow page's loader read; `null` is "not yours or not there", one answer on purpose. */
     readonly memberGetRun: (
       shop: string,
       input: Domain.GetRunForMemberInput,

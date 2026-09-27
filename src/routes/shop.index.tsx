@@ -42,7 +42,7 @@ function RouteComponent() {
         ) : (
           <s-stack gap="base">
             {shops.map((shop) => (
-              <Link key={shop} to="/shop/$shop" params={{ shop }}>
+              <Link key={shop} to="/shop/$shop/workflows" params={{ shop }}>
                 {shop}
               </Link>
             ))}

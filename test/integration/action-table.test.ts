@@ -188,4 +188,33 @@ describe("action table parser", () => {
       ]);
     });
   });
+
+  describe("every screen a merchant or member uses has a Screens row, and every row's route file exists", () => {
+    /** Every route file's source, keyed by file name as `readdirSync` lists it. */
+    const routeFiles = Object.fromEntries(
+      Object.entries(
+        import.meta.glob<string>("/src/routes/*", {
+          query: "?raw",
+          import: "default",
+          eager: true,
+        }),
+      ).map(([path, text]) => [path.slice("/src/routes/".length), text]),
+    );
+
+    it("Domain.ts passes", () => {
+      expect(ActionTable.checkScreens(source, routeFiles)).toEqual([]);
+    });
+
+    it("a row with no route file, and a screen with no row, are reported", () => {
+      const doctored = source.replace(
+        "| merchant | `app.members`                     |",
+        "| merchant | `app.people`                      |",
+      );
+      expect(doctored).not.toBe(source);
+      expect(ActionTable.checkScreens(doctored, routeFiles)).toEqual([
+        "Glossary: Screens: no route file app.people.tsx",
+        "Glossary: Screens: app.members.tsx has no row",
+      ]);
+    });
+  });
 });

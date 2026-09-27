@@ -177,8 +177,8 @@ function RouteComponent() {
   /**
    * `status: undefined` is how the filter is removed; leaving the key out
    * would let the layout's middleware retain the old value
-   * (`WorkflowsSearch` in `app.workflows.tsx`). `replace: true` for the run
-   * list's reason (`selectTab` in `shop.$shop.index.tsx`): the filters are a
+   * (`WorkflowsSearch` in `app.workflows.tsx`). `replace: true` for the
+   * member's workflows list's reason (`selectTab` in `shop.$shop.workflows.index.tsx`): the filters are a
    * screen's state, not a trail.
    */
   const setFilters = (next: {

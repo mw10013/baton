@@ -45,7 +45,7 @@ export const formatNumber = (value: number) =>
 /**
  * Coarse age for a run row's "ordered 3d ago": minutes under an hour,
  * hours under a day, then days. Coarse on purpose — a bench wants "is this
- * from today or last week", not a timestamp, which the work page has. Same
+ * from today or last week", not a timestamp, which the workflow page has. Same
  * SSR caveat as `formatDateTime`: `Date.now()` differs between the server
  * render and hydration, so render through `LocalDateTime`.
  */

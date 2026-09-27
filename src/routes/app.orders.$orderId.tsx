@@ -212,8 +212,8 @@ const stepCount = (tasks: readonly Domain.RunTask[]) =>
  * the team in parentheses.
  *
  * Deliberately a second phrasing beside {@link RunSteps}, not a call into it.
- * That one describes *each task* inside the Manage disclosure, in the work
- * page's vocabulary, so the merchant and the worker say the same thing about
+ * That one describes *each task* inside the Manage disclosure, in the
+ * member's workflow page's vocabulary, so the merchant and the worker say the same thing about
  * the same task. This one describes *the run* on a collapsed card and has to
  * cover a parallel step (several current tasks at once), which is not a task
  * state. Keeping them apart is cheaper than a shared function with a mode flag.
@@ -645,7 +645,7 @@ function RouteComponent() {
   const { order, lineItems, runs, itemWorkflows, teams } = detail;
   const orderOpen = Domain.orderIsOpen(order);
   /**
-   * The same aggregate the index computes in SQL, rebuilt from the run list
+   * The same aggregate the index computes in SQL, rebuilt from the runs
    * this page already carries so both pages read one `productionState`.
    * Only the `made` banner reads it: every other state here is per item, and
    * the cards carry it.
@@ -752,7 +752,8 @@ function RouteComponent() {
    *
    * No action here is primary — not `Done`, not `Block`. Every write on
    * this page is a merchant reaching past a worker — the bench claims and
-   * marks tasks done on the work page — and a primary button is the grammar of
+   * marks tasks done on the member's workflow page — and a primary button
+   * is the grammar of
    * "this is what you came here to do", which is false here. Nothing here is
    * red either: Polaris puts the critical tone on the button that performs a
    * destructive action, not on the one that opens the question, and Cancel
@@ -1288,7 +1289,7 @@ function RouteComponent() {
               Help Center says "line item properties", REST and Liquid say
               properties, only the GraphQL API says customAttributes.
               Shortened because the heading already sits inside the line
-              item's card. The rows are the work page's
+              item's card. The rows are the member's workflow page's
               ({@link LineItemProperties}). */}
           {item.properties.length > 0 && (
             <s-stack gap="small-300">
@@ -1557,7 +1558,11 @@ function RouteComponent() {
       <BlockModal
         id={BLOCK_MODAL}
         run={
+          /* The run left the page under an open modal (a socket refresh after
+             a Change workflow): the heading names the order and a stand-in for
+             the item, and the submit answers that the workflow is gone. */
           modalRun ?? {
+            lineItemTitle: "this item",
             orderName: order.name,
             blockedAt: null,
             blockReason: null,

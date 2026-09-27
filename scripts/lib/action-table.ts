@@ -417,30 +417,30 @@ const glossaryTables = (source: string): readonly GlossaryTable[] => {
   let intro = "";
   for (let index = 0; index < lines.length; index++) {
     const text = lines[index] ?? "";
-    if (!text.startsWith("|")) {
-      if (text !== "" && (lines[index - 1] ?? "") === "") intro = text;
-      continue;
+    if (text.startsWith("|")) {
+      const header = cellsOf(text);
+      const rows: Record<string, string>[] = [];
+      // Skip the separator, then read body rows until the table ends.
+      index += 2;
+      for (; (lines[index] ?? "").startsWith("|"); index++) {
+        const values = cellsOf(lines[index] ?? "");
+        rows.push(
+          Object.fromEntries(
+            header.map((column, at) => [column, values[at] ?? ""]),
+          ),
+        );
+      }
+      tables.push({ intro, rows });
+    } else if (text !== "" && (lines[index - 1] ?? "") === "") {
+      intro = text;
     }
-    const header = cellsOf(text);
-    const rows: Record<string, string>[] = [];
-    // Skip the separator, then read body rows until the table ends.
-    index += 2;
-    for (; (lines[index] ?? "").startsWith("|"); index++) {
-      const values = cellsOf(lines[index] ?? "");
-      rows.push(
-        Object.fromEntries(
-          header.map((column, at) => [column, values[at] ?? ""]),
-        ),
-      );
-    }
-    tables.push({ intro, rows });
   }
   return tables;
 };
 
 /** `put back` → `putBack`: a glossary word as the constants key it. */
 const camel = (word: string) =>
-  word.replace(/ (?<letter>[a-z])/gu, (_, letter: string) =>
+  word.replaceAll(/ (?<letter>[a-z])/gu, (_, letter: string) =>
     letter.toUpperCase(),
   );
 
@@ -452,12 +452,20 @@ const camel = (word: string) =>
  * first " (" or " ·", because the open row carries the merchant's second
  * word and the closed row its reason. Reports each mismatch.
  */
+/** A constant's value as the glossary prints it: `null` is "(none)". */
+const shown = (value: string | null) => value ?? "(none)";
+
+/** A word → label map as a one-column (`screen`) constant table for `compare`. */
+const screen = (values: Readonly<Record<string, string | null>>) =>
+  Object.fromEntries(
+    Object.entries(values).map(([word, value]) => [word, { screen: value }]),
+  );
+
 export const checkScreenColumns = (
   source: string,
   labels: ScreenLabels,
 ): readonly string[] => {
   const tables = glossaryTables(source);
-  const shown = (value: string | null) => value ?? "(none)";
   const compare = (
     name: string,
     intro: string,
@@ -468,10 +476,10 @@ export const checkScreenColumns = (
   ): readonly string[] => {
     const table = tables.find((each) => each.intro.startsWith(intro));
     if (table === undefined) return [`Glossary: no ${name} table`];
-    const words = table.rows.map((row) => camel(row["word"] ?? ""));
+    const words = table.rows.map((row) => camel(row.word ?? ""));
     return [
       ...table.rows.flatMap((row) => {
-        const word = row["word"] ?? "";
+        const word = row.word ?? "";
         const constant = constants[camel(word)];
         if (constant === undefined)
           return [`Glossary: ${name} ${word}: no constant`];
@@ -489,10 +497,6 @@ export const checkScreenColumns = (
         .map((key) => `Glossary: ${name}: no row for ${key}`),
     ];
   };
-  const screen = (values: Readonly<Record<string, string | null>>) =>
-    Object.fromEntries(
-      Object.entries(values).map(([word, value]) => [word, { screen: value }]),
-    );
   return [
     ...compare("Task states", "Task states", screen(labels.taskStates)),
     ...compare(
@@ -507,5 +511,43 @@ export const checkScreenColumns = (
       screen(labels.workflowStates),
     ),
     ...compare("Verbs", "Verbs", labels.verbs),
+  ];
+};
+
+/**
+ * **Every screen a merchant or member uses has a Screens row, and every
+ * row's route file exists.** `routeFiles` maps each file under `src/routes/`
+ * to its source, passed in for the same reason as {@link ScreenLabels}. A
+ * screen is an `app.*` or `shop.*` route file that renders an `s-page` and
+ * no `Outlet`: a layout renders its children (the `/shop/$shop` layout's
+ * not-found `s-page` is the layout's, not a screen), and a redirect renders
+ * nothing. Other route files (`admin.*`, `auth.*`, `webhooks.*`, `login*`,
+ * `privacy`, `index`) are not merchant or member screens. Headings are not
+ * checked: several are the record's own name. Reports each miss.
+ */
+export const checkScreens = (
+  source: string,
+  routeFiles: Readonly<Record<string, string>>,
+): readonly string[] => {
+  const table = glossaryTables(source).find((each) =>
+    each.intro.startsWith("Screens."),
+  );
+  if (table === undefined) return ["Glossary: no Screens table"];
+  const named = table.rows.map(
+    (row) => `${(row["route file"] ?? "").replaceAll("`", "")}.tsx`,
+  );
+  return [
+    ...named
+      .filter((file) => !(file in routeFiles))
+      .map((file) => `Glossary: Screens: no route file ${file}`),
+    ...Object.entries(routeFiles)
+      .filter(
+        ([file, text]) =>
+          /^(?:app|shop)\..*\.tsx$/u.test(file) &&
+          text.includes("<s-page") &&
+          !text.includes("<Outlet") &&
+          !named.includes(file),
+      )
+      .map(([file]) => `Glossary: Screens: ${file} has no row`),
   ];
 };

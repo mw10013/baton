@@ -319,6 +319,18 @@ const complete = (
     ),
   );
 
+/** The `task` entries of a Recent read. */
+const taskItems = (items: readonly Domain.RecentItem[]) =>
+  items.flatMap((item) => (item.kind === "task" ? [item] : []));
+
+/** A Recent read as one line per entry, "task <name>" or "closed <reason>". */
+const shape = (items: readonly Domain.RecentItem[]) =>
+  items.map((item) =>
+    item.kind === "task"
+      ? `task ${item.task.name}`
+      : `closed ${item.run.closedReason ?? ""}`,
+  );
+
 describe("RunRepository.countWaitingOrders", () => {
   it("counts open orders that would match if the date allowed, paid or not, with the earliest placed date; Include them starts the paid ones", () =>
     runInRepository(
@@ -1444,7 +1456,7 @@ describe("RunRepository.reconcileOrder", () => {
     ));
 });
 
-describe("RunRepository tasks, run list, blocks, delete", () => {
+describe("RunRepository tasks, workflows list, blocks, delete", () => {
   it("markTaskDone enforces team, order, and terminal state and records doneBy", () =>
     runInRepository(
       Effect.gen(function* () {
@@ -2251,8 +2263,6 @@ describe("RunRepository tasks, run list, blocks, delete", () => {
         const runs = yield* RunRepository;
         const detail = yield* steppedRun();
         const since = Date.now() - 1000;
-        const taskItems = (items: readonly Domain.RecentItem[]) =>
-          items.flatMap((item) => (item.kind === "task" ? [item] : []));
         strictEqual(
           (yield* runs.listRecent({ teamIds: [TEAM_A.id], since, limit: 10 }))
             .total,
@@ -2367,12 +2377,6 @@ describe("RunRepository tasks, run list, blocks, delete", () => {
         yield* runs.cancelRun({ runId: cancelled.run.id });
         yield* Effect.sleep("5 millis");
         yield* complete(made, 2, [TEAM_B.id]);
-        const shape = (items: readonly Domain.RecentItem[]) =>
-          items.map((item) =>
-            item.kind === "task"
-              ? `task ${item.task.name}`
-              : `closed ${item.run.closedReason ?? ""}`,
-          );
         // Team A did Cut, and could see the run that closed (its Cut
         // task is on Team A), though none of it was done.
         const teamA = yield* runs.listRecent({
@@ -2417,7 +2421,7 @@ describe("RunRepository tasks, run list, blocks, delete", () => {
       }),
     ));
 
-  it("a closed run is still read by its gate and its work page, and Reopen on it is refused", () =>
+  it("a closed run is still read by its gate and its workflow page, and Reopen on it is refused", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -2460,7 +2464,7 @@ describe("RunRepository tasks, run list, blocks, delete", () => {
       }),
     ));
 
-  it("a closed run's open tasks are never current on the work page", () =>
+  it("a closed run's open tasks are never current on the workflow page", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
@@ -2680,7 +2684,7 @@ describe("RunRepository tasks, run list, blocks, delete", () => {
   /**
    * The edit is text and nothing else. `blockedBy` and `blockedAt` record who set the
    * hold and when, and a correction to its wording must not restate either —
-   * the merchant reading the run list is chasing the person who blocked it, not
+   * the merchant reading the workflows list is chasing the person who blocked it, not
    * whoever last fixed a typo.
    */
   it("setBlockReason rewrites the reason, keeps by, and refuses anything that is not a standing block", () =>
@@ -3067,7 +3071,7 @@ describe("RunRepository tasks, run list, blocks, delete", () => {
         strictEqual(oldest?.tasks.length, 2);
       }),
     ));
-  it("deleteWorkflow leaves its runs and run tasks, open and done; the run list, order view, start, done, block, and cancel still work on them", () =>
+  it("deleteWorkflow leaves its runs and run tasks, open and done; the workflows list, order view, start, done, block, and cancel still work on them", () =>
     runInRepository(
       Effect.gen(function* () {
         const { a, b } = yield* seed;

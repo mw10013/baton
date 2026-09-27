@@ -186,7 +186,7 @@ details[open] > .live-value-summary .live-value-preview {
 }
 
 /*
- * The member work page prints as a job ticket: chrome and every button go.
+ * The member's workflow page prints as a job ticket: chrome and every button go.
  * `s-button` covers the page's own action slots too, so a control added
  * there needs no rule of its own.
  */
@@ -198,7 +198,7 @@ details[open] > .live-value-summary .live-value-preview {
 }
 
 /*
- * The member work page's body (`shop.$shop.workflows.$runId.tsx`) is plain
+ * The member's workflow page's body (`shop.$shop.workflows.$runId.tsx`) is plain
  * content with no `s-section`, and `s-page` insets only its heading on a
  * phone: below 507px it pads its children 0.5rem, which suits full-width
  * cards, and the heading 1.5rem. The extra 1rem lines the text up with the
@@ -212,7 +212,7 @@ details[open] > .live-value-summary .live-value-preview {
 }
 
 /*
- * The member's run list (`shop.$shop.index.tsx`). Here rather than inline because
+ * The member's workflows list (`shop.$shop.workflows.index.tsx`). Here rather than inline because
  * the clamp needs three declarations React's `style` types deprecate, and
  * because the file already owns the member area's other plain-element rules.
  */
@@ -265,7 +265,7 @@ details[open] > .live-value-summary .live-value-preview {
 
 /*
  * Line two of a run row, cut to two lines with an ellipsis: a blocked reason
- * can be a paragraph, and the row is not where it is read — the work page the
+ * can be a paragraph, and the row is not where it is read — the workflow page the
  * row links to shows the whole thing in its banner. `-webkit-box` is still the
  * only clamp Safari honours.
  */

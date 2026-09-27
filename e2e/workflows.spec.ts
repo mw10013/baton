@@ -548,7 +548,7 @@ test("editing the tag from the detail page writes immediately and starts no draf
  * `WorkflowsSearch` on the `/app/workflows` layout: the status filter rides
  * the workflow page's URL, so its breadcrumb returns to the filtered list.
  */
-test("the workflows list keeps its status filter across the workflow page", async ({
+test("the workflows index keeps its status filter across the workflow page", async ({
   page,
 }) => {
   test.setTimeout(120_000);

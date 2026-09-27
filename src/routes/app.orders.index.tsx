@@ -312,7 +312,7 @@ function RouteComponent() {
 
   /**
    * A filter change is a new list, so the page resets to one. `replace: true`
-   * for the run list's reason (`selectTab` in `shop.$shop.index.tsx`): the
+   * for the member's workflows list's reason (`selectTab` in `shop.$shop.workflows.index.tsx`): the
    * filters are a screen's state, not a trail.
    *
    * A patch over `prev`, not the whole set from this render: the URL commits

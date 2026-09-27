@@ -969,7 +969,7 @@ export class OrderRepository extends Context.Service<
            * `Domain.OrderRow.attention` in SQL, bound to the roster the
            * caller read from D1: an open task is unassigned when its team id
            * is null or not in the roster, and a current task (`currentWhere`, the
-           * one definition the member's run list also runs on) on a team with no
+           * one definition the member's workflows list also runs on) on a team with no
            * members is stuck on nobody's list.
            */
           const liveIds = teams.map(({ id }) => id);
