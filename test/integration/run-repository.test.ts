@@ -13,7 +13,7 @@ import {
   type StartContext,
   RunRepository,
 } from "@/lib/RunRepository";
-import { runShopAgentMigrations } from "@/lib/ShopAgent";
+import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
 import { WorkflowRepository } from "@/lib/WorkflowRepository";
 
 type Services =

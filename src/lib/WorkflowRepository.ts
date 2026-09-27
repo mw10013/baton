@@ -140,15 +140,10 @@ export class WorkflowRepository extends Context.Service<
       SqlError.SqlError | WorkflowRepositoryError
     >;
     /**
-     * Deletes the definition only: the workflow row, and its tasks, draft,
-     * and draft tasks by cascade. Every run stays, open
-     * and done, and keeps working — a run snapshots `workflowName`
-     * and each task's `name`, `step`, `instructions`, and `teamName`, and
-     * no read joins a run back to `Workflow`, so an orphan run renders,
-     * lists, starts, marks done, blocks, and cancels unchanged.
-     * `Run.workflowId` stays `not null` because it is the conflict
-     * key of `unique (lineItemId, workflowId)`.
-     * No turn-off-first rule.
+     * Deletes the definition only: what goes and what survives is the data
+     * model on `initializeSchema` (`ShopAgentSchema.ts`). No read joins a run
+     * back to `Workflow`, so an orphan run renders, lists, starts, marks
+     * done, blocks, and cancels unchanged. No turn-off-first rule.
      */
     readonly deleteWorkflow: (input: {
       readonly workflowId: string;
@@ -181,9 +176,9 @@ export class WorkflowRepository extends Context.Service<
      * reseed exists to discard whatever the last one left behind, and
      * skipping existing names would preserve it.
      *
-     * `Run` needs its own delete: it deliberately has no foreign key
-     * to `Workflow` (a run snapshots its definition so it survives a rename),
-     * so nothing cascades from the `Workflow` delete to it.
+     * `Run` needs its own delete: a run references no workflow (the data
+     * model on `initializeSchema`, `ShopAgentSchema.ts`), so nothing cascades
+     * from the `Workflow` delete to it.
      *
      * Bypasses the limit and team checks the ordinary write path
      * enforces: positions come from array order and `teamId` from `Team` rows
@@ -488,8 +483,10 @@ export class WorkflowRepository extends Context.Service<
      * The object-side half of a team delete: every workflow task, draft task,
      * and *open* run task of an open run that points at `teamId` becomes
      * unassigned, in one transaction. Done run tasks and every task of a
-     * closed run keep the pointer and their `teamName` snapshot. Idempotent, so a retry after a failed first attempt (D1 row
-     * already gone) still cleans up. Touches `RunTask` from here
+     * closed run keep the pointer and their `teamName` snapshot (the data
+     * model on `initializeSchema`, `ShopAgentSchema.ts`). Idempotent, so a
+     * retry after a failed first attempt (D1 row already gone) still cleans
+     * up. Touches `RunTask` from here
      * rather than from the run repository because the three updates must
      * share one transaction and Durable Object SQLite refuses to nest.
      */

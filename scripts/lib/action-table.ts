@@ -144,7 +144,7 @@ export interface Fixture<TeamId, Blocker> {
  * | run        | closed       | status `closed`                                                                      |
  * | run        | open or done | `active`; `done`                                                                     |
  * | blocked    | yes / no     | `blockedAt` 1 / null                                                                 |
- * | blocked    | any          | both                                                                                 |
+ * | blocked    | any          | both on an open run; null on a done run                                              |
  * | units      | some / none  | `currentQuantity` 1 / 0 (runActions only)                                            |
  * | task       | ready        | `current: true, startedAt: null, doneAt: null`                                       |
  * | task       | started      | `current: true, startedAt: 1, doneAt: null`                                          |
@@ -159,6 +159,11 @@ export interface Fixture<TeamId, Blocker> {
  * The `ready` and `started` words are the glossary's narrow task states. The
  * `current` flag they set is the broad one (`Domain.currentTasks`: the
  * task's step is current, started or not), so both set it.
+ *
+ * **A done run is never blocked.** Only an open run can carry a block (the
+ * data model on `initializeSchema`, `ShopAgentSchema.ts`), so "any" under
+ * `blocked` on an "open or done" row expands to a block on the open run
+ * only; a blocked done run is not a state and is not a fixture.
  */
 export const expand = <TeamId, Blocker>(
   name: TableName,
@@ -169,10 +174,12 @@ export const expand = <TeamId, Blocker>(
     Schema.decodeUnknownSync(WORDS[column])(row.state[column]);
   const states = ORDERS[word("order")].flatMap((order) =>
     RUNS[word("run")].flatMap((status) =>
-      BLOCKED[word("blocked")].map((blockedAt) => ({
-        order,
-        run: { status, blockedAt },
-      })),
+      BLOCKED[word("blocked")]
+        .filter((blockedAt) => blockedAt === null || status === "active")
+        .map((blockedAt) => ({
+          order,
+          run: { status, blockedAt },
+        })),
     ),
   );
   if (name === "runActions")
@@ -271,16 +278,23 @@ const decodeRow = (
   return Result.succeed({ line, state: words, cells });
 };
 
+/** A table's lines with their source line numbers, markdown cell padding and JSDoc gutter removed. */
+interface TableLines {
+  readonly head: readonly string[];
+  readonly body: readonly { readonly line: number; readonly text: string }[];
+}
+
 /**
- * Find the JSDoc immediately preceding `export const <name> =` in `source`,
- * take its first markdown table, and decode it. The header must be the
- * table's state columns then its action columns, in {@link TABLES}' order.
- * Fails with a message that names the line and the offending word or cell.
+ * Find the JSDoc immediately preceding `export const <name> =` in `source`
+ * and take its first markdown table. The header must equal `expected`, and
+ * the line after it must be the separator. Shared by the action matrices and
+ * the data-model table, so both locate and frame their table the same way.
  */
-export const parse = (
+const firstTable = (
   source: string,
-  name: TableName,
-): Result.Result<readonly Row[], ParseError> =>
+  name: string,
+  expected: readonly string[],
+): Result.Result<TableLines, ParseError> =>
   Result.flatMap(jsdocBefore(source, name), ({ start, end }) => {
     const firstLine = source.slice(0, start).split("\n").length;
     const lines = source
@@ -302,7 +316,6 @@ export const parse = (
       from,
       to === -1 ? undefined : to,
     );
-    const expected = [...TABLES[name].state, ...TABLES[name].actions];
     const header = cellsOf(head?.text ?? "");
     if (header.join("|") !== expected.join("|"))
       return Result.fail(
@@ -318,10 +331,26 @@ export const parse = (
           message: `${name}, line ${String(separator?.line)}: expected the separator row after the header`,
         }),
       );
-    return Result.all(
-      body.map(({ line, text }) => decodeRow(name, header, line, text)),
-    );
+    return Result.succeed({ head: header, body });
   });
+
+/**
+ * Find the JSDoc immediately preceding `export const <name> =` in `source`,
+ * take its first markdown table, and decode it. The header must be the
+ * table's state columns then its action columns, in {@link TABLES}' order.
+ * Fails with a message that names the line and the offending word or cell.
+ */
+export const parse = (
+  source: string,
+  name: TableName,
+): Result.Result<readonly Row[], ParseError> =>
+  Result.flatMap(
+    firstTable(source, name, [...TABLES[name].state, ...TABLES[name].actions]),
+    ({ head, body }) =>
+      Result.all(
+        body.map(({ line, text }) => decodeRow(name, head, line, text)),
+      ),
+  );
 
 /** The row rendered back as one line, for `it` titles and `print`. Blank cells are left out. */
 export const renderRow = (name: TableName, row: Row): string => {
@@ -550,4 +579,115 @@ export const checkScreens = (
       )
       .map(([file]) => `Glossary: Screens: ${file} has no row`),
   ];
+};
+
+/** One parsed row of the data-model table on `initializeSchema`. */
+export interface DataModelRow {
+  readonly line: number;
+  readonly about: string;
+  readonly rule: string;
+  readonly holdsBy: HoldsBy;
+  readonly pinnedBy: string;
+}
+
+/** Who guarantees a data-model rule: the database, a write path, or both. */
+export const HoldsBy = Schema.Literals(["schema", "app", "schema+app"]);
+export type HoldsBy = typeof HoldsBy.Type;
+
+/** The glossary nouns a data-model row may be about; a table name is the other kind of `about`. */
+export const DATA_MODEL_NOUNS = [
+  "order",
+  "item",
+  "workflow",
+  "draft",
+  "step",
+  "task",
+  "run",
+] as const;
+
+/** The `pinned by` cell of a rule no test asserts by name yet. */
+export const NONE_YET = "(none yet)";
+
+const DATA_MODEL = "initializeSchema";
+
+/**
+ * Read the data-model table out of the JSDoc on `initializeSchema` in
+ * `source` (`src/lib/ShopAgentSchema.ts`). The header is `about | rule |
+ * holds by | pinned by`. `about` is a glossary noun ({@link
+ * DATA_MODEL_NOUNS}) or a backticked name some `create table if not exists`
+ * in the same source declares; `rule` is non-empty; `holds by` is a
+ * {@link HoldsBy}; `pinned by` is a test title or {@link NONE_YET}. Fails
+ * with a message naming the line and the offending cell.
+ */
+export const parseDataModel = (
+  source: string,
+): Result.Result<readonly DataModelRow[], ParseError> => {
+  const tables = new Set(
+    [...source.matchAll(/create table if not exists (?<name>\w+)/gu)].map(
+      (match) => match.groups?.name ?? "",
+    ),
+  );
+  return Result.flatMap(
+    firstTable(source, DATA_MODEL, ["about", "rule", "holds by", "pinned by"]),
+    ({ body }) =>
+      Result.all(
+        body.map(({ line, text }): Result.Result<DataModelRow, ParseError> => {
+          const fail = (message: string) =>
+            Result.fail(
+              new ParseError({
+                message: `${DATA_MODEL}, line ${String(line)}: ${message}`,
+              }),
+            );
+          const values = cellsOf(text);
+          if (values.length !== 4)
+            return fail(`${String(values.length)} cells, expected 4: ${text}`);
+          const [about = "", rule = "", holdsBy = "", pinnedBy = ""] = values;
+          const table = /^`(?<name>\w+)`$/u.exec(about)?.groups?.name;
+          if (
+            !(DATA_MODEL_NOUNS as readonly string[]).includes(about) &&
+            (table === undefined || !tables.has(table))
+          )
+            return fail(
+              `unknown about "${about}"; expected one of: ${DATA_MODEL_NOUNS.join(", ")}, or a backticked table name`,
+            );
+          if (rule === "") return fail("empty rule");
+          if (!Schema.is(HoldsBy)(holdsBy))
+            return fail(
+              `unknown holds by "${holdsBy}"; expected one of: ${HoldsBy.literals.join(", ")}`,
+            );
+          if (pinnedBy === "") return fail("empty pinned by");
+          return Result.succeed({ line, about, rule, holdsBy, pinnedBy });
+        }),
+      ),
+  );
+};
+
+const escapeRegExp = (text: string) =>
+  text.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
+
+/**
+ * **Every `pinned by` title is carried by a test.** A row whose cell is not
+ * {@link NONE_YET} needs an `it(` in some test source followed, after
+ * optional whitespace, by the title as a whole quoted string. A string
+ * search, not a TypeScript parse: the titles are plain strings. `testSources`
+ * maps each test file to its text. Reports each missing title.
+ */
+export const checkPinned = (
+  rows: readonly DataModelRow[],
+  testSources: Readonly<Record<string, string>>,
+): readonly string[] => {
+  const texts = Object.values(testSources);
+  return rows
+    .filter((row) => row.pinnedBy !== NONE_YET)
+    .filter((row) => {
+      const title = new RegExp(
+        `\\bit\\(\\s*(["'\`])${escapeRegExp(row.pinnedBy)}\\1`,
+        "u",
+      );
+      return !texts.some((text) => title.test(text));
+    })
+    .map(
+      (row) =>
+        `${DATA_MODEL}, line ${String(row.line)}: no test titled "${row.pinnedBy}"`,
+    );
 };

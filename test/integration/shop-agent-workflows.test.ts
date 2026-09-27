@@ -1,3 +1,5 @@
+import type { ShopAgent } from "@/lib/ShopAgent";
+
 import { SqliteClient } from "@effect/sql-sqlite-do";
 import { deepStrictEqual, strictEqual } from "@effect/vitest/utils";
 import { getAgentByName } from "agents";
@@ -12,7 +14,7 @@ import * as Domain from "@/lib/Domain";
 import { makeEnvLayer } from "@/lib/LayerEx";
 import { OrderRepository } from "@/lib/OrderRepository";
 import { Repository } from "@/lib/Repository";
-import { runShopAgentMigrations, type ShopAgent } from "@/lib/ShopAgent";
+import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
 
 import { openMemberSocket, openMerchantSocket } from "./agent-socket";
 

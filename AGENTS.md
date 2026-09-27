@@ -2,6 +2,7 @@
 
 - Prefer JSDoc for complex and subtle behavior the code cannot show, and for rules: any behaviour more than one site must agree on is stated once, normatively, on the symbol that enforces it or the symbol that is the concept. Other sites `{@link}` it rather than restate it; a site that follows a different rule says so and why. Each rule has a test whose title is the rule.
 - An action matrix in a JSDoc (`runActions`, `taskActions` in `src/lib/Domain.ts`) is the spec: the test reads it out of the source, and a behaviour change starts at the cell. `pnpm lint` checks that the tables parse, that every word the glossary names still exists, and that the glossary's screen columns equal the label constants (`TASK_STATE_LABEL`, `RUN_STATE_LABEL`, `WORKFLOW_STATE_LABEL`, `VERB_LABEL`), which the screens read; a label change starts at the glossary row. `scripts/rules-lint.ts` refuses the retired words ("run", "line item", "finished", ...) in screen copy.
+- The data-model table in the JSDoc on `initializeSchema` (`src/lib/ShopAgentSchema.ts`) is the spec for the Durable Object's schema: one row per structural rule, in the glossary's words, with `holds by` (schema, app, schema+app) and `pinned by` (a test title). `pnpm action-table check` parses it and refuses a title no test carries. A structural change starts at the row, then the DDL and write paths, then the pinned test. A failing pinned test means the row and the code disagree; fix one of them, never delete the test. Behavioural rules stay on the `Domain` symbol.
 - The glossary at the top of `src/lib/Domain.ts` is the vocabulary. Use its words in code, JSDoc, tests and research, and update it in the same change as any rename.
 - The Screens table in the glossary names every merchant and member screen; a JSDoc, test or research doc uses that name, never the route segment and never "run". `pnpm action-table check` verifies each row's route file exists.
 - Status, flag and role predicates are `Domain` functions, never inline comparisons in routes or the object (`scripts/rules-lint.ts`, run by `pnpm lint`, refuses them).
@@ -60,7 +61,7 @@ Downloaded source code of libraries are in `refs/` for reference.
 pnpm app:dev            # Start dev server via Shopify CLI (runs pnpm dev internally)
 pnpm typecheck          # TypeScript type checking (includes wrangler types generation)
 pnpm lint               # Run oxlint
-pnpm action-table check # Parse the action tables in Domain.ts and check the glossary and its screen columns (also run by pnpm lint)
+pnpm action-table check # Parse the action tables in Domain.ts, check the glossary and its screen columns, and check the data-model table in ShopAgentSchema.ts (also run by pnpm lint)
 pnpm action-table print # Render the parsed action tables and their fixture counts
 pnpm fmt                # Format the repo with oxfmt (excludes refs/ and dist/)
 pnpm test               # Run tests with Vitest.

@@ -36,6 +36,12 @@ export interface OrderUpsert<E = never> {
 /**
  * The `ShopUsage` row as stored. {@link Domain.ShopUsage} is this plus
  * `databaseSize`, which only the Durable Object can read.
+ *
+ * The row holds everything the Worker needs to compare this shop against its
+ * plan without the object knowing what the plan is: the billing cycle's
+ * counted orders, when the order and open-run ceilings last refused
+ * something, when retention last swept, and Shopify's own meter reading at
+ * the last revalidation.
  */
 export const ShopUsageRow = Schema.Struct({
   cycleStartAt: Schema.NullOr(Schema.Number),
@@ -370,6 +376,13 @@ export class OrderRepository extends Context.Service<
     readonly recordWebhookDelivery: (
       delivery: WebhookDelivery,
     ) => Effect.Effect<boolean, SqlError.SqlError>;
+    /**
+     * The one `SyncState` row, seeded by the schema so every read is a plain
+     * `select` and every write an `update` that cannot race an insert. It
+     * holds what the last import left behind (its error, its completion) and
+     * nothing about an import in flight: that is the Agents SDK's
+     * `cf_agents_workflows` row, read by `ShopAgent.syncOrders`.
+     */
     readonly getSyncState: () => Effect.Effect<
       Domain.SyncState,
       SqlError.SqlError | OrderRepositoryError
@@ -424,6 +437,13 @@ export class OrderRepository extends Context.Service<
      * {@link Domain.seatEventValue}: that covers an add whose
      * `recordRoster` failed (it is best-effort), and a cycle the counting path
      * rolled forward on its own, which starts with no mark.
+     *
+     * The cycle columns are seeded null. Until the Worker has pushed a real
+     * period, the object opens a cycle at its first stored order and rolls it
+     * forward on its own, so a shop meters from its first run rather than from
+     * its first plan revalidation. `shopGid` is stored here rather than
+     * derived because addressing a usage event at Shopify needs it and the
+     * object has no other source.
      */
     readonly setBillingCycle: (
       input: Domain.BillingCycleInput,
@@ -461,6 +481,14 @@ export class OrderRepository extends Context.Service<
      * `ShopifyAppEvents` is a requirement of the *effect* rather than of the
      * layer, so the repository stays constructible from a bare SQLite client
      * and only the callers that flush have to provide the client.
+     *
+     * The App Events API answers `202` to everything, including events it will
+     * later refuse, so an event that is merely sent proves nothing: a row is
+     * deleted only once Shopify has accepted the request, and a refusal leaves
+     * it with its `attempts` and `lastError` for an operator to read.
+     * `idempotencyKey` is the row's key because Shopify enforces billing
+     * idempotency keys permanently: a replayed flush must not bill twice, and
+     * re-queuing a key already stored is a no-op by construction.
      */
     readonly flushUsageEvents: (
       shop: string,
@@ -498,8 +526,10 @@ export class OrderRepository extends Context.Service<
     /**
      * One retention pass: at most `ShopLimits.sweepBatch` orders older than
      * `ShopLimits.orderRetentionDays` — open or closed, with runs or without —
-     * plus a batch of runs whose order is no longer stored. Deliberately
-     * batched and deliberately carried by a request that was already doing
+     * plus a batch of runs whose order is no longer stored. What goes with an
+     * expired order is the data model on `initializeSchema`
+     * (`ShopAgentSchema.ts`). Deliberately batched and deliberately carried
+     * by a request that was already doing
      * heavy work — there is no alarm and no cron — so a shop with years of
      * history drains over several passes instead of one request paying for
      * all of it.

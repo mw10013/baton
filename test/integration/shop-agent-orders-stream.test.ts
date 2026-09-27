@@ -9,8 +9,8 @@ import { describe, it } from "vitest";
 import * as Domain from "@/lib/Domain";
 import { OrderRepository } from "@/lib/OrderRepository";
 import { RunRepository } from "@/lib/RunRepository";
-import { runShopAgentMigrations } from "@/lib/ShopAgent";
 import { runShopAgentOrdersStream } from "@/lib/ShopAgentOrdersStream";
+import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
 import { WorkflowRepository } from "@/lib/WorkflowRepository";
 
 const BULK_URL = "https://storage.googleapis.test/bulk-orders.jsonl";

@@ -7,7 +7,7 @@ import { SqlClient } from "effect/unstable/sql";
 import { describe, it } from "vitest";
 
 import * as Domain from "@/lib/Domain";
-import { runShopAgentMigrations } from "@/lib/ShopAgent";
+import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
 import { WorkflowRepository } from "@/lib/WorkflowRepository";
 import { copyName } from "@/lib/workflowShared";
 

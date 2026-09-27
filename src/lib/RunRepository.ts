@@ -311,13 +311,13 @@ export class RunRepository extends Context.Service<
     >;
     /**
      * Manual attach, read as **set this item's workflow**. An item holds at
-     * most one run, so this is a replace, done in one transaction:
+     * most one run (the data model on `initializeSchema`,
+     * `ShopAgentSchema.ts`), so this is a replace, done in one transaction:
      *
      * - an open run for *this* workflow is `None` — nothing to do, and the
      *   caller reads it as "already there";
      * - an open run for a different workflow is deleted first, tasks and
-     *   all, so the unique `lineItemId` is free before the insert, and comes
-     *   back as `replaced`;
+     *   all, and comes back as `replaced`;
      * - a `closed` run is deleted the same way, tasks and all, whatever its
      *   workflow, and `replaced` is null: nothing was open;
      * - a `done` run is refused ({@link RunNotOpenError}).
@@ -658,8 +658,10 @@ export class RunRepository extends Context.Service<
     >;
     /**
      * Points any *open* run task at `team`, snapshotting the name from the
-     * live roster the caller resolved, and puts the task on that team's
-     * list. The team's existence is the caller's check (`Team` is a D1 row
+     * live roster the caller resolved ({@link Domain.RunTask}'s team is both a
+     * pointer and a snapshot: the data model on `initializeSchema`,
+     * `ShopAgentSchema.ts`), and puts the task on that team's list. The
+     * team's existence is the caller's check (`Team` is a D1 row
      * this store cannot see). Allowed on any open task, assigned or not and
      * started or not — it is both the remedy that makes a team delete safe
      * and the merchant's way to move work between teams. Only `teamId` /

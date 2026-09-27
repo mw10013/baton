@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import * as Domain from "@/lib/Domain";
 import { OrderRepository } from "@/lib/OrderRepository";
 import { Repository } from "@/lib/Repository";
-import { runShopAgentMigrations } from "@/lib/ShopAgent";
+import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
 
 import {
   agentSocket,

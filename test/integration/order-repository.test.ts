@@ -8,7 +8,7 @@ import { describe, it } from "vitest";
 
 import * as Domain from "@/lib/Domain";
 import { OrderRepository } from "@/lib/OrderRepository";
-import { runShopAgentMigrations } from "@/lib/ShopAgent";
+import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
 import {
   ShopifyAppEvents,
   ShopifyAppEventsError,
@@ -400,7 +400,7 @@ const seedNeeds = Effect.gen(function* () {
       (id, runId, position, step, name, teamId, teamName, doneAt)
     values (${id}, ${runId}, 1, 1, 'Task', ${teamId}, 'Team', null)
   `;
-  yield* sql`update Run set blockedAt = 1 where id = 'run-3-1'`;
+  yield* sql`update Run set blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-3-1'`;
   yield* task("s4", "run-4-1", "team-gone");
   yield* task("s13", "run-13-0", "team-cut");
   yield* task("s14", "run-14-0", "team-cut");
@@ -643,7 +643,7 @@ describe("OrderRepository.listOrders filters", () => {
         const repository = yield* seedStates;
         const sql = yield* SqlClient.SqlClient;
         // A stale block on a fulfilled order's run is not a to-do.
-        yield* sql`update Run set status = 'active', blockedAt = 1 where id = 'run-7-0'`;
+        yield* sql`update Run set status = 'active', blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-7-0'`;
         return yield* repository.listOrders({
           limit: 20,
           cursor: null,
@@ -659,9 +659,10 @@ describe("OrderRepository.listOrders filters", () => {
   });
 
   /**
-   * `RunCounts.blocked` counts open runs only, so a done run's stale block
-   * counts nowhere, and `RunCounts.closed` counts closed runs whatever the
-   * order.
+   * `RunCounts.blocked` counts open runs only, and `RunCounts.closed` counts
+   * closed runs whatever the order. A done run carries no block (the data
+   * model on `initializeSchema`, `ShopAgentSchema.ts`), so no done run is
+   * blocked here.
    */
   it("counts a block on open runs only, and counts closed runs", async () => {
     const { all } = await runInRepository(
@@ -669,9 +670,8 @@ describe("OrderRepository.listOrders filters", () => {
         const repository = yield* seedStates;
         const sql = yield* SqlClient.SqlClient;
         const block = (runId: string) =>
-          sql`update Run set blockedAt = 1 where id = ${runId}`;
+          sql`update Run set blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = ${runId}`;
         yield* block("run-3-1");
-        yield* block("run-1-0");
         return {
           all: yield* repository.listOrders({
             limit: 20,
@@ -936,7 +936,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
     const { all, cut, needs } = await runInRepository(
       Effect.gen(function* () {
         const { sql, task, list } = yield* waitingFixture;
-        yield* sql`update Run set status = 'active', blockedAt = 1 where id = 'run-7-0'`;
+        yield* sql`update Run set status = 'active', blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-7-0'`;
         yield* sql`update Run set status = 'active' where id = 'run-6-0'`;
         yield* task("s7", "run-7-0", 1, "team-cut");
         yield* task("s6", "run-6-0", 1, "team-cut");
@@ -991,7 +991,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
     const { page, filtered } = await runInRepository(
       Effect.gen(function* () {
         const { sql, list } = yield* waitingFixture;
-        yield* sql`update Run set blockedAt = 1 where id = 'run-4-1'`;
+        yield* sql`update Run set blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-4-1'`;
         return {
           page: yield* list(),
           filtered: yield* list(aTeamId("team-cut")),

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import * as Domain from "@/lib/Domain";
 import source from "@/lib/Domain.ts?raw";
+import schemaSource from "@/lib/ShopAgentSchema.ts?raw";
 
 import * as ActionTable from "../../scripts/lib/action-table.ts";
 
@@ -39,6 +40,13 @@ const sourceOf = (...rows: readonly string[]) =>
 
 const parseError = (source: string) => {
   const parsed = ActionTable.parse(source, "taskActions");
+  if (Result.isSuccess(parsed)) throw new Error("parsed");
+  return parsed.failure.message;
+};
+
+const dataModelError = (doctored: string) => {
+  expect(doctored).not.toBe(schemaSource);
+  const parsed = ActionTable.parseDataModel(doctored);
   if (Result.isSuccess(parsed)) throw new Error("parsed");
   return parsed.failure.message;
 };
@@ -115,10 +123,26 @@ describe("action table parser", () => {
       sourceOf("| closed | open or done | any | any | - | | | | | |"),
     );
     if (row === undefined) throw new Error("row");
-    // 2 closed orders × 2 runs × 2 blocked × 4 tasks.
+    // 2 closed orders × (open run × 2 blocked + done run × 1) × 4 tasks.
     expect(
       ActionTable.expand("taskActions", row, { teamId: "t", blocker: "b" }),
-    ).toHaveLength(32);
+    ).toHaveLength(24);
+  });
+
+  it("a done run is never blocked", () => {
+    const [row] = rowsOf(
+      sourceOf("| open | open or done | any | done | none | | | | M m | |"),
+    );
+    if (row === undefined) throw new Error("row");
+    const fixtures = ActionTable.expand("taskActions", row, {
+      teamId: "t",
+      blocker: "b",
+    });
+    expect(fixtures.map((fixture) => fixture.run)).toEqual([
+      { status: "active", blockedAt: null },
+      { status: "active", blockedAt: 1 },
+      { status: "done", blockedAt: null },
+    ]);
   });
 
   it("two rows that share a fixture are an overlap", () => {
@@ -214,6 +238,69 @@ describe("action table parser", () => {
       expect(ActionTable.checkScreens(doctored, routeFiles)).toEqual([
         "Glossary: Screens: no route file app.people.tsx",
         "Glossary: Screens: app.members.tsx has no row",
+      ]);
+    });
+  });
+
+  describe("data model table", () => {
+    /** Every integration test's source, where the pinned titles live. */
+    const testSources = import.meta.glob<string>(
+      "/test/integration/*.test.ts",
+      {
+        query: "?raw",
+        import: "default",
+        eager: true,
+      },
+    );
+
+    it("the real table parses", () => {
+      const rows = Result.getOrThrow(ActionTable.parseDataModel(schemaSource));
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.map((row) => row.about)).toContain("`SyncState`");
+    });
+
+    it("a doctored header is refused", () => {
+      expect(
+        dataModelError(
+          schemaSource.replace("| holds by   |", "| held by    |"),
+        ),
+      ).toMatch(/header is about, rule, held by, pinned by/u);
+    });
+
+    it("an about word that is neither a glossary noun nor a table is refused", () => {
+      expect(
+        dataModelError(
+          schemaSource.replace(
+            "| `SyncState`       |",
+            "| singleton         |",
+          ),
+        ),
+      ).toMatch(/unknown about "singleton"/u);
+    });
+
+    it("an unknown holds by is refused", () => {
+      expect(
+        dataModelError(
+          schemaSource.replace(
+            "| schema     | an item has exactly one order",
+            "| database   | an item has exactly one order",
+          ),
+        ),
+      ).toMatch(/unknown holds by "database"/u);
+    });
+
+    it("every pinned title is carried by a test, and a doctored one is reported", () => {
+      const rows = Result.getOrThrow(ActionTable.parseDataModel(schemaSource));
+      expect(ActionTable.checkPinned(rows, testSources)).toEqual([]);
+      const doctored = rows.map((row) =>
+        row.pinnedBy === "deleteWorkflow cascades its draft and tasks"
+          ? { ...row, pinnedBy: "deleteWorkflow cascades nothing" }
+          : row,
+      );
+      expect(ActionTable.checkPinned(doctored, testSources)).toEqual([
+        expect.stringMatching(
+          /no test titled "deleteWorkflow cascades nothing"/u,
+        ),
       ]);
     });
   });

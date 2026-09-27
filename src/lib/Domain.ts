@@ -1108,7 +1108,8 @@ export type WorkflowTag = typeof WorkflowTag.Type;
  * meets a third:
  *
  * - **Workflow**: name, type, tag, tasks, Active / Off. This is what
- *   starts runs. Runs copy it wholesale and never look back at it.
+ *   starts runs. Runs copy it wholesale and never look back at it (the
+ *   data model on `initializeSchema`, `ShopAgentSchema.ts`).
  * - **Draft**: a private copy of the workflow's **tasks**, created by
  *   Edit and living until Apply or Discard. Every edit writes to the draft
  *   immediately; there is no unsaved state anywhere.
@@ -1146,8 +1147,9 @@ export type WorkflowTag = typeof WorkflowTag.Type;
  * Apply and only that; **any open task on a run can be assigned to another
  * team**, a done task is history; **deleting configuration never deletes
  * work**. Delete removes the definition, its tasks, and its draft, nothing
- * else — a run is self-sufficient, so it needs no confirm counts and the
- * dialog says only what survives. The id is identity, the tag is the one
+ * else (the data model on `initializeSchema`, `ShopAgentSchema.ts`) — a run
+ * is self-sufficient, so it needs no confirm counts and the dialog says only
+ * what survives. The id is identity, the tag is the one
  * unique key, and the name is a label two workflows may share — so everything
  * that shows a workflow to the merchant outside its own page shows the tag
  * beside the name. A rename is immediate and cosmetic because runs snapshot
@@ -1197,10 +1199,10 @@ export const Workflow = Schema.Struct({
 export type Workflow = typeof Workflow.Type;
 
 /**
- * The draft side of {@link Workflow}: at most one per workflow (`workflowId`
- * is the primary key), holding the tasks being edited as `WorkflowDraftTask`
- * rows. The tag is not drafted; it lives on the workflow row. Nothing that
- * starts runs ever reads the draft.
+ * The draft side of {@link Workflow}, holding the tasks being edited as
+ * `WorkflowDraftTask` rows. One per workflow at most; the data model on
+ * `initializeSchema` (`ShopAgentSchema.ts`) says so and the draft holds
+ * tasks only. Nothing that starts runs ever reads the draft.
  */
 export const WorkflowDraft = Schema.Struct({
   workflowId: WorkflowId,
@@ -1215,12 +1217,11 @@ export type WorkflowDraft = typeof WorkflowDraft.Type;
  * team that exists. `null` is **unassigned** — what a team delete leaves
  * behind — and an id no D1 row carries reads the same way. It carries no
  * `teamName`: the name is joined at read time, and only the eventual
- * instance rows snapshot it.
+ * instance rows snapshot it. The pointer's rule is the data model on
+ * `initializeSchema` (`ShopAgentSchema.ts`).
  *
  * Workflow tasks and draft tasks have the same shape but live in two tables
- * (`WorkflowTask`, `WorkflowDraftTask`), so a task-id write can never be
- * ambiguous about which side it targets and `unique (workflowId, position)`
- * holds on each side independently. Only `applyDraft` writes `WorkflowTask`;
+ * (`WorkflowTask`, `WorkflowDraftTask`; why, on the DDL). Only `applyDraft` writes `WorkflowTask`;
  * every editor write targets the draft. Apply carries draft task ids over to
  * the workflow; Edit copies workflow tasks into the draft under new ids.
  *
@@ -3088,7 +3089,8 @@ export type RunSource = typeof RunSource.Type;
  * the record of what was made), and what is left on it is Reopen and a note.
  * A closed run holds the slot too, so reconcile starts nothing on the item: a
  * tag match must not undo a merchant's cancel or restart work Shopify ended
- * on the next webhook.
+ * on the next webhook. The slot is the one run per item of the data model
+ * on `initializeSchema` (`ShopAgentSchema.ts`).
  */
 export const RunStatus = Schema.Literals(["active", "done", "closed"]);
 export type RunStatus = typeof RunStatus.Type;
@@ -3174,17 +3176,13 @@ export const runIsBlocked = (run: { readonly blockedAt: number | null }) =>
 /**
  * One workflow applied to one item. Every display field
  * is a snapshot taken at creation — `workflowName`, `orderName`, the line
- * item's title and properties — so a run's row reads only this row
- * and the run survives a definition rename or an item dropped from the
- * order. No foreign keys to `ShopOrder`, `OrderLineItem`, or `Workflow` for
- * that reason. An order delete takes its runs with it
- * (`OrderRepository` retention), and the member's views join `ShopOrder`
- * for {@link OrderState} and drop a run whose order is gone; the snapshots
- * are for reading, not for outliving the order.
+ * item's title and properties — so a run's row reads only this row. The
+ * member's views join `ShopOrder` for {@link OrderState} and drop a run whose
+ * order is gone; the snapshots are for reading, not for outliving the order.
  *
- * `lineItemId` is unique: **one row per item**, `done` and `closed`
- * included — a done item does not get a second route, and a closed one
- * waits for the merchant — so replacing a workflow means deleting the
+ * What a run references, what it survives, and that an item has at most one
+ * run are rules of the data model on `initializeSchema`
+ * (`ShopAgentSchema.ts`), so replacing a workflow means deleting the
  * incumbent in the same transaction ({@link RunStatus}).
  */
 export const Run = Schema.Struct({
@@ -3867,7 +3865,10 @@ const holdsCurrentTask = (
  * `RunRepository` applies to Block, Edit reason and Unblock; for the
  * note it is a member who can see the run ({@link runIsVisibleTo}). Blank is
  * never. Each state column is one input; a row is one fixture, and a word
- * such as "closed" under `order` stands for every state it names.
+ * such as "closed" under `order` stands for every state it names. A done
+ * run is never blocked (the data model on `initializeSchema`,
+ * `ShopAgentSchema.ts`), so "any" under `blocked` beside "open or done"
+ * names a block on the open run only.
  *
  * | order  | run          | blocked | units | note | block | editReason | unblock | cancel | changeWorkflow |
  * | ------ | ------------ | ------- | ----- | ---- | ----- | ---------- | ------- | ------ | -------------- |

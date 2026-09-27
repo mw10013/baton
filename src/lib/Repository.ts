@@ -259,6 +259,8 @@ export class Repository extends Context.Service<
     >;
     /**
      * The D1 half of a team delete: the row goes and `TeamMember` cascades.
+     * Run history keeps the team's name as a snapshot on each run task
+     * (the data model on `initializeSchema`, `ShopAgentSchema.ts`).
      * Only `ShopAgent.deleteTeam` calls this, because the object's SQLite
      * pointers must be nulled right after and the two cannot share a
      * transaction. Returns the members who were on the team, whose open member
@@ -617,7 +619,8 @@ export class Repository extends Context.Service<
        * `TeamMember` cascades. Existing better-auth sessions are not revoked
        * — the member-area guard (`findMemberAccess`) rejects them on the next
        * request. Run history is untouched: the actor email is a snapshot on
-       * the run task, not a join against this row.
+       * the run task, not a join against this row (the data model on
+       * `initializeSchema`, `ShopAgentSchema.ts`).
        */
       const deleteMember = Effect.fn("Repository.deleteMember")(function* (
         member: Pick<Domain.Member, "shop" | "email">,

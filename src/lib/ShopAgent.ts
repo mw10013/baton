@@ -1,8 +1,9 @@
 import type * as ShopifyApi from "@shopify/shopify-api";
+import type { SqlError } from "effect/unstable/sql";
 
 import type { OrdersSyncParams } from "@/lib/OrdersSyncWorkflow";
 
-import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-do";
+import { SqliteClient } from "@effect/sql-sqlite-do";
 import {
   Agent,
   callable,
@@ -21,7 +22,6 @@ import {
   type SchemaAST,
 } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
-import { SqlClient, type SqlError } from "effect/unstable/sql";
 
 import { CurrentShopifySession } from "@/lib/CurrentShopifySession";
 import { D1Primary } from "@/lib/D1Primary";
@@ -60,6 +60,7 @@ import {
   type OrdersStreamCounts,
   runShopAgentOrdersStream,
 } from "@/lib/ShopAgentOrdersStream";
+import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
 import { Shopify } from "@/lib/Shopify";
 import { ShopifyAdmin } from "@/lib/ShopifyAdmin";
 import { ShopifyAppEvents } from "@/lib/ShopifyAppEvents";
@@ -293,324 +294,6 @@ const memberCallableEffect =
       ),
       Effect.withLogSpan(name),
     );
-
-/**
- * The Durable Object's private SQLite schema, versioned through
- * `SqliteMigrator` rather than a bare `create table if not exists` block, so
- * the next migration has somewhere to go.
- *
- * `ShopOrder`, not `Order` — `order` is a SQL reserved word, and an
- * unquoted identifier collides with `order by` in every hand-written query.
- *
- * Shopify's numeric ids are stored as `text`: they exceed the 52-bit integers
- * `SqlStorage.exec` can round-trip losslessly, and a truncated legacy id would
- * silently mismatch the webhook payload it is supposed to correlate with.
- *
- * `WebhookDelivery` is the `X-Shopify-Webhook-Id` dedupe log — Shopify retries
- * 8 times over 4 hours replaying the original payload, and warns the same
- * delivery may arrive more than once. `receivedAt` is indexed so its retention
- * sweep walks the oldest rows instead of the table. `SyncState` is one row
- * under `check (id = 1)`, seeded here so every read is a plain `select` and
- * every write is an `update` that cannot race an insert. It holds what the
- * last import left behind — its error, its completion — and nothing about a
- * run in flight: that is the Agents SDK's `cf_agents_workflows` row, read by
- * {@link ShopAgent.syncOrders}.
- *
- * `ShopUsage` is the same one-row shape and holds everything the Worker needs
- * to compare this shop against its plan without the object knowing what the
- * plan is: the billing cycle's counted orders, when the order and open-run
- * ceilings last refused something, when retention last swept, and Shopify's own
- * meter reading at the last revalidation. The cycle columns are seeded null —
- * the Worker pushes the real period (`setBillingCycle`), and until it has, the
- * object opens a cycle at its first stored order and rolls it forward on its
- * own, so a shop meters from its first run rather than from its first plan
- * revalidation. `shopGid` is here rather than derived because addressing a
- * usage event at Shopify needs it and the object has no other source.
- *
- * `UsageEvent` is the App Events outbox. The API answers `202` to everything,
- * including events it will later refuse, so an event that is merely *sent*
- * proves nothing; the row is deleted only once Shopify has accepted the request,
- * and a refusal leaves the row with its `attempts` and `lastError` for an
- * operator to read. `idempotencyKey` is the primary key because Shopify enforces
- * billing idempotency keys permanently — a replayed flush must not bill twice,
- * and re-queuing a key already stored is a no-op by construction.
- * `ShopOrder.countedAt` is its per-order counterpart: null means Baton has
- * never created a run for the order, which is what makes it bill exactly once
- * (`OrderRepository.countOrder`).
- *
- * The `(processedAt desc, id desc)` index is the keyset the orders page pages
- * on; `id desc` is in it so the tiebreak is index-ordered too, since a shop
- * can place several orders in the same millisecond. The retention sweep reads
- * the same index as a range scan (`Domain.ShopLimits.orderRetentionDays`).
- *
- * `Workflow` / `WorkflowTask` are the production-workflow *definitions* a
- * merchant configures: what starts runs. `WorkflowDraft` / `WorkflowDraftTask`
- * are the merchant's private copy under edit (see the vocabulary on
- * `Domain.Workflow`): Edit copies the workflow's tasks into the draft, every
- * editor write lands on the draft, Apply replaces the workflow's tasks with
- * the draft's and deletes it, Discard deletes it — each in
- * one transaction, so run creation sees the old definition or the new one and
- * never a half-edit. A workflow has at most one draft (`workflowId` is the
- * draft's primary key), and the draft's tasks cascade with it. Tasks live in
- * two tables rather than one with a flag so a task-id write can never be
- * ambiguous about its side and `unique (workflowId, position)` holds on each
- * side independently. No history is kept: a run survives every later edit
- * because it snapshots its tasks and names, not because old definitions are
- * retained. `activatedAt` is the on/off switch and the coverage date in one
- * column, stored and never derived: null is off; Turn on sets it to now or to
- * an earlier date the merchant chose; the merchant can move it on the
- * workflow page; Turn off clears it; Apply never touches it. One fact instead
- * of two that must agree, and Apply must not move it because an unpaid order
- * placed while the workflow was on is still that workflow's business when it
- * pays. A run starts on an order only when `ShopOrder.processedAt >=
- * activatedAt`.
- *
- * `WorkflowTask.teamId` is a D1 `Team.id` with no foreign key because none is
- * possible: `Team` lives in D1 and this table in the object's private SQLite,
- * and SQLite foreign keys do not cross databases. Integrity is
- * application-level — `addStep` / `addTask` / `updateTask` verify the team exists before
- * writing, and `deleteTeam` nulls every pointer right after the D1 row goes
- * (`unassignTeam`, served by the `teamId` indexes). Nullable on purpose:
- * `null` is **unassigned**, the state a team delete leaves behind, and every
- * read treats an id no D1 row carries the same way, so the cross-store window
- * between the two writes is harmless. No workflow history is kept — a delete
- * removes the definition, its tasks, and its draft; the runs it started stay,
- * because a run is self-sufficient with respect to its workflow and nothing
- * reads back through `workflowId`. `unique (workflowId, position)` is what forces every
- * layout edit to go through a scratch position inside one transaction — why
- * `WorkflowRepository.writeLayout` first parks every draft task at
- * `-position` before assigning final positions and steps.
- * `step` is the layout of {@link Domain.WorkflowTask}, kept by the pure
- * `WorkflowLayout` module rather than by SQL. `instructions` is merchant text
- * copied onto each run. Epoch-ms integers like `ShopOrder`, not D1 `Team`'s
- * ISO text: the two stores already differ, and one store should not mix.
- *
- * `Run` / `RunTask` are the *instances*: one workflow applied
- * to one item, with the definition's tasks copied
- * in. Every display field is a snapshot and there is no foreign key to
- * `ShopOrder`, `OrderLineItem`, or `Workflow` — a run must survive an order
- * delete, an item dropped by an edit, and a definition edit or rename,
- * because it is the record of work someone may already have started.
- * `lineItemId` is `unique`: **one row per item**, enforced by the
- * database and not only by the write paths, so reconcile, manual attach and
- * replace all have to be correct under it. The constraint is total, not
- * partial over a status: a closed run keeps the item's slot rather than
- * sitting beside a live one, and a manual attach replaces it
- * (`Domain.RunStatus`). `OrderLineItem.matchedWorkflowIds` is the other half:
- * the workflows whose tags matched at the last reconcile, from which
- * "ambiguous" (two or more, no run) is derived at read time. `status` is denormalized from the tasks for
- * the workflows list and the definitions badge; every task write recomputes it in
- * the same transaction. `(teamId, doneAt)` serves the member's workflows list, which
- * asks for open tasks by team. `RunTask.teamId` is nullable for the
- * same reason as `WorkflowTask.teamId`: a team delete nulls it on open tasks
- * (unassigned, on nobody's list until a person assigns a team) and leaves
- * done tasks alone, whose `teamName` snapshot is all history needs.
- * `startedByEmail` / `doneByEmail` snapshot the actor the same way, so
- * a member delete never leaves history resolving to nobody. A run task is
- * *current* by `currentWhere`'s rule, so several tasks of one run can be
- * current at once; `startedAt` / `startedBy` record Start. A run is `active` from
- * creation, and `Domain.runIsUnstarted` reads the tasks. `Run.note` is free
- * text about the whole item, one field per run with no author
- * (`Domain.SetRunNoteCommand`).
- * `blockedAt` / `blockReason` / `blockedBy` are the one hold a person sets
- * (`Domain.runIsBlocked`); `blockedBy` is the JSON `Domain.Actor`.
- * `closedAt` / `closedReason` are set together when a run closes
- * (`Domain.ClosedReason`), and `quantityChangedFrom` is the quantity badge
- * (`Domain.Run`).
- *
- * `startedByRole` / `doneByRole` / `reopenedByRole` are the actor
- * discriminator (`Domain.Actor`): the merchant acts on these rows from the
- * order page and has no `Member` row, so the id and email columns beside a
- * `'merchant'` role are null. `reopenedAt` / `reopenedBy*` hold the most
- * recent reopen only; a later Done clears the three together.
- */
-const initializeSchema = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
-  yield* sql`
-    create table if not exists ShopOrder (
-      id text primary key,
-      legacyId text not null,
-      name text not null,
-      processedAt integer not null,
-      updatedAt integer not null,
-      cancelledAt integer,
-      closedAt integer,
-      financialStatus text,
-      fulfillmentStatus text not null,
-      fullyPaid integer not null,
-      note text,
-      lineItemsTruncated integer not null default 0,
-      syncedAt integer not null,
-      syncSource text not null,
-      countedAt integer
-    );
-    -- Serves the index page's keyset and the retention sweep's range scan
-    -- alike; a descending index reads a range as readily as an ascending one,
-    -- so the sweep needs no index of its own.
-    create index if not exists ShopOrder_processedAt
-      on ShopOrder (processedAt desc, id desc);
-    create index if not exists ShopOrder_open_idx
-      on ShopOrder (processedAt desc, id desc)
-      where fulfillmentStatus <> 'FULFILLED' and cancelledAt is null;
-    create table if not exists OrderLineItem (
-      id text primary key,
-      orderId text not null references ShopOrder(id) on delete cascade,
-      productId text,
-      variantId text,
-      title text not null,
-      variantTitle text,
-      sku text,
-      quantity integer not null,
-      currentQuantity integer not null,
-      productTags text not null,
-      matchedWorkflowIds text not null default '[]',
-      properties text not null,
-      requiresShipping integer not null
-    );
-    create index if not exists OrderLineItem_orderId on OrderLineItem (orderId);
-    create table if not exists WebhookDelivery (
-      webhookId text primary key,
-      topic text not null,
-      orderId text not null,
-      triggeredAt integer not null,
-      receivedAt integer not null
-    );
-    create index if not exists WebhookDelivery_receivedAt_idx
-      on WebhookDelivery (receivedAt);
-    create table if not exists SyncState (
-      id integer primary key check (id = 1),
-      lastError text,
-      lastCompletedAt integer
-    );
-    insert or ignore into SyncState (id) values (1);
-    create table if not exists ShopUsage (
-      id integer primary key check (id = 1),
-      shopGid text,
-      cycleStartAt integer,
-      cycleEndAt integer,
-      ordersThisCycle integer not null default 0,
-      ordersLimitedAt integer,
-      openRunsLimitedAt integer,
-      lastSweepAt integer,
-      membersHighWater integer not null default 0,
-      lastReconciledOrders integer,
-      lastReconciledMembers integer
-    );
-    insert or ignore into ShopUsage (id) values (1);
-    create table if not exists UsageEvent (
-      idempotencyKey text primary key,
-      eventHandle text not null,
-      orderId text,
-      value integer not null,
-      occurredAt integer not null,
-      attempts integer not null default 0,
-      lastError text
-    );
-    create table if not exists Workflow (
-      id text primary key,
-      name text not null check (name = trim(name) and length(name) > 0),
-      tag text not null unique check (tag = trim(tag) and length(tag) > 0),
-      activatedAt integer,
-      createdAt integer not null,
-      updatedAt integer not null
-    );
-    create table if not exists WorkflowTask (
-      id text primary key,
-      workflowId text not null references Workflow (id) on delete cascade,
-      position integer not null,
-      step integer not null,
-      name text not null check (name = trim(name) and length(name) > 0),
-      teamId text,
-      instructions text,
-      unique (workflowId, position)
-    );
-    create index if not exists WorkflowTask_teamId_idx on WorkflowTask (teamId);
-    create table if not exists WorkflowDraft (
-      workflowId text primary key references Workflow (id) on delete cascade,
-      createdAt integer not null,
-      updatedAt integer not null
-    );
-    create table if not exists WorkflowDraftTask (
-      id text primary key,
-      workflowId text not null references WorkflowDraft (workflowId) on delete cascade,
-      position integer not null,
-      step integer not null,
-      name text not null check (name = trim(name) and length(name) > 0),
-      teamId text,
-      instructions text,
-      unique (workflowId, position)
-    );
-    create index if not exists WorkflowDraftTask_teamId_idx on WorkflowDraftTask (teamId);
-    create table if not exists Run (
-      id text primary key,
-      workflowId text not null,
-      workflowName text not null,
-      orderId text not null,
-      orderName text not null,
-      orderProcessedAt integer not null,
-      lineItemId text not null unique,
-      lineItemTitle text not null,
-      variantTitle text,
-      sku text,
-      quantity integer not null,
-      lineItemProperties text not null,
-      source text not null check (source in ('tag', 'manual')),
-      status text not null check (status in ('active', 'done', 'closed')),
-      blockedAt integer,
-      blockReason text,
-      blockedBy text,
-      quantityChangedFrom integer,
-      note text,
-      createdAt integer not null,
-      updatedAt integer not null,
-      closedAt integer,
-      closedReason text check (closedReason in ('fulfilled', 'order_cancelled', 'item_removed', 'merchant_cancelled'))
-    );
-    create index if not exists Run_orderId_idx on Run (orderId);
-    create index if not exists Run_status_idx on Run (status);
-    create index if not exists Run_open_age_idx
-      on Run (orderProcessedAt, lineItemId, id) where status = 'active';
-    create index if not exists Run_closed_idx
-      on Run (closedAt) where status = 'closed';
-    create table if not exists RunTask (
-      id text primary key,
-      runId text not null references Run (id) on delete cascade,
-      position integer not null,
-      step integer not null,
-      name text not null,
-      teamId text,
-      teamName text not null,
-      instructions text,
-      startedAt integer,
-      startedBy text,
-      startedByEmail text,
-      doneAt integer,
-      doneBy text,
-      doneByEmail text,
-      startedByRole text check (startedByRole in ('merchant', 'member')),
-      doneByRole text check (doneByRole in ('merchant', 'member')),
-      reopenedAt integer,
-      reopenedByRole text check (reopenedByRole in ('merchant', 'member')),
-      reopenedByEmail text,
-      unique (runId, position)
-    );
-    create index if not exists RunTask_teamId_idx
-      on RunTask (teamId, doneAt);
-  `;
-});
-
-export const runShopAgentMigrations = SqliteMigrator.run({
-  loader: SqliteMigrator.fromRecord({
-    "1_initialize schema": initializeSchema,
-  }),
-}).pipe(
-  Effect.tapCause((cause) =>
-    Effect.logError(
-      `ShopAgent migrations failed: ${causeToErrorMessage(cause)}`,
-    ),
-  ),
-  Effect.asVoid,
-);
 
 /**
  * Two SQL stores coexist. `Repository` runs over D1 (shared, sessions) via the
@@ -2467,8 +2150,10 @@ export class ShopAgent extends Agent {
    * draft. Unlike a rename it changes how the workflow matches, so an on
    * workflow reconciles every stored order once afterwards, as Apply does:
    * an order already in Baton whose product carries the new tag starts now,
-   * not on Shopify's next edit. Runs in flight snapshot their tag and tasks
-   * and are untouched. Publishes because the order pages read the reconcile.
+   * not on Shopify's next edit. Runs in flight are untouched: a run snapshots
+   * its workflow (the data model on `initializeSchema`,
+   * `ShopAgentSchema.ts`). Publishes because the order pages read the
+   * reconcile.
    */
   @callable()
   updateWorkflowTag(
@@ -2757,7 +2442,8 @@ export class ShopAgent extends Agent {
 
   /**
    * Delete a workflow and its runs stay on their orders (vocabulary on
-   * `Domain.Workflow`). `removeWorkflow`, not `deleteWorkflow`: the Agents
+   * `Domain.Workflow`; the rule is the data model on `initializeSchema`,
+   * `ShopAgentSchema.ts`). `removeWorkflow`, not `deleteWorkflow`: the Agents
    * SDK base class already has a `deleteWorkflow(workflowId)` that drops a
    * Cloudflare Workflow instance's tracking row (`onWorkflowComplete` calls
    * it), the same collision `getWorkflowDetail` sidesteps. Publishes because
