@@ -55,14 +55,11 @@ const anOrder = (
   processedAt: 1000,
   updatedAt: 1000,
   cancelledAt: null,
-  closedAt: null,
-  financialStatus: "PENDING",
   fulfillmentStatus: "UNFULFILLED",
   fullyPaid: false,
   note: null,
   lineItemsTruncated: false,
   syncedAt: 1000,
-  syncSource: "bulk",
   ...overrides,
 });
 
@@ -72,8 +69,6 @@ const aLineItem = (
 ): Domain.OrderLineItem => ({
   id: lineItemId(n),
   orderId: orderId(1),
-  productId: `gid://shopify/Product/${String(n)}`,
-  variantId: null,
   title: `Item ${String(n)}`,
   variantTitle: null,
   sku: `SKU-${String(n)}`,
@@ -82,7 +77,6 @@ const aLineItem = (
   productTags: ["engraved"],
   matchedWorkflowIds: [],
   properties: [{ key: "text", value: "Hello" }],
-  requiresShipping: true,
   ...overrides,
 });
 
@@ -372,12 +366,12 @@ const seedStates = Effect.gen(function* () {
         insert into Run (
           id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
           lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
-          source, status, closedAt, closedReason, createdAt, updatedAt
+          status, closedAt, closedReason, createdAt, updatedAt
         ) values (
           ${`run-${String(n)}-${String(index)}`}, 'wf', 'Workflow',
           ${orderId(n)}, ${`#10${String(n).padStart(2, "0")}`}, 0,
           ${`${lineItemId(n)}-${String(index)}`}, 'Item', null, null, 1,
-          '[]', 'tag', ${status}, ${status === "closed" ? 1 : null},
+          '[]', ${status}, ${status === "closed" ? 1 : null},
           ${status === "closed" ? "merchant_cancelled" : null}, 0, 0
         )
       `;
@@ -895,10 +889,10 @@ describe("OrderRepository.listOrders waitingOn", () => {
       insert into Run (
         id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
         lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
-        source, status, createdAt, updatedAt
+        status, createdAt, updatedAt
       ) values (
         'run-3-2', 'wf', 'Workflow', ${orderId(3)}, '#1003', 0,
-        ${`${lineItemId(3)}-2`}, 'Item', null, null, 1, '[]', 'tag', 'active',
+        ${`${lineItemId(3)}-2`}, 'Item', null, null, 1, '[]', 'active',
         0, 0
       )
     `;
@@ -1081,9 +1075,6 @@ describe("OrderRepository.recordWebhookDelivery", () => {
         const repository = yield* OrderRepository;
         const delivery = {
           webhookId: "wh-1",
-          topic: "orders/paid",
-          orderId: orderId(1),
-          triggeredAt: 10,
           receivedAt: 11,
         };
         return [
@@ -1104,18 +1095,12 @@ describe("OrderRepository.recordWebhookDelivery", () => {
         const now = 30 * 86_400_000;
         yield* repository.recordWebhookDelivery({
           webhookId: "wh-old",
-          topic: "orders/paid",
-          orderId: orderId(1),
-          triggeredAt: 0,
           receivedAt:
             now -
             (Domain.ShopLimits.webhookDeliveryRetentionDays + 1) * 86_400_000,
         });
         yield* repository.recordWebhookDelivery({
           webhookId: "wh-new",
-          topic: "orders/paid",
-          orderId: orderId(1),
-          triggeredAt: now,
           receivedAt: now,
         });
         const rows = yield* sql`select webhookId from WebhookDelivery`.values;
@@ -1139,7 +1124,6 @@ describe("OrderRepository usage", () => {
       id: orderId(n),
       name: `#100${String(n)}`,
       fullyPaid: true,
-      financialStatus: "PAID",
       processedAt: CYCLE_START,
       updatedAt: CYCLE_START,
       syncedAt: CYCLE_START,
@@ -1826,10 +1810,10 @@ const runWith =
       insert into Run (
         id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
         lineItemId, lineItemTitle, variantTitle, sku, quantity,
-        lineItemProperties, source, status, createdAt, updatedAt
+        lineItemProperties, status, createdAt, updatedAt
       ) values (
         ${`run-${orderId}-${status}`}, 'wf', 'Workflow', ${orderId}, '#1',
-        0, ${`li-${orderId}`}, 'Item', null, null, 1, '[]', 'tag',
+        0, ${`li-${orderId}`}, 'Item', null, null, 1, '[]',
         ${status}, ${updatedAt}, ${updatedAt}
       )
     `;

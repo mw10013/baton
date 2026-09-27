@@ -13,7 +13,7 @@ import { Effect, Match, Option, Schema } from "effect";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { QuotaBanners } from "@/components/QuotaBanners";
 import * as Domain from "@/lib/Domain";
-import { formatNumber, formatStatus } from "@/lib/format";
+import { formatNumber } from "@/lib/format";
 import { adminOrderUrl, useResourceLinkTarget } from "@/lib/orderLinks";
 import { ORDER_IMPORT_WINDOW_DAYS } from "@/lib/orderSyncConstants";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
@@ -624,15 +624,10 @@ function RouteComponent() {
               <s-table-cell>
                 <LocalDateTime value={row.order.processedAt} />
               </s-table-cell>
-              {/* Blank when Shopify reports no financial status, which it
-                  does for $0 and untransacted orders — the admin leaves the
-                  cell empty rather than inventing a value. */}
               <s-table-cell>
-                {row.order.financialStatus !== null && (
-                  <s-badge tone={row.order.fullyPaid ? "success" : "warning"}>
-                    {formatStatus(row.order.financialStatus)}
-                  </s-badge>
-                )}
+                <s-badge tone={row.order.fullyPaid ? "success" : "warning"}>
+                  {row.order.fullyPaid ? "Paid" : "Unpaid"}
+                </s-badge>
               </s-table-cell>
               <s-table-cell>
                 <s-stack direction="inline" gap="small-300">

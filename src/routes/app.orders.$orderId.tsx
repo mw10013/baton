@@ -1608,25 +1608,17 @@ function RouteComponent() {
           {fact("Placed", <LocalDateTime value={order.processedAt} />)}
           {fact(
             "Payment",
-            order.financialStatus === null ? null : (
-              <s-stack direction="inline">
-                <s-badge tone={order.fullyPaid ? "success" : "warning"}>
-                  {formatStatus(order.financialStatus)}
-                </s-badge>
-              </s-stack>
-            ),
+            <s-stack direction="inline">
+              <s-badge tone={order.fullyPaid ? "success" : "warning"}>
+                {order.fullyPaid ? "Paid" : "Unpaid"}
+              </s-badge>
+            </s-stack>,
           )}
           {fact("Fulfillment", formatStatus(order.fulfillmentStatus))}
           {fact(
             "Cancelled",
             order.cancelledAt === null ? null : (
               <LocalDateTime value={order.cancelledAt} />
-            ),
-          )}
-          {fact(
-            "Closed",
-            order.closedAt === null ? null : (
-              <LocalDateTime value={order.closedAt} />
             ),
           )}
         </s-grid>

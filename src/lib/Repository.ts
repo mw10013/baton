@@ -78,11 +78,7 @@ const decodeRepository =
  * accept them (see its JSDoc — re-authentication must not disturb a cached
  * plan, and D1 bills every column in a `SET` list on the hot auth path).
  */
-type PlanCacheColumn =
-  | "planHandle"
-  | "planHandleExpiresAt"
-  | "planBoundaryAt"
-  | "planCycleStartAt";
+type PlanCacheColumn = "planHandle" | "planHandleExpiresAt" | "planBoundaryAt";
 
 export class Repository extends Context.Service<
   Repository,
@@ -415,8 +411,7 @@ export class Repository extends Context.Service<
             update ShopSession set
               planHandle = ${shopSession.planHandle},
               planHandleExpiresAt = ${shopSession.planHandleExpiresAt},
-              planBoundaryAt = ${shopSession.planBoundaryAt},
-              planCycleStartAt = ${shopSession.planCycleStartAt}
+              planBoundaryAt = ${shopSession.planBoundaryAt}
             where shop = ${shopSession.shop}
           `;
       });
@@ -454,7 +449,7 @@ export class Repository extends Context.Service<
       )(function* (shop: Domain.ShopSession["shop"]) {
         const rows = yield* sql`
           select shop, shopGid, shopAgentId, scope, accessTokenExpiresAt, refreshTokenExpiresAt,
-            planHandle, planHandleExpiresAt, planBoundaryAt, planCycleStartAt,
+            planHandle, planHandleExpiresAt, planBoundaryAt,
             (accessToken is not null) as hasAccessToken,
             (refreshToken is not null) as hasRefreshToken
           from ShopSession
@@ -496,7 +491,7 @@ export class Repository extends Context.Service<
         ];
         const rows = yield* sql`
           select shop, shopGid, shopAgentId, scope, accessTokenExpiresAt, refreshTokenExpiresAt,
-            planHandle, planHandleExpiresAt, planBoundaryAt, planCycleStartAt,
+            planHandle, planHandleExpiresAt, planBoundaryAt,
             (accessToken is not null) as hasAccessToken,
             (refreshToken is not null) as hasRefreshToken
           from ShopSession

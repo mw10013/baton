@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Clock, Effect, Schema } from "effect";
+import { Effect, Schema } from "effect";
 
 import { CloudflareEnv } from "@/lib/CloudflareEnv";
 import { handleWebhook } from "@/lib/Shopify";
@@ -85,19 +85,17 @@ export const Route = createFileRoute("/webhooks/orders")({
     handlers: {
       POST: ({ context: { runEffect } }) =>
         runEffect(
-          handleWebhook(({ shop, topic, payload, webhookId, triggeredAt }) =>
+          handleWebhook(({ shop, topic, payload, webhookId }) =>
             Effect.gen(function* () {
               const { orderId, updatedAt } = orderRef(
                 yield* Schema.decodeUnknownEffect(WebhookPayload)(payload),
               );
               const stub = (yield* CloudflareEnv).SHOP_AGENT.getByName(shop);
-              const receivedAt = yield* Clock.currentTimeMillis;
               yield* Effect.tryPromise(() =>
                 stub.syncOrder({
                   orderId,
                   topic,
                   webhookId,
-                  triggeredAt: triggeredAt ?? receivedAt,
                   updatedAt,
                 }),
               );

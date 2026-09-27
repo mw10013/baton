@@ -10,8 +10,7 @@ create table if not exists ShopSession (
   refreshTokenExpiresAt integer,
   planHandle text,
   planHandleExpiresAt integer,
-  planBoundaryAt integer,
-  planCycleStartAt integer
+  planBoundaryAt integer
 );
 
 -- No soft delete: uniqueness is among existing rows only, so re-adding an

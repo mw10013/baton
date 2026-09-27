@@ -229,14 +229,18 @@ const summarise = (
 });
 
 /**
- * An {@link Domain.Actor} flattened into the three columns a task's actor slot
- * holds. The merchant has no `Member` row, so the id and email are null beside
- * a `'merchant'` role — the role column is what readers discriminate on.
+ * An {@link Domain.Actor} flattened into the two columns a task's actor slot
+ * holds. The merchant has no `Member` row, so the email is null beside a
+ * `'merchant'` role — the role column is what readers discriminate on.
  */
 const actorColumns = (actor: Domain.Actor) =>
   actor.role === "merchant"
-    ? { role: "merchant" as const, id: null, email: null }
-    : { role: "member" as const, id: actor.memberId, email: actor.email };
+    ? { role: "merchant" as const, email: null }
+    : { role: "member" as const, email: actor.email };
+
+/** The {@link Domain.ActorDisplay} a row stores for an {@link Domain.Actor}: role and email, never the gate's id or teams. */
+const actorDisplay = (actor: Domain.Actor): Domain.ActorDisplay =>
+  actor.role === "merchant" ? actor : { role: "member", email: actor.email };
 
 const NO_COUNTS: ReconcileCounts = {
   created: 0,
@@ -244,12 +248,6 @@ const NO_COUNTS: ReconcileCounts = {
   closed: 0,
   ambiguous: 0,
 };
-
-/** An {@link Domain.Actor} as attribution: `teamIds` is the gate's, never stored. */
-const attribution = (actor: Domain.Actor): Domain.Actor =>
-  actor.role === "merchant"
-    ? actor
-    : { role: "member", memberId: actor.memberId, email: actor.email };
 
 export class RunRepository extends Context.Service<
   RunRepository,
@@ -335,7 +333,6 @@ export class RunRepository extends Context.Service<
       readonly teams: StartContext["teams"];
       readonly order: Domain.ShopOrder;
       readonly lineItem: Domain.OrderLineItem;
-      readonly source: Domain.RunSource;
     }) => Effect.Effect<
       Option.Option<{
         readonly run: Domain.Run;
@@ -525,7 +522,7 @@ export class RunRepository extends Context.Service<
     >;
     /**
      * Marks a ready task started. Idempotent: a second Start leaves the
-     * original `startedAt` / `startedBy` / `startedByEmail` — no takeover, no
+     * original `startedAt` / `startedByEmail` / `startedByRole` — no takeover, no
      * error — so two people pressing it does not rewrite who began. The
      * email is snapshotted so history reads after the member is deleted.
      * Gates: {@link Domain.runIsOpen}, and not {@link Domain.runIsBlocked}.
@@ -665,7 +662,7 @@ export class RunRepository extends Context.Service<
      * this store cannot see). Allowed on any open task, assigned or not and
      * started or not — it is both the remedy that makes a team delete safe
      * and the merchant's way to move work between teams. Only `teamId` /
-     * `teamName` are written, so a started task keeps `startedBy` /
+     * `teamName` are written, so a started task keeps `startedByRole` /
      * `startedByEmail` and history still names whoever began it. A done
      * task is refused (`TaskDoneError`), and so is a task of a run that
      * is not {@link Domain.runIsOpen} (`RunTerminalError`): a `done` run's
@@ -740,8 +737,7 @@ export class RunRepository extends Context.Service<
 
       const orderColumns = sql.literal(
         `id, legacyId, name, processedAt, updatedAt, cancelledAt,
-         closedAt, financialStatus, fulfillmentStatus, fullyPaid, note,
-         lineItemsTruncated, syncedAt, syncSource`,
+         fulfillmentStatus, fullyPaid, note, lineItemsTruncated, syncedAt`,
       );
 
       const findRun = (runId: string) =>
@@ -972,7 +968,6 @@ export class RunRepository extends Context.Service<
               .map((task) =>
                 Struct.omit(task, [
                   "doneAt",
-                  "doneBy",
                   "doneByEmail",
                   "doneByRole",
                   "instructions",
@@ -1109,13 +1104,11 @@ export class RunRepository extends Context.Service<
         teams,
         order,
         lineItem,
-        source,
       }: {
         readonly workflow: Domain.WorkflowDetail;
         readonly teams: StartContext["teams"];
         readonly order: Domain.ShopOrder;
         readonly lineItem: Domain.OrderLineItem;
-        readonly source: Domain.RunSource;
       }) {
         const now = yield* Clock.currentTimeMillis;
         const runId = crypto.randomUUID();
@@ -1124,7 +1117,7 @@ export class RunRepository extends Context.Service<
               insert into Run (
                 id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
                 lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
-                source, status, createdAt, updatedAt
+                status, createdAt, updatedAt
               ) values (
                 ${runId}, ${workflow.id}, ${workflow.name}, ${order.id},
                 ${order.name}, ${order.processedAt},
@@ -1132,7 +1125,7 @@ export class RunRepository extends Context.Service<
                 ${lineItem.variantTitle}, ${lineItem.sku},
                 ${Domain.unitsToMake(lineItem)},
                 ${json(lineItem.properties)},
-                ${source}, 'active', ${now}, ${now}
+                'active', ${now}, ${now}
               )
               on conflict do nothing
               returning *
@@ -1148,13 +1141,12 @@ export class RunRepository extends Context.Service<
           (task) => sql`
               insert into RunTask
                 (id, runId, position, step, name, teamId, teamName, instructions,
-                 startedAt, startedBy, startedByEmail, doneAt, doneBy,
-                 doneByEmail)
+                 startedAt, startedByEmail, doneAt, doneByEmail)
               values (
                 ${crypto.randomUUID()}, ${runId}, ${task.position}, ${task.step},
                 ${task.name}, ${task.teamId},
                 ${teams.find((team) => team.id === task.teamId)?.name ?? ""},
-                ${task.instructions}, null, null, null, null, null, null
+                ${task.instructions}, null, null, null, null
               )
             `,
           { discard: true },
@@ -1348,7 +1340,6 @@ export class RunRepository extends Context.Service<
                 teams,
                 order,
                 lineItem,
-                source: "tag",
               }).pipe(
                 Effect.map(
                   Option.map((run) => ({ run, item: lineItem.title })),
@@ -1825,10 +1816,8 @@ export class RunRepository extends Context.Service<
               // longer makes and a time that is no longer true.
               yield* sql`
                   update RunTask
-                  set doneAt = null, doneBy = null,
-                      doneByEmail = null, doneByRole = null,
-                      startedAt = null, startedBy = null,
-                      startedByEmail = null, startedByRole = null,
+                  set doneAt = null, doneByEmail = null, doneByRole = null,
+                      startedAt = null, startedByEmail = null, startedByRole = null,
                       reopenedAt = ${now}, reopenedByRole = ${by.role},
                       reopenedByEmail = ${by.email}
                   where id = ${runTaskId}
@@ -1860,8 +1849,8 @@ export class RunRepository extends Context.Service<
               const now = yield* Clock.currentTimeMillis;
               yield* sql`
                 update RunTask
-                set startedAt = null, startedBy = null,
-                    startedByEmail = null, startedByRole = null
+                set startedAt = null, startedByEmail = null,
+                    startedByRole = null
                 where id = ${runTaskId}
               `;
               yield* recomputeStatus(run.id, now);
@@ -1934,7 +1923,6 @@ export class RunRepository extends Context.Service<
               yield* sql`
                 update RunTask
                 set startedAt = coalesce(startedAt, ${now}),
-                    startedBy = coalesce(startedBy, ${by.id}),
                     startedByEmail = coalesce(startedByEmail, ${by.email}),
                     startedByRole = coalesce(startedByRole, ${by.role})
                 where id = ${runTaskId}
@@ -1963,11 +1951,9 @@ export class RunRepository extends Context.Service<
               const by = actorColumns(actor);
               yield* sql`
                   update RunTask
-                  set doneAt = ${now}, doneBy = ${by.id},
-                      doneByEmail = ${by.email},
+                  set doneAt = ${now}, doneByEmail = ${by.email},
                       doneByRole = ${by.role},
                       startedAt = coalesce(startedAt, ${now}),
-                      startedBy = coalesce(startedBy, ${by.id}),
                       startedByEmail = coalesce(startedByEmail, ${by.email}),
                       startedByRole = coalesce(startedByRole, ${by.role}),
                       reopenedAt = null, reopenedByRole = null,
@@ -2014,7 +2000,7 @@ export class RunRepository extends Context.Service<
               yield* sql`
                 update Run
                 set blockedAt = ${now}, blockReason = ${reason},
-                    blockedBy = ${json(attribution(actor))}, updatedAt = ${now}
+                    blockedBy = ${json(actorDisplay(actor))}, updatedAt = ${now}
                 where id = ${runId}
               `;
             }),

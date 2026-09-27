@@ -173,7 +173,6 @@ const workflowOf = (id: string, name: string): Domain.Workflow => ({
   name: Schema.decodeUnknownSync(Domain.WorkflowName)(name),
   tag: Schema.decodeUnknownSync(Domain.WorkflowTag)(name.toLowerCase()),
   activatedAt: 0,
-  createdAt: 0,
   updatedAt: 0,
 });
 
@@ -182,8 +181,6 @@ const lineItemOf = (
 ): Domain.OrderLineItem => ({
   id: "li",
   orderId: "o",
-  productId: null,
-  variantId: null,
   title: "Ring",
   variantTitle: null,
   sku: null,
@@ -192,7 +189,6 @@ const lineItemOf = (
   productTags: [],
   matchedWorkflowIds: [],
   properties: [],
-  requiresShipping: true,
   ...overrides,
 });
 
@@ -213,7 +209,6 @@ const detailOf = (
     sku: null,
     quantity: 1,
     lineItemProperties: [],
-    source: "tag",
     status,
     blockedAt: null,
     blockReason: null,
@@ -349,14 +344,11 @@ const seedOrder = (shop: string) =>
               processedAt: now,
               updatedAt: now,
               cancelledAt: null,
-              closedAt: null,
-              financialStatus: "PAID",
               fulfillmentStatus: "UNFULFILLED",
               fullyPaid: true,
               note: null,
               lineItemsTruncated: false,
               syncedAt: now,
-              syncSource: "manual",
             },
             lineItems: [lineItemOf({ id: LINE_ITEM_ID, orderId: ORDER_ID })],
             afterWrite: Effect.void,
@@ -468,14 +460,12 @@ const reset = (
         const started = progress.startedAt !== null;
         const done = progress.doneAt !== null;
         sql.exec(
-          "update RunTask set teamId = ?, startedAt = ?, startedBy = ?, startedByEmail = ?, startedByRole = ?, doneAt = ?, doneBy = ?, doneByEmail = ?, doneByRole = ?, reopenedAt = null, reopenedByRole = null, reopenedByEmail = null where id = ?",
+          "update RunTask set teamId = ?, startedAt = ?, startedByEmail = ?, startedByRole = ?, doneAt = ?, doneByEmail = ?, doneByRole = ?, reopenedAt = null, reopenedByRole = null, reopenedByEmail = null where id = ?",
           teamId,
           progress.startedAt,
-          started ? "m1" : null,
           started ? "m1@example.com" : null,
           started ? "member" : null,
           progress.doneAt,
-          done ? "m1" : null,
           done ? "m1@example.com" : null,
           done ? "member" : null,
           id,

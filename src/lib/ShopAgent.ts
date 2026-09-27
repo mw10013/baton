@@ -741,7 +741,6 @@ export const OrderWebhookInput = Schema.Struct({
   orderId: Schema.NonEmptyString,
   topic: Schema.String,
   webhookId: Schema.NonEmptyString,
-  triggeredAt: Schema.Number,
   updatedAt: Schema.NullOr(Schema.Number),
 });
 export type OrderWebhookInput = typeof OrderWebhookInput.Type;
@@ -1210,7 +1209,7 @@ export class ShopAgent extends Agent {
   /**
    * Fetches one order from the Admin API and merges it into SQLite. Shared by
    * the webhook path and the manual resync; `source` is the only difference,
-   * and it is recorded, not acted on.
+   * and it is logged, not acted on.
    *
    * A `null` order is not a failure: by the time a delivery is handled the
    * order may already be deleted, and Shopify answers with `null` rather than
@@ -1252,7 +1251,6 @@ export class ShopAgent extends Agent {
       const reconcile = yield* reconciler();
       const shopOrder = toShopOrder({
         node: order,
-        source,
         syncedAt: yield* Clock.currentTimeMillis,
         lineItemsTruncated,
       });
@@ -1613,14 +1611,11 @@ export class ShopAgent extends Agent {
       this.fetchAndUpsertOrder(orderId, "webhook");
     return this.runEffect(
       callableEffect("ShopAgent.syncOrder", OrderWebhookInput, { role: "rpc" })(
-        ({ orderId, topic, webhookId, triggeredAt, updatedAt }) =>
+        ({ orderId, topic, webhookId, updatedAt }) =>
           Effect.gen(function* () {
             const repository = yield* OrderRepository;
             const isNew = yield* repository.recordWebhookDelivery({
               webhookId,
-              topic,
-              orderId,
-              triggeredAt,
               receivedAt: yield* Clock.currentTimeMillis,
             });
             if (!isNew) {
@@ -2798,7 +2793,6 @@ export class ShopAgent extends Agent {
             teams: roster,
             order: target.value.order,
             lineItem: target.value.lineItem,
-            source: "manual",
           });
           if (Option.isNone(set))
             return { _tag: "AlreadyExists" } satisfies Domain.AttachResult;
@@ -4130,7 +4124,6 @@ export class ShopAgent extends Agent {
                     teams: roster,
                     order: target.value.order,
                     lineItem: target.value.lineItem,
-                    source: "manual",
                   });
             });
           // Orders, items, runs and the usage they counted, together;
@@ -4157,14 +4150,11 @@ export class ShopAgent extends Agent {
               processedAt,
               updatedAt: now,
               cancelledAt: null,
-              closedAt: null,
-              financialStatus: seed.unpaid === true ? "PENDING" : "PAID",
               fulfillmentStatus: seed.fulfillmentStatus ?? "UNFULFILLED",
               fullyPaid: seed.unpaid !== true,
               note: seed.note ?? null,
               lineItemsTruncated: false,
               syncedAt: now,
-              syncSource: "manual",
             };
             /** `changed` is the `after` block's quantities, by 1-based position; without it this is the order as placed. */
             const lineItemsOf = (
@@ -4181,8 +4171,6 @@ export class ShopAgent extends Agent {
                 return {
                   id: `${id}/line-${String(position + 1)}`,
                   orderId: id,
-                  productId: null,
-                  variantId: null,
                   title: item.title,
                   variantTitle: null,
                   sku: null,
@@ -4191,7 +4179,6 @@ export class ShopAgent extends Agent {
                   productTags: item.tags,
                   matchedWorkflowIds: [],
                   properties: item.properties ?? [],
-                  requiresShipping: true,
                 } satisfies Domain.OrderLineItem;
               });
             yield* orderRepository.upsertOrder({

@@ -451,14 +451,14 @@ export const ShopSession = Schema.Struct({
   planHandle: Schema.NullOr(Schema.String),
   planHandleExpiresAt: Schema.NullOr(Schema.Number),
   /**
-   * The contract's boundary and period, cached beside the handle and written
-   * only by `Repository.updateShopSessionPlan`, so a cache hit answers "when
-   * does this expire" without a second Partner call. Null means none or
-   * unknown, and both are only meaningful while `planHandleExpiresAt` is in the
-   * future — a stale row's dates are as untrustworthy as its handle.
+   * The contract's boundary, cached beside the handle and written only by
+   * `Repository.updateShopSessionPlan`, so a cache hit answers "when does
+   * this expire" without a second Partner call. Null means none or unknown,
+   * and it is only meaningful while `planHandleExpiresAt` is in the future —
+   * a stale row's date is as untrustworthy as its handle. The cycle start is
+   * not cached: nothing reads it off the row.
    */
   planBoundaryAt: Schema.NullOr(Schema.Number),
-  planCycleStartAt: Schema.NullOr(Schema.Number),
 });
 export type ShopSession = typeof ShopSession.Type;
 
@@ -476,7 +476,6 @@ export const ShopSessionUpsert = Schema.Struct(
     "planHandle",
     "planHandleExpiresAt",
     "planBoundaryAt",
-    "planCycleStartAt",
   ]),
 );
 export type ShopSessionUpsert = typeof ShopSessionUpsert.Type;
@@ -1178,7 +1177,6 @@ const WorkflowFields = {
   id: WorkflowId,
   name: WorkflowName,
   activatedAt: Schema.NullOr(Schema.Number),
-  createdAt: Schema.Number,
   updatedAt: Schema.Number,
 };
 
@@ -1201,7 +1199,6 @@ export type Workflow = typeof Workflow.Type;
  */
 export const WorkflowDraft = Schema.Struct({
   workflowId: WorkflowId,
-  createdAt: Schema.Number,
   updatedAt: Schema.Number,
 });
 export type WorkflowDraft = typeof WorkflowDraft.Type;
@@ -1683,7 +1680,7 @@ export type AssignRunTaskTeamInput = typeof AssignRunTaskTeamInput.Type;
 
 /**
  * Any open task can be assigned, started or not: only `teamId` / `teamName`
- * move, so `startedBy` / `startedByEmail` stay and history keeps whoever
+ * move, so `startedByRole` / `startedByEmail` stay and history keeps whoever
  * began it. `TaskDone` refuses a done task because the write would
  * overwrite `teamName`, the record of which team did it.
  */
@@ -1710,9 +1707,9 @@ export const ShopSessionRedactedPage = Schema.Struct({
 export type ShopSessionRedactedPage = typeof ShopSessionRedactedPage.Type;
 
 /**
- * Which ingestion path last wrote a `ShopOrder` row. Diagnostic, not control
- * flow: every path runs the same `updatedAt`-guarded upsert, so the value
- * only answers "how did this row get here" when a sync looks wrong.
+ * Which ingestion path is writing an order, for the sync logs. Diagnostic,
+ * not control flow: every path runs the same `updatedAt`-guarded upsert. Not
+ * stored on the row; a log line answers "how did this get here" as well.
  */
 export const OrderSyncSource = Schema.Literals(["webhook", "bulk", "manual"]);
 export type OrderSyncSource = typeof OrderSyncSource.Type;
@@ -1759,8 +1756,10 @@ export type LineItemProperty = typeof LineItemProperty.Type;
  * shows under Additional details) are not stored: no run or screen reads an
  * order-level field, and the merchant reads them in the admin one click away.
  *
- * `financialStatus` is nullable because `Order.displayFinancialStatus` is —
- * `displayFulfillmentStatus` is the non-null one of the pair.
+ * Payment is stored as `fullyPaid` only, the one fact a rule reads
+ * ({@link canStartRuns}). Shopify's display financial status and the order's
+ * archive time (`closedAt`) are not mirrored: no rule and no maker reads them,
+ * and the admin is one click away.
  */
 export const ShopOrder = Schema.Struct({
   id: Schema.String,
@@ -1776,8 +1775,6 @@ export const ShopOrder = Schema.Struct({
   processedAt: Schema.Number,
   updatedAt: Schema.Number,
   cancelledAt: Schema.NullOr(Schema.Number),
-  closedAt: Schema.NullOr(Schema.Number),
-  financialStatus: Schema.NullOr(Schema.String),
   fulfillmentStatus: Schema.String,
   fullyPaid: SqliteBoolean,
   note: Schema.NullOr(Schema.String),
@@ -1790,7 +1787,6 @@ export const ShopOrder = Schema.Struct({
    */
   lineItemsTruncated: SqliteBoolean,
   syncedAt: Schema.Number,
-  syncSource: OrderSyncSource,
 });
 export type ShopOrder = typeof ShopOrder.Type;
 
@@ -1817,12 +1813,14 @@ export type ShopOrder = typeof ShopOrder.Type;
  * Shopify sends it, underscore-prefixed app keys included; Baton is a
  * back-office view and hides nothing the merchant can already see in the
  * admin.
+ *
+ * The product and variant ids are not stored because nothing links to the
+ * product; `requiresShipping` is not stored because no rule distinguishes a
+ * digital item.
  */
 export const OrderLineItem = Schema.Struct({
   id: Schema.String,
   orderId: Schema.String,
-  productId: Schema.NullOr(Schema.String),
-  variantId: Schema.NullOr(Schema.String),
   title: Schema.String,
   variantTitle: Schema.NullOr(Schema.String),
   sku: Schema.NullOr(Schema.String),
@@ -1831,7 +1829,6 @@ export const OrderLineItem = Schema.Struct({
   productTags: Schema.fromJsonString(Schema.Array(Schema.String)),
   matchedWorkflowIds: Schema.fromJsonString(Schema.Array(WorkflowId)),
   properties: Schema.fromJsonString(Schema.Array(LineItemProperty)),
-  requiresShipping: SqliteBoolean,
 });
 export type OrderLineItem = typeof OrderLineItem.Type;
 
@@ -2039,7 +2036,7 @@ export const SeedOrdersInput = Schema.Struct({
           progress: Schema.optionalKey(SeedProgress),
           /**
            * A workflow to set on this item after reconcile, exactly as the
-           * merchant's Choose / Change does (`setRun`, source `manual`):
+           * merchant's Choose / Change does (`setRun`):
            * resolves an ambiguous item, or attaches where no tag matched.
            * Applied before progress so the run it creates is one the rounds
            * below then advance. Callers above this schema name the workflow
@@ -2865,15 +2862,11 @@ export const ConnectionRole = Schema.Literals(["merchant", "member"]);
 export type ConnectionRole = typeof ConnectionRole.Type;
 
 /**
- * Who did a task action, as a closed union rather than a set of nullable
- * columns read together. The merchant has no member id and no email — they
- * act through the embedded admin, where identity is the Shopify session, not
- * a `Member` row — so inferring "merchant" from a null email would make every
- * reader re-derive the same rule and would collide with a member row whose
- * email columns are legitimately null (a task nobody has touched). The role
- * discriminator is stored beside the id and email on the row, and the
- * accessors below ({@link taskStartedBy} and friends) are the only place the
- * three columns are reassembled.
+ * The live caller of a run or task action: the identity the gates check
+ * ({@link runActions}, {@link taskActions}). The merchant has no member id
+ * and no email — they act through the embedded admin, where identity is the
+ * Shopify session, not a `Member` row. What a row keeps of the caller is the
+ * narrower {@link ActorDisplay}, never this.
  */
 export const Actor = Schema.Union([
   Schema.Struct({
@@ -2882,8 +2875,9 @@ export const Actor = Schema.Union([
     email: Email,
     /**
      * The member's teams. Present when the actor is gating
-     * ({@link runActions}, {@link taskActions}), absent when it is
-     * attribution: a stored `blockedBy` never sets it.
+     * ({@link runActions}, {@link taskActions}), absent otherwise. A stored
+     * actor is an {@link ActorDisplay} and carries neither `memberId` nor
+     * `teamIds`.
      */
     teamIds: Schema.optionalKey(Schema.Array(TeamId)),
   }),
@@ -2894,13 +2888,26 @@ export type Actor = typeof Actor.Type;
 export type MemberActor = Extract<Actor, { readonly role: "member" }>;
 
 /**
- * The part of an {@link Actor} a page displays. Separate from `Actor` because
- * the `reopened` slot stores no member id and so cannot produce a full actor,
- * yet reads the same way on the page ({@link taskReopenedBy}).
+ * The part of an {@link Actor} a row stores and a page displays: the role,
+ * and a member's email. Separate from `Actor`, which is the live caller the
+ * gates check. No stored actor keeps a member id: history is displayed and
+ * matched by email ({@link actorIsMember}), never joined to `Member`, so an
+ * id would only go stale when the member is removed.
+ *
+ * Stored as a closed union rather than a set of nullable columns read
+ * together: inferring "merchant" from a null email would make every reader
+ * re-derive the same rule and would collide with a task row whose email
+ * columns are legitimately null (a task nobody has touched). So the role
+ * discriminator is stored beside the email — a `*ByRole` column on
+ * {@link RunTask}, the `role` key of `Run.blockedBy` — and the accessors
+ * ({@link taskStartedBy} and friends) are the only place the two columns are
+ * reassembled.
  */
-export type ActorDisplay =
-  | { readonly role: "merchant" }
-  | { readonly role: "member"; readonly email: Email };
+export const ActorDisplay = Schema.Union([
+  Schema.Struct({ role: Schema.Literal("member"), email: Email }),
+  Schema.Struct({ role: Schema.Literal("merchant") }),
+]);
+export type ActorDisplay = typeof ActorDisplay.Type;
 
 /** How every page spells an actor: the merchant is `Merchant`, a member is their email. */
 export const actorLabel = (actor: ActorDisplay) =>
@@ -2913,7 +2920,7 @@ export const actorLabel = (actor: ActorDisplay) =>
  * Mine by email). The merchant has no email and is never "you" on a member
  * page.
  */
-export const actorIsMember = (actor: Actor, email: Email) =>
+export const actorIsMember = (actor: ActorDisplay, email: Email) =>
   actor.role === "member" && actor.email === email;
 
 export const MerchantConnectionState = Schema.Struct({
@@ -3013,10 +3020,6 @@ export type RunId = typeof RunId.Type;
 
 export const RunTaskId = Schema.NonEmptyString.pipe(Schema.brand("RunTaskId"));
 export type RunTaskId = typeof RunTaskId.Type;
-
-/** How a run came to exist: a tag match during an order upsert, or an admin attaching by hand. */
-export const RunSource = Schema.Literals(["tag", "manual"]);
-export type RunSource = typeof RunSource.Type;
 
 /**
  * The run lifecycle, stated once. What a merchant reads:
@@ -3203,16 +3206,16 @@ export const Run = Schema.Struct({
    * because on a run the bare word would read as the run's own.
    */
   lineItemProperties: Schema.fromJsonString(Schema.Array(LineItemProperty)),
-  source: RunSource,
   status: RunStatus,
   /** When the run was blocked; null is not blocked ({@link runIsBlocked}). */
   blockedAt: Schema.NullOr(Schema.Number),
   blockReason: Schema.NullOr(BlockReason),
   /**
-   * Who blocked the run. Snapshotted like the task actors, so a deleted
-   * member still reads as who; an edit to the reason leaves it alone.
+   * Who blocked the run, role and email only. Snapshotted like the task
+   * actors, so a deleted member still reads as who; an edit to the reason
+   * leaves it alone.
    */
-  blockedBy: Schema.NullOr(Schema.fromJsonString(Actor)),
+  blockedBy: Schema.NullOr(Schema.fromJsonString(ActorDisplay)),
   /**
    * The run's `quantity` before the last Shopify change, while nobody has
    * done a task since: the badge **Quantity changed · 3 → 2**.
@@ -3235,6 +3238,12 @@ export const Run = Schema.Struct({
   quantityChangedFrom: Schema.NullOr(Schema.Number),
   note: Schema.NullOr(RunNote),
   createdAt: Schema.Number,
+  /**
+   * Bumped by every run and task write. No screen reads it; its one reader is
+   * the retention sweep (`OrderRepository.sweepExpiredOrders`), which ages an
+   * orphaned run on it because the order the run belonged to, and its
+   * `processedAt`, are gone. Kept for that reader alone.
+   */
   updatedAt: Schema.Number,
   /** Set on a {@link runIsClosed} run only: when it closed. */
   closedAt: Schema.NullOr(Schema.Number),
@@ -3249,22 +3258,22 @@ export type Run = typeof Run.Type;
  * the live pointer that puts the task on a team's list; a team delete nulls
  * it on *open* tasks only (**unassigned**: red on the order page, on nobody's
  * list, waiting for **assign a team**), while a done task keeps both the
- * id and the name. `startedBy` / `doneBy` are D1 `Member.id`s,
- * cross-store and unreferenced; `startedByEmail` / `doneByEmail` are
+ * id and the name. `startedByEmail` / `doneByEmail` / `reopenedByEmail` are
  * the snapshots taken at the action that keep history readable after the
  * member is deleted.
  *
  * Each of the three actor slots carries a `*ByRole` column, and that column
- * is the discriminator: the merchant leaves the id and email null (they have
- * no `Member` row), a member fills all three. Read them through
+ * is the discriminator: the merchant leaves the email null (they have no
+ * `Member` row), a member fills both. No slot has an id column: an actor is
+ * displayed and matched by email ({@link actorIsMember}), never joined to
+ * `Member`. Read them through
  * {@link taskStartedBy} / {@link taskDoneBy} / {@link taskReopenedBy}
- * rather than by hand, and see {@link Actor} for why the role is stored
+ * rather than by hand, and see {@link ActorDisplay} for why the role is stored
  * rather than inferred from a null email.
  *
  * `reopened*` is a *last-actor slot*, not a history: it records the most
  * recent reopen and the next `markTaskDone` clears it, so the line only shows
- * while the task is genuinely back open. There is no `reopenedBy` id
- * column — the reopener is only ever displayed, never joined. A reopen also
+ * while the task is genuinely back open. A reopen also
  * clears the whole Start slot, so a reopened task reads Ready. Put back
  * clears the Start slot with no slot of its own: a put-back task is plain
  * Ready and the next Start writes a fresh record.
@@ -3284,10 +3293,8 @@ export const RunTask = Schema.Struct({
   teamName: TeamName,
   instructions: Schema.NullOr(TaskInstructions),
   startedAt: Schema.NullOr(Schema.Number),
-  startedBy: Schema.NullOr(MemberId),
   startedByEmail: Schema.NullOr(Email),
   doneAt: Schema.NullOr(Schema.Number),
-  doneBy: Schema.NullOr(MemberId),
   doneByEmail: Schema.NullOr(Email),
   startedByRole: Schema.NullOr(ConnectionRole),
   doneByRole: Schema.NullOr(ConnectionRole),
@@ -3298,22 +3305,18 @@ export const RunTask = Schema.Struct({
 export type RunTask = typeof RunTask.Type;
 
 /**
- * The three actor slots, reassembled from their role column and its
- * companions. `null` when the action has not happened; a `member` role with a
- * missing id or email cannot occur (the writes set the three together) and
- * reads as nobody rather than throwing, because a display path is the wrong
- * place to fail.
+ * An actor slot, reassembled from its role column and its email. `null` when
+ * the action has not happened; a `member` role with a missing email cannot
+ * occur (the writes set the two together) and reads as nobody rather than
+ * throwing, because a display path is the wrong place to fail.
  */
 const actorFrom = (
   role: ConnectionRole | null,
-  memberId: MemberId | null,
   email: Email | null,
-): Actor | null => {
+): ActorDisplay | null => {
   if (role === null) return null;
   if (role === "merchant") return { role: "merchant" };
-  return memberId === null || email === null
-    ? null
-    : { role: "member", memberId, email };
+  return email === null ? null : { role: "member", email };
 };
 
 /**
@@ -3322,26 +3325,16 @@ const actorFrom = (
  * `done*` slot at all — is as good an argument as a done one.
  */
 export const taskStartedBy = (
-  task: Pick<RunTask, "startedByRole" | "startedBy" | "startedByEmail">,
-) => actorFrom(task.startedByRole, task.startedBy, task.startedByEmail);
+  task: Pick<RunTask, "startedByRole" | "startedByEmail">,
+) => actorFrom(task.startedByRole, task.startedByEmail);
 
-export const taskDoneBy = (task: RunTask) =>
-  actorFrom(task.doneByRole, task.doneBy, task.doneByEmail);
+export const taskDoneBy = (task: Pick<RunTask, "doneByRole" | "doneByEmail">) =>
+  actorFrom(task.doneByRole, task.doneByEmail);
 
-/**
- * The reopener. Narrower than the other two: the `reopened` slot has no id
- * column (see {@link RunTask}), so this is an {@link ActorDisplay} —
- * enough for {@link actorLabel}, which is all anything does with it.
- */
+/** The reopener, the most recent one only (see {@link RunTask}). */
 export const taskReopenedBy = (
   task: Pick<RunTask, "reopenedByRole" | "reopenedByEmail">,
-): ActorDisplay | null => {
-  if (task.reopenedByRole === null) return null;
-  if (task.reopenedByRole === "merchant") return { role: "merchant" };
-  return task.reopenedByEmail === null
-    ? null
-    : { role: "member", email: task.reopenedByEmail };
-};
+) => actorFrom(task.reopenedByRole, task.reopenedByEmail);
 
 /** An open run task whose team is gone: `teamId` null, or an id the roster no longer carries. */
 export const isRunTaskUnassigned = (
@@ -3387,7 +3380,7 @@ export type RunDetail = typeof RunDetail.Type;
  * live join — and it is load-bearing beyond display: {@link tierOf} decides
  * "Mine" with it.
  *
- * Two groups of columns are omitted rather than carried as nulls. The four
+ * Two groups of columns are omitted rather than carried as nulls. The three
  * `done*` ones can never say anything here: `currentWhere` requires `doneAt is
  * null` and a reopen clears the whole slot, so on a list task
  * every one of them is null by construction. The rest — instructions and the
@@ -3402,7 +3395,6 @@ export type RunDetail = typeof RunDetail.Type;
 export const RunListTask = Schema.Struct(
   Struct.omit(RunTask.fields, [
     "doneAt",
-    "doneBy",
     "doneByEmail",
     "doneByRole",
     "instructions",
@@ -3435,7 +3427,6 @@ export const RunListRun = Schema.Struct(
     "variantTitle",
     "sku",
     "lineItemProperties",
-    "source",
     "createdAt",
     "updatedAt",
     "closedAt",
@@ -3536,10 +3527,10 @@ export const DEFAULT_RUN_TAB: RunTab = "mine";
  * task the viewer started; else any started task; else up next. Every row
  * here is an open run already: closed and done runs never reach a tier.
  *
- * "Mine" is by `startedByEmail`, not by the `startedBy` member id. Removing a
+ * "Mine" is by `startedByEmail`; the row keeps no member id. Removing a
  * member and re-adding the same address mints a **new** `Member.id` (the
- * member row on {@link D1_TABLES}), so the id on a row taken before that
- * stops matching the person still standing at the bench, while the email —
+ * member row on {@link D1_TABLES}), so an id taken before that would stop
+ * matching the person still standing at the bench, while the email —
  * the snapshot the run task keeps, the snapshot row on
  * {@link initializeSchema} — keeps matching. A merchant's task has no email
  * at all and so is nobody's, which is right: `Merchant` is not a member of

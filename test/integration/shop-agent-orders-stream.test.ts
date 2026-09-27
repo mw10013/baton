@@ -69,8 +69,6 @@ const orderLine = (n: number, updatedAt: string) => ({
   processedAt: `2026-08-0${String(n)}T00:00:00Z`,
   updatedAt,
   cancelledAt: null,
-  closedAt: null,
-  displayFinancialStatus: "PAID",
   displayFulfillmentStatus: "UNFULFILLED",
   fullyPaid: true,
   note: null,
@@ -84,10 +82,8 @@ const lineItemLine = (n: number, parent: number) => ({
   sku: `SKU-${String(n)}`,
   quantity: 1,
   currentQuantity: 1,
-  requiresShipping: true,
   customAttributes: [{ key: "text", value: "Hello" }],
-  variant: { id: `gid://shopify/ProductVariant/${String(n)}` },
-  product: { id: `gid://shopify/Product/${String(n)}`, tags: ["engraved"] },
+  product: { tags: ["engraved"] },
   __parentId: orderGid(parent),
 });
 
@@ -124,7 +120,6 @@ describe("runShopAgentOrdersStream", () => {
     const one = Option.getOrThrow(first);
     strictEqual(one.order.name, "#1001");
     strictEqual(one.order.fullyPaid, true);
-    strictEqual(one.order.syncSource, "bulk");
     strictEqual(one.order.lineItemsTruncated, false);
     strictEqual(one.lineItems.length, 2);
     strictEqual(one.lineItems[0]?.productTags[0], "engraved");
@@ -207,14 +202,11 @@ describe("runShopAgentOrdersStream", () => {
             processedAt: 0,
             updatedAt: Date.parse("2026-08-05T00:00:00Z"),
             cancelledAt: null,
-            closedAt: null,
-            financialStatus: "REFUNDED",
             fulfillmentStatus: "FULFILLED",
             fullyPaid: true,
             note: null,
             lineItemsTruncated: false,
             syncedAt: 0,
-            syncSource: "webhook",
           },
           lineItems: [],
         });
@@ -227,8 +219,8 @@ describe("runShopAgentOrdersStream", () => {
     strictEqual(counts.ordersSeen, 2);
     strictEqual(counts.ordersUpserted, 1);
     const { order, lineItems } = Option.getOrThrow(detail);
-    strictEqual(order.syncSource, "webhook");
-    strictEqual(order.financialStatus, "REFUNDED");
+    strictEqual(order.syncedAt, 0);
+    strictEqual(order.fulfillmentStatus, "FULFILLED");
     strictEqual(lineItems.length, 0);
   });
 });
@@ -332,7 +324,6 @@ describe("runShopAgentOrdersStream with afterWrite", () => {
     );
     strictEqual(first.length, 0);
     strictEqual(second.length, 1);
-    strictEqual(second[0]?.run.source, "tag");
     strictEqual(second[0]?.tasks[0]?.teamName, "Engravers");
     strictEqual(secondPass.length, 1);
   });

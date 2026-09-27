@@ -66,21 +66,16 @@ const order: Domain.ShopOrder = {
   processedAt: PROCESSED_AT,
   updatedAt: PROCESSED_AT,
   cancelledAt: null,
-  closedAt: null,
-  financialStatus: "PAID",
   fulfillmentStatus: "UNFULFILLED",
   fullyPaid: true,
   note: null,
   lineItemsTruncated: false,
   syncedAt: PROCESSED_AT,
-  syncSource: "webhook",
 };
 
 const lineItem: Domain.OrderLineItem = {
   id: LINE_ITEM_ID,
   orderId: ORDER_ID,
-  productId: null,
-  variantId: null,
   title: "Mug",
   variantTitle: null,
   sku: null,
@@ -89,7 +84,6 @@ const lineItem: Domain.OrderLineItem = {
   productTags: ["mug"],
   matchedWorkflowIds: [],
   properties: [],
-  requiresShipping: true,
 };
 
 /** One workflow tagged `mug` with one task on `TEAM`, applied and on, and one order whose item it starts a run on. */
@@ -136,10 +130,10 @@ const insertRun = (id: string) =>
         insert into Run (
           id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
           lineItemId, lineItemTitle, variantTitle, sku, quantity,
-          lineItemProperties, source, status, createdAt, updatedAt
+          lineItemProperties, status, createdAt, updatedAt
         ) values (
           ${id}, 'wf', 'Mugs', ${ORDER_ID}, '#1001', 0,
-          ${LINE_ITEM_ID}, 'Mug', null, null, 1, '[]', 'manual', 'active', 0, 0
+          ${LINE_ITEM_ID}, 'Mug', null, null, 1, '[]', 'active', 0, 0
         )
       `,
     ),
@@ -161,8 +155,8 @@ describe("data model", () => {
         const orphan = yield* Effect.flip(sql`
           insert into OrderLineItem (
             id, orderId, title, quantity, currentQuantity, productTags,
-            properties, requiresShipping
-          ) values ('orphan', 'gid://shopify/Order/none', 'Mug', 1, 1, '[]', '[]', 1)
+            properties
+          ) values ('orphan', 'gid://shopify/Order/none', 'Mug', 1, 1, '[]', '[]')
         `);
         strictEqual(orphan._tag, "SqlError");
         yield* (yield* OrderRepository).upsertOrder({
@@ -181,8 +175,8 @@ describe("data model", () => {
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         const insert = (id: string, name: string, tag: string) => sql`
-          insert into Workflow (id, name, tag, createdAt, updatedAt)
-          values (${id}, ${name}, ${tag}, 0, 0)
+          insert into Workflow (id, name, tag, updatedAt)
+          values (${id}, ${name}, ${tag}, 0)
         `;
         yield* insert("w1", "Mugs", "mug");
         const sameTag = yield* Effect.flip(insert("w2", "Cups", "mug"));
@@ -197,12 +191,12 @@ describe("data model", () => {
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         yield* sql`
-          insert into Workflow (id, name, tag, createdAt, updatedAt)
-          values ('w1', 'Mugs', 'mug', 0, 0)
+          insert into Workflow (id, name, tag, updatedAt)
+          values ('w1', 'Mugs', 'mug', 0)
         `;
         const draft = sql`
-          insert into WorkflowDraft (workflowId, createdAt, updatedAt)
-          values ('w1', 0, 0)
+          insert into WorkflowDraft (workflowId, updatedAt)
+          values ('w1', 0)
         `;
         yield* draft;
         const second = yield* Effect.flip(draft);
@@ -214,7 +208,6 @@ describe("data model", () => {
           readonly name: string;
         }>`select name from pragma_table_info('WorkflowDraft')`;
         deepStrictEqual(columns.map((column) => column.name).toSorted(), [
-          "createdAt",
           "updatedAt",
           "workflowId",
         ]);

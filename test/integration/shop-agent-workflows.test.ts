@@ -533,22 +533,17 @@ const seedOrder = (
               processedAt,
               updatedAt: processedAt,
               cancelledAt: null,
-              closedAt: null,
-              financialStatus: "PAID",
               fulfillmentStatus: "UNFULFILLED",
               fullyPaid: true,
               note: null,
               lineItemsTruncated: false,
               syncedAt: processedAt,
-              syncSource: "manual",
               ...order,
             },
             lineItems: [
               {
                 id: "gid://shopify/LineItem/1",
                 orderId: "gid://shopify/Order/1",
-                productId: null,
-                variantId: null,
                 title: "Necklace",
                 variantTitle: null,
                 sku: null,
@@ -557,7 +552,6 @@ const seedOrder = (
                 productTags: [...productTags],
                 matchedWorkflowIds: [],
                 properties: [],
-                requiresShipping: true,
               },
             ],
           });
@@ -618,7 +612,6 @@ describe("ShopAgent workflow run callables", () => {
     });
     strictEqual(attached._tag, "Ok");
     if (attached._tag !== "Ok") return;
-    strictEqual(attached.run.source, "manual");
     strictEqual(attached.run.orderName, "#1001");
     strictEqual(attached.replaced, null);
 
@@ -692,7 +685,6 @@ describe("ShopAgent workflow run callables", () => {
     // deposit, which is exactly what automatic starts withhold.
     const unpaid = await attachTo("wf-attach-unpaid.myshopify.com", {
       fullyPaid: false,
-      financialStatus: "PENDING",
     });
     strictEqual(unpaid._tag, "Ok");
   });
@@ -1151,7 +1143,6 @@ describe("ShopAgent workflow run callables", () => {
     strictEqual(blocked?.run.blockReason, "waiting on stock");
     deepStrictEqual<unknown>(blocked?.run.blockedBy, {
       role: "member",
-      memberId,
       email: memberEmail,
     });
     strictEqual(blocked?.run.note, "spelling confirmed");
@@ -1373,9 +1364,7 @@ describe("ShopAgent seed callables", () => {
     const runs = await agent.merchantListRunsForOrder({
       orderId: seedOrderId(1),
     });
-    expect(runs.map(({ run }) => [run.workflowName, run.source])).toEqual([
-      ["Board", "manual"],
-    ]);
+    expect(runs.map(({ run }) => run.workflowName)).toEqual(["Board"]);
     const [chosen] = await ordersPage(agent);
     strictEqual(
       chosen === undefined ? null : Domain.productionState(chosen),
@@ -1475,20 +1464,18 @@ describe("ShopAgent seed callables", () => {
         .storage;
       sql.exec(
         `insert or replace into ShopOrder
-           (id, legacyId, name, processedAt, updatedAt, cancelledAt, closedAt,
-            financialStatus, fulfillmentStatus, fullyPaid, note,
-            lineItemsTruncated, syncedAt, syncSource)
-         values ('gid://shopify/Order/synced-1', 'synced-1', '#5001', 1, 1, null, null,
-                 'PAID', 'UNFULFILLED', 1, null, 0, 1, 'webhook')`,
+           (id, legacyId, name, processedAt, updatedAt, cancelledAt,
+            fulfillmentStatus, fullyPaid, note, lineItemsTruncated, syncedAt)
+         values ('gid://shopify/Order/synced-1', 'synced-1', '#5001', 1, 1, null,
+                 'UNFULFILLED', 1, null, 0, 1)`,
       );
       sql.exec(
         `insert or replace into OrderLineItem
-           (id, orderId, productId, variantId, title, variantTitle, sku, quantity,
-            currentQuantity, productTags,
-            matchedWorkflowIds, properties, requiresShipping)
+           (id, orderId, title, variantTitle, sku, quantity,
+            currentQuantity, productTags, matchedWorkflowIds, properties)
          values ('gid://shopify/Order/synced-1/line-1', 'gid://shopify/Order/synced-1',
-                 null, null, 'Board', null, null, 1, 1, '["board"]',
-                 '["a-workflow-this-seed-deletes"]', '[]', 1)`,
+                 'Board', null, null, 1, 1, '["board"]',
+                 '["a-workflow-this-seed-deletes"]', '[]')`,
       );
     });
 

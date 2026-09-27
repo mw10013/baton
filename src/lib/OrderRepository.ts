@@ -111,11 +111,13 @@ export interface UsageFlush {
   readonly remaining: number;
 }
 
+/**
+ * A dedupe record, not a history: the delivery id, and when it arrived for
+ * the age sweep. The topic and order are not kept because nothing reads a
+ * past delivery; the logs carry both.
+ */
 export interface WebhookDelivery {
   readonly webhookId: string;
-  readonly topic: string;
-  readonly orderId: string;
-  readonly triggeredAt: number;
   readonly receivedAt: number;
 }
 
@@ -156,7 +158,7 @@ const OPEN = "fulfillmentStatus <> 'FULFILLED' and cancelledAt is null";
 /**
  * {@link OPEN} on an aliased `ShopOrder`, for statements that also read
  * `Run`: qualified so the predicate cannot bind to a run column of
- * the same name (both tables carry a `closedAt`).
+ * the same name (both tables carry `id` and `note`).
  */
 const openAs = (alias: string) =>
   `${alias}.fulfillmentStatus <> 'FULFILLED' and ${alias}.cancelledAt is null`;
@@ -562,8 +564,7 @@ export class OrderRepository extends Context.Service<
 
       const orderColumns = sql.literal(
         `id, legacyId, name, processedAt, updatedAt, cancelledAt,
-         closedAt, financialStatus, fulfillmentStatus, fullyPaid, note,
-         lineItemsTruncated, syncedAt, syncSource`,
+         fulfillmentStatus, fullyPaid, note, lineItemsTruncated, syncedAt`,
       );
 
       /**
@@ -629,28 +630,25 @@ export class OrderRepository extends Context.Service<
           lineItems,
           (item) => sql`
             insert into OrderLineItem (
-              id, orderId, productId, variantId, title, variantTitle, sku,
+              id, orderId, title, variantTitle, sku,
               quantity, currentQuantity, productTags, matchedWorkflowIds,
-              properties, requiresShipping
+              properties
             ) values (
-              ${item.id}, ${item.orderId}, ${item.productId}, ${item.variantId},
+              ${item.id}, ${item.orderId},
               ${item.title}, ${item.variantTitle}, ${item.sku},
               ${item.quantity}, ${item.currentQuantity},
               ${json(item.productTags)}, ${json(item.matchedWorkflowIds)},
-              ${json(item.properties)}, ${bit(item.requiresShipping)}
+              ${json(item.properties)}
             )
             on conflict(id) do update set
               orderId = excluded.orderId,
-              productId = excluded.productId,
-              variantId = excluded.variantId,
               title = excluded.title,
               variantTitle = excluded.variantTitle,
               sku = excluded.sku,
               quantity = excluded.quantity,
               currentQuantity = excluded.currentQuantity,
               productTags = excluded.productTags,
-              properties = excluded.properties,
-              requiresShipping = excluded.requiresShipping
+              properties = excluded.properties
           `,
           { discard: true },
         );
@@ -894,17 +892,15 @@ export class OrderRepository extends Context.Service<
                 const written = yield* sql`
                 insert into ShopOrder (
                   id, legacyId, name, processedAt, updatedAt,
-                  cancelledAt, closedAt, financialStatus, fulfillmentStatus,
+                  cancelledAt, fulfillmentStatus,
                   fullyPaid, note,
-                  lineItemsTruncated, syncedAt, syncSource
+                  lineItemsTruncated, syncedAt
                 ) values (
                   ${order.id}, ${order.legacyId}, ${order.name},
                   ${order.processedAt}, ${order.updatedAt},
-                  ${order.cancelledAt}, ${order.closedAt},
-                  ${order.financialStatus}, ${order.fulfillmentStatus},
+                  ${order.cancelledAt}, ${order.fulfillmentStatus},
                   ${bit(order.fullyPaid)}, ${order.note},
-                  ${bit(order.lineItemsTruncated)}, ${order.syncedAt},
-                  ${order.syncSource}
+                  ${bit(order.lineItemsTruncated)}, ${order.syncedAt}
                 )
                 on conflict(id) do update set
                   legacyId = excluded.legacyId,
@@ -912,14 +908,11 @@ export class OrderRepository extends Context.Service<
                   processedAt = excluded.processedAt,
                   updatedAt = excluded.updatedAt,
                   cancelledAt = excluded.cancelledAt,
-                  closedAt = excluded.closedAt,
-                  financialStatus = excluded.financialStatus,
                   fulfillmentStatus = excluded.fulfillmentStatus,
                   fullyPaid = excluded.fullyPaid,
                   note = excluded.note,
                   lineItemsTruncated = excluded.lineItemsTruncated,
-                  syncedAt = excluded.syncedAt,
-                  syncSource = excluded.syncSource
+                  syncedAt = excluded.syncedAt
                 where excluded.updatedAt >= ShopOrder.updatedAt
                 returning id
               `;
@@ -1376,11 +1369,8 @@ export class OrderRepository extends Context.Service<
         )(function* (delivery: WebhookDelivery) {
           const inserted = yield* sql`
             insert or ignore into WebhookDelivery
-              (webhookId, topic, orderId, triggeredAt, receivedAt)
-            values (
-              ${delivery.webhookId}, ${delivery.topic}, ${delivery.orderId},
-              ${delivery.triggeredAt}, ${delivery.receivedAt}
-            )
+              (webhookId, receivedAt)
+            values (${delivery.webhookId}, ${delivery.receivedAt})
             returning webhookId
           `;
           /**

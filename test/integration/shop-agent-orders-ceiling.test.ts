@@ -58,7 +58,6 @@ const webhook = (orderId: string, webhookId: string) => ({
   orderId,
   topic: "orders/paid",
   webhookId,
-  triggeredAt: 1000,
   updatedAt: 1000,
 });
 

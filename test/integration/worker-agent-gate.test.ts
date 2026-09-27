@@ -244,7 +244,6 @@ describe("ShopAgent connect gate", () => {
           planHandle: null,
           planHandleExpiresAt: Date.now() + 60 * 60 * 1000,
           planBoundaryAt: null,
-          planCycleStartAt: null,
         });
         yield* repository.addMember({
           shop,
@@ -276,7 +275,6 @@ describe("ShopAgent connect gate", () => {
           planHandle: "baton-basic",
           planHandleExpiresAt: Date.now() + 60 * 60 * 1000,
           planBoundaryAt: null,
-          planCycleStartAt: null,
         });
         const included = Domain.entitlementsOfPlan("basic").membersIncluded;
         for (let index = 0; index < included; index += 1)

@@ -197,7 +197,6 @@ export const runShopAgentOrdersStream = <E = never>({
           Effect.gen(function* () {
             const shopOrder = toShopOrder({
               node: order,
-              source: "bulk",
               syncedAt,
               lineItemsTruncated: truncated,
             });

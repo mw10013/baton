@@ -115,7 +115,7 @@ export function Prose({
 
 /** The person behind a block, as the banner's attribution line names them ("m2@m.com · 3m ago", "Merchant · 3m ago"). */
 export const blockedByLabel = (run: {
-  readonly blockedBy: Domain.Actor | null;
+  readonly blockedBy: Domain.ActorDisplay | null;
 }) => (run.blockedBy === null ? null : Domain.actorLabel(run.blockedBy));
 
 /**
@@ -265,7 +265,7 @@ export function BlockBanner({
   readonly run: {
     readonly blockedAt: number | null;
     readonly blockReason: string | null;
-    readonly blockedBy: Domain.Actor | null;
+    readonly blockedBy: Domain.ActorDisplay | null;
   };
   readonly actions?: React.ReactNode;
 }) {

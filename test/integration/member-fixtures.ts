@@ -91,7 +91,6 @@ export const seedShop = (shop: Domain.Shop) =>
       planHandle: SEEDED_PLAN_HANDLE,
       planHandleExpiresAt: Date.now() + 60 * 60 * 1000,
       planBoundaryAt: null,
-      planCycleStartAt: null,
     });
   });
 

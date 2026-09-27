@@ -1196,7 +1196,7 @@ describe("WorkflowRepository workflow and draft", () => {
         });
         const draft = yield* repo.createDraft({ workflowId: w.id });
         const again = yield* repo.createDraft({ workflowId: w.id });
-        strictEqual(again.createdAt, draft.createdAt);
+        deepStrictEqual(again, draft);
         const forked = yield* found(w.id);
         deepStrictEqual(taskNames(forked.draft?.tasks ?? []), [
           "Cut",

@@ -237,7 +237,6 @@ export class SubscriptionPlan extends Context.Service<
               contract?.boundaryAt ?? null,
             ),
             planBoundaryAt: contract?.boundaryAt ?? null,
-            planCycleStartAt: contract?.cycleStartAt ?? null,
           })
           .pipe(
             Effect.mapError(

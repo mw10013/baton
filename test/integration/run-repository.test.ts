@@ -127,14 +127,11 @@ const order = (
   processedAt: PROCESSED_AT,
   updatedAt: PROCESSED_AT,
   cancelledAt: null,
-  closedAt: null,
-  financialStatus: "PAID",
   fulfillmentStatus: "UNFULFILLED",
   fullyPaid: true,
   note: "Gift wrap please",
   lineItemsTruncated: false,
   syncedAt: PROCESSED_AT,
-  syncSource: "webhook",
   ...overrides,
 });
 
@@ -145,8 +142,6 @@ const lineItem = (
 ): Domain.OrderLineItem => ({
   id: `gid://shopify/LineItem/${String(n)}`,
   orderId: ORDER_ID,
-  productId: null,
-  variantId: null,
   title: `Item ${String(n)}`,
   variantTitle: null,
   sku: null,
@@ -155,7 +150,6 @@ const lineItem = (
   productTags,
   matchedWorkflowIds: [],
   properties: [{ key: "Engraving", value: `Hello ${String(n)}` }],
-  requiresShipping: true,
   ...overrides,
 });
 
@@ -523,7 +517,6 @@ describe("RunRepository one row per item", () => {
             teams: TEAMS,
             order: order(),
             lineItem: items[0] ?? lineItem(1, ["a"]),
-            source: "manual",
           }),
         );
         strictEqual(set.replaced?.id, before.run.id);
@@ -555,7 +548,6 @@ describe("RunRepository one row per item", () => {
             teams: TEAMS,
             order: order(),
             lineItem: items[0] ?? lineItem(1, ["a"]),
-            source: "manual",
           })
           .pipe(Effect.flip);
         strictEqual(refused._tag, "RunNotOpenError");
@@ -593,7 +585,6 @@ describe("RunRepository one row per item", () => {
             teams: TEAMS,
             order: order(),
             lineItem: items[0] ?? lineItem(1, ["a"]),
-            source: "manual",
           }),
         );
         // A new row from the definition, even of the closed workflow:
@@ -625,12 +616,12 @@ describe("RunRepository one row per item", () => {
           insert into Run (
             id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
             lineItemId, lineItemTitle, variantTitle, sku, quantity,
-            lineItemProperties, source, status,
+            lineItemProperties, status,
             createdAt, updatedAt
           ) values (
             'raw', ${b.id}, 'Workflow b', ${ORDER_ID}, '#1001', 0,
             ${live.run.lineItemId}, 'Item', null, null, 1,
-            '[]', 'manual', 'active', 0, 0
+            '[]', 'active', 0, 0
           )
         `);
         strictEqual(raw._tag, "SqlError");
@@ -645,12 +636,12 @@ describe("RunRepository one row per item", () => {
           insert into Run (
             id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
             lineItemId, lineItemTitle, variantTitle, sku, quantity,
-            lineItemProperties, source, status,
+            lineItemProperties, status,
             createdAt, updatedAt
           ) values (
             'raw', ${b.id}, 'Workflow b', ${ORDER_ID}, '#1001', 0,
             ${live.run.lineItemId}, 'Item', null, null, 1,
-            '[]', 'manual', 'active', 0, 0
+            '[]', 'active', 0, 0
           )
         `);
         strictEqual(again._tag, "SqlError");
@@ -686,12 +677,12 @@ describe("RunRepository one row per item", () => {
           insert into Run (
             id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
             lineItemId, lineItemTitle, variantTitle, sku, quantity,
-            lineItemProperties, source, status,
+            lineItemProperties, status,
             createdAt, updatedAt
           ) values (
             'busy', 'other', 'Other', 'o2', 'o2', 0,
             'o2/li', 'Item', null, null, 1,
-            '[]', 'manual', 'active', 0, 0
+            '[]', 'active', 0, 0
           )
         `;
         // o3 would come out ambiguous — the rival's tag is on it too — and
@@ -725,7 +716,6 @@ describe("RunRepository.reconcileOrder", () => {
         const runs = yield* runsForOrder();
         strictEqual(runs.length, 2);
         const [first] = runs;
-        strictEqual(first?.run.source, "tag");
         strictEqual(first?.run.status, "active");
         strictEqual(Domain.runIsUnstarted(first?.tasks ?? []), true);
         strictEqual(first?.run.quantity, 2);
@@ -803,18 +793,18 @@ describe("RunRepository.reconcileOrder", () => {
         yield* seed;
         const items = [lineItem(1, ["a"])];
         const unpaid = yield* upsertAndReconcile(
-          order({ fullyPaid: false, financialStatus: "PENDING" }),
+          order({ fullyPaid: false }),
           items,
         );
         strictEqual(unpaid.created, 0);
         strictEqual((yield* runsForOrder()).length, 0);
         const paid = yield* upsertAndReconcile(
-          order({ updatedAt: PROCESSED_AT + 1, syncSource: "bulk" }),
+          order({ updatedAt: PROCESSED_AT + 1 }),
           items,
         );
         strictEqual(paid.created, 1);
         const manual = yield* upsertAndReconcile(
-          order({ updatedAt: PROCESSED_AT + 2, syncSource: "manual" }),
+          order({ updatedAt: PROCESSED_AT + 2 }),
           items,
         );
         strictEqual(manual.created, 0);
@@ -837,17 +827,14 @@ describe("RunRepository.reconcileOrder", () => {
           teams: TEAMS,
           order: old,
           lineItem: items[0] ?? lineItem(1, ["a"]),
-          source: "manual",
         });
         strictEqual(Option.isSome(attached), true);
-        strictEqual(Option.getOrThrow(attached).run.source, "manual");
         strictEqual(Option.getOrThrow(attached).replaced, null);
         const duplicate = yield* runs.setRun({
           workflow: detail,
           teams: TEAMS,
           order: old,
           lineItem: items[0] ?? lineItem(1, ["a"]),
-          source: "manual",
         });
         strictEqual(Option.isNone(duplicate), true);
       }),
@@ -1105,7 +1092,6 @@ describe("RunRepository.reconcileOrder", () => {
             order({
               updatedAt: PROCESSED_AT + 1,
               fullyPaid: false,
-              financialStatus: "PENDING",
             }),
             threeLines,
           );
@@ -1149,7 +1135,6 @@ describe("RunRepository.reconcileOrder", () => {
             order({
               updatedAt: PROCESSED_AT + 1,
               fullyPaid: false,
-              financialStatus: "PARTIALLY_REFUNDED",
             }),
             [
               lineItem(1, ["a"], { currentQuantity: 0 }),
@@ -1285,7 +1270,6 @@ describe("RunRepository.reconcileOrder", () => {
               teams: TEAMS,
               order: order(),
               lineItem: lineItem(3, []),
-              source: "manual",
             }),
           ).run;
           const counts = yield* upsertAndReconcile(
@@ -1457,7 +1441,7 @@ describe("RunRepository.reconcileOrder", () => {
 });
 
 describe("RunRepository tasks, workflows list, blocks, delete", () => {
-  it("markTaskDone enforces team, order, and terminal state and records doneBy", () =>
+  it("markTaskDone enforces team, order, and terminal state and records who did it", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -1480,7 +1464,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           yield* runs.getRun({ runId: detail.run.id }),
         );
         strictEqual(active.run.status, "active");
-        strictEqual(active.tasks[0]?.doneBy, "member-1");
+        strictEqual(active.tasks[0]?.doneByEmail, "member-1@example.com");
 
         const repeat = yield* complete(detail, 1, [TEAM_A.id]).pipe(
           Effect.flip,
@@ -1997,7 +1981,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           yield* runs.getRun({ runId: detail.run.id }),
         );
         strictEqual(started.run.status, "active");
-        strictEqual(started.tasks[0]?.startedBy, "m1");
+        strictEqual(started.tasks[0]?.startedByEmail, "m1@example.com");
         strictEqual(started.tasks[0]?.startedAt !== null, true);
         strictEqual(started.tasks[0]?.doneAt, null);
 
@@ -2009,15 +1993,15 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         const again = Option.getOrThrow(
           yield* runs.getRun({ runId: detail.run.id }),
         );
-        strictEqual(again.tasks[0]?.startedBy, "m1");
+        strictEqual(again.tasks[0]?.startedByEmail, "m1@example.com");
 
         // Done without Start backfills who started.
         yield* complete(detail, 2, [TEAM_B.id]);
         const materials = Option.getOrThrow(
           yield* runs.getRun({ runId: detail.run.id }),
         ).tasks[1];
-        strictEqual(materials?.startedBy, "member-1");
-        strictEqual(materials?.doneBy, "member-1");
+        strictEqual(materials?.startedByEmail, "member-1@example.com");
+        strictEqual(materials?.doneByEmail, "member-1@example.com");
         strictEqual(materials?.startedAt, materials?.doneAt);
       }),
     ));
@@ -2068,9 +2052,8 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           yield* runs.getRun({ runId: detail.run.id }),
         );
         strictEqual(undone.tasks[0]?.doneAt, null);
-        strictEqual(undone.tasks[0]?.doneBy, null);
+        strictEqual(undone.tasks[0]?.doneByEmail, null);
         strictEqual(undone.tasks[0]?.startedAt, null);
-        strictEqual(undone.tasks[0]?.startedBy, null);
         strictEqual(undone.tasks[0]?.startedByEmail, null);
         strictEqual(undone.tasks[0]?.startedByRole, null);
         strictEqual(undone.run.status, "active");
@@ -2163,7 +2146,6 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         );
         const task = after.tasks[0];
         strictEqual(task?.startedAt, null);
-        strictEqual(task?.startedBy, null);
         strictEqual(task?.startedByEmail, null);
         strictEqual(task?.startedByRole, null);
         strictEqual(task?.reopenedAt, null);
@@ -2633,10 +2615,9 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         );
         strictEqual(Domain.runIsBlocked(blocked.run), true);
         strictEqual(blocked.run.blockReason, "Out of chain");
-        // Attribution only: the gate's team ids are not stored.
+        // Role and email only: the gate's member id and team ids are not stored.
         deepStrictEqual<unknown>(blocked.run.blockedBy, {
           role: "member",
-          memberId: "m1",
           email: "m1@example.com",
         });
         const rows = yield* runListRows({ teamIds: [TEAM_B.id] });
@@ -2719,11 +2700,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           teamIds: [TEAM_A.id],
           reason: reason("Waiting on stones"),
         });
-        const by = {
-          role: "member",
-          memberId: "m1",
-          email: "m1@example.com",
-        };
+        const by = { role: "member", email: "m1@example.com" };
         const at = (yield* blockOf()).at;
 
         const wrongTeam = yield* runs
@@ -2780,10 +2757,8 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           yield* runs.getRun({ runId: detail.run.id }),
         ).tasks[0];
         strictEqual(task?.doneByRole, "merchant");
-        strictEqual(task?.doneBy, null);
         strictEqual(task?.doneByEmail, null);
         strictEqual(task?.startedByRole, "merchant");
-        strictEqual(task?.startedBy, null);
         strictEqual(task?.startedByEmail, null);
         deepStrictEqual<unknown>(Domain.taskDoneBy(task), {
           role: "merchant",
@@ -2848,7 +2823,6 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         yield* runs.reopenTask({ runTaskId: artwork, actor: MERCHANT });
         const ready = yield* taskNow();
         strictEqual(ready.startedAt, null);
-        strictEqual(ready.startedBy, null);
         strictEqual(ready.startedByEmail, null);
         strictEqual(ready.startedByRole, null);
         strictEqual(ready.doneAt, null);
@@ -3200,7 +3174,6 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           teams: TEAMS,
           order: order(),
           lineItem: items[0] ?? lineItem(1, ["a"]),
-          source: "manual",
         });
         strictEqual(Option.isSome(attached), true);
         strictEqual(Option.getOrThrow(attached).replaced?.id, orphaned.run.id);
@@ -3434,7 +3407,6 @@ describe("RunRepository open-run ceiling", () => {
             teams: TEAMS,
             order: target.order,
             lineItem: target.lineItem,
-            source: "manual",
           });
           strictEqual(Option.isSome(replaced), true);
           // A second item has nowhere to go.
@@ -3452,7 +3424,6 @@ describe("RunRepository open-run ceiling", () => {
               teams: TEAMS,
               order: second.order,
               lineItem: second.lineItem,
-              source: "manual",
             }),
           );
           strictEqual(refused._tag, "RunLimitError");
@@ -3532,7 +3503,6 @@ describe("RunRepository metering", () => {
           teams: TEAMS,
           order: stored.order,
           lineItem: stored.lineItem,
-          source: "manual",
         });
         strictEqual((yield* usage()).ordersThisCycle, 1);
         deepStrictEqual(yield* usageEvents(), [

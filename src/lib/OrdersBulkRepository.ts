@@ -47,8 +47,6 @@ query BulkOrdersQuery {
         processedAt
         updatedAt
         cancelledAt
-        closedAt
-        displayFinancialStatus
         displayFulfillmentStatus
         fullyPaid
         note
@@ -62,10 +60,8 @@ query BulkOrdersQuery {
               sku
               quantity
               currentQuantity
-              requiresShipping
               customAttributes { key value }
-              variant { id }
-              product { id tags }
+              product { tags }
             }
           }
         }

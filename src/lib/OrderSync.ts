@@ -9,7 +9,7 @@ import * as Domain from "@/lib/Domain";
  *
  * Timestamps decode to epoch milliseconds ({@link Domain.EpochMillis}); the
  * enum-shaped fields stay `String` because Shopify may add a value to
- * `OrderDisplayFinancialStatus` at any time and a new status must render as
+ * `OrderDisplayFulfillmentStatus` at any time and a new status must render as
  * itself rather than fail a decode deep inside a stream fold.
  */
 export const OrderNode = Schema.Struct({
@@ -19,8 +19,6 @@ export const OrderNode = Schema.Struct({
   processedAt: Domain.EpochMillis,
   updatedAt: Domain.EpochMillis,
   cancelledAt: Schema.NullOr(Domain.EpochMillis),
-  closedAt: Schema.NullOr(Domain.EpochMillis),
-  displayFinancialStatus: Schema.NullOr(Schema.String),
   displayFulfillmentStatus: Schema.String,
   fullyPaid: Schema.Boolean,
   note: Schema.NullOr(Schema.String),
@@ -28,8 +26,8 @@ export const OrderNode = Schema.Struct({
 export type OrderNode = typeof OrderNode.Type;
 
 /**
- * `variant` and `product` are objects rather than connections, so the bulk
- * export inlines them on the line-item line instead of emitting a third line
+ * `product` is an object rather than a connection, so the bulk export
+ * inlines it on the line-item line instead of emitting a third line
  * type — which is why one schema serves both paths here too.
  */
 export const LineItemNode = Schema.Struct({
@@ -39,23 +37,17 @@ export const LineItemNode = Schema.Struct({
   sku: Schema.NullOr(Schema.String),
   quantity: Schema.Number,
   currentQuantity: Schema.Number,
-  requiresShipping: Schema.Boolean,
   customAttributes: Schema.Array(Domain.LineItemProperty),
-  variant: Schema.NullOr(Schema.Struct({ id: Schema.String })),
-  product: Schema.NullOr(
-    Schema.Struct({ id: Schema.String, tags: Schema.Array(Schema.String) }),
-  ),
+  product: Schema.NullOr(Schema.Struct({ tags: Schema.Array(Schema.String) })),
 });
 export type LineItemNode = typeof LineItemNode.Type;
 
 export const toShopOrder = ({
   node,
-  source,
   syncedAt,
   lineItemsTruncated,
 }: {
   readonly node: OrderNode;
-  readonly source: Domain.OrderSyncSource;
   readonly syncedAt: number;
   /**
    * Whether this fetch stored less than the order has: another page on the
@@ -72,14 +64,11 @@ export const toShopOrder = ({
   processedAt: node.processedAt,
   updatedAt: node.updatedAt,
   cancelledAt: node.cancelledAt,
-  closedAt: node.closedAt,
-  financialStatus: node.displayFinancialStatus,
   fulfillmentStatus: node.displayFulfillmentStatus,
   fullyPaid: node.fullyPaid,
   note: node.note,
   lineItemsTruncated,
   syncedAt,
-  syncSource: source,
 });
 
 export const toOrderLineItem = (
@@ -88,8 +77,6 @@ export const toOrderLineItem = (
 ): Domain.OrderLineItem => ({
   id: node.id,
   orderId,
-  productId: node.product?.id ?? null,
-  variantId: node.variant?.id ?? null,
   title: node.title,
   variantTitle: node.variantTitle,
   sku: node.sku,
@@ -100,7 +87,6 @@ export const toOrderLineItem = (
   matchedWorkflowIds: [],
   /** Shopify's name for the list; the domain calls it properties (see {@link Domain.LineItemProperty}). */
   properties: node.customAttributes,
-  requiresShipping: node.requiresShipping,
 });
 
 /**
@@ -126,8 +112,6 @@ export const orderSyncQuery = `#graphql
       processedAt
       updatedAt
       cancelledAt
-      closedAt
-      displayFinancialStatus
       displayFulfillmentStatus
       fullyPaid
       note
@@ -140,10 +124,8 @@ export const orderSyncQuery = `#graphql
           sku
           quantity
           currentQuantity
-          requiresShipping
           customAttributes { key value }
-          variant { id }
-          product { id tags }
+          product { tags }
         }
       }
     }

@@ -36,7 +36,7 @@ const shopGid = Schema.decodeUnknownSync(Domain.ShopGid)(
 
 const shopSession = (): Omit<
   Domain.ShopSession,
-  "planHandle" | "planHandleExpiresAt" | "planBoundaryAt" | "planCycleStartAt"
+  "planHandle" | "planHandleExpiresAt" | "planBoundaryAt"
 > => ({
   shop,
   shopGid,
@@ -53,7 +53,6 @@ const seedShopSession = (
   expiresAt: number | null,
   cached: {
     readonly planBoundaryAt?: number | null;
-    readonly planCycleStartAt?: number | null;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -64,7 +63,6 @@ const seedShopSession = (
       planHandle,
       planHandleExpiresAt: expiresAt,
       planBoundaryAt: cached.planBoundaryAt ?? null,
-      planCycleStartAt: cached.planCycleStartAt ?? null,
     });
   });
 
@@ -328,7 +326,7 @@ describe("SubscriptionPlan", () => {
     }),
   );
 
-  it.effect("caches the boundary and the cycle it names", () =>
+  it.effect("caches the boundary", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(1000);
       const pushes = yield* makePushes;
@@ -353,7 +351,6 @@ describe("SubscriptionPlan", () => {
             yield* (yield* Repository).findShopSession(shop),
           );
           assert.strictEqual(stored.planBoundaryAt, 601_000);
-          assert.strictEqual(stored.planCycleStartAt, 500);
         }),
         { pushes },
       );

@@ -610,8 +610,8 @@ export class WorkflowRepository extends Context.Service<
         Effect.gen(function* () {
           const [draft] = yield* decodeDrafts(
             yield* sql`
-              insert into WorkflowDraft (workflowId, createdAt, updatedAt)
-              values (${workflowId}, ${now}, ${now})
+              insert into WorkflowDraft (workflowId, updatedAt)
+              values (${workflowId}, ${now})
               returning *
             `,
           );
@@ -1140,9 +1140,9 @@ export class WorkflowRepository extends Context.Service<
                   seeded.push({ name: workflow.name, id: workflowId });
                   yield* sql`
                     insert into Workflow
-                      (id, name, tag, activatedAt, createdAt, updatedAt)
+                      (id, name, tag, activatedAt, updatedAt)
                     values
-                      (${workflowId}, ${workflow.name}, ${workflow.tag}, ${workflow.active ? now : null}, ${now}, ${now})
+                      (${workflowId}, ${workflow.name}, ${workflow.tag}, ${workflow.active ? now : null}, ${now})
                   `;
                   yield* writeTasks(
                     sql.literal("WorkflowTask"),
@@ -1184,9 +1184,9 @@ export class WorkflowRepository extends Context.Service<
                 const [workflow] = yield* decodeWorkflows(
                   yield* sql`
                     insert into Workflow
-                      (id, name, tag, activatedAt, createdAt, updatedAt)
+                      (id, name, tag, activatedAt, updatedAt)
                     values
-                      (${crypto.randomUUID()}, ${name}, ${tag}, null, ${now}, ${now})
+                      (${crypto.randomUUID()}, ${name}, ${tag}, null, ${now})
                     returning *
                   `,
                 );
@@ -1227,9 +1227,9 @@ export class WorkflowRepository extends Context.Service<
                 const [workflow] = yield* decodeWorkflows(
                   yield* sql`
                     insert into Workflow
-                      (id, name, tag, activatedAt, createdAt, updatedAt)
+                      (id, name, tag, activatedAt, updatedAt)
                     values
-                      (${copyId}, ${name}, ${tag}, null, ${now}, ${now})
+                      (${copyId}, ${name}, ${tag}, null, ${now})
                     returning *
                   `,
                 );

@@ -370,14 +370,11 @@ const storedOrder = (updatedAt: number): Domain.ShopOrder => ({
   processedAt: updatedAt,
   updatedAt,
   cancelledAt: null,
-  closedAt: null,
-  financialStatus: "PAID",
   fulfillmentStatus: "UNFULFILLED",
   fullyPaid: true,
   note: null,
   lineItemsTruncated: false,
   syncedAt: updatedAt,
-  syncSource: "bulk",
 });
 
 const seedOrder = (updatedAt: number) =>
@@ -431,7 +428,7 @@ const readWebhookDelivery = (webhookId: string) =>
           Effect.gen(function* () {
             const sql = yield* SqlClient.SqlClient;
             const rows =
-              yield* sql`select orderId from WebhookDelivery where webhookId = ${webhookId}`;
+              yield* sql`select webhookId from WebhookDelivery where webhookId = ${webhookId}`;
             return rows;
           }).pipe(
             Effect.provide(SqliteClient.layer({ storage: state.storage })),
@@ -497,7 +494,7 @@ describe("orders webhooks", () => {
       );
       strictEqual(response.status, 200);
       const { order } = Option.getOrThrow(yield* readOrder());
-      strictEqual(order.syncSource, "bulk");
+      strictEqual(order.syncedAt, Date.parse("2026-09-02T12:00:00Z"));
       strictEqual(order.updatedAt, Date.parse("2026-09-02T12:00:00Z"));
     }).pipe(Effect.provide(shopifyTestLayer())),
   );
@@ -518,7 +515,7 @@ describe("orders webhooks", () => {
       strictEqual((yield* send()).status, 200);
       strictEqual((yield* send()).status, 200);
       const { order } = Option.getOrThrow(yield* readOrder());
-      strictEqual(order.syncSource, "bulk");
+      strictEqual(order.syncedAt, Date.parse("2026-09-02T12:00:00Z"));
     }).pipe(Effect.provide(shopifyTestLayer())),
   );
 
@@ -545,10 +542,11 @@ describe("orders webhooks", () => {
         );
         // Nothing in `test/` stubs the Admin API, so the fetch fails and a
         // success is not observable; a 200 here could only mean the stale
-        // guard short-circuited, which the delivery row below rules out too.
+        // guard short-circuited. The delivery row shows the payload resolved
+        // to an order id and reached the object, which records it first.
         notDeepStrictEqual(response.status, 200);
         deepStrictEqual(yield* readWebhookDelivery("wh-edited"), [
-          { orderId: ORDER_ID },
+          { webhookId: "wh-edited" },
         ]);
       }).pipe(Effect.provide(shopifyTestLayer())),
   );

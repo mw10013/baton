@@ -33,7 +33,6 @@ const setPlan = (shop: Domain.Shop, planHandle: string | null) =>
       planHandle,
       planHandleExpiresAt: Date.now() + 60 * 60 * 1000,
       planBoundaryAt: null,
-      planCycleStartAt: null,
     });
   });
 
@@ -269,7 +268,6 @@ describe("member workflows list", () => {
           planHandle: null,
           planHandleExpiresAt: Date.now() + 60 * 60 * 1000,
           planBoundaryAt: null,
-          planCycleStartAt: null,
         });
         yield* repository.addMember({
           shop: SHOP,

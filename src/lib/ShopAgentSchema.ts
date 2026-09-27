@@ -92,14 +92,11 @@ export const initializeSchema = Effect.gen(function* () {
       processedAt integer not null,
       updatedAt integer not null,
       cancelledAt integer,
-      closedAt integer,
-      financialStatus text,
       fulfillmentStatus text not null,
       fullyPaid integer not null,
       note text,
       lineItemsTruncated integer not null default 0,
       syncedAt integer not null,
-      syncSource text not null,
       -- Null until Baton first creates a run for the order; the billing
       -- meter's per-order marker, owned by OrderRepository.countOrder.
       countedAt integer
@@ -117,8 +114,6 @@ export const initializeSchema = Effect.gen(function* () {
     create table if not exists OrderLineItem (
       id text primary key,
       orderId text not null references ShopOrder(id) on delete cascade,
-      productId text,
-      variantId text,
       title text not null,
       variantTitle text,
       sku text,
@@ -128,17 +123,13 @@ export const initializeSchema = Effect.gen(function* () {
       -- The workflows whose tags matched at the last reconcile; "ambiguous"
       -- (two or more, no run) is derived from it at read time.
       matchedWorkflowIds text not null default '[]',
-      properties text not null,
-      requiresShipping integer not null
+      properties text not null
     );
     create index if not exists OrderLineItem_orderId on OrderLineItem (orderId);
     -- Shopify's webhook retry dedupe; protocol on
     -- OrderRepository.recordWebhookDelivery.
     create table if not exists WebhookDelivery (
       webhookId text primary key,
-      topic text not null,
-      orderId text not null,
-      triggeredAt integer not null,
       receivedAt integer not null
     );
     -- So the retention sweep walks the oldest rows instead of the table.
@@ -188,7 +179,6 @@ export const initializeSchema = Effect.gen(function* () {
       name text not null check (name = trim(name) and length(name) > 0),
       tag text not null unique check (tag = trim(tag) and length(tag) > 0),
       activatedAt integer,
-      createdAt integer not null,
       updatedAt integer not null
     );
     -- step is the layout, kept dense from 1 by the pure WorkflowLayout
@@ -215,7 +205,6 @@ export const initializeSchema = Effect.gen(function* () {
     create index if not exists WorkflowTask_teamId_idx on WorkflowTask (teamId);
     create table if not exists WorkflowDraft (
       workflowId text primary key references Workflow (id) on delete cascade,
-      createdAt integer not null,
       updatedAt integer not null
     );
     -- Same shape and same position caveat as WorkflowTask.
@@ -248,11 +237,11 @@ export const initializeSchema = Effect.gen(function* () {
       sku text,
       quantity integer not null,
       lineItemProperties text not null,
-      source text not null check (source in ('tag', 'manual')),
       -- Denormalized from the tasks for the workflows list and the
       -- definitions badge (RunRepository's recomputeStatus).
       status text not null check (status in ('active', 'done', 'closed')),
-      -- The one hold a person sets; blockedBy is the JSON Domain.Actor.
+      -- The one hold a person sets; blockedBy is the JSON
+      -- Domain.ActorDisplay (role and email, no id).
       -- blockReason is optional text, so only blockedAt and blockedBy move
       -- as one.
       blockedAt integer,
@@ -278,10 +267,12 @@ export const initializeSchema = Effect.gen(function* () {
       on Run (orderProcessedAt, lineItemId, id) where status = 'active';
     create index if not exists Run_closed_idx
       on Run (closedAt) where status = 'closed';
-    -- *ByRole is the actor discriminator (Domain.Actor): the merchant acts
-    -- from the order page and has no Member row, so the id and email columns
-    -- beside a 'merchant' role are null. reopened* hold the most recent
-    -- reopen only; the check keeps reopenedAt and reopenedByRole one fact.
+    -- *ByRole is the actor discriminator (Domain.ActorDisplay): a 'member'
+    -- role has its email beside it, and a 'merchant' role, who acts from the
+    -- order page and has no Member row, has null. No slot has an id column:
+    -- who did what is a snapshot, never resolved through Member. reopened*
+    -- hold the most recent reopen only; the check keeps reopenedAt and
+    -- reopenedByRole one fact.
     create table if not exists RunTask (
       id text primary key,
       runId text not null references Run (id) on delete cascade,
@@ -293,10 +284,8 @@ export const initializeSchema = Effect.gen(function* () {
       teamName text not null,
       instructions text,
       startedAt integer,
-      startedBy text,
       startedByEmail text,
       doneAt integer,
-      doneBy text,
       doneByEmail text,
       startedByRole text check (startedByRole in ('merchant', 'member')),
       doneByRole text check (doneByRole in ('merchant', 'member')),

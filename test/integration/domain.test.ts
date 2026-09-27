@@ -14,14 +14,11 @@ const order = (
   processedAt: 0,
   updatedAt: 0,
   cancelledAt: null,
-  closedAt: null,
-  financialStatus: "PAID",
   fulfillmentStatus: "UNFULFILLED",
   fullyPaid: true,
   note: null,
   lineItemsTruncated: false,
   syncedAt: 0,
-  syncSource: "webhook",
   ...overrides,
 });
 
@@ -173,7 +170,6 @@ const run = (status: Domain.RunStatus, blocked = false): Domain.Run => ({
   sku: null,
   quantity: 1,
   lineItemProperties: [],
-  source: "tag",
   status,
   blockedAt: blocked ? 1 : null,
   blockReason: null,
@@ -209,8 +205,6 @@ const lineItem = (
 ): Domain.OrderLineItem => ({
   id,
   orderId: "o",
-  productId: null,
-  variantId: null,
   title: "Ring",
   variantTitle: null,
   sku: null,
@@ -221,7 +215,6 @@ const lineItem = (
     Schema.decodeUnknownSync(Domain.WorkflowId)(id),
   ),
   properties: [],
-  requiresShipping: true,
 });
 
 const runOn = (lineItemId: string, status: Domain.RunStatus): Domain.Run => ({
@@ -314,9 +307,8 @@ const runListItem = (
   orderProcessedAt: number,
   overrides: {
     readonly blocked?: boolean;
+    /** The starter's email local part: `<startedBy>@example.com`. */
     readonly startedBy?: string;
-    /** Defaults to `<startedBy>@example.com`; name it to make the id and the email disagree. */
-    readonly startedByEmail?: string;
   } = {},
 ): Domain.RunListItem => ({
   run: {
@@ -335,15 +327,11 @@ const runListItem = (
       teamId: Schema.decodeUnknownSync(Domain.TeamId)("t"),
       teamName: Schema.decodeUnknownSync(Domain.TeamName)("T"),
       startedAt: overrides.startedBy === undefined ? null : 1,
-      startedBy:
-        overrides.startedBy === undefined
-          ? null
-          : Schema.decodeUnknownSync(Domain.MemberId)(overrides.startedBy),
       startedByEmail:
         overrides.startedBy === undefined
           ? null
           : Schema.decodeUnknownSync(Domain.Email)(
-              overrides.startedByEmail ?? `${overrides.startedBy}@example.com`,
+              `${overrides.startedBy}@example.com`,
             ),
       startedByRole: overrides.startedBy === undefined ? null : "member",
     },
@@ -428,29 +416,6 @@ describe("Domain.tierOf", () => {
       "teammates",
     );
     strictEqual(Domain.tierOf(runListItem("early-next", 10), ME), "upNext");
-  });
-
-  /**
-   * The re-added member: removing and re-adding an address mints a new
-   * `Member.id`, so the row taken before that carries an id the connection no
-   * longer has. The email is the snapshot that survives, and the work is still
-   * theirs.
-   */
-  it("keeps a task under Mine when the id changed but the email did not", () => {
-    strictEqual(
-      Domain.tierOf(
-        runListItem("re-added", 20, {
-          startedBy: "old-id",
-          startedByEmail: "me@example.com",
-        }),
-        ME,
-      ),
-      "mine",
-    );
-    strictEqual(
-      Domain.tierOf(runListItem("someone-else", 10, { startedBy: "them" }), ME),
-      "teammates",
-    );
   });
 });
 
@@ -797,11 +762,9 @@ const runTask = (
   teamName: Schema.decodeUnknownSync(Domain.TeamName)("T"),
   instructions: null,
   startedAt: done ? 1 : null,
-  startedBy: null,
   startedByEmail: null,
   startedByRole: null,
   doneAt: done ? 2 : null,
-  doneBy: null,
   doneByEmail: null,
   doneByRole: null,
   reopenedAt: null,
