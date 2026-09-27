@@ -599,10 +599,11 @@ export type TeamId = typeof TeamId.Type;
 
 /**
  * Trimmed on decode for the same structural reason as {@link Email}: the
- * `Team.name` check constraint rejects untrimmed text, and uniqueness is
- * `collate nocase`, so a leading space would otherwise be the difference
+ * `Team.name` check constraint rejects untrimmed text, and uniqueness
+ * compares exactly, so a leading space would otherwise be the difference
  * between a duplicate the database refuses and one it silently accepts.
- * Case is *not* folded — merchants name teams "Cut & Sew", not "cut & sew".
+ * Case is *not* folded: a name is a label compared as typed, so "Sewing" and
+ * "sewing" are two teams, and merchants write "Cut & Sew", not "cut & sew".
  */
 export const TeamName = Schema.String.pipe(
   Schema.decodeTo(
@@ -1011,9 +1012,9 @@ const trimmedName = <B extends string>(brand: B) =>
   );
 
 /**
- * Same shape and reasoning as {@link TeamName}: trimmed, case preserved.
- * Unlike {@link TeamName} it is **not** unique — see {@link Workflow}, where
- * the tag is the one key and the name is a label.
+ * Same shape and reasoning as {@link TeamName}: trimmed, case preserved,
+ * and unique in its shop, compared exactly. See {@link Workflow} for why the
+ * name is unique as well as the tag.
  */
 export const WorkflowName = trimmedName("WorkflowName");
 export type WorkflowName = typeof WorkflowName.Type;
@@ -1143,10 +1144,11 @@ export type WorkflowTag = typeof WorkflowTag.Type;
  * work**. Delete removes the definition, its tasks, and its draft, nothing
  * else (the data model on `initializeSchema`, `ShopAgentSchema.ts`) — a run
  * is self-sufficient, so it needs no confirm counts and the dialog says only
- * what survives. The id is identity, the tag is the one
- * unique key, and the name is a label two workflows may share — so everything
- * that shows a workflow to the merchant outside its own page shows the tag
- * beside the name. A rename is immediate and cosmetic because runs snapshot
+ * what survives. The id is identity, the tag is the key a product carries,
+ * and the name is the label people pick a workflow by. Both are unique:
+ * members never see the tag, and pickers such as the order page's attach
+ * list show only the name, so the name alone has to tell two workflows
+ * apart. A rename is immediate and cosmetic because runs snapshot
  * `workflowName`.
  *
  * `activatedAt` is the on/off switch and the coverage date in one column,
@@ -1508,20 +1510,19 @@ export type TeamIdInput = typeof TeamIdInput.Type;
 /**
  * Expected failures cross the socket as values, not throws: `runEffect`
  * collapses every failure into one `Error(message)` at the RPC seam, which is
- * fine for faults but loses the tag the page needs to put "tag taken" on the
- * tag field rather than in a banner.
+ * fine for faults but loses the tag the page needs to put "name taken" on the
+ * name field and "tag taken" on the tag field rather than in a banner.
  *
- * `TagTaken` carries the holder's `workflowId` as well as its name because a
- * name no longer identifies a workflow: two may share one, so the refusal
- * links to the holder rather than naming it and leaving the merchant to guess
- * which of two rows it meant.
+ * `TagTaken` names the holder so the merchant can decide whether to change
+ * this tag or retag the other workflow; the name is enough, since no two
+ * workflows share one.
  */
 export const WorkflowResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok"), workflow: Workflow }),
+  Schema.Struct({ _tag: Schema.Literal("NameTaken"), name: WorkflowName }),
   Schema.Struct({
     _tag: Schema.Literal("TagTaken"),
     tag: WorkflowTag,
-    workflowId: WorkflowId,
     workflowName: WorkflowName,
   }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),

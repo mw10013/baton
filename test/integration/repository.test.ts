@@ -580,7 +580,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
                     `${row.memberId === idOf(alone) ? "alone" : "other"}:${row.teamName}:${String(row.teamMemberCount)}`,
                 )
                 .join(","),
-              "alone:a shared:2,other:a shared:2,alone:Solo:1",
+              "alone:Solo:1,alone:a shared:2,other:a shared:2",
             );
             /* A sole membership is `teamMemberCount === 1`, which is what
                the members page's remove dialog warns about. */
@@ -782,18 +782,21 @@ describe("Repository SQL (D1 ShopSession)", () => {
       ),
     );
 
-    it.effect("createTeam rejects a case-insensitive duplicate name", () =>
-      run(
-        Effect.gen(function* () {
-          const shop = shopOf("t.myshopify.com");
-          yield* seed(yield* Repository, [shop]);
-          yield* seedTeam(shop, "Cut");
-          assertTrue(
-            (yield* Effect.flip(seedTeam(shop, "  cut  "))) instanceof
-              TeamNameTakenError,
-          );
-        }),
-      ),
+    it.effect(
+      "createTeam rejects an exact duplicate name and accepts a case variant",
+      () =>
+        run(
+          Effect.gen(function* () {
+            const shop = shopOf("t.myshopify.com");
+            yield* seed(yield* Repository, [shop]);
+            yield* seedTeam(shop, "Cut");
+            assertTrue(
+              (yield* Effect.flip(seedTeam(shop, "  Cut  "))) instanceof
+                TeamNameTakenError,
+            );
+            yield* seedTeam(shop, "cut");
+          }),
+        ),
     );
 
     it.effect("createTeam refuses past ShopLimits.maxTeams", () =>
@@ -827,7 +830,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
           yield* seedTeam(shop, "Sew");
           assertTrue(
             (yield* Effect.flip(
-              repo.renameTeam({ shop, id: cut.id, name: teamNameOf("sew") }),
+              repo.renameTeam({ shop, id: cut.id, name: teamNameOf("Sew") }),
             )) instanceof TeamNameTakenError,
           );
           yield* repo.renameTeam({

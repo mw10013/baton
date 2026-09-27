@@ -4,8 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "mkdir -p logs && set -a && source .env && set +a && vite dev --port $PORT 2>&1 | tee logs/server.log",
-    "dev:force": "mkdir -p logs && set -a && source .env && set +a && vite dev --port $PORT --force 2>&1 | tee logs/server.log",
+    "dev": "mkdir -p logs && set -a && source .env && set +a && vite dev --port $PORT 2>&1 | tee logs/local-worker.log",
+    "dev:start": "node --env-file=.env scripts/dev.ts start",
+    "dev:stop": "node --env-file=.env scripts/dev.ts stop",
+    "dev:status": "node --env-file=.env scripts/dev.ts status",
+    "dev:reset": "node --env-file=.env scripts/dev.ts reset",
+    "dev:logs": "node --env-file=.env scripts/dev.ts logs",
+    "dev:force": "mkdir -p logs && set -a && source .env && set +a && vite dev --port $PORT --force 2>&1 | tee logs/local-worker.log",
     "app:dev": "shopify app dev --config shopify.app.toml --store sandbox-shop-01",
     "app:dev:stress": "shopify app dev --config shopify.app.toml --store stress-shop-01",
     "app:deploy": "shopify app deploy --config shopify.app.toml",
@@ -61,9 +66,9 @@
     "refs": "node scripts/refs.ts",
     "refs:all": "node scripts/refs.ts fetch --all",
     "refs:check": "node scripts/refs.ts check",
-    "tail": "mkdir -p logs && wrangler tail --format json 2>&1 | tee logs/tail.log | jq -r --unbuffered -f scripts/wrangler-tail-compact.jq | tee logs/tail-compact.log",
-    "tail:staging": "mkdir -p logs && wrangler tail --env staging --format json 2>&1 | tee logs/staging.log | jq -r --unbuffered -f scripts/wrangler-tail-compact.jq | tee logs/staging-compact.log",
-    "tail:PRODUCTION": "mkdir -p logs && wrangler tail --env production --format json 2>&1 | tee logs/production.log | jq -r --unbuffered -f scripts/wrangler-tail-compact.jq | tee logs/production-compact.log"
+    "tail": "mkdir -p logs && wrangler tail --format json 2>&1 | tee logs/default-worker.log | jq -r --unbuffered -f scripts/wrangler-tail-compact.jq | tee logs/default-worker.compact.log",
+    "tail:staging": "mkdir -p logs && wrangler tail --env staging --format json 2>&1 | tee logs/staging-worker.log | jq -r --unbuffered -f scripts/wrangler-tail-compact.jq | tee logs/staging-worker.compact.log",
+    "tail:PRODUCTION": "mkdir -p logs && wrangler tail --env production --format json 2>&1 | tee logs/production-worker.log | jq -r --unbuffered -f scripts/wrangler-tail-compact.jq | tee logs/production-worker.compact.log"
   },
   "dependencies": {
     "@effect/sql-d1": "4.0.0-rc.112",

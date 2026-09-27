@@ -178,6 +178,7 @@ function RouteComponent() {
     readonly instructions: string;
   } | null>(null);
   const [name, setName] = React.useState(detail?.workflow.name ?? "");
+  const [nameError, setNameError] = React.useState<string | null>(null);
 
   const invalidate = () => router.invalidate({ sync: true });
 
@@ -311,9 +312,13 @@ function RouteComponent() {
       call((stub) => stub.updateWorkflow({ workflowId, name })).then(
         decodeWorkflowResult,
       ),
-    /** Names are labels, so only `NotFound` is left and that is about the workflow, not what was typed. */
+    /** `NameTaken` is about what was typed, so it goes under the field; anything else is about the workflow and goes in the banner. */
     onSuccess: async (result) => {
       const message = workflowResultMessage(result);
+      if (result._tag === "NameTaken") {
+        setNameError(message);
+        return;
+      }
       if (message !== null) {
         setBanner(message);
         return;
@@ -920,14 +925,22 @@ function RouteComponent() {
         </s-button>
       </s-modal>
 
-      <s-modal id={RENAME_MODAL} heading={RENAME_HEADING}>
+      <s-modal
+        id={RENAME_MODAL}
+        heading={RENAME_HEADING}
+        onAfterHide={() => {
+          setNameError(null);
+        }}
+      >
         <s-stack gap="small-300">
           <s-text-field
             label={RENAME_FIELD_LABEL}
             value={name}
             maxLength={Domain.NAME_MAX_LENGTH}
+            {...(nameError === null ? {} : { error: nameError })}
             onInput={(event) => {
               setName(event.currentTarget.value);
+              setNameError(null);
             }}
           />
           {/* `s-text-field` has no counter of its own, and the limit is worth

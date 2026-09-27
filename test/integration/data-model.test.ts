@@ -170,7 +170,7 @@ describe("data model", () => {
       }),
     ));
 
-  it("a workflow is identified by its tag; no two workflows share one; the name is a label two may share", () =>
+  it("a workflow is identified by its tag and by its name; no two workflows share either; the name is compared exactly", () =>
     runInRepository(
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
@@ -181,7 +181,9 @@ describe("data model", () => {
         yield* insert("w1", "Mugs", "mug");
         const sameTag = yield* Effect.flip(insert("w2", "Cups", "mug"));
         strictEqual(sameTag._tag, "SqlError");
-        yield* insert("w3", "Mugs", "cup");
+        const sameName = yield* Effect.flip(insert("w3", "Mugs", "cup"));
+        strictEqual(sameName._tag, "SqlError");
+        yield* insert("w4", "mugs", "cup");
         strictEqual(yield* count("Workflow"), 2);
       }),
     ));

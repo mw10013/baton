@@ -64,7 +64,7 @@ test("teams screen creates, staffs, renames, and deletes a team", async ({
   await expect(frame.getByText("Not used by any workflow yet.")).toBeVisible();
   await expect(frame.getByText("Nobody is on this team")).toBeVisible();
 
-  /* Case-insensitive uniqueness is a unique index, not a pre-check, so the
+  /* Uniqueness is a unique constraint, not a pre-check, so the
      duplicate has to come back as the field error in the dialog rather than
      as a raw constraint error. */
   await clickHoisted(page.getByRole("link", { name: "Teams", exact: true }));
@@ -73,9 +73,7 @@ test("teams screen creates, staffs, renames, and deletes a team", async ({
      hoisted into the admin chrome by App Bridge (see `clickHoisted`); the
      modal itself stays in the frame. */
   await clickHoisted(page.getByRole("button", { name: "Create team" }));
-  await frame
-    .getByRole("textbox", { name: "Name", exact: true })
-    .fill(TEAM.toLowerCase());
+  await frame.getByRole("textbox", { name: "Name", exact: true }).fill(TEAM);
   await frame.getByRole("button", { name: "Create", exact: true }).click();
   await expect(
     frame.getByText("A team with that name already exists."),

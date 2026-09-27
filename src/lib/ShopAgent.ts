@@ -73,6 +73,7 @@ import {
   type WorkflowLimitError,
   type WorkflowNotFoundError,
   type WorkflowOffError,
+  type WorkflowNameTakenError,
   type WorkflowTagTakenError,
   WorkflowRepository,
   WorkflowRepositoryError,
@@ -414,12 +415,13 @@ const flushUsageEvents = Effect.fn("ShopAgent.flushUsageEvents")(function* (
  * page decodes, leaving faults (`SqlError`, decode errors) to propagate and
  * become a thrown `Error` at the `runEffect` seam. Expected failures must be
  * *values* here because that seam collapses every failure into one message
- * string, which would leave the browser unable to tell "tag taken" (a field
- * error) from "limit reached" (a banner).
+ * string, which would leave the browser unable to tell "name taken" or "tag
+ * taken" (field errors) from "limit reached" (a banner).
  */
 const workflowResult = <R>(
   effect: Effect.Effect<
     Domain.Workflow,
+    | WorkflowNameTakenError
     | WorkflowTagTakenError
     | WorkflowNotFoundError
     | WorkflowLimitError
@@ -442,11 +444,12 @@ const workflowResult = <R>(
   effect.pipe(
     Effect.map((workflow): Domain.WorkflowResult => ({ _tag: "Ok", workflow })),
     Effect.catchTags({
-      WorkflowTagTakenError: ({ tag, workflowId, workflowName }) =>
+      WorkflowNameTakenError: ({ name }) =>
+        Effect.succeed<Domain.WorkflowResult>({ _tag: "NameTaken", name }),
+      WorkflowTagTakenError: ({ tag, workflowName }) =>
         Effect.succeed<Domain.WorkflowResult>({
           _tag: "TagTaken",
           tag,
-          workflowId,
           workflowName,
         }),
       WorkflowNotFoundError: () =>

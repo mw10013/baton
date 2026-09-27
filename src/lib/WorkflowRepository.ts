@@ -32,17 +32,29 @@ export class WorkflowNotFoundError extends Schema.TaggedError<WorkflowNotFoundEr
  * workflow's key — the one string a product can carry that names it — and the
  * `unique` on `Workflow.tag` is the rule. This error exists so the refusal can
  * name the holder and the merchant is told which field to change, at the
- * moment they typed it: Create, Duplicate, and Edit tag. The holder's id
- * rides along with its name because names repeat: a link is the only way the
- * merchant can be sure which workflow the refusal meant.
+ * moment they typed it: Create, Duplicate, and Edit tag. The holder's name is
+ * enough to identify it, because names are unique too
+ * ({@link WorkflowNameTakenError}).
  */
 export class WorkflowTagTakenError extends Schema.TaggedError<WorkflowTagTakenError>()(
   "WorkflowTagTakenError",
   {
     tag: Domain.WorkflowTag,
-    workflowId: Domain.WorkflowId,
     workflowName: Domain.WorkflowName,
   },
+) {}
+
+/**
+ * A name another workflow already has, on or off, compared exactly. The name
+ * is the label merchants and members pick a workflow by — members never see
+ * the tag — so no two workflows share one, and the `unique` on
+ * `Workflow.name` is the rule. This error exists so the refusal lands under
+ * the name field at Create, Duplicate, and Rename rather than as a raw
+ * constraint failure.
+ */
+export class WorkflowNameTakenError extends Schema.TaggedError<WorkflowNameTakenError>()(
+  "WorkflowNameTakenError",
+  { name: Domain.WorkflowName },
 ) {}
 
 /** A task id the editor sent that neither the draft nor the workflow carries — a task some other tab already removed, or a stale id. */
@@ -195,8 +207,9 @@ export class WorkflowRepository extends Context.Service<
      * Inserts the workflow: off, no tasks, carrying its tag, and **no draft**.
      * The draft is the editor's record of unsaved changes and is created by
      * the first change (`ensureDraft`), so a fresh workflow has none and the
-     * editor opens without a Discard button for nothing. The tag is checked
-     * before the insert so the dialog can name its holder.
+     * editor opens without a Discard button for nothing. The name, then the
+     * tag, is checked before the insert so the dialog can put the refusal
+     * under the field that caused it.
      */
     readonly createWorkflow: (
       input: Domain.CreateWorkflowInput,
@@ -204,14 +217,15 @@ export class WorkflowRepository extends Context.Service<
       Domain.Workflow,
       | SqlError.SqlError
       | WorkflowRepositoryError
+      | WorkflowNameTakenError
       | WorkflowTagTakenError
       | WorkflowLimitError
     >;
     /**
      * A copy of the workflow's tasks, with their steps under new ids, under
      * the name and tag the merchant chose in the Duplicate dialog; off, with
-     * no draft. The tag is checked before the insert so the dialog can name
-     * its holder.
+     * no draft. The name, then the tag, is checked before the insert, as in
+     * `createWorkflow`.
      */
     readonly duplicateWorkflow: (input: {
       readonly workflowId: string;
@@ -222,16 +236,20 @@ export class WorkflowRepository extends Context.Service<
       | SqlError.SqlError
       | WorkflowRepositoryError
       | WorkflowNotFoundError
+      | WorkflowNameTakenError
       | WorkflowTagTakenError
       | WorkflowLimitError
     >;
-    /** Rename only; immediate, since runs snapshot the name. Unconditional: names are labels, so nothing can refuse one. */
+    /** Rename only; immediate, since runs snapshot the name. Refuses a name another workflow has. */
     readonly updateWorkflow: (input: {
       readonly workflowId: string;
       readonly name: Domain.WorkflowName;
     }) => Effect.Effect<
       Domain.Workflow,
-      SqlError.SqlError | WorkflowRepositoryError | WorkflowNotFoundError
+      | SqlError.SqlError
+      | WorkflowRepositoryError
+      | WorkflowNotFoundError
+      | WorkflowNameTakenError
     >;
     /**
      * Writes the tag on the workflow row immediately, like a rename, and
@@ -872,14 +890,32 @@ export class WorkflowRepository extends Context.Service<
         });
 
       const decodeHolders = decode(
-        Schema.Array(
-          Schema.Struct({
-            id: Domain.WorkflowId,
-            name: Domain.WorkflowName,
-          }),
-        ),
+        Schema.Array(Schema.Struct({ name: Domain.WorkflowName })),
         "Invalid Workflow holder row",
       );
+
+      /**
+       * Refuses `name` if another workflow has it, excluding `workflowId` so
+       * a rename may keep the workflow's own name. The `unique` on
+       * `Workflow.name` is the guarantee; this select exists so the refusal
+       * is typed and lands under the name field. Names are compared exactly,
+       * as typed (`Domain.WorkflowName` trims and nothing else). Same
+       * transaction reasoning as {@link requireTagFree}.
+       */
+      const requireNameFree = (
+        name: Domain.WorkflowName,
+        workflowId: string | null,
+      ) =>
+        Effect.gen(function* () {
+          const [holder] = yield* decodeHolders(
+            yield* sql`
+              select name from Workflow
+              where name = ${name}
+                and (${workflowId} is null or id <> ${workflowId})
+            `,
+          );
+          if (holder !== undefined) yield* new WorkflowNameTakenError({ name });
+        });
 
       /**
        * Which workflow, if any, already holds `tag`, excluding `workflowId` so
@@ -890,10 +926,10 @@ export class WorkflowRepository extends Context.Service<
        * is the whole comparison — the same equality
        * `RunRepository.matchesTag` uses. Runs inside the caller's
        * transaction on the Durable Object's synchronous SQLite, so nothing can
-       * interleave between it and the write that follows. The holder's id and
-       * name both ride back: the merchant decides whether to change this tag
-       * or go retag the other workflow, and only the id can take them there,
-       * since two workflows may share a name.
+       * interleave between it and the write that follows. The holder's name
+       * rides back so the merchant can decide whether to change this tag or
+       * go retag the other workflow; the name identifies it, since no two
+       * workflows share one.
        */
       const requireTagFree = (
         tag: Domain.WorkflowTag,
@@ -902,7 +938,7 @@ export class WorkflowRepository extends Context.Service<
         Effect.gen(function* () {
           const [holder] = yield* decodeHolders(
             yield* sql`
-              select id, name from Workflow
+              select name from Workflow
               where tag = ${tag}
                 and (${workflowId} is null or id <> ${workflowId})
             `,
@@ -910,7 +946,6 @@ export class WorkflowRepository extends Context.Service<
           if (holder !== undefined)
             yield* new WorkflowTagTakenError({
               tag,
-              workflowId: holder.id,
               workflowName: holder.name,
             });
         });
@@ -926,7 +961,7 @@ export class WorkflowRepository extends Context.Service<
                 select w.*,
                   (select coalesce(max(t.step), 0) from WorkflowTask t where t.workflowId = w.id) as stepCount
                 from Workflow w
-                order by w.name collate nocase
+                order by w.name
               `,
             );
             // Derived, never stored: the badge is computed from the workflow's
@@ -985,7 +1020,7 @@ export class WorkflowRepository extends Context.Service<
             yield* sql`
               select * from Workflow
               where activatedAt is not null
-              order by name collate nocase
+              order by name
             `,
           );
           const tasks = yield* decodeTasks(
@@ -1105,6 +1140,16 @@ export class WorkflowRepository extends Context.Service<
             // `Workflow.tag` is unique, so a fixture repeating a tag would
             // fail as a bare constraint error naming no workflow. Seeds are
             // trusted, so this refuses loudly instead.
+            const duplicateName = staged.find(
+              (workflow, index) =>
+                staged.findIndex((other) => other.name === workflow.name) <
+                index,
+            );
+            if (duplicateName !== undefined)
+              return yield* new WorkflowRepositoryError({
+                message: `replaceWorkflows: workflow=${duplicateName.name}: two workflows cannot share a name`,
+                cause: duplicateName.name,
+              });
             const duplicateTag = staged.find(
               (workflow, index) =>
                 staged.findIndex((other) => other.tag === workflow.tag) < index,
@@ -1165,10 +1210,11 @@ export class WorkflowRepository extends Context.Service<
         ),
 
         /**
-         * The tag is asked about before the insert, inside one transaction:
-         * it is the workflow's one unique key, and the refusal has to name
-         * the holder, which the `unique` constraint alone cannot. The name is
-         * not asked about at all — names are labels and may repeat.
+         * The name and the tag are asked about before the insert, inside one
+         * transaction: both are unique, and each refusal has to land under
+         * its own field, which a `unique` constraint failure cannot say. The
+         * name goes first because the dialog prefills the tag from it, so a
+         * new name usually frees both.
          */
         createWorkflow: Effect.fn("WorkflowRepository.createWorkflow")(
           function* ({ name, tag }: Domain.CreateWorkflowInput) {
@@ -1179,6 +1225,7 @@ export class WorkflowRepository extends Context.Service<
                   return yield* new WorkflowLimitError({
                     limit: Domain.WorkflowLimits.maxWorkflows,
                   });
+                yield* requireNameFree(name, null);
                 yield* requireTagFree(tag, null);
                 const now = yield* Clock.currentTimeMillis;
                 const [workflow] = yield* decodeWorkflows(
@@ -1221,6 +1268,7 @@ export class WorkflowRepository extends Context.Service<
                   return yield* new WorkflowLimitError({
                     limit: Domain.WorkflowLimits.maxWorkflows,
                   });
+                yield* requireNameFree(name, null);
                 yield* requireTagFree(tag, null);
                 const tasks = yield* workflowTasks(workflowId);
                 const now = yield* Clock.currentTimeMillis;
@@ -1258,7 +1306,6 @@ export class WorkflowRepository extends Context.Service<
           },
         ),
 
-        /** Unconditional: a name is a label, so any name is available and a rename can only fail by the workflow being gone. */
         updateWorkflow: Effect.fn("WorkflowRepository.updateWorkflow")(
           function* ({
             workflowId,
@@ -1270,6 +1317,7 @@ export class WorkflowRepository extends Context.Service<
             return yield* sql.withTransaction(
               Effect.gen(function* () {
                 yield* requireWorkflow(workflowId);
+                yield* requireNameFree(name, workflowId);
                 const now = yield* Clock.currentTimeMillis;
                 const [workflow] = yield* decodeWorkflows(
                   yield* sql`
@@ -1688,7 +1736,7 @@ export class WorkflowRepository extends Context.Service<
                   union
                   select workflowId from WorkflowDraftTask where teamId = ${teamId}
                 )
-                order by w.name collate nocase
+                order by w.name
               `,
             );
           },
@@ -1709,7 +1757,7 @@ export class WorkflowRepository extends Context.Service<
                   select teamId, workflowId from WorkflowDraftTask where teamId is not null
                 ) u
                 join Workflow w on w.id = u.workflowId
-                order by w.name collate nocase, u.teamId
+                order by w.name, u.teamId
               `,
           );
         }),

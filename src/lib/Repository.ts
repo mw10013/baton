@@ -26,7 +26,7 @@ export class RepositoryError extends Schema.TaggedError<RepositoryError>()(
 ) {}
 
 /**
- * The shop already has a team by that name, case-insensitively. Detected by the
+ * The shop already has a team by that exact name. Detected by the
  * write returning no row under `or ignore` rather than by matching D1's
  * constraint-violation text, which is neither typed nor stable.
  */
@@ -651,7 +651,7 @@ export class Repository extends Context.Service<
             join Team t on t.id = tm.teamId
             join Member m on m.id = tm.memberId
             where t.shop = ${shop}
-            order by t.name collate nocase, m.email collate nocase
+            order by t.name, m.email
           `;
           return yield* decodeRepository(
             Schema.Array(Domain.MemberTeam),
@@ -751,7 +751,7 @@ export class Repository extends Context.Service<
           select t.*, (select count(*) from TeamMember tm where tm.teamId = t.id) as memberCount
           from Team t
           where t.shop = ${params.shop}
-          order by t.name collate nocase
+          order by t.name
         `;
         return yield* decodeRepository(
           Schema.Array(Domain.TeamSummary),
@@ -817,7 +817,7 @@ export class Repository extends Context.Service<
         const rows = yield* sqlPrimary`
           select
             exists(select 1 from Team where shop = ${team.shop} and id = ${team.id}) as teamExists,
-            exists(select 1 from Team where shop = ${team.shop} and name = ${team.name} collate nocase and id <> ${team.id}) as nameTaken
+            exists(select 1 from Team where shop = ${team.shop} and name = ${team.name} and id <> ${team.id}) as nameTaken
         `;
         const { nameTaken } = yield* decodeRepository(
           Schema.Struct({
@@ -992,7 +992,7 @@ export class Repository extends Context.Service<
             left join TeamMember tm on tm.memberId = m.id
             left join Team t on t.id = tm.teamId
             where m.shop = ${member.shop} and m.email = ${member.email}
-            order by t.name collate nocase
+            order by t.name
           `;
           if (rows[0] === undefined) return Option.none();
           const decoded = yield* decodeRepository(

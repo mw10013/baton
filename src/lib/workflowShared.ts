@@ -3,14 +3,22 @@ import { Match } from "effect";
 import * as Domain from "@/lib/Domain";
 
 /**
- * The Duplicate dialog's prefilled name. Names may repeat, so there is no
- * search for a free one: `<name> copy`, with the base trimmed so the result
- * still fits `Domain.WorkflowName`.
+ * The Duplicate dialog's prefilled name: `<name> copy`, with the base trimmed
+ * so the result still fits `Domain.WorkflowName`. There is no search for a
+ * free one; if a second copy collides, `NameTaken` lands under the name field
+ * and the merchant picks another.
  */
 export const copyName = (name: string): string => {
   const suffix = " copy";
   return `${name.slice(0, Domain.NAME_MAX_LENGTH - suffix.length).trimEnd()}${suffix}`;
 };
+
+/**
+ * `NameTaken`, reported under the name field at Create, Duplicate, and
+ * Rename. Worded like the team dialog's refusal.
+ */
+export const nameTakenMessage = () =>
+  "A workflow with that name already exists.";
 
 /**
  * `TagTaken`, reported under the tag field at Create, Duplicate, and Edit tag
@@ -31,6 +39,7 @@ export const workflowResultMessage = Match.typeTags<
   string | null
 >()({
   Ok: () => null,
+  NameTaken: nameTakenMessage,
   TagTaken: tagTakenMessage,
   NotFound: () => "That workflow no longer exists.",
   Limit: ({ limit }) =>

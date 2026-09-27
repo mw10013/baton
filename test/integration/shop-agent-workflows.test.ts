@@ -307,10 +307,15 @@ describe("ShopAgent workflow callables", () => {
     expect(detail?.draft?.tasks[0]?.teamName).toBe(null);
     expect(detail?.teams).toEqual([]);
 
-    // The name is a label: the same one under a free tag is a second workflow.
+    // Names compare exactly: a case variant under a free tag is a second workflow.
     const twin = await agent.createWorkflow({ name: "w", tag: "dupe" });
     strictEqual(twin._tag, "Ok");
-    // The tag is the one key, refused under its own field.
+    // The name itself is refused under its own field.
+    expect(await agent.createWorkflow({ name: "w", tag: "free" })).toEqual({
+      _tag: "NameTaken",
+      name: "w",
+    });
+    // So is the tag.
     const dupeTag = await agent.createWorkflow({ name: "Other", tag: "W" });
     strictEqual(dupeTag._tag, "TagTaken");
     // Never applied: the list counts saved tasks, and there are none.
@@ -331,11 +336,11 @@ describe("ShopAgent workflow callables", () => {
     );
     const removeMissing = await agent.removeTask({ taskId: task.task.id });
     strictEqual(removeMissing._tag, "NotFound");
-    // The twin is untouched: two rows shared a name, and only one was deleted.
+    // The twin is untouched: only the one removed goes.
     const remaining = await agent.listWorkflows();
     expect(remaining.map((w) => w.tag)).toEqual(["dupe"]);
-    // The name is free at once.
-    const recreated = await agent.createWorkflow({ name: "w", tag: "w" });
+    // Its name and tag are free at once.
+    const recreated = await agent.createWorkflow({ name: "W", tag: "w" });
     strictEqual(recreated._tag, "Ok");
   });
 
@@ -774,7 +779,6 @@ describe("ShopAgent workflow run callables", () => {
     ).toEqual({
       _tag: "TagTaken",
       tag: "engraved",
-      workflowId: holder.id,
       workflowName: "Engraving",
     });
     // Edit tag: the same refusal on an existing workflow.
@@ -783,7 +787,6 @@ describe("ShopAgent workflow run callables", () => {
     ).toEqual({
       _tag: "TagTaken",
       tag: "engraved",
-      workflowId: holder.id,
       workflowName: "Engraving",
     });
     // Duplicate: the copy's own tag.
@@ -796,7 +799,6 @@ describe("ShopAgent workflow run callables", () => {
     ).toEqual({
       _tag: "TagTaken",
       tag: "engraved",
-      workflowId: holder.id,
       workflowName: "Engraving",
     });
 

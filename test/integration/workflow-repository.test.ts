@@ -87,7 +87,7 @@ describe("Domain workflow schemas", () => {
 });
 
 describe("WorkflowRepository", () => {
-  it("creates, lists with stepCount, takes a name another workflow already uses, and deletes", () =>
+  it("creates, lists with stepCount, takes a case variant of another workflow's name, and deletes", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -98,7 +98,7 @@ describe("WorkflowRepository", () => {
         const fresh = yield* found(created.id);
         strictEqual(tagOf(fresh.workflow), "engraving");
         strictEqual(fresh.draft, null);
-        // The name is a label: the same one under a free tag is a second workflow.
+        // Names compare exactly: a case variant under a free tag is a second workflow.
         const twin = yield* repo.createWorkflow({
           name: name("engraving"),
           tag: tag("other"),
@@ -783,14 +783,16 @@ describe("WorkflowRepository duplicate", () => {
         strictEqual(Domain.isActive(source.workflow), true);
         strictEqual(tagOf(source.workflow), "engraved");
 
-        // The copy's name may repeat the one the first copy took.
+        // A second copy under the first copy's name is refused.
         strictEqual(
-          (yield* repo.duplicateWorkflow({
-            workflowId: w.id,
-            name: name("Engraved ring copy"),
-            tag: tag("free"),
-          })).name,
-          "Engraved ring copy",
+          (yield* repo
+            .duplicateWorkflow({
+              workflowId: w.id,
+              name: name("Engraved ring copy"),
+              tag: tag("free"),
+            })
+            .pipe(Effect.flip))._tag,
+          "WorkflowNameTakenError",
         );
         const tagTaken = yield* repo
           .duplicateWorkflow({
@@ -853,7 +855,7 @@ describe("WorkflowRepository tag uniqueness", () => {
       }),
     ));
 
-  it("refuses the tag alone: the same name under a free tag goes through", () =>
+  it("refuses the tag alone: a case variant of the name under a free tag goes through", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -870,9 +872,9 @@ describe("WorkflowRepository tag uniqueness", () => {
           .createWorkflow({ name: name("Rush"), tag: tag("engraved") })
           .pipe(Effect.flip);
         strictEqual(sameTag._tag, "WorkflowTagTakenError");
-        // The refusal links to the holder, since its name no longer picks it out.
+        // The refusal names the holder; its name picks it out.
         if (sameTag._tag === "WorkflowTagTakenError")
-          strictEqual(sameTag.workflowId, holder.id);
+          strictEqual(sameTag.workflowName, holder.name);
       }),
     ));
 
@@ -916,11 +918,12 @@ describe("WorkflowRepository tag uniqueness", () => {
 });
 
 /**
- * The name is a label, not a key: the id identifies a workflow and the tag is
- * the one thing no two may share. Every write that takes a name takes any.
+ * The name is unique in the shop, compared exactly, on every write that takes
+ * one: members pick a workflow by name alone. The name is checked before the
+ * tag, since the dialogs prefill the tag from the name.
  */
-describe("WorkflowRepository names are labels", () => {
-  it("two workflows share a name, a rename takes an existing one, and a duplicate keeps the source's", () =>
+describe("WorkflowRepository name uniqueness", () => {
+  it("create, rename and duplicate refuse a name another workflow has; a case variant goes through", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -929,29 +932,62 @@ describe("WorkflowRepository names are labels", () => {
           tag: tag("engraved"),
         });
         const second = yield* repo.createWorkflow({
-          name: name("Engraving"),
+          name: name("Rush"),
           tag: tag("rush"),
         });
-        strictEqual(second.name, "Engraving");
-        strictEqual(first.id !== second.id, true);
 
-        const renamed = yield* repo.updateWorkflow({
-          workflowId: second.id,
-          name: name("engraving"),
-        });
-        strictEqual(renamed.name, "engraving");
+        const created = yield* repo
+          .createWorkflow({ name: name("Engraving"), tag: tag("other") })
+          .pipe(Effect.flip);
+        strictEqual(created._tag, "WorkflowNameTakenError");
+
+        const renamed = yield* repo
+          .updateWorkflow({ workflowId: second.id, name: name("Engraving") })
+          .pipe(Effect.flip);
+        strictEqual(renamed._tag, "WorkflowNameTakenError");
+        // A rename may keep the workflow's own name.
+        strictEqual(
+          (yield* repo.updateWorkflow({
+            workflowId: first.id,
+            name: name("Engraving"),
+          })).name,
+          "Engraving",
+        );
 
         yield* twoTasks(first.id);
-        const copy = yield* repo.duplicateWorkflow({
-          workflowId: first.id,
-          name: name("Engraving"),
-          tag: tag("third"),
+        const copied = yield* repo
+          .duplicateWorkflow({
+            workflowId: first.id,
+            name: name("Engraving"),
+            tag: tag("third"),
+          })
+          .pipe(Effect.flip);
+        strictEqual(copied._tag, "WorkflowNameTakenError");
+
+        const variant = yield* repo.createWorkflow({
+          name: name("engraving"),
+          tag: tag("lower"),
         });
-        strictEqual(copy.name, "Engraving");
+        strictEqual(variant.name, "engraving");
         strictEqual(
           (yield* repo.listWorkflows({ teams: ALL_TEAMS })).length,
           3,
         );
+      }),
+    ));
+
+  it("checks the name before the tag", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const repo = yield* WorkflowRepository;
+        yield* repo.createWorkflow({
+          name: name("Engraving"),
+          tag: tag("engraving"),
+        });
+        const both = yield* repo
+          .createWorkflow({ name: name("Engraving"), tag: tag("engraving") })
+          .pipe(Effect.flip);
+        strictEqual(both._tag, "WorkflowNameTakenError");
       }),
     ));
 });

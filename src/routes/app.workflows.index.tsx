@@ -11,7 +11,6 @@ import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
-import * as WorkflowTag from "@/components/WorkflowTag";
 import * as Domain from "@/lib/Domain";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
@@ -74,10 +73,9 @@ export const Route = createFileRoute("/app/workflows/")({
  * Creating asks for a name and a tag, the tag prefilled from the name — the
  * tag is what makes a workflow reachable at all, so it is asked for at the
  * moment the merchant forms the model of the object, not behind the editor.
- * The name is asked for even though it is only a label and nothing depends on
- * it: the tag mirrors the name as the merchant types, so the name field is how
- * most of them will produce a tag at all, and dropping it would leave the tag
- * field alone with nothing to mirror.
+ * The name is the label merchants and members pick the workflow by, and the
+ * tag mirrors it as the merchant types, so the name field is also how most of
+ * them will produce a tag at all.
  * Tasks are decisions made in the editor, in front of the trigger card that
  * says what they do, so the page carries no standing form.
  */
@@ -92,11 +90,8 @@ function RouteComponent() {
   const [name, setName] = React.useState("");
   const [tag, setTag] = React.useState("");
   const [tagDirty, setTagDirty] = React.useState(false);
+  const [nameError, setNameError] = React.useState<string | null>(null);
   const [tagError, setTagError] = React.useState<string | null>(null);
-  const [tagHolder, setTagHolder] = React.useState<{
-    readonly workflowId: string;
-    readonly workflowName: string;
-  } | null>(null);
   const [banner, setBanner] = React.useState<string | null>(null);
 
   /**
@@ -127,14 +122,14 @@ function RouteComponent() {
           ).then(decodeWorkflowResult)
         : Promise.reject(new Error("Still connecting. Try again in a moment.")),
     onSuccess: async (result) => {
-      // The tag is the workflow's one unique key, so it is the one refusal
-      // that goes under a field rather than into the banner above both.
+      // The name and the tag are both unique, so each refusal goes under
+      // its own field rather than into the banner above both.
+      if (result._tag === "NameTaken") {
+        setNameError(workflowResultMessage(result));
+        return;
+      }
       if (result._tag === "TagTaken") {
         setTagError(workflowResultMessage(result));
-        setTagHolder({
-          workflowId: result.workflowId,
-          workflowName: result.workflowName,
-        });
         return;
       }
       if (result._tag !== "Ok") {
@@ -156,8 +151,8 @@ function RouteComponent() {
     setName("");
     setTag("");
     setTagDirty(false);
+    setNameError(null);
     setTagError(null);
-    setTagHolder(null);
   };
 
   /**
@@ -171,7 +166,11 @@ function RouteComponent() {
    */
   const onNameInput = (next: string) => {
     setName(next);
-    if (!tagDirty) setTag(next.trim().toLowerCase());
+    setNameError(null);
+    if (!tagDirty) {
+      setTag(next.trim().toLowerCase());
+      setTagError(null);
+    }
   };
 
   /**
@@ -353,6 +352,7 @@ function RouteComponent() {
             details="You'll add the steps next."
             value={name}
             maxLength={Domain.NAME_MAX_LENGTH}
+            {...(nameError === null ? {} : { error: nameError })}
             onInput={(event) => {
               onNameInput(event.currentTarget.value);
             }}
@@ -367,10 +367,8 @@ function RouteComponent() {
               setTag(event.currentTarget.value);
               setTagDirty(true);
               setTagError(null);
-              setTagHolder(null);
             }}
           />
-          <WorkflowTag.TagTakenLink holder={tagHolder} />
         </s-stack>
         <s-button
           slot="secondary-actions"

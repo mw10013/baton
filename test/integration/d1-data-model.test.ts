@@ -145,11 +145,12 @@ describe("D1 data model", () => {
     expect(references.flat()).toEqual(["TeamMember.memberId"]);
   });
 
-  it("a team is identified by its name within a shop, case-insensitively; the name is trimmed and non-empty", async () => {
+  it("a team is identified by its name within a shop, compared exactly; the name is trimmed and non-empty", async () => {
     await insertShop("a.myshopify.com");
     await insertShop("b.myshopify.com");
     await insertTeam("t1", "a.myshopify.com", "Cut");
-    await rejects(insertTeam("t2", "a.myshopify.com", "cut"));
+    await rejects(insertTeam("t2", "a.myshopify.com", "Cut"));
+    await insertTeam("t6", "a.myshopify.com", "cut");
     await rejects(insertTeam("t3", "a.myshopify.com", " Sew"));
     await rejects(insertTeam("t4", "a.myshopify.com", ""));
     await insertTeam("t5", "b.myshopify.com", "Cut");

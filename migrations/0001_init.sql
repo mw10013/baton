@@ -39,10 +39,9 @@ create table if not exists Team (
   id text primary key,
   shop text not null references ShopSession (shop) on delete cascade,
   name text not null check (name = trim(name) and length(name) > 0),
-  createdAt text not null
+  createdAt text not null,
+  unique (shop, name)
 );
-
-create unique index if not exists Team_shop_name_uidx on Team (shop, name collate nocase);
 
 -- Edges point at Member.id, not at an email, so both cascades (member removed,
 -- team removed) come free. The two foreign keys give each side one shop but

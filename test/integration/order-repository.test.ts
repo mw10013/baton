@@ -762,6 +762,34 @@ describe("OrderRepository.listOrders q", () => {
     deepStrictEqual(names(await runInRepository(search("100_"))), []);
   });
 
+  it("is case-insensitive, so ab takes #AB1001", async () => {
+    const found = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* seedNames;
+        yield* upsert(
+          repository,
+          anOrder({
+            id: orderId(4),
+            legacyId: "4",
+            name: "#AB1001",
+            processedAt: 4000,
+          }),
+          [aLineItem(4, { orderId: orderId(4) })],
+        );
+        return yield* repository.listOrders({
+          limit: 20,
+          cursor: null,
+          q: Schema.decodeUnknownSync(Domain.OrderSearch)("ab"),
+          status: null,
+          need: null,
+          team: null,
+          teams: [],
+        });
+      }),
+    );
+    deepStrictEqual(names(found), ["#AB1001"]);
+  });
+
   it("narrows the counts to the search", async () => {
     const { all, searched } = await runInRepository(
       Effect.gen(function* () {

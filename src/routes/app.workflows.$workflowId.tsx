@@ -53,17 +53,6 @@ const decodeDeleteWorkflowResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.DeleteWorkflowResult),
 );
 
-/** The holder a `TagTaken` named, for the link under the field; see `WorkflowTag.TagTakenLink`. */
-type TagHolder = {
-  readonly workflowId: string;
-  readonly workflowName: string;
-} | null;
-
-const tagHolder = (result: Domain.WorkflowResult): TagHolder =>
-  result._tag === "TagTaken"
-    ? { workflowId: result.workflowId, workflowName: result.workflowName }
-    : null;
-
 /** Loader read for the same reason as the index's: a definition is configuration one person edits. */
 const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(WorkflowParams))
@@ -123,8 +112,9 @@ function RouteComponent() {
   const [banner, setBanner] = React.useState<string | null>(null);
   const [name, setName] = React.useState(detail?.workflow.name ?? "");
   const [copy, setCopy] = React.useState(() => suggestedCopy(detail));
+  const [nameError, setNameError] = React.useState<string | null>(null);
+  const [copyNameError, setCopyNameError] = React.useState<string | null>(null);
   const [copyTagError, setCopyTagError] = React.useState<string | null>(null);
-  const [copyTagHolder, setCopyTagHolder] = React.useState<TagHolder>(null);
 
   const invalidate = () => router.invalidate({ sync: true });
 
@@ -151,13 +141,13 @@ function RouteComponent() {
       call((stub) => stub.updateWorkflow({ workflowId, name })).then(
         decodeWorkflowResult,
       ),
-    /**
-     * Nothing a rename can be refused for belongs under the field any more:
-     * names are labels, so only `NotFound` is left and that is about the
-     * workflow, not what was typed.
-     */
+    /** `NameTaken` is about what was typed, so it goes under the field; anything else is about the workflow and goes in the banner. */
     onSuccess: async (result) => {
       const message = workflowResultMessage(result);
+      if (result._tag === "NameTaken") {
+        setNameError(message);
+        return;
+      }
       if (message !== null) {
         setBanner(message);
         return;
@@ -179,11 +169,14 @@ function RouteComponent() {
         }),
       ).then(decodeWorkflowResult),
     onSuccess: async (result) => {
-      // The tag is the copy's one unique key, so it is the one refusal that
-      // goes under a field rather than into the banner above both.
+      // The name and the tag are both unique, so each refusal goes under
+      // its own field rather than into the banner above both.
+      if (result._tag === "NameTaken") {
+        setCopyNameError(workflowResultMessage(result));
+        return;
+      }
       if (result._tag === "TagTaken") {
         setCopyTagError(workflowResultMessage(result));
-        setCopyTagHolder(tagHolder(result));
         return;
       }
       if (result._tag !== "Ok") {
@@ -208,8 +201,8 @@ function RouteComponent() {
    */
   const seedDuplicateForm = () => {
     setCopy(suggestedCopy(detail));
+    setCopyNameError(null);
     setCopyTagError(null);
-    setCopyTagHolder(null);
   };
 
   const deleteMutation = useMutation({
@@ -406,14 +399,22 @@ function RouteComponent() {
         </s-stack>
       </s-section>
 
-      <s-modal id={RENAME_MODAL} heading={RENAME_HEADING}>
+      <s-modal
+        id={RENAME_MODAL}
+        heading={RENAME_HEADING}
+        onAfterHide={() => {
+          setNameError(null);
+        }}
+      >
         <s-stack gap="small-300">
           <s-text-field
             label={RENAME_FIELD_LABEL}
             value={name}
             maxLength={Domain.NAME_MAX_LENGTH}
+            {...(nameError === null ? {} : { error: nameError })}
             onInput={(event) => {
               setName(event.currentTarget.value);
+              setNameError(null);
             }}
           />
           {/* `s-text-field` has no counter of its own, and the limit is worth
@@ -457,6 +458,7 @@ function RouteComponent() {
             label="Name"
             value={copy.name}
             maxLength={Domain.NAME_MAX_LENGTH}
+            {...(copyNameError === null ? {} : { error: copyNameError })}
             onInput={(event) => {
               const next = event.currentTarget.value;
               setCopy((current) => ({
@@ -464,6 +466,8 @@ function RouteComponent() {
                 name: next,
                 ...(current.dirty ? {} : { tag: next.trim().toLowerCase() }),
               }));
+              setCopyNameError(null);
+              if (!copy.dirty) setCopyTagError(null);
             }}
           />
           <s-text-field
@@ -476,10 +480,8 @@ function RouteComponent() {
               const next = event.currentTarget.value;
               setCopy((current) => ({ ...current, tag: next, dirty: true }));
               setCopyTagError(null);
-              setCopyTagHolder(null);
             }}
           />
-          <WorkflowTag.TagTakenLink holder={copyTagHolder} />
         </s-stack>
         <s-button
           slot="secondary-actions"

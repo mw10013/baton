@@ -59,6 +59,11 @@ Downloaded source code of libraries are in `refs/` for reference.
 
 ```bash
 pnpm app:dev            # Start dev server via Shopify CLI (runs pnpm dev internally)
+pnpm dev:start          # Start the dev server, or adopt the running one; install on the dev store if needed (--seed to seed)
+pnpm dev:status         # Report the dev server: where it runs, port, tunnel, ShopSession (--json)
+pnpm dev:stop           # Stop the dev server wherever it runs
+pnpm dev:reset          # Stop, wipe local D1 and object state, start, install, seed (--no-seed to skip)
+pnpm dev:logs           # Print recent Shopify CLI output and the tail of the Worker log
 pnpm typecheck          # TypeScript type checking (includes wrangler types generation)
 pnpm lint               # Run oxlint
 pnpm spec check         # Parse the action tables in Domain.ts, check the glossary and its screen columns, and check the data-model tables in ShopAgentSchema.ts and D1Schema.ts (also run by pnpm lint)
@@ -68,7 +73,7 @@ pnpm test               # Run tests with Vitest.
 npm run test:e2e --     # Full local E2E suite, headless; pass Playwright args after --
 npm run test:e2e:headed -- # Same suite with visible browsers for debugging
 pnpm graphql-codegen    # Validate #graphql template literal strings against the Shopify Admin schema
-pnpm tail               # Tail deployed remote logs (raw logs/tail.log, compact logs/tail-compact.log)
+pnpm tail               # Tail deployed remote logs (raw logs/default-worker.log, compact logs/default-worker.compact.log)
 pnpm seed               # Seed local dev data (members, teams, workflows) via /api/dev/seed
 pnpm d1:reset           # Recreate local D1 from migrations (wipes .wrangler)
 pnpm refs:check         # Report refs/ that drifted from package.json pins
@@ -82,11 +87,14 @@ pnpm refs fetch <name>  # Refetch a ref (see scripts/refs.ts; refs:all for every
 
 ## Server Log Monitoring
 
-- `logs/server.log` - Local dev server logs (written by `pnpm dev`).
-- `logs/tail.log` - Raw remote logs (written by `pnpm tail`).
-- `logs/tail-compact.log` - Same stream through `scripts/wrangler-tail-compact.jq`: one `timestamp<TAB>level<TAB>message` line per event.
+Log files are named `<environment>-<source>[.compact].log`:
 
-Use `tail -f logs/server.log` locally, `tail -f logs/tail-compact.log` for readable remote logs, or `tail -f logs/tail.log` for raw Cloudflare JSON. `pnpm tail:staging` / `pnpm tail:PRODUCTION` write the same pair as `logs/staging*.log` / `logs/production*.log`.
+- `logs/local-worker.log` - Local Vite and Worker output (written by `pnpm dev`, which `pnpm app:dev` runs).
+- `logs/local-cli.log` - Shopify CLI output when `pnpm dev:start` runs it in the background (outside Herdr, with no terminal). Inside Herdr the CLI runs in the `server` tab; read it with `pnpm dev:logs`.
+- `logs/default-worker.log` - Raw remote logs of the top-level deployed Worker (written by `pnpm tail`).
+- `logs/default-worker.compact.log` - Same stream through `scripts/wrangler-tail-compact.jq`: one `timestamp<TAB>level<TAB>message` line per event.
+
+Use `tail -f logs/local-worker.log` locally, `tail -f logs/default-worker.compact.log` for readable remote logs, or `tail -f logs/default-worker.log` for raw Cloudflare JSON. `pnpm tail:staging` / `pnpm tail:PRODUCTION` write the same pair as `logs/staging-worker*.log` / `logs/production-worker*.log`.
 
 ## Logging
 

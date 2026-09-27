@@ -1097,14 +1097,14 @@ export class OrderRepository extends Context.Service<
            * Prefix, not substring. An order name is `#` plus digits and the
            * merchant types the digits they read off the admin, so `#10`
            * listing `#1001` … `#1099` is the useful answer; `%10%` would also
-           * match `#2100`, which nobody asked for. Case-insensitive because
-           * `name` is `text` with the default `binary` collation and a name is
-           * not always digits.
+           * match `#2100`, which nobody asked for. Case-insensitive because a
+           * name is not always digits, and SQLite's `like` already folds ASCII
+           * case whatever the column's collation.
            */
           const searchFilter =
             q === null
               ? sql.literal("1 = 1")
-              : sql`name like ${`${escapeLike(Domain.normaliseOrderSearch(q))}%`} escape '\\' collate nocase`;
+              : sql`name like ${`${escapeLike(Domain.normaliseOrderSearch(q))}%`} escape '\\'`;
           /**
            * Keyset, never `limit/offset`: the bulk stream and webhooks insert
            * while a merchant pages, and an offset would skip or repeat rows
