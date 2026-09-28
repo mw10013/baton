@@ -32,6 +32,50 @@ Every worktree has an **index**, and the index names everything it must not shar
 - Shared: git history and `refs/` (a symlink in each linked worktree to the main worktree's `refs/`).
 - Linked worktrees are long-lived. One takes task after task on the same `wt-NN` branch; you create it once.
 
+## How it fits together
+
+**One repository, many folders.** There is one repository: the `.git` folder in the main worktree. A linked worktree's folder has no repository of its own; its commits go into the same one. So every commit is visible from every worktree the moment it is made, with no fetching or pushing between them.
+
+**A branch is a label on a commit.** Commits form a chain, each pointing at its parent. `main` and `wt-01` are labels, each pointing at one commit. Committing moves the label of the branch you are on to the new commit. A fast-forward moves a label forward along the chain without creating anything.
+
+**Where work happens.**
+
+- In the main worktree you develop on `main` directly. A commit there has landed.
+- In a linked worktree the agent develops on `wt-NN`. Its commits land when `main` is fast-forwarded to them (step 4 below).
+- `wt-NN` is a feature branch that is reused instead of deleted: at the start of each task it is level with `main`, during the task it is a few commits ahead, and after the merge it is level again.
+
+**The one rule: work lands only on top of the current `main`.** `--ff-only` enforces it by refusing anything else. When two lines of work happen at once (you in `main` and an agent in `wt-01`, or two agents), whoever lands second rebases onto `main` first.
+
+Worked example, with you committing in `main` while an agent works in `wt-01`:
+
+```
+start          main = D                        wt-01 = D
+work           main = D ← M        (you)       wt-01 = D ← E ← F   (agent)
+in wt-01       git rebase main  →  wt-01 = D ← M ← E' ← F'
+in main        git merge --ff-only wt-01  →  main = F'
+next task      in wt-01: git merge --ff-only main  →  wt-01 = F'
+```
+
+`E'` and `F'` are `E` and `F` replayed on top of `M`. Any conflict between your change and the agent's shows up during the rebase, in `wt-01`, where its server and tests can check the result.
+
+**Which command, when:**
+
+```mermaid
+flowchart TD
+  start([Start a task in wt-NN]) --> level{"git rev-list --left-right --count main...wt-NN"}
+  level -->|"0 0 or N 0"| ff["in wt-NN: git merge --ff-only main"]
+  level -->|"0 N or N N"| unmerged["wt-NN has unmerged work:<br/>land it first (below)"]
+  ff --> work["agent works and commits on wt-NN"]
+  work --> done([Task done: land it])
+  done --> behind{"main moved since the task started?"}
+  behind -->|yes| rebase["in wt-NN: git rebase main<br/>(resolve conflicts, re-run tests)"]
+  behind -->|no| merge
+  rebase --> merge["in main: git merge --ff-only wt-NN"]
+  merge --> push["in main: git push, when you want staging to build"]
+```
+
+**Only `main` is pushed.** `wt-NN` stays on this machine. Once merged, its commits are part of `main`'s history and reach GitHub when `main` is pushed. The cost: commits in `wt-NN` that have not been merged and pushed exist only on this laptop.
+
 ## Create a linked worktree (once)
 
 Prerequisites:
@@ -85,7 +129,7 @@ git rebase main
 ```bash
 # in the linked worktree first, if main has moved since step 1:
 git rebase main
-# then in the main worktree:
+# then in the main worktree, with your own work there committed:
 git merge --ff-only wt-NN
 git push                    # when you want staging to build
 ```
@@ -103,6 +147,16 @@ git commit                  # one commit with everything
 `wt-NN` stays in line with `main` either way.
 
 **5. Next task:** back to step 1. The branch is not deleted.
+
+### Is a worktree in step with `main`?
+
+Run in any worktree (they share one history, so no fetch is needed):
+
+```bash
+git rev-list --left-right --count main...wt-NN
+```
+
+The first number is commits on `main` that `wt-NN` lacks (take them in: step 1 or 3); the second is commits on `wt-NN` that `main` lacks (merge them: step 4). `0 0` means identical. `git log --oneline wt-NN..main` and `main..wt-NN` list the commits themselves.
 
 ### After pulling in changes
 
