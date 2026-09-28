@@ -101,6 +101,11 @@ const checkCommand = Command.make(
           `Glossary: \`${word}\` does not occur in src/lib/Domain.ts outside the glossary`,
       ),
       ...ActionTable.checkScreenColumns(source, SCREEN_LABELS),
+      ...ActionTable.checkOrderIssues(
+        source,
+        Domain.OrderIssue.literals,
+        Domain.orderIssueIsCritical,
+      ),
       ...ActionTable.checkScreens(source, routeFiles),
       ...dataModels.flatMap(({ source, options }) =>
         Result.match(ActionTable.parseDataModel(source, options), {

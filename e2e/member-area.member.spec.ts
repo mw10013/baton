@@ -122,7 +122,7 @@ test("removing a member closes the shop page on their live session", async ({
 /**
  * Teams are resolved by the same `requireMember` query that proves membership,
  * so a member sees the teams they are on and nothing else — a team that exists
- * in the same shop, staffed by someone else, must not appear. The workflows list shows
+ * in the same shop, whose members are other people, must not appear. The workflows list shows
  * its team select only for a member on more than one team, so the member here
  * is on two of three: their two options render, the stranger's does not.
  * Seeded rather than created through the admin because the two surfaces are

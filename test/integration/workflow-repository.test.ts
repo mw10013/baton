@@ -476,7 +476,7 @@ describe("WorkflowRepository", () => {
         );
         const all = yield* repo.listWorkflows({ teams: ALL_TEAMS });
         deepStrictEqual(
-          all.map((w) => [w.name, Domain.isActive(w), w.needsAttention]),
+          all.map((w) => [w.name, Domain.isActive(w), w.unassigned]),
           [
             ["Live", true, false],
             ["Lost", false, true],
@@ -1570,8 +1570,8 @@ describe("WorkflowRepository workflow and draft", () => {
         // Idempotent: nothing left to null.
         yield* repo.unassignTeam({ teamId: T1.id });
         const [row] = yield* repo.listWorkflows({ teams: ALL_TEAMS });
-        strictEqual(row?.needsAttention, true);
-        // Assigning a team on the draft, then applying, clears the badge with
+        strictEqual(row?.unassigned, true);
+        // Assigning a team on the draft, then applying, clears unassigned with
         // no other write.
         const [lost] = after.draft?.tasks ?? [];
         yield* repo.updateTask({
@@ -1582,15 +1582,16 @@ describe("WorkflowRepository workflow and draft", () => {
         });
         yield* repo.applyDraft({ workflowId: w.id, teams: ALL_TEAMS });
         strictEqual(
-          (yield* repo.listWorkflows({ teams: ALL_TEAMS }))[0]?.needsAttention,
+          (yield* repo.listWorkflows({ teams: ALL_TEAMS }))[0]?.unassigned,
           false,
         );
-        // An empty team is the other attention state, derived the same way.
-        strictEqual(
-          (yield* repo.listWorkflows({
-            teams: [T1, T2, { ...T3, memberCount: 0 }],
-          }))[0]?.needsAttention,
-          true,
+        // An empty team is the other badge, emptyTeam, derived the same way.
+        const [emptied] = yield* repo.listWorkflows({
+          teams: [T1, T2, { ...T3, memberCount: 0 }],
+        });
+        deepStrictEqual(
+          [emptied?.unassigned, emptied?.emptyTeam],
+          [false, true],
         );
       }),
     ));
@@ -1638,7 +1639,7 @@ describe("WorkflowRepository workflow and draft", () => {
             w.name,
             Domain.isActive(w),
             w.stepCount,
-            w.needsAttention,
+            w.unassigned,
             tagOf(w),
           ]),
           [

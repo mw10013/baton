@@ -197,15 +197,15 @@ const CHOOSING = `fullyPaid = 1 and exists (${AMBIGUOUS_ITEM})`;
  * Each counted view's predicate over the `facts` rows of the count
  * statement in `listOrders`: `viewFilter` restated over per-order facts
  * instead of correlated subqueries, and moving with it. `OPEN` is the
- * statement's own `where`, so `open` is every row. `issues` is the three
- * `Domain.orderIssues` elements or'd: choosing, unstaffed, blocked.
- * `criticalIssues` is the two of them that are critical, unstaffed and
- * blocked; it has no view.
+ * statement's own `where`, so `open` is every row. `issues` is the four
+ * `Domain.orderIssues` elements or'd. `criticalIssues` is the ones
+ * `Domain.orderIssueIsCritical` holds, restated in SQL, and must move with
+ * it; it has no view.
  */
 const COUNT_FACT = {
   open: "1",
-  issues: "choosing or unstaffed or blockedRuns > 0",
-  criticalIssues: "unstaffed or blockedRuns > 0",
+  issues: "choosing or unassigned or emptyTeam or blockedRuns > 0",
+  criticalIssues: "unassigned or blockedRuns > 0",
   not_started: "openRuns = 0 and doneRuns = 0",
   making: "openRuns > 0",
   made: "doneRuns > 0 and openRuns = 0",
@@ -375,7 +375,7 @@ export class OrderRepository extends Context.Service<
       readonly view: Domain.OrdersIndexView | null;
       /** `null` is any team; an id is `Domain.ListOrdersInput.team` — waiting on that team. */
       readonly team: Domain.TeamId | null;
-      /** The live D1 roster `unstaffed` and `waitingOn` are derived against (`Domain.OrderRow`). */
+      /** The live D1 roster `unassigned`, `emptyTeam` and `waitingOn` are derived against (`Domain.OrderRow`). */
       readonly teams: readonly Domain.TeamRoster[];
     }) => Effect.Effect<
       Domain.OrdersPage,
@@ -982,11 +982,10 @@ export class OrderRepository extends Context.Service<
           readonly teams: readonly Domain.TeamRoster[];
         }) {
           /**
-           * `Domain.OrderRow.unstaffed` in SQL, bound to the roster the
-           * caller read from D1: an open task is unassigned when its team id
-           * is null or not in the roster, and a current task (`currentWhere`, the
-           * one definition the member's workflows list also runs on) on a team with no
-           * members is stuck on nobody's list.
+           * Bound to the roster the caller read from D1. `unassignedRun` is
+           * `Domain.OrderRow.unassigned` in SQL. `emptyTeamRun` is
+           * `Domain.OrderRow.emptyTeam` in SQL, through `currentWhere`, the
+           * one definition the member's workflows list also runs on.
            */
           const liveIds = teams.map(({ id }) => id);
           const emptyIds = teams
@@ -1000,16 +999,16 @@ export class OrderRepository extends Context.Service<
             emptyIds.length === 0
               ? sql.literal("1 = 0")
               : sql`(${sql.in("s.teamId", emptyIds)} and ${sql.literal(CurrentWhere.currentWhere("s"))})`;
-          const unstaffedTask = sql`exists (
-            select 1 from RunTask s
-            where s.runId = r.id and s.doneAt is null
-              and ${sql.or([unassigned, emptyReady])}
-          )`;
-          const unstaffedRun = sql`exists (
+          const runWithTask = (task: typeof unassigned) => sql`exists (
             select 1 from Run r
             where r.orderId = ShopOrder.id and r.status = 'active'
-              and ${unstaffedTask}
+              and exists (
+                select 1 from RunTask s
+                where s.runId = r.id and s.doneAt is null and ${task}
+              )
           )`;
+          const unassignedRun = runWithTask(unassigned);
+          const emptyTeamRun = runWithTask(emptyReady);
           /**
            * The waiting-on column's membership test as a `where`, so a
            * filtered page is exactly the rows whose cell names the team —
@@ -1034,7 +1033,7 @@ export class OrderRepository extends Context.Service<
            * The open positions partition the open orders by run state alone:
            * no open and no done run is `not_started`, any open run is
            * `making`, only done runs is `made`, as `Domain.productionState`
-           * says. `issues` is `OPEN` and the three `Domain.orderIssues`
+           * says. `issues` is `OPEN` and the four `Domain.orderIssues`
            * elements or'd, each the fragment above that restates it.
            */
           const viewFilter = Match.value(view).pipe(
@@ -1043,7 +1042,8 @@ export class OrderRepository extends Context.Service<
                 OPEN,
                 sql.or([
                   `(${CHOOSING})`,
-                  unstaffedRun,
+                  unassignedRun,
+                  emptyTeamRun,
                   `exists (${BLOCKED_RUN})`,
                 ]),
               ]),
@@ -1154,12 +1154,18 @@ export class OrderRepository extends Context.Service<
                   where ${sql.in("orderId", ids)}
                   group by orderId
                 `.values;
-          const unstaffedRows =
+          const teamIssueRows =
             ids.length === 0
               ? []
               : yield* sql`
-                  select id from ShopOrder
-                  where ${sql.in("id", ids)} and ${unstaffedRun}
+                  select id, unassigned, emptyTeam from (
+                    select id,
+                      ${unassignedRun} as unassigned,
+                      ${emptyTeamRun} as emptyTeam
+                    from ShopOrder
+                    where ${sql.in("id", ids)}
+                  )
+                  where unassigned or emptyTeam
                 `.values;
           /**
            * `Domain.OrderRow.ambiguousItems`, restating `AMBIGUOUS_ITEM` per
@@ -1184,7 +1190,7 @@ export class OrderRepository extends Context.Service<
            * the reason the comment above gives for the other aggregates — the
            * `ShopOrder` decoder wants exactly its own columns, and this one
            * returns several rows per order anyway. Gated on `liveIds` because
-           * a task pointing at a deleted team is `unstaffed`, and the outer
+           * a task pointing at a deleted team is `unassigned`, and the outer
            * run is aliased `wr`: `currentWhere` binds `r` for the task's own
            * run inside its subqueries (see its JSDoc). `teamFilter` above
            * restates this read as a `where` and must move with it.
@@ -1234,7 +1240,16 @@ export class OrderRepository extends Context.Service<
                 .map(({ id }) => id),
             ]),
           );
-          const unstaffed = new Set(unstaffedRows.map((row) => String(row[0])));
+          const unassignedIds = new Set(
+            teamIssueRows
+              .filter((row) => Boolean(row[1]))
+              .map((row) => String(row[0])),
+          );
+          const emptyTeamIds = new Set(
+            teamIssueRows
+              .filter((row) => Boolean(row[2]))
+              .map((row) => String(row[0])),
+          );
           const ambiguous = new Map(
             ambiguousRows.map((row) => [String(row[0]), Number(row[1] ?? 0)]),
           );
@@ -1257,7 +1272,7 @@ export class OrderRepository extends Context.Service<
            * search, which ignores the views. `run_summary` is the per-page
            * `runRows` aggregate hoisted over every open order, one grouped
            * read of `Run` in place of a correlated `exists` per fragment;
-           * `CHOOSING` and `unstaffedRun` stay correlated, walking items and
+           * `CHOOSING`, `unassignedRun` and `emptyTeamRun` stay correlated, walking items and
            * tasks. `facts` is materialised so each correlated term runs once
            * per order however many sums read it. The sums restate
            * `viewFilter` over those facts ({@link COUNT_FACT}) and must move
@@ -1289,7 +1304,8 @@ export class OrderRepository extends Context.Service<
                   coalesce(rs.doneRuns, 0) as doneRuns,
                   coalesce(rs.blockedRuns, 0) as blockedRuns,
                   (${sql.literal(CHOOSING)}) as choosing,
-                  ${unstaffedRun} as unstaffed
+                  ${unassignedRun} as unassigned,
+                  ${emptyTeamRun} as emptyTeam
                 from ShopOrder
                 left join run_summary rs on rs.orderId = ShopOrder.id
                 where ${sql.and([OPEN, teamFilter])}
@@ -1322,7 +1338,8 @@ export class OrderRepository extends Context.Service<
                 blocked: 0,
                 closed: 0,
               },
-              unstaffed: unstaffed.has(order.id),
+              unassigned: unassignedIds.has(order.id),
+              emptyTeam: emptyTeamIds.has(order.id),
               waitingOn: waitingOn.get(order.id) ?? [],
               ambiguousItems: ambiguous.get(order.id) ?? 0,
             })),

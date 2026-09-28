@@ -1377,11 +1377,17 @@ test("a bad filter value reads as no filter", async ({ page }) => {
 
 /**
  * The Issues banner on the orders index. The sandbox holds real orders, so
- * the team select keeps this test to its own: `#9601` waits on a staffed
- * team and has an item matching two workflows, a Choose a workflow issue,
+ * the team select keeps this test to its own: `#9601` waits on a team with a
+ * member and has an item matching two workflows, a Choose a workflow issue,
  * which is a warning; `#9602`'s only task is on a team with no members, a
- * Needs a team issue, which is critical. The banner's count honours the
- * team (`Domain.OrderCounts`), so each team shows its own order's tone.
+ * Team has no members issue, which is a warning; `#9603` has an unassigned
+ * task on a later step, a Needs a team issue, which is critical. The
+ * banner's count honours the team (`Domain.OrderCounts`), so each team shows
+ * its own order's tone.
+ *
+ * The seed refuses to turn on a workflow with an unassigned task, so
+ * `#9603`'s second step is seeded on a team that is then deleted on the
+ * teams screen, which is how a task becomes unassigned in the app.
  */
 test("the Issues banner stands while any open order has an issue and goes with the Issues view", async ({
   page,
@@ -1391,12 +1397,16 @@ test("the Issues banner stands while any open order has an issue and goes with t
   const MEMBER = "e2e.banner@example.com";
   const TEAM = "E2E Banner Bench";
   const EMPTY_TEAM = "E2E Banner Empty";
+  const ORPHAN_TEAM = "E2E Banner Orphan";
+  const GONE_TEAM = "E2E Banner Gone";
   await seedMembers(
     seedConfig(),
     [MEMBER],
     [
       { name: TEAM, members: [MEMBER] },
       { name: EMPTY_TEAM, members: [] },
+      { name: ORPHAN_TEAM, members: [MEMBER] },
+      { name: GONE_TEAM, members: [MEMBER] },
     ],
     [
       {
@@ -1410,9 +1420,17 @@ test("the Issues banner stands while any open order has an issue and goes with t
         tasks: [{ name: "Expedite", team: TEAM }],
       },
       {
-        name: "E2E Banner Unstaffed",
+        name: "E2E Banner Empty team",
         tag: "e2e-banner-empty",
         tasks: [{ name: "Wait", team: EMPTY_TEAM }],
+      },
+      {
+        name: "E2E Banner Orphan",
+        tag: "e2e-banner-orphan",
+        tasks: [
+          { name: "Cut", team: ORPHAN_TEAM, step: 1 },
+          { name: "Pack", team: GONE_TEAM, step: 2 },
+        ],
       },
     ],
     [
@@ -1433,10 +1451,32 @@ test("the Issues banner stands while any open order has an issue and goes with t
           { title: "E2E Nobody", quantity: 1, tags: ["e2e-banner-empty"] },
         ],
       },
+      {
+        n: 9603,
+        lineItems: [
+          { title: "E2E Orphan", quantity: 1, tags: ["e2e-banner-orphan"] },
+        ],
+      },
     ],
   );
 
   const frame = await gotoApp(page);
+  await clickHoisted(appNavLink(page, "Teams"));
+  await frame.getByRole("link", { name: GONE_TEAM }).click();
+  await expect(frame.locator(`s-page[heading="${GONE_TEAM}"]`)).toBeVisible();
+  /* Delete sits in the title bar's More actions menu, which App Bridge
+     hoists; its in-frame button still fires the modal (`teams.spec.ts`). */
+  await frame
+    .locator("s-menu#team-actions s-button", { hasText: "Delete" })
+    .evaluate((el) => {
+      (el as HTMLElement).click();
+    });
+  await frame
+    .getByRole("button", { name: "Delete", exact: true })
+    .last()
+    .click();
+  await expect(frame.locator('s-page[heading="Teams"]')).toBeVisible();
+
   await clickHoisted(appNavLink(page, "Orders"));
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
 
@@ -1466,8 +1506,23 @@ test("the Issues banner stands while any open order has an issue and goes with t
   await viewButton(frame, "Open").click();
   await expect(banner).toBeVisible();
 
-  /* The team with only a Needs a team order: the banner goes critical. */
+  /* The team with only a Team has no members order: a warning. */
   await team.selectOption({ label: EMPTY_TEAM });
+  await expect(
+    frame
+      .locator("s-table-row", { hasText: "#9602" })
+      .getByText("Team has no members", { exact: true }),
+  ).toBeVisible();
+  await expect(banner).toHaveAttribute("tone", "warning");
+  await expect(banner).toHaveAttribute("heading", "1 open order has an issue");
+
+  /* The team with only a Needs a team order: the banner goes critical. */
+  await team.selectOption({ label: ORPHAN_TEAM });
+  await expect(
+    frame
+      .locator("s-table-row", { hasText: "#9603" })
+      .getByText("Needs a team", { exact: true }),
+  ).toBeVisible();
   await expect(banner).toHaveAttribute("tone", "critical");
   await expect(banner).toHaveAttribute("heading", "1 open order has an issue");
 });

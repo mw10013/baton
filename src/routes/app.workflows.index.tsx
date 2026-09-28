@@ -26,8 +26,10 @@ const decodeWorkflowResult = Schema.decodeUnknownPromise(
 );
 
 /**
- * One place for every status badge. "Needs attention" is derived by the
- * object on every read: an unassigned task or a team with no members.
+ * One place for every status badge. The `team` and `empty_team` badges are
+ * the orders index's, label and tone ({@link Domain.ORDER_ISSUE_LABEL},
+ * {@link Domain.orderIssueTone}), for the same faults on a workflow:
+ * `unassigned` and `emptyTeam`, derived by the object on every read.
  */
 export const statusBadges = (workflow: Domain.WorkflowSummary) => (
   <s-stack direction="inline" gap="small-300">
@@ -37,8 +39,15 @@ export const statusBadges = (workflow: Domain.WorkflowSummary) => (
       <s-badge>{Domain.WORKFLOW_STATE_LABEL.off}</s-badge>
     )}
     {workflow.stepCount === 0 && <s-badge tone="warning">No steps</s-badge>}
-    {workflow.needsAttention && (
-      <s-badge tone="critical">Needs attention</s-badge>
+    {workflow.unassigned && (
+      <s-badge tone={Domain.orderIssueTone("team")}>
+        {Domain.ORDER_ISSUE_LABEL.team}
+      </s-badge>
+    )}
+    {workflow.emptyTeam && (
+      <s-badge tone={Domain.orderIssueTone("empty_team")}>
+        {Domain.ORDER_ISSUE_LABEL.empty_team}
+      </s-badge>
     )}
   </s-stack>
 );

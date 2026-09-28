@@ -414,11 +414,10 @@ function RouteComponent() {
       <s-link slot="breadcrumb-actions" href="/app/teams">
         Teams
       </s-link>
-      {current.length === 0 && (
-        <s-badge slot="accessory" tone="warning">
-          No members
-        </s-badge>
-      )}
+      {/* No "No members" badge in the header: the members card below is
+          the empty state for that, with the consequence and the Add button,
+          and a second mark for one fault reads as two. The teams index keeps
+          its badge, where the row is the only place the fact shows. */}
       {addButton(true)}
       {/* The drill-in that makes the orders filter discoverable from the
           suspicion that prompts it — "is this team backed up?" — rather than

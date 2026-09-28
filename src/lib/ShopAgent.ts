@@ -1930,8 +1930,9 @@ export class ShopAgent extends Agent {
     return Effect.gen(function* () {
       const repository = yield* OrderRepository;
       /* One roster read for both consumers: the repository derives
-         `unstaffed` and `waitingOn` from it, and `OrdersIndexData` carries
-         it so the route can name the ids it gets back. */
+         `unassigned`, `emptyTeam` and `waitingOn` from it, and
+         `OrdersIndexData` carries it so the route can name the ids it gets
+         back. */
       const teams = yield* readTeams();
       return {
         page: yield* repository.listOrders({
@@ -2015,7 +2016,7 @@ export class ShopAgent extends Agent {
    * Joins team names from D1 inside the object rather than in a server fn: the
    * runtime already holds `Repository`, and one round trip returns the tasks,
    * their resolved team names and member counts, and the roster the picker
-   * needs. Both attention states are derived here and never stored: a task
+   * needs. Unassigned and empty team are derived here and never stored: a task
    * whose `teamId` is null or names no team resolves to `teamName: null`
    * (unassigned — warned, never blocked in the editor, since the risk is
    * when a run starts); a task on a team with no members carries

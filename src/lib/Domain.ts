@@ -127,11 +127,16 @@
  *
  * Order issues, zero or more per open order, derived by {@link orderIssues}:
  *
- * | word            | meaning                                                | screen            |
- * | --------------- | ------------------------------------------------------ | ----------------- |
- * | choose workflow | an item matched two or more workflows                  | Choose a workflow |
- * | team            | an open task unassigned, or on a deleted or empty team | Needs a team      |
- * | blocked         | a run on the order is blocked, the run-state word      | Blocked           |
+ * | word            | meaning                                           | screen              |
+ * | --------------- | ------------------------------------------------- | ------------------- |
+ * | choose workflow | an item matched two or more workflows             | Choose a workflow   |
+ * | team            | an open task unassigned                           | Needs a team        |
+ * | empty team      | a current task on a team with no members          | Team has no members |
+ * | blocked         | a run on the order is blocked, the run-state word | Blocked             |
+ *
+ * The workflows index and the workflow page show the `team` and `empty team`
+ * rows' screen words for a workflow with the same fault, so one fault has one
+ * label wherever it shows.
  *
  * Verbs. Who may do each, and in which state, is the matrix on
  * {@link taskActions} or {@link runActions}, not here. The two screen
@@ -260,11 +265,15 @@ export const PRODUCTION_STATE_LABEL = {
 /**
  * The glossary's order-issues screen column: the badges in the orders index's
  * Issues column. A row of filter buttons used to carry these words too; now
- * only the badges do, and the Issues view holds all three.
+ * only the badges do, and the Issues view holds all of them. The workflows
+ * index's badges and the workflow page's banners read `team` and
+ * `empty_team` from here too, with the tone from {@link orderIssueTone}, so
+ * a fault has one label and one tone on every screen.
  */
 export const ORDER_ISSUE_LABEL = {
   choose_workflow: "Choose a workflow",
   team: "Needs a team",
+  empty_team: "Team has no members",
   blocked: "Blocked",
 } as const satisfies Record<OrderIssue, string>;
 
@@ -699,9 +708,10 @@ export type TeamName = typeof TeamName.Type;
  * The order of the delete is the team-delete row on {@link D1_TABLES};
  * which task pointers it nulls and why history never needs the row are the
  * cross-store rows on {@link initializeSchema}.
- * A team with nobody on it is valid and shows **No members**: its tasks can
- * still start runs, nobody can work them until someone joins, and adding one
- * member fixes everything with no data change.
+ * A team with nobody on it is valid and shows **No members** on the teams
+ * index (on a workflow or an order it is the `empty_team` {@link OrderIssue}):
+ * its tasks can still start runs, nobody can work them until someone joins,
+ * and adding one member fixes everything with no data change.
  */
 export const Team = Schema.Struct({
   id: TeamId,
@@ -719,7 +729,7 @@ export type TeamSummary = typeof TeamSummary.Type;
 
 /**
  * The live D1 roster as the Durable Object hands it to pages: what the team
- * pickers list and what the derived attention state is computed against.
+ * pickers list and what `unassigned` and `emptyTeam` are computed against.
  * `memberCount` is here so "No members on <team>" needs no second read.
  */
 export const TeamRoster = Schema.Struct({
@@ -1249,12 +1259,15 @@ export type WorkflowTag = typeof WorkflowTag.Type;
  * is assigned to a team that exists`; `activatedAt` not null implies at
  * least one task, every one assigned at the moment of Turn on.
  * A task whose team was deleted is **unassigned** (`teamId` null, or an id
- * no D1 row carries — read as null everywhere). **Needs attention** is the
- * badge for a workflow, run, or team with an unassigned task or a team with
- * no members (on the orders index, the `team` {@link OrderIssue}, whose badge
- * reads **Needs a team**); it is derived on every read, never stored, and the
- * fix is always **assign a team** or add a member. Unassigned refuses Apply and
- * Turn on; an empty team is a warning only. Tasks change only through Apply,
+ * no D1 row carries — read as null everywhere). A workflow with an
+ * unassigned task carries the `team` {@link OrderIssue} (**Needs a team**,
+ * critical) and one with a task on a team with no members the `empty_team`
+ * issue (**Team has no members**, warning), with the orders index's labels
+ * and tones ({@link ORDER_ISSUE_LABEL}, {@link orderIssueTone}), on the
+ * workflows index as badges and on the workflow page as banners. Both are
+ * derived on every read and never stored.
+ * Unassigned refuses Apply and Turn on; an empty team is a warning only, for
+ * the reason on {@link OrderIssue}. Tasks change only through Apply,
  * so an order arriving between two edits sees a whole definition, never a
  * half one; the tag and the name are immediate, because runs snapshot both at
  * start. Encoded side is the Durable Object row
@@ -1330,9 +1343,9 @@ export const WorkflowDraftTask = WorkflowTask;
 export type WorkflowDraftTask = typeof WorkflowDraftTask.Type;
 
 /**
- * List row. `tag` and `stepCount` describe the workflow. `needsAttention` is the
- * derived badge from {@link Workflow}: a task unassigned or on a team with no
- * members, computed against the live roster on every list read.
+ * List row. `tag` and `stepCount` describe the workflow. `unassigned` and
+ * `emptyTeam` are the derived badges from {@link Workflow}, computed against
+ * the live roster on every list read.
  */
 const WorkflowSummaryRowFields = {
   stepCount: Schema.Number,
@@ -1348,7 +1361,8 @@ export type WorkflowSummaryRow = typeof WorkflowSummaryRow.Type;
 export const WorkflowSummary = Schema.Struct({
   ...Workflow.fields,
   ...WorkflowSummaryRowFields,
-  needsAttention: Schema.Boolean,
+  unassigned: Schema.Boolean,
+  emptyTeam: Schema.Boolean,
 });
 export type WorkflowSummary = typeof WorkflowSummary.Type;
 
@@ -1418,7 +1432,7 @@ export type WorkflowPageData = typeof WorkflowPageData.Type;
 /** A task is unassigned when its team is null or resolves to no team; the name is the tell after the roster join. */
 export const isUnassigned = (task: TaskWithTeamName) => task.teamName === null;
 
-/** Assigned to a team nobody is on: a warning, never a blocker. */
+/** Assigned to a team nobody is on: a warning, never a blocker ({@link OrderIssue} says why). */
 export const hasEmptyTeam = (task: TaskWithTeamName) =>
   task.teamName !== null && task.memberCount === 0;
 
@@ -1542,8 +1556,8 @@ export type UpdateTaskInput = typeof UpdateTaskInput.Type;
  * leaves a half-built definition. `position` is array order; `teamId` is a D1
  * `Team.id` the caller has already created, so the team check `AddStepInput`
  * exists to trigger has nothing left to catch — or `null`, which seeds the
- * task **unassigned** so the needs-attention state is visible after
- * `pnpm seed`. A task with no `step` gets the previous task's step + 1
+ * task **unassigned** so the Needs a team badge is visible on the workflows
+ * and orders indexes after `pnpm seed`. A task with no `step` gets the previous task's step + 1
  * (linear); the repository validates the step invariant before writing.
  *
  * `tasks` become the workflow's tasks; a fixture with no tasks and no
@@ -2270,11 +2284,28 @@ export type OrdersIndexView = typeof OrdersIndexView.Type;
  * {@link orderIssues}; the SQL predicates in `OrderRepository.listOrders`
  * restate each element and must move with it.
  *
- * | Issue             | Rule                                                                                  | Remedy                                             |
- * | ----------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------- |
- * | `choose_workflow` | `ambiguousItems > 0` and the order can start runs ({@link canStartRuns})               | choose a workflow on the order page                |
- * | `team`            | {@link OrderRow} `unstaffed`                                                           | assign a team on the order page, or staff the team |
- * | `blocked`         | `runs.blocked > 0`                                                                     | the order page                                     |
+ * | Issue             | Rule                                                                     | Tone     | Remedy                              |
+ * | ----------------- | ------------------------------------------------------------------------ | -------- | ----------------------------------- |
+ * | `choose_workflow` | `ambiguousItems > 0` and the order can start runs ({@link canStartRuns}) | warning  | choose a workflow on the order page |
+ * | `team`            | {@link OrderRow} `unassigned`                                            | critical | Assign team on the order page       |
+ * | `empty_team`      | {@link OrderRow} `emptyTeam`                                             | warning  | add a member on the team page       |
+ * | `blocked`         | `runs.blocked > 0`                                                       | critical | the order page                      |
+ *
+ * **Each issue has one remedy: the action that fixes the fault the issue
+ * names.** A Remedy cell never names two actions. An action that only routes
+ * around the fault (Assign team on an `empty_team`) may still be offered on
+ * the order page, but it is not the remedy. A label that covers two fixes
+ * names neither: that is how Needs a team came to be shown for a team that
+ * was assigned but had no members.
+ *
+ * **Critical means a person cannot proceed without the merchant deciding
+ * something about this order**: the task has no team, or a person has put a
+ * hold on the run. An empty team is a warning because a team with no members
+ * is valid (Turn on allows it, {@link Workflow}), it is the ordinary state of
+ * a new team while the merchant is still adding members, and adding one
+ * member clears every order waiting on that team. Critical has to stay rare
+ * enough to mean something. {@link orderIssueIsCritical} reads the Tone
+ * column.
  *
  * **An issue is an undecided item.** An item whose run the merchant
  * cancelled was decided (Cancel workflow says "Baton is not making this"),
@@ -2309,6 +2340,7 @@ export type OrdersIndexView = typeof OrdersIndexView.Type;
 export const OrderIssue = Schema.Literals([
   "choose_workflow",
   "team",
+  "empty_team",
   "blocked",
 ]);
 export type OrderIssue = typeof OrderIssue.Type;
@@ -2444,17 +2476,22 @@ export const OrderRow = Schema.Struct({
   itemUnits: Schema.Number,
   runs: RunCounts,
   /**
-   * **Needs a team**, derived at read time against the live D1 roster and
-   * never stored: an open run has an open task that is unassigned (`teamId`
-   * null or no longer in the roster) or a current task on a team with no
-   * members. The order page's "Assign team" picker and the members screen
-   * are the remedies; either clears this with no further write.
-   *
-   * It is the `team` element of {@link orderIssues}, and the row badge reads
-   * "Needs a team". The field says what the fact is (a task with nobody to
-   * do it), not what the badge asks for.
+   * The `team` {@link OrderIssue}, derived at read time against the live D1
+   * roster and never stored: an open run has an open task, on any step, whose
+   * `teamId` is null or not on the roster. Any step, not only the current
+   * one, because an unassigned task cannot fix itself before it becomes
+   * current. Remedy: Assign team on the order page.
    */
-  unstaffed: Schema.Boolean,
+  unassigned: Schema.Boolean,
+  /**
+   * The `empty_team` {@link OrderIssue}, derived at read time against the
+   * live D1 roster and never stored: an open run has a current task
+   * ({@link currentTasks}) on a roster team with no members. Current tasks
+   * only, because a team on a later step may have members by the time that
+   * step is reached. Remedy: add a member, which clears this with no further
+   * write.
+   */
+  emptyTeam: Schema.Boolean,
   /**
    * Teams with a current task on an open run of this order, distinct, as ids:
    * "who is holding it", answered at the altitude the list grows with — a
@@ -2466,15 +2503,15 @@ export const OrderRow = Schema.Struct({
    * open run on it and only open runs have current tasks ({@link currentTasks}).
    * This is the same line {@link OrderIssue} draws: issues are open-only too.
    *
-   * Unassigned current tasks contribute nothing, and neither does a team that
-   * has left the roster: both are `unstaffed`, and rendering one fault in two
-   * cells makes it look like two alarms. A blocked run contributes nothing
-   * either: its team cannot move it, and `RunCounts.blocked` is its alarm. A
-   * team still on the roster but with
-   * no members does contribute: it is `unstaffed` too, but the badge names
-   * the team the merchant has to staff. So an order in production with an
-   * empty list is exactly an order whose every current task is unassigned or
-   * on a deleted team, which is when the critical badge is showing.
+   * An unassigned current task contributes nothing, and neither does a team
+   * that has left the roster: both are `unassigned`, and rendering one fault
+   * in two cells makes it look like two alarms. A blocked run contributes
+   * nothing either: its team cannot move it, and `RunCounts.blocked` is its
+   * alarm. A team on the roster with no members does contribute: it is
+   * `emptyTeam`, and the Waiting on cell names the team the merchant has to
+   * add a member to. So an order being made with an empty list is exactly an
+   * order whose every current task is unassigned, which is when the critical
+   * badge is showing.
    *
    * Ids, not names: the Durable Object has no team names. The route resolves
    * them through `OrdersIndexData.teams`, the roster the page was read against.
@@ -2539,20 +2576,37 @@ export const productionState = ({
 export const orderIssues = ({
   order,
   runs,
-  unstaffed,
+  unassigned,
+  emptyTeam,
   ambiguousItems,
 }: Pick<
   OrderRow,
-  "order" | "runs" | "unstaffed" | "ambiguousItems"
+  "order" | "runs" | "unassigned" | "emptyTeam" | "ambiguousItems"
 >): readonly OrderIssue[] => {
   if (!orderIsOpen(order)) return [];
   const issue: Record<OrderIssue, boolean> = {
     choose_workflow: canStartRuns(order) && ambiguousItems > 0,
-    team: unstaffed,
+    team: unassigned,
+    empty_team: emptyTeam,
     blocked: runs.blocked > 0,
   };
   return OrderIssue.literals.filter((literal) => issue[literal]);
 };
+
+const ORDER_ISSUE_IS_CRITICAL = {
+  choose_workflow: false,
+  team: true,
+  empty_team: false,
+  blocked: true,
+} as const satisfies Record<OrderIssue, boolean>;
+
+/** The Tone column of {@link OrderIssue}: true where it says critical. */
+export const orderIssueIsCritical = (issue: OrderIssue): boolean =>
+  ORDER_ISSUE_IS_CRITICAL[issue];
+
+/** {@link orderIssueIsCritical} as the `s-badge` and `s-banner` tone word every screen passes. */
+export const orderIssueTone = (issue: OrderIssue): "critical" | "warning" =>
+  orderIssueIsCritical(issue) ? "critical" : "warning";
 
 /**
  * The index's per-order ambiguity count, recomputed from a detail page's line
@@ -2597,8 +2651,9 @@ export const runCounts = (runs: readonly Run[]): RunCounts =>
  * when the team changes, which is what a merchant expects a team select to
  * do. `open` is the sum of the three positions.
  *
- * `criticalIssues` is the open orders with a `team` or `blocked`
- * {@link OrderIssue}, given the team, a subset of `issues`; it has no view.
+ * `criticalIssues` is the open orders with an issue
+ * {@link orderIssueIsCritical} holds, given the team, a subset of `issues`;
+ * it has no view.
  * It sets the Issues banner's tone on the orders index, critical only while
  * a person is stopped, so critical stays rare enough to mean something.
  *
@@ -2716,9 +2771,10 @@ export const OrdersIndexData = Schema.Struct({
   page: OrdersPage,
   syncState: OrdersSyncStatus,
   /**
-   * The live D1 roster the page was read against — the same list `unstaffed`
-   * and `OrderRow.waitingOn` were derived from, carried so the route can name
-   * the waiting-on ids and fill the team filter without a second read.
+   * The live D1 roster the page was read against — the same list
+   * `unassigned`, `emptyTeam` and `OrderRow.waitingOn` were derived from,
+   * carried so the route can name the waiting-on ids and fill the team
+   * filter without a second read.
    */
   teams: Schema.Array(TeamRoster),
 });
@@ -3176,7 +3232,7 @@ export type RunTaskId = typeof RunTaskId.Type;
  * > your team works on it, **done** when the last step is done, and
  * > **closed** if Shopify ends it first (the order was fulfilled or
  * > cancelled, or the item was removed). A member can **block** a run that
- * > needs attention; unblock it to continue. Nothing else needs your action.
+ * > cannot go on; unblock it to continue. Nothing else needs your action.
  *
  * The merchant's own Cancel workflow closes a run too, with its own reason
  * ({@link ClosedReason}). So a run ends one of two ways: `done`, a person

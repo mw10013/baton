@@ -45,7 +45,7 @@ import type {
  * single-workflow, and every hand-off crosses a team boundary. Tags are the
  * workflow names in tag form, which is what the create dialog prefills.
  *
- * The derived attention states are all seeded so every warning is visible
+ * The derived team issues are all seeded so every warning is visible
  * after one `pnpm seed`, and each carries its reading in its name so the row
  * cannot be mistaken for a mistake: `Retired team (empty)` has nobody on it,
  * `Tag stamping (unassigned task)` has a task with no team (what a team delete
@@ -110,7 +110,7 @@ export const teams: readonly SeedTeam[] = [
   { name: TEXTILES, members: [LEAD] },
   { name: FINISHING, members: [LEAD, maker(1)] },
   { name: RUSH, members: [LEAD, maker(2)] },
-  // nobody on it: "No members" on the team page and on the tasks it owns
+  // nobody on it: "No members" on the teams index, "Team has no members" on the workflows it owns tasks in
   { name: RETIRED_TEAM_EMPTY, members: [] },
   { name: AT_CAP_TEAM, members: [LEAD, maker(1)] },
 ];
@@ -247,8 +247,9 @@ export const workflows: readonly SeedWorkflow[] = [
   },
   {
     // the pet tag: one unassigned task (what a team delete leaves) and one on the empty
-    // team: "Needs a team" in the list, both banners on the detail page,
-    // Turn on refused until the task is assigned
+    // team: "Needs a team" and "Team has no members" on the workflows index
+    // and as banners on the workflow page, Turn on refused until the
+    // unassigned task is assigned; off, so no order carries its issues
     name: "Tag stamping (unassigned task)",
     tag: TAG.petTag,
     tasks: [task("Stamp", null), task("Attach ring", RETIRED_TEAM_EMPTY)],
@@ -396,9 +397,9 @@ const LONG_BLOCK_REASON =
 /**
  * One order per state a worker or the orders index can meet, oldest first
  * (the seed spaces them a millisecond apart). Read down the list as a day on the
- * floor: new work, work under way, work waiting on packing, the rows that need
- * a person's attention, and the rows where Shopify changed the order after the
- * bench had already started on it.
+ * floor: new work, work under way, work waiting on packing, the rows with an
+ * issue, and the rows where Shopify changed the order after the bench had
+ * already started on it.
  */
 const floorOrders: readonly SeedOrder[] = [
   {

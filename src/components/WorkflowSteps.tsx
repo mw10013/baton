@@ -2,7 +2,7 @@ import type * as React from "react";
 
 import * as Domain from "@/lib/Domain";
 import * as WorkflowLayout from "@/lib/WorkflowLayout";
-import { attentionLines } from "@/lib/workflowShared";
+import { emptyTeamLine, unassignedLine } from "@/lib/workflowShared";
 
 /**
  * The tasks of an item workflow drawn as the merchant reads them: top to
@@ -15,17 +15,18 @@ import { attentionLines } from "@/lib/workflowShared";
  * separates them.
  */
 
-/** The team under a task name, or the attention state standing in its place. */
+/**
+ * The team under a task name, or "No team" in its place: a fact, not an
+ * alarm. No badge for an unassigned task or an empty team here, because
+ * {@link TeamIssueBanners} above the steps already raises each issue under
+ * its label and names the task or team, and a second red mark on the same
+ * page for one fault reads as two.
+ */
 export function TeamLine({ task }: { readonly task: Domain.TaskWithTeamName }) {
-  if (Domain.isUnassigned(task))
-    return <s-badge tone="critical">Unassigned</s-badge>;
   return (
-    <s-stack direction="inline" gap="small-300" alignItems="center">
-      <s-text color="subdued">{task.teamName}</s-text>
-      {Domain.hasEmptyTeam(task) && (
-        <s-badge tone="warning">No members</s-badge>
-      )}
-    </s-stack>
+    <s-text color="subdued">
+      {Domain.isUnassigned(task) ? "No team" : task.teamName}
+    </s-text>
   );
 }
 
@@ -137,24 +138,38 @@ export function StepFlow({
   );
 }
 
-/** The unassigned-task and empty-team warnings, or nothing when there is nothing to say. */
-export function AttentionBanner({
+/**
+ * One banner per team issue a workflow carries, the `team` and `empty_team`
+ * {@link Domain.OrderIssue}s, headed by the issue's label and toned by its
+ * tone so a fault reads the same here as on the indexes. Nothing when the
+ * workflow has neither. Two banners rather than one because the faults have
+ * different tones and different remedies, and one heading over both would
+ * name neither.
+ */
+export function TeamIssueBanners({
   tasks,
 }: {
   readonly tasks: readonly Domain.TaskWithTeamName[];
 }) {
-  const lines = attentionLines(tasks);
-  if (lines.length === 0) return null;
+  const banners = [
+    { issue: "team" as const, line: unassignedLine(tasks) },
+    { issue: "empty_team" as const, line: emptyTeamLine(tasks) },
+  ];
   return (
-    <s-banner
-      tone={tasks.some(Domain.isUnassigned) ? "critical" : "warning"}
-      heading="Needs attention"
-    >
-      <s-stack gap="small-500">
-        {lines.map((line) => (
-          <s-text key={line}>{line}</s-text>
-        ))}
-      </s-stack>
-    </s-banner>
+    <>
+      {banners.map(({ issue, line }) =>
+        line === null ? null : (
+          <s-banner
+            key={issue}
+            tone={Domain.orderIssueTone(issue)}
+            heading={Domain.ORDER_ISSUE_LABEL[issue]}
+          >
+            {/* An element, not a bare string: `s-banner` renders its body
+                from elements, and a bare string child never reaches the page. */}
+            <s-text>{line}</s-text>
+          </s-banner>
+        ),
+      )}
+    </>
   );
 }

@@ -121,7 +121,7 @@ const validLayout = (
 const count = (query: Statement.Statement<SqlConnection.Row>) =>
   query.values.pipe(Effect.map((rows) => Number(rows[0]?.[0] ?? 0)));
 
-/** The live D1 roster as the object passes it in; `memberCount` only matters to the list's attention badge. */
+/** The live D1 roster as the object passes it in; `memberCount` only matters to `emptyTeam`. */
 type Teams = readonly {
   readonly id: Domain.TeamId;
   readonly memberCount?: number;
@@ -141,9 +141,9 @@ export class WorkflowRepository extends Context.Service<
   WorkflowRepository,
   {
     /**
-     * `teams` is the live roster: `needsAttention` is derived per row from
-     * the workflow's tasks against it (unassigned, or on a team with no
-     * members) and never stored.
+     * `teams` is the live roster: `unassigned` and `emptyTeam` are derived
+     * per row from the workflow's tasks against it and never stored.
+     * {@link Domain.WorkflowSummary} carries them.
      */
     readonly listWorkflows: (input: {
       readonly teams: Teams;
@@ -968,7 +968,7 @@ export class WorkflowRepository extends Context.Service<
                 order by w.name
               `,
             );
-            // Derived, never stored: the badge is computed from the workflow's
+            // Derived, never stored: the badges are computed from the workflow's
             // tasks against the roster on every list read, so assigning a
             // team or adding a member clears it with no other write.
             const tasks = yield* decodeTasks(
@@ -980,10 +980,12 @@ export class WorkflowRepository extends Context.Service<
               );
             return rows.map((row): Domain.WorkflowSummary => ({
               ...row,
-              needsAttention: tasks.some(
+              unassigned: tasks.some(
                 (task) =>
-                  task.workflowId === row.id &&
-                  (isUnassigned(task, teams) || emptyTeam(task)),
+                  task.workflowId === row.id && isUnassigned(task, teams),
+              ),
+              emptyTeam: tasks.some(
+                (task) => task.workflowId === row.id && emptyTeam(task),
               ),
             }));
           },

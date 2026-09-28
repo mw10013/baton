@@ -585,3 +585,56 @@ test("the workflows index keeps its status filter across the workflow page", asy
   await expect.poll(status).toBe("active");
   await expect(frame.getByRole("link", { name: OFF })).toHaveCount(0);
 });
+
+/**
+ * The workflows index's two derived badges are separate and are the orders
+ * index's: "Needs a team" for an unassigned task and "Team has no members"
+ * for a task on a team with no members (`statusBadges`). A workflow with
+ * both shows both, and its workflow page shows one banner per issue under
+ * the same headings and tones (`TeamIssueBanners`). Seeded off, because the
+ * seed refuses to turn on a workflow with an unassigned task.
+ */
+test("the workflows index and the workflow page show Needs a team and Team has no members apart", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+
+  const BOTH = "E2E Both faults";
+  const EMPTY = "E2E Nobody here";
+  await seedMembers(
+    seedConfig(),
+    [MEMBER],
+    [
+      { name: TEAM, members: [MEMBER] },
+      { name: EMPTY, members: [] },
+    ],
+    [
+      {
+        name: BOTH,
+        tag: "e2e-both-faults",
+        active: false,
+        tasks: [
+          { name: "Stamp", team: null },
+          { name: "Attach ring", team: EMPTY },
+        ],
+      },
+    ],
+  );
+
+  const frame = await gotoApp(page);
+  await clickHoisted(appNavLink(page, "Workflows"));
+  const row = frame.locator("s-table-row", { hasText: BOTH });
+  await expect(row.getByText("Needs a team", { exact: true })).toBeVisible();
+  await expect(
+    row.getByText("Team has no members", { exact: true }),
+  ).toBeVisible();
+
+  await frame.getByRole("link", { name: BOTH }).click();
+  await expect(frame.locator(`s-page[heading="${BOTH}"]`)).toBeVisible();
+  const needsTeam = frame.locator('s-banner[heading="Needs a team"]');
+  await expect(needsTeam).toHaveAttribute("tone", "critical");
+  await expect(needsTeam).toContainText("No team on Stamp.");
+  const noMembers = frame.locator('s-banner[heading="Team has no members"]');
+  await expect(noMembers).toHaveAttribute("tone", "warning");
+  await expect(noMembers).toContainText(`Nobody is on ${EMPTY}.`);
+});

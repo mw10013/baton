@@ -53,6 +53,28 @@ describe("a retired word stays off every merchant and member screen", () => {
     expect(hits(source)).toEqual([]);
   });
 
+  it("staff is a retired word in screen copy", () => {
+    const source = [
+      'const a = "Unstaffed";',
+      "<s-paragraph>",
+      "  Add a member to staff the team.",
+      "</s-paragraph>",
+      "// Shopify staff inside the embedded admin",
+    ].join("\n");
+    expect(hits(source)).toEqual([1, 3]);
+  });
+
+  it("attention is a retired word in screen copy", () => {
+    const source = [
+      '<s-banner heading="Needs attention" />',
+      "<s-paragraph>",
+      "  Nothing else needs your attention.",
+      "</s-paragraph>",
+      "// the derived attention state",
+    ].join("\n");
+    expect(hits(source)).toEqual([1, 3]);
+  });
+
   it("names the line and its text", () => {
     expect(
       RulesLint.retiredCopyHits('x;\nconst t = "Keep run";', false),

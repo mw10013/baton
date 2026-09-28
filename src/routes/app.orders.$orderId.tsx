@@ -235,7 +235,7 @@ const nowLine = ({ run, tasks }: Domain.RunDetail): React.ReactNode => {
   }
   const current = Domain.currentTasks(run, tasks);
   const lowest = Domain.lowestOpenStep(tasks);
-  /* Every remaining task unassigned, or an inconsistent run: the attention
+  /* Every remaining task unassigned, or an inconsistent run: the team issue
      rows below are the answer, not a position. */
   if (current.length === 0 || lowest === null) return null;
   /* One name, then a count. On a parallel step every current task can carry a
@@ -266,37 +266,54 @@ const nowLine = ({ run, tasks }: Domain.RunDetail): React.ReactNode => {
   );
 };
 
+/** A run's tasks with the merchant's actions, as {@link teamIssueRows} reads them. */
+type ActionableTask = Domain.RunTaskRow & {
+  readonly actions: Domain.TaskActions;
+};
+
 /**
- * The two derived attention states of a run, against the live team roster
- * {@link Domain.OrderPageData} carries: an open task whose team is gone is named with an "Assign team"
- * picker (the remedy that makes a team delete safe), and a current task on a
- * team with no members warns, linking to the team so the fix is one click.
- * Both are about work that can still move, so both follow
- * {@link Domain.taskActions}' `assign`: the picker is that write, and the
- * warning's remedy is either it or a new member.
- *
- * They render on the card, outside the Manage disclosure, because they are the
- * one thing that must be acted on and a disclosure would hide it. Every other
- * intervention — moving a task to another team, notes, block, cancel —
- * is inside Manage: one place to act on a run rather than two, and nothing on
- * the card is a click target, so scanning an order never risks a stray "done".
+ * The `team` issue on a run: one row per open task whose team is gone, named
+ * with an "Assign team" picker, the remedy that makes a team delete safe.
+ * Follows {@link Domain.taskActions}' `assign`, because the picker is that
+ * write.
  */
-const attentionRows = (
-  tasks: readonly (Domain.RunTaskRow & {
-    readonly actions: Domain.TaskActions;
-  })[],
+const unassignedRows = (
+  tasks: readonly ActionableTask[],
   teams: readonly Domain.TeamRoster[],
   assign: (runTaskId: string) => React.ReactNode,
+) =>
+  tasks
+    .filter(({ actions }) => actions.assign)
+    .filter((task) => Domain.isRunTaskUnassigned(task, teams))
+    .map((task) => (
+      <s-stack
+        key={task.id}
+        direction="inline"
+        gap="small-300"
+        alignItems="center"
+      >
+        <s-text type="strong">{`${task.name}: assign a team.`}</s-text>
+        {assign(task.id)}
+      </s-stack>
+    ));
+
+/**
+ * The `empty_team` issue on a run: a current task on a team with no members
+ * warns, linking to the team so the fix is one click. The remedy is a new
+ * member ({@link Domain.OrderIssue}); the warning still offers Assign team,
+ * which routes the task around the empty team, and so, like
+ * {@link unassignedRows}, it follows {@link Domain.taskActions}' `assign`.
+ * `null` when no current task is on an empty team.
+ */
+const emptyTeamWarning = (
+  tasks: readonly ActionableTask[],
+  teams: readonly Domain.TeamRoster[],
 ) => {
-  const assignable = tasks.filter(({ actions }) => actions.assign);
-  const unassigned = assignable.filter((task) =>
-    Domain.isRunTaskUnassigned(task, teams),
-  );
   /** The roster row, not the snapshot name, so the warning can link to the team page. */
   const emptyTeams = [
     ...new Map(
-      assignable
-        .filter((task) => task.current)
+      tasks
+        .filter(({ actions, current }) => actions.assign && current)
         .flatMap((task) => {
           const team = teams.find(
             (candidate) =>
@@ -306,33 +323,44 @@ const attentionRows = (
         }),
     ).values(),
   ];
-  if (unassigned.length === 0 && emptyTeams.length === 0) return null;
+  if (emptyTeams.length === 0) return null;
+  return (
+    <s-paragraph color="subdued">
+      {"No members on "}
+      {emptyTeams.map((team, index) => (
+        <React.Fragment key={team.id}>
+          {index > 0 && ", "}
+          <s-link href={`/app/teams/${team.id}`}>{team.name}</s-link>
+        </React.Fragment>
+      ))}
+      . Nobody can work this until someone joins, or you assign another team.
+    </s-paragraph>
+  );
+};
+
+/**
+ * The team issues of a run, {@link unassignedRows} then
+ * {@link emptyTeamWarning}, against the live team roster
+ * {@link Domain.OrderPageData} carries; `null` when it has neither.
+ *
+ * They render on the card, outside the Manage disclosure, because they are the
+ * one thing that must be acted on and a disclosure would hide it. Every other
+ * intervention — moving a task to another team, notes, block, cancel —
+ * is inside Manage: one place to act on a run rather than two, and nothing on
+ * the card is a click target, so scanning an order never risks a stray "done".
+ */
+const teamIssueRows = (
+  tasks: readonly ActionableTask[],
+  teams: readonly Domain.TeamRoster[],
+  assign: (runTaskId: string) => React.ReactNode,
+) => {
+  const unassigned = unassignedRows(tasks, teams, assign);
+  const emptyTeam = emptyTeamWarning(tasks, teams);
+  if (unassigned.length === 0 && emptyTeam === null) return null;
   return (
     <s-stack gap="small-500">
-      {unassigned.map((task) => (
-        <s-stack
-          key={task.id}
-          direction="inline"
-          gap="small-300"
-          alignItems="center"
-        >
-          <s-text type="strong">{`${task.name}: assign a team.`}</s-text>
-          {assign(task.id)}
-        </s-stack>
-      ))}
-      {emptyTeams.length > 0 && (
-        <s-paragraph color="subdued">
-          {"No members on "}
-          {emptyTeams.map((team, index) => (
-            <React.Fragment key={team.id}>
-              {index > 0 && ", "}
-              <s-link href={`/app/teams/${team.id}`}>{team.name}</s-link>
-            </React.Fragment>
-          ))}
-          . Nobody can work this until someone joins, or you assign another
-          team.
-        </s-paragraph>
-      )}
+      {unassigned}
+      {emptyTeam}
     </s-stack>
   );
 };
@@ -589,7 +617,7 @@ function RouteComponent() {
       ),
     onSuccess: async (result, { runTaskId }) => {
       const message = assignResultMessage(result);
-      /* The attention row's picker has no modal to hold a message, so its
+      /* The unassigned row's picker has no modal to hold a message, so its
          refusal goes to the page banner; the modal keeps its own. */
       if (assigning?.runTaskId === runTaskId) {
         if (message === null) {
@@ -701,7 +729,7 @@ function RouteComponent() {
   })();
   /**
    * The team picker and Assign button beside an unassigned task in
-   * `attentionRows`, open at rest because a task with no team is a required
+   * `unassignedRows`, open at rest because a task with no team is a required
    * slot left empty, the one thing on the card that must be acted on. A task
    * that has a team changes it through the Assign team modal instead: a filled
    * slot is changed in a modal, an empty one is filled at rest.
@@ -747,8 +775,7 @@ function RouteComponent() {
    * the workflow, because the card does not; then the run-level actions —
    * Block, Cancel workflow, Change workflow — in one row under a rule. Every
    * intervention lives here and nowhere else, so the card above stays a
-   * read-only glance: item, status, where the run is, and whatever needs
-   * attention.
+   * read-only glance: item, status, where the run is, and its team issues.
    *
    * No action here is primary — not `Done`, not `Block`. Every write on
    * this page is a merchant reaching past a worker — the bench claims and
@@ -962,7 +989,7 @@ function RouteComponent() {
    * properties. Top to bottom: the {@link ClosedLine} on a closed run (why
    * and when it ended), the {@link BlockBanner} while blocked (why it
    * stopped, with Edit reason and Unblock), the Now line (where it is), the
-   * {@link RunNote}, the attention rows, then Manage and, when open, the
+   * {@link RunNote}, the team issue rows, then Manage and, when open, the
    * disclosure it toggles. The badges are on the facts line
    * ({@link runBadges}). A closed run keeps its tasks as the record, so
    * Manage still lists them, with no buttons ({@link Domain.taskActions}).
@@ -1007,7 +1034,7 @@ function RouteComponent() {
     }));
     const actions = Domain.runActions(MERCHANT, order, run, tasks, item);
     const now = nowLine({ run, tasks });
-    const attention = attentionRows(tasks, teams, assignTeam);
+    const teamIssues = teamIssueRows(tasks, teams, assignTeam);
     const options = itemWorkflows.filter(
       (workflow) => workflow.id !== run.workflowId,
     );
@@ -1084,7 +1111,7 @@ function RouteComponent() {
             openModal(NOTE_MODAL, run);
           }}
         />
-        {attention}
+        {teamIssues}
         <s-stack direction="inline">
           <s-button
             variant="secondary"

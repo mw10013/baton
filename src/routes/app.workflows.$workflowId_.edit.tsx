@@ -11,7 +11,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
-import { AttentionBanner, StepFlow } from "@/components/WorkflowSteps";
+import { StepFlow, TeamIssueBanners } from "@/components/WorkflowSteps";
 import { WorkflowSwitch } from "@/components/WorkflowSwitch";
 import * as Domain from "@/lib/Domain";
 import { hideModal } from "@/lib/polarisModal";
@@ -694,7 +694,7 @@ function RouteComponent() {
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
           {/* Only while the header offers Turn on or Apply: an active
               workflow with no draft has neither, and its unassigned tasks are
-              `AttentionBanner`'s to report. */}
+              `TeamIssueBanners`' to report. */}
           {blocker !== null && !(showSwitch && Domain.isActive(workflow)) && (
             <s-banner
               tone="warning"
@@ -702,13 +702,13 @@ function RouteComponent() {
                 showSwitch ? "Turn on is unavailable" : "Not ready to apply"
               }
             >
-              {/* Wrapped, like {@link AttentionBanner}'s lines: `s-banner`
+              {/* Wrapped, like {@link TeamIssueBanners}' lines: `s-banner`
                   renders its body from elements, and a bare string child
                   never reaches the page. */}
               <s-paragraph>{applyResultMessage(blocker)}</s-paragraph>
             </s-banner>
           )}
-          <AttentionBanner tasks={tasks} />
+          <TeamIssueBanners tasks={tasks} />
 
           <StepFlow
             tasks={tasks}

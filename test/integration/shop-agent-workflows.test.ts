@@ -221,7 +221,7 @@ describe("ShopAgent workflow callables", () => {
       taskNames: ["S"],
     });
     const [summary] = await agent.listWorkflows();
-    strictEqual(summary?.needsAttention, true);
+    strictEqual(summary?.unassigned, true);
 
     // The D1 half succeeded and the object half did not: every read treats
     // the dangling id as unassigned, and a retry nulls it for real.
@@ -240,7 +240,7 @@ describe("ShopAgent workflow callables", () => {
     const repaired = await agent.getWorkflowDetail({ workflowId });
     expect(repaired?.tasks.map((s) => s.teamId)).toEqual([null, null]);
 
-    // Assigning a team on the draft and applying clears the badge.
+    // Assigning a team on the draft and applying clears unassigned.
     const c = await seedTeam(shop, "C");
     for (const task of repaired?.draft?.tasks ?? [])
       await agent.updateTask({
@@ -251,12 +251,13 @@ describe("ShopAgent workflow callables", () => {
       });
     const reapplied = await agent.applyDraft({ workflowId });
     strictEqual(reapplied._tag, "Ok");
-    // Turn on is allowed again; the badge stays because C has nobody on it,
+    // Turn on is allowed again; emptyTeam shows because C has nobody on it,
     // which is a warning, never a refusal.
     const backOn = await agent.setWorkflowActive({ workflowId, active: true });
     strictEqual(backOn._tag, "Ok");
     const [cleared] = await agent.listWorkflows();
-    strictEqual(cleared?.needsAttention, true);
+    strictEqual(cleared?.unassigned, false);
+    strictEqual(cleared?.emptyTeam, true);
     expect(await agent.deleteTeam({ teamId: "nope" })).toEqual({
       _tag: "NotFound",
     });

@@ -68,6 +68,13 @@ const dataModelError = (doctored: string) => {
 const rowsOf = (source: string) =>
   Result.getOrThrow(ActionTable.parse(source, "taskActions"));
 
+const checkOrderIssues = (doctored: string) =>
+  ActionTable.checkOrderIssues(
+    doctored,
+    Domain.OrderIssue.literals,
+    Domain.orderIssueIsCritical,
+  );
+
 describe("action table parser", () => {
   it("the table is the first one in the JSDoc before the export", () => {
     const rows = rowsOf(
@@ -236,6 +243,52 @@ describe("action table parser", () => {
       expect(ActionTable.checkScreenColumns(doctored, labels)).toEqual([
         "Glossary: Task states idle: no constant",
         "Glossary: Task states: no row for waiting",
+      ]);
+    });
+  });
+
+  describe("the order issue table", () => {
+    const TEAM_ROW =
+      "| `team`            | {@link OrderRow} `unassigned`                                            | critical | Assign team on the order page       |";
+    const EMPTY_TEAM_ROW =
+      "| `empty_team`      | {@link OrderRow} `emptyTeam`                                             | warning  | add a member on the team page       |";
+
+    it("Domain.ts passes", () => {
+      expect(source).toContain(TEAM_ROW);
+      expect(source).toContain(EMPTY_TEAM_ROW);
+      expect(checkOrderIssues(source)).toEqual([]);
+    });
+
+    it("each order issue has one remedy", () => {
+      const doctored = source.replace(
+        EMPTY_TEAM_ROW,
+        "| `empty_team`      | {@link OrderRow} `emptyTeam`                                             | warning  | assign a team, or add a member      |",
+      );
+      expect(doctored).not.toBe(source);
+      expect(checkOrderIssues(doctored)).toEqual([
+        "OrderIssue `empty_team`: a remedy names one action; this one says or",
+      ]);
+    });
+
+    it("the Tone column is orderIssueIsCritical", () => {
+      const doctored = source.replace(
+        EMPTY_TEAM_ROW,
+        EMPTY_TEAM_ROW.replace("| warning  |", "| critical |"),
+      );
+      expect(doctored).not.toBe(source);
+      expect(checkOrderIssues(doctored)).toEqual([
+        "OrderIssue `empty_team`: Tone says critical; orderIssueIsCritical says warning",
+      ]);
+    });
+
+    it("the Issue column is the OrderIssue literals, in order", () => {
+      const doctored = source.replace(
+        `${TEAM_ROW}\n * ${EMPTY_TEAM_ROW}`,
+        `${EMPTY_TEAM_ROW}\n * ${TEAM_ROW}`,
+      );
+      expect(doctored).not.toBe(source);
+      expect(checkOrderIssues(doctored)).toEqual([
+        "OrderIssue: the Issue column is choose_workflow, empty_team, team, blocked; the literals are choose_workflow, team, empty_team, blocked",
       ]);
     });
   });

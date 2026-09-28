@@ -6,7 +6,7 @@ import { appNavLink, clickHoisted, gotoApp } from "./app";
 import { seedConfig, seedMembers } from "./seed";
 
 /**
- * The embedded half of member access: granting, staffing, and revoking on
+ * The embedded half of member access: granting, putting on teams, and revoking on
  * `/app/members`. What a member can then *do* with that grant is
  * `member-area.member.spec.ts`, which runs outside the admin entirely.
  *
@@ -19,7 +19,7 @@ const MEMBER_EMAIL = "e2e.member@example.com";
 const TEAM = "Engraving";
 const EMPTY_STATE = "No members yet";
 
-test("members screen adds, staffs, normalizes, and removes a member", async ({
+test("members screen adds, puts on teams, normalizes, and removes a member", async ({
   page,
 }) => {
   /* `gotoApp` spends 4-6s on a healthy load and each of the mutations below

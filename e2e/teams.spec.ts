@@ -4,7 +4,7 @@ import { appNavLink, clickHoisted, gotoApp } from "./app";
 import { seedConfig, seedMembers } from "./seed";
 
 /**
- * The embedded half of teams: creating, staffing, renaming, and deleting on
+ * The embedded half of teams: creating, adding members to, renaming, and deleting on
  * `/app/teams`. What a member then sees of their teams is
  * `member-area.member.spec.ts`, which runs outside the admin entirely.
  *
@@ -39,7 +39,7 @@ const EMPTY_STATE = "No teams yet";
 const TEAM = "E2E Cut";
 const RENAMED = "E2E Cutting";
 
-test("teams screen creates, staffs, renames, and deletes a team", async ({
+test("teams screen creates, adds members to, renames, and deletes a team", async ({
   page,
 }) => {
   test.setTimeout(120_000);

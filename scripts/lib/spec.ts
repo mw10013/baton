@@ -565,6 +565,63 @@ export const checkScreenColumns = (
 };
 
 /**
+ * **Each order issue has one remedy**, and the issue table on `OrderIssue` is
+ * the spec for tone. Parses that table (header `Issue | Rule | Tone |
+ * Remedy`) and reports: an Issue column that is not `literals` in order; a
+ * Tone cell other than critical or warning, or one that disagrees with
+ * `critical`; and a Remedy cell that says "or". A Remedy that offers two
+ * fixes names neither: the old Needs a team label covered both assigning a
+ * team and adding a member, and was shown for a team that was assigned but
+ * had no members.
+ */
+export const checkOrderIssues = <Issue extends string>(
+  source: string,
+  literals: readonly Issue[],
+  critical: (issue: Issue) => boolean,
+): readonly string[] =>
+  Result.match(
+    firstTable(source, "OrderIssue", ["Issue", "Rule", "Tone", "Remedy"]),
+    {
+      onFailure: (error) => [error.message],
+      onSuccess: ({ body }) => {
+        const rows = body.map(({ text }) => {
+          const [issue = "", , tone = "", remedy = ""] = cellsOf(text);
+          return { issue: issue.replaceAll("`", ""), tone, remedy };
+        });
+        const issues = rows.map(({ issue }) => issue);
+        const isLiteral = (issue: string): issue is Issue =>
+          (literals as readonly string[]).includes(issue);
+        const toneProblems = (issue: string, tone: string) => {
+          if (tone !== "critical" && tone !== "warning")
+            return [
+              `OrderIssue \`${issue}\`: Tone "${tone}"; expected critical or warning`,
+            ];
+          if (!isLiteral(issue) || critical(issue) === (tone === "critical"))
+            return [];
+          return [
+            `OrderIssue \`${issue}\`: Tone says ${tone}; orderIssueIsCritical says ${critical(issue) ? "critical" : "warning"}`,
+          ];
+        };
+        return [
+          ...(issues.join(",") === literals.join(",")
+            ? []
+            : [
+                `OrderIssue: the Issue column is ${issues.join(", ")}; the literals are ${literals.join(", ")}`,
+              ]),
+          ...rows.flatMap(({ issue, tone, remedy }) => [
+            ...toneProblems(issue, tone),
+            ...(/\bor\b/iu.test(remedy)
+              ? [
+                  `OrderIssue \`${issue}\`: a remedy names one action; this one says or`,
+                ]
+              : []),
+          ]),
+        ];
+      },
+    },
+  );
+
+/**
  * **Every screen a merchant or member uses has a Screens row, and every
  * row's route file exists.** `routeFiles` maps each file under `src/routes/`
  * to its source, passed in for the same reason as {@link ScreenLabels}. A

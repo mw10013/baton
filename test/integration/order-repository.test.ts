@@ -38,18 +38,18 @@ const runInRepository = <A, E>(
 const orderId = (n: number) => `gid://shopify/Order/${String(n)}`;
 const names = (page: Domain.OrdersPage) =>
   page.orders.map(({ order }) => order.name);
-/** The page's orders with a `team` or `blocked` issue. */
+/** The page's orders with an issue `Domain.orderIssueIsCritical` holds. */
 const critical = (page: Domain.OrdersPage) =>
   page.orders.filter((row) =>
-    Domain.orderIssues(row).some(
-      (issue) => issue === "team" || issue === "blocked",
-    ),
+    Domain.orderIssues(row).some(Domain.orderIssueIsCritical),
   ).length;
 const lineItemId = (n: number) => `gid://shopify/LineItem/${String(n)}`;
 const aTeamId = (value: string) =>
   Schema.decodeUnknownSync(Domain.TeamId)(value);
 const rowOf = (page: Domain.OrdersPage, name: string) =>
   page.orders.find((row) => row.order.name === name);
+const flagged = (page: Domain.OrdersPage, field: "unassigned" | "emptyTeam") =>
+  page.orders.filter((row) => row[field]).map((row) => row.order.name);
 const waitingOf = (page: Domain.OrdersPage, name: string) =>
   rowOf(page, name)?.waitingOn;
 
@@ -386,9 +386,11 @@ const seedStates = Effect.gen(function* () {
 
 /**
  * `seedStates` plus the issues it lacks, and a team to filter on: `#1003`'s
- * open run is blocked and `#1004`'s open run has a task on a team that has
- * left the roster. Ready tasks on Cut hang off `#1013` and `#1014`, so the
- * team filter keeps one order with an issue and one without.
+ * open run is blocked, `#1004`'s open run has a task on a team that has
+ * left the roster (unassigned), and `#1015`, added here, is being made with
+ * its current task on a team with no members (empty team). Ready tasks on
+ * Cut hang off `#1013` and `#1014`, so the team filter keeps one order with
+ * an issue and one without.
  */
 const seedIssues = Effect.gen(function* () {
   const repository = yield* seedStates;
@@ -402,8 +404,32 @@ const seedIssues = Effect.gen(function* () {
   yield* task("s4", "run-4-1", "team-gone");
   yield* task("s13", "run-13-0", "team-cut");
   yield* task("s14", "run-14-0", "team-cut");
+  yield* upsert(
+    repository,
+    anOrder({
+      id: orderId(15),
+      legacyId: "15",
+      name: "#1015",
+      processedAt: 15_000,
+      fullyPaid: true,
+    }),
+    [aLineItem(15, { orderId: orderId(15) })],
+  );
+  yield* sql`
+    insert into Run (
+      id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
+      lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
+      status, closedAt, closedReason, createdAt, updatedAt
+    ) values (
+      'run-15-0', 'wf', 'Workflow', ${orderId(15)}, '#1015', 0,
+      ${`${lineItemId(15)}-0`}, 'Item', null, null, 1, '[]', 'active', null,
+      null, 0, 0
+    )
+  `;
+  yield* task("s15", "run-15-0", "team-empty");
   const teams = Schema.decodeUnknownSync(Schema.Array(Domain.TeamRoster))([
     { id: "team-cut", name: "Cut", memberCount: 1 },
+    { id: "team-empty", name: "Polish", memberCount: 0 },
   ]);
   const list = (
     view: Domain.OrdersIndexView | null,
@@ -486,9 +512,16 @@ describe("OrderRepository.listOrders views", () => {
         return { all: yield* list("all"), issues: yield* list("issues") };
       }),
     );
-    // Choosing `#1013` and `#1012`, unstaffed `#1004`, blocked `#1003`.
-    // `#1005` matched no workflow and `#1010`'s only run was closed: no issue.
-    deepStrictEqual(names(issues), ["#1013", "#1012", "#1004", "#1003"]);
+    // Empty team `#1015`, choosing `#1013` and `#1012`, unassigned `#1004`,
+    // blocked `#1003`. `#1005` matched no workflow and `#1010`'s only run was
+    // closed: no issue.
+    deepStrictEqual(names(issues), [
+      "#1015",
+      "#1013",
+      "#1012",
+      "#1004",
+      "#1003",
+    ]);
     for (const row of all.orders)
       strictEqual(
         names(issues).includes(row.order.name),
@@ -554,10 +587,10 @@ describe("OrderRepository.listOrders views", () => {
     for (const { label, count, shown } of checks.out)
       strictEqual(count, shown, label);
     deepStrictEqual(checks.open, {
-      open: 11,
-      issues: 4,
+      open: 12,
+      issues: 5,
       not_started: 4,
-      making: 4,
+      making: 5,
       made: 3,
       criticalIssues: 2,
     });
@@ -572,7 +605,7 @@ describe("OrderRepository.listOrders views", () => {
     });
   });
 
-  it("criticalIssues counts the open orders with a team or blocked issue", async () => {
+  it("criticalIssues counts the open orders with a critical issue, and an empty team is not one", async () => {
     const { all, cut } = await runInRepository(
       Effect.gen(function* () {
         const { list } = yield* seedIssues;
@@ -582,8 +615,12 @@ describe("OrderRepository.listOrders views", () => {
         };
       }),
     );
-    // Unstaffed `#1004` and blocked `#1003`.
+    // Unassigned `#1004` and blocked `#1003`; empty team `#1015` is an issue
+    // but not a critical one.
     strictEqual(all.counts.criticalIssues, 2);
+    strictEqual(all.counts.issues, 5);
+    strictEqual(rowOf(all, "#1015")?.emptyTeam, true);
+    strictEqual(rowOf(all, "#1015")?.unassigned, false);
     strictEqual(all.counts.criticalIssues, critical(all));
     strictEqual(cut.counts.criticalIssues, critical(cut));
   });
@@ -762,19 +799,29 @@ describe("OrderRepository.listOrders q", () => {
   });
 });
 
-describe("OrderRepository.listOrders unstaffed", () => {
+describe("OrderRepository.listOrders team issues", () => {
+  const teams = Schema.decodeUnknownSync(Schema.Array(Domain.TeamRoster))([
+    { id: "team-cut", name: "Cut", memberCount: 1 },
+    { id: "team-empty", name: "Polish", memberCount: 0 },
+  ]);
   /**
-   * `Domain.OrderRow.unstaffed` against a roster the test hands in: #3's
-   * active run has an open task on a deleted team, #4's unstarted run has a
-   * current task on an empty team, #1's done run keeps a stale pointer on
-   * a done task and never counts, and #8 is healthy.
+   * `seedStates` with tasks hung off its runs, listed against `teams`, for
+   * `Domain.OrderRow.unassigned` and `Domain.OrderRow.emptyTeam`. `#1`'s done
+   * run keeps a stale pointer on a done task and never counts, and `#8` is
+   * healthy.
    */
-  it("an order with an unassigned or unstaffed open task is unstaffed, and the Issues view holds it", async () => {
-    const teams = Schema.decodeUnknownSync(Schema.Array(Domain.TeamRoster))([
-      { id: "team-cut", name: "Cut", memberCount: 1 },
-      { id: "team-empty", name: "Polish", memberCount: 0 },
-    ]);
-    const { all, issues } = await runInRepository(
+  const fixture = (
+    extra: (
+      task: (
+        id: string,
+        runId: string,
+        step: number,
+        teamId: string | null,
+        doneAt: number | null,
+      ) => Effect.Effect<unknown, unknown>,
+    ) => Effect.Effect<unknown, unknown>,
+  ) =>
+    runInRepository(
       Effect.gen(function* () {
         const repository = yield* seedStates;
         const sql = yield* SqlClient.SqlClient;
@@ -789,11 +836,9 @@ describe("OrderRepository.listOrders unstaffed", () => {
             (id, runId, position, step, name, teamId, teamName, doneAt)
           values (${id}, ${runId}, ${step}, ${step}, 'Task', ${teamId}, 'Team', ${doneAt})
         `;
-        yield* task("s3", "run-3-1", 1, "team-gone", null);
-        yield* task("s4a", "run-4-1", 1, "team-cut", 1);
-        yield* task("s4b", "run-4-1", 2, "team-empty", null);
         yield* task("s1", "run-1-0", 1, "team-gone", 1);
         yield* task("s8", "run-8-0", 1, "team-cut", 1);
+        yield* extra(task);
         const list = (view: Domain.OrdersIndexView | null) =>
           repository.listOrders({
             limit: 20,
@@ -806,12 +851,47 @@ describe("OrderRepository.listOrders unstaffed", () => {
         return { all: yield* list(null), issues: yield* list("issues") };
       }),
     );
-    deepStrictEqual(
-      all.orders.filter((row) => row.unstaffed).map((row) => row.order.name),
-      ["#1004", "#1003"],
+
+  /**
+   * `#1003`'s active run has an open task on a deleted team on its current
+   * step; `#1014`'s has a current task on Cut and a later one on the deleted
+   * team.
+   */
+  it("an open task on a deleted team, on any step, makes the order unassigned, and the Issues view holds it", async () => {
+    const { all, issues } = await fixture((task) =>
+      Effect.gen(function* () {
+        yield* task("s3", "run-3-1", 1, "team-gone", null);
+        yield* task("s14a", "run-14-0", 1, "team-cut", null);
+        yield* task("s14b", "run-14-0", 2, "team-gone", null);
+      }),
     );
-    for (const name of ["#1004", "#1003"])
+    deepStrictEqual(flagged(all, "unassigned"), ["#1014", "#1003"]);
+    deepStrictEqual(flagged(all, "emptyTeam"), []);
+    for (const name of ["#1014", "#1003"])
       strictEqual(names(issues).includes(name), true, name);
+    strictEqual(names(issues).includes("#1008"), false);
+    strictEqual(names(issues).includes("#1001"), false);
+    strictEqual(all.counts.issues, names(issues).length);
+  });
+
+  /**
+   * `#1004`'s active run has finished step 1 on Cut, so its step-2 task on
+   * the empty team is current; `#1014`'s step 1 on Cut is still current, so
+   * its step-2 task on the empty team is not.
+   */
+  it("a current task on a team with no members makes the order emptyTeam, and a later one does not", async () => {
+    const { all, issues } = await fixture((task) =>
+      Effect.gen(function* () {
+        yield* task("s4a", "run-4-1", 1, "team-cut", 1);
+        yield* task("s4b", "run-4-1", 2, "team-empty", null);
+        yield* task("s14a", "run-14-0", 1, "team-cut", null);
+        yield* task("s14b", "run-14-0", 2, "team-empty", null);
+      }),
+    );
+    deepStrictEqual(flagged(all, "emptyTeam"), ["#1004"]);
+    deepStrictEqual(flagged(all, "unassigned"), []);
+    strictEqual(names(issues).includes("#1004"), true);
+    strictEqual(names(issues).includes("#1014"), false);
     strictEqual(names(issues).includes("#1008"), false);
     strictEqual(all.counts.issues, names(issues).length);
   });
@@ -955,7 +1035,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
     strictEqual(rowOf(filtered, "#1003")?.order.name, "#1003");
   });
 
-  it("leaves out a team that has left the roster, which is unstaffed instead", async () => {
+  it("leaves out a team that has left the roster, which is unassigned instead", async () => {
     const page = await runInRepository(
       Effect.gen(function* () {
         const { sql, list } = yield* waitingFixture;
@@ -964,7 +1044,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
       }),
     );
     deepStrictEqual(waitingOf(page, "#1003"), []);
-    strictEqual(rowOf(page, "#1003")?.unstaffed, true);
+    strictEqual(rowOf(page, "#1003")?.unassigned, true);
   });
 
   /**

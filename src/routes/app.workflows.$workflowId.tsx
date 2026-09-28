@@ -12,7 +12,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
-import { AttentionBanner, StepFlow } from "@/components/WorkflowSteps";
+import { StepFlow, TeamIssueBanners } from "@/components/WorkflowSteps";
 import {
   activateResultMessage,
   AppliesSince,
@@ -348,7 +348,7 @@ function RouteComponent() {
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
           {showSwitch && !active && blocker !== null && (
             <s-banner tone="info" heading="Turn on is unavailable">
-              {/* Wrapped, like `AttentionBanner`'s lines: `s-banner` renders
+              {/* Wrapped, like `TeamIssueBanners`' lines: `s-banner` renders
                   its body from elements, and a bare string child never
                   reaches the page. */}
               <s-paragraph>{activateResultMessage(blocker)}</s-paragraph>
@@ -362,7 +362,7 @@ function RouteComponent() {
             />
           )}
 
-          <AttentionBanner tasks={tasks} />
+          <TeamIssueBanners tasks={tasks} />
 
           <StepFlow
             tasks={tasks}

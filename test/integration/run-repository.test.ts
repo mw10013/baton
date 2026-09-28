@@ -3255,7 +3255,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         strictEqual(
           (yield* workflows.listWorkflows({ teams: TEAMS })).find(
             (w) => w.id === a.id,
-          )?.needsAttention,
+          )?.unassigned,
           true,
         );
       }),
@@ -3321,7 +3321,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         strictEqual(
           (yield* workflows.listWorkflows({ teams: TEAMS })).find(
             (w) => w.id === a.id,
-          )?.needsAttention,
+          )?.unassigned,
           true,
         );
         const none = yield* upsertAndReconcile(

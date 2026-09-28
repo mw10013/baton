@@ -31,7 +31,8 @@ const row = (
   order: order(overrides),
   itemUnits: 1,
   runs: { ...NONE, ...runs },
-  unstaffed: false,
+  unassigned: false,
+  emptyTeam: false,
   waitingOn: [],
   ambiguousItems,
 });
@@ -108,10 +109,28 @@ describe("Domain.orderIssues", () => {
     deepStrictEqual(Domain.orderIssues(row(NONE, { fullyPaid: false }, 1)), []);
   });
 
-  it("team: the order has an unstaffed task", () => {
+  it("team: an open run has an unassigned open task", () => {
     deepStrictEqual(
-      Domain.orderIssues({ ...row({ open: 1 }), unstaffed: true }),
+      Domain.orderIssues({ ...row({ open: 1 }), unassigned: true }),
       ["team"],
+    );
+  });
+
+  it("empty team: an open run has a current task on a team with no members", () => {
+    deepStrictEqual(
+      Domain.orderIssues({ ...row({ open: 1 }), emptyTeam: true }),
+      ["empty_team"],
+    );
+  });
+
+  it("an order with both team faults carries both issues, team first", () => {
+    deepStrictEqual(
+      Domain.orderIssues({
+        ...row({ open: 2 }),
+        unassigned: true,
+        emptyTeam: true,
+      }),
+      ["team", "empty_team"],
     );
   });
 
@@ -125,7 +144,7 @@ describe("Domain.orderIssues", () => {
     deepStrictEqual(
       Domain.orderIssues({
         ...row({ open: 2, blocked: 1 }, {}, 1),
-        unstaffed: true,
+        unassigned: true,
       }),
       ["choose_workflow", "team", "blocked"],
     );
@@ -134,7 +153,8 @@ describe("Domain.orderIssues", () => {
   it("a fulfilled or cancelled order has no issues", () => {
     const troubled = (overrides: Partial<Domain.ShopOrder>) => ({
       ...row({ open: 1, blocked: 1 }, overrides, 1),
-      unstaffed: true,
+      unassigned: true,
+      emptyTeam: true,
     });
     deepStrictEqual(
       Domain.orderIssues(troubled({ fulfillmentStatus: "FULFILLED" })),
@@ -144,6 +164,15 @@ describe("Domain.orderIssues", () => {
     deepStrictEqual(
       Domain.orderIssues(row(NONE, { fulfillmentStatus: "FULFILLED" })),
       [],
+    );
+  });
+});
+
+describe("Domain.orderIssueIsCritical", () => {
+  it("team and blocked are critical, choose workflow and empty team are warnings", () => {
+    deepStrictEqual(
+      Domain.OrderIssue.literals.filter(Domain.orderIssueIsCritical),
+      ["team", "blocked"],
     );
   });
 });
