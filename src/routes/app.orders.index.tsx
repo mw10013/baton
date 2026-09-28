@@ -48,12 +48,15 @@ const ordersQueryKey = (
 ) => ["orders", shop, q, view, team, after] as const;
 
 /**
- * The view row, left to right: Open (the default, `null` in the URL), Issues,
- * the ladder in the order an order moves, then Fulfilled and All. Each is one
- * whole question and exactly one is pressed ({@link Domain.OrdersIndexView},
- * which carries the rule and why the row is not two crossed rows). Issues
- * sits second because it is the merchant's first question and the reason the
- * badges are red. There is no label to the row's left: the row holds scopes
+ * The view row, left to right: Open (the default, `null` in the URL), the
+ * ladder in the order an order moves, Fulfilled, All, and then Issues set
+ * apart at the row's end. Each is one whole question and exactly one is
+ * pressed ({@link Domain.OrdersIndexView}, which carries the rule and why the
+ * row is not two crossed rows). Open, the positions and All read as one run:
+ * a total, its parts in lifecycle order, then the scope widening to the whole
+ * history. Issues cuts across the three open positions rather than following
+ * them, so it sits outside that run instead of breaking it, at the row's far
+ * edge. There is no label to the row's left: the row holds scopes
  * and positions side by side, and a label such as "Status" would promise one
  * axis. `count` is the `Domain.OrderCounts` key the button shows; Fulfilled
  * and All carry none. `cancelled` has no button. Labels are
@@ -64,13 +67,18 @@ const VIEWS: readonly {
   readonly count: keyof Domain.OrderCounts | null;
 }[] = [
   { value: null, count: "open" },
-  { value: "issues", count: "issues" },
   { value: "not_started", count: "not_started" },
   { value: "making", count: "making" },
   { value: "made", count: "made" },
   { value: "fulfilled", count: null },
   { value: "all", count: null },
 ];
+
+/** Issues, set apart at the view row's end ({@link VIEWS}). */
+const ISSUES_VIEW: (typeof VIEWS)[number] = {
+  value: "issues",
+  count: "issues",
+};
 
 /**
  * `Schema.toType`, not the schema itself. A Durable Object RPC result has
@@ -361,7 +369,7 @@ function RouteComponent() {
 
   /**
    * Enter and blur, not a debounce: every other control in this row navigates
-   * on the merchant's own action (a press-button click, a select change), and
+   * on the merchant's own action (a view button click, a select change), and
    * a timer that navigated mid-number would page the table under the typing.
    * A no-op submit is dropped so re-blurring an unchanged field costs nothing.
    * An emptied field submits at once (see the field's `onInput`).
@@ -630,11 +638,16 @@ function RouteComponent() {
   };
 
   /**
-   * One button of the view row. `s-press-button`: the pressed, hover and
-   * focus states come from Polaris, and `pressed` says "this one is on"
-   * where a disabled primary button read to a screen reader as unavailable.
-   * No red on the row — `s-press-button` only takes `tone="neutral"`, and
-   * the alarm colour belongs on the row badges, where the remedy is.
+   * One button of the view row, built as the member screen's view row is:
+   * an `s-button`, pressed by `variant="primary"`, never by `disabled`,
+   * which reads as unavailable. A screen reader hears the pressed one by its
+   * name, which ends ", selected" through `accessibilityLabel`: `aria-pressed`
+   * on the `s-button` host never reaches the native button in its shadow
+   * root, and `accessibilityLabel` does. Not
+   * `s-press-button`, which takes only `tone="neutral"`: Issues goes
+   * critical while it counts any order, so the one colour on the row always
+   * means an order is waiting on the merchant. At zero it is plain, because
+   * red over nothing is a false alarm.
    *
    * A counted view always renders, at zero if need be, so nothing on the
    * row appears or disappears with the data. An uncounted one (Fulfilled,
@@ -646,19 +659,23 @@ function RouteComponent() {
    * is ignored is a lie the merchant would have to learn. Pressing one
    * clears the search and shows that view.
    */
-  const pressButton = ({ value, count }: (typeof VIEWS)[number]) => {
+  const viewButton = ({ value, count }: (typeof VIEWS)[number]) => {
     const label = Domain.ORDERS_INDEX_VIEW_LABEL[value ?? "open"];
     const n = count === null ? null : (data?.page.counts[count] ?? null);
+    const pressed = q === null && view === value;
+    const text = n === null ? label : `${label} · ${formatNumber(n)}`;
     return (
-      <s-press-button
+      <s-button
         key={value ?? "open"}
-        pressed={q === null && view === value}
+        variant={pressed ? "primary" : "secondary"}
+        tone={value === "issues" && n !== null && n > 0 ? "critical" : "auto"}
+        accessibilityLabel={pressed ? `${text}, selected` : text}
         onClick={() => {
           setFilters({ view: value, q: null });
         }}
       >
-        {n === null ? label : `${label} · ${formatNumber(n)}`}
-      </s-press-button>
+        {text}
+      </s-button>
     );
   };
 
@@ -730,8 +747,15 @@ function RouteComponent() {
                   }}
                 />
               </s-grid>
-              <s-stack direction="inline" gap="small-300">
-                {VIEWS.map(pressButton)}
+              <s-stack
+                direction="inline"
+                gap="small-300"
+                justifyContent="space-between"
+              >
+                <s-stack direction="inline" gap="small-300">
+                  {VIEWS.map(viewButton)}
+                </s-stack>
+                {viewButton(ISSUES_VIEW)}
               </s-stack>
               <s-grid
                 gridTemplateColumns="auto 1fr"
@@ -739,7 +763,7 @@ function RouteComponent() {
                 alignItems="center"
               >
                 <s-text color="subdued">Team</s-text>
-                {/* A select rather than press-buttons: the team list is
+                {/* A select rather than view buttons: the team list is
                     unbounded, and a select whose value is the team already
                     reads as the active chip, so this is one control instead
                     of a control plus a chip. The primary way in is the

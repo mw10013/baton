@@ -150,12 +150,24 @@ const VIEW_LABELS = Object.values(Domain.ORDERS_INDEX_VIEW_LABEL);
 /**
  * A view's button on the orders index, by label and whatever count it is
  * carrying: Fulfilled and All carry none. The count is part of the
- * accessible name, so a test that asserts the number names it in full.
+ * accessible name, so a test that asserts the number names it in full, and
+ * so is ", selected" on the pressed one (`viewButton` in
+ * `app.orders.index.tsx`).
  */
 const viewButton = (frame: FrameLocator, label: string) =>
   frame.getByRole("button", {
-    name: new RegExp(`^${label}(?: · \\d+)?$`, "u"),
+    name: new RegExp(`^${label}(?: · \\d+)?(?:, selected)?$`, "u"),
   });
+
+/** Whether a view's button is the pressed one, read off its accessible name. */
+const expectSelected = async (
+  frame: FrameLocator,
+  label: string,
+  selected: boolean,
+) =>
+  selected
+    ? expect(viewButton(frame, label)).toHaveAccessibleName(/, selected$/u)
+    : expect(viewButton(frame, label)).not.toHaveAccessibleName(/, selected$/u);
 
 /**
  * Order-number search: the field narrows the table to the one order, and
@@ -211,19 +223,12 @@ test("the orders index searches by order number and clears back to the list", as
   await expect(frame.getByRole("link", { name: "#9301" })).toBeVisible();
   await expect(frame.getByRole("link", { name: "#9302" })).toHaveCount(0);
   await expect(search).toHaveValue("9301");
-  for (const label of VIEW_LABELS)
-    await expect(viewButton(frame, label)).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
+  for (const label of VIEW_LABELS) await expectSelected(frame, label, false);
 
   /* Pressing a view clears the search and shows that view. */
   await viewButton(frame, "Open").click();
   await expect(search).toHaveValue("");
-  await expect(viewButton(frame, "Open")).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await expectSelected(frame, "Open", true);
   await expect(frame.getByRole("link", { name: "#9302" })).toBeVisible();
 
   await search.fill("9301");
@@ -1352,10 +1357,7 @@ test("a bad filter value reads as no filter", async ({ page }) => {
 
   const frame = await gotoApp(page, "app/orders?view=nonsense&after=nonsense");
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
-  await expect(viewButton(frame, "Open")).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await expectSelected(frame, "Open", true);
   /* `after=nonsense` is not shaped like a cursor (`Domain.OrdersCursor`), so
      it is dropped too: this is page one and there is no previous page. */
   await expect(

@@ -280,12 +280,12 @@ export const ORDER_ISSUE_LABEL = {
  */
 export const ORDERS_INDEX_VIEW_LABEL = {
   open: "Open",
-  issues: "Issues",
   not_started: PRODUCTION_STATE_LABEL.not_started,
   making: PRODUCTION_STATE_LABEL.making,
   made: PRODUCTION_STATE_LABEL.made,
   fulfilled: PRODUCTION_STATE_LABEL.fulfilled,
   all: "All",
+  issues: "Issues",
 } as const satisfies Record<
   Exclude<OrdersIndexView, "cancelled"> | "open",
   string
