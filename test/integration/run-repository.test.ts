@@ -3220,39 +3220,76 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
       }),
     ));
 
-  it("a team delete leaves a closed run's tasks on their team, so the run stays on that team's Recent", () =>
+  it("a team delete nulls the team on every task; history keeps the name", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { a } = yield* seed;
+        const runs = yield* RunRepository;
+        const workflows = yield* WorkflowRepository;
+        yield* upsertAndReconcile(order(), [
+          lineItem(1, ["a"]),
+          lineItem(2, ["a"]),
+        ]);
+        const [open, closed] = yield* runsForOrder();
+        if (open === undefined || closed === undefined)
+          throw new Error("no runs");
+        // A done task on an open run, and a closed run with both tasks undone.
+        yield* runs.markTaskDone({
+          runTaskId: open.tasks[0]?.id ?? "",
+          actor: memberActor("m1"),
+          teamIds: [TEAM_A.id],
+        });
+        yield* runs.cancelRun({ runId: closed.run.id });
+        yield* workflows.unassignTeam({ teamId: TEAM_A.id });
+        yield* workflows.unassignTeam({ teamId: TEAM_B.id });
+        for (const { run } of [open, closed])
+          deepStrictEqual(
+            Option.getOrThrow(yield* runs.getRun({ runId: run.id })).tasks.map(
+              (task) => [task.teamId, task.teamName],
+            ),
+            [
+              [null, "Team A"],
+              [null, "Team B"],
+            ],
+          );
+        strictEqual(
+          (yield* workflows.listWorkflows({ teams: TEAMS })).find(
+            (w) => w.id === a.id,
+          )?.needsAttention,
+          true,
+        );
+      }),
+    ));
+
+  it("a reopened task whose team was deleted is unassigned", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
         const runs = yield* RunRepository;
         const workflows = yield* WorkflowRepository;
-        const since = Date.now() - 1000;
         yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
         const [run] = yield* runsForOrder();
-        if (run === undefined) throw new Error("no run");
-        // Closed with both tasks still open: the case the rule is about.
-        yield* runs.cancelRun({ runId: run.run.id });
-        yield* workflows.unassignTeam({ teamId: TEAM_A.id });
-        const closed = Option.getOrThrow(
-          yield* runs.getRun({ runId: run.run.id }),
-        );
-        deepStrictEqual(
-          closed.tasks.map((task) => task.teamId),
-          [TEAM_A.id, TEAM_B.id],
-        );
-        const recent = yield* runs.listRecent({
+        const cut = run?.tasks[0];
+        if (run === undefined || cut === undefined) throw new Error("no run");
+        yield* runs.markTaskDone({
+          runTaskId: cut.id,
+          actor: memberActor("m1"),
           teamIds: [TEAM_A.id],
-          since,
-          limit: 10,
         });
+        yield* workflows.unassignTeam({ teamId: TEAM_A.id });
+        yield* runs.reopenTask({ runTaskId: cut.id, actor: MERCHANT });
+        const reopened = Option.getOrThrow(
+          yield* runs.getRun({ runId: run.run.id }),
+        ).tasks[0];
         deepStrictEqual(
-          recent.items.map((item) => [item.kind, item.run.id]),
-          [["closed", run.run.id]],
+          [reopened?.doneAt, reopened?.teamId, reopened?.teamName],
+          [null, null, "Team A"],
         );
+        strictEqual((yield* runListRows({ teamIds: [TEAM_A.id] })).length, 0);
       }),
     ));
 
-  it("unassignTeam nulls open run tasks only; the task leaves every list and cannot be worked; assignRunTaskTeam brings it back", () =>
+  it("an unassigned task leaves every list and cannot be worked; assigning a team brings it back", () =>
     runInRepository(
       Effect.gen(function* () {
         const { a } = yield* seed;
@@ -3264,7 +3301,6 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         const [cut, finish] = run.tasks;
         if (cut === undefined || finish === undefined)
           throw new Error("no tasks");
-        // Mark Cut done (Team A) so it is the done task that keeps its pointer.
         yield* runs.markTaskDone({
           runTaskId: cut.id,
           actor: memberActor("m1"),
@@ -3272,16 +3308,6 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         });
         yield* workflows.unassignTeam({ teamId: TEAM_A.id });
         yield* workflows.unassignTeam({ teamId: TEAM_B.id });
-        const nulled = Option.getOrThrow(
-          yield* runs.getRun({ runId: run.run.id }),
-        );
-        deepStrictEqual(
-          nulled.tasks.map((s) => [s.teamId, s.teamName]),
-          [
-            [TEAM_A.id, "Team A"],
-            [null, "Team B"],
-          ],
-        );
         strictEqual((yield* runListRows({ teamIds: [TEAM_B.id] })).length, 0);
         const refused = yield* runs
           .startTask({

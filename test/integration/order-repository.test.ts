@@ -1295,28 +1295,28 @@ describe("OrderRepository usage", () => {
     ]);
   });
 
-  it("a seeded order counts locally but queues no billing event", async () => {
-    const { usage, events } = await runInRepository(
+  it("a seeded order is never counted", async () => {
+    const seedId = `${Domain.SEED_ORDER_ID_PREFIX}1`;
+    const { usage, events, countedAt } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
+        const sql = yield* SqlClient.SqlClient;
         yield* openCycle(repository);
-        yield* upsert(
-          repository,
-          paid(1, { id: `${Domain.SEED_ORDER_ID_PREFIX}1` }),
-          [],
-        );
-        yield* repository.countOrder(
-          `${Domain.SEED_ORDER_ID_PREFIX}1`,
-          CYCLE_START,
-        );
+        yield* upsert(repository, paid(1, { id: seedId }), []);
+        yield* repository.countOrder(seedId, CYCLE_START);
+        const [row] =
+          yield* sql`select countedAt from ShopOrder where id = ${seedId}`
+            .values;
         return {
           usage: yield* repository.getUsage(),
           events: yield* usageEvents(),
+          countedAt: row?.[0],
         };
       }),
     );
-    strictEqual(usage.ordersThisCycle, 1);
+    strictEqual(usage.ordersThisCycle, 0);
     deepStrictEqual(events, []);
+    strictEqual(countedAt, null);
   });
 
   it("a re-sync never queues a second count", async () => {
@@ -1450,32 +1450,6 @@ describe("OrderRepository usage", () => {
       deepStrictEqual(third, { written: true, fresh: false, refused: false });
       strictEqual(usage.ordersThisCycle, 1);
       strictEqual(usage.ordersLimitedAt !== null, true);
-    } finally {
-      limits.maxOrdersPerCycle = original;
-    }
-  });
-
-  it("deleteSeedOrders clears the limited flag when giving the count back leaves the cycle under the ceiling", async () => {
-    const limits = Domain.ShopLimits as { maxOrdersPerCycle: number };
-    const original = limits.maxOrdersPerCycle;
-    limits.maxOrdersPerCycle = 1;
-    try {
-      const { limited, usage } = await runInRepository(
-        Effect.gen(function* () {
-          const repository = yield* OrderRepository;
-          yield* openCycle(repository);
-          const seedId = `${Domain.SEED_ORDER_ID_PREFIX}1`;
-          yield* upsert(repository, paid(1, { id: seedId }), []);
-          yield* repository.countOrder(seedId, CYCLE_START);
-          yield* upsert(repository, paid(2), []);
-          const limited = yield* repository.getUsage();
-          yield* repository.deleteSeedOrders();
-          return { limited, usage: yield* repository.getUsage() };
-        }),
-      );
-      strictEqual(limited.ordersLimitedAt !== null, true);
-      strictEqual(usage.ordersThisCycle, 0);
-      strictEqual(usage.ordersLimitedAt, null);
     } finally {
       limits.maxOrdersPerCycle = original;
     }
@@ -1752,18 +1726,6 @@ describe("OrderRepository usage", () => {
     ]);
   });
 
-  it("seat events survive deleteSeedOrders", async () => {
-    const events = await runInRepository(
-      Effect.gen(function* () {
-        const repository = yield* OrderRepository;
-        yield* openCycleWithRoster(repository, 3);
-        yield* repository.deleteSeedOrders();
-        return yield* seatEvents();
-      }),
-    );
-    strictEqual(events.length, 1);
-  });
-
   it("the members drift check tolerates pending seat events", async () => {
     const { pending, drained } = await runInRepository(
       Effect.gen(function* () {
@@ -1911,6 +1873,52 @@ describe("OrderRepository.sweepExpiredOrders", () => {
     deepStrictEqual(orders, [orderId(3), orderId(4)]);
     deepStrictEqual(runs, []);
     strictEqual(usage.lastSweepAt, NOW);
+  });
+});
+
+describe("OrderRepository retention", () => {
+  it("an order older than retention is never stored again", async () => {
+    const { expired, kept, aged, orders } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        const sql = yield* SqlClient.SqlClient;
+        // Stored while inside the window, then aged past it before a sweep
+        // reached it: still stored, so it keeps taking updates.
+        yield* upsert(
+          repository,
+          anOrder({ id: orderId(3), processedAt: EXPIRED, syncedAt: EXPIRED }),
+          [],
+        );
+        // A webhook for a year-old order Baton no longer holds.
+        const expired = yield* upsert(
+          repository,
+          anOrder({ id: orderId(1), processedAt: EXPIRED, syncedAt: NOW }),
+          [],
+        );
+        const kept = yield* upsert(
+          repository,
+          anOrder({ id: orderId(2), processedAt: KEPT, syncedAt: NOW }),
+          [],
+        );
+        const aged = yield* upsert(
+          repository,
+          anOrder({
+            id: orderId(3),
+            processedAt: EXPIRED,
+            updatedAt: NOW,
+            syncedAt: NOW,
+          }),
+          [],
+        );
+        const orders = (yield* sql`select id from ShopOrder order by id`
+          .values).map((row) => String(row[0]));
+        return { expired, kept, aged, orders };
+      }),
+    );
+    deepStrictEqual(expired, { written: false, fresh: false, refused: false });
+    strictEqual(kept.written, true);
+    strictEqual(aged.written, true);
+    deepStrictEqual(orders, [orderId(2), orderId(3)]);
   });
 });
 

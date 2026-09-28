@@ -746,12 +746,13 @@ export const ShopLimits = {
    * An order whose `processedAt` is older than this is deleted on the next
    * sweep, open or closed, with or without runs; its runs go with it, deleted
    * in the same transaction and not flagged first, because a flag on a row
-   * the next statement deletes is read by nobody. The rule is one `where` clause in
-   * `OrderRepository.sweepExpiredOrders`, which is its only enforcer and its
-   * only reader — no TypeScript site asks whether an order has expired, so
-   * there is no predicate here to drift from the SQL. Baton is a working
-   * set, not an archive — Shopify keeps every order — so one rule replaces
-   * asking what "closed" or "untouched" means.
+   * the next statement deletes is read by nobody. An expired order is also
+   * never stored again: `OrderRepository.upsertOrder` refuses a new row for
+   * one, since a webhook for a year-old order would otherwise bring it back
+   * with no `countedAt`, and its first run would count it a second time.
+   * Both sites read the cutoff from {@link retentionCutoff}. Baton is a
+   * working set, not an archive — Shopify keeps every order — so one rule
+   * replaces asking what "closed" or "untouched" means.
    *
    * The sweep rides the import and, at most every {@link
    * ShopLimits.sweepIntervalMs}, the webhook path. There is no alarm: a shop
@@ -768,6 +769,14 @@ export const ShopLimits = {
   /** Minimum gap between retention passes triggered from the webhook path. */
   sweepIntervalMs: 6 * 60 * 60 * 1000,
 } as const;
+
+/**
+ * The `processedAt` below which an order has expired at `now`
+ * ({@link ShopLimits.orderRetentionDays} is the rule). The sweep deletes
+ * orders under it and `upsertOrder` refuses to insert one.
+ */
+export const retentionCutoff = (now: number) =>
+  now - ShopLimits.orderRetentionDays * 86_400_000;
 
 /**
  * What one shop has consumed, as the Durable Object counts it. The Worker
@@ -801,7 +810,7 @@ export const ShopUsage = Schema.Struct({
    * which is the billable quantity, rather than rows.
    */
   ordersThisCycle: Schema.Number,
-  /** Set when a new order was refused because of {@link ShopLimits.maxOrdersPerCycle}; null once the cycle rolls, or once `OrderRepository.deleteSeedOrders` gives the refused seed's count back. */
+  /** Set when a new order was refused because of {@link ShopLimits.maxOrdersPerCycle}; null once the cycle rolls. */
   ordersLimitedAt: Schema.NullOr(Schema.Number),
   /** Set when reconcile declined to auto-start a run because of `ShopLimits.maxOpenRuns`; null once under the ceiling again. */
   openRunsLimitedAt: Schema.NullOr(Schema.Number),
@@ -1640,9 +1649,11 @@ export const DeleteTeamInput = TeamIdInput;
 export type DeleteTeamInput = typeof DeleteTeamInput.Type;
 
 /**
- * What the team delete dialog states: every pointer the delete will null.
- * Workflow and draft tasks are configuration; `openRunTasks` are work in
- * progress that will wait until someone assigns a team.
+ * What the team delete dialog states: every task the delete leaves
+ * unassigned that someone will notice. Workflow and draft tasks are
+ * configuration; `openRunTasks` are work in progress that will wait until
+ * someone assigns a team. Done and closed tasks lose the pointer too but keep
+ * showing their `teamName`, so they are not counted.
  */
 export const TeamDeleteCounts = Schema.Struct({
   workflowTasks: Schema.Number,
@@ -1917,13 +1928,12 @@ export type OrderDetail = typeof OrderDetail.Type;
 export const SEED_ORDER_ID_PREFIX = "gid://shopify/Order/seed-";
 
 /**
- * A fixture order, by its id. Seeded orders still count toward
- * {@link ShopUsage.ordersThisCycle} — that is what lets a prototyping shop
- * exercise the quota banner — but they must never reach Shopify's usage meter,
- * because a fixture that bills is a fixture that costs money. The counter is
- * local and reversible (`OrderRepository.deleteSeedOrders` subtracts on the
- * next reseed); a billing event is neither, since Shopify enforces idempotency
- * keys permanently.
+ * A fixture order, by its id. A seeded order is never counted: no
+ * `countedAt`, no share of {@link ShopUsage.ordersThisCycle}, no usage event
+ * (`OrderRepository.countOrder`). A fixture that reaches Shopify's meter costs
+ * money under a permanent idempotency key, and one that moves the local count
+ * would climb by a fixture's worth on every reseed. The ceiling and the quota
+ * banner are tested with ordinary orders, so the seed has no reason to count.
  */
 export const orderIsSeeded = (orderId: string) =>
   orderId.startsWith(SEED_ORDER_ID_PREFIX);
@@ -3257,9 +3267,9 @@ export type Run = typeof Run.Type;
  * A task copied from the definition at run creation. `teamName` is
  * snapshotted alongside `teamId` so the workflows list never joins D1. `teamId` is
  * the live pointer that puts the task on a team's list; a team delete nulls
- * it on *open* tasks only (**unassigned**: red on the order page, on nobody's
- * list, waiting for **assign a team**), while a done task keeps both the
- * id and the name. `startedByEmail` / `doneByEmail` / `reopenedByEmail` are
+ * it on every task. An open task becomes **unassigned** (red on the order
+ * page, on nobody's list, waiting for **assign a team**); a done or closed
+ * task keeps showing its `teamName`, which is all history reads. `startedByEmail` / `doneByEmail` / `reopenedByEmail` are
  * the snapshots taken at the action that keep history readable after the
  * member is deleted.
  *

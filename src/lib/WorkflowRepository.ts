@@ -478,9 +478,11 @@ export class WorkflowRepository extends Context.Service<
       | TaskNotFoundError
     >;
     /**
-     * Every pointer a team delete would null, per team: workflow tasks, draft
-     * tasks, and open run tasks. Feeds the delete dialogs, never a refusal.
-     * Teams that own nothing are absent.
+     * What a team delete would change, per team: workflow tasks, draft tasks,
+     * and undone tasks of open runs. The delete also nulls the pointer on done
+     * and closed tasks, but those read their `teamName` snapshot, so nothing
+     * a person sees changes and they are not counted. Feeds the delete
+     * dialogs, never a refusal. Teams that own nothing are absent.
      */
     readonly countTasksByTeam: () => Effect.Effect<
       readonly Domain.TeamTaskCounts[],
@@ -498,11 +500,13 @@ export class WorkflowRepository extends Context.Service<
       SqlError.SqlError | WorkflowRepositoryError
     >;
     /**
-     * The object-side half of a team delete: every workflow task, draft task,
-     * and *open* run task of an open run that points at `teamId` becomes
-     * unassigned, in one transaction. Done run tasks and every task of a
-     * closed run keep the pointer and their `teamName` snapshot (the data
-     * model on `initializeSchema`, `ShopAgentSchema.ts`). Idempotent, so a
+     * The object-side half of a team delete: every workflow task, draft task
+     * and run task that points at `teamId` becomes unassigned, in one
+     * transaction, done or not and whatever the run's status. A run task
+     * keeps its `teamName` snapshot, which is all history reads; the pointer
+     * on a done or closed task had no reader once the team was gone, because
+     * every team-scoped list takes its team ids from D1 (the data model on
+     * `initializeSchema`, `ShopAgentSchema.ts`). Idempotent, so a
      * retry after a failed first attempt (D1 row already gone) still cleans
      * up. Touches `RunTask` from here
      * rather than from the run repository because the three updates must
@@ -1771,17 +1775,7 @@ export class WorkflowRepository extends Context.Service<
             Effect.gen(function* () {
               yield* sql`update WorkflowTask set teamId = null where teamId = ${teamId}`;
               yield* sql`update WorkflowDraftTask set teamId = null where teamId = ${teamId}`;
-              // Open tasks of open runs only: a closed run's open tasks
-              // are a record like done ones (`Domain.RunStatus`), and
-              // nulling their team would drop the run from the Recent tab of
-              // the team that could see it.
-              yield* sql`
-                update RunTask set teamId = null
-                where teamId = ${teamId} and doneAt is null
-                  and runId in (
-                    select id from Run where status = 'active'
-                  )
-              `;
+              yield* sql`update RunTask set teamId = null where teamId = ${teamId}`;
             }),
           );
         }),

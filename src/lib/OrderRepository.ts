@@ -241,6 +241,16 @@ export class OrderRepository extends Context.Service<
      * items are then left alone too. Writing them anyway would replace a
      * fresh set with a stale one under a row that correctly refused to move.
      *
+     * A new order that has already expired
+     * ({@link Domain.ShopLimits.orderRetentionDays}) is not written either,
+     * and reports `written: false` like a stale one. Only a webhook can carry
+     * one, since the bulk import reaches back 30 days; it arrives when a
+     * merchant edits, refunds or fulfils a year-old order. Stored again, it
+     * would have no `countedAt`, so its first run would count it a second
+     * time, and the next sweep would delete it and the run. An expired order
+     * still stored because the sweep has not reached it yet keeps taking
+     * updates: its mark is intact.
+     *
      * Line items are replaced wholesale on every accepted write, so a removed
      * line disappears. Every fetch path asks Shopify for the first
      * `Domain.ShopLimits.maxLineItemsPerOrder` (250), which is the maximum any
@@ -294,7 +304,14 @@ export class OrderRepository extends Context.Service<
      * second run on the same order changes no row, so no counter moves and no
      * event is queued; the same holds for a reconcile that re-creates runs
      * after a cancellation. The `#count` key is permanent at Shopify, so even
-     * a queue that slipped through would bill once.
+     * a queue that slipped through would bill once. The mark lives on the
+     * order row, so only deleting the order removes it, and `upsertOrder`
+     * refuses to bring back an order retention deleted
+     * ({@link Domain.ShopLimits.orderRetentionDays}).
+     *
+     * A seeded order is never counted ({@link Domain.orderIsSeeded}): no
+     * mark, no counter, no event. Checked here, the one door into the meter,
+     * so a reseed has nothing to give back.
      *
      * Runs inside the caller's transaction — Durable Object SQLite refuses
      * nested ones — so the marker, the counter and the outbox row cannot come
@@ -501,28 +518,13 @@ export class OrderRepository extends Context.Service<
     >;
     /**
      * Seed only: delete every order under `SEED_ORDER_ID_PREFIX`, its line
-     * items, its runs, its share of `ordersThisCycle`, and any usage event it
-     * queued that has not gone out yet. This is the one path that removes a
-     * stored order outside retention, and the only one that may give a count
-     * back. Runs go with the order because a fixture row being replaced has no
-     * trail worth keeping, and a run outliving its order carries its own
-     * snapshot of the order name and item, so it would sit on a queue as a card
-     * nothing can clear. Seat events have a null `orderId`, so the `like` on
-     * `orderId` never touches them. Usage: the meter counts orders Baton started work on
-     * and never reverses ({@link Domain.ShopUsage}), so a reseed would climb by
-     * a fixture's worth every time until the quota banner appeared over a shop
-     * holding one seed's orders. Only the seed knows the whole set is being
-     * replaced, so only it may subtract — and it subtracts rather than zeroes
-     * so synced orders keep their share. It subtracts by `countedAt`, the
-     * per-order marker the meter writes, so the subtraction matches exactly
-     * what was added however the order later changed. The queued events go with
-     * the rows because a fixture must not bill a development store; events
-     * already accepted by Shopify are gone from the table and are the seed's
-     * own to answer for. `ordersLimitedAt` is cleared when the count given
-     * back leaves the cycle under {@link Domain.cycleAtOrderCeiling}: the
-     * orders the ceiling refused were the seed's own, and the reseed replaces
-     * them, so the banner has nothing left to say. This is the one clearing
-     * outside a cycle roll.
+     * items and its runs. This is the one path that removes a stored order
+     * outside retention. Runs go with the order because a fixture row being
+     * replaced has no trail worth keeping, and a run outliving its order
+     * carries its own snapshot of the order name and item, so it would sit on
+     * a queue as a card nothing can clear. Usage is untouched: a seeded order
+     * is never counted ({@link Domain.orderIsSeeded}), so there is nothing to
+     * give back.
      */
     readonly deleteSeedOrders: () => Effect.Effect<void, SqlError.SqlError>;
     /**
@@ -754,6 +756,7 @@ export class OrderRepository extends Context.Service<
         orderId: string,
         now: number,
       ) {
+        if (Domain.orderIsSeeded(orderId)) return;
         // The cycle is resolved before the marker is written: a roll-forward
         // recounts from `countedAt`, so a marker written first would be
         // counted by the recount and again by the increment below.
@@ -802,12 +805,7 @@ export class OrderRepository extends Context.Service<
        * `or ignore`, so re-queuing a key Shopify has already been told about is
        * a no-op rather than a second charge. The row carries no shop: the shop
        * is the object, and `ShopUsage.shopGid` is read once at flush time.
-       *
-       * A seeded order queues nothing ({@link Domain.orderIsSeeded}). It is
-       * refused here rather than at the call sites because this is the only
-       * door into the outbox, and a fixture that reaches Shopify's meter costs
-       * real money under a permanent idempotency key. A seat event has no
-       * order and is never a fixture's.
+       * A seeded order never gets here: `countOrder` returns first.
        */
       const queueUsageEvent = (input: {
         readonly idempotencyKey: string;
@@ -816,12 +814,10 @@ export class OrderRepository extends Context.Service<
         readonly value: number;
         readonly occurredAt: number;
       }) =>
-        input.orderId !== null && Domain.orderIsSeeded(input.orderId)
-          ? Effect.void
-          : sql`
-              insert or ignore into UsageEvent (idempotencyKey, eventHandle, orderId, value, occurredAt)
-              values (${input.idempotencyKey}, ${input.eventHandle}, ${input.orderId}, ${input.value}, ${input.occurredAt})
-            `;
+        sql`
+          insert or ignore into UsageEvent (idempotencyKey, eventHandle, orderId, value, occurredAt)
+          values (${input.idempotencyKey}, ${input.eventHandle}, ${input.orderId}, ${input.value}, ${input.occurredAt})
+        `;
 
       const markOrdersLimited = Effect.fn("OrderRepository.markOrdersLimited")(
         function* (now: number) {
@@ -879,6 +875,11 @@ export class OrderRepository extends Context.Service<
                 const existing =
                   yield* sql`select 1 from ShopOrder where id = ${order.id} limit 1`;
                 const fresh = existing.length === 0;
+                if (
+                  fresh &&
+                  order.processedAt < Domain.retentionCutoff(order.syncedAt)
+                )
+                  return { written: false, fresh: false, refused: false };
                 // Resolved before the insert because the ceiling is a fact
                 // about the cycle this write lands in, after any roll-forward.
                 const cycle = yield* currentCycle(order.syncedAt);
@@ -1647,22 +1648,6 @@ export class OrderRepository extends Context.Service<
             const seedPrefix = `${Domain.SEED_ORDER_ID_PREFIX}%`;
             yield* sql.withTransaction(
               Effect.gen(function* () {
-                const [row] = yield* sql`
-                  select count(*) as counted from ShopOrder
-                  where id like ${seedPrefix} and countedAt is not null
-                `.values;
-                const counted = Number(row?.[0] ?? 0);
-                yield* sql`
-                  update ShopUsage
-                  set ordersThisCycle = max(0, ordersThisCycle - ${counted})
-                  where id = 1
-                `;
-                const [after] =
-                  yield* sql`select ordersThisCycle from ShopUsage where id = 1`
-                    .values;
-                if (!Domain.cycleAtOrderCeiling(Number(after?.[0] ?? 0)))
-                  yield* sql`update ShopUsage set ordersLimitedAt = null where id = 1`;
-                yield* sql`delete from UsageEvent where orderId like ${seedPrefix}`;
                 yield* sql`delete from Run where orderId like ${seedPrefix}`;
                 yield* sql`delete from OrderLineItem where orderId like ${seedPrefix}`;
                 yield* sql`delete from ShopOrder where id like ${seedPrefix}`;
@@ -1673,8 +1658,7 @@ export class OrderRepository extends Context.Service<
 
         sweepExpiredOrders: Effect.fn("OrderRepository.sweepExpiredOrders")(
           function* ({ now }: { readonly now: number }) {
-            const expiredBefore =
-              now - Domain.ShopLimits.orderRetentionDays * 86_400_000;
+            const expiredBefore = Domain.retentionCutoff(now);
             return yield* sql.withTransaction(
               Effect.gen(function* () {
                 /**

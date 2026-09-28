@@ -1418,12 +1418,13 @@ describe("ShopAgent seed callables", () => {
     strictEqual(resized?.quantityChangedFrom, 2);
   });
 
-  it("seedOrders leaves the usage counter at one seed's worth however often it is reseeded", async () => {
+  it("reseeding leaves the usage counter unchanged", async () => {
     const shop = "seed-usage.myshopify.com";
     const team = await seedTeam(shop, "Bench");
     const agent = await getAgentByName(env.SHOP_AGENT, shop);
     // The meter counts an order when its first run is created, so the seed
-    // needs a workflow for its orders to match.
+    // needs a workflow for its orders to match; the runs start and nothing
+    // is counted.
     await agent.seedWorkflows({
       workflows: [twoTask("Board", "board", team.id)],
     });
@@ -1441,9 +1442,9 @@ describe("ShopAgent seed callables", () => {
       return usage.ordersThisCycle;
     };
     await agent.seedOrders({ ...seedMember, orders });
-    strictEqual(await countedOrders(), 2);
+    strictEqual(await countedOrders(), 0);
     // Five orders the seed does not own, counted the way a sync would count
-    // them: a reseed gives back only its own share, never theirs.
+    // them: a reseed leaves their share alone.
     await runInDurableObject(env.SHOP_AGENT.getByName(shop), (instance) => {
       (instance as unknown as { ctx: DurableObjectState }).ctx.storage.sql.exec(
         "update ShopUsage set ordersThisCycle = ordersThisCycle + 5 where id = 1",
@@ -1451,7 +1452,7 @@ describe("ShopAgent seed callables", () => {
     });
     await agent.seedOrders({ ...seedMember, orders });
     await agent.seedOrders({ ...seedMember, orders });
-    strictEqual(await countedOrders(), 7);
+    strictEqual(await countedOrders(), 5);
   });
 
   it("a reseed re-matches the orders it did not replace", async () => {
