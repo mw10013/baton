@@ -500,8 +500,8 @@ const floorOrders: readonly SeedOrder[] = [
     lineItems: [item("Leather journal", TAG.journal, 1, { Initials: "S.P." })],
   },
   {
-    // no workflow matches: Not started, and a "No workflow" badge in the
-    // orders index's Issues column
+    // no workflow matches: Not started, with an empty cell in the orders
+    // index's Issues column
     n: 1010,
     lineItems: [item("Gift card", null, 1)],
   },

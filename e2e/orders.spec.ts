@@ -150,24 +150,14 @@ const VIEW_LABELS = Object.values(Domain.ORDERS_INDEX_VIEW_LABEL);
 /**
  * A view's button on the orders index, by label and whatever count it is
  * carrying: Fulfilled and All carry none. The count is part of the
- * accessible name, so a test that asserts the number names it in full, and
- * so is ", selected" on the pressed one (`viewButton` in
- * `app.orders.index.tsx`).
+ * accessible name, so a test that asserts the number names it in full.
+ * The role resolves to the native button inside the `s-press-button`, which
+ * is where `aria-pressed` is (`viewButton` in `app.orders.index.tsx`).
  */
 const viewButton = (frame: FrameLocator, label: string) =>
   frame.getByRole("button", {
-    name: new RegExp(`^${label}(?: · \\d+)?(?:, selected)?$`, "u"),
+    name: new RegExp(`^${label}(?: · \\d+)?$`, "u"),
   });
-
-/** Whether a view's button is the pressed one, read off its accessible name. */
-const expectSelected = async (
-  frame: FrameLocator,
-  label: string,
-  selected: boolean,
-) =>
-  selected
-    ? expect(viewButton(frame, label)).toHaveAccessibleName(/, selected$/u)
-    : expect(viewButton(frame, label)).not.toHaveAccessibleName(/, selected$/u);
 
 /**
  * Order-number search: the field narrows the table to the one order, and
@@ -223,13 +213,30 @@ test("the orders index searches by order number and clears back to the list", as
   await expect(frame.getByRole("link", { name: "#9301" })).toBeVisible();
   await expect(frame.getByRole("link", { name: "#9302" })).toHaveCount(0);
   await expect(search).toHaveValue("9301");
-  for (const label of VIEW_LABELS) await expectSelected(frame, label, false);
+  for (const label of VIEW_LABELS)
+    await expect(viewButton(frame, label)).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
 
   /* Pressing a view clears the search and shows that view. */
   await viewButton(frame, "Open").click();
   await expect(search).toHaveValue("");
-  await expectSelected(frame, "Open", true);
+  await expect(viewButton(frame, "Open")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   await expect(frame.getByRole("link", { name: "#9302" })).toBeVisible();
+
+  await test.step("pressing the pressed view keeps it pressed", async () => {
+    await viewButton(frame, "Open").click();
+    await expect(viewButton(frame, "Open")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(frame.getByRole("link", { name: "#9301" })).toBeVisible();
+    await expect(frame.getByRole("link", { name: "#9302" })).toBeVisible();
+  });
 
   await search.fill("9301");
   await search.press("Enter");
@@ -1357,10 +1364,110 @@ test("a bad filter value reads as no filter", async ({ page }) => {
 
   const frame = await gotoApp(page, "app/orders?view=nonsense&after=nonsense");
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
-  await expectSelected(frame, "Open", true);
+  await expect(viewButton(frame, "Open")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   /* `after=nonsense` is not shaped like a cursor (`Domain.OrdersCursor`), so
      it is dropped too: this is page one and there is no previous page. */
   await expect(
     frame.getByRole("button", { name: "Go to previous page" }),
   ).toBeDisabled();
+});
+
+/**
+ * The Issues banner on the orders index. The sandbox holds real orders, so
+ * the team select keeps this test to its own: `#9601` waits on a staffed
+ * team and has an item matching two workflows, a Choose a workflow issue,
+ * which is a warning; `#9602`'s only task is on a team with no members, a
+ * Needs a team issue, which is critical. The banner's count honours the
+ * team (`Domain.OrderCounts`), so each team shows its own order's tone.
+ */
+test("the Issues banner stands while any open order has an issue and goes with the Issues view", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+
+  const MEMBER = "e2e.banner@example.com";
+  const TEAM = "E2E Banner Bench";
+  const EMPTY_TEAM = "E2E Banner Empty";
+  await seedMembers(
+    seedConfig(),
+    [MEMBER],
+    [
+      { name: TEAM, members: [MEMBER] },
+      { name: EMPTY_TEAM, members: [] },
+    ],
+    [
+      {
+        name: "E2E Banner Cuff",
+        tag: "e2e-banner",
+        tasks: [{ name: "Cut", team: TEAM }],
+      },
+      {
+        name: "E2E Banner Rush",
+        tag: "e2e-banner-rush",
+        tasks: [{ name: "Expedite", team: TEAM }],
+      },
+      {
+        name: "E2E Banner Unstaffed",
+        tag: "e2e-banner-empty",
+        tasks: [{ name: "Wait", team: EMPTY_TEAM }],
+      },
+    ],
+    [
+      {
+        n: 9601,
+        lineItems: [
+          { title: "E2E Cuff", quantity: 1, tags: ["e2e-banner"] },
+          {
+            title: "E2E Twice",
+            quantity: 1,
+            tags: ["e2e-banner", "e2e-banner-rush"],
+          },
+        ],
+      },
+      {
+        n: 9602,
+        lineItems: [
+          { title: "E2E Nobody", quantity: 1, tags: ["e2e-banner-empty"] },
+        ],
+      },
+    ],
+  );
+
+  const frame = await gotoApp(page);
+  await clickHoisted(appNavLink(page, "Orders"));
+  await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
+
+  const banner = frame.locator("s-banner", {
+    has: frame.getByRole("button", { name: "Show issues" }),
+  });
+  const team = frame.getByRole("combobox", { name: "Team" });
+
+  await team.selectOption({ label: TEAM });
+  await expect(banner).toBeVisible();
+  await expect(banner).toHaveAttribute(
+    "heading",
+    /^\d+ open orders? ha(?:s|ve) (?:an )?issues?$/u,
+  );
+  await expect(banner).toHaveAttribute("heading", "1 open order has an issue");
+  await expect(banner).toHaveAttribute("tone", "warning");
+
+  await banner.getByRole("button", { name: "Show issues" }).click();
+  await expect.poll(() => listContext(page).view).toBe("issues");
+  await expect(viewButton(frame, "Issues")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(frame.getByRole("link", { name: "#9601" })).toBeVisible();
+  await expect(banner).toHaveCount(0);
+
+  await viewButton(frame, "Open").click();
+  await expect(banner).toBeVisible();
+
+  /* The team with only a Needs a team order: the banner goes critical. */
+  await team.selectOption({ label: EMPTY_TEAM });
+  await expect(banner).toHaveAttribute("tone", "critical");
+  await expect(banner).toHaveAttribute("heading", "1 open order has an issue");
 });

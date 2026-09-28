@@ -40,7 +40,6 @@ const NONE = {
   open: 0,
   done: 0,
   blocked: 0,
-  closed: 0,
 } satisfies Domain.RunCounts;
 
 describe("Domain.productionState", () => {
@@ -60,7 +59,7 @@ describe("Domain.productionState", () => {
     ],
     [
       "a fulfilled order is fulfilled whatever its runs say",
-      row({ done: 1, closed: 1 }, { fulfillmentStatus: "FULFILLED" }),
+      row({ done: 1 }, { fulfillmentStatus: "FULFILLED" }),
       "fulfilled",
     ],
     [
@@ -70,7 +69,7 @@ describe("Domain.productionState", () => {
     ],
     [
       "a cancelled order is cancelled whatever its runs say",
-      row({ closed: 1 }, { cancelledAt: 1 }),
+      row({ open: 1 }, { cancelledAt: 1 }),
       "cancelled",
     ],
     [
@@ -91,23 +90,15 @@ describe("Domain.productionState", () => {
     );
     strictEqual(Domain.productionState(row(NONE, {}, 1)), "not_started");
   });
-
-  it("an order whose runs are all closed is not started", () => {
-    strictEqual(Domain.productionState(row({ closed: 2 })), "not_started");
-  });
 });
 
 describe("Domain.orderIssues", () => {
-  it("no_workflow: paid, open, no run and no ambiguous item", () => {
-    deepStrictEqual(Domain.orderIssues(row(NONE)), ["no_workflow"]);
+  it("an order with no run and no ambiguous item has no issue", () => {
+    deepStrictEqual(Domain.orderIssues(row(NONE)), []);
     deepStrictEqual(Domain.orderIssues(row(NONE, { fullyPaid: false })), []);
     deepStrictEqual(Domain.orderIssues(row({ open: 1 })), []);
     deepStrictEqual(Domain.orderIssues(row({ done: 1 })), []);
     deepStrictEqual(Domain.orderIssues(row(NONE, {}, 1)), ["choose_workflow"]);
-  });
-
-  it("an item whose run closed is decided and is no issue", () => {
-    deepStrictEqual(Domain.orderIssues(row({ closed: 1 })), []);
   });
 
   it("choose_workflow: an ambiguous item on an order that can start runs", () => {
@@ -183,7 +174,7 @@ const run = (status: Domain.RunStatus, blocked = false): Domain.Run => ({
 });
 
 describe("Domain.runCounts", () => {
-  it("counts open, done, blocked-open and closed the way the index SQL does", () => {
+  it("counts open, done and blocked-open the way the index SQL does, and closed runs not at all", () => {
     deepStrictEqual(
       Domain.runCounts([
         run("active"),
@@ -193,7 +184,7 @@ describe("Domain.runCounts", () => {
         run("closed"),
         run("closed"),
       ]),
-      { open: 3, done: 1, blocked: 1, closed: 2 },
+      { open: 3, done: 1, blocked: 1 },
     );
   });
 });

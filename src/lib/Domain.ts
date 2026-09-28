@@ -129,7 +129,6 @@
  *
  * | word            | meaning                                                | screen            |
  * | --------------- | ------------------------------------------------------ | ----------------- |
- * | no workflow     | paid, no run on any item, no item choosing             | No workflow       |
  * | choose workflow | an item matched two or more workflows                  | Choose a workflow |
  * | team            | an open task unassigned, or on a deleted or empty team | Needs a team      |
  * | blocked         | a run on the order is blocked, the run-state word      | Blocked           |
@@ -261,10 +260,9 @@ export const PRODUCTION_STATE_LABEL = {
 /**
  * The glossary's order-issues screen column: the badges in the orders index's
  * Issues column. A row of filter buttons used to carry these words too; now
- * only the badges do, and the Issues view holds all four.
+ * only the badges do, and the Issues view holds all three.
  */
 export const ORDER_ISSUE_LABEL = {
-  no_workflow: "No workflow",
   choose_workflow: "Choose a workflow",
   team: "Needs a team",
   blocked: "Blocked",
@@ -1210,8 +1208,9 @@ export type WorkflowTag = typeof WorkflowTag.Type;
  *
  * - a workflow **starts when** an order **contains** a product **tagged with**
  *   its tag;
- * - an order or item that no workflow's tag **matches** shows
- *   **"No workflow"**;
+ * - on an item that no workflow's tag **matches**, the order page says no
+ *   workflow can start and offers the picker; the orders index shows the
+ *   order under Not started with nothing in Issues;
  * - the order page says a workflow **started for** N items;
  * - a workflow **applies to orders placed since** it was turned on; the
  *   word for an order's date is **placed**, never a field name.
@@ -2119,7 +2118,7 @@ export const SeedOrdersInput = Schema.Struct({
       /** Numeric suffix: the id becomes `SEED_ORDER_ID_PREFIX + n` and the name `#<n>`. */
       n: Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0)),
       fulfillmentStatus: Schema.optionalKey(Schema.String),
-      /** `PENDING`, `fullyPaid: false`: no runs are created, and the row reads as unpaid rather than "No workflow". */
+      /** `PENDING`, `fullyPaid: false`: no runs are created, and the row reads as unpaid, with nothing in Issues. */
       unpaid: Schema.optionalKey(Schema.Boolean),
       /** The progress every run of this order takes unless its own item overrides it. */
       ...SeedProgressFields,
@@ -2247,10 +2246,9 @@ export type ProductionState = typeof ProductionState.Type;
  *   and final, and the order sits under All with its badge.
  *
  * One row, not a Status row of positions crossed with a row of issue
- * filters. Crossed, six of the twelve cells could never be anything but zero
- * (no workflow is never making or made; a team gap and a block are only ever
- * making), and Fulfilled had to hide the issue row because no closed order
- * carries an issue: a control that must disappear when a sibling is pressed
+ * filters. Crossed, four of the nine cells could never be anything but zero
+ * (a team gap and a block are only ever making), and Fulfilled had to hide
+ * the issue row because no closed order carries an issue: a control that must disappear when a sibling is pressed
  * is not a sibling. The row has no label on purpose: "Status" promised one
  * axis, and the row holds scopes (Open, Issues, All) and positions side by
  * side, as the Shopify admin's own views do (All · Unfulfilled · Unpaid ·
@@ -2274,19 +2272,20 @@ export type OrdersIndexView = typeof OrdersIndexView.Type;
  *
  * | Issue             | Rule                                                                                  | Remedy                                             |
  * | ----------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------- |
- * | `no_workflow`     | paid, uncancelled, unfulfilled, no run of any status on any item, no ambiguous item   | attach a workflow on the order page                |
  * | `choose_workflow` | `ambiguousItems > 0` and the order can start runs ({@link canStartRuns})               | choose a workflow on the order page                |
  * | `team`            | {@link OrderRow} `unstaffed`                                                           | assign a team on the order page, or staff the team |
  * | `blocked`         | `runs.blocked > 0`                                                                     | the order page                                     |
  *
  * **An issue is an undecided item.** An item whose run the merchant
  * cancelled was decided (Cancel workflow says "Baton is not making this"),
- * so it is no issue; an item that matched no workflow was never decided, so
- * it is No workflow until a workflow is attached or the order is fulfilled
- * in Shopify. The No workflow badge stays on every stock order of a shop
- * that also sells stock: hiding it would also hide a made-to-order product
- * nobody tagged, and that customer never gets their order, while a stock
- * order showing the badge until it is fulfilled costs nothing.
+ * so it is no issue. An item that matched no workflow is not an issue
+ * either: matching by tag is the merchant's statement of what Baton makes,
+ * so by that statement an unmatched item is not Baton's work, and flagging
+ * it on every order for a ready-made product, such as a keychain taken off
+ * the shelf, would be a permanent false alarm that teaches the merchant to
+ * ignore the count. The accepted risk: a made-to-order product nobody
+ * tagged sits in Not started, where the merchant sees it, and its order
+ * page offers the workflow picker on the item.
  *
  * An unpaid order with an ambiguous item is not choosing: reconcile would not
  * start a run on it whichever workflow was chosen, so there is no decision
@@ -2308,7 +2307,6 @@ export type OrdersIndexView = typeof OrdersIndexView.Type;
  * not the problem. The labels are {@link ORDER_ISSUE_LABEL}.
  */
 export const OrderIssue = Schema.Literals([
-  "no_workflow",
   "choose_workflow",
   "team",
   "blocked",
@@ -2420,18 +2418,18 @@ export type ResyncOrderInput = typeof ResyncOrderInput.Type;
 
 /**
  * Per-order production state for the index table, aggregated from
- * `Run` rows in the same read. Counts every run on the order.
- * `open` counts {@link runIsOpen} runs, `done` the done ones.
- * `closed` counts {@link runIsClosed} runs: an item whose run was closed is
- * decided, so an order whose only runs were closed is not "No workflow"
- * ({@link orderIssues}), though it reads as not started ({@link productionState}).
+ * `Run` rows in the same read. `open` counts {@link runIsOpen} runs, `done`
+ * the done ones. Closed runs are not counted: nothing derives from their
+ * number. A closed run still holds its item ({@link RunStatus}), which
+ * {@link ambiguousItems} reads off the run rows, and an order whose only
+ * runs were closed reads as not started ({@link productionState}) with no
+ * issue ({@link orderIssues}).
  */
 export const RunCounts = Schema.Struct({
   open: Schema.Number,
   done: Schema.Number,
   /** Open runs a worker or the merchant blocked ({@link runIsBlocked}). */
   blocked: Schema.Number,
-  closed: Schema.Number,
 });
 export type RunCounts = typeof RunCounts.Type;
 
@@ -2537,10 +2535,6 @@ export const productionState = ({
  * closed order ({@link orderIsOpen}). The one definition: the orders index's
  * Issues column renders this result, and its Issues view is this result's
  * non-emptiness, restated in SQL in `OrderRepository.listOrders`.
- *
- * `no_workflow` tests fulfilment itself because {@link canStartRuns} reads
- * paid and uncancelled only: a fulfilled order with no runs is every
- * historical order the window sync pulled in, and is not a to-do.
  */
 export const orderIssues = ({
   order,
@@ -2553,12 +2547,6 @@ export const orderIssues = ({
 >): readonly OrderIssue[] => {
   if (!orderIsOpen(order)) return [];
   const issue: Record<OrderIssue, boolean> = {
-    no_workflow:
-      canStartRuns(order) &&
-      runs.open === 0 &&
-      runs.done === 0 &&
-      runs.closed === 0 &&
-      ambiguousItems === 0,
     choose_workflow: canStartRuns(order) && ambiguousItems > 0,
     team: unstaffed,
     blocked: runs.blocked > 0,
@@ -2593,9 +2581,8 @@ export const runCounts = (runs: readonly Run[]): RunCounts =>
       open: counts.open + (runIsOpen(run) ? 1 : 0),
       done: counts.done + (runIsDone(run) ? 1 : 0),
       blocked: counts.blocked + (runIsOpen(run) && runIsBlocked(run) ? 1 : 0),
-      closed: counts.closed + (runIsClosed(run) ? 1 : 0),
     }),
-    { open: 0, done: 0, blocked: 0, closed: 0 },
+    { open: 0, done: 0, blocked: 0 },
   );
 
 /**
@@ -2609,6 +2596,11 @@ export const runCounts = (runs: readonly Run[]): RunCounts =>
  * views there is nothing for a count to cross with, so the numbers move only
  * when the team changes, which is what a merchant expects a team select to
  * do. `open` is the sum of the three positions.
+ *
+ * `criticalIssues` is the open orders with a `team` or `blocked`
+ * {@link OrderIssue}, given the team, a subset of `issues`; it has no view.
+ * It sets the Issues banner's tone on the orders index, critical only while
+ * a person is stopped, so critical stays rare enough to mean something.
  *
  * All are computed over open orders only. They are read through the partial
  * index over unfulfilled, uncancelled orders, so a count costs one row per
@@ -2626,6 +2618,7 @@ export const OrderCounts = Schema.Struct({
   not_started: Schema.Number,
   making: Schema.Number,
   made: Schema.Number,
+  criticalIssues: Schema.Number,
 });
 export type OrderCounts = typeof OrderCounts.Type;
 

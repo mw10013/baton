@@ -149,9 +149,9 @@ const json = (value: unknown) => JSON.stringify(value);
  * proves that by matching terms, not by reasoning about them. The run
  * fragments are correlated to the outer `ShopOrder` row and served by
  * `Run_orderId_idx`. A closed run still holds its item
- * (`Domain.RunStatus`): it is in `ANY_RUN` and `RUN_FOR_ITEM`, so an item
- * whose run closed is neither "No workflow" nor "Choose a workflow" (it is no
- * issue: a closed run is a decided item), and it is in no position fragment
+ * (`Domain.RunStatus`): it is in `RUN_FOR_ITEM`, so an item whose run closed
+ * is not "Choose a workflow" (a closed run is a decided item), and it is in
+ * no position fragment
  * but `not_started`'s, which asks for no open and no done run.
  */
 const OPEN = "fulfillmentStatus <> 'FULFILLED' and cancelledAt is null";
@@ -162,8 +162,6 @@ const OPEN = "fulfillmentStatus <> 'FULFILLED' and cancelledAt is null";
  */
 const openAs = (alias: string) =>
   `${alias}.fulfillmentStatus <> 'FULFILLED' and ${alias}.cancelledAt is null`;
-const ANY_RUN = `select 1 from Run r
-  where r.orderId = ShopOrder.id`;
 const OPEN_RUN = `select 1 from Run r
   where r.orderId = ShopOrder.id and r.status = 'active'`;
 const DONE_RUN = `select 1 from Run r
@@ -190,27 +188,24 @@ const AMBIGUOUS_ITEM = `select 1 from OrderLineItem li
 /**
  * The `choose_workflow` {@link Domain.OrderIssue} as one predicate: an order
  * is only choosing when it can start runs, so an unpaid order with an
- * ambiguous item is *not* choosing. `NO_WORKFLOW` excludes this whole term.
+ * ambiguous item is *not* choosing. `OPEN` is the caller's, as for every
+ * issue.
  */
 const CHOOSING = `fullyPaid = 1 and exists (${AMBIGUOUS_ITEM})`;
-/**
- * The `no_workflow` {@link Domain.OrderIssue}: paid, no run of any status, and no item
- * waiting on a choice. `OPEN` is the caller's, as for every issue.
- */
-const NO_WORKFLOW = `fullyPaid = 1 and not exists (${ANY_RUN}) and not (${CHOOSING})`;
 
 /**
  * Each counted view's predicate over the `facts` rows of the count
  * statement in `listOrders`: `viewFilter` restated over per-order facts
  * instead of correlated subqueries, and moving with it. `OPEN` is the
- * statement's own `where`, so `open` is every row. `issues` is the four
- * `Domain.orderIssues` elements or'd: no workflow, choosing, unstaffed,
- * blocked.
+ * statement's own `where`, so `open` is every row. `issues` is the three
+ * `Domain.orderIssues` elements or'd: choosing, unstaffed, blocked.
+ * `criticalIssues` is the two of them that are critical, unstaffed and
+ * blocked; it has no view.
  */
 const COUNT_FACT = {
   open: "1",
-  issues:
-    "(paid and openRuns = 0 and doneRuns = 0 and closedRuns = 0 and not choosing) or choosing or unstaffed or blockedRuns > 0",
+  issues: "choosing or unstaffed or blockedRuns > 0",
+  criticalIssues: "unstaffed or blockedRuns > 0",
   not_started: "openRuns = 0 and doneRuns = 0",
   making: "openRuns > 0",
   made: "doneRuns > 0 and openRuns = 0",
@@ -1039,7 +1034,7 @@ export class OrderRepository extends Context.Service<
            * The open positions partition the open orders by run state alone:
            * no open and no done run is `not_started`, any open run is
            * `making`, only done runs is `made`, as `Domain.productionState`
-           * says. `issues` is `OPEN` and the four `Domain.orderIssues`
+           * says. `issues` is `OPEN` and the three `Domain.orderIssues`
            * elements or'd, each the fragment above that restates it.
            */
           const viewFilter = Match.value(view).pipe(
@@ -1047,7 +1042,6 @@ export class OrderRepository extends Context.Service<
               sql.and([
                 OPEN,
                 sql.or([
-                  `(${NO_WORKFLOW})`,
                   `(${CHOOSING})`,
                   unstaffedRun,
                   `exists (${BLOCKED_RUN})`,
@@ -1155,8 +1149,7 @@ export class OrderRepository extends Context.Service<
                     orderId,
                     sum(status = 'active') as open,
                     sum(status = 'done') as done,
-                    sum(blockedAt is not null and status = 'active') as blocked,
-                    sum(status = 'closed') as closed
+                    sum(blockedAt is not null and status = 'active') as blocked
                   from Run
                   where ${sql.in("orderId", ids)}
                   group by orderId
@@ -1255,7 +1248,6 @@ export class OrderRepository extends Context.Service<
                 open: Number(row[1] ?? 0),
                 done: Number(row[2] ?? 0),
                 blocked: Number(row[3] ?? 0),
-                closed: Number(row[4] ?? 0),
               } satisfies Domain.RunCounts,
             ]),
           );
@@ -1285,8 +1277,7 @@ export class OrderRepository extends Context.Service<
                 select r.orderId,
                   sum(r.status = 'active') as openRuns,
                   sum(r.status = 'done') as doneRuns,
-                  sum(r.status = 'active' and r.blockedAt is not null) as blockedRuns,
-                  sum(r.status = 'closed') as closedRuns
+                  sum(r.status = 'active' and r.blockedAt is not null) as blockedRuns
                 from ShopOrder o
                 cross join Run r on r.orderId = o.id
                 where ${sql.literal(openAs("o"))}
@@ -1294,11 +1285,9 @@ export class OrderRepository extends Context.Service<
               ),
               facts as materialized (
                 select
-                  fullyPaid = 1 as paid,
                   coalesce(rs.openRuns, 0) as openRuns,
                   coalesce(rs.doneRuns, 0) as doneRuns,
                   coalesce(rs.blockedRuns, 0) as blockedRuns,
-                  coalesce(rs.closedRuns, 0) as closedRuns,
                   (${sql.literal(CHOOSING)}) as choosing,
                   ${unstaffedRun} as unstaffed
                 from ShopOrder
@@ -1310,7 +1299,8 @@ export class OrderRepository extends Context.Service<
                 sum(${sql.literal(COUNT_FACT.issues)}),
                 sum(${sql.literal(COUNT_FACT.not_started)}),
                 sum(${sql.literal(COUNT_FACT.making)}),
-                sum(${sql.literal(COUNT_FACT.made)})
+                sum(${sql.literal(COUNT_FACT.made)}),
+                sum(${sql.literal(COUNT_FACT.criticalIssues)})
               from facts
             `.values;
           const counts = {
@@ -1319,6 +1309,7 @@ export class OrderRepository extends Context.Service<
             not_started: Number(countRow?.[2] ?? 0),
             making: Number(countRow?.[3] ?? 0),
             made: Number(countRow?.[4] ?? 0),
+            criticalIssues: Number(countRow?.[5] ?? 0),
           } satisfies Domain.OrderCounts;
           const last = orders.at(-1);
           return {

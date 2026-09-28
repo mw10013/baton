@@ -111,7 +111,9 @@ const orderLocation = ({ legacyId }: Domain.ShopOrder) =>
 /**
  * The Status cell: the ladder badge, from `Domain.productionState` over the
  * row, one for every order, labelled by `Domain.PRODUCTION_STATE_LABEL`.
- * Whether a not-started order is stuck is the Issues cell's to say. Made is
+ * The Issues cell says when a not-started order waits on the merchant; an
+ * order whose items matched no workflow is Not started and shows nothing
+ * there, on purpose ({@link Domain.OrderIssue} says why). Made is
  * derived, never stored: it becomes Fulfilled on its own once Shopify
  * reports the fulfilment.
  */
@@ -169,6 +171,16 @@ const syncStatusText = (
     ? "Importing… this page updates as orders arrive."
     : null;
 };
+
+/**
+ * The Issues banner's heading: how many open orders have an issue, given the
+ * team. No body: the Issues column carries the breakdown by kind, and
+ * repeating it in the banner would be the table said twice.
+ */
+const issuesHeading = (n: number) =>
+  n === 1
+    ? "1 open order has an issue"
+    : `${formatNumber(n)} open orders have issues`;
 
 /**
  * What an empty view says, one line each. With a team selected the list is
@@ -638,16 +650,20 @@ function RouteComponent() {
   };
 
   /**
-   * One button of the view row, built as the member screen's view row is:
-   * an `s-button`, pressed by `variant="primary"`, never by `disabled`,
-   * which reads as unavailable. A screen reader hears the pressed one by its
-   * name, which ends ", selected" through `accessibilityLabel`: `aria-pressed`
-   * on the `s-button` host never reaches the native button in its shadow
-   * root, and `accessibilityLabel` does. Not
-   * `s-press-button`, which takes only `tone="neutral"`: Issues goes
-   * critical while it counts any order, so the one colour on the row always
-   * means an order is waiting on the merchant. At zero it is plain, because
-   * red over nothing is a false alarm.
+   * One button of the view row. The rule for both view rows, this one and
+   * the member Workflows list's: a view is an `s-press-button`, because
+   * `pressed` is a real state that reaches the native button in its shadow
+   * root as `aria-pressed`, where `aria-pressed` on an `s-button` host never
+   * did, and `variant="primary"` on an `s-button` means the page's main
+   * action, which a view is not. No view is red: `s-press-button` takes only
+   * `tone="neutral"`, and the alarm colour belongs with the remedy, on the
+   * Issues badges and the Issues banner.
+   *
+   * The element flips its own `pressed` on every click, and React re-sets a
+   * controlled property only when its value changes between renders.
+   * Pressing the pressed view navigates to the same search, nothing
+   * re-renders, and the element would stay unpressed; so `onClick` first
+   * puts `pressed` back to what React rendered.
    *
    * A counted view always renders, at zero if need be, so nothing on the
    * row appears or disappears with the data. An uncounted one (Fulfilled,
@@ -665,17 +681,16 @@ function RouteComponent() {
     const pressed = q === null && view === value;
     const text = n === null ? label : `${label} · ${formatNumber(n)}`;
     return (
-      <s-button
+      <s-press-button
         key={value ?? "open"}
-        variant={pressed ? "primary" : "secondary"}
-        tone={value === "issues" && n !== null && n > 0 ? "critical" : "auto"}
-        accessibilityLabel={pressed ? `${text}, selected` : text}
-        onClick={() => {
+        pressed={pressed}
+        onClick={(event) => {
+          event.currentTarget.pressed = pressed;
           setFilters({ view: value, q: null });
         }}
       >
         {text}
-      </s-button>
+      </s-press-button>
     );
   };
 
@@ -688,6 +703,34 @@ function RouteComponent() {
       {/* Above the sync button on purpose: the merchant who notices an order
           missing here is the one these two banners are for. */}
       <QuotaBanners usage={usage} />
+      {/* The Issues banner. It stands while any open order has an issue:
+          every issue is something the merchant clears in Baton, so it goes
+          away. Not dismissible, because dismissing would hide a state that
+          is still true and it would return on the next load. Hidden while
+          the Issues view is pressed, because the table below is that list.
+          Critical while any order Needs a team or is Blocked, otherwise a
+          warning, matching the Issues badges. The count is
+          `Domain.OrderCounts`, which honours the team select, so it is the
+          Issues button's number. On the orders index only, not the home
+          page, so one screen owns it. After the quota banners, which say
+          the app itself is stopped. */}
+      {data !== undefined &&
+        data.page.counts.issues > 0 &&
+        !(q === null && view === "issues") && (
+          <s-banner
+            heading={issuesHeading(data.page.counts.issues)}
+            tone={data.page.counts.criticalIssues > 0 ? "critical" : "warning"}
+          >
+            <s-button
+              slot="secondary-actions"
+              onClick={() => {
+                setFilters({ view: "issues", q: null });
+              }}
+            >
+              Show issues
+            </s-button>
+          </s-banner>
+        )}
       {/* Unconditional, empty list included: the resource-index template keeps
           the title-bar action and lets the empty state carry a second copy,
           so "import is top right" holds on every visit.

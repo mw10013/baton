@@ -708,16 +708,19 @@ function RouteComponent() {
    * stays — the row must not reflow when a count crosses zero — and stays
    * enabled, because an empty list with its empty state is a valid screen to
    * land on, a disabled button leaves the tab order altogether, and the count
-   * already says zero. Blocked goes critical only while it has rows, so the
-   * one colour on the view row always means something is stopped.
+   * already says zero.
    *
    * Five views and nothing else; the team filter is in the member bar.
    * Polaris has no view component either — its index pages put views in a
-   * menu — so a view here is an `s-button`, pressed by `variant="primary"`,
-   * which is the only selected state any of these components has, five in a
-   * grid so they never wrap. `inlineSize="fill"` is what makes each one its
-   * grid cell's width, so five buttons read as one row rather than five
-   * differently sized ones.
+   * menu — so a view here is an `s-press-button`, as on the Orders index
+   * (whose `viewButton` holds the rule for both view rows): `pressed`
+   * reaches the native button as `aria-pressed`, and `onClick` first puts
+   * `pressed` back to what React rendered, because the element flips it on
+   * every click and pressing the pressed view re-renders nothing. Blocked has
+   * no colour: `s-press-button` takes only `tone="neutral"`, and a member is
+   * not usually the one who clears a block. Five in a grid so they never
+   * wrap; `inlineSize="fill"` is what makes each one its grid cell's width,
+   * so five buttons read as one row rather than five differently sized ones.
    */
   const viewRow = (
     /* Not `s-button-group`, which renders only its named action slots so
@@ -726,20 +729,17 @@ function RouteComponent() {
        the grid, and says why it is not a scroller. */
     <div className="run-view-row">
       {VIEWS.map((each) => (
-        <s-button
+        <s-press-button
           key={each}
-          variant={each === view ? "primary" : "secondary"}
+          pressed={each === view}
           inlineSize="fill"
-          tone={
-            each === "blocked" && list.counts.blocked > 0 ? "critical" : "auto"
-          }
-          aria-pressed={each === view}
-          onClick={() => {
+          onClick={(event) => {
+            event.currentTarget.pressed = each === view;
             selectView(each);
           }}
         >
           {`${VIEW_LABEL[each]} · ${String(list.counts[each])}`}
-        </s-button>
+        </s-press-button>
       ))}
     </div>
   );

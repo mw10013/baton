@@ -38,6 +38,13 @@ const runInRepository = <A, E>(
 const orderId = (n: number) => `gid://shopify/Order/${String(n)}`;
 const names = (page: Domain.OrdersPage) =>
   page.orders.map(({ order }) => order.name);
+/** The page's orders with a `team` or `blocked` issue. */
+const critical = (page: Domain.OrdersPage) =>
+  page.orders.filter((row) =>
+    Domain.orderIssues(row).some(
+      (issue) => issue === "team" || issue === "blocked",
+    ),
+  ).length;
 const lineItemId = (n: number) => `gid://shopify/LineItem/${String(n)}`;
 const aTeamId = (value: string) =>
   Schema.decodeUnknownSync(Domain.TeamId)(value);
@@ -292,8 +299,9 @@ describe("OrderRepository.listOrders", () => {
  * names the TypeScript functions give it. Runs are written directly because
  * `RunRepository` is not in this test's layer and the views only read
  * status. `#1005`, `#1009`, `#1010` and `#1012` are open with no open and no
- * done run: `not_started`. `#1010`'s only run is closed, which still reads
- * not started but decides the item, so it is no issue.
+ * done run: `not_started`. `#1005` matched no workflow, which is Not started
+ * with no issue. `#1010`'s only run is closed, which still reads not started
+ * but decides the item, so it is no issue.
  *
  * `#1012` and `#1013` are the ambiguity cases, written with
  * `matchedWorkflowIds` directly because reconcile is the only writer of that
@@ -478,15 +486,9 @@ describe("OrderRepository.listOrders views", () => {
         return { all: yield* list("all"), issues: yield* list("issues") };
       }),
     );
-    // No workflow `#1005`, choosing `#1013` and `#1012`, unstaffed `#1004`,
-    // blocked `#1003`. `#1010`'s only run was closed: decided, so no issue.
-    deepStrictEqual(names(issues), [
-      "#1013",
-      "#1012",
-      "#1005",
-      "#1004",
-      "#1003",
-    ]);
+    // Choosing `#1013` and `#1012`, unstaffed `#1004`, blocked `#1003`.
+    // `#1005` matched no workflow and `#1010`'s only run was closed: no issue.
+    deepStrictEqual(names(issues), ["#1013", "#1012", "#1004", "#1003"]);
     for (const row of all.orders)
       strictEqual(
         names(issues).includes(row.order.name),
@@ -514,6 +516,8 @@ describe("OrderRepository.listOrders views", () => {
           "fulfilled",
           "all",
         ] as const;
+        /* `criticalIssues` has no view, so it is not here; its own test
+           checks it. */
         const counted = {
           open: null,
           issues: "issues",
@@ -521,7 +525,7 @@ describe("OrderRepository.listOrders views", () => {
           making: "making",
           made: "made",
         } as const satisfies Record<
-          keyof Domain.OrderCounts,
+          Exclude<keyof Domain.OrderCounts, "criticalIssues">,
           Domain.OrdersIndexView | null
         >;
         const out: {
@@ -536,7 +540,7 @@ describe("OrderRepository.listOrders views", () => {
               for (const [key, shows] of Object.entries(counted))
                 out.push({
                   label: `${String(view)}/${String(team)}/${String(q)}: ${key}`,
-                  count: counts[key as keyof Domain.OrderCounts],
+                  count: counts[key as keyof typeof counted],
                   shown: (yield* list(shows, team)).orders.length,
                 });
             }
@@ -551,10 +555,11 @@ describe("OrderRepository.listOrders views", () => {
       strictEqual(count, shown, label);
     deepStrictEqual(checks.open, {
       open: 11,
-      issues: 5,
+      issues: 4,
       not_started: 4,
       making: 4,
       made: 3,
+      criticalIssues: 2,
     });
     // Cut holds `#1013` and `#1014`, both making; `#1013` is choosing.
     deepStrictEqual(checks.cut, {
@@ -563,7 +568,24 @@ describe("OrderRepository.listOrders views", () => {
       not_started: 0,
       making: 2,
       made: 0,
+      criticalIssues: 0,
     });
+  });
+
+  it("criticalIssues counts the open orders with a team or blocked issue", async () => {
+    const { all, cut } = await runInRepository(
+      Effect.gen(function* () {
+        const { list } = yield* seedIssues;
+        return {
+          all: yield* list("all"),
+          cut: yield* list("all", aTeamId("team-cut")),
+        };
+      }),
+    );
+    // Unstaffed `#1004` and blocked `#1003`.
+    strictEqual(all.counts.criticalIssues, 2);
+    strictEqual(all.counts.criticalIssues, critical(all));
+    strictEqual(cut.counts.criticalIssues, critical(cut));
   });
 
   it("search ignores the view and the team", async () => {
@@ -608,12 +630,12 @@ describe("OrderRepository.listOrders views", () => {
   });
 
   /**
-   * `RunCounts.blocked` counts open runs only, and `RunCounts.closed` counts
-   * closed runs whatever the order. A done run carries no block (the data
-   * model on `initializeSchema`, `ShopAgentSchema.ts`), so no done run is
-   * blocked here.
+   * `RunCounts.blocked` counts open runs only, and a closed run is not
+   * counted at all (`#1002`'s closed run leaves its counts at one done run).
+   * A done run carries no block (the data model on `initializeSchema`,
+   * `ShopAgentSchema.ts`), so no done run is blocked here.
    */
-  it("counts a block on open runs only, and counts closed runs", async () => {
+  it("counts a block on open runs only, and counts closed runs not at all", async () => {
     const { all } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* seedStates;
@@ -639,19 +661,16 @@ describe("OrderRepository.listOrders views", () => {
       open: 1,
       done: 1,
       blocked: 1,
-      closed: 0,
     });
     deepStrictEqual(runsOf("#1001"), {
       open: 0,
       done: 1,
       blocked: 0,
-      closed: 0,
     });
     deepStrictEqual(runsOf("#1002"), {
       open: 0,
       done: 1,
       blocked: 0,
-      closed: 1,
     });
   });
 });
@@ -981,6 +1000,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
       not_started: 0,
       making: 0,
       made: 0,
+      criticalIssues: 0,
     };
     deepStrictEqual(cut.counts, { ...none, open: 2, making: 2 });
     deepStrictEqual(unknown.counts, none);

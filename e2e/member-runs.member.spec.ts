@@ -272,11 +272,10 @@ const view = (page: Page, label: string) =>
 const DEFAULT_VIEW = "mine";
 
 /**
- * Switch views and wait for the switch to land. The wait is on the URL rather
- * than on `aria-pressed`, because `getByRole` may resolve to either the
- * `s-button` host or the native button inside its shadow root and only the
- * host carries the attribute — the search param is the same fact, on the
- * side that cannot be ambiguous.
+ * Switch views and wait for the switch to land: the URL first, then
+ * `aria-pressed` on the view. A view is an `s-press-button`, which puts
+ * `aria-pressed` on the native button in its shadow root, and that native
+ * button is what `getByRole` resolves to, so the attribute is not ambiguous.
  *
  * The default view is the absence of the key: `stripSearchParams` keeps it out
  * of the URL so `/shop/$shop/workflows` with no search stays the canonical way home
@@ -291,6 +290,7 @@ const selectView = async (
   await expect(page).toHaveURL(
     (url) => (url.searchParams.get("view") ?? DEFAULT_VIEW) === name,
   );
+  await expect(view(page, label)).toHaveAttribute("aria-pressed", "true");
 };
 
 /**
