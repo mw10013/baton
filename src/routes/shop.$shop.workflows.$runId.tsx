@@ -50,7 +50,7 @@ const getLoaderData = createServerFn({ method: "GET" })
           shop: data.shop,
           email: user.email,
         });
-        const view = yield* (yield* ShopAgentClient).memberGetRun(shop, {
+        const page = yield* (yield* ShopAgentClient).memberGetRun(shop, {
           runId: data.runId,
           teamIds: teams.map((team) => team.id),
         });
@@ -59,7 +59,7 @@ const getLoaderData = createServerFn({ method: "GET" })
           memberId,
           memberEmail: user.email,
           teams,
-          view,
+          page,
         } satisfies Domain.RunLoaderData;
       }),
     ),
@@ -72,7 +72,7 @@ export const Route = createFileRoute("/shop/$shop/workflows/$runId")({
   head: ({ loaderData }) => ({
     meta: [
       {
-        title: `${loaderData?.view?.run.lineItemTitle ?? "Not found"} — Baton`,
+        title: `${loaderData?.page?.run.lineItemTitle ?? "Not found"} — Baton`,
       },
     ],
   }),
@@ -85,11 +85,11 @@ function RouteComponent() {
     memberId,
     memberEmail,
     teams,
-    view: initialView,
+    page: initialPage,
   } = Route.useLoaderData();
   const { runId } = Route.useParams();
   const {
-    data: view,
+    data: page,
     invalidate,
     agent,
     identified,
@@ -97,7 +97,7 @@ function RouteComponent() {
     queryKey: ["shop-run", shop, runId],
     subscribe: (stub, subscriberId) =>
       stub.subscribeRun({ subscriberId, runId }),
-    initialData: initialView,
+    initialData: initialPage,
   });
   const actions = useMemberRunActions({
     agent,
@@ -123,9 +123,9 @@ function RouteComponent() {
    * itself, because the task standing in the way is on this same page with a
    * `Started` badge on it.
    */
-  const taskButtons = (task: Domain.RunTaskView) => {
-    if (view === null) return null;
-    const can = Domain.taskActions(actor, view.order, view.run, task);
+  const taskButtons = (task: Domain.RunTaskRow) => {
+    if (page === null) return null;
+    const can = Domain.taskActions(actor, page.order, page.run, task);
     const anyAction = can.done || can.putBack || can.reopen?.blockedBy === null;
     if (!anyAction) return null;
     return (
@@ -178,7 +178,7 @@ function RouteComponent() {
     );
   };
 
-  if (view === null)
+  if (page === null)
     return (
       <>
         <MemberBar shop={shop} email={memberEmail} />
@@ -192,9 +192,9 @@ function RouteComponent() {
       </>
     );
 
-  const { run } = view;
+  const { run } = page;
   /** Block, the note, Edit reason and Unblock: {@link Domain.runActions}. */
-  const can = Domain.runActions(actor, view.order, run, view.tasks);
+  const can = Domain.runActions(actor, page.order, run, page.tasks);
   /**
    * Unblock lifts the hold and nothing else: the run goes back to the tier
    * and the tasks it had, and whoever lifted it presses Done next if the work
@@ -238,7 +238,7 @@ function RouteComponent() {
       </>
     ) : null;
   const hasNote = run.note !== null && run.note.length > 0;
-  const hasOrderNote = view.orderNote !== null && view.orderNote.length > 0;
+  const hasOrderNote = page.orderNote !== null && page.orderNote.length > 0;
 
   return (
     <>
@@ -246,7 +246,7 @@ function RouteComponent() {
       {/* No breadcrumb: `MemberBar` sits directly above this heading and its
           mark is the link to `/shop/$shop/workflows`, the workflows list. A second
           link to the same place, a stride below the first, is one link too
-          many — and the mark's link lands on the list the member left, tab,
+          many — and the mark's link lands on the list the member left, view,
           team and depth included, because this page's URL carries their
           context too (`MemberSearch` in `shop.$shop.tsx`). */}
       <s-page heading={run.lineItemTitle} inlineSize="small">
@@ -329,7 +329,7 @@ function RouteComponent() {
                 {hasOrderNote && (
                   <s-stack gap="small-500">
                     <s-text color="subdued">From the order:</s-text>
-                    <Prose>{view.orderNote}</Prose>
+                    <Prose>{page.orderNote}</Prose>
                   </s-stack>
                 )}
               </s-stack>
@@ -337,7 +337,7 @@ function RouteComponent() {
             {/* The step cards, shared with the order page's Manage drawer:
               {@link RunSteps} states their shape. */}
             <RunSteps
-              tasks={view.tasks}
+              tasks={page.tasks}
               showInstructions
               renderActions={taskButtons}
             />

@@ -493,19 +493,21 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // unpaid: nothing routes, and an unpaid order with no runs has no need
+    // unpaid: nothing routes, and an unpaid order with no runs has no issue:
+    // Not started with an empty Issues cell
     n: 1009,
     unpaid: true,
     lineItems: [item("Leather journal", TAG.journal, 1, { Initials: "S.P." })],
   },
   {
-    // no workflow matches: "No workflow" on the orders index
+    // no workflow matches: Not started, and a "No workflow" badge in the
+    // orders index's Issues column
     n: 1010,
     lineItems: [item("Gift card", null, 1)],
   },
   {
     // two workflows claim the one item (its own tag plus `rush`), so nothing
-    // starts: "Choose a workflow" on the index, and the order page's picker
+    // starts: a "Choose a workflow" issue badge on the index, and the order page's picker
     // offers exactly those two
     n: 1011,
     lineItems: [
@@ -516,8 +518,8 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // one ambiguous item beside one that started fine: Making with
-    // "Choose a workflow"
+    // one ambiguous item beside one that started fine: Making in the Status
+    // column, "Choose a workflow" in the Issues column
     n: 1012,
     lineItems: [
       item("Engraved cutting board", [TAG.board, TAG.rush], 1, {

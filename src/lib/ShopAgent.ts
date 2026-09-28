@@ -1166,7 +1166,7 @@ export class ShopAgent extends Agent {
    *
    * `teams` is the same idea for the other population. A member's subscription
    * is their workflows list, which is scoped by team rather than by order, so an order
-   * GID says nothing about whether their view changed. The five member
+   * GID says nothing about whether their list changed. The five member
    * mutations name the teams their write could have affected — every team
    * owning a task on any run of that order, because which tasks are current depends on every run of the order
    * (`RunRepository.listOrderTeamIds`) — and everything else publishes
@@ -1589,7 +1589,7 @@ export class ShopAgent extends Agent {
    * Two guards make an unordered, retried, at-least-once delivery channel
    * idempotent: the `X-Shopify-Webhook-Id` log rejects a redelivery outright,
    * and the payload's `updated_at` skips a fetch that could only produce an
-   * older view than the one already stored. The upsert's own guard is the
+   * older version than the one already stored. The upsert's own guard is the
    * third, and the only one that survives two paths writing at once.
    *
    * The topic is a log field and nothing else: `reconcileOrder` works from the
@@ -1914,14 +1914,7 @@ export class ShopAgent extends Agent {
     );
   }
 
-  private readOrders({
-    limit,
-    cursor,
-    q,
-    status,
-    need,
-    team,
-  }: Domain.ListOrdersInput) {
+  private readOrders({ limit, cursor, q, view, team }: Domain.ListOrdersInput) {
     const readTeams = () => this.teams();
     /**
      * Read, never refreshed: this is the loader half of a page and must not
@@ -1937,16 +1930,15 @@ export class ShopAgent extends Agent {
     return Effect.gen(function* () {
       const repository = yield* OrderRepository;
       /* One roster read for both consumers: the repository derives
-         `attention` and `waitingOn` from it, and the view carries it so the
-         route can name the ids it gets back. */
+         `unstaffed` and `waitingOn` from it, and `OrdersIndexData` carries
+         it so the route can name the ids it gets back. */
       const teams = yield* readTeams();
       return {
         page: yield* repository.listOrders({
           limit,
           cursor,
           q,
-          status,
-          need,
+          view,
           team,
           teams,
         }),
@@ -1955,7 +1947,7 @@ export class ShopAgent extends Agent {
           ...(yield* repository.getSyncState()),
         },
         teams,
-      } satisfies Domain.OrdersView;
+      } satisfies Domain.OrdersIndexData;
     });
   }
 
@@ -1964,7 +1956,7 @@ export class ShopAgent extends Agent {
    * through `ShopAgentClient` so the first page paints during SSR. The socket
    * half is {@link subscribeOrders}, the same read plus the subscription.
    */
-  listOrders(input: Domain.ListOrdersInput): Promise<Domain.OrdersView> {
+  listOrders(input: Domain.ListOrdersInput): Promise<Domain.OrdersIndexData> {
     return this.runEffect(
       callableEffect("ShopAgent.listOrders", Domain.ListOrdersInput, {
         role: "rpc",
@@ -1973,7 +1965,7 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * The orders view's `subscribe<Feature>` method — reads the page and
+   * The orders index's `subscribe<Feature>` method — reads the page and
    * subscribes the calling connection in one round trip. Combining the read and
    * subscription prevents a write between separate calls from being missed.
    * `orderId: null` subscribes to every order-state push.
@@ -1981,7 +1973,7 @@ export class ShopAgent extends Agent {
   @callable()
   subscribeOrders(
     input: Domain.SubscribeOrdersInput,
-  ): Promise<Domain.OrdersView> {
+  ): Promise<Domain.OrdersIndexData> {
     const readOrders = (input: Domain.ListOrdersInput) =>
       this.readOrders(input);
     return this.runEffect(
@@ -2034,7 +2026,7 @@ export class ShopAgent extends Agent {
    */
   getWorkflowDetail(
     input: typeof Domain.WorkflowIdInput.Encoded,
-  ): Promise<Domain.WorkflowDetailView | null> {
+  ): Promise<Domain.WorkflowPageData | null> {
     const teams = () => this.teams();
     return this.runEffect(
       callableEffect("ShopAgent.getWorkflowDetail", Domain.WorkflowIdInput, {
@@ -2070,7 +2062,7 @@ export class ShopAgent extends Agent {
                     tasks: withTeamNames(detail.value.draft.tasks),
                   },
             teams: roster,
-          } satisfies Domain.WorkflowDetailView;
+          } satisfies Domain.WorkflowPageData;
         }),
       )(input),
     );
@@ -2634,7 +2626,7 @@ export class ShopAgent extends Agent {
         itemWorkflows: workflows
           .filter(({ tasks }) => tasks.length > 0)
           .map(({ workflow }) => workflow),
-      } satisfies Domain.OrderDetailView;
+      } satisfies Domain.OrderPageData;
     });
   }
 
@@ -2644,7 +2636,7 @@ export class ShopAgent extends Agent {
    */
   getOrderDetail(
     input: Domain.GetOrderDetailInput,
-  ): Promise<Domain.OrderDetailView | null> {
+  ): Promise<Domain.OrderPageData | null> {
     return this.runEffect(
       callableEffect("ShopAgent.getOrderDetail", Domain.GetOrderDetailInput, {
         role: "rpc",
@@ -2655,7 +2647,7 @@ export class ShopAgent extends Agent {
   @callable()
   subscribeOrder(
     input: typeof Domain.SubscribeOrderInput.Encoded,
-  ): Promise<Domain.OrderDetailView | null> {
+  ): Promise<Domain.OrderPageData | null> {
     const readOrderDetail = (input: Domain.GetOrderDetailInput) =>
       this.readOrderDetail(input);
     return this.runEffect(
@@ -2664,7 +2656,7 @@ export class ShopAgent extends Agent {
         parse: { onExcessProperty: "error" },
       })(({ subscriberId, ...input }) =>
         Effect.gen(function* () {
-          const view = yield* readOrderDetail(input);
+          const page = yield* readOrderDetail(input);
           /**
            * Subscribed after the read because the scope is the GID and the
            * route only carries the legacy id. An unstored order subscribes
@@ -2675,9 +2667,9 @@ export class ShopAgent extends Agent {
           if (connection)
             setSubscription(connection, {
               subscriberId,
-              orderId: view?.order.id ?? null,
+              orderId: page?.order.id ?? null,
             });
-          return view;
+          return page;
         }),
       )(input),
     );
@@ -2783,7 +2775,7 @@ export class ShopAgent extends Agent {
               MERCHANT,
               target.value.order,
               incumbent.run,
-              Domain.runTaskViews(incumbent.run, incumbent.tasks),
+              Domain.runTaskRows(incumbent.run, incumbent.tasks),
               target.value.lineItem,
             ).changeWorkflow
           )
@@ -3120,13 +3112,13 @@ export class ShopAgent extends Agent {
 
   /**
    * No D1 read: `startedByEmail` is a snapshot on the row, so the list reads
-   * the same after the member is deleted. Every half of `Domain.RunListView`
+   * the same after the member is deleted. Every half of `Domain.WorkflowsListData`
    * comes from one call so the loader and the socket paint one snapshot: the
-   * strip and the list under it are never two reads that can disagree.
+   * view row and the list under it are never two reads that can disagree.
    *
-   * The Recent count is read on every tab (`listRecent` with `limit: 0`
-   * counts without reading rows) because the strip shows it whatever is
-   * open; its rows are read only when `query.tab` is "done".
+   * The Recent count is read on every view (`listRecent` with `limit: 0`
+   * counts without reading rows) because the view row shows it whatever is
+   * pressed; its rows are read only when `query.view` is "done".
    *
    * `query.team` narrows Recent the same way it narrows the tiers, and a team
    * the member is not on narrows it to nothing — the same answer the
@@ -3154,24 +3146,24 @@ export class ShopAgent extends Agent {
       const recent = yield* repository.listRecent({
         teamIds: recentTeamIds,
         since: started - Domain.DONE_WINDOW_MS,
-        limit: query.tab === "done" ? query.limit : 0,
+        limit: query.view === "done" ? query.limit : 0,
       });
       /**
        * The fan-out this read was cut to bound, measured on real shops:
        * `rows` is what left the object, and it must stay at or under
        * `query.limit`.
        */
-      const rows = query.tab === "done" ? recent.items.length : items.length;
+      const rows = query.view === "done" ? recent.items.length : items.length;
       const team = query.team ?? "all";
       const ms = (yield* Clock.currentTimeMillis) - started;
       yield* Effect.logInfo(
-        `ShopAgent.readRuns: shop=${shop} teams=${String(teamIds.length)} team=${team} tab=${query.tab} rows=${String(rows)} ms=${String(ms)}`,
+        `ShopAgent.readRuns: shop=${shop} teams=${String(teamIds.length)} team=${team} view=${query.view} rows=${String(rows)} ms=${String(ms)}`,
       ).pipe(
         Effect.annotateLogs({
           shop,
           teams: teamIds.length,
           team,
-          tab: query.tab,
+          view: query.view,
           rows,
           ms,
         }),
@@ -3180,13 +3172,13 @@ export class ShopAgent extends Agent {
         counts: { ...counts, done: recent.total },
         items,
         recent: recent.items,
-      } satisfies Domain.RunListView;
+      } satisfies Domain.WorkflowsListData;
     });
   }
 
   listRuns(
     input: typeof Domain.ListRunsInput.Encoded,
-  ): Promise<Domain.RunListView> {
+  ): Promise<Domain.WorkflowsListData> {
     const readRuns = (
       teamIds: readonly Domain.TeamId[],
       memberEmail: Domain.Email,
@@ -3217,7 +3209,7 @@ export class ShopAgent extends Agent {
   @callable()
   subscribeRuns(
     input: typeof Domain.SubscribeRunsInput.Encoded,
-  ): Promise<Domain.RunListView> {
+  ): Promise<Domain.WorkflowsListData> {
     const readRuns = (
       teamIds: readonly Domain.TeamId[],
       memberEmail: Domain.Email,
@@ -3466,12 +3458,12 @@ export class ShopAgent extends Agent {
     );
   }
 
-  private readRunView(input: {
+  private readRunPage(input: {
     readonly runId: string;
     readonly teamIds: readonly string[];
   }) {
     return RunRepository.pipe(
-      Effect.flatMap((repository) => repository.getRunView(input)),
+      Effect.flatMap((repository) => repository.getRunPage(input)),
       Effect.map(Option.getOrNull),
     );
   }
@@ -3479,13 +3471,13 @@ export class ShopAgent extends Agent {
   /** The workflow page's loader read; plain RPC for the same reason as {@link listRuns}. */
   memberGetRun(
     input: typeof Domain.GetRunForMemberInput.Encoded,
-  ): Promise<Domain.RunView | null> {
-    const readRunView = (input: Domain.GetRunForMemberInput) =>
-      this.readRunView(input);
+  ): Promise<Domain.RunPageData | null> {
+    const readRunPage = (input: Domain.GetRunForMemberInput) =>
+      this.readRunPage(input);
     return this.runEffect(
       callableEffect("ShopAgent.memberGetRun", Domain.GetRunForMemberInput, {
         role: "rpc",
-      })((input) => readRunView(input))(input),
+      })((input) => readRunPage(input))(input),
     );
   }
 
@@ -3499,9 +3491,9 @@ export class ShopAgent extends Agent {
   @callable()
   subscribeRun(
     input: typeof Domain.SubscribeRunInput.Encoded,
-  ): Promise<Domain.RunView | null> {
-    const readRunView = (input: Domain.GetRunForMemberInput) =>
-      this.readRunView(input);
+  ): Promise<Domain.RunPageData | null> {
+    const readRunPage = (input: Domain.GetRunForMemberInput) =>
+      this.readRunPage(input);
     return this.runEffect(
       memberCallableEffect("ShopAgent.subscribeRun", Domain.SubscribeRunInput, {
         onExcessProperty: "error",
@@ -3510,7 +3502,7 @@ export class ShopAgent extends Agent {
           const { connection } = getCurrentAgent<ShopAgent>();
           if (connection)
             setSubscription(connection, { subscriberId, orderId: null });
-          return yield* readRunView({ runId, teamIds });
+          return yield* readRunPage({ runId, teamIds });
         }),
       )(input),
     );

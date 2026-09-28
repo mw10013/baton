@@ -46,13 +46,12 @@ const runningOperation: Domain.BulkOperation = {
 /** Exactly the polls the workflow's wall-clock bound allows. */
 const POLL_COUNT = BULK_GIVE_UP_MS / BULK_POLL_INTERVAL_MS;
 
-/** The orders view, for the sync state the workflow leaves behind. */
+/** The orders index's read, for the sync state the workflow leaves behind. */
 const listOrdersInput = {
   limit: 1,
   cursor: null,
   q: null,
-  status: null,
-  need: null,
+  view: null,
   team: null,
 } as const;
 

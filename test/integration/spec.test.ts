@@ -186,7 +186,7 @@ describe("action table parser", () => {
       " * | screen | `Closed · <reason>` |",
       " */",
       "export const Run = 1;",
-      "export const RunTaskView = 2;",
+      "export const RunTaskRow = 2;",
     ].join("\n");
     expect(ActionTable.checkGlossary(source)).toEqual(["RunTask", "pending"]);
   });
@@ -196,6 +196,8 @@ describe("action table parser", () => {
       taskStates: Domain.TASK_STATE_LABEL,
       runStates: Domain.RUN_STATE_LABEL,
       workflowStates: Domain.WORKFLOW_STATE_LABEL,
+      productionStates: Domain.PRODUCTION_STATE_LABEL,
+      orderIssues: Domain.ORDER_ISSUE_LABEL,
       verbs: Domain.VERB_LABEL,
     };
 
@@ -211,6 +213,17 @@ describe("action table parser", () => {
       expect(doctored).not.toBe(source);
       expect(ActionTable.checkScreenColumns(doctored, labels)).toEqual([
         'Glossary: Verbs put back: merchant says "Take back", constant says "Put back"',
+      ]);
+    });
+
+    it("a spaced word finds its snake-case literal key", () => {
+      const doctored = source.replace(
+        "| not started | open, no open run and no done run | Not started |",
+        "| not started | open, no open run and no done run | To make     |",
+      );
+      expect(doctored).not.toBe(source);
+      expect(ActionTable.checkScreenColumns(doctored, labels)).toEqual([
+        'Glossary: Order positions not started: screen says "To make", constant says "Not started"',
       ]);
     });
 

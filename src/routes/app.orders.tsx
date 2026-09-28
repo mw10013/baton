@@ -3,7 +3,7 @@ import {
   Outlet,
   retainSearchParams,
 } from "@tanstack/react-router";
-import { Schema } from "effect";
+import { Schema, SchemaGetter } from "effect";
 
 import * as Domain from "@/lib/Domain";
 import { lenientSearchKey } from "@/lib/searchParams";
@@ -20,6 +20,25 @@ declare module "@tanstack/react-router" {
 }
 
 /**
+ * **A bare order number in the URL is the search.** The router JSON-encodes
+ * every search value, so a search the app writes is `?q="1575"` and comes
+ * back a string, but a merchant who types or shares `?q=1575` by hand gets
+ * the number 1575 from the parser, which `Domain.OrderSearch` refuses and
+ * {@link lenientSearchKey} would then drop as no search: a URL that looked
+ * right would open the unfiltered list. A number is read as its digits;
+ * everything else is the string it already was. Only the read widens: the
+ * app keeps writing the string form, and `q` is the one key a person would
+ * type, since a view is a word and a team or cursor is an id.
+ */
+const OrderSearchParam = Schema.Union([Schema.String, Schema.Number]).pipe(
+  Schema.decodeTo(Domain.OrderSearch, {
+    // oxlint-disable-next-line unicorn/prefer-native-coercion-functions -- bare `String` is typed `(value?: any) => string` and loses the union
+    decode: SchemaGetter.transform((value: string | number) => String(value)),
+    encode: SchemaGetter.transform((q) => q),
+  }),
+);
+
+/**
  * **The merchant's context on the orders index, and it travels.** The same
  * rule as the member area's {@link MemberSearch} (`shop.$shop.tsx`), which
  * carries the reasoning: the keys live on the layout so every page under it,
@@ -30,19 +49,19 @@ declare module "@tanstack/react-router" {
  * and the browser's Back all land on the filters and the page the merchant
  * left.
  *
- * `?q=` is the order-number search; `?status=` picks a lifecycle position
- * (`made` is the packer's view, `all` the whole history); `?need=`
- * keeps only open orders with that problem (`Domain.OrderNeed`); `?team=`
- * keeps only orders waiting on that team, which is the link the team detail
- * page drills in with; `?after=` is the page, as the keyset cursor it starts
- * after. An absent `status` is open work (`Domain.OrdersStatus`), an absent
- * `need` is anything, an absent `after` is page one.
+ * `?view=` picks a view (`Domain.OrdersIndexView`; `made` is the packer's
+ * queue, `all` the whole history), and an absent `view` is Open. `?q=` is
+ * the order-number search: it searches every stored order and the view and
+ * team are then ignored (`Domain.ListOrdersInput.q`), though they stay in the
+ * URL so clearing the field returns to them. `?team=` keeps only orders
+ * waiting on that team, which is the link the team page drills in with.
+ * `?after=` is the page, as the keyset cursor it starts after; an absent
+ * `after` is page one.
  *
  * What differs from the member area:
  *
- * - The layout is `/app/orders`, not `/app`. The workflows index has its own
- *   `status` key (`app.workflows.tsx`) and the two would collide, and an
- *   orders filter has no business on a `/app/teams` URL.
+ * - The layout is `/app/orders`, not `/app`: an orders filter has no
+ *   business on a `/app/teams` URL.
  * - No `stripSearchParams`: none of the keys has a default value; absence is
  *   the default, and the index writes it by leaving the key out.
  * - `after` is a page, where the member's workflows list's `limit` is a
@@ -54,16 +73,15 @@ declare module "@tanstack/react-router" {
  * **No value of these keys fails**, for `MemberSearch`'s reason: an
  * unreadable value reads as that filter being off ({@link lenientSearchKey}).
  * Before this layout the index validated strictly, and a stale or hand-edited
- * `?status=` put the router's error boundary over the page. `after` that is
+ * filter put the router's error boundary over the page. `after` that is
  * not shaped like a cursor is dropped here (`Domain.OrdersCursor`), so
  * Previous stays off; one that is shaped like a cursor but no longer names a
  * row is the repository's to absorb: its keyset seek lands on the next row
  * (`OrderRepository.listOrders`).
  */
 const OrdersSearch = Schema.Struct({
-  q: lenientSearchKey(Domain.OrderSearch),
-  status: lenientSearchKey(Domain.OrdersStatus),
-  need: lenientSearchKey(Domain.OrderNeed),
+  q: lenientSearchKey(OrderSearchParam),
+  view: lenientSearchKey(Domain.OrdersIndexView),
   team: lenientSearchKey(Domain.TeamId),
   after: lenientSearchKey(Domain.OrdersCursor),
 });
@@ -77,7 +95,7 @@ const OrdersSearch = Schema.Struct({
 export const Route = createFileRoute("/app/orders")({
   validateSearch: Schema.toStandardSchemaV1(OrdersSearch),
   search: {
-    middlewares: [retainSearchParams(["q", "status", "need", "team", "after"])],
+    middlewares: [retainSearchParams(["q", "view", "team", "after"])],
   },
   component: () => <Outlet />,
 });

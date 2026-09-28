@@ -88,12 +88,12 @@ export class ShopAgentClient extends Context.Service<
     readonly listRuns: (
       shop: string,
       input: Domain.ListRunsInput,
-    ) => Effect.Effect<Domain.RunListView, ShopAgentClientError>;
+    ) => Effect.Effect<Domain.WorkflowsListData, ShopAgentClientError>;
     /** The workflow page's loader read; `null` is "not yours or not there", one answer on purpose. */
     readonly memberGetRun: (
       shop: string,
       input: Domain.GetRunForMemberInput,
-    ) => Effect.Effect<Domain.RunView | null, ShopAgentClientError>;
+    ) => Effect.Effect<Domain.RunPageData | null, ShopAgentClientError>;
     readonly listTeamWorkflows: (
       shop: string,
       input: Domain.TeamIdInput,
@@ -110,11 +110,11 @@ export class ShopAgentClient extends Context.Service<
     readonly listOrders: (
       shop: string,
       input: Domain.ListOrdersInput,
-    ) => Effect.Effect<Domain.OrdersView, ShopAgentClientError>;
+    ) => Effect.Effect<Domain.OrdersIndexData, ShopAgentClientError>;
     readonly getOrderDetail: (
       shop: string,
       input: Domain.GetOrderDetailInput,
-    ) => Effect.Effect<Domain.OrderDetailView | null, ShopAgentClientError>;
+    ) => Effect.Effect<Domain.OrderPageData | null, ShopAgentClientError>;
     /**
      * The quota surfaces' loader read. `@callable()` on the object as well, for
      * the socket; both are the same method, since usage is read by a page that
@@ -129,7 +129,7 @@ export class ShopAgentClient extends Context.Service<
     readonly getWorkflowDetail: (
       shop: string,
       input: Domain.WorkflowIdInput,
-    ) => Effect.Effect<Domain.WorkflowDetailView | null, ShopAgentClientError>;
+    ) => Effect.Effect<Domain.WorkflowPageData | null, ShopAgentClientError>;
     /**
      * Not a read: the one write on this path. Every merchant edit that changes
      * who a member is or which teams they work on ends with this call, because
@@ -240,28 +240,30 @@ export class ShopAgentClient extends Context.Service<
        * value is the decoded shape (`lineItemProperties` an array, not JSON
        * text) and must be validated on that side.
        */
-      const runListView = Schema.toType(Domain.RunListView);
-      const runView = Schema.toType(Schema.NullOr(Domain.RunView));
+      const workflowsListData = Schema.toType(Domain.WorkflowsListData);
+      const runPageData = Schema.toType(Schema.NullOr(Domain.RunPageData));
       const teamWorkflows = Schema.toType(Schema.Array(Domain.TeamWorkflow));
       const teamTaskCounts = Schema.toType(Schema.Array(Domain.TeamTaskCounts));
       const teamWorkflowsByTeam = Schema.toType(
         Schema.Array(Domain.TeamWorkflowByTeam),
       );
-      const ordersView = Schema.toType(Domain.OrdersView);
-      const orderDetail = Schema.toType(Schema.NullOr(Domain.OrderDetailView));
+      const ordersIndexData = Schema.toType(Domain.OrdersIndexData);
+      const orderDetail = Schema.toType(Schema.NullOr(Domain.OrderPageData));
       const usage = Schema.toType(Domain.ShopUsage);
       const workflows = Schema.toType(Schema.Array(Domain.WorkflowSummary));
       const workflowDetail = Schema.toType(
-        Schema.NullOr(Domain.WorkflowDetailView),
+        Schema.NullOr(Domain.WorkflowPageData),
       );
       return ShopAgentClient.of({
         listRuns: Effect.fn("ShopAgentClient.listRuns")(
           (shop: string, input: Domain.ListRunsInput) =>
-            call("listRuns", runListView, shop, (stub) => stub.listRuns(input)),
+            call("listRuns", workflowsListData, shop, (stub) =>
+              stub.listRuns(input),
+            ),
         ),
         memberGetRun: Effect.fn("ShopAgentClient.memberGetRun")(
           (shop: string, input: Domain.GetRunForMemberInput) =>
-            call("memberGetRun", runView, shop, (stub) =>
+            call("memberGetRun", runPageData, shop, (stub) =>
               stub.memberGetRun(input),
             ),
         ),
@@ -285,7 +287,7 @@ export class ShopAgentClient extends Context.Service<
         ),
         listOrders: Effect.fn("ShopAgentClient.listOrders")(
           (shop: string, input: Domain.ListOrdersInput) =>
-            call("listOrders", ordersView, shop, (stub) =>
+            call("listOrders", ordersIndexData, shop, (stub) =>
               stub.listOrders(input),
             ),
         ),

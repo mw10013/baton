@@ -73,42 +73,42 @@ const reason = Schema.decodeUnknownSync(Domain.BlockReason);
 /** Nobody's list in particular: a reader who has started nothing, so `tierOf` never answers "mine". */
 const VIEWER = emailOf("viewer@example.com");
 
-/** The four tabs whose rows `listRuns` returns; "done" is `listRecent`'s. */
+/** The four views whose rows `listRuns` returns; "done" is `listRecent`'s. */
 const TIER_TABS = [
   "mine",
   "upNext",
   "teammates",
   "blocked",
-] as const satisfies readonly Domain.RunTab[];
+] as const satisfies readonly Domain.WorkflowsListView[];
 
 /**
- * The rows `listRuns` returns, flattened back into one list in strip order,
+ * The rows `listRuns` returns, flattened back into one list in view-row order,
  * so a test that only cares about *which* runs are listed reads the same as it
- * did before the read became one tab at a time. `tab` names the single tab
+ * did before the read became one view at a time. `view` names the single view
  * where that is what the test is about; tests about the tiering itself call
  * `listRuns` directly.
  */
 const runListRows = Effect.fn("runListRows")(function* ({
   teamIds,
   memberEmail = VIEWER,
-  tab,
+  view,
   team = null,
   limit = Domain.RUN_PAGE,
 }: {
   readonly teamIds: readonly Domain.TeamId[];
   readonly memberEmail?: Domain.Email;
-  readonly tab?: Domain.RunTab;
+  readonly view?: Domain.WorkflowsListView;
   readonly team?: Domain.TeamId | null;
   readonly limit?: number;
 }) {
   const repository = yield* RunRepository;
-  const read = (wanted: Domain.RunTab) =>
+  const read = (wanted: Domain.WorkflowsListView) =>
     repository.listRuns({
       teamIds,
       memberEmail,
-      query: { team, tab: wanted, limit },
+      query: { team, view: wanted, limit },
     });
-  if (tab !== undefined) return (yield* read(tab)).items;
+  if (view !== undefined) return (yield* read(view)).items;
   const rows: Domain.RunListItem[] = [];
   for (const wanted of TIER_TABS) rows.push(...(yield* read(wanted)).items);
   return rows;
@@ -1553,7 +1553,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
       }),
     ));
 
-  it("listRuns shows only current tasks for the given teams, and a blocked run on the Blocked tab", () =>
+  it("listRuns shows only current tasks for the given teams, and a blocked run on the Blocked view", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -1593,11 +1593,11 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           actor: MERCHANT,
           reason: reason("Out of thread"),
         });
-        // The block decides the tab, not the position in one list: the
+        // The block decides the view, not the position in one list: the
         // held run leaves Up next for Blocked and the untouched one stays.
         const blocked = yield* runListRows({
           teamIds: [TEAM_A.id, TEAM_B.id],
-          tab: "blocked",
+          view: "blocked",
         });
         deepStrictEqual(
           blocked.map((item) => [
@@ -1609,7 +1609,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         deepStrictEqual(
           (yield* runListRows({
             teamIds: [TEAM_A.id, TEAM_B.id],
-            tab: "upNext",
+            view: "upNext",
           })).map((item) => [item.run.id, item.run.blockedAt]),
           [[first.run.id, null]],
         );
@@ -1664,7 +1664,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         const { counts } = yield* runs.listRuns({
           teamIds: teams,
           memberEmail: VIEWER,
-          query: { team: null, tab: "mine", limit: Domain.RUN_PAGE },
+          query: { team: null, view: "mine", limit: Domain.RUN_PAGE },
         });
         strictEqual(counts.total, 1);
         strictEqual(counts.blocked, 0);
@@ -1756,14 +1756,14 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           reason: reason("Waiting on the customer"),
         });
 
-        // The counts come back whatever tab is asked for, so one read per
+        // The counts come back whatever view is asked for, so one read per
         // reader says where every row landed for them.
         const countsFor = (memberEmail: Domain.Email) =>
           runs
             .listRuns({
               teamIds: [TEAM_A.id],
               memberEmail,
-              query: { team: null, tab: "mine", limit: Domain.RUN_PAGE },
+              query: { team: null, view: "mine", limit: Domain.RUN_PAGE },
             })
             .pipe(
               Effect.map(({ counts, items }) => ({
@@ -1791,7 +1791,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           (yield* runListRows({
             teamIds: [TEAM_A.id],
             memberEmail: VIEWER,
-            tab: "teammates",
+            view: "teammates",
           })).map((item) => item.run.id),
           [mine.run.id],
         );
@@ -1799,14 +1799,14 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           (yield* runListRows({
             teamIds: [TEAM_A.id],
             memberEmail: maker.email,
-            tab: "blocked",
+            view: "blocked",
           })).map((item) => item.run.id),
           [theirs.run.id],
         );
       }),
     ));
 
-  it("listRuns counts the whole tab and returns only the limit; the team counts ignore the narrowing", () =>
+  it("listRuns counts the whole view and returns only the limit; the team counts ignore the narrowing", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -1821,7 +1821,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           runs.listRuns({
             teamIds: [TEAM_A.id, TEAM_B.id],
             memberEmail: VIEWER,
-            query: { team: null, tab: "upNext", limit },
+            query: { team: null, view: "upNext", limit },
           });
 
         const capped = yield* read(10);
@@ -1843,7 +1843,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
       }),
     ));
 
-  it("listRuns on the Done tab returns no items and counts the tiers all the same", () =>
+  it("listRuns on the Done view returns no items and counts the tiers all the same", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -1853,10 +1853,10 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         const done = yield* runs.listRuns({
           teamIds: [TEAM_A.id],
           memberEmail: VIEWER,
-          query: { team: null, tab: "done", limit: Domain.RUN_PAGE },
+          query: { team: null, view: "done", limit: Domain.RUN_PAGE },
         });
-        // The Recent tab's rows are `listRecent`'s; the strip above them is still
-        // this read's, which is why the counts do not depend on the tab.
+        // The Recent view's rows are `listRecent`'s; the view row above them is still
+        // this read's, which is why the counts do not depend on the view.
         strictEqual(done.items.length, 0);
         strictEqual(done.counts.upNext, 1);
         strictEqual(done.counts.total, 1);
@@ -1875,7 +1875,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           runs.listRuns({
             teamIds,
             memberEmail: VIEWER,
-            query: { team, tab: "upNext", limit: Domain.RUN_PAGE },
+            query: { team, view: "upNext", limit: Domain.RUN_PAGE },
           });
 
         const both = yield* read(null);
@@ -1903,7 +1903,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
 
         const foreign = yield* read(TEAM_C.id);
         strictEqual(foreign.items.length, 0);
-        // The tab counts are after the narrowing — they describe the lists the
+        // The view counts are after the narrowing — they describe the lists the
         // member can switch to — while `total` and `teamCounts` are not.
         strictEqual(foreign.counts.upNext, 0);
         strictEqual(foreign.counts.total, 1);
@@ -2154,7 +2154,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         strictEqual(Domain.runIsUnstarted(after.tasks), true);
         // Ready again: it is on Team A's list as a Start.
         const view = Option.getOrThrow(
-          yield* runs.getRunView({
+          yield* runs.getRunPage({
             runId: detail.run.id,
             teamIds: [TEAM_A.id],
           }),
@@ -2238,7 +2238,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
       }),
     ));
 
-  it("listRecent lists the team's recent completions newest first with the undo verdict; getRunView decorates every task", () =>
+  it("listRecent lists the team's recent completions newest first with the undo verdict; getRunPage decorates every task", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
@@ -2301,7 +2301,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         );
 
         const view = Option.getOrThrow(
-          yield* runs.getRunView({
+          yield* runs.getRunPage({
             runId: detail.run.id,
             teamIds: [TEAM_A.id],
           }),
@@ -2322,7 +2322,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         // No task on the caller's teams, or no such run: the same None.
         strictEqual(
           Option.isNone(
-            yield* runs.getRunView({
+            yield* runs.getRunPage({
               runId: detail.run.id,
               teamIds: ["nobody"],
             }),
@@ -2331,7 +2331,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         );
         strictEqual(
           Option.isNone(
-            yield* runs.getRunView({ runId: "missing", teamIds: [TEAM_A.id] }),
+            yield* runs.getRunPage({ runId: "missing", teamIds: [TEAM_A.id] }),
           ),
           true,
         );
@@ -2418,7 +2418,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         );
         strictEqual(gate.run.status, "closed");
         const view = Option.getOrThrow(
-          yield* runs.getRunView({
+          yield* runs.getRunPage({
             runId: detail.run.id,
             teamIds: [TEAM_A.id],
           }),
@@ -2455,7 +2455,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         // Nothing done: step 1's two tasks were current a moment ago.
         yield* runs.cancelRun({ runId: detail.run.id });
         const view = Option.getOrThrow(
-          yield* runs.getRunView({
+          yield* runs.getRunPage({
             runId: detail.run.id,
             teamIds: [TEAM_A.id],
           }),

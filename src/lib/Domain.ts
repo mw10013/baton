@@ -38,27 +38,29 @@
  * says what a word means, where it lives, and what a screen calls it; the
  * rule stays on the symbol. The screen columns are checked: each cell is
  * the value of the label constant beside the table ({@link TASK_STATE_LABEL},
- * {@link RUN_STATE_LABEL}, {@link WORKFLOW_STATE_LABEL}, {@link VERB_LABEL}),
- * and `pnpm spec check` refuses a cell that differs, so a label
- * change starts here.
+ * {@link RUN_STATE_LABEL}, {@link WORKFLOW_STATE_LABEL},
+ * {@link PRODUCTION_STATE_LABEL}, {@link ORDER_ISSUE_LABEL},
+ * {@link VERB_LABEL}), and `pnpm spec check` refuses a cell that differs, so
+ * a label change starts here.
  *
  * Nouns. "(none)" means no screen says the word; the cell says what a
  * screen shows instead:
  *
- * | word     | meaning                                                  | symbol                          | screen                                                         |
- * | -------- | -------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------- |
- * | merchant | the shop's owner, acting from the Shopify admin          | `Actor` role `merchant`         | "you" to the merchant, "the merchant" to a member              |
- * | shop     | one Shopify store, the tenant                            | `ShopSession`, `Shop`           | its domain                                                     |
- * | member   | a person at the bench, on one or more teams              | `Actor` role `member`, `Member` | member (merchant screens); "you" or a name (member screens)    |
- * | team     | the group a task is assigned to                          | `Team`                          | team, or its name                                              |
- * | order    | a Shopify order                                          | `ShopOrder`                     | its name (#1001)                                               |
- * | item     | one line item of an order                                | `OrderLineItem`                 | item; never "line item"                                        |
- * | workflow | the definition: steps of tasks                           | `Workflow`, `WorkflowTask`      | workflow, or its name                                          |
- * | step     | a position in a workflow; its tasks are done in parallel | `WorkflowTask`, `RunTask` field | Step k of n                                                    |
- * | run      | one item going through one workflow                      | `Run`                           | the item's workflow, on both sides; never bare, never "run"    |
- * | task     | one unit of work on a run, on one team                   | `RunTask`                       | task, or its name                                              |
- * | block    | a person's hold on a run                                 | `runIsBlocked`                  | Blocked                                                        |
- * | note     | free text on a run                                       | `RunNote`                       | Note                                                           |
+ * | word     | meaning                                                                                                   | symbol                                 | screen                                                      |
+ * | -------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------- |
+ * | merchant | the shop's owner, acting from the Shopify admin                                                           | `Actor` role `merchant`                | "you" to the merchant, "the merchant" to a member           |
+ * | shop     | one Shopify store, the tenant                                                                             | `ShopSession`, `Shop`                  | its domain                                                  |
+ * | member   | a person at the bench, on one or more teams                                                               | `Actor` role `member`, `Member`        | member (merchant screens); "you" or a name (member screens) |
+ * | team     | the group a task is assigned to                                                                           | `Team`                                 | team, or its name                                           |
+ * | order    | a Shopify order                                                                                           | `ShopOrder`                            | its name (#1001)                                            |
+ * | item     | one line item of an order                                                                                 | `OrderLineItem`                        | item; never "line item"                                     |
+ * | workflow | the definition: steps of tasks                                                                            | `Workflow`, `WorkflowTask`             | workflow, or its name                                       |
+ * | step     | a position in a workflow; its tasks are done in parallel                                                  | `WorkflowTask`, `RunTask` field        | Step k of n                                                 |
+ * | run      | one item going through one workflow                                                                       | `Run`                                  | the item's workflow, on both sides; never bare, never "run" |
+ * | task     | one unit of work on a run, on one team                                                                    | `RunTask`                              | task, or its name                                           |
+ * | block    | a person's hold on a run                                                                                  | `runIsBlocked`                         | Blocked                                                     |
+ * | note     | free text on a run                                                                                        | `RunNote`                              | Note                                                        |
+ * | view     | one whole question about a list, chosen by pressing its button; exclusive; the row's first is the default | `WorkflowsListView`, `OrdersIndexView` | its label (Mine, Issues, ...)                               |
  *
  * An item is always shown under its order on the merchant's order page,
  * and beside it in the member's row (`<item> · <workflow> · <order>`), so
@@ -109,6 +111,29 @@
  * | on   | new items get runs from it          | `active` true  | On     |
  * | off  | it starts nothing; open runs carry on | `active` false | Off    |
  *
+ * Order positions, one per order, derived by {@link productionState} and
+ * never stored:
+ *
+ * | word        | meaning                           | screen      |
+ * | ----------- | --------------------------------- | ----------- |
+ * | not started | open, no open run and no done run | Not started |
+ * | making      | open, an open run                 | Making      |
+ * | made        | open, done runs and no open run   | Made        |
+ * | fulfilled   | Shopify says `FULFILLED`          | Fulfilled   |
+ * | cancelled   | Shopify says `cancelledAt`        | Cancelled   |
+ *
+ * "open" is {@link orderIsOpen}, not fulfilled and not cancelled: the orders
+ * index's default view, labelled Open.
+ *
+ * Order issues, zero or more per open order, derived by {@link orderIssues}:
+ *
+ * | word            | meaning                                                | screen            |
+ * | --------------- | ------------------------------------------------------ | ----------------- |
+ * | no workflow     | paid, no run on any item, no item choosing             | No workflow       |
+ * | choose workflow | an item matched two or more workflows                  | Choose a workflow |
+ * | team            | an open task unassigned, or on a deleted or empty team | Needs a team      |
+ * | blocked         | a run on the order is blocked, the run-state word      | Blocked           |
+ *
  * Verbs. Who may do each, and in which state, is the matrix on
  * {@link taskActions} or {@link runActions}, not here. The two screen
  * columns are the member's and the merchant's label; "(none)" means that
@@ -152,6 +177,10 @@
  * | member   | `shop.$shop.workflows.index`      | Workflows                    | the workflows list          |
  * | member   | `shop.$shop.workflows.$runId`     | the item's title             | the workflow page           |
  * | member   | `shop.$shop_.lapsed`              | the shop's domain            | the lapsed page             |
+ *
+ * The orders index's view row speaks the two order tables plus Open, Issues
+ * and All ({@link ORDERS_INDEX_VIEW_LABEL}); the member's workflows list's
+ * view row reads its labels from `workflowsListViews.ts`.
  */
 import { Match, Option, Schema, SchemaGetter, Struct } from "effect";
 
@@ -169,7 +198,7 @@ export type TaskState = typeof TaskState.Type;
 
 /**
  * One task's state ({@link TaskState}) from its row and the `current` flag
- * ({@link RunTaskView}). The one derivation: a page that draws a task's
+ * ({@link RunTaskRow}). The one derivation: a page that draws a task's
  * badge reads this rather than testing the columns itself.
  *
  * `startedAt` is read before `current`. On an open run the order does not
@@ -180,7 +209,7 @@ export type TaskState = typeof TaskState.Type;
  * had what.
  */
 export const taskStateOf = (
-  task: Pick<RunTaskView, "current" | "startedAt" | "doneAt">,
+  task: Pick<RunTaskRow, "current" | "startedAt" | "doneAt">,
 ): TaskState => {
   if (task.doneAt !== null) return "done";
   if (task.startedAt !== null) return "started";
@@ -213,6 +242,54 @@ export const RUN_UNSTARTED_LABEL = "Not started";
 
 /** The glossary's workflow-states screen column, for `Workflow.active`. */
 export const WORKFLOW_STATE_LABEL = { on: "On", off: "Off" } as const;
+
+/**
+ * The glossary's order-positions screen column: the orders index's Status
+ * badge and its position views. "Not started" is also
+ * {@link RUN_UNSTARTED_LABEL}, the merchant's word for an open run nobody has
+ * touched: it is the same fact one level down, and the two never render on
+ * one row (the orders index shows positions, the order page shows runs).
+ */
+export const PRODUCTION_STATE_LABEL = {
+  not_started: "Not started",
+  making: "Making",
+  made: "Made",
+  fulfilled: "Fulfilled",
+  cancelled: "Cancelled",
+} as const satisfies Record<ProductionState, string>;
+
+/**
+ * The glossary's order-issues screen column: the badges in the orders index's
+ * Issues column. A row of filter buttons used to carry these words too; now
+ * only the badges do, and the Issues view holds all four.
+ */
+export const ORDER_ISSUE_LABEL = {
+  no_workflow: "No workflow",
+  choose_workflow: "Choose a workflow",
+  team: "Needs a team",
+  blocked: "Blocked",
+} as const satisfies Record<OrderIssue, string>;
+
+/**
+ * The orders index's view-row labels, in view-row order: the positions of
+ * {@link PRODUCTION_STATE_LABEL} plus Open, Issues and All, the three views
+ * that are scopes rather than positions ({@link OrdersIndexView}). Not a
+ * glossary table: Open and All carry no rule of their own, and the two
+ * glossary tables cover the words. `open` keys the default view, which is
+ * `null` in the URL; `cancelled` has no button.
+ */
+export const ORDERS_INDEX_VIEW_LABEL = {
+  open: "Open",
+  issues: "Issues",
+  not_started: PRODUCTION_STATE_LABEL.not_started,
+  making: PRODUCTION_STATE_LABEL.making,
+  made: PRODUCTION_STATE_LABEL.made,
+  fulfilled: PRODUCTION_STATE_LABEL.fulfilled,
+  all: "All",
+} as const satisfies Record<
+  Exclude<OrdersIndexView, "cancelled"> | "open",
+  string
+>;
 
 /**
  * The glossary's verbs, as the action structs name them ({@link RunActions},
@@ -325,7 +402,7 @@ export interface Entitlements {
  * the object as a number to send ({@link RecordRosterInput}), not to compare.
  * Neither entitlement reaches `ShopAgent`, so the object stores no plan state
  * to fall out of sync, and an upgrade or downgrade lands on the very next page
- * view with nothing to invalidate. The one plan-adjacent fact the
+ * load with nothing to invalidate. The one plan-adjacent fact the
  * object does hold is the billing *cycle* (see {@link ShopUsage}), which is a
  * period, not an entitlement.
  *
@@ -657,7 +734,7 @@ export type TeamRoster = typeof TeamRoster.Type;
 /**
  * The team plus every member of its shop, each marked with whether they are on
  * it — the detail screen toggles membership against the whole roster, so the
- * non-members are as much a part of the view as the members.
+ * non-members are as much a part of the screen as the members.
  */
 export const TeamDetail = Schema.Struct({
   team: Team,
@@ -1175,7 +1252,7 @@ export type WorkflowTag = typeof WorkflowTag.Type;
  * A task whose team was deleted is **unassigned** (`teamId` null, or an id
  * no D1 row carries — read as null everywhere). **Needs attention** is the
  * badge for a workflow, run, or team with an unassigned task or a team with
- * no members (on the orders index, the `team` {@link OrderNeed}, whose badge
+ * no members (on the orders index, the `team` {@link OrderIssue}, whose badge
  * reads **Needs a team**); it is derived on every read, never stored, and the
  * fix is always **assign a team** or add a member. Unassigned refuses Apply and
  * Turn on; an empty team is a warning only. Tasks change only through Apply,
@@ -1297,9 +1374,9 @@ export const WorkflowWithDraft = Schema.Struct({
 export type WorkflowWithDraft = typeof WorkflowWithDraft.Type;
 
 /**
- * What the detail page renders, in one socket round trip: the workflow
- * (read-only, what starts runs) and the draft (what the editor writes), each
- * with its tasks. Both attention states are derived here against the live
+ * A workflow task with its team's live name and headcount, as the merchant's
+ * workflow page ({@link WorkflowPageData}) and the workflow editor
+ * ({@link WorkflowDraftDetail}) render it. Both warning states are derived here against the live
  * roster and never stored: `teamName` is `null` when the task is unassigned
  * (`teamId` null, or an id no team carries) — a warning, not a block in the
  * editor; the task renders with an empty picker and everything else stays
@@ -1314,19 +1391,30 @@ const TaskWithTeamName = Schema.Struct({
 });
 export type TaskWithTeamName = typeof TaskWithTeamName.Type;
 
-export const WorkflowDraftView = Schema.Struct({
+/**
+ * A draft with its tasks: the `*Detail` shape ({@link RunDetail} is a run and
+ * its tasks). Not a screen of its own: it is nested in
+ * {@link WorkflowPageData} and is what the workflow editor reads.
+ */
+export const WorkflowDraftDetail = Schema.Struct({
   draft: WorkflowDraft,
   tasks: Schema.Array(TaskWithTeamName),
 });
-export type WorkflowDraftView = typeof WorkflowDraftView.Type;
+export type WorkflowDraftDetail = typeof WorkflowDraftDetail.Type;
 
-export const WorkflowDetailView = Schema.Struct({
+/**
+ * Everything the merchant's workflow page renders, in one socket round trip:
+ * the workflow (read-only, what starts runs) and the draft (what the editor
+ * writes), each with its tasks. The suffix is `Data` for the reason on
+ * {@link OrdersIndexData}.
+ */
+export const WorkflowPageData = Schema.Struct({
   workflow: Workflow,
   tasks: Schema.Array(TaskWithTeamName),
-  draft: Schema.NullOr(WorkflowDraftView),
+  draft: Schema.NullOr(WorkflowDraftDetail),
   teams: Schema.Array(TeamRoster),
 });
-export type WorkflowDetailView = typeof WorkflowDetailView.Type;
+export type WorkflowPageData = typeof WorkflowPageData.Type;
 
 /** A task is unassigned when its team is null or resolves to no team; the name is the tell after the roster join. */
 export const isUnassigned = (task: TaskWithTeamName) => task.teamName === null;
@@ -1761,7 +1849,7 @@ export type LineItemProperty = typeof LineItemProperty.Type;
  * page renders.
  *
  * Deliberately carries no customer identity: no `customer`, `shippingAddress`,
- * email, or phone. Baton is a production-floor view, so the buyer never needs
+ * email, or phone. Baton is a production-floor tool, so the buyer never needs
  * naming, and staying off those fields keeps the app clear of Level 2 protected
  * customer data. `note` stays because it can carry instructions a maker
  * works from. Order-level `customAttributes` (the cart attributes the admin
@@ -1823,7 +1911,7 @@ export type ShopOrder = typeof ShopOrder.Type;
  *
  * `properties` is the item's own list, every key stored and shown as
  * Shopify sends it, underscore-prefixed app keys included; Baton is a
- * back-office view and hides nothing the merchant can already see in the
+ * back-office tool and hides nothing the merchant can already see in the
  * admin.
  *
  * The product and variant ids are not stored because nothing links to the
@@ -1871,7 +1959,7 @@ export const isFulfilled = (order: Pick<ShopOrder, "fulfillmentStatus">) =>
 /**
  * The two order fields {@link orderIsOpen} reads, and so every action set
  * ({@link runActions}, {@link taskActions}). Carried on the member's run
- * views ({@link RunView}, {@link RunListItem}, {@link RecentItem}) because a
+ * reads ({@link RunPageData}, {@link RunListItem}, {@link RecentItem}) because a
  * member page never holds the order itself, and without them it would offer
  * work on an order Shopify has closed.
  */
@@ -2091,7 +2179,7 @@ export const SyncState = Schema.Struct({
 });
 export type SyncState = typeof SyncState.Type;
 
-/** {@link SyncState} as the orders view carries it, plus whether an import is tracked as running right now. */
+/** {@link SyncState} as {@link OrdersIndexData} carries it, plus whether an import is tracked as running right now. */
 export const OrdersSyncStatus = Schema.Struct({
   inFlight: Schema.Boolean,
   ...SyncState.fields,
@@ -2099,19 +2187,26 @@ export const OrdersSyncStatus = Schema.Struct({
 export type OrdersSyncStatus = typeof OrdersSyncStatus.Type;
 
 /**
- * An order's lifecycle position, the production ladder: **To make ·
+ * An order's lifecycle position, the production ladder: **Not started ·
  * Making · Made · Fulfilled**, and **Cancelled** beside it. One per order,
  * derived from the order row and its run counts on every read and never
- * stored. Problems are not positions: an order being made can also be
- * blocked or waiting on a workflow choice, so those live on {@link OrderNeed}
+ * stored. Issues are not positions: an order being made can also be
+ * blocked or waiting on a workflow choice, so those live on {@link OrderIssue}
  * and an order carries any number of them beside its one position.
  *
- * The first three rungs are Baton's: nothing is being made yet, the bench has
+ * The first three rungs are Baton's: nothing has started, the bench has
  * it, every run is done and the order waits for the merchant to fulfil it.
  * The last two are Shopify's and use Shopify's own words, because they are
  * facts Shopify records (`FULFILLED`, `cancelledAt`) and the merchant reads
  * the same words in the admin. No "shipped": the admin never says it, and it
  * is wrong for pickup and digital orders.
+ *
+ * The first rung is "Not started", not "To make". It holds every open order
+ * with no open and no done run, which includes an unpaid order, an order
+ * whose items matched no workflow, an order whose only run the merchant
+ * cancelled, and an order whose only item Shopify removed. In the last three
+ * the bench will make nothing, so "to make" was a promise the app could not
+ * keep; "not started" is true of all four.
  *
  * Never stored is what makes the packer's round trip automatic — fulfil in
  * Shopify, `orders/fulfilled` stores `FULFILLED`, the next read says
@@ -2122,10 +2217,10 @@ export type OrdersSyncStatus = typeof OrdersSyncStatus.Type;
  * definition, and the SQL filters in `OrderRepository.listOrders` restate its
  * branches and must move with it. Readers (`app.orders.index.tsx`) switch on
  * the value for labels and filters only; no site decides anything by
- * comparing it inline.
+ * comparing it inline. The labels are {@link PRODUCTION_STATE_LABEL}.
  */
 export const ProductionState = Schema.Literals([
-  "to_make",
+  "not_started",
   "making",
   "made",
   "fulfilled",
@@ -2134,55 +2229,91 @@ export const ProductionState = Schema.Literals([
 export type ProductionState = typeof ProductionState.Type;
 
 /**
- * The orders index's Status row, which is {@link ProductionState} plus one
- * value that is not a position.
+ * The orders index's view row: one whole question about the list at a time,
+ * chosen by pressing its button. The views are exclusive, so nothing crosses:
  *
- * `null` is **open work**: to make, making and made, the three rungs Baton
- * owns. It is the default because retention keeps a year of orders
- * ({@link ShopLimits.orderRetentionDays}) and a merchant opening Orders is
- * looking at the bench, not at the year. `"all"` is the escape hatch that
- * shows the closed ones too, and is the only value here that crosses the
- * open and closed sets — which is why it is not a `ProductionState`: nothing
- * derives it from an order, and `productionState` must never return it.
- * `"cancelled"` is a legal value with no button.
+ * - `null` is **Open**, {@link orderIsOpen}: not started, making and made,
+ *   the three rungs Baton owns. It is the default because retention keeps a
+ *   year of orders ({@link ShopLimits.orderRetentionDays}) and a merchant
+ *   opening Orders is looking at the bench, not at the year.
+ * - `"issues"` is an open order with at least one {@link orderIssues}
+ *   element: what needs the merchant.
+ * - The five positions are {@link productionState}.
+ * - `"all"` is the whole history, cancelled included. With `"fulfilled"` and
+ *   `"cancelled"` it is a view that reads closed orders, and the only one
+ *   that reads both open and closed. It is not a `ProductionState`: nothing
+ *   derives it from an order.
+ * - `"cancelled"` is a legal value with no button: a Shopify cancel is rare
+ *   and final, and the order sits under All with its badge.
+ *
+ * One row, not a Status row of positions crossed with a row of issue
+ * filters. Crossed, six of the twelve cells could never be anything but zero
+ * (no workflow is never making or made; a team gap and a block are only ever
+ * making), and Fulfilled had to hide the issue row because no closed order
+ * carries an issue: a control that must disappear when a sibling is pressed
+ * is not a sibling. The row has no label on purpose: "Status" promised one
+ * axis, and the row holds scopes (Open, Issues, All) and positions side by
+ * side, as the Shopify admin's own views do (All · Unfulfilled · Unpaid ·
+ * Open · Archived).
+ *
+ * The word is view for the reasons on {@link WorkflowsListView}, the other
+ * view row. The labels are {@link ORDERS_INDEX_VIEW_LABEL}.
  */
-export const OrdersStatus = Schema.Union([
+export const OrdersIndexView = Schema.Union([
+  Schema.Literal("issues"),
   ProductionState,
   Schema.Literal("all"),
 ]);
-export type OrdersStatus = typeof OrdersStatus.Type;
+export type OrdersIndexView = typeof OrdersIndexView.Type;
 
 /**
- * A problem on an open order that the merchant has a remedy for: the orders
- * index's Needs row, in the order of that row. The one definition is
- * {@link orderNeeds}; the SQL predicates in `OrderRepository.listOrders`
+ * **An issue is an open order that will not move until the merchant acts**:
+ * the orders index's Issues view and Issues column. The one definition is
+ * {@link orderIssues}; the SQL predicates in `OrderRepository.listOrders`
  * restate each element and must move with it.
  *
- * | Need              | Rule                                                                                  | Remedy                                             |
+ * | Issue             | Rule                                                                                  | Remedy                                             |
  * | ----------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------- |
  * | `no_workflow`     | paid, uncancelled, unfulfilled, no run of any status on any item, no ambiguous item   | attach a workflow on the order page                |
  * | `choose_workflow` | `ambiguousItems > 0` and the order can start runs ({@link canStartRuns})               | choose a workflow on the order page                |
- * | `team`            | {@link OrderRow} `attention`                                                           | assign a team on the order page, or staff the team |
+ * | `team`            | {@link OrderRow} `unstaffed`                                                           | assign a team on the order page, or staff the team |
  * | `blocked`         | `runs.blocked > 0`                                                                     | the order page                                     |
+ *
+ * **An issue is an undecided item.** An item whose run the merchant
+ * cancelled was decided (Cancel workflow says "Baton is not making this"),
+ * so it is no issue; an item that matched no workflow was never decided, so
+ * it is No workflow until a workflow is attached or the order is fulfilled
+ * in Shopify. The No workflow badge stays on every stock order of a shop
+ * that also sells stock: hiding it would also hide a made-to-order product
+ * nobody tagged, and that customer never gets their order, while a stock
+ * order showing the badge until it is fulfilled costs nothing.
  *
  * An unpaid order with an ambiguous item is not choosing: reconcile would not
  * start a run on it whichever workflow was chosen, so there is no decision
- * waiting yet.
+ * waiting yet. Unpaid is not an issue either: it is a Shopify fact the
+ * Payment column already shows, not something the merchant fixes in Baton.
  *
- * A need is only ever on an open order ({@link orderIsOpen}): a closed order
- * has no work left. Needs are independent of each other and of the
+ * An issue is only ever on an open order ({@link orderIsOpen}): a closed
+ * order has no work left. Issues are independent of each other and of the
  * {@link ProductionState}: one order can carry several, and an order being
  * made can be waiting on a choice for another item at the same time. No
- * Shopify change is a need: a Shopify event closes or resizes a run and
- * waits on nobody ({@link RunStatus}).
+ * Shopify change is an issue: a Shopify event closes or resizes a run and
+ * waits on nobody ({@link RunStatus}). Blocked is the run-state word on
+ * purpose: the issue is "a run on this order is blocked".
+ *
+ * The word is issue, not need or attention. Shopify's badge guidance pairs
+ * the critical tone with "urgent issues needing action"; "need" is
+ * verb-shaped and did not fit Blocked, which is a hold a person set rather
+ * than a gap to fill; "attention" names what a badge does about a problem,
+ * not the problem. The labels are {@link ORDER_ISSUE_LABEL}.
  */
-export const OrderNeed = Schema.Literals([
+export const OrderIssue = Schema.Literals([
   "no_workflow",
   "choose_workflow",
   "team",
   "blocked",
 ]);
-export type OrderNeed = typeof OrderNeed.Type;
+export type OrderIssue = typeof OrderIssue.Type;
 
 /**
  * Keyset cursor over `(processedAt desc, id desc)`, encoded as
@@ -2245,22 +2376,22 @@ export const ListOrdersInput = Schema.Struct({
    * Order-number search, matched against `ShopOrder.name` after
    * {@link normaliseOrderSearch}: `null` is no search.
    *
+   * **Search ignores the view and the team.** When `q` is not null the read
+   * is over every stored order and `view` and `team` are not applied: the
+   * number the merchant typed is the whole question, and a search crossed
+   * with the view meant "no match under Made" sent them to All to type it
+   * again. The counts ignore `q` in turn ({@link OrderCounts}).
+   *
    * Always send the key, for the same reason as `team`.
    */
   q: Schema.NullOr(OrderSearch),
   /**
-   * {@link OrdersStatus}: `null` is open work, `"all"` is every order, and
-   * each position has a SQL form in `OrderRepository.listOrders` that
-   * restates `productionState`. Always send the key, for the same reason as
-   * `team`.
+   * {@link OrdersIndexView}: `null` is Open, `"all"` is every order, and each
+   * other view has a SQL form in `OrderRepository.listOrders` that restates
+   * `productionState` or the union of `orderIssues`. Always send the key, for
+   * the same reason as `team`.
    */
-  status: Schema.NullOr(OrdersStatus),
-  /**
-   * {@link OrderNeed}: `null` is any ("Anything"); a need keeps only open
-   * orders {@link orderNeeds} gives it, under any status, `"all"` included.
-   * Always send the key, for the same reason as `team`.
-   */
-  need: Schema.NullOr(OrderNeed),
+  view: Schema.NullOr(OrdersIndexView),
   /**
    * `null` is any team; an id keeps only orders waiting on that team
    * ({@link OrderRow} `waitingOn`, open orders only) — the workflows list's own
@@ -2293,7 +2424,7 @@ export type ResyncOrderInput = typeof ResyncOrderInput.Type;
  * `open` counts {@link runIsOpen} runs, `done` the done ones.
  * `closed` counts {@link runIsClosed} runs: an item whose run was closed is
  * decided, so an order whose only runs were closed is not "No workflow"
- * ({@link orderNeeds}), though it reads as to make ({@link productionState}).
+ * ({@link orderIssues}), though it reads as not started ({@link productionState}).
  */
 export const RunCounts = Schema.Struct({
   open: Schema.Number,
@@ -2321,10 +2452,11 @@ export const OrderRow = Schema.Struct({
    * members. The order page's "Assign team" picker and the members screen
    * are the remedies; either clears this with no further write.
    *
-   * It is the `team` element of {@link orderNeeds}, and the row badge reads
-   * "Needs a team".
+   * It is the `team` element of {@link orderIssues}, and the row badge reads
+   * "Needs a team". The field says what the fact is (a task with nobody to
+   * do it), not what the badge asks for.
    */
-  attention: Schema.Boolean,
+  unstaffed: Schema.Boolean,
   /**
    * Teams with a current task on an open run of this order, distinct, as ids:
    * "who is holding it", answered at the altitude the list grows with — a
@@ -2334,20 +2466,20 @@ export const OrderRow = Schema.Struct({
    * **Only an open order waits on a team**: a fulfilled or cancelled
    * order's list is empty by the status rule, because reconcile closed every
    * open run on it and only open runs have current tasks ({@link currentTasks}).
-   * This is the same line {@link OrderNeed} draws: needs are open-only too.
+   * This is the same line {@link OrderIssue} draws: issues are open-only too.
    *
    * Unassigned current tasks contribute nothing, and neither does a team that
-   * has left the roster: both are `attention`, and rendering one fault in two
+   * has left the roster: both are `unstaffed`, and rendering one fault in two
    * cells makes it look like two alarms. A blocked run contributes nothing
    * either: its team cannot move it, and `RunCounts.blocked` is its alarm. A
    * team still on the roster but with
-   * no members does contribute: it is `attention` too, but the badge names
+   * no members does contribute: it is `unstaffed` too, but the badge names
    * the team the merchant has to staff. So an order in production with an
    * empty list is exactly an order whose every current task is unassigned or
    * on a deleted team, which is when the critical badge is showing.
    *
    * Ids, not names: the Durable Object has no team names. The route resolves
-   * them through `OrdersView.teams`, the roster the page was read against.
+   * them through `OrdersIndexData.teams`, the roster the page was read against.
    */
   waitingOn: Schema.Array(TeamId),
   /**
@@ -2369,11 +2501,12 @@ export type OrderRow = typeof OrderRow.Type;
  * with no runs at all — every historical order the window sync pulls in —
  * reads as fulfilled (and one fulfilled with runs open cannot exist past the
  * next reconcile, which closes them). The open positions then follow the run
- * counts alone: no open and no done run is `to_make`, any open run is
+ * counts alone: no open and no done run is `not_started`, any open run is
  * `making`, only done runs is `made`. An order whose runs are all closed
- * reads `to_make`, which is right: nothing is being made, and the items may
- * take a new workflow from the picker. Whether `to_make` is a problem is
- * {@link orderNeeds}' question (`no_workflow`), not this one's. The SQL forms
+ * reads not started, which is right, because nothing has started and the
+ * items may take a new workflow from the picker. Whether that is an issue is
+ * {@link orderIssues}' question, and the answer is no: a closed run is a
+ * decided item. The SQL forms
  * in `OrderRepository.listOrders` restate these branches and must move with
  * them.
  *
@@ -2394,31 +2527,32 @@ export const productionState = ({
     Match.withReturnType<ProductionState>(),
     Match.when({ cancelled: true }, () => "cancelled"),
     Match.when({ fulfilled: true }, () => "fulfilled"),
-    Match.when({ none: true }, () => "to_make"),
+    Match.when({ none: true }, () => "not_started"),
     Match.when({ open: true }, () => "making"),
     Match.orElse(() => "made"),
   );
 
 /**
- * The {@link OrderNeed}s of one order, in `OrderNeed` order; `[]` for a
- * closed order ({@link orderIsOpen}). The row badges render this result and
- * the Needs filter restates each element in SQL.
+ * The {@link OrderIssue}s of one order, in `OrderIssue` order; `[]` for a
+ * closed order ({@link orderIsOpen}). The one definition: the orders index's
+ * Issues column renders this result, and its Issues view is this result's
+ * non-emptiness, restated in SQL in `OrderRepository.listOrders`.
  *
  * `no_workflow` tests fulfilment itself because {@link canStartRuns} reads
  * paid and uncancelled only: a fulfilled order with no runs is every
  * historical order the window sync pulled in, and is not a to-do.
  */
-export const orderNeeds = ({
+export const orderIssues = ({
   order,
   runs,
-  attention,
+  unstaffed,
   ambiguousItems,
 }: Pick<
   OrderRow,
-  "order" | "runs" | "attention" | "ambiguousItems"
->): readonly OrderNeed[] => {
+  "order" | "runs" | "unstaffed" | "ambiguousItems"
+>): readonly OrderIssue[] => {
   if (!orderIsOpen(order)) return [];
-  const need: Record<OrderNeed, boolean> = {
+  const issue: Record<OrderIssue, boolean> = {
     no_workflow:
       canStartRuns(order) &&
       runs.open === 0 &&
@@ -2426,10 +2560,10 @@ export const orderNeeds = ({
       runs.closed === 0 &&
       ambiguousItems === 0,
     choose_workflow: canStartRuns(order) && ambiguousItems > 0,
-    team: attention,
+    team: unstaffed,
     blocked: runs.blocked > 0,
   };
-  return OrderNeed.literals.filter((literal) => need[literal]);
+  return OrderIssue.literals.filter((literal) => issue[literal]);
 };
 
 /**
@@ -2465,35 +2599,33 @@ export const runCounts = (runs: readonly Run[]): RunCounts =>
   );
 
 /**
- * The counts on the orders index's Status and Needs buttons.
+ * The counts on the orders index's counted views ({@link OrdersIndexView}):
+ * `open` is Open, `issues` is Issues, and the three positions are theirs.
  *
- * **A count is what pressing that button would show, given every other
- * filter.** A status count honours the selected need, the team and the
- * search; a need count honours the selected status, the team and the search.
- * Neither honours its own row, or pressing a button would read "0" on every
- * sibling of the pressed one.
+ * **A count is what pressing that view would show, given the team.** Counts
+ * honour the team select and nothing else: not the search, because the
+ * search ignores the views ({@link ListOrdersInput} `q`); not the pressed
+ * view, because a view never narrows its own row. With one row of exclusive
+ * views there is nothing for a count to cross with, so the numbers move only
+ * when the team changes, which is what a merchant expects a team select to
+ * do. `open` is the sum of the three positions.
  *
- * Both are computed over open orders only. They are read through the partial
+ * All are computed over open orders only. They are read through the partial
  * index over unfulfilled, uncancelled orders, so a count costs one row per
- * open order, not one per order ever stored. So `fulfilled` and `all` carry
- * no status count — on a shop with years of history that would be a
- * full-table read on every refresh of a subscribed page — and under status
- * `fulfilled` (or `cancelled`) the need counts are all zero and the route
- * hides the row, while the status counts still read as the open positions
- * they would show.
+ * open order, not one per order ever stored. So Fulfilled and All carry no
+ * count: on a shop with years of history that would be a full-table read on
+ * every refresh of a subscribed page.
  *
  * Refreshes are bounded by the subscribed page's invalidation throttle,
  * `INVALIDATION_THROTTLE_MS` in `useSubscribedQuery` (2 s), not by anything
  * here.
  */
 export const OrderCounts = Schema.Struct({
-  to_make: Schema.Number,
+  open: Schema.Number,
+  issues: Schema.Number,
+  not_started: Schema.Number,
   making: Schema.Number,
   made: Schema.Number,
-  no_workflow: Schema.Number,
-  choose_workflow: Schema.Number,
-  team: Schema.Number,
-  blocked: Schema.Number,
 });
 export type OrderCounts = typeof OrderCounts.Type;
 
@@ -2568,25 +2700,36 @@ export type BulkOperation = typeof BulkOperation.Type;
  * What the Import open orders button is told it did. `in_flight` is an import
  * already tracked as running, `refused` is a refusal recorded on
  * {@link SyncState.lastError} for the banner to carry; neither is an error,
- * and in all three cases the page re-reads the view.
+ * and in all three cases the page re-reads {@link OrdersIndexData}.
  */
 export const OrdersSyncResult = Schema.Struct({
   status: Schema.Literals(["started", "in_flight", "refused"]),
 });
 export type OrdersSyncResult = typeof OrdersSyncResult.Type;
 
-/** Everything `/app/orders` renders, in one socket round trip. */
-export const OrdersView = Schema.Struct({
+/**
+ * Everything the orders index renders, in one socket round trip.
+ *
+ * The suffix is `Data`, and the prefix is the Screens table's spec name, for
+ * this and every struct that is what one screen reads ({@link OrderPageData},
+ * {@link WorkflowPageData}, {@link WorkflowsListData}, {@link RunPageData}):
+ * `Data` is TanStack's own word for what a screen reads (`loaderData`,
+ * `useLoaderData`), and the old `View` suffix now means a view-row button
+ * ({@link OrdersIndexView}, {@link WorkflowsListView}). The structs carry no
+ * rule of their own, so a generic suffix is right and the screen name carries
+ * the meaning.
+ */
+export const OrdersIndexData = Schema.Struct({
   page: OrdersPage,
   syncState: OrdersSyncStatus,
   /**
-   * The live D1 roster the page was read against — the same list `attention`
+   * The live D1 roster the page was read against — the same list `unstaffed`
    * and `OrderRow.waitingOn` were derived from, carried so the route can name
    * the waiting-on ids and fill the team filter without a second read.
    */
   teams: Schema.Array(TeamRoster),
 });
-export type OrdersView = typeof OrdersView.Type;
+export type OrdersIndexData = typeof OrdersIndexData.Type;
 
 /**
  * Why the shop's cached plan entry reads the way it does.
@@ -2712,18 +2855,18 @@ export interface LoginLoaderData {
  * `/app/orders` (`app.orders.index`): the first page, plus the usage the
  * page's limit banners need.
  *
- * `view` is what the socket replaces on every order push; `usage` is
+ * `orders` is what the socket replaces on every order push; `usage` is
  * loader-only and deliberately does not move under the socket. It is a
  * billing-period fact, and refreshing it on every webhook would be a read per
  * push for a number that changes on a scale of days.
  */
 export interface OrdersIndexLoaderData {
-  readonly view: OrdersView;
+  readonly orders: OrdersIndexData;
   readonly usage: ShopUsage;
 }
 
 /** `/app/orders/$orderId` (`app.orders.$orderId`); `null` is not stored. */
-export type OrderLoaderData = OrderDetailView | null;
+export type OrderLoaderData = OrderPageData | null;
 
 /** `/app/workflows` (`app.workflows.index`). */
 export interface WorkflowsIndexLoaderData {
@@ -2731,7 +2874,7 @@ export interface WorkflowsIndexLoaderData {
 }
 
 /** `/app/workflows/$workflowId` (`app.workflows.$workflowId`) and its `/edit`; `null` is not found. */
-export type WorkflowLoaderData = WorkflowDetailView | null;
+export type WorkflowLoaderData = WorkflowPageData | null;
 
 /**
  * `/app/members` (`app.members`). `teams` feeds the team checklist in the add
@@ -2770,11 +2913,11 @@ export interface TeamLoaderData extends TeamDetail {
 /**
  * `/shop/$shop/workflows` (`shop.$shop.workflows.index`): the member's
  * workflows list, which is the member area's landing page (`/shop/$shop`
- * redirects to it). `view` is the read of `query` — the tab from the URL, every
+ * redirects to it). `list` is the read of `query` — the view from the URL, every
  * team, one page deep — which is why `memberEmail` is here to be *sent* on
  * the socket's later reads rather than to group rows the page holds; it and
  * `memberId` come out of the same `requireMember` that resolved `teams`.
- * `query` travels with the view so the page can tell whether the socket is
+ * `query` travels with the list so the page can tell whether the socket is
  * about to ask for the same read ({@link sameRunQuery}) and hand these rows
  * over as `initialData`. `shop` is the `myshopify.com` domain — the Admin
  * API's display name is not stored anywhere in Baton, and the domain is what
@@ -2786,16 +2929,16 @@ export interface RunListLoaderData {
   readonly memberEmail: Email;
   readonly teams: MemberAccess["teams"];
   readonly query: RunQuery;
-  readonly view: RunListView;
+  readonly list: WorkflowsListData;
 }
 
-/** `/shop/$shop/workflows/$runId` (`shop.$shop.workflows.$runId`). `view` is null when the run is not the member's to see. */
+/** `/shop/$shop/workflows/$runId` (`shop.$shop.workflows.$runId`). `page` is null when the run is not the member's to see. */
 export interface RunLoaderData {
   readonly shop: Shop;
   readonly memberId: MemberId;
   readonly memberEmail: Email;
   readonly teams: MemberAccess["teams"];
-  readonly view: RunView | null;
+  readonly page: RunPageData | null;
 }
 
 /**
@@ -2804,7 +2947,7 @@ export interface RunLoaderData {
  * One cycle, named the same on both sides:
  *
  * 1. **Subscribe.** The page's read is a `subscribe<Feature>` RPC on
- *    `ShopAgent` (`subscribeOrders`, `subscribeOrder`) that returns the view
+ *    `ShopAgent` (`subscribeOrders`, `subscribeOrder`) that returns the page's data
  *    *and* stores this `Subscription` as the connection's state, in one round
  *    trip so a write between two calls cannot be missed. Each has a plain
  *    twin without the subscription (`listOrders`, `getOrderDetail`) that the
@@ -2812,7 +2955,7 @@ export interface RunLoaderData {
  *    calls the RPC through `useSubscribedQuery`, which owns the client half.
  * 2. **Publish.** A write on the object ends with `ShopAgent.publish`, which
  *    sends `InvalidatedMessage` to every connection whose subscription the
- *    write touched — a hint that the view is stale, never the new value.
+ *    write touched — a hint that the data is stale, never the new value.
  * 3. **Invalidate.** The hook decodes the message and invalidates its query
  *    (throttled), which re-runs the `subscribe<Feature>` read and so also
  *    renews the subscription.
@@ -3066,9 +3209,9 @@ export type RunTaskId = typeof RunTaskId.Type;
  * closed item, the order's retention delete) removes tasks.
  *
  * **Mine, Up next, Teammates and Blocked hold open runs only.** Closed and done runs leave the
- * member's Mine, Up next, Teammates and Blocked tabs, and stop counting on
+ * member's Mine, Up next, Teammates and Blocked views, and stop counting on
  * the orders index, by this status and no other rule: the list reads select
- * `status = 'active'`. The fifth tab, Recent, holds done tasks and closed
+ * `status = 'active'`. The fifth view, Recent, holds done tasks and closed
  * runs, a closed run with its reason ({@link RecentItem}).
  *
  * What each status allows. The gate column is the rule; the enforcing write
@@ -3176,7 +3319,7 @@ export const runIsDone = (run: { readonly status: RunStatus }) =>
  * | Unblock and edit reason are offered; Block is not                 | {@link runActions}                         |
  * | a blocked run holds no team ("waiting on") and shows no Now line  | `OrderRepository.listOrders`, the order page |
  * | counted as `blocked`, open runs only                              | {@link runCounts}                          |
- * | the run's row is on the Blocked tab                               | {@link tierOf}                             |
+ * | the run's row is on the Blocked view                              | {@link tierOf}                             |
  *
  * Reopen is not stopped because it takes work back rather than doing more,
  * and a held run is the one somebody needs to write on.
@@ -3188,7 +3331,7 @@ export const runIsBlocked = (run: { readonly blockedAt: number | null }) =>
  * One workflow applied to one item. Every display field
  * is a snapshot taken at creation — `workflowName`, `orderName`, the line
  * item's title and properties — so a run's row reads only this row. The
- * member's views join `ShopOrder` for {@link OrderState} and drop a run whose
+ * member's reads join `ShopOrder` for {@link OrderState} and drop a run whose
  * order is gone; the snapshots are for reading, not for outliving the order.
  *
  * What a run references, what it survives, and that an item has at most one
@@ -3369,7 +3512,7 @@ export const taskIsOnTeams = (
 /**
  * **A member's access to a run is any task of it on one of their teams**,
  * current or not, done or not. It is what shows them the run page
- * (`RunRepository.getRunView`) and what lets them write the run's
+ * (`RunRepository.getRunPage`) and what lets them write the run's
  * note (`setRunNote`), the one write that is not about a particular task.
  * Acting on a task needs that task's team ({@link taskIsOnTeams}); Block
  * needs a current one, because a hold is placed by whoever is stuck.
@@ -3500,11 +3643,12 @@ export const runRowLine = (
 };
 
 /**
- * The four tiers a waiting row can fall in. Four of the five tabs
- * ({@link RunTab}) are these; `done` (Recent) is not a tier because it is a
- * window over what left the lists rather than a grouping of them. The labels the
- * member reads are the route's (`runTabs.ts`); the object only needs the
- * keys, because it is the side that groups, sorts, and caps.
+ * The four tiers a waiting row can fall in. Four of the five views of the
+ * member's workflows list ({@link WorkflowsListView}) are these; `done`
+ * (Recent) is not a tier because it is a window over what left the lists
+ * rather than a grouping of them. The labels the member reads are the
+ * route's (`workflowsListViews.ts`); the object only needs the keys, because
+ * it is the side that groups, sorts, and caps.
  */
 export const RunTier = Schema.Literals([
   "blocked",
@@ -3515,24 +3659,33 @@ export const RunTier = Schema.Literals([
 export type RunTier = typeof RunTier.Type;
 
 /**
- * The five screens of the member's workflows list, in strip order: what I have
- * started, what I can start, what a teammate is holding, what a person has
- * blocked, and what left my lists lately. Four are the tiers of
+ * The five views of the member's workflows list, in view-row order: what I
+ * have started, what I can start, what a teammate is holding, what a person
+ * has blocked, and what left my lists lately. Four are the tiers of
  * {@link tierOf}, and hold open runs only ({@link RunStatus}); the blocked
- * tab (Blocked) holds blocks and nothing else, since a Shopify change is
+ * view (Blocked) holds blocks and nothing else, since a Shopify change is
  * never a to-do. `done` is the Recent window ({@link RecentItem}); the key
- * keeps its old name, the label is the route's (`runTabs.ts`). The tab is the
- * unit of a read: one read returns every tab's count and one tab's rows.
+ * keeps its old name, the label is the route's (`workflowsListViews.ts`). The
+ * view is the unit of a read: one read returns every view's count and one
+ * view's rows. {@link OrdersIndexView} is the other view row, on the orders
+ * index.
+ *
+ * The word is view, not tab. It is Shopify's word for the same control on its
+ * own index pages (the Orders page's menu is labelled "Select a view": one
+ * whole question about the list at a time, beside filters that narrow it);
+ * the Polaris web components have no tab component, so what is drawn is a
+ * row of buttons, not tabs; and "tab" in this codebase means a browser tab
+ * (one socket per tab), a meaning the socket reasoning needs.
  */
-export const RunTab = Schema.Literals([
+export const WorkflowsListView = Schema.Literals([
   "mine",
   "upNext",
   "teammates",
   "blocked",
   "done",
 ]);
-export type RunTab = typeof RunTab.Type;
-export const DEFAULT_RUN_TAB: RunTab = "mine";
+export type WorkflowsListView = typeof WorkflowsListView.Type;
+export const DEFAULT_WORKFLOWS_LIST_VIEW: WorkflowsListView = "mine";
 
 /**
  * Which tier a row belongs in: a block wins ({@link runIsBlocked}); else a
@@ -3658,7 +3811,7 @@ export const reopenBlockedBy = (
 };
 
 /**
- * One entry of the member's Recent tab: **what left my lists lately**, inside
+ * One entry of the member's Recent view: **what left my lists lately**, inside
  * {@link DONE_WINDOW_MS}, newest first. Two kinds:
  *
  * - `task`: a task one of the member's teams did, with its run for the
@@ -3689,17 +3842,17 @@ export const RecentItem = Schema.Union([
 export type RecentItem = typeof RecentItem.Type;
 
 /**
- * Provisional. The rows one tab returns before it offers "Show more", and the
- * size of each "more". One number for every tab: a member's own tab (Mine) is
+ * Provisional. The rows one view returns before it offers "Show more", and the
+ * size of each "more". One number for every view: a member's own view (Mine) is
  * the one they scroll least and the one that must fit, and at ~50 px a row 25
  * is under two phone screens. A proposal, not a tuned figure.
  */
 export const RUN_PAGE = 25;
-/** Provisional: the most rows one tab may be expanded to in a single read. */
+/** Provisional: the most rows one view may be expanded to in a single read. */
 export const RUN_LIMIT_MAX = 100;
 
 /**
- * How deep one read of a tab goes, as the object accepts it: a whole number
+ * How deep one read of a view goes, as the object accepts it: a whole number
  * of rows from 1 to {@link RUN_LIMIT_MAX}.
  *
  * **The object refuses a depth out of range; the URL clamps one into it.**
@@ -3739,17 +3892,17 @@ export const clampRunLimit = (value: number) =>
 
 /**
  * What the browser may choose about its workflows list: one of its own teams to narrow
- * to (`null` is every team on the connection), which tab, and how many rows of
- * that tab. `team` is validated against the connection's `teamIds` by the
+ * to (`null` is every team on the connection), which view, and how many rows
+ * of that view. `team` is validated against the connection's `teamIds` by the
  * object; a team the member is not on reads as an empty list, never as an
  * error. The screen resolves a URL's team against the roster before it gets
  * here (`shop.$shop.workflows.index.tsx`), so that empty list is reserved for a caller
- * that ignored the roster. The counts of every tab come back regardless of
- * `tab`, so the strip is always current.
+ * that ignored the roster. The counts of every view come back regardless of
+ * `view`, so the view row is always current.
  */
 export const RunQuery = Schema.Struct({
   team: Schema.NullOr(TeamId),
-  tab: RunTab,
+  view: WorkflowsListView,
   limit: RunLimit,
 });
 export type RunQuery = typeof RunQuery.Type;
@@ -3760,7 +3913,7 @@ export type RunQuery = typeof RunQuery.Type;
  * press, and the loader's own query is built from the URL.
  */
 export const sameRunQuery = (a: RunQuery, b: RunQuery) =>
-  a.team === b.team && a.tab === b.tab && a.limit === b.limit;
+  a.team === b.team && a.view === b.view && a.limit === b.limit;
 
 export const RunListTeamCount = Schema.Struct({
   teamId: TeamId,
@@ -3769,8 +3922,8 @@ export const RunListTeamCount = Schema.Struct({
 export type RunListTeamCount = typeof RunListTeamCount.Type;
 
 /**
- * The strip. `mine`, `upNext`, `teammates`, `blocked` and `done` are the
- * counts of the five tabs **after** `query.team` narrows them, because they
+ * The view row's counts. `mine`, `upNext`, `teammates`, `blocked` and `done`
+ * are the counts of the five views **after** `query.team` narrows them, because they
  * describe the lists the member can switch to. `total` and `teamCounts` are
  * over every team on the connection regardless of `query.team`, so the team
  * select does not move under the finger.
@@ -3787,40 +3940,42 @@ export const RunListCounts = Schema.Struct({
 export type RunListCounts = typeof RunListCounts.Type;
 
 /**
- * One read of the member's workflows list: every tab's count and one tab's rows. Exactly
- * one of `items` and `recent` is populated: `items` when `query.tab` is a tier,
- * `recent` when it is "done". The selected tab's total is `counts[query.tab]`.
- * One value rather than two reads so the loader and the socket paint the same
- * snapshot and the strip never disagrees with the list under it.
+ * Everything the member's workflows list renders, in one socket round trip:
+ * every view's count and one view's rows. Exactly one of `items` and `recent`
+ * is populated: `items` when `query.view` is a tier, `recent` when it is
+ * "done". The selected view's total is `counts[query.view]`. One value rather
+ * than two reads so the loader and the socket paint the same snapshot and the
+ * view row never disagrees with the list under it. The suffix is `Data` for
+ * the reason on {@link OrdersIndexData}.
  */
-export const RunListView = Schema.Struct({
+export const WorkflowsListData = Schema.Struct({
   counts: RunListCounts,
   items: Schema.Array(RunListItem),
   recent: Schema.Array(RecentItem),
 });
-export type RunListView = typeof RunListView.Type;
+export type WorkflowsListData = typeof WorkflowsListData.Type;
 
 /**
  * How far back Recent reaches ({@link RecentItem}). A day, not a shift: a
  * mistake is noticed when the next card looks wrong, which can be after lunch
- * or the next morning, and a longer window would make the tab a history view
+ * or the next morning, and a longer window would make Recent a history
  * the merchant's order page already is.
  */
 export const DONE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * A run task on the workflow page, decorated with what the page needs to offer
+ * One task row of the member's workflow page, decorated with what the page needs to offer
  * the right button: `current` is {@link currentTasks}' rule evaluated for this
  * task, and `reopenBlockedBy` is the reopen verdict for a done one. Both are
  * facts about *other* rows (earlier and later steps of the run), which is
  * why the object computes them rather than the page.
  */
-export const RunTaskView = Schema.Struct({
+export const RunTaskRow = Schema.Struct({
   ...RunTask.fields,
   current: Schema.Boolean,
   reopenBlockedBy: Schema.NullOr(ReopenBlocker),
 });
-export type RunTaskView = typeof RunTaskView.Type;
+export type RunTaskRow = typeof RunTaskRow.Type;
 
 /** What an actor may do to one run: the result of {@link runActions}, whose JSDoc holds the matrix. */
 export const RunActions = Schema.Struct({
@@ -3999,7 +4154,7 @@ export const taskActions = (
   order: OrderState,
   run: { readonly status: RunStatus; readonly blockedAt: number | null },
   task: Pick<
-    RunTaskView,
+    RunTaskRow,
     "teamId" | "current" | "startedAt" | "doneAt" | "reopenBlockedBy"
   >,
 ): TaskActions => {
@@ -4054,7 +4209,7 @@ export const taskActions = (
  * outside those sets, the picker at rest, is the page's to hide with
  * {@link orderIsOpen}.
  *
- * `tasks` are decorated as the workflow page's are ({@link RunTaskView}), from
+ * `tasks` are decorated as the workflow page's are ({@link RunTaskRow}), from
  * rows the order page already holds, so {@link taskActions} reads the same
  * shape on both pages.
  */
@@ -4070,7 +4225,7 @@ export const LineItemState = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("closed"),
     run: Run,
-    tasks: Schema.Array(RunTaskView),
+    tasks: Schema.Array(RunTaskRow),
     options: Schema.Array(Workflow),
     matched: Schema.Array(WorkflowId),
     startable: Schema.Boolean,
@@ -4078,21 +4233,21 @@ export const LineItemState = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("open"),
     run: Run,
-    tasks: Schema.Array(RunTaskView),
+    tasks: Schema.Array(RunTaskRow),
   }),
   Schema.Struct({
     kind: Schema.Literal("done"),
     run: Run,
-    tasks: Schema.Array(RunTaskView),
+    tasks: Schema.Array(RunTaskRow),
   }),
 ]);
 export type LineItemState = typeof LineItemState.Type;
 
-/** A run's tasks as {@link RunTaskView}s, from the rows alone: the `current` flag by {@link currentTasks}, the reopen verdict by {@link reopenBlockedBy}. */
-export const runTaskViews = (
+/** A run's tasks as {@link RunTaskRow}s, from the rows alone: the `current` flag by {@link currentTasks}, the reopen verdict by {@link reopenBlockedBy}. */
+export const runTaskRows = (
   run: { readonly status: RunStatus },
   tasks: readonly RunTask[],
-): RunTaskView[] => {
+): RunTaskRow[] => {
   const current = new Set(currentTasks(run, tasks).map((task) => task.id));
   return tasks.map((task) => ({
     ...task,
@@ -4121,7 +4276,7 @@ export const lineItemState = (
         ? {
             kind: "closed",
             run,
-            tasks: runTaskViews(run, tasks),
+            tasks: runTaskRows(run, tasks),
             options,
             matched: matched.map((workflow) => workflow.id),
             startable: unitsToMake(item) > 0,
@@ -4129,7 +4284,7 @@ export const lineItemState = (
         : {
             kind: runIsOpen(run) ? "open" : "done",
             run,
-            tasks: runTaskViews(run, tasks),
+            tasks: runTaskRows(run, tasks),
           },
     ),
     Match.when({ removed: true }, () => ({ kind: "removed" })),
@@ -4147,8 +4302,10 @@ export const lineItemState = (
 };
 
 /**
- * Everything `/shop/$shop/workflows/$runId` renders: one run, its tasks, and the
- * order's live note.
+ * Everything the member's workflow page renders: one run, its tasks, and the
+ * order's live note. "Run" rather than "Workflow" in the name because the
+ * merchant's workflow page has {@link WorkflowPageData}, and the route is
+ * `$runId`. The suffix is `Data` for the reason on {@link OrdersIndexData}.
  *
  * The other items on the order are deliberately **not** here. A workflow
  * is attached to a product and runs once per matching item
@@ -4156,15 +4313,15 @@ export const lineItemState = (
  * tasks. Nothing on this page acts on the order as a whole, and an order can
  * carry an unbounded number of lines to render.
  */
-export const RunView = Schema.Struct({
+export const RunPageData = Schema.Struct({
   run: Run,
-  tasks: Schema.Array(RunTaskView),
+  tasks: Schema.Array(RunTaskRow),
   /** Shopify's order note, read-only here; the run's own note is `run.note`. */
   orderNote: Schema.NullOr(Schema.String),
   /** The order's open or closed state, for {@link runActions} and {@link taskActions}. */
   order: OrderState,
 });
-export type RunView = typeof RunView.Type;
+export type RunPageData = typeof RunPageData.Type;
 
 export const ListRunsForOrderInput = Schema.Struct({ orderId: BoundedId });
 export type ListRunsForOrderInput = typeof ListRunsForOrderInput.Type;
@@ -4178,21 +4335,21 @@ export type AttachWorkflowInput = typeof AttachWorkflowInput.Type;
 export const RunIdInput = Schema.Struct({ runId: BoundedId });
 export type RunIdInput = typeof RunIdInput.Type;
 
-/** Everything `/app/orders/$orderId` renders, in one socket round trip. */
-export const OrderDetailView = Schema.Struct({
+/** Everything the order page renders, in one socket round trip. The suffix is `Data` for the reason on {@link OrdersIndexData}. */
+export const OrderPageData = Schema.Struct({
   order: ShopOrder,
   lineItems: Schema.Array(OrderLineItem),
   runs: Schema.Array(RunDetail),
   /**
    * Active workflows with at least one task — the manual-attach picker's
-   * choices. Carried in the view rather than read by a second socket query so
+   * choices. Carried in the page's data rather than read by a second socket query so
    * the page has exactly one read, one key, and one push.
    */
   itemWorkflows: Schema.Array(Workflow),
   /** The live roster: the "Assign team" picker's choices, and what decides which open tasks are unassigned or on an empty team. */
   teams: Schema.Array(TeamRoster),
 });
-export type OrderDetailView = typeof OrderDetailView.Type;
+export type OrderPageData = typeof OrderPageData.Type;
 
 /**
  * The member workflows list's loader read. Still Worker-resolved: `teamIds` comes
@@ -4213,7 +4370,7 @@ export type ListRunsInput = typeof ListRunsInput.Type;
  * trip. `teamIds` and `memberEmail` are absent on purpose — the list is
  * scoped by the membership on the connection, which the member cannot name
  * for themselves. `query` is theirs to name: it chooses among their own teams,
- * which tab, and how far that tab is expanded, and the object bounds all three.
+ * which view, and how far that view is expanded, and the object bounds all three.
  */
 export const SubscribeRunsInput = Schema.Struct({
   ...SubscriberIdInput.fields,

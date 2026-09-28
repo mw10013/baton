@@ -144,7 +144,7 @@ details[open] > .live-value-summary .live-value-preview {
   }
 }
 
-/* The member area's top bar (`MemberBar.tsx`): the one strip above `s-page`. */
+/* The member area's top bar (`MemberBar.tsx`): the one bar above `s-page`. */
 .member-bar {
   padding: 0.5rem 1rem;
   border-block-end: 1px solid var(--s-color-border, #e3e3e3);
@@ -218,12 +218,12 @@ details[open] > .live-value-summary .live-value-preview {
  */
 
 /*
- * The strip travels with the list: a member scrolling Up next switches tabs
- * without scrolling back to the top. `s-box` has no `position`, so the sticky
+ * The view row travels with the list: a member scrolling Up next switches
+ * views without scrolling back to the top. `s-box` has no `position`, so the sticky
  * wrapper is a plain div. The surface colour is repeated because a
  * transparent sticky element would let rows scroll through it.
  */
-.run-strip {
+.run-view-row-sticky {
   position: sticky;
   inset-block-start: 0;
   z-index: 1;
@@ -232,33 +232,33 @@ details[open] > .live-value-summary .live-value-preview {
 }
 
 /*
- * Five tabs are wider than a phone. They are a grid of three columns rather
+ * Five views are wider than a phone. They are a grid of three columns rather
  * than a scroller: it wraps three and two, which is balanced at every width a
  * bench uses, and it breaks on the container's width alone — so a count going
  * from 9 to 10 changes a label and never the layout, which is the reflow that
  * ruled out `flex-wrap`. A row that never overflows also has no scrollbar to
- * appear over the tabs, in any browser or under any scrollbar setting, and no
- * tab is ever cut in half at the edge.
+ * appear over the views, in any browser or under any scrollbar setting, and no
+ * view is ever cut in half at the edge.
  *
  * Two columns on a phone (below 27rem), three on a tablet and up. `1fr` is
  * `minmax(auto, 1fr)`, so a cell will not shrink under its own button's
  * width: three columns of "Teammates · 128" spill a 390px screen, and a
- * strip that spills is the scrollbar this layout exists to remove. Measured
+ * row that spills is the scrollbar this layout exists to remove. Measured
  * against three-digit counts at 320, 360, 375, 390, 430 and 600.
  *
  * A plain div and not `s-grid`: that component's `gridTemplateColumns` takes
  * track sizing values or a Polaris responsive-value string, and a media query
- * is neither. `0.375rem` is Polaris's `small-300`, the gap the strip had
- * while it was a stack.
+ * is neither. `0.375rem` is Polaris's `small-300`, the gap the view row
+ * had while it was a stack.
  */
-.run-strip-tabs {
+.run-view-row {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 0.375rem;
 }
 
 @media (max-width: 27rem) {
-  .run-strip-tabs {
+  .run-view-row {
     grid-template-columns: repeat(2, 1fr);
   }
 }

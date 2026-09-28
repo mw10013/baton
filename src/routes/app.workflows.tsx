@@ -17,14 +17,15 @@ import { lenientSearchKey } from "@/lib/searchParams";
  * editor route (`$workflowId_.edit`) is a child as well: the `_` escapes only
  * `$workflowId`, and a `?status=` on the editor window's URL is harmless.
  *
- * The status tabs are in the URL, so a filtered list is a link someone can
+ * The status buttons are in the URL, so a filtered list is a link someone can
  * send. The search text is not: it changes on every keystroke and is
  * nobody's destination. There is no tag filter: a workflow's tag is its
  * identity, not a grouping dimension, and one filter button per tag made it
  * look like one.
  *
- * The layout is `/app/workflows` rather than `/app` because the orders index
- * has its own `status` key. No `stripSearchParams`: absence is the default.
+ * The layout is `/app/workflows` rather than `/app` because only the
+ * workflows screens read `status`; retained on `/app` it would ride onto every
+ * other screen's links. No `stripSearchParams`: absence is the default.
  * A value the page does not know — a stale link, a hand-edited URL — reads as
  * no filter ({@link lenientSearchKey}): a wrong filter is not an error
  * condition.

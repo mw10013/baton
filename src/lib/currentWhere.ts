@@ -13,7 +13,7 @@
  * the run test: `RunRepository.listRuns` and `OrderRepository`'s waiting-on
  * column and team filter join `Run` with `status = 'active'`, the task guards
  * check {@link Domain.runIsOpen} in `requireActionable` before they ask, and
- * `getRunView` reads it only for an open run. Block's team gate
+ * `getRunPage` reads it only for an open run. Block's team gate
  * (`requireCurrentTeam`) runs inside writes that refuse a run that is not
  * open. A new caller adds the run test or reads the wrong tasks. The status
  * stays out of the predicate because every caller already joins or holds the

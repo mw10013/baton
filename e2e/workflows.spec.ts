@@ -199,7 +199,7 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
     0,
   );
 
-  /* The detail page shows what is in force, with no tabs: there is one
+  /* The detail page shows what is in force, with no draft panel: there is one
      answer and the editor holds the other. */
   await closeEditor(page);
   await expect(frame.locator(`s-page[heading="${CREATED}"]`)).toBeVisible();

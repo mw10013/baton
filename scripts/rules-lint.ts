@@ -67,7 +67,7 @@ const COPY_FILES = [
     "useMemberRunActions.ts",
     "changeWarning.ts",
     "workflowShared.ts",
-    "runTabs.ts",
+    "workflowsListViews.ts",
   ].map((name) => join(ROOT, "lib", name)),
 ];
 

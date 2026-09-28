@@ -11,7 +11,7 @@ import { formatNumber } from "@/lib/format";
  * merchant's order page render, kept together so the screens describe one item, one block and one
  * closed run in the same words.
  *
- * One fact, once. The pressed tab on the workflows list says which tier a row is in,
+ * One fact, once. The pressed view on the workflows list says which tier a row is in,
  * so nothing inside the card repeats it. {@link BlockBanner} takes the buttons
  * that act on the block through its `actions` slot rather than rendering them
  * itself: each screen offers a different set, but all belong inside the
@@ -131,7 +131,7 @@ export const blockedByLabel = (run: {
  * which the maker needs when the product offers one.
  *
  * Every property is drawn, underscore-prefixed app keys included: Baton is a
- * back-office view and the merchant sees the same keys in the admin, so there
+ * back-office tool and the merchant sees the same keys in the admin, so there
  * is nothing to hide from either screen. The merchant's order page renders
  * this too under a Properties heading, so both screens show an item's
  * properties alike.

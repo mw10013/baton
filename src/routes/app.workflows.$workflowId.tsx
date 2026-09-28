@@ -80,7 +80,7 @@ export const Route = createFileRoute("/app/workflows/$workflowId")({
  * The page shows what is in force and nothing else — the tasks that start
  * runs now. A `Draft` accessory badge is the whole signal that the editor
  * holds unapplied changes; the editor, one click away, is where they are
- * read, applied, or discarded. There is no draft tab, no banner and no
+ * read, applied, or discarded. There is no draft panel, no banner and no
  * sentence saying so: a badge and a button already say it, and a second
  * telling is what makes a page feel like a form. There is no version history
  * and no run history here either, on purpose: a run copies its tasks when it

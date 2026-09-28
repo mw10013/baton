@@ -65,7 +65,7 @@ const FINISHED = `${CUT_TEAM} · ${MAKER}`;
  * one team, so no team name follows it either.
  */
 const MINE_STATE = "Step 1 of 1";
-/** Per-tab empty text (`TAB_EMPTY` in `src/lib/runTabs.ts`). */
+/** Per-view empty text (`VIEW_EMPTY` in `src/lib/workflowsListViews.ts`). */
 const EMPTY_MINE = "Nothing in hand.";
 const EMPTY_TEAMMATES = "Nobody else has work.";
 const EMPTY_DONE = "Nothing done or closed in the last day.";
@@ -86,7 +86,7 @@ const ORDER_LINK = /^Open .+ on #94\d\d$/u;
 const BULK_COUNT = 25;
 const BULK_FIRST = 9410;
 
-/** Tab labels, as `TAB_LABEL` writes them on the strip. */
+/** View labels, as `VIEW_LABEL` writes them on the view row. */
 const MINE = "Mine";
 const UP_NEXT = "Up next";
 const TEAMMATES = "Teammates";
@@ -232,23 +232,23 @@ const memberContext = (
 const contexts: BrowserContext[] = [];
 
 /**
- * Land a signed-in member on their workflows list. `tab` goes in the URL rather than
- * through a click, because the tab is a search param and most tests here are
- * about the rows rather than about getting to them; the default landing tab
+ * Land a signed-in member on their workflows list. `viewKey` goes in the URL rather than
+ * through a click, because the view is a search param and most tests here are
+ * about the rows rather than about getting to them; the default landing view
  * is Mine, which is empty until somebody starts something.
  */
 const openRuns = async (
   browser: Browser,
   config: SeedConfig,
   storageState: StorageState,
-  tab?: string,
+  viewKey?: string,
 ): Promise<Page> => {
   const context = await memberContext(browser, config, storageState);
   contexts.push(context);
   const page = await context.newPage();
   await gotoMember(
     page,
-    `/shop/${config.shop}/workflows${tab === undefined ? "" : `?tab=${tab}`}`,
+    `/shop/${config.shop}/workflows${viewKey === undefined ? "" : `?view=${viewKey}`}`,
   );
   /* The section, not an `s-page` heading: the page has none, and the section's
      accessibility label is what names the landmark now. */
@@ -259,37 +259,37 @@ const openRuns = async (
 };
 
 /**
- * A tab's button on the strip, by label and whatever count it is carrying. The
+ * A view's button on the view row, by label and whatever count it is carrying. The
  * count is part of the accessible name, so a test that wants to assert the
  * number names it in full instead.
  */
-const tab = (page: Page, label: string) =>
+const view = (page: Page, label: string) =>
   page.getByRole("button", {
     name: new RegExp(`^${label} · \\d+$`, "u"),
   });
 
-/** The landing tab, `Domain.DEFAULT_RUN_TAB`, which the URL never spells out. */
-const DEFAULT_TAB = "mine";
+/** The landing view, `Domain.DEFAULT_WORKFLOWS_LIST_VIEW`, which the URL never spells out. */
+const DEFAULT_VIEW = "mine";
 
 /**
- * Switch tabs and wait for the switch to land. The wait is on the URL rather
+ * Switch views and wait for the switch to land. The wait is on the URL rather
  * than on `aria-pressed`, because `getByRole` may resolve to either the
  * `s-button` host or the native button inside its shadow root and only the
  * host carries the attribute — the search param is the same fact, on the
  * side that cannot be ambiguous.
  *
- * The default tab is the absence of the key: `stripSearchParams` keeps it out
+ * The default view is the absence of the key: `stripSearchParams` keeps it out
  * of the URL so `/shop/$shop/workflows` with no search stays the canonical way home
  * (`MemberSearch` in `src/routes/shop.$shop.tsx`).
  */
-const selectTab = async (
+const selectView = async (
   page: Page,
   name: string,
   label: string,
 ): Promise<void> => {
-  await tab(page, label).click();
+  await view(page, label).click();
   await expect(page).toHaveURL(
-    (url) => (url.searchParams.get("tab") ?? DEFAULT_TAB) === name,
+    (url) => (url.searchParams.get("view") ?? DEFAULT_VIEW) === name,
   );
 };
 
@@ -328,7 +328,7 @@ const rowLink = (page: Page, orderName: string) =>
 
 /**
  * The row for one order: the innermost `s-box` holding that order's
- * link. `.last()`, not `.first()`: the tab's list container is an `s-box`
+ * link. `.last()`, not `.first()`: the view's list container is an `s-box`
  * around every row and so matches the same filter, and it is the ancestor, so
  * document order puts it first.
  */
@@ -418,8 +418,8 @@ test("a member starts and completes their team's current task over the socket", 
   await markDocument(page);
 
   await rowAction(page, RING_ORDER, "Start");
-  /* Starting moves the row off the tab it was started from: Up next is what
-     nobody has in hand, and the strip says where it went. That the counts
+  /* Starting moves the row off the view it was started from: Up next is what
+     nobody has in hand, and the view row says where it went. That the counts
      moved at all is the page's own state following the object's — proof the
      answer was applied, not just accepted. */
   await expect(page.getByRole("button", { name: `${MINE} · 1` })).toBeVisible();
@@ -428,10 +428,10 @@ test("a member starts and completes their team's current task over the socket", 
   ).toBeVisible();
   await expect(rowLink(page, RING_ORDER)).toBeHidden();
 
-  await selectTab(page, "mine", MINE);
+  await selectView(page, "mine", MINE);
   await expect(rowLink(page, RING_ORDER)).toBeVisible();
   /* The row says where it is in the run and not that it is the reader's own,
-     which the pressed tab already said; what changed is the verb in its menu,
+     which the pressed view already said; what changed is the verb in its menu,
      where Start has given way to Done. */
   await expect(page.getByText(MINE_STATE)).toBeVisible();
   await clickWhenEnabled(rowMenu(page, RING_ORDER));
@@ -474,7 +474,7 @@ test("a run's row opens the workflow page and its menu does not", async ({
   await expect(card(page, RING_ORDER)).toBeVisible();
   const runsUrl = page.url();
   await rowAction(page, RING_ORDER, "Start");
-  /* The write landed and the reader stayed put: the strip renumbered and the
+  /* The write landed and the reader stayed put: the view row renumbered and the
      address bar still says the workflows list. */
   await expect(page.getByRole("button", { name: `${MINE} · 1` })).toBeVisible();
   await expect(page).toHaveURL(runsUrl);
@@ -512,7 +512,7 @@ test("a task one member marks done lands on another member's workflows list with
   await expect(maker.getByText("Pack")).toBeHidden();
 
   await rowAction(maker, RING_ORDER, "Start");
-  /* The push reaches the mate whatever tab they are on: the strip renumbers
+  /* The push reaches the mate whatever view they are on: the view row renumbers
      under them while they are still reading Up next. */
   await expect(
     mate.getByRole("button", { name: `${TEAMMATES} · 1` }),
@@ -523,12 +523,12 @@ test("a task one member marks done lands on another member's workflows list with
 
   /* The mate's row says who has it; the start time is on the workflow page the
      row links to, which is one tap away and not on the list. */
-  await selectTab(mate, "teammates", TEAMMATES);
+  await selectView(mate, "teammates", TEAMMATES);
   await expect(
     mate.getByText(`${Domain.TASK_STATE_LABEL.started} · ${MAKER}`),
   ).toBeVisible();
 
-  await selectTab(maker, "mine", MINE);
+  await selectView(maker, "mine", MINE);
   await rowAction(maker, RING_ORDER, "Done");
   await expect(rowLink(mate, RING_ORDER)).toBeHidden();
   /* The mate's other team is untouched by the ring order's fan-out, so the
@@ -575,11 +575,11 @@ test("removing a member from a team empties their open workflows list", async ({
 });
 
 /**
- * The strip, driven by the two real actors rather than the seed: untouched
+ * The view row, driven by the two real actors rather than the seed: untouched
  * work is counted under "Up next"; the maker's own Start moves the card to
  * "Mine" on their page and to "Teammates" — naming them — on the mate's,
- * which arrives by push. The counts on the strip are the shape of the day,
- * and every tab stays on it whatever its count, so nothing reflows when a
+ * which arrives by push. The counts on the view row are the shape of the day,
+ * and every view stays on it whatever its count, so nothing reflows when a
  * number crosses zero.
  */
 test("a started card moves to Mine for the starter and Teammates for a teammate", async ({
@@ -601,13 +601,13 @@ test("a started card moves to Mine for the starter and Teammates for a teammate"
   await expect(
     maker.getByRole("button", { name: `${MINE} · 1` }),
   ).toBeVisible();
-  /* The emptied tab keeps its place on the strip rather than disappearing. */
+  /* The emptied view keeps its place on the view row rather than disappearing. */
   await expect(
     maker.getByRole("button", { name: `${UP_NEXT} · 0` }),
   ).toBeVisible();
 
-  await selectTab(maker, "mine", MINE);
-  /* The tab is said by the strip and by nothing on the card: the card that
+  await selectView(maker, "mine", MINE);
+  /* The view is said by the view row and by nothing on the card: the card that
      moved to "Mine · 1" carries no badge repeating it. */
   await expect(card(maker, RING_ORDER).getByText(MINE)).toHaveCount(0);
 
@@ -617,22 +617,22 @@ test("a started card moves to Mine for the starter and Teammates for a teammate"
   await expect(
     mate.getByRole("button", { name: `${UP_NEXT} · 1` }),
   ).toBeVisible();
-  await selectTab(mate, "teammates", TEAMMATES);
+  await selectView(mate, "teammates", TEAMMATES);
   await expect(
     mate.getByText(`${Domain.TASK_STATE_LABEL.started} · ${MAKER}`),
   ).toBeVisible();
 
   /* The other side of that fact, on the starter's own page: the only started
-     task is theirs, so their Teammates tab is empty and says so in three
+     task is theirs, so their Teammates view is empty and says so in three
      words rather than restating whose teams they are. */
-  await selectTab(maker, "teammates", TEAMMATES);
+  await selectView(maker, "teammates", TEAMMATES);
   await expect(maker.getByText(EMPTY_TEAMMATES)).toBeVisible();
 });
 
 /**
- * The one place in the member area where the number on the strip is not the
+ * The one place in the member area where the number on the view row is not the
  * number of rows under it. Up next is cut to `Domain.RUN_PAGE` (25) and the
- * strip still counts the whole tab, which is the promise being tested: a
+ * view row still counts the whole view, which is the promise being tested: a
  * member who reads "Up next · 27" above twenty-five rows must be able to reach
  * the other two — and the button that does it asks the object for a deeper
  * read rather than revealing rows the page was already holding. A member who
@@ -664,7 +664,7 @@ test("Up next cuts at a page, pages on Show more, and re-cuts when the team chan
 
   /* The team counts are over every team whatever is selected, so the option
      names the same 26 before and after it is chosen. The button beside them
-     carries no count at all: the tab counts are team-narrowed and this one is
+     carries no count at all: the view counts are team-narrowed and this one is
      not, so on one row they would be counting different things. */
   await page.getByRole("button", { name: "All teams", exact: true }).click();
   await page.getByRole("menuitem", { name: `${CUT_TEAM} · 26` }).click();
@@ -681,19 +681,19 @@ test("Up next cuts at a page, pages on Show more, and re-cuts when the team chan
 });
 
 /**
- * Five tabs are wider than a phone. They are a grid rather than a scroller:
+ * Five views are wider than a phone. They are a grid rather than a scroller:
  * `auto-fit` breaks the row on the container's width alone, so a count going
  * from 9 to 10 changes a label and never the layout, and a row that never
- * overflows has no scrollbar to appear over the tabs — which hiding one was
+ * overflows has no scrollbar to appear over the views — which hiding one was
  * only ever a patch for.
  *
- * The team filter is not on the strip. A team name is merchant-typed and
- * unbounded, so there it would decide how many tabs a screen has room for; it
+ * The team filter is not on the view row. A team name is merchant-typed and
+ * unbounded, so there it would decide how many views a screen has room for; it
  * sits in the member bar instead, beside the shop, rather than taking a line
  * of its own above the fold. The mate drives this because the filter only
  * renders for a member on more than one team.
  */
-test("the tabs are a grid that never scrolls and the team filter sits in the member bar", async ({
+test("the views are a grid that never scrolls and the team filter sits in the member bar", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -701,8 +701,8 @@ test("the tabs are a grid that never scrolls and the team filter sits in the mem
   const page = await openRuns(browser, config, mateState, "upNext");
   await page.setViewportSize({ width: 375, height: 800 });
 
-  const strip = page.locator(".run-strip-tabs");
-  const metrics = await strip.evaluate((element) => {
+  const viewRow = page.locator(".run-view-row");
+  const metrics = await viewRow.evaluate((element) => {
     const style = getComputedStyle(element);
     return {
       display: style.display,
@@ -757,12 +757,12 @@ test("a row names its team only for a member on several teams looking at all of 
 });
 
 /**
- * The tab is a search param, so it survives a paste into the address bar and
+ * The view is a search param, so it survives a paste into the address bar and
  * it is what the back button walks out of. `replace: true` on the switch is
- * the second half: a member who glanced at three tabs presses Back once and
+ * the second half: a member who glanced at three views presses Back once and
  * is out of the workflows list, not walked back through them.
  */
-test("the tab is in the URL and switching tabs replaces it", async ({
+test("the view is in the URL and switching views replaces it", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -770,11 +770,11 @@ test("the tab is in the URL and switching tabs replaces it", async ({
   const page = await openRuns(browser, config, makerState);
   await expect(page.getByText(EMPTY_MINE)).toBeVisible();
 
-  await gotoMember(page, `/shop/${config.shop}/workflows?tab=upNext`);
-  /* First paint, no click: the loader read the tab out of the URL. */
+  await gotoMember(page, `/shop/${config.shop}/workflows?view=upNext`);
+  /* First paint, no click: the loader read the view out of the URL. */
   await expect(rowLink(page, RING_ORDER)).toBeVisible();
 
-  await selectTab(page, "blocked", BLOCKED);
+  await selectView(page, "blocked", BLOCKED);
   await page.goBack();
   await expect(page).toHaveURL(
     new RegExp(`/shop/${config.shop}/workflows$`, "u"),
@@ -795,9 +795,9 @@ test("the shop root redirects to the workflows list and keeps the search", async
   await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
   const page = await openRuns(browser, config, makerState);
 
-  await gotoMember(page, `/shop/${config.shop}?tab=blocked`);
+  await gotoMember(page, `/shop/${config.shop}?view=blocked`);
   await expect(page).toHaveURL(
-    new RegExp(`/shop/${config.shop}/workflows\\?tab=blocked$`, "u"),
+    new RegExp(`/shop/${config.shop}/workflows\\?view=blocked$`, "u"),
   );
   await expect(
     page.locator('s-section[accessibilityLabel="Workflows"]'),
@@ -807,7 +807,7 @@ test("the shop root redirects to the workflows list and keeps the search", async
 /**
  * The team is the member's context, not the screen's: a bench narrows to one
  * team once and everything they do afterwards is that team's. It is in the
- * URL for the same two reasons the tab is — a cold load paints it, and Back
+ * URL for the same two reasons the view is — a cold load paints it, and Back
  * walks out of the list rather than through the filters — and `replace: true`
  * is what keeps one glance at one team from costing one press of Back.
  */
@@ -817,7 +817,7 @@ test("the team is in the URL and switching teams replaces it", async ({
   const config = seedConfig();
   await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
   const page = await openRuns(browser, config, mateState);
-  await gotoMember(page, `/shop/${config.shop}/workflows?tab=upNext`);
+  await gotoMember(page, `/shop/${config.shop}/workflows?view=upNext`);
 
   await page.getByRole("button", { name: "All teams", exact: true }).click();
   await page.getByRole("menuitem", { name: `${CUT_TEAM} · 1` }).click();
@@ -825,7 +825,7 @@ test("the team is in the URL and switching teams replaces it", async ({
   const team = teamParam(page);
   expect(team).not.toBeNull();
 
-  /* One press, out: the team switch replaced the entry the tab switch made,
+  /* One press, out: the team switch replaced the entry the view switch made,
      so Back is the way out of the list rather than back through the filter. */
   await page.goBack();
   await expect(page).toHaveURL(
@@ -836,7 +836,7 @@ test("the team is in the URL and switching teams replaces it", async ({
   /* Cold, with the team in the URL: the loader reads it, so the narrowed list
      is what the server paints — one Cut row, not two rows corrected after the
      socket answers. */
-  const narrowed = `/shop/${config.shop}/workflows?tab=upNext&team=${String(team)}`;
+  const narrowed = `/shop/${config.shop}/workflows?view=upNext&team=${String(team)}`;
   expect(await serverRows(page, narrowed)).toBe(1);
   await gotoMember(page, narrowed);
   await expect(
@@ -878,7 +878,7 @@ test("depth is in the URL and a return lands on the same depth", async ({
 
   /* Cold at that depth: all 27 in the SSR paint, and no button offering rows
      that are already there. */
-  const deep = `/shop/${config.shop}/workflows?tab=upNext&limit=50`;
+  const deep = `/shop/${config.shop}/workflows?view=upNext&limit=50`;
   expect(await serverRows(page, deep)).toBe(27);
   await gotoMember(page, deep);
   await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(27);
@@ -888,8 +888,8 @@ test("depth is in the URL and a return lands on the same depth", async ({
 
   /* Below the floor and far above the ceiling: both are lists, neither is an
      error page. `limit=0` clamps to one row, which is the sharp end of the
-     rule — the tab still counts 27 and offers the rest. */
-  await gotoMember(page, `/shop/${config.shop}/workflows?tab=upNext&limit=0`);
+     rule — the view still counts 27 and offers the rest. */
+  await gotoMember(page, `/shop/${config.shop}/workflows?view=upNext&limit=0`);
   await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(1);
   await expect(
     page.getByRole("button", { name: "Show 25 more of 26" }),
@@ -897,7 +897,7 @@ test("depth is in the URL and a return lands on the same depth", async ({
 
   await gotoMember(
     page,
-    `/shop/${config.shop}/workflows?tab=upNext&limit=1000`,
+    `/shop/${config.shop}/workflows?view=upNext&limit=1000`,
   );
   await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(27);
   await expect(
@@ -928,7 +928,7 @@ test("the bar's mark returns to the screen the member left", async ({
 
   await rowLink(page, RING_ORDER).click();
   await expect(page.locator(`s-page[heading="${RING_ITEM}"]`)).toBeVisible();
-  await expect(page).toHaveURL(/[?&]tab=upNext(?:&|$)/u);
+  await expect(page).toHaveURL(/[?&]view=upNext(?:&|$)/u);
   await expect(page).toHaveURL(
     new RegExp(`[?&]team=${String(team)}(&|$)`, "u"),
   );
@@ -937,7 +937,7 @@ test("the bar's mark returns to the screen the member left", async ({
     await expect(
       page.locator('s-section[accessibilityLabel="Workflows"]'),
     ).toBeVisible();
-    await expect(page).toHaveURL(/[?&]tab=upNext(?:&|$)/u);
+    await expect(page).toHaveURL(/[?&]view=upNext(?:&|$)/u);
     expect(teamParam(page)).toBe(team);
     await expect(
       page.getByRole("button", { name: `${UP_NEXT} · 1` }),
@@ -972,7 +972,7 @@ test("a team the member is no longer on reads as all teams", async ({
   const page = await openRuns(browser, config, mateState);
   await gotoMember(
     page,
-    `/shop/${config.shop}/workflows?tab=upNext&team=not-a-team-of-theirs`,
+    `/shop/${config.shop}/workflows?view=upNext&team=not-a-team-of-theirs`,
   );
 
   await expect(
@@ -987,7 +987,7 @@ test("a team the member is no longer on reads as all teams", async ({
 
 /**
  * The three keys ride in a URL a member can edit, so none of them can fail:
- * a `tab` the schema cannot read is the default tab, a `limit` that is not a
+ * a `view` the schema cannot read is the default view, a `limit` that is not a
  * number is a page, and an empty `team` is every team (`MemberSearch` in
  * `src/routes/shop.$shop.tsx`). The schema guards the whole member area now,
  * workflow page included, so the alternative to a default is the router's error
@@ -1004,13 +1004,16 @@ test("a value the search schema cannot read falls back to the default", async ({
   });
   const page = await openRuns(browser, config, mateState);
 
-  await gotoMember(page, `/shop/${config.shop}/workflows?tab=bogus`);
+  await gotoMember(page, `/shop/${config.shop}/workflows?view=bogus`);
   await expect(page.getByText(EMPTY_MINE)).toBeVisible();
 
-  await gotoMember(page, `/shop/${config.shop}/workflows?tab=upNext&limit=abc`);
+  await gotoMember(
+    page,
+    `/shop/${config.shop}/workflows?view=upNext&limit=abc`,
+  );
   await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(25);
 
-  await gotoMember(page, `/shop/${config.shop}/workflows?tab=upNext&team=`);
+  await gotoMember(page, `/shop/${config.shop}/workflows?view=upNext&team=`);
   await expect(
     page.getByRole("button", { name: "All teams", exact: true }),
   ).toBeVisible();
@@ -1020,7 +1023,7 @@ test("a value the search schema cannot read falls back to the default", async ({
 });
 
 /**
- * Recent and Undo. The done task leaves the list for the Recent tab;
+ * Recent and Undo. The done task leaves the list for the Recent view;
  * Undo puts it back, and because Undo returns the task to Ready
  * (`RunRepository.reopenTask`) the card lands in "Up next", not
  * "Mine".
@@ -1034,17 +1037,17 @@ test("undo puts a done task back to Ready", async ({ browser }) => {
   ).toBeVisible();
 
   await rowAction(page, RING_ORDER, "Start");
-  await selectTab(page, "mine", MINE);
+  await selectView(page, "mine", MINE);
   await rowAction(page, RING_ORDER, "Done");
   await expect(page.getByText(EMPTY_MINE)).toBeVisible();
   await expect(
     page.getByRole("button", { name: `${RECENT} · 1` }),
   ).toBeVisible();
-  /* Unopened, the tab is a count and nothing else: its rows are a different
-     read, so the Undo below is only reachable once the tab is chosen. The
+  /* Unopened, the view is a count and nothing else: its rows are a different
+     read, so the Undo below is only reachable once the view is chosen. The
      entry says "by you" rather than the reader's own address, which on this
      tier is the longest and least informative text on the page. */
-  await selectTab(page, "done", RECENT);
+  await selectView(page, "done", RECENT);
   await expect(page.getByText("by you at")).toBeVisible();
 
   await rowAction(page, RING_ORDER, "Undo");
@@ -1061,7 +1064,7 @@ test("undo puts a done task back to Ready", async ({ browser }) => {
       exact: true,
     }),
   ).toBeVisible();
-  await selectTab(page, "upNext", UP_NEXT);
+  await selectView(page, "upNext", UP_NEXT);
   await expect(rowLink(page, RING_ORDER)).toBeVisible();
 });
 
@@ -1077,7 +1080,7 @@ test("put back returns a started task to Up next for everyone", async ({
   await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
   const maker = await openRuns(browser, config, makerState, "upNext");
   await rowAction(maker, RING_ORDER, "Start");
-  await selectTab(maker, "mine", MINE);
+  await selectView(maker, "mine", MINE);
   await expect(maker.getByText(MINE_STATE)).toBeVisible();
 
   /* The mate is on Cut and Pack: the box order stays in their Up next, the
@@ -1122,7 +1125,7 @@ test("put back returns a started task to Up next for everyone", async ({
 
 /**
  * A `done` run is only its last task's Done, and the workflow page must offer
- * Undo there just as the workflows list's Recent tab does (`Domain.taskActions`:
+ * Undo there just as the workflows list's Recent view does (`Domain.taskActions`:
  * `reopen` does not need `runIsOpen`). The ring order has one task, so Done
  * on it makes the run done, and the page it links to is the page under test.
  */
@@ -1194,12 +1197,12 @@ test("a blocked undo offers nothing and explains nothing, on the row or the work
      and Done once the maker does, so finishing from the list takes no
      detour. */
   await rowAction(maker, BAND_ORDER, "Start");
-  await selectTab(maker, "mine", MINE);
+  await selectView(maker, "mine", MINE);
   await rowAction(maker, BAND_ORDER, "Done");
   await expect(
     maker.getByRole("button", { name: `${RECENT} · 1` }),
   ).toBeVisible();
-  await selectTab(maker, "done", RECENT);
+  await selectView(maker, "done", RECENT);
   await awaitEnabled(rowMenu(maker, BAND_ORDER));
 
   const mate = await openRuns(browser, config, mateState, "upNext");
@@ -1383,12 +1386,12 @@ test("the workflow page shows the task history and takes a note, a block, and Do
   await expect(
     page.locator('s-section[accessibilityLabel="Workflows"]'),
   ).toBeVisible();
-  /* The mark lands back on Up next, the tab this test came from; the held run
-     is on Blocked, which the strip counts from wherever the reader is. */
-  await expect(page).toHaveURL(/[?&]tab=upNext(?:&|$)/u);
-  await selectTab(page, "blocked", BLOCKED);
+  /* The mark lands back on Up next, the view this test came from; the held run
+     is on Blocked, which the view row counts from wherever the reader is. */
+  await expect(page).toHaveURL(/[?&]view=upNext(?:&|$)/u);
+  await selectView(page, "blocked", BLOCKED);
   const blocked = card(page, BAND_ORDER);
-  /* No badge on the row either: "Blocked" there would repeat the pressed tab,
+  /* No badge on the row either: "Blocked" there would repeat the pressed view,
      the verb in the menu, and the reason on line two. */
   await expect(blocked.getByText("Blocked")).toHaveCount(0);
   await clickWhenEnabled(rowMenu(page, BAND_ORDER));
@@ -1478,7 +1481,7 @@ test("closed runs leave Mine, Up next, Teammates and Blocked and show on Recent 
     page.getByRole("button", { name: `${RECENT} · 2` }),
   ).toBeVisible();
 
-  await selectTab(page, "done", RECENT);
+  await selectView(page, "done", RECENT);
   await expect(
     card(page, "#9451").getByText("Closed · Fulfilled in Shopify"),
   ).toBeVisible();
@@ -1636,7 +1639,7 @@ test("a merchant's completion reads as Merchant on the workflows list and the wo
   await expect(
     page.getByRole("button", { name: `${RECENT} · 1` }),
   ).toBeVisible();
-  await selectTab(page, "done", RECENT);
+  await selectView(page, "done", RECENT);
   await expect(page.getByText("by Merchant at")).toBeVisible();
 
   await rowLink(page, BAND_ORDER).click();

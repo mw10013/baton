@@ -18,7 +18,7 @@ import { signOutFn } from "@/lib/memberSignOut";
  * needs no sign-out button.
  *
  * **The mark is home.** The link around it goes to `/shop/$shop/workflows`,
- * the workflows list, and it lands on the list the member left — same tab, same team, same
+ * the workflows list, and it lands on the list the member left — same view, same team, same
  * depth — because the layout's middleware puts their context on every link
  * built under `/shop/$shop` (`MemberSearch` in `src/routes/shop.$shop.tsx`).
  * This bar is the only chrome the member area has, so the mark is the only

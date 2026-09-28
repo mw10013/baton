@@ -15,8 +15,8 @@ import * as Domain from "@/lib/Domain";
 import { ShopAgentSocketProvider } from "@/lib/ShopAgentSocketHost";
 
 /**
- * **The member's context, and it travels.** `tab`, `team` and `limit` say
- * which list the member is looking at, narrowed to which of their teams, and
+ * **The member's context, and it travels.** `view`, `team` and `limit` say
+ * which view of the workflows list the member is looking at ({@link Domain.WorkflowsListView}), narrowed to which of their teams, and
  * how far down it. They live here rather than on the index route, and
  * `retainSearchParams` copies them onto every link and navigation built to
  * `/shop/$shop` or anything under it, so the two ways home — the browser's
@@ -34,7 +34,7 @@ import { ShopAgentSocketProvider } from "@/lib/ShopAgentSocketHost";
  *
  * **No value of these keys fails.** They ride in a URL a member can edit and
  * can outlive a team they were taken off, so every one of them decodes to
- * something usable: an unreadable `tab` becomes the default tab, an
+ * something usable: an unreadable `view` becomes the default view, an
  * out-of-range `limit` clamps ({@link Domain.clampRunLimit}) and an unreadable
  * one becomes a page, and `team` is carried as plain text, because which ids
  * mean anything is the roster's answer and not this schema's — the screen
@@ -44,17 +44,21 @@ import { ShopAgentSocketProvider } from "@/lib/ShopAgentSocketHost";
  *
  * **A recovery has to name a value, not drop the key.** Returning
  * `Option.none` from `catchDecoding` reads as "no such key", and the router
- * then hands the route the raw text that failed — so a bad `?tab=` would
+ * then hands the route the raw text that failed — so a bad `?view=` would
  * arrive at the loader as the string a member typed. Every recovery here
  * answers with the default instead.
  *
  * `stripSearchParams` keeps the defaults out of the URL, so
- * `/shop/$shop/workflows` with no search stays the canonical way home.
+ * `/shop/$shop/workflows` with no search stays the canonical way home. The key was
+ * `?tab=` before the word became view; a bookmark that still carries it is
+ * an unknown key and lands on the default view, Mine.
  */
 const MemberSearch = Schema.Struct({
-  tab: Schema.optionalKey(
-    Domain.RunTab.pipe(
-      Schema.catchDecoding(() => Effect.succeedSome(Domain.DEFAULT_RUN_TAB)),
+  view: Schema.optionalKey(
+    Domain.WorkflowsListView.pipe(
+      Schema.catchDecoding(() =>
+        Effect.succeedSome(Domain.DEFAULT_WORKFLOWS_LIST_VIEW),
+      ),
     ),
   ),
   team: Schema.optionalKey(
@@ -92,9 +96,9 @@ export const Route = createFileRoute("/shop/$shop")({
   validateSearch: Schema.toStandardSchemaV1(MemberSearch),
   search: {
     middlewares: [
-      retainSearchParams(["tab", "team", "limit"]),
+      retainSearchParams(["view", "team", "limit"]),
       stripSearchParams({
-        tab: Domain.DEFAULT_RUN_TAB,
+        view: Domain.DEFAULT_WORKFLOWS_LIST_VIEW,
         limit: Domain.RUN_PAGE,
       }),
     ],

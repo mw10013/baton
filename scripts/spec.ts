@@ -27,6 +27,8 @@ const SCREEN_LABELS: ActionTable.ScreenLabels = {
   taskStates: Domain.TASK_STATE_LABEL,
   runStates: Domain.RUN_STATE_LABEL,
   workflowStates: Domain.WORKFLOW_STATE_LABEL,
+  productionStates: Domain.PRODUCTION_STATE_LABEL,
+  orderIssues: Domain.ORDER_ISSUE_LABEL,
   verbs: Domain.VERB_LABEL,
 };
 

@@ -1,4 +1,10 @@
-import { expect, type Locator, type Page, test } from "@playwright/test";
+import {
+  expect,
+  type FrameLocator,
+  type Locator,
+  type Page,
+  test,
+} from "@playwright/test";
 
 import * as Domain from "@/lib/Domain";
 
@@ -138,10 +144,25 @@ test("the orders index names the team an open order is waiting on", async ({
   await expect(frame.locator('s-page[heading="#9201"]')).toBeVisible();
 });
 
+/** The orders index's view labels, in view-row order (`Domain.ORDERS_INDEX_VIEW_LABEL`). */
+const VIEW_LABELS = Object.values(Domain.ORDERS_INDEX_VIEW_LABEL);
+
+/**
+ * A view's button on the orders index, by label and whatever count it is
+ * carrying: Fulfilled and All carry none. The count is part of the
+ * accessible name, so a test that asserts the number names it in full.
+ */
+const viewButton = (frame: FrameLocator, label: string) =>
+  frame.getByRole("button", {
+    name: new RegExp(`^${label}(?: · \\d+)?$`, "u"),
+  });
+
 /**
  * Order-number search: the field narrows the table to the one order, and
  * emptying the field puts the rest of the list back. Two
  * orders are seeded because a filter that cannot hide anything proves nothing.
+ * The search ignores the view (`Domain.ListOrdersInput.q`), so it finds a
+ * making order under Made, and every view reads unpressed while it is on.
  */
 test("the orders index searches by order number and clears back to the list", async ({
   page,
@@ -177,14 +198,37 @@ test("the orders index searches by order number and clears back to the list", as
   await clickHoisted(appNavLink(page, "Orders"));
   await expect(frame.getByRole("link", { name: "#9302" })).toBeVisible();
 
+  /* Under Made, where neither making order is listed. */
+  await viewButton(frame, "Made").click();
+  await expect(frame.getByRole("link", { name: "#9302" })).toHaveCount(0);
+
   /* The digits alone: `normaliseOrderSearch` supplies the `#`. Enter submits;
-     the field does not debounce. */
+     the field does not debounce. The search reads every stored order, so a
+     making order is found under Made. */
   const search = frame.getByRole("searchbox", { name: "Order number" });
   await search.fill("9301");
   await search.press("Enter");
   await expect(frame.getByRole("link", { name: "#9301" })).toBeVisible();
   await expect(frame.getByRole("link", { name: "#9302" })).toHaveCount(0);
   await expect(search).toHaveValue("9301");
+  for (const label of VIEW_LABELS)
+    await expect(viewButton(frame, label)).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+
+  /* Pressing a view clears the search and shows that view. */
+  await viewButton(frame, "Open").click();
+  await expect(search).toHaveValue("");
+  await expect(viewButton(frame, "Open")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(frame.getByRole("link", { name: "#9302" })).toBeVisible();
+
+  await search.fill("9301");
+  await search.press("Enter");
+  await expect(frame.getByRole("link", { name: "#9302" })).toHaveCount(0);
 
   /* Emptying the field is the search cleared, with no Enter: the list comes
      back. */
@@ -192,7 +236,7 @@ test("the orders index searches by order number and clears back to the list", as
   await expect(frame.getByRole("link", { name: "#9302" })).toBeVisible();
 
   /* A number no order carries: the empty state names it rather than falling
-     back to the filter copy. */
+     back to the view's copy. */
   await search.fill("9999");
   await search.press("Enter");
   await expect(
@@ -201,6 +245,16 @@ test("the orders index searches by order number and clears back to the list", as
 
   await search.fill("");
   await expect(frame.getByRole("link", { name: "#9302" })).toBeVisible();
+
+  /* A bare order number typed into the URL is the search (`OrderSearchParam`
+     in `app.orders.tsx`): the router parses `q=9301` as a number, and it
+     reads as the digits rather than being dropped as an unreadable key. */
+  const typed = await gotoApp(page, "app/orders?q=9301");
+  await expect(typed.getByRole("link", { name: "#9301" })).toBeVisible();
+  await expect(typed.getByRole("link", { name: "#9302" })).toHaveCount(0);
+  await expect(
+    typed.getByRole("searchbox", { name: "Order number" }),
+  ).toHaveValue("9301");
 });
 
 /**
@@ -653,7 +707,7 @@ test("the order card puts the run's badges on the title line, Manage above its d
  * and this is the fixture for it.
  *
  * So: the item matches two, nothing starts, the index shows the order under
- * the _Choose a workflow_ need, and the order page asks. Then the same item is
+ * Issues with the _Choose a workflow_ badge, and the order page asks. Then the same item is
  * moved to the other workflow through the Change workflow modal, which holds
  * the select and, on a run with work on it, the warning.
  */
@@ -699,20 +753,17 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Orders"));
 
-  /* The Needs row carries the button with a count, and the row's badge says
-     the same thing. Scoped to the row for the badge, because the button above
-     the table has the same words. */
-  const choose = frame.getByRole("button", { name: /^Choose a workflow/u });
-  await expect(choose).toBeVisible();
+  /* The row's Issues cell says what it is waiting on, and the Issues view
+     holds it. */
   await expect(
     frame
       .locator("s-table-row", { hasText: "#9401" })
       .getByText("Choose a workflow", { exact: true }),
   ).toBeVisible();
-  await choose.click();
+  await viewButton(frame, "Issues").click();
   await expect
-    .poll(() => new URL(page.url()).searchParams.get("need"))
-    .toBe("choose_workflow");
+    .poll(() => new URL(page.url()).searchParams.get("view"))
+    .toBe("issues");
   await expect(frame.getByRole("link", { name: "#9401" })).toBeVisible();
 
   await frame.getByRole("link", { name: "#9401" }).click();
@@ -831,7 +882,7 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   await expect(item.getByText("Closed", { exact: true })).toHaveCount(0);
   await expect(manage).toBeVisible();
 
-  /* And the order has left the need: one live run, nothing left to choose. */
+  /* And the order has left the issue: one live run, nothing left to choose. */
   await clickHoisted(appNavLink(page, "Orders"));
   await expect(
     frame
@@ -1039,36 +1090,56 @@ test("each order-page state draws the controls its action set allows", async ({
 });
 
 /**
- * `Domain.OrderCounts` on screen: each Needs button's count is the number of
- * rows pressing it shows. The search narrows the counts too, which is what
- * keeps this test to its own two orders on a shop that also holds the
- * sandbox's real ones.
+ * `Domain.OrderCounts` on screen: each counted view's number is the number of
+ * rows pressing it shows, under the team select. The counts ignore the
+ * search, so the team is what keeps this test to its own orders on a shop
+ * that also holds the sandbox's real ones: `#9501` and `#9502` wait on a
+ * fresh team, and `#9501` also has an item matching two workflows, which is
+ * an issue. `#9503` matches nothing, so it waits on no team and only the
+ * unnarrowed counts see it.
  */
-test("the needs row counts what its button shows", async ({ page }) => {
+test("each view's count is what pressing it shows, given the team", async ({
+  page,
+}) => {
   test.setTimeout(120_000);
 
-  const MEMBER = "e2e.needs@example.com";
-  const TEAM = "E2E Needs Bench";
+  const MEMBER = "e2e.issues@example.com";
+  const TEAM = "E2E Issues Bench";
   await seedMembers(
     seedConfig(),
     [MEMBER],
     [{ name: TEAM, members: [MEMBER] }],
     [
       {
-        name: "E2E Needs Cuff",
-        tag: "e2e-needs",
+        name: "E2E Issues Cuff",
+        tag: "e2e-issues",
         tasks: [{ name: "Cut", team: TEAM }],
+      },
+      {
+        name: "E2E Issues Rush",
+        tag: "e2e-issues-rush",
+        tasks: [{ name: "Expedite", team: TEAM }],
       },
     ],
     [
       {
         n: 9501,
-        lineItems: [{ title: "E2E Unrouted", quantity: 1, tags: [] }],
+        lineItems: [
+          { title: "E2E Cuff", quantity: 1, tags: ["e2e-issues"] },
+          {
+            title: "E2E Twice",
+            quantity: 1,
+            tags: ["e2e-issues", "e2e-issues-rush"],
+          },
+        ],
       },
       {
         n: 9502,
-        blocked: "Waiting on the customer.",
-        lineItems: [{ title: "E2E Cuff", quantity: 1, tags: ["e2e-needs"] }],
+        lineItems: [{ title: "E2E Cuff", quantity: 1, tags: ["e2e-issues"] }],
+      },
+      {
+        n: 9503,
+        lineItems: [{ title: "E2E Unrouted", quantity: 1, tags: [] }],
       },
     ],
   );
@@ -1077,45 +1148,48 @@ test("the needs row counts what its button shows", async ({ page }) => {
   await clickHoisted(appNavLink(page, "Orders"));
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
 
-  const search = frame.getByRole("searchbox", { name: "Order number" });
-  await search.fill("#950");
-  await search.press("Enter");
-
-  const rows = frame.locator("s-table-row", { hasText: /#950\d/u });
-  await expect(
-    frame.getByRole("button", { name: "No workflow · 1", exact: true }),
-  ).toBeVisible();
-  await expect(
-    frame.getByRole("button", { name: "Blocked · 1", exact: true }),
-  ).toBeVisible();
-  await expect(rows).toHaveCount(2);
+  /* Every open order, `#9503` included, before the team narrows them. Read
+     off the accessible name: the label is slotted into the button's shadow
+     root, so the element `getByRole` resolves to has no text of its own. */
+  const openCount = async () =>
+    Number(
+      /Open · (?<n>\d+)/u.exec(await viewButton(frame, "Open").ariaSnapshot())
+        ?.groups?.n ?? Number.NaN,
+    );
+  await expect.poll(openCount).toBeGreaterThan(2);
 
   await frame
-    .getByRole("button", { name: "No workflow · 1", exact: true })
-    .click();
-  await expect(rows).toHaveCount(1);
+    .getByRole("combobox", { name: "Team" })
+    .selectOption({ label: TEAM });
+  const counted = [
+    ["Open", 2],
+    ["Issues", 1],
+    ["Not started", 0],
+    ["Making", 2],
+    ["Made", 0],
+  ] as const;
+  for (const [label, n] of counted)
+    await expect(
+      frame.getByRole("button", { name: `${label} · ${String(n)}` }),
+    ).toBeVisible();
+
+  const rows = frame.locator("s-table-row");
+  for (const [label, n] of counted) {
+    await viewButton(frame, label).click();
+    await expect(rows).toHaveCount(n);
+  }
+  await viewButton(frame, "Issues").click();
   await expect(frame.getByRole("link", { name: "#9501" })).toBeVisible();
 
-  await frame.getByRole("button", { name: "Anything", exact: true }).click();
-  await expect(rows).toHaveCount(2);
-
-  /* Fulfilled hides the open-only filters and drops a pressed need, keeping
-     the search; All brings the row back with the need cleared. */
-  await frame.getByRole("button", { name: "Blocked · 1", exact: true }).click();
-  await expect(rows).toHaveCount(1);
-  await frame.getByRole("button", { name: "Fulfilled", exact: true }).click();
-  await expect
-    .poll(() => new URL(page.url()).searchParams.get("need"))
-    .toBeNull();
-  await expect(frame.getByText("Needs", { exact: true })).toHaveCount(0);
-  await expect(frame.getByRole("combobox", { name: "Team" })).toHaveCount(0);
-  await expect(search).toHaveValue("#950");
-  await frame.getByRole("button", { name: "All", exact: true }).click();
-  await expect(
-    frame.getByRole("button", { name: "Anything", exact: true }),
-  ).toBeVisible();
-  await expect(frame.getByRole("combobox", { name: "Team" })).toBeVisible();
-  await expect(rows).toHaveCount(2);
+  /* A search reads every stored order, team or not, and moves no count. */
+  const search = frame.getByRole("searchbox", { name: "Order number" });
+  await search.fill("9503");
+  await search.press("Enter");
+  await expect(frame.getByRole("link", { name: "#9503" })).toBeVisible();
+  for (const [label, n] of counted)
+    await expect(
+      frame.getByRole("button", { name: `${label} · ${String(n)}` }),
+    ).toBeVisible();
 });
 
 /**
@@ -1150,7 +1224,7 @@ const seedTwoPages = async (team: string) => {
 const listContext = (page: Page) => {
   const url = new URL(page.url());
   return {
-    status: url.searchParams.get("status"),
+    view: url.searchParams.get("view"),
     team: url.searchParams.get("team"),
     after: url.searchParams.get("after"),
   };
@@ -1172,7 +1246,7 @@ test("the orders index keeps its filters and page across the order page", async 
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Orders"));
   const rows = frame.locator("s-table-row", { hasText: /#96\d\d/u });
-  await frame.getByRole("button", { name: /^Making/u }).click();
+  await viewButton(frame, "Making").click();
   await frame
     .getByRole("combobox", { name: "Team" })
     .selectOption({ label: TEAM });
@@ -1182,7 +1256,7 @@ test("the orders index keeps its filters and page across the order page", async 
   await expect(rows).toHaveCount(5);
   await expect.poll(() => listContext(page).after).not.toBeNull();
   const expected = listContext(page);
-  expect(expected.status).toBe("making");
+  expect(expected.view).toBe("making");
   expect(expected.team).not.toBeNull();
 
   /* The row's real href carries them, so open-in-new-tab does too. */
@@ -1190,7 +1264,7 @@ test("the orders index keeps its filters and page across the order page", async 
   const href = await link.evaluate((el) => el.getAttribute("href") ?? "");
   const hrefSearch = new URL(href, "http://localhost").searchParams;
   expect({
-    status: hrefSearch.get("status"),
+    view: hrefSearch.get("view"),
     team: hrefSearch.get("team"),
     after: hrefSearch.get("after"),
   }).toEqual(expected);
@@ -1232,9 +1306,9 @@ test("the orders index keeps its filters and page across the order page", async 
 });
 
 /**
- * `setFilters` in `app.orders.index.tsx`: a filter is a new list, so the page
- * resets, and it replaces the history entry, so Back leaves the list rather
- * than replaying the filters.
+ * `setFilters` in `app.orders.index.tsx`: a view or a filter is a new list,
+ * so the page resets, and it replaces the history entry, so Back leaves the
+ * list rather than replaying the filters.
  */
 test("a filter change resets the page and replaces history", async ({
   page,
@@ -1248,13 +1322,13 @@ test("a filter change resets the page and replaces history", async ({
   await clickHoisted(appNavLink(page, "Orders"));
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
   const rows = frame.locator("s-table-row", { hasText: /#96\d\d/u });
-  await frame.getByRole("button", { name: /^Making/u }).click();
+  await viewButton(frame, "Making").click();
   await frame
     .getByRole("combobox", { name: "Team" })
     .selectOption({ label: TEAM });
   await expect(rows).toHaveCount(25);
 
-  /* Two filters pressed, no page turned: one Back leaves Orders. */
+  /* A view and a filter chosen, no page turned: one Back leaves Orders. */
   await page.goBack();
   await expect(frame.locator('s-page[heading="Orders"]')).toHaveCount(0);
   await page.goForward();
@@ -1262,31 +1336,26 @@ test("a filter change resets the page and replaces history", async ({
 
   await frame.getByRole("button", { name: "Go to next page" }).click();
   await expect(rows).toHaveCount(5);
-  await frame.getByRole("button", { name: "All", exact: true }).click();
+  await viewButton(frame, "All").click();
   await expect
     .poll(() => {
-      const { status, after } = listContext(page);
-      return { status, after };
+      const { view, after } = listContext(page);
+      return { view, after };
     })
-    .toEqual({ status: "all", after: null });
+    .toEqual({ view: "all", after: null });
   await expect(rows).toHaveCount(25);
 });
 
-/** `lenientSearchKey`: an unreadable filter reads as that filter being off, never as an error. */
+/** `lenientSearchKey`: an unreadable view or filter reads as that key being off, never as an error. */
 test("a bad filter value reads as no filter", async ({ page }) => {
   test.setTimeout(120_000);
 
-  const frame = await gotoApp(
-    page,
-    "app/orders?status=nonsense&need=nonsense&after=nonsense",
-  );
+  const frame = await gotoApp(page, "app/orders?view=nonsense&after=nonsense");
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
-  await expect(
-    frame.getByRole("button", { name: "Open", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
-  await expect(
-    frame.getByRole("button", { name: "Anything", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
+  await expect(viewButton(frame, "Open")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   /* `after=nonsense` is not shaped like a cursor (`Domain.OrdersCursor`), so
      it is dropped too: this is page one and there is no previous page. */
   await expect(

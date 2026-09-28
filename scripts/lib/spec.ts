@@ -420,6 +420,8 @@ export interface ScreenLabels {
   readonly taskStates: Readonly<Record<string, string | null>>;
   readonly runStates: Readonly<Record<string, string>>;
   readonly workflowStates: Readonly<Record<string, string>>;
+  readonly productionStates: Readonly<Record<string, string>>;
+  readonly orderIssues: Readonly<Record<string, string>>;
   readonly verbs: Readonly<
     Record<
       string,
@@ -469,15 +471,26 @@ const glossaryTables = (source: string): readonly GlossaryTable[] => {
   return tables;
 };
 
-/** `put back` → `putBack`: a glossary word as the constants key it. */
+/** `put back` → `putBack`. */
 const camel = (word: string) =>
   word.replaceAll(/ (?<letter>[a-z])/gu, (_, letter: string) =>
     letter.toUpperCase(),
   );
 
 /**
+ * The constant key a glossary word names: `camel(word)` if the constants
+ * have it, else the word snake-cased (`not started` → `not_started`). Verb
+ * keys are camel case because they name action-struct fields
+ * ({@link ScreenLabels} `verbs`); order-position and order-issue keys are the
+ * stored literals, which are snake case.
+ */
+const keyOf = (word: string, constants: Readonly<Record<string, unknown>>) =>
+  camel(word) in constants ? camel(word) : word.replaceAll(" ", "_");
+
+/**
  * **The glossary's screen column is the label constant.** Each screen cell in
- * the Task states, Run states, Workflow states and Verbs tables equals the
+ * the Task states, Run states, Workflow states, Order positions, Order issues
+ * and Verbs tables equals the
  * constant's value for its word ("(none)" for `null`), every constant key
  * has a row, and every row has a key. A run-state cell is compared up to its
  * first " (" or " ·", because the open row carries the merchant's second
@@ -507,11 +520,11 @@ export const checkScreenColumns = (
   ): readonly string[] => {
     const table = tables.find((each) => each.intro.startsWith(intro));
     if (table === undefined) return [`Glossary: no ${name} table`];
-    const words = table.rows.map((row) => camel(row.word ?? ""));
+    const words = table.rows.map((row) => keyOf(row.word ?? "", constants));
     return [
       ...table.rows.flatMap((row) => {
         const word = row.word ?? "";
-        const constant = constants[camel(word)];
+        const constant = constants[keyOf(word, constants)];
         if (constant === undefined)
           return [`Glossary: ${name} ${word}: no constant`];
         return Object.entries(constant).flatMap(([column, value]) => {
@@ -541,6 +554,12 @@ export const checkScreenColumns = (
       "Workflow states",
       screen(labels.workflowStates),
     ),
+    ...compare(
+      "Order positions",
+      "Order positions",
+      screen(labels.productionStates),
+    ),
+    ...compare("Order issues", "Order issues", screen(labels.orderIssues)),
     ...compare("Verbs", "Verbs", labels.verbs),
   ];
 };

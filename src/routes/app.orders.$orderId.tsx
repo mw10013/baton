@@ -37,9 +37,9 @@ import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
 const orderQueryKey = (shop: string, legacyId: string) =>
   ["order", shop, legacyId] as const;
 
-/** See the note on `decodeOrdersView` in `app.orders.index.tsx`. */
+/** See the note on `decodeOrdersIndexData` in `app.orders.index.tsx`. */
 const decodeDetail = Schema.decodeUnknownPromise(
-  Schema.toType(Schema.NullOr(Domain.OrderDetailView)),
+  Schema.toType(Schema.NullOr(Domain.OrderPageData)),
 );
 const decodeAttachResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.AttachResult),
@@ -138,7 +138,7 @@ const NOT_STARTED_BADGE = {
 
 const runStatusBadge = (
   run: Domain.Run,
-  tasks: readonly Domain.RunTaskView[],
+  tasks: readonly Domain.RunTaskRow[],
 ) =>
   Domain.runIsOpen(run) && Domain.runIsUnstarted(tasks)
     ? NOT_STARTED_BADGE
@@ -267,8 +267,8 @@ const nowLine = ({ run, tasks }: Domain.RunDetail): React.ReactNode => {
 };
 
 /**
- * The two derived attention states of a run, against the live team roster the
- * view carries: an open task whose team is gone is named with an "Assign team"
+ * The two derived attention states of a run, against the live team roster
+ * {@link Domain.OrderPageData} carries: an open task whose team is gone is named with an "Assign team"
  * picker (the remedy that makes a team delete safe), and a current task on a
  * team with no members warns, linking to the team so the fix is one click.
  * Both are about work that can still move, so both follow
@@ -282,7 +282,7 @@ const nowLine = ({ run, tasks }: Domain.RunDetail): React.ReactNode => {
  * the card is a click target, so scanning an order never risks a stray "done".
  */
 const attentionRows = (
-  tasks: readonly (Domain.RunTaskView & {
+  tasks: readonly (Domain.RunTaskRow & {
     readonly actions: Domain.TaskActions;
   })[],
   teams: readonly Domain.TeamRoster[],
@@ -765,7 +765,7 @@ function RouteComponent() {
    */
   const manageRows = (
     run: Domain.Run,
-    tasks: readonly (Domain.RunTaskView & {
+    tasks: readonly (Domain.RunTaskRow & {
       readonly actions: Domain.TaskActions;
     })[],
     actions: Domain.RunActions,
@@ -945,7 +945,7 @@ function RouteComponent() {
    * the badge is the glance, and the banner, with the reason and Unblock, is
    * the detail further down.
    */
-  const runBadges = (run: Domain.Run, tasks: readonly Domain.RunTaskView[]) => (
+  const runBadges = (run: Domain.Run, tasks: readonly Domain.RunTaskRow[]) => (
     <>
       <s-badge tone={runStatusBadge(run, tasks).tone}>
         {runStatusBadge(run, tasks).label}
@@ -999,7 +999,7 @@ function RouteComponent() {
   const renderRun = (
     item: Domain.OrderLineItem,
     run: Domain.Run,
-    views: readonly Domain.RunTaskView[],
+    views: readonly Domain.RunTaskRow[],
   ) => {
     const tasks = views.map((task) => ({
       ...task,

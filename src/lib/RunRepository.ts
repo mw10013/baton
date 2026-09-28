@@ -256,7 +256,7 @@ export class RunRepository extends Context.Service<
      * Plain statements, no transaction of its own: called from inside
      * `OrderRepository.upsertOrder`'s transaction via `afterWrite`, and Durable
      * Object SQLite refuses to nest. Reads the order and its stored items
-     * back rather than trusting the caller's view, so a reconcile is against
+     * back rather than trusting the caller's copy, so a reconcile is against
      * what is actually stored — including an order whose items the write
      * stored short (`Domain.ShopOrder.lineItemsTruncated`).
      */
@@ -350,7 +350,7 @@ export class RunRepository extends Context.Service<
     /**
      * What an action set reads ({@link Domain.runActions},
      * {@link Domain.taskActions}): the run, its tasks decorated as
-     * {@link Domain.RunTaskView}s, and its order's open or closed state.
+     * {@link Domain.RunTaskRow}s, and its order's open or closed state.
      * `None` when the run, or its order, is gone. A closed run is returned:
      * its note is still writable, and the action sets refuse everything else
      * on it.
@@ -360,7 +360,7 @@ export class RunRepository extends Context.Service<
     ) => Effect.Effect<
       Option.Option<{
         readonly run: Domain.Run;
-        readonly tasks: readonly Domain.RunTaskView[];
+        readonly tasks: readonly Domain.RunTaskRow[];
         readonly order: Domain.OrderState;
       }>,
       SqlError.SqlError | RunRepositoryError
@@ -400,9 +400,9 @@ export class RunRepository extends Context.Service<
      * The member's workflows list, tiered and cut here rather than on the page: every run
      * with at least one current task owned by `teamIds`, grouped by
      * {@link Domain.tierOf} against `memberEmail`. **Every** tier is counted;
-     * **one** is returned — the one `query.tab` names — sorted oldest first
-     * and cut to `query.limit`. `tab: "done"` returns no items at all and the
-     * caller reads `listRecent` for that tab's rows. Only open runs have
+     * **one** is returned — the one `query.view` names — sorted oldest first
+     * and cut to `query.limit`. `view: "done"` returns no items at all and the
+     * caller reads `listRecent` for that view's rows. Only open runs have
      * current tasks, so a closed or done run is never listed
      * ({@link Domain.RunStatus}).
      *
@@ -427,7 +427,7 @@ export class RunRepository extends Context.Service<
       SqlError.SqlError | RunRepositoryError
     >;
     /**
-     * The Recent tab ({@link Domain.RecentItem}): tasks owned by `teamIds`
+     * The Recent view ({@link Domain.RecentItem}): tasks owned by `teamIds`
      * done at or after `since`, each with its run and the reopen verdict
      * ({@link Domain.reopenBlockedBy}), and runs with a task on `teamIds` that
      * closed at or after `since`, newest first by `doneAt` or
@@ -435,8 +435,8 @@ export class RunRepository extends Context.Service<
      * as readily as its author, and a closed run is news to everyone who
      * could see it.
      *
-     * `total` is always the count inside the window, because the tab says it
-     * even while another tab is showing; `limit: 0` returns the count alone,
+     * `total` is always the count inside the window, because the view row says it
+     * even while another view is showing; `limit: 0` returns the count alone,
      * reading no rows.
      */
     readonly listRecent: (input: {
@@ -513,11 +513,11 @@ export class RunRepository extends Context.Service<
      * cannot probe run ids. A closed run is returned: a link to it lands on
      * its reason rather than on a not-found.
      */
-    readonly getRunView: (input: {
+    readonly getRunPage: (input: {
       readonly runId: string;
       readonly teamIds: readonly string[];
     }) => Effect.Effect<
-      Option.Option<Domain.RunView>,
+      Option.Option<Domain.RunPageData>,
       SqlError.SqlError | RunRepositoryError
     >;
     /**
@@ -1578,7 +1578,7 @@ export class RunRepository extends Context.Service<
             ? Option.none()
             : Option.some({
                 run,
-                tasks: Domain.runTaskViews(run, tasks),
+                tasks: Domain.runTaskRows(run, tasks),
                 order,
               });
         }),
@@ -1666,9 +1666,9 @@ export class RunRepository extends Context.Service<
           // which reads done tasks and closed runs rather than the current
           // ones grouped here.
           const selected =
-            query.tab === "done"
+            query.view === "done"
               ? []
-              : tier(query.tab).toSorted(Domain.byAge).slice(0, query.limit);
+              : tier(query.view).toSorted(Domain.byAge).slice(0, query.limit);
           return {
             counts: {
               mine: tier("mine").length,
@@ -1717,7 +1717,7 @@ export class RunRepository extends Context.Service<
           const total =
             Number(countedTasks[0]?.[0] ?? 0) +
             Number(countedClosed[0]?.[0] ?? 0);
-          // Collapsed: the tab still counts the day, so the counts are read
+          // Collapsed: the view row still counts the day, so the counts are read
           // and the rows are not.
           if (limit === 0) return { items: [], total };
           const done = yield* decodeTasks(
@@ -1858,7 +1858,7 @@ export class RunRepository extends Context.Service<
           );
         }),
 
-        getRunView: Effect.fn("RunRepository.getRunView")(function* ({
+        getRunPage: Effect.fn("RunRepository.getRunPage")(function* ({
           runId,
           teamIds,
         }: {
@@ -1893,7 +1893,7 @@ export class RunRepository extends Context.Service<
           const { note, ...order } = orderRow;
           return Option.some({
             run,
-            tasks: tasks.map((task): Domain.RunTaskView => ({
+            tasks: tasks.map((task): Domain.RunTaskRow => ({
               ...task,
               current: current.some((candidate) => candidate.id === task.id),
               reopenBlockedBy:
@@ -1903,7 +1903,7 @@ export class RunRepository extends Context.Service<
             })),
             orderNote: note,
             order,
-          } satisfies Domain.RunView);
+          } satisfies Domain.RunPageData);
         }),
 
         startTask: Effect.fn("RunRepository.startTask")(function* ({

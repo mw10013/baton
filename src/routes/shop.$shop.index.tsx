@@ -5,7 +5,7 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
  * A redirect rather than the list itself so the URL a member reads
  * says the noun (`/shop/$shop/workflows`). The search (`MemberSearch`
  * in `shop.$shop.tsx`) is carried across, so a bookmarked
- * `/shop/x?tab=blocked` still lands on Blocked.
+ * `/shop/x?view=blocked` still lands on Blocked.
  */
 export const Route = createFileRoute("/shop/$shop/")({
   beforeLoad: ({ params, search }) => {

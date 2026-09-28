@@ -12,15 +12,15 @@ import { ClosedLine, QuantityBadge } from "@/components/MemberRun";
 import * as Domain from "@/lib/Domain";
 import { requireMember } from "@/lib/MemberAccess";
 import { memberServerFnMiddleware } from "@/lib/MemberServerFnMiddleware";
-import { TAB_EMPTY, TAB_LABEL, TABS } from "@/lib/runTabs";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { SocketBanner } from "@/lib/SocketBanner";
 import { useMemberRunActions } from "@/lib/useMemberRunActions";
 import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
+import { VIEW_EMPTY, VIEW_LABEL, VIEWS } from "@/lib/workflowsListViews";
 
 const LoaderInput = Schema.Struct({
   shop: Schema.String,
-  tab: Domain.RunTab,
+  view: Domain.WorkflowsListView,
   /** Text, not a {@link Domain.TeamId}: the roster resolves it (`MemberSearch` in `shop.$shop.tsx`). */
   team: Schema.String.check(Schema.isMaxLength(Domain.TEAM_SEARCH_MAX)),
   limit: Domain.RunLimit,
@@ -37,7 +37,7 @@ const LoaderInput = Schema.Struct({
  * `memberEmail` are resolved server-side and never sent by the browser.
  *
  * **The whole query comes from the URL, so the paint is the screen the member
- * left.** Tab, team and depth are the member's context (`MemberSearch` in
+ * left.** View, team and depth are the member's context (`MemberSearch` in
  * `shop.$shop.tsx`), which every link under `/shop/$shop` carries, so a return
  * from the workflow page server-renders narrowed and deepened rather than painting
  * page one of every team and correcting itself when the socket answers. The
@@ -60,10 +60,10 @@ const getLoaderData = createServerFn({ method: "GET" })
         });
         const query: Domain.RunQuery = {
           team: teams.find((team) => team.id === data.team)?.id ?? null,
-          tab: data.tab,
+          view: data.view,
           limit: data.limit,
         };
-        const view = yield* (yield* ShopAgentClient).listRuns(shop, {
+        const list = yield* (yield* ShopAgentClient).listRuns(shop, {
           teamIds: teams.map((team) => team.id),
           memberEmail: user.email,
           query,
@@ -74,7 +74,7 @@ const getLoaderData = createServerFn({ method: "GET" })
           memberEmail: user.email,
           teams,
           query,
-          view,
+          list,
         } satisfies Domain.RunListLoaderData;
       }),
     ),
@@ -82,7 +82,7 @@ const getLoaderData = createServerFn({ method: "GET" })
 
 export const Route = createFileRoute("/shop/$shop/workflows/")({
   loaderDeps: ({ search }) => ({
-    tab: search.tab ?? Domain.DEFAULT_RUN_TAB,
+    view: search.view ?? Domain.DEFAULT_WORKFLOWS_LIST_VIEW,
     team: search.team ?? "",
     limit: search.limit ?? Domain.RUN_PAGE,
   }),
@@ -92,7 +92,7 @@ export const Route = createFileRoute("/shop/$shop/workflows/")({
    * A query is a different loader key, so its first visit runs the loader once
    * and that read is the socket query's `initialData` for the new key; after
    * that the socket owns the data and pushes keep it current. Without this the
-   * default `staleTime: 0` would re-run the loader on every return to a tab,
+   * default `staleTime: 0` would re-run the loader on every return to a view,
    * team or depth whose data the socket already holds — which, now that all
    * three are in the URL, is every way back to this screen.
    */
@@ -148,7 +148,7 @@ function RouteComponent() {
     memberEmail,
     teams,
     query: loaderQuery,
-    view: loaderView,
+    list: loaderList,
   } = Route.useLoaderData();
   /** The member as the actor every row's action set is computed for. */
   const actor: Domain.Actor = {
@@ -169,7 +169,7 @@ function RouteComponent() {
    * alternative is a list that is empty for a reason nothing on screen states.
    */
   const {
-    tab = Domain.DEFAULT_RUN_TAB,
+    view = Domain.DEFAULT_WORKFLOWS_LIST_VIEW,
     team: searchTeam = "",
     limit = Domain.RUN_PAGE,
   } = Route.useSearch();
@@ -188,13 +188,13 @@ function RouteComponent() {
    * read the SSR paint never made, and `keepPreviousData` in the hook holds
    * the previous rows on screen until it returns.
    */
-  const query: Domain.RunQuery = { team, tab, limit };
+  const query: Domain.RunQuery = { team, view, limit };
   const { data, invalidate, agent, identified } = useSubscribedQuery({
     queryKey: ["shop-runs", shop, query],
     subscribe: (stub, subscriberId) =>
       stub.subscribeRuns({ subscriberId, query }),
     initialData: Domain.sameRunQuery(query, loaderQuery)
-      ? loaderView
+      ? loaderList
       : undefined,
   });
   /**
@@ -202,9 +202,9 @@ function RouteComponent() {
    * every team), so the loader's stand in while a new key is in flight. The
    * rows are not: for a query the loader never read and with no previous rows
    * to keep, the page says it is loading rather than paint the unnarrowed
-   * loader rows under a pressed tab.
+   * loader rows under a pressed view.
    */
-  const view = data ?? loaderView;
+  const list = data ?? loaderList;
   const loading = data === undefined;
   const actions = useMemberRunActions({
     agent,
@@ -216,18 +216,18 @@ function RouteComponent() {
    * The three controls, all of them navigations, because all three are in the
    * URL. **Filters are a screen's state, not a trail:** `replace: true` on
    * every one so Back leaves the workflows list rather than walking the member back
-   * through every tab and team they glanced at. The embedded app's orders and
+   * through every view and team they glanced at. The embedded app's orders and
    * workflows filters follow this rule (`setFilters` in `app.orders.index.tsx`
    * and `app.workflows.index.tsx`).
    *
-   * A tab or a team is a different list, so depth resets: "Show 25 more" of Up
+   * A view or a team is a different list, so depth resets: "Show 25 more" of Up
    * next is not a promise about Blocked. `undefined` is how a key is removed,
    * which is what puts the default back and keeps it out of the URL.
    */
-  const selectTab = (next: Domain.RunTab) => {
-    if (next === tab) return;
+  const selectView = (next: Domain.WorkflowsListView) => {
+    if (next === view) return;
     void navigate({
-      search: (prev) => ({ ...prev, tab: next, limit: undefined }),
+      search: (prev) => ({ ...prev, view: next, limit: undefined }),
       replace: true,
     });
   };
@@ -313,10 +313,10 @@ function RouteComponent() {
     /**
      * A row you started says where it is in the run, not "Started · you".
      * Starting a task is what puts the row in Mine ({@link Domain.tierOf}),
-     * and Put back is the inverse that takes it out again, so those words are true of every row under that pressed tab and so
+     * and Put back is the inverse that takes it out again, so those words are true of every row under that pressed view and so
      * distinguish none of them. A row a teammate started says who instead,
-     * which is the whole of what the Teammates tab is for. The test is the
-     * starter rather than the open tab because a run can have several current
+     * which is the whole of what the Teammates view is for. The test is the
+     * starter rather than the pressed view because a run can have several current
      * tasks on the member's teams and `tasks[0]` is the lowest-positioned
      * one, not necessarily theirs.
      */
@@ -438,7 +438,7 @@ function RouteComponent() {
          went the way of the subdued surface that marked a row in hand, and
          for the same reason. A block puts the row in the Blocked tier
          ({@link Domain.tierOf}) and nowhere else, so the mark fired on every
-         row of the only tab it could appear on and separated nothing. It also
+         row of the only view it could appear on and separated nothing. It also
          ran past the list container's rounded corner, which a radius does not
          clip without `overflow: hidden`. */
       <s-box key={run.id} borderWidth={first ? "none" : "base none none none"}>
@@ -461,7 +461,7 @@ function RouteComponent() {
                 <s-text type="strong">{run.lineItemTitle}</s-text>
                 <s-text color="subdued">{`${run.workflowName} · ${run.orderName}`}</s-text>
                 {/* No Blocked badge: it would read "Blocked" under a pressed
-                    Blocked tab, beside an Unblock item, above the reason as
+                    Blocked view, beside an Unblock item, above the reason as
                     typed — one fact said four times. */}
                 <QuantityBadge run={run} />
               </s-stack>
@@ -494,7 +494,7 @@ function RouteComponent() {
     );
   };
 
-  /** The same rule as the workflow page's Undo, {@link Domain.taskActions}' `reopen`, on the tab's own row. */
+  /** The same rule as the workflow page's Undo, {@link Domain.taskActions}' `reopen`, on the view's own row. */
   const reopenOf = (entry: Extract<Domain.RecentItem, { kind: "task" }>) =>
     Domain.taskActions(actor, entry.order, entry.run, {
       ...entry.task,
@@ -514,7 +514,7 @@ function RouteComponent() {
    * the reasoning that a missing control reads as a row that was never
    * reopenable while a disabled one reads as the refusal it is. That holds
    * while refusal is the exception. Here it is the rule: reopen is blocked the
-   * moment anything downstream starts, so a busy shop's Recent tab was mostly
+   * moment anything downstream starts, so a busy shop's Recent view was mostly
    * dead buttons each explaining itself in a third line. When most rows can
    * offer nothing, absence is the norm a reader learns in two rows and the
    * kebab is the signal. The refusal is not lost — the workflow page the row
@@ -631,7 +631,7 @@ function RouteComponent() {
       : renderClosed(entry, first);
 
   /**
-   * "Show 25 more of N". The button is the only way past the open tab's cut
+   * "Show 25 more of N". The button is the only way past the pressed view's cut
    * and it asks the object for the deeper read rather than revealing rows the
    * page already holds, so the count it names is the object's count.
    */
@@ -649,7 +649,7 @@ function RouteComponent() {
   );
 
   const teamCount = (teamId: string) =>
-    view.counts.teamCounts.find((count) => count.teamId === teamId)?.count ?? 0;
+    list.counts.teamCounts.find((count) => count.teamId === teamId)?.count ?? 0;
 
   /**
    * A button naming the chosen team, with the list behind it, rather than a
@@ -658,13 +658,13 @@ function RouteComponent() {
    * screen whose subject is the list below it.
    *
    * It is rendered into `MemberBar`, beside the shop. On the workflows list it had a
-   * line of its own above the tabs — it cannot share the tab row, where a
-   * merchant-typed team name would decide how many tabs a phone has room for
+   * line of its own above the views — it cannot share the view row, where a
+   * merchant-typed team name would decide how many views a phone has room for
    * — and a whole line above the fold is what a bench tablet has least of.
    * The bar already holds the two answers a member needs on every screen, and
    * a set-once filter is at home beside them.
    *
-   * The button carries no count. The tab counts beside it are narrowed to the
+   * The button carries no count. The view counts beside it are narrowed to the
    * chosen team while `counts.total` is over every team, so two numbers on
    * one row would be counting different things. Inside the menu the counts
    * stay, because there they are what is being chosen between — and they are
@@ -686,7 +686,7 @@ function RouteComponent() {
               selectTeam(null);
             }}
           >
-            {`All teams · ${String(view.counts.total)}`}
+            {`All teams · ${String(list.counts.total)}`}
           </s-button>
           {teams.map((each) => (
             <s-button
@@ -703,76 +703,76 @@ function RouteComponent() {
     ) : null;
 
   /**
-   * The strip is the heading — literally, now that the page has none: every
-   * tab with its count, the open one pressed. A zero-count tab stays — the
-   * strip must not reflow when a count crosses zero — and stays enabled,
-   * because an empty list with its empty state is a valid screen to land on,
-   * a disabled button leaves the tab order altogether, and the count already
-   * says zero. Blocked goes critical only while it has rows, so the one
-   * colour on the strip always means something is stopped.
+   * The view row is the heading — literally, now that the page has none:
+   * every view with its count, the selected one pressed. A zero-count view
+   * stays — the row must not reflow when a count crosses zero — and stays
+   * enabled, because an empty list with its empty state is a valid screen to
+   * land on, a disabled button leaves the tab order altogether, and the count
+   * already says zero. Blocked goes critical only while it has rows, so the
+   * one colour on the view row always means something is stopped.
    *
-   * Five tabs and nothing else; the team filter is in the member bar. Polaris
-   * has no tab component — its index patterns filter with a search field, a
-   * popover and a select — so a tab here is an `s-button`, pressed by
-   * `variant="primary"`, which is the only selected state any of these
-   * components has. `inlineSize="fill"` is what makes each one its grid
-   * cell's width, so five buttons read as one strip rather than five
+   * Five views and nothing else; the team filter is in the member bar.
+   * Polaris has no view component either — its index pages put views in a
+   * menu — so a view here is an `s-button`, pressed by `variant="primary"`,
+   * which is the only selected state any of these components has, five in a
+   * grid so they never wrap. `inlineSize="fill"` is what makes each one its
+   * grid cell's width, so five buttons read as one row rather than five
    * differently sized ones.
    */
-  const strip = (
+  const viewRow = (
     /* Not `s-button-group`, which renders only its named action slots so
        buttons in its default slot never reach the page; and not `s-stack`,
-       which wraps when it is inline. `.run-strip-tabs` in `styles.css` is
+       which wraps when it is inline. `.run-view-row` in `styles.css` is
        the grid, and says why it is not a scroller. */
-    <div className="run-strip-tabs">
-      {TABS.map((each) => (
+    <div className="run-view-row">
+      {VIEWS.map((each) => (
         <s-button
           key={each}
-          variant={each === tab ? "primary" : "secondary"}
+          variant={each === view ? "primary" : "secondary"}
           inlineSize="fill"
           tone={
-            each === "blocked" && view.counts.blocked > 0 ? "critical" : "auto"
+            each === "blocked" && list.counts.blocked > 0 ? "critical" : "auto"
           }
-          aria-pressed={each === tab}
+          aria-pressed={each === view}
           onClick={() => {
-            selectTab(each);
+            selectView(each);
           }}
         >
-          {`${TAB_LABEL[each]} · ${String(view.counts[each])}`}
+          {`${VIEW_LABEL[each]} · ${String(list.counts[each])}`}
         </s-button>
       ))}
     </div>
   );
 
-  const total = view.counts[tab];
-  const rows = tab === "done" ? view.recent : view.items;
+  const total = list.counts[view];
+  const rows = view === "done" ? list.recent : list.items;
   const hidden = total - rows.length;
   /**
-   * The way out of an empty tab; `null` when there is nowhere worth sending
+   * The way out of an empty view; `null` when there is nowhere worth sending
    * the reader. "Go to" rather than the bare label so the button cannot be
-   * confused with the strip button above it that carries the same count.
+   * confused with the view-row button above it that carries the same count.
    */
-  const goTo = TAB_EMPTY[tab].goTo;
+  const goTo = VIEW_EMPTY[view].goTo;
   const renderEmpty = () => (
     <s-stack gap="small-300">
-      <s-paragraph color="subdued">{TAB_EMPTY[tab].text}</s-paragraph>
-      {goTo !== null && view.counts[goTo] > 0 && (
+      <s-paragraph color="subdued">{VIEW_EMPTY[view].text}</s-paragraph>
+      {goTo !== null && list.counts[goTo] > 0 && (
         <s-button
           variant="tertiary"
           onClick={() => {
-            selectTab(goTo);
+            selectView(goTo);
           }}
         >
-          {`Go to ${TAB_LABEL[goTo]} · ${String(view.counts[goTo])}`}
+          {`Go to ${VIEW_LABEL[goTo]} · ${String(list.counts[goTo])}`}
         </s-button>
       )}
     </s-stack>
   );
   const renderList = () => (
     <s-box borderWidth="base" borderRadius="base">
-      {tab === "done"
-        ? view.recent.map((entry, index) => renderRecent(entry, index === 0))
-        : view.items.map((item, index) => renderItem(item, index === 0))}
+      {view === "done"
+        ? list.recent.map((entry, index) => renderRecent(entry, index === 0))
+        : list.items.map((item, index) => renderItem(item, index === 0))}
       {hidden > 0 && renderMore(hidden)}
     </s-box>
   );
@@ -786,7 +786,7 @@ function RouteComponent() {
   return (
     <>
       <MemberBar shop={shop} email={memberEmail} filter={teamMenu} />
-      {/* No `heading`: the strip below says the same word and says more with
+      {/* No `heading`: the view row below says the same word and says more with
           it, and a heading block above the fold is what a bench tablet has
           least of. "Workflows", the rows' noun, is in the document title and
           the section's accessibility label: the browser tab and the
@@ -805,8 +805,8 @@ function RouteComponent() {
               </s-paragraph>
             ) : (
               <>
-                {/* `.run-strip` in `styles.css` keeps it on screen. */}
-                <div className="run-strip">{strip}</div>
+                {/* `.run-view-row-sticky` in `styles.css` keeps it on screen. */}
+                <div className="run-view-row-sticky">{viewRow}</div>
                 {renderRuns()}
               </>
             )}

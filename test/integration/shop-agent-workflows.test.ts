@@ -104,31 +104,34 @@ afterEach(async () => {
  * tests in the same worker, so sharing a shop would leak workflows between cases.
  */
 /**
- * The current half of the workflows list view, flattened back into one list in strip
- * order because one read now returns one tab; the Done tab and the tiering
+ * The current half of the workflows list, flattened back into one list in view-row
+ * order because one read now returns one view; the Done view and the tiering
  * itself are covered by the repository tests. `memberEmail` defaults to
  * nobody these tests started work as, so every started task reads as a
- * teammate's; `tab` names one tab where that is what a case is about.
+ * teammate's; `view` names one view where that is what a case is about.
  */
 const runListItems = async (
   agent: Awaited<ReturnType<typeof getAgentByName<Cloudflare.Env, ShopAgent>>>,
   teamIds: readonly string[],
   {
     memberEmail = "viewer@example.com",
-    tab,
-  }: { readonly memberEmail?: string; readonly tab?: Domain.RunTab } = {},
+    view,
+  }: {
+    readonly memberEmail?: string;
+    readonly view?: Domain.WorkflowsListView;
+  } = {},
 ) => {
-  const read = async (wanted: Domain.RunTab) => {
-    const view = await agent.listRuns({
+  const read = async (wanted: Domain.WorkflowsListView) => {
+    const list = await agent.listRuns({
       teamIds,
       memberEmail,
-      query: { team: null, tab: wanted, limit: Domain.RUN_PAGE },
+      query: { team: null, view: wanted, limit: Domain.RUN_PAGE },
     });
-    return view.items;
+    return list.items;
   };
-  if (tab !== undefined) return await read(tab);
-  const tabs = ["mine", "upNext", "teammates", "blocked"] as const;
-  const reads = await Promise.all(tabs.map(read));
+  if (view !== undefined) return await read(view);
+  const views = ["mine", "upNext", "teammates", "blocked"] as const;
+  const reads = await Promise.all(views.map(read));
   return reads.flat();
 };
 
@@ -1103,11 +1106,11 @@ describe("ShopAgent workflow run callables", () => {
       teamIds: [team.id],
     });
     expect(await engraver.startTask({ runTaskId })).toEqual({ _tag: "Ok" });
-    // Their own started task, so it is Mine for them — which is the tab the
+    // Their own started task, so it is Mine for them — which is the view the
     // snapshotted email has to survive the delete in.
     const [item] = await runListItems(agent, [team.id], {
       memberEmail,
-      tab: "mine",
+      view: "mine",
     });
     strictEqual(item?.run.status, "active");
     strictEqual(item?.tasks[0]?.startedByEmail, "w@example.com");
@@ -1124,7 +1127,7 @@ describe("ShopAgent workflow run callables", () => {
     );
     const [deletedItem] = await runListItems(agent, [team.id], {
       memberEmail,
-      tab: "mine",
+      view: "mine",
     });
     strictEqual(deletedItem?.tasks[0]?.startedByEmail, "w@example.com");
     expect(
@@ -1150,7 +1153,7 @@ describe("ShopAgent workflow run callables", () => {
     strictEqual(blocked?.run.note, "spelling confirmed");
   });
 
-  it("assignRunTaskTeam puts an unassigned open task on the new team's list; the order view lists the roster", async () => {
+  it("assignRunTaskTeam puts an unassigned open task on the new team's list; the order page lists the roster", async () => {
     const shop = "wf-assign.myshopify.com";
     const a = await seedTeam(shop, "A");
     await seedOrder(shop, Date.now());
@@ -1175,9 +1178,9 @@ describe("ShopAgent workflow run callables", () => {
 
     await agent.deleteTeam({ teamId: a.id });
     expect(await runListItems(agent, [a.id])).toEqual([]);
-    const view = await agent.getOrderDetail({ legacyId: "1" });
-    expect(view?.runs[0]?.tasks[0]?.teamId).toBe(null);
-    expect(view?.teams).toEqual([]);
+    const page = await agent.getOrderDetail({ legacyId: "1" });
+    expect(page?.runs[0]?.tasks[0]?.teamId).toBe(null);
+    expect(page?.teams).toEqual([]);
 
     expect(
       await agent.merchantAssignRunTaskTeam({ runTaskId, teamId: a.id }),
@@ -1258,16 +1261,15 @@ const seedOrderId = (n: number) => `${Domain.SEED_ORDER_ID_PREFIX}${String(n)}`;
 const ordersPage = async (
   agent: Awaited<ReturnType<typeof getAgentByName<Cloudflare.Env, ShopAgent>>>,
 ) => {
-  const view = await agent.subscribeOrders({
+  const data = await agent.subscribeOrders({
     subscriberId: "seed-test",
     limit: 50,
     cursor: null,
     q: null,
-    status: null,
-    need: null,
+    view: null,
     team: null,
   });
-  return view.page.orders;
+  return data.page.orders;
 };
 
 const twoTask = (name: string, tag: string, teamId: string) => ({
@@ -1353,7 +1355,7 @@ describe("ShopAgent seed callables", () => {
     });
     strictEqual(unrouted.length, 0);
     const [asking] = await ordersPage(agent);
-    deepStrictEqual(asking === undefined ? null : Domain.orderNeeds(asking), [
+    deepStrictEqual(asking === undefined ? null : Domain.orderIssues(asking), [
       "choose_workflow",
     ]);
 
@@ -1375,7 +1377,7 @@ describe("ShopAgent seed callables", () => {
     strictEqual(
       chosen === undefined
         ? null
-        : Domain.orderNeeds(chosen).includes("choose_workflow"),
+        : Domain.orderIssues(chosen).includes("choose_workflow"),
       false,
     );
   });

@@ -171,25 +171,29 @@ const seedShopWithWork = async (shopName: string) => {
 /** One page of Up next, every team: what every test here seeds a single row into. */
 const UP_NEXT: Domain.RunQuery = {
   team: null,
-  tab: "upNext",
+  view: "upNext",
   limit: Domain.RUN_PAGE,
 };
 
-const subscribeView = (
+const subscribeList = (
   socket: AgentSocket,
   subscriberId: string,
   query: Domain.RunQuery = UP_NEXT,
-) => socket.call<Domain.RunListView>("subscribeRuns", { subscriberId, query });
+) =>
+  socket.call<Domain.WorkflowsListData>("subscribeRuns", {
+    subscriberId,
+    query,
+  });
 
 /**
- * The current rows of one tab. Every test here seeds a single untouched task on
+ * The current rows of one view. Every test here seeds a single untouched task on
  * one team, which is Up next for whoever reads it.
  */
 const subscribe = (
   socket: AgentSocket,
   subscriberId: string,
   query?: Domain.RunQuery,
-) => subscribeView(socket, subscriberId, query).then((view) => view.items);
+) => subscribeList(socket, subscriberId, query).then((list) => list.items);
 
 afterEach(async () => {
   await resetMemberTables();
@@ -223,9 +227,9 @@ describe("member workflows list socket", () => {
 
   /**
    * The query is the browser's to choose and the object's to honour: the same
-   * connection, re-subscribing with a different tab, gets that tab's rows
+   * connection, re-subscribing with a different view, gets that view's rows
    * while every read agrees on the counts. What this proves is that `query`
-   * reaches the object and selects the tab — the tiering itself is the
+   * reaches the object and selects the view — the tiering itself is the
    * repository's test.
    */
   it("re-subscribing with a different query changes what the read returns", async () => {
@@ -237,7 +241,7 @@ describe("member workflows list socket", () => {
       memberEmail: "alice@example.com",
       teamIds: [working.id],
     });
-    const upNext = await subscribeView(worker.socket, "sub-alice", {
+    const upNext = await subscribeList(worker.socket, "sub-alice", {
       ...UP_NEXT,
       limit: 1,
     });
@@ -245,9 +249,9 @@ describe("member workflows list socket", () => {
     expect(upNext.counts.upNext).toBe(1);
     expect(upNext.counts.total).toBe(1);
 
-    const done = await subscribeView(worker.socket, "sub-alice", {
+    const done = await subscribeList(worker.socket, "sub-alice", {
       ...UP_NEXT,
-      tab: "done",
+      view: "done",
     });
     expect(done.items).toHaveLength(0);
     expect(done.recent).toHaveLength(0);

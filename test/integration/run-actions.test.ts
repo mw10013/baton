@@ -125,7 +125,7 @@ describe("Domain.runActions matrix", () => {
 const task = (
   overrides: Partial<
     Pick<
-      Domain.RunTaskView,
+      Domain.RunTaskRow,
       "current" | "startedAt" | "doneAt" | "reopenBlockedBy"
     >
   > = {},

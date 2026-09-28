@@ -148,7 +148,7 @@ function Field({
 }
 
 /**
- * A point-in-time operator view. Nothing here is live: the socket surface is
+ * A point-in-time operator page. Nothing here is live: the socket surface is
  * `@callable()` and merchant-scoped, and an admin looking at a shop is not a
  * reason to open a connection on it.
  */

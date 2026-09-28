@@ -47,7 +47,7 @@ const editorPath = (workflowId: string): string =>
  * reopens on the page's own workflow rather than on the last one `open`
  * named. Whatever hides the window — the admin X, Escape, or an Apply inside — fires
  * `onHide`, so the page refetches: the editor writes straight to the draft
- * and the page must not keep showing a stale Draft tab.
+ * and the page must not keep showing a stale Draft badge.
  *
  * An `applied` message from inside hides the window; `deleted` hides it and
  * hands the id to `onDeleted` because the page that opened it no longer has

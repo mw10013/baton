@@ -31,7 +31,7 @@ const row = (
   order: order(overrides),
   itemUnits: 1,
   runs: { ...NONE, ...runs },
-  attention: false,
+  unstaffed: false,
   waitingOn: [],
   ambiguousItems,
 });
@@ -45,7 +45,7 @@ const NONE = {
 
 describe("Domain.productionState", () => {
   const cases: readonly [string, Domain.OrderRow, Domain.ProductionState][] = [
-    ["no open and no done run is to make", row(NONE), "to_make"],
+    ["no open and no done run is not started", row(NONE), "not_started"],
     ["any open run is making", row({ open: 1, done: 1 }), "making"],
     [
       "an ambiguous item does not move the position: one item chosen, another waiting",
@@ -84,74 +84,74 @@ describe("Domain.productionState", () => {
       strictEqual(Domain.productionState(input), expected);
     });
 
-  it("an open order with no runs is to make whether or not it is paid", () => {
+  it("an open order with no runs is not started whether or not it is paid", () => {
     strictEqual(
       Domain.productionState(row(NONE, { fullyPaid: false })),
-      "to_make",
+      "not_started",
     );
-    strictEqual(Domain.productionState(row(NONE, {}, 1)), "to_make");
+    strictEqual(Domain.productionState(row(NONE, {}, 1)), "not_started");
   });
 
-  it("an order whose runs are all closed reads to make", () => {
-    strictEqual(Domain.productionState(row({ closed: 2 })), "to_make");
+  it("an order whose runs are all closed is not started", () => {
+    strictEqual(Domain.productionState(row({ closed: 2 })), "not_started");
   });
 });
 
-describe("Domain.orderNeeds", () => {
+describe("Domain.orderIssues", () => {
   it("no_workflow: paid, open, no run and no ambiguous item", () => {
-    deepStrictEqual(Domain.orderNeeds(row(NONE)), ["no_workflow"]);
-    deepStrictEqual(Domain.orderNeeds(row(NONE, { fullyPaid: false })), []);
-    deepStrictEqual(Domain.orderNeeds(row({ open: 1 })), []);
-    deepStrictEqual(Domain.orderNeeds(row({ done: 1 })), []);
-    deepStrictEqual(Domain.orderNeeds(row(NONE, {}, 1)), ["choose_workflow"]);
+    deepStrictEqual(Domain.orderIssues(row(NONE)), ["no_workflow"]);
+    deepStrictEqual(Domain.orderIssues(row(NONE, { fullyPaid: false })), []);
+    deepStrictEqual(Domain.orderIssues(row({ open: 1 })), []);
+    deepStrictEqual(Domain.orderIssues(row({ done: 1 })), []);
+    deepStrictEqual(Domain.orderIssues(row(NONE, {}, 1)), ["choose_workflow"]);
   });
 
-  it("an item whose run closed counts as decided: no no_workflow need", () => {
-    deepStrictEqual(Domain.orderNeeds(row({ closed: 1 })), []);
+  it("an item whose run closed is decided and is no issue", () => {
+    deepStrictEqual(Domain.orderIssues(row({ closed: 1 })), []);
   });
 
   it("choose_workflow: an ambiguous item on an order that can start runs", () => {
-    deepStrictEqual(Domain.orderNeeds(row({ open: 1 }, {}, 1)), [
+    deepStrictEqual(Domain.orderIssues(row({ open: 1 }, {}, 1)), [
       "choose_workflow",
     ]);
-    deepStrictEqual(Domain.orderNeeds(row(NONE, { fullyPaid: false }, 1)), []);
+    deepStrictEqual(Domain.orderIssues(row(NONE, { fullyPaid: false }, 1)), []);
   });
 
-  it("team: the order needs attention", () => {
+  it("team: the order has an unstaffed task", () => {
     deepStrictEqual(
-      Domain.orderNeeds({ ...row({ open: 1 }), attention: true }),
+      Domain.orderIssues({ ...row({ open: 1 }), unstaffed: true }),
       ["team"],
     );
   });
 
   it("blocked: an open run is blocked", () => {
-    deepStrictEqual(Domain.orderNeeds(row({ open: 1, blocked: 1 })), [
+    deepStrictEqual(Domain.orderIssues(row({ open: 1, blocked: 1 })), [
       "blocked",
     ]);
   });
 
   it("an order can be blocked and choosing at once, in row order", () => {
     deepStrictEqual(
-      Domain.orderNeeds({
+      Domain.orderIssues({
         ...row({ open: 2, blocked: 1 }, {}, 1),
-        attention: true,
+        unstaffed: true,
       }),
       ["choose_workflow", "team", "blocked"],
     );
   });
 
-  it("a fulfilled or cancelled order has no needs", () => {
+  it("a fulfilled or cancelled order has no issues", () => {
     const troubled = (overrides: Partial<Domain.ShopOrder>) => ({
       ...row({ open: 1, blocked: 1 }, overrides, 1),
-      attention: true,
+      unstaffed: true,
     });
     deepStrictEqual(
-      Domain.orderNeeds(troubled({ fulfillmentStatus: "FULFILLED" })),
+      Domain.orderIssues(troubled({ fulfillmentStatus: "FULFILLED" })),
       [],
     );
-    deepStrictEqual(Domain.orderNeeds(troubled({ cancelledAt: 1 })), []);
+    deepStrictEqual(Domain.orderIssues(troubled({ cancelledAt: 1 })), []);
     deepStrictEqual(
-      Domain.orderNeeds(row(NONE, { fulfillmentStatus: "FULFILLED" })),
+      Domain.orderIssues(row(NONE, { fulfillmentStatus: "FULFILLED" })),
       [],
     );
   });
@@ -275,7 +275,7 @@ describe("Domain.ambiguousItems", () => {
 });
 
 /**
- * The copy is the contract between the order page, the Recent tab and the
+ * The copy is the contract between the order page, the Recent view and the
  * workflow page, which all read the reason from one function
  * ({@link Domain.ClosedReason}).
  */
@@ -443,7 +443,7 @@ describe("Domain.byAge", () => {
 describe("Domain.sameRunQuery", () => {
   const query: Domain.RunQuery = {
     team: null,
-    tab: "mine",
+    view: "mine",
     limit: Domain.RUN_PAGE,
   };
 
@@ -456,7 +456,7 @@ describe("Domain.sameRunQuery", () => {
       }),
       false,
     );
-    strictEqual(Domain.sameRunQuery(query, { ...query, tab: "done" }), false);
+    strictEqual(Domain.sameRunQuery(query, { ...query, view: "done" }), false);
     strictEqual(
       Domain.sameRunQuery(query, {
         ...query,
@@ -563,15 +563,15 @@ describe("Domain.runIsUnstarted", () => {
 const TEAM = Schema.decodeUnknownSync(Domain.TeamId)("t");
 const OTHER_TEAM = Schema.decodeUnknownSync(Domain.TeamId)("u");
 
-const taskView = (
+const taskRow = (
   overrides: Partial<
     Pick<
-      Domain.RunTaskView,
+      Domain.RunTaskRow,
       "teamId" | "current" | "startedAt" | "doneAt" | "reopenBlockedBy"
     >
   > = {},
 ): Pick<
-  Domain.RunTaskView,
+  Domain.RunTaskRow,
   "teamId" | "current" | "startedAt" | "doneAt" | "reopenBlockedBy"
 > => ({
   teamId: TEAM,
@@ -618,7 +618,7 @@ describe("Domain.taskActions", () => {
     deepStrictEqual(
       memberActions(
         run("done"),
-        taskView({ current: false, startedAt: 1, doneAt: 2 }),
+        taskRow({ current: false, startedAt: 1, doneAt: 2 }),
         [TEAM],
       ),
       { ...NOTHING, reopen: { blockedBy: null } },
@@ -633,7 +633,7 @@ describe("Domain.taskActions", () => {
     deepStrictEqual(
       memberActions(
         run("active"),
-        taskView({
+        taskRow({
           current: false,
           startedAt: 1,
           doneAt: 2,
@@ -646,13 +646,13 @@ describe("Domain.taskActions", () => {
   });
 
   it("a block hides Start and Done but not Reopen", () => {
-    deepStrictEqual(memberActions(run("active", true), taskView(), [TEAM]), {
+    deepStrictEqual(memberActions(run("active", true), taskRow(), [TEAM]), {
       ...NOTHING,
     });
     deepStrictEqual(
       memberActions(
         run("active", true),
-        taskView({ current: false, startedAt: 1, doneAt: 2 }),
+        taskRow({ current: false, startedAt: 1, doneAt: 2 }),
         [TEAM],
       ),
       { ...NOTHING, reopen: { blockedBy: null } },
@@ -661,17 +661,17 @@ describe("Domain.taskActions", () => {
 
   it("a task on another team offers nothing", () => {
     deepStrictEqual(
-      memberActions(run("active"), taskView(), [OTHER_TEAM]),
+      memberActions(run("active"), taskRow(), [OTHER_TEAM]),
       NOTHING,
     );
     deepStrictEqual(
-      memberActions(run("active"), taskView({ teamId: null }), [TEAM]),
+      memberActions(run("active"), taskRow({ teamId: null }), [TEAM]),
       NOTHING,
     );
   });
 
   it("Start is offered only before the task is started; Done while it is ready", () => {
-    deepStrictEqual(memberActions(run("active"), taskView(), [TEAM]), {
+    deepStrictEqual(memberActions(run("active"), taskRow(), [TEAM]), {
       start: true,
       done: true,
       putBack: false,
@@ -679,7 +679,7 @@ describe("Domain.taskActions", () => {
       assign: false,
     });
     deepStrictEqual(
-      memberActions(run("active"), taskView({ startedAt: 1 }), [TEAM]),
+      memberActions(run("active"), taskRow({ startedAt: 1 }), [TEAM]),
       {
         start: false,
         done: true,
@@ -689,7 +689,7 @@ describe("Domain.taskActions", () => {
       },
     );
     deepStrictEqual(
-      memberActions(run("active"), taskView({ current: false }), [TEAM]),
+      memberActions(run("active"), taskRow({ current: false }), [TEAM]),
       { ...NOTHING },
     );
   });
@@ -698,15 +698,12 @@ describe("Domain.taskActions", () => {
 describe("Domain.taskActions Put back", () => {
   it("Put back is offered wherever Done is, and only on a started task", () => {
     strictEqual(
-      memberActions(run("active"), taskView({ startedAt: 1 }), [TEAM]).putBack,
+      memberActions(run("active"), taskRow({ startedAt: 1 }), [TEAM]).putBack,
       true,
     );
+    strictEqual(memberActions(run("active"), taskRow(), [TEAM]).putBack, false);
     strictEqual(
-      memberActions(run("active"), taskView(), [TEAM]).putBack,
-      false,
-    );
-    strictEqual(
-      memberActions(run("active"), taskView({ current: false, startedAt: 1 }), [
+      memberActions(run("active"), taskRow({ current: false, startedAt: 1 }), [
         TEAM,
       ]).putBack,
       false,
@@ -715,7 +712,7 @@ describe("Domain.taskActions Put back", () => {
 
   it("a block hides Put back", () => {
     strictEqual(
-      memberActions(run("active", true), taskView({ startedAt: 1 }), [TEAM])
+      memberActions(run("active", true), taskRow({ startedAt: 1 }), [TEAM])
         .putBack,
       false,
     );
@@ -723,7 +720,7 @@ describe("Domain.taskActions Put back", () => {
 
   it("a started task on another team offers no Put back", () => {
     strictEqual(
-      memberActions(run("active"), taskView({ startedAt: 1 }), [OTHER_TEAM])
+      memberActions(run("active"), taskRow({ startedAt: 1 }), [OTHER_TEAM])
         .putBack,
       false,
     );
@@ -733,7 +730,7 @@ describe("Domain.taskActions Put back", () => {
     strictEqual(
       memberActions(
         run("active"),
-        taskView({ current: false, startedAt: 1, doneAt: 2 }),
+        taskRow({ current: false, startedAt: 1, doneAt: 2 }),
         [TEAM],
       ).putBack,
       false,

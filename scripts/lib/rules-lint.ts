@@ -15,6 +15,7 @@
  * | finish, finished         | done (a task), or done or closed (a run)                   |
  * | in progress              | the run's label, read from `Domain.RUN_STATE_LABEL`        |
  * | unclaimed                | no such state; a task waits for a member                   |
+ * | tab, tabs                | a list's button is a view (`Domain.WorkflowsListView`)     |
  *
  * A grep. It reads string literals, including the literals inside a
  * template's `${...}`, and in `.tsx` JSX text: text between tags on one
@@ -34,6 +35,7 @@ export const RETIRED: readonly RegExp[] = [
   /\bfinish(?:ed)?\b/iu,
   /\bin progress\b/iu,
   /\bunclaimed\b/iu,
+  /\btabs?\b/iu,
 ];
 
 const LITERAL =

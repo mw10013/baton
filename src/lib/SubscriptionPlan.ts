@@ -375,7 +375,7 @@ export class SubscriptionPlan extends Context.Service<
  * views. Display-only today, and exactly the shape that gets copied to an
  * enforcement path later.
  *
- * The cost is one extra cached D1 read per page view — `authenticateAppRoute`
+ * The cost is one extra cached D1 read per page load — `authenticateAppRoute`
  * resolves in `beforeLoad` and this resolves again. A loader that needs more
  * than the entitlements off the status resolves once and calls
  * {@link entitlementsOfStatus} rather than paying a third read.
