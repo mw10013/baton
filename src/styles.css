@@ -218,7 +218,7 @@ details[open] > .live-value-summary .live-value-preview {
  */
 
 /*
- * The view row travels with the list: a member scrolling Up next switches
+ * The view row travels with the list: a member scrolling Ready switches
  * views without scrolling back to the top. `s-box` has no `position`, so the sticky
  * wrapper is a plain div. The surface colour is repeated because a
  * transparent sticky element would let rows scroll through it.
@@ -232,19 +232,24 @@ details[open] > .live-value-summary .live-value-preview {
 }
 
 /*
- * Five views are wider than a phone. They are a grid of three columns rather
- * than a scroller: it wraps three and two, which is balanced at every width a
- * bench uses, and it breaks on the container's width alone — so a count going
- * from 9 to 10 changes a label and never the layout, which is the reflow that
- * ruled out `flex-wrap`. A row that never overflows also has no scrollbar to
- * appear over the views, in any browser or under any scrollbar setting, and no
- * view is ever cut in half at the edge.
+ * Five views are wider than a phone. They are a grid rather than a scroller:
+ * it wraps three and two, or two, two and one, and it breaks on the viewport's
+ * width alone — so a count going from 9 to 10 changes a label and never the
+ * layout, which is the reflow that ruled out `flex-wrap`. A row that never
+ * overflows also has no scrollbar to appear over the views, in any browser or
+ * under any scrollbar setting, and no view is ever cut in half at the edge.
+ * Two columns put the two Started views side by side, and Ready beside
+ * Blocked.
  *
- * Two columns on a phone (below 27rem), three on a tablet and up. `1fr` is
- * `minmax(auto, 1fr)`, so a cell will not shrink under its own button's
- * width: three columns of "Teammates · 128" spill a 390px screen, and a
- * row that spills is the scrollbar this layout exists to remove. Measured
- * against three-digit counts at 320, 360, 375, 390, 430 and 600.
+ * `1fr` is `minmax(auto, 1fr)`, so a cell will not shrink under its own
+ * button's width, and a row that spills is the scrollbar this layout exists
+ * to remove. The widest label is "Started by others · 128": 130px of 12px
+ * Inter plus 24px of padding, so 154px a cell. Three columns need a 474px
+ * row, which the page's 80px of gutters leave at a 554px viewport, so two
+ * below 36rem. Two need 314px, which a phone's 48px of gutters leave at 362px,
+ * so one below 23rem (320px phones, and 360px Android phones once a count
+ * reaches three digits). Measured at 320, 360, 375, 430, 500, 540, 576 and
+ * 600.
  *
  * A plain div and not `s-grid`: that component's `gridTemplateColumns` takes
  * track sizing values or a Polaris responsive-value string, and a media query
@@ -257,9 +262,15 @@ details[open] > .live-value-summary .live-value-preview {
   gap: 0.375rem;
 }
 
-@media (max-width: 27rem) {
+@media (max-width: 36rem) {
   .run-view-row {
     grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 23rem) {
+  .run-view-row {
+    grid-template-columns: 1fr;
   }
 }
 

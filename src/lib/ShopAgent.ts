@@ -3116,11 +3116,11 @@ export class ShopAgent extends Agent {
    * comes from one call so the loader and the socket paint one snapshot: the
    * view row and the list under it are never two reads that can disagree.
    *
-   * The Recent count is read on every view (`listRecent` with `limit: 0`
+   * The Done or closed count is read on every view (`listRecent` with `limit: 0`
    * counts without reading rows) because the view row shows it whatever is
    * pressed; its rows are read only when `query.view` is "done".
    *
-   * `query.team` narrows Recent the same way it narrows the tiers, and a team
+   * `query.team` narrows Done or closed the same way it narrows the tiers, and a team
    * the member is not on narrows it to nothing — the same answer the
    * repository gives for the tiers, reached here because `listRecent` takes
    * the team list already narrowed.

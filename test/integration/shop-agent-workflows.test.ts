@@ -1106,7 +1106,7 @@ describe("ShopAgent workflow run callables", () => {
       teamIds: [team.id],
     });
     expect(await engraver.startTask({ runTaskId })).toEqual({ _tag: "Ok" });
-    // Their own started task, so it is Mine for them — which is the view the
+    // Their own started task, so it is Started by you for them — which is the view the
     // snapshotted email has to survive the delete in.
     const [item] = await runListItems(agent, [team.id], {
       memberEmail,

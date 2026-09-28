@@ -168,8 +168,8 @@ const seedShopWithWork = async (shopName: string) => {
   return { shop, runTaskId, ...seeded };
 };
 
-/** One page of Up next, every team: what every test here seeds a single row into. */
-const UP_NEXT: Domain.RunQuery = {
+/** One page of Ready, every team: what every test here seeds a single row into. */
+const READY: Domain.RunQuery = {
   team: null,
   view: "upNext",
   limit: Domain.RUN_PAGE,
@@ -178,7 +178,7 @@ const UP_NEXT: Domain.RunQuery = {
 const subscribeList = (
   socket: AgentSocket,
   subscriberId: string,
-  query: Domain.RunQuery = UP_NEXT,
+  query: Domain.RunQuery = READY,
 ) =>
   socket.call<Domain.WorkflowsListData>("subscribeRuns", {
     subscriberId,
@@ -187,7 +187,7 @@ const subscribeList = (
 
 /**
  * The current rows of one view. Every test here seeds a single untouched task on
- * one team, which is Up next for whoever reads it.
+ * one team, which is Ready for whoever reads it.
  */
 const subscribe = (
   socket: AgentSocket,
@@ -242,7 +242,7 @@ describe("member workflows list socket", () => {
       teamIds: [working.id],
     });
     const upNext = await subscribeList(worker.socket, "sub-alice", {
-      ...UP_NEXT,
+      ...READY,
       limit: 1,
     });
     expect(upNext.items).toHaveLength(1);
@@ -250,7 +250,7 @@ describe("member workflows list socket", () => {
     expect(upNext.counts.total).toBe(1);
 
     const done = await subscribeList(worker.socket, "sub-alice", {
-      ...UP_NEXT,
+      ...READY,
       view: "done",
     });
     expect(done.items).toHaveLength(0);

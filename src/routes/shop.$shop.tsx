@@ -51,7 +51,7 @@ import { ShopAgentSocketProvider } from "@/lib/ShopAgentSocketHost";
  * `stripSearchParams` keeps the defaults out of the URL, so
  * `/shop/$shop/workflows` with no search stays the canonical way home. The key was
  * `?tab=` before the word became view; a bookmark that still carries it is
- * an unknown key and lands on the default view, Mine.
+ * an unknown key and lands on the default view, Started by you.
  */
 const MemberSearch = Schema.Struct({
   view: Schema.optionalKey(

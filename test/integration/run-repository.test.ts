@@ -313,11 +313,11 @@ const complete = (
     ),
   );
 
-/** The `task` entries of a Recent read. */
+/** The `task` entries of a Done or closed read. */
 const taskItems = (items: readonly Domain.RecentItem[]) =>
   items.flatMap((item) => (item.kind === "task" ? [item] : []));
 
-/** A Recent read as one line per entry, "task <name>" or "closed <reason>". */
+/** A Done or closed read as one line per entry, "task <name>" or "closed <reason>". */
 const shape = (items: readonly Domain.RecentItem[]) =>
   items.map((item) =>
     item.kind === "task"
@@ -1594,7 +1594,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           reason: reason("Out of thread"),
         });
         // The block decides the view, not the position in one list: the
-        // held run leaves Up next for Blocked and the untouched one stays.
+        // held run leaves Ready for Blocked and the untouched one stays.
         const blocked = yield* runListRows({
           teamIds: [TEAM_A.id, TEAM_B.id],
           view: "blocked",
@@ -1729,7 +1729,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
       }),
     ));
 
-  it("listRuns tiers by the reader: my started task is Mine, a teammate's is Teammates, a block is Blocked for both", () =>
+  it("listRuns tiers by the reader: my started task is Started by you, a teammate's is Started by others, a block is Blocked for both", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -1855,7 +1855,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           memberEmail: VIEWER,
           query: { team: null, view: "done", limit: Domain.RUN_PAGE },
         });
-        // The Recent view's rows are `listRecent`'s; the view row above them is still
+        // The Done or closed view's rows are `listRecent`'s; the view row above them is still
         // this read's, which is why the counts do not depend on the view.
         strictEqual(done.items.length, 0);
         strictEqual(done.counts.upNext, 1);

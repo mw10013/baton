@@ -275,7 +275,7 @@ describe("Domain.ambiguousItems", () => {
 });
 
 /**
- * The copy is the contract between the order page, the Recent view and the
+ * The copy is the contract between the order page, the Done or closed view and the
  * workflow page, which all read the reason from one function
  * ({@link Domain.ClosedReason}).
  */

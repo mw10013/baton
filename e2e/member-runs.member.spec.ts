@@ -61,7 +61,7 @@ const FINISHED = `${CUT_TEAM} · ${MAKER}`;
 /**
  * A row's line two where the reader holds the task themselves: where it
  * is in the run, not "Started · you", which would be true of every row
- * under a pressed Mine. The ring workflow has one task, and the maker is on
+ * under a pressed Started by you. The ring workflow has one task, and the maker is on
  * one team, so no team name follows it either.
  */
 const MINE_STATE = "Step 1 of 1";
@@ -78,7 +78,7 @@ const EMPTY_DONE = "Nothing done or closed in the last day.";
 const ORDER_LINK = /^Open .+ on #94\d\d$/u;
 /**
  * Filler Cut orders, numbered clear of the three named ones. Twenty-five and
- * not twenty-four: the ring order is a Cut order too, so the mate's Up next
+ * not twenty-four: the ring order is a Cut order too, so the mate's Ready
  * comes to twenty-seven and the maker's to twenty-six — both over
  * `Domain.RUN_PAGE` (25), and the two counts differ, so an assertion cannot
  * pass by reading the wrong page.
@@ -87,11 +87,11 @@ const BULK_COUNT = 25;
 const BULK_FIRST = 9410;
 
 /** View labels, as `VIEW_LABEL` writes them on the view row. */
-const MINE = "Mine";
-const UP_NEXT = "Up next";
-const TEAMMATES = "Teammates";
+const STARTED_BY_YOU = "Started by you";
+const READY = "Ready";
+const STARTED_BY_OTHERS = "Started by others";
 const BLOCKED = "Blocked";
-const RECENT = "Recent";
+const DONE_OR_CLOSED = "Done or closed";
 
 /**
  * One workflow per team and one order for each, so every assertion about who
@@ -235,7 +235,7 @@ const contexts: BrowserContext[] = [];
  * Land a signed-in member on their workflows list. `viewKey` goes in the URL rather than
  * through a click, because the view is a search param and most tests here are
  * about the rows rather than about getting to them; the default landing view
- * is Mine, which is empty until somebody starts something.
+ * is Started by you, which is empty until somebody starts something.
  */
 const openRuns = async (
   browser: Browser,
@@ -418,17 +418,19 @@ test("a member starts and completes their team's current task over the socket", 
   await markDocument(page);
 
   await rowAction(page, RING_ORDER, "Start");
-  /* Starting moves the row off the view it was started from: Up next is what
+  /* Starting moves the row off the view it was started from: Ready is what
      nobody has in hand, and the view row says where it went. That the counts
      moved at all is the page's own state following the object's — proof the
      answer was applied, not just accepted. */
-  await expect(page.getByRole("button", { name: `${MINE} · 1` })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: `${UP_NEXT} · 0` }),
+    page.getByRole("button", { name: `${STARTED_BY_YOU} · 1` }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: `${READY} · 0` }),
   ).toBeVisible();
   await expect(rowLink(page, RING_ORDER)).toBeHidden();
 
-  await selectView(page, "mine", MINE);
+  await selectView(page, "mine", STARTED_BY_YOU);
   await expect(rowLink(page, RING_ORDER)).toBeVisible();
   /* The row says where it is in the run and not that it is the reader's own,
      which the pressed view already said; what changed is the verb in its menu,
@@ -476,7 +478,9 @@ test("a run's row opens the workflow page and its menu does not", async ({
   await rowAction(page, RING_ORDER, "Start");
   /* The write landed and the reader stayed put: the view row renumbered and the
      address bar still says the workflows list. */
-  await expect(page.getByRole("button", { name: `${MINE} · 1` })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: `${STARTED_BY_YOU} · 1` }),
+  ).toBeVisible();
   await expect(page).toHaveURL(runsUrl);
 });
 
@@ -513,31 +517,31 @@ test("a task one member marks done lands on another member's workflows list with
 
   await rowAction(maker, RING_ORDER, "Start");
   /* The push reaches the mate whatever view they are on: the view row renumbers
-     under them while they are still reading Up next. */
+     under them while they are still reading Ready. */
   await expect(
-    mate.getByRole("button", { name: `${TEAMMATES} · 1` }),
+    mate.getByRole("button", { name: `${STARTED_BY_OTHERS} · 1` }),
   ).toBeVisible();
   await expect(
-    mate.getByRole("button", { name: `${UP_NEXT} · 1` }),
+    mate.getByRole("button", { name: `${READY} · 1` }),
   ).toBeVisible();
 
   /* The mate's row says who has it; the start time is on the workflow page the
      row links to, which is one tap away and not on the list. */
-  await selectView(mate, "teammates", TEAMMATES);
+  await selectView(mate, "teammates", STARTED_BY_OTHERS);
   await expect(
     mate.getByText(`${Domain.TASK_STATE_LABEL.started} · ${MAKER}`),
   ).toBeVisible();
 
-  await selectView(maker, "mine", MINE);
+  await selectView(maker, "mine", STARTED_BY_YOU);
   await rowAction(maker, RING_ORDER, "Done");
   await expect(rowLink(mate, RING_ORDER)).toBeHidden();
   /* The mate's other team is untouched by the ring order's fan-out, so the
      refetch must not have emptied the page wholesale. */
   await expect(
-    mate.getByRole("button", { name: `${UP_NEXT} · 1` }),
+    mate.getByRole("button", { name: `${READY} · 1` }),
   ).toBeVisible();
   await expect(
-    mate.getByRole("button", { name: `${RECENT} · 1` }),
+    mate.getByRole("button", { name: `${DONE_OR_CLOSED} · 1` }),
   ).toBeVisible();
   await expectSameDocument(mate);
 });
@@ -576,71 +580,73 @@ test("removing a member from a team empties their open workflows list", async ({
 
 /**
  * The view row, driven by the two real actors rather than the seed: untouched
- * work is counted under "Up next"; the maker's own Start moves the card to
- * "Mine" on their page and to "Teammates" — naming them — on the mate's,
+ * work is counted under "Ready"; the maker's own Start moves the card to
+ * "Started by you" on their page and to "Started by others" — naming them — on the mate's,
  * which arrives by push. The counts on the view row are the shape of the day,
  * and every view stays on it whatever its count, so nothing reflows when a
  * number crosses zero.
  */
-test("a started card moves to Mine for the starter and Teammates for a teammate", async ({
+test("a started card moves to Started by you for the starter and Started by others for a teammate", async ({
   browser,
 }) => {
   const config = seedConfig();
   await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
   const mate = await openRuns(browser, config, mateState, "upNext");
   await expect(
-    mate.getByRole("button", { name: `${UP_NEXT} · 2` }),
+    mate.getByRole("button", { name: `${READY} · 2` }),
   ).toBeVisible();
   await awaitEnabled(rowMenu(mate, RING_ORDER));
 
   const maker = await openRuns(browser, config, makerState, "upNext");
   await expect(
-    maker.getByRole("button", { name: `${UP_NEXT} · 1` }),
+    maker.getByRole("button", { name: `${READY} · 1` }),
   ).toBeVisible();
   await rowAction(maker, RING_ORDER, "Start");
   await expect(
-    maker.getByRole("button", { name: `${MINE} · 1` }),
+    maker.getByRole("button", { name: `${STARTED_BY_YOU} · 1` }),
   ).toBeVisible();
   /* The emptied view keeps its place on the view row rather than disappearing. */
   await expect(
-    maker.getByRole("button", { name: `${UP_NEXT} · 0` }),
+    maker.getByRole("button", { name: `${READY} · 0` }),
   ).toBeVisible();
 
-  await selectView(maker, "mine", MINE);
+  await selectView(maker, "mine", STARTED_BY_YOU);
   /* The view is said by the view row and by nothing on the card: the card that
-     moved to "Mine · 1" carries no badge repeating it. */
-  await expect(card(maker, RING_ORDER).getByText(MINE)).toHaveCount(0);
+     moved to "Started by you · 1" carries no badge repeating it. */
+  await expect(card(maker, RING_ORDER).getByText(STARTED_BY_YOU)).toHaveCount(
+    0,
+  );
 
   await expect(
-    mate.getByRole("button", { name: `${TEAMMATES} · 1` }),
+    mate.getByRole("button", { name: `${STARTED_BY_OTHERS} · 1` }),
   ).toBeVisible();
   await expect(
-    mate.getByRole("button", { name: `${UP_NEXT} · 1` }),
+    mate.getByRole("button", { name: `${READY} · 1` }),
   ).toBeVisible();
-  await selectView(mate, "teammates", TEAMMATES);
+  await selectView(mate, "teammates", STARTED_BY_OTHERS);
   await expect(
     mate.getByText(`${Domain.TASK_STATE_LABEL.started} · ${MAKER}`),
   ).toBeVisible();
 
   /* The other side of that fact, on the starter's own page: the only started
-     task is theirs, so their Teammates view is empty and says so in three
+     task is theirs, so their Started by others view is empty and says so in three
      words rather than restating whose teams they are. */
-  await selectView(maker, "teammates", TEAMMATES);
+  await selectView(maker, "teammates", STARTED_BY_OTHERS);
   await expect(maker.getByText(EMPTY_TEAMMATES)).toBeVisible();
 });
 
 /**
  * The one place in the member area where the number on the view row is not the
- * number of rows under it. Up next is cut to `Domain.RUN_PAGE` (25) and the
+ * number of rows under it. Ready is cut to `Domain.RUN_PAGE` (25) and the
  * view row still counts the whole view, which is the promise being tested: a
- * member who reads "Up next · 27" above twenty-five rows must be able to reach
+ * member who reads "Ready · 27" above twenty-five rows must be able to reach
  * the other two — and the button that does it asks the object for a deeper
  * read rather than revealing rows the page was already holding. A member who
  * then narrows to one team must not be shown a stale expansion from the wider
  * list. The teammate drives it because the team select only renders for
  * someone on more than one team.
  */
-test("Up next cuts at a page, pages on Show more, and re-cuts when the team changes", async ({
+test("Ready cuts at a page, pages on Show more, and re-cuts when the team changes", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -652,7 +658,7 @@ test("Up next cuts at a page, pages on Show more, and re-cuts when the team chan
   const page = await openRuns(browser, config, mateState, "upNext");
 
   await expect(
-    page.getByRole("button", { name: `${UP_NEXT} · 27` }),
+    page.getByRole("button", { name: `${READY} · 27` }),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(25);
 
@@ -672,7 +678,7 @@ test("Up next cuts at a page, pages on Show more, and re-cuts when the team chan
     page.getByRole("button", { name: CUT_TEAM, exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: `${UP_NEXT} · 26` }),
+    page.getByRole("button", { name: `${READY} · 26` }),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(25);
   await expect(
@@ -840,7 +846,7 @@ test("the team is in the URL and switching teams replaces it", async ({
   expect(await serverRows(page, narrowed)).toBe(1);
   await gotoMember(page, narrowed);
   await expect(
-    page.getByRole("button", { name: `${UP_NEXT} · 1` }),
+    page.getByRole("button", { name: `${READY} · 1` }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: CUT_TEAM, exact: true }),
@@ -901,7 +907,7 @@ test("depth is in the URL and a return lands on the same depth", async ({
   );
   await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(27);
   await expect(
-    page.getByRole("button", { name: `${UP_NEXT} · 27` }),
+    page.getByRole("button", { name: `${READY} · 27` }),
   ).toBeVisible();
 });
 
@@ -940,7 +946,7 @@ test("the bar's mark returns to the screen the member left", async ({
     await expect(page).toHaveURL(/[?&]view=upNext(?:&|$)/u);
     expect(teamParam(page)).toBe(team);
     await expect(
-      page.getByRole("button", { name: `${UP_NEXT} · 1` }),
+      page.getByRole("button", { name: `${READY} · 1` }),
     ).toBeVisible();
     await expect(
       page.getByRole("button", { name: CUT_TEAM, exact: true }),
@@ -979,7 +985,7 @@ test("a team the member is no longer on reads as all teams", async ({
     page.getByRole("button", { name: "All teams", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: `${UP_NEXT} · 2` }),
+    page.getByRole("button", { name: `${READY} · 2` }),
   ).toBeVisible();
   await expect(rowLink(page, RING_ORDER)).toBeVisible();
   await expect(rowLink(page, BOX_ORDER)).toBeVisible();
@@ -1018,83 +1024,83 @@ test("a value the search schema cannot read falls back to the default", async ({
     page.getByRole("button", { name: "All teams", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: `${UP_NEXT} · 27` }),
+    page.getByRole("button", { name: `${READY} · 27` }),
   ).toBeVisible();
 });
 
 /**
- * Recent and Undo. The done task leaves the list for the Recent view;
+ * Done or closed and Undo. The done task leaves the list for the Done or closed view;
  * Undo puts it back, and because Undo returns the task to Ready
- * (`RunRepository.reopenTask`) the card lands in "Up next", not
- * "Mine".
+ * (`RunRepository.reopenTask`) the card lands in "Ready", not
+ * "Started by you".
  */
 test("undo puts a done task back to Ready", async ({ browser }) => {
   const config = seedConfig();
   await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
   const page = await openRuns(browser, config, makerState, "upNext");
   await expect(
-    page.getByRole("button", { name: `${RECENT} · 0` }),
+    page.getByRole("button", { name: `${DONE_OR_CLOSED} · 0` }),
   ).toBeVisible();
 
   await rowAction(page, RING_ORDER, "Start");
-  await selectView(page, "mine", MINE);
+  await selectView(page, "mine", STARTED_BY_YOU);
   await rowAction(page, RING_ORDER, "Done");
   await expect(page.getByText(EMPTY_MINE)).toBeVisible();
   await expect(
-    page.getByRole("button", { name: `${RECENT} · 1` }),
+    page.getByRole("button", { name: `${DONE_OR_CLOSED} · 1` }),
   ).toBeVisible();
   /* Unopened, the view is a count and nothing else: its rows are a different
      read, so the Undo below is only reachable once the view is chosen. The
      entry says "by you" rather than the reader's own address, which on this
      tier is the longest and least informative text on the page. */
-  await selectView(page, "done", RECENT);
+  await selectView(page, "done", DONE_OR_CLOSED);
   await expect(page.getByText("by you at")).toBeVisible();
 
   await rowAction(page, RING_ORDER, "Undo");
   await expect(page.getByText(EMPTY_DONE)).toBeVisible();
   await expect(
     page.getByRole("button", {
-      name: `${MINE} · 0`,
+      name: `${STARTED_BY_YOU} · 0`,
       exact: true,
     }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", {
-      name: `${UP_NEXT} · 1`,
+      name: `${READY} · 1`,
       exact: true,
     }),
   ).toBeVisible();
-  await selectView(page, "upNext", UP_NEXT);
+  await selectView(page, "upNext", READY);
   await expect(rowLink(page, RING_ORDER)).toBeVisible();
 });
 
 /**
  * Put back, the inverse of Start (`RunRepository.putBackTask`). The
- * row leaves the starter's Mine and returns to Up next for everyone on the
- * team: the mate, who saw it under Teammates, sees it under Up next again.
+ * row leaves the starter's Started by you and returns to Ready for everyone on the
+ * team: the mate, who saw it under Started by others, sees it under Ready again.
  */
-test("put back returns a started task to Up next for everyone", async ({
+test("put back returns a started task to Ready for everyone", async ({
   browser,
 }) => {
   const config = seedConfig();
   await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
   const maker = await openRuns(browser, config, makerState, "upNext");
   await rowAction(maker, RING_ORDER, "Start");
-  await selectView(maker, "mine", MINE);
+  await selectView(maker, "mine", STARTED_BY_YOU);
   await expect(maker.getByText(MINE_STATE)).toBeVisible();
 
-  /* The mate is on Cut and Pack: the box order stays in their Up next, the
+  /* The mate is on Cut and Pack: the box order stays in their Ready, the
      ring order is a teammate's while the maker has it. */
   const mate = await openRuns(browser, config, mateState, "upNext");
   await expect(
     mate.getByRole("button", {
-      name: `${UP_NEXT} · 1`,
+      name: `${READY} · 1`,
       exact: true,
     }),
   ).toBeVisible();
   await expect(
     mate.getByRole("button", {
-      name: `${TEAMMATES} · 1`,
+      name: `${STARTED_BY_OTHERS} · 1`,
       exact: true,
     }),
   ).toBeVisible();
@@ -1103,20 +1109,20 @@ test("put back returns a started task to Up next for everyone", async ({
   await expect(maker.getByText(EMPTY_MINE)).toBeVisible();
   await expect(
     maker.getByRole("button", {
-      name: `${UP_NEXT} · 1`,
+      name: `${READY} · 1`,
       exact: true,
     }),
   ).toBeVisible();
 
   await expect(
     mate.getByRole("button", {
-      name: `${UP_NEXT} · 2`,
+      name: `${READY} · 2`,
       exact: true,
     }),
   ).toBeVisible();
   await expect(
     mate.getByRole("button", {
-      name: `${TEAMMATES} · 0`,
+      name: `${STARTED_BY_OTHERS} · 0`,
       exact: true,
     }),
   ).toBeVisible();
@@ -1125,7 +1131,7 @@ test("put back returns a started task to Up next for everyone", async ({
 
 /**
  * A `done` run is only its last task's Done, and the workflow page must offer
- * Undo there just as the workflows list's Recent view does (`Domain.taskActions`:
+ * Undo there just as the workflows list's Done or closed view does (`Domain.taskActions`:
  * `reopen` does not need `runIsOpen`). The ring order has one task, so Done
  * on it makes the run done, and the page it links to is the page under test.
  */
@@ -1166,7 +1172,7 @@ test("a done run's workflow page offers Undo on its last task", async ({
 /**
  * Once downstream has started the fix is a conversation, and **neither member
  * screen says so in words**: the mate (on the Polish team) starts the next
- * step, the maker's Recent entry loses its menu, and the workflow page the
+ * step, the maker's Done or closed entry loses its menu, and the workflow page the
  * row still links to simply stops offering Undo.
  *
  * The rule used to be a disabled Undo beside a clause naming the blocker, so
@@ -1197,12 +1203,12 @@ test("a blocked undo offers nothing and explains nothing, on the row or the work
      and Done once the maker does, so finishing from the list takes no
      detour. */
   await rowAction(maker, BAND_ORDER, "Start");
-  await selectView(maker, "mine", MINE);
+  await selectView(maker, "mine", STARTED_BY_YOU);
   await rowAction(maker, BAND_ORDER, "Done");
   await expect(
-    maker.getByRole("button", { name: `${RECENT} · 1` }),
+    maker.getByRole("button", { name: `${DONE_OR_CLOSED} · 1` }),
   ).toBeVisible();
-  await selectView(maker, "done", RECENT);
+  await selectView(maker, "done", DONE_OR_CLOSED);
   await awaitEnabled(rowMenu(maker, BAND_ORDER));
 
   const mate = await openRuns(browser, config, mateState, "upNext");
@@ -1386,7 +1392,7 @@ test("the workflow page shows the task history and takes a note, a block, and Do
   await expect(
     page.locator('s-section[accessibilityLabel="Workflows"]'),
   ).toBeVisible();
-  /* The mark lands back on Up next, the view this test came from; the held run
+  /* The mark lands back on Ready, the view this test came from; the held run
      is on Blocked, which the view row counts from wherever the reader is. */
   await expect(page).toHaveURL(/[?&]view=upNext(?:&|$)/u);
   await selectView(page, "blocked", BLOCKED);
@@ -1422,16 +1428,16 @@ test("the workflow page shows the task history and takes a note, a block, and Do
   /* Cut is done and Polish is the packer's, so the run is no card of the
      maker's any more; what remains of it on this page is the Done entry. */
   await expect(
-    page.getByRole("button", { name: `${RECENT} · 1` }),
+    page.getByRole("button", { name: `${DONE_OR_CLOSED} · 1` }),
   ).toBeVisible();
 });
 
 /**
  * A Shopify event never creates a to-do (`Domain.RunStatus`): a run the order's
- * fulfilment or cancel closed leaves Mine, Up next, Teammates and Blocked by its status,
- * and Recent says why, with no verb on the row.
+ * fulfilment or cancel closed leaves Started by you, Started by others, Ready and Blocked by its status,
+ * and Done or closed says why, with no verb on the row.
  */
-test("closed runs leave Mine, Up next, Teammates and Blocked and show on Recent with their reason", async ({
+test("closed runs leave Started by you, Started by others, Ready and Blocked and show on Done or closed with their reason", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -1470,18 +1476,20 @@ test("closed runs leave Mine, Up next, Teammates and Blocked and show on Recent 
     { keepIdentities: true },
   );
   const page = await openRuns(browser, config, makerState);
-  await expect(page.getByRole("button", { name: `${MINE} · 0` })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: `${UP_NEXT} · 0` }),
+    page.getByRole("button", { name: `${STARTED_BY_YOU} · 0` }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: `${READY} · 0` }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: `${BLOCKED} · 0` }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: `${RECENT} · 2` }),
+    page.getByRole("button", { name: `${DONE_OR_CLOSED} · 2` }),
   ).toBeVisible();
 
-  await selectView(page, "done", RECENT);
+  await selectView(page, "done", DONE_OR_CLOSED);
   await expect(
     card(page, "#9451").getByText("Closed · Fulfilled in Shopify"),
   ).toBeVisible();
@@ -1637,9 +1645,9 @@ test("a merchant's completion reads as Merchant on the workflows list and the wo
   const page = await openRuns(browser, config, makerState);
 
   await expect(
-    page.getByRole("button", { name: `${RECENT} · 1` }),
+    page.getByRole("button", { name: `${DONE_OR_CLOSED} · 1` }),
   ).toBeVisible();
-  await selectView(page, "done", RECENT);
+  await selectView(page, "done", DONE_OR_CLOSED);
   await expect(page.getByText("by Merchant at")).toBeVisible();
 
   await rowLink(page, BAND_ORDER).click();

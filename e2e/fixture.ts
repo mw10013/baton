@@ -638,7 +638,7 @@ const floorOrders: readonly SeedOrder[] = [
   },
   {
     // cancelled in Shopify after the ring was already cast: the run closes,
-    // "Order cancelled in Shopify", and leaves every list for Recent
+    // "Order cancelled in Shopify", and leaves every list for Done or closed
     n: 1019,
     advance: 1,
     after: { cancelled: true },
@@ -829,7 +829,7 @@ const bigOrder = (n: number): SeedOrder => ({
   }),
 });
 
-/** Cycled over the generated orders so every tier of the workflows list is populated, not only Up next. */
+/** Cycled over the generated orders so every tier of the workflows list is populated, not only Ready. */
 const SCALE_PROGRESS: readonly SeedProgress[] = [
   {},
   { advance: 1 },
@@ -839,7 +839,7 @@ const SCALE_PROGRESS: readonly SeedProgress[] = [
 ];
 
 /**
- * Volume, always seeded: the workflows list's tiers are uncapped apart from Up next and
+ * Volume, always seeded: the workflows list's tiers are uncapped apart from Ready and
  * the orders index pages at 25, so neither can be judged at ten orders. Kept
  * to a few hundred runs — every one is a real reconcile and every round a real
  * write, and the reseed has to stay quick enough that people still run it.

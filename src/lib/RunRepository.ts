@@ -427,7 +427,7 @@ export class RunRepository extends Context.Service<
       SqlError.SqlError | RunRepositoryError
     >;
     /**
-     * The Recent view ({@link Domain.RecentItem}): tasks owned by `teamIds`
+     * The Done or closed view ({@link Domain.RecentItem}): tasks owned by `teamIds`
      * done at or after `since`, each with its run and the reopen verdict
      * ({@link Domain.reopenBlockedBy}), and runs with a task on `teamIds` that
      * closed at or after `since`, newest first by `doneAt` or
@@ -1662,7 +1662,7 @@ export class RunRepository extends Context.Service<
             { blocked: [], mine: [], teammates: [], upNext: [] },
           );
           const tier = (wanted: Domain.RunTier) => byTier[wanted];
-          // "done" (Recent) is not a tier: its rows come from `listRecent`,
+          // "done" (Done or closed) is not a tier: its rows come from `listRecent`,
           // which reads done tasks and closed runs rather than the current
           // ones grouped here.
           const selected =

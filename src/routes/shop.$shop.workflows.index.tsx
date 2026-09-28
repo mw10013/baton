@@ -127,7 +127,7 @@ const insideRow = (event: {
 };
 
 /**
- * Who did a Recent task entry, spelled as the waiting rows spell an actor:
+ * Who did a Done or closed task entry, spelled as the waiting rows spell an actor:
  * `you` for the reader, the email for anybody else, `Merchant` for the
  * merchant. Your own address repeated down a page is the noisiest text on the
  * tier and the least informative line on it. Empty rather than "nobody" for a
@@ -312,10 +312,10 @@ function RouteComponent() {
     const line = Domain.runRowLine(item, showTeam);
     /**
      * A row you started says where it is in the run, not "Started · you".
-     * Starting a task is what puts the row in Mine ({@link Domain.tierOf}),
+     * Starting a task is what puts the row in Started by you ({@link Domain.tierOf}),
      * and Put back is the inverse that takes it out again, so those words are true of every row under that pressed view and so
      * distinguish none of them. A row a teammate started says who instead,
-     * which is the whole of what the Teammates view is for. The test is the
+     * which is the whole of what the Started by others view is for. The test is the
      * starter rather than the pressed view because a run can have several current
      * tasks on the member's teams and `tasks[0]` is the lowest-positioned
      * one, not necessarily theirs.
@@ -514,7 +514,7 @@ function RouteComponent() {
    * the reasoning that a missing control reads as a row that was never
    * reopenable while a disabled one reads as the refusal it is. That holds
    * while refusal is the exception. Here it is the rule: reopen is blocked the
-   * moment anything downstream starts, so a busy shop's Recent view was mostly
+   * moment anything downstream starts, so a busy shop's Done or closed view was mostly
    * dead buttons each explaining itself in a third line. When most rows can
    * offer nothing, absence is the norm a reader learns in two rows and the
    * kebab is the signal. The refusal is not lost — the workflow page the row
@@ -589,7 +589,7 @@ function RouteComponent() {
   };
 
   /**
-   * A closed run's Recent row ({@link Domain.RecentItem}): line one is the
+   * A closed run's Done or closed row ({@link Domain.RecentItem}): line one is the
    * item, its workflow and order, as on every run row ({@link renderItem}),
    * then "Closed · <reason> · <time>" ({@link ClosedLine}). A link to
    * the workflow page and nothing else: closing is a notice, not a to-do, and a

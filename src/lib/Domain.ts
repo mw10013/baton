@@ -21,8 +21,8 @@
  *   retired words in them. A JSDoc that explains copy quotes the copy.
  *   A JSDoc that names a screen uses the Screens table's spec name.
  *
- * The action tables cover buttons, and a run leaving Mine, Up next,
- * Teammates and Blocked is its status, not a button: a table can say a run
+ * The action tables cover buttons, and a run leaving Started by you, Started by
+ * others, Ready and Blocked is its status, not a button: a table can say a run
  * offers nothing and a list can still show it, so which rows a list holds is
  * decided by {@link RunStatus} (open runs only) and nothing else, the same
  * rule for every list. A page
@@ -60,7 +60,7 @@
  * | task     | one unit of work on a run, on one team                                                                    | `RunTask`                              | task, or its name                                           |
  * | block    | a person's hold on a run                                                                                  | `runIsBlocked`                         | Blocked                                                     |
  * | note     | free text on a run                                                                                        | `RunNote`                              | Note                                                        |
- * | view     | one whole question about a list, chosen by pressing its button; exclusive; the row's first is the default | `WorkflowsListView`, `OrdersIndexView` | its label (Mine, Issues, ...)                               |
+ * | view     | one whole question about a list, chosen by pressing its button; exclusive; the row's first is the default | `WorkflowsListView`, `OrdersIndexView` | its label (Started by you, Issues, ...)                     |
  *
  * An item is always shown under its order on the merchant's order page,
  * and beside it in the member's row (`<item> · <workflow> · <order>`), so
@@ -3072,7 +3072,7 @@ export const actorLabel = (actor: ActorDisplay) =>
  * Whether an actor slot is this member, by email: the durable identity, since
  * a removed and re-added member mints a new id but keeps the address (the
  * member row on {@link D1_TABLES}; the same reason {@link tierOf} matches
- * Mine by email). The merchant has no email and is never "you" on a member
+ * a started task to its starter by email). The merchant has no email and is never "you" on a member
  * page.
  */
 export const actorIsMember = (actor: ActorDisplay, email: Email) =>
@@ -3208,10 +3208,10 @@ export type RunTaskId = typeof RunTaskId.Type;
  * what; only deleting the row (Change workflow, a manual attach over a
  * closed item, the order's retention delete) removes tasks.
  *
- * **Mine, Up next, Teammates and Blocked hold open runs only.** Closed and done runs leave the
- * member's Mine, Up next, Teammates and Blocked views, and stop counting on
+ * **Started by you, Started by others, Ready and Blocked hold open runs only.** Closed and done runs leave the
+ * member's Started by you, Started by others, Ready and Blocked views, and stop counting on
  * the orders index, by this status and no other rule: the list reads select
- * `status = 'active'`. The fifth view, Recent, holds done tasks and closed
+ * `status = 'active'`. The fifth view, Done or closed, holds done tasks and closed
  * runs, a closed run with its reason ({@link RecentItem}).
  *
  * What each status allows. The gate column is the rule; the enforcing write
@@ -3254,7 +3254,7 @@ export type RunStatus = typeof RunStatus.Type;
  * not a different card or a different set of actions: every closed run
  * offers the note and nothing else.
  *
- * | reason               | set by                                                       | member's Recent line                  | merchant's card line                 |
+ * | reason               | set by                                                       | member's Done or closed line          | merchant's card line                 |
  * | -------------------- | ------------------------------------------------------------ | ------------------------------------- | ------------------------------------ |
  * | `fulfilled`          | reconcile, the order reached `FULFILLED` ({@link isFulfilled}) | Closed · Fulfilled in Shopify         | Fulfilled in Shopify                 |
  * | `order_cancelled`    | reconcile, the order was cancelled ({@link isCancelled})        | Closed · Order cancelled in Shopify   | Order cancelled in Shopify           |
@@ -3533,7 +3533,7 @@ export type RunDetail = typeof RunDetail.Type;
  * One current task the member may act on, cut to what a run's row renders.
  * `startedByEmail` is read off the row — the snapshot taken at Start, never a
  * live join — and it is load-bearing beyond display: {@link tierOf} decides
- * "Mine" with it.
+ * "Started by you" with it.
  *
  * Two groups of columns are omitted rather than carried as nulls. The three
  * `done*` ones can never say anything here: `currentWhere` requires `doneAt is
@@ -3645,7 +3645,7 @@ export const runRowLine = (
 /**
  * The four tiers a waiting row can fall in. Four of the five views of the
  * member's workflows list ({@link WorkflowsListView}) are these; `done`
- * (Recent) is not a tier because it is a window over what left the lists
+ * (Done or closed) is not a tier because it is a window over what left the lists
  * rather than a grouping of them. The labels the member reads are the
  * route's (`workflowsListViews.ts`); the object only needs the keys, because
  * it is the side that groups, sorts, and caps.
@@ -3660,11 +3660,11 @@ export type RunTier = typeof RunTier.Type;
 
 /**
  * The five views of the member's workflows list, in view-row order: what I
- * have started, what I can start, what a teammate is holding, what a person
- * has blocked, and what left my lists lately. Four are the tiers of
+ * have started, what someone else has started, what I can start, what a
+ * person has blocked, and what left my lists lately. Four are the tiers of
  * {@link tierOf}, and hold open runs only ({@link RunStatus}); the blocked
  * view (Blocked) holds blocks and nothing else, since a Shopify change is
- * never a to-do. `done` is the Recent window ({@link RecentItem}); the key
+ * never a to-do. `done` is the Done or closed window ({@link RecentItem}); the key
  * keeps its old name, the label is the route's (`workflowsListViews.ts`). The
  * view is the unit of a read: one read returns every view's count and one
  * view's rows. {@link OrdersIndexView} is the other view row, on the orders
@@ -3679,8 +3679,8 @@ export type RunTier = typeof RunTier.Type;
  */
 export const WorkflowsListView = Schema.Literals([
   "mine",
-  "upNext",
   "teammates",
+  "upNext",
   "blocked",
   "done",
 ]);
@@ -3692,7 +3692,7 @@ export const DEFAULT_WORKFLOWS_LIST_VIEW: WorkflowsListView = "mine";
  * task the viewer started; else any started task; else up next. Every row
  * here is an open run already: closed and done runs never reach a tier.
  *
- * "Mine" is by `startedByEmail`; the row keeps no member id. Removing a
+ * "Started by you" is by `startedByEmail`; the row keeps no member id. Removing a
  * member and re-adding the same address mints a **new** `Member.id` (the
  * member row on {@link D1_TABLES}), so an id taken before that would stop
  * matching the person still standing at the bench, while the email —
@@ -3702,7 +3702,7 @@ export const DEFAULT_WORKFLOWS_LIST_VIEW: WorkflowsListView = "mine";
  * this shop.
  *
  * Put back and reopen both clear `startedByEmail`, so they are the two ways a
- * run leaves Mine without being done.
+ * run leaves Started by you without being done.
  *
  * Here rather than beside the route's labels because the object tiers the
  * rows now: one read counts every tier and returns one of them, so the
@@ -3811,7 +3811,7 @@ export const reopenBlockedBy = (
 };
 
 /**
- * One entry of the member's Recent view: **what left my lists lately**, inside
+ * One entry of the member's Done or closed view: **what left my lists lately**, inside
  * {@link DONE_WINDOW_MS}, newest first. Two kinds:
  *
  * - `task`: a task one of the member's teams did, with its run for the
@@ -3819,8 +3819,8 @@ export const reopenBlockedBy = (
  *   only side that can see the downstream tasks.
  * - `closed`: a run one of the member's teams could see ({@link runIsVisibleTo})
  *   that closed ({@link runIsClosed}), with its reason. A closed run leaves
- *   Mine, Up next, Teammates and Blocked the moment it closes, and without this entry it would
- *   just vanish; Recent is where the member reads why ("Fulfilled in
+ *   Started by you, Started by others, Ready and Blocked the moment it closes, and without this entry it would
+ *   just vanish; Done or closed is where the member reads why ("Fulfilled in
  *   Shopify", "Order cancelled in Shopify"). It is a notice, not a to-do: the
  *   row offers nothing.
  */
@@ -3843,7 +3843,7 @@ export type RecentItem = typeof RecentItem.Type;
 
 /**
  * Provisional. The rows one view returns before it offers "Show more", and the
- * size of each "more". One number for every view: a member's own view (Mine) is
+ * size of each "more". One number for every view: a member's own view (Started by you) is
  * the one they scroll least and the one that must fit, and at ~50 px a row 25
  * is under two phone screens. A proposal, not a tuned figure.
  */
@@ -3956,9 +3956,9 @@ export const WorkflowsListData = Schema.Struct({
 export type WorkflowsListData = typeof WorkflowsListData.Type;
 
 /**
- * How far back Recent reaches ({@link RecentItem}). A day, not a shift: a
+ * How far back Done or closed reaches ({@link RecentItem}). A day, not a shift: a
  * mistake is noticed when the next card looks wrong, which can be after lunch
- * or the next morning, and a longer window would make Recent a history
+ * or the next morning, and a longer window would make Done or closed a history
  * the merchant's order page already is.
  */
 export const DONE_WINDOW_MS = 24 * 60 * 60 * 1000;
