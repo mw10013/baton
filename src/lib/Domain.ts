@@ -2080,7 +2080,8 @@ export type SeedOrdersInput = typeof SeedOrdersInput.Type;
  * the moment a workflow dies without reporting.
  *
  * `lastError` is the banner on the orders index and survives until the next
- * import starts; `lastCompletedAt` is "Last imported" and is written by
+ * import starts; `lastCompletedAt` is not on screen (a standing "Last
+ * imported" time read as a chore to keep fresh) and is written by
  * `onWorkflowComplete`, not by the stream, so a file that streams halfway and
  * then fails never claims a completed import.
  */
@@ -2206,8 +2207,8 @@ export const OrdersCursor = Schema.String.check(
  * handful of digits, so anything past 32 characters is not a search anyone
  * can satisfy, and letting it through would only widen the scan. `#` alone
  * (or `##`) is refused too: {@link normaliseOrderSearch} would reduce it to
- * `#`, a prefix every order name shares, and a chip reading `Order #` over
- * the whole list is not a search either.
+ * `#`, a prefix every order name shares, which matches the whole list and is
+ * not a search either.
  */
 export const OrderSearch = trimmedText("OrderSearch", 32).check(
   Schema.makeFilter(
@@ -2220,8 +2221,8 @@ export type OrderSearch = typeof OrderSearch.Type;
  * `1001`, `#1001`, ` #1001 ` all mean the order named `#1001`. Shopify writes
  * `ShopOrder.name` with the `#`, the merchant reads the number off the admin
  * and may or may not type it, so the one normalisation lives here and both the
- * SQL and the route's chip call it — a chip that said `1001` while the query
- * matched `#1001` would be two facts where there is one.
+ * SQL and the route's no-match text call it — text that said `1001` while
+ * the query matched `#1001` would be two facts where there is one.
  */
 export const normaliseOrderSearch = (q: string): string =>
   `#${q.trim().replace(/^#+/u, "")}`;

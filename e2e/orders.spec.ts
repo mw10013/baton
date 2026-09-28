@@ -27,8 +27,8 @@ import { seedConfig, seedMembers } from "./seed";
  * so "enabled again" is the honest signal that the run finished — more honest
  * than waiting for rows, which start landing mid-stream.
  *
- * Both action buttons sit in the page's `primary-action` slot, which App Bridge
- * hoists out of the iframe into the admin title bar, so they are located on
+ * Both action buttons sit in the page's `secondary-actions` slot, which App
+ * Bridge hoists out of the iframe into the admin title bar, so they are located on
  * `page`, not `frame`, and driven through the hoisted helpers.
  *
  * The hoisted copy is the one to drive, and the only one this test names. The
@@ -54,36 +54,18 @@ test("orders screen imports open orders and lists them", async ({ page }) => {
   const sync = page.getByRole("button", { name: "Import open orders" });
   await expect.poll(() => hoistedEnabled(sync)).toBe(true);
 
-  /* The completion signal is a *new* `Last imported` timestamp, not the
-     transient "Importing…" text and not the button re-enabling. A sandbox
-     imports in seconds, so the in-flight state can come and go between polls,
-     and the button is momentarily enabled between the click and the state
-     update — both would pass without proving anything ran. Comparing the
-     timestamp against the one on screen beforehand is the only assertion that
-     can only be satisfied by a run that actually finished.
-
-     A shop that has never imported shows no line at all, so the text is read
-     through `count()` first: `textContent()` on a locator that matches
-     nothing does not reject, it waits — and with no action timeout
-     configured, it waits out the whole test. */
-  const status = frame.getByText(/^(?:Last imported|Importing)/u);
-  const statusText = async () =>
-    (await status.count()) > 0 ? await status.textContent() : null;
-  const before = await statusText();
-
+  /* The completion signal is the "Importing…" line appearing and then going,
+     the only import status the screen shows. Seeing it appear first is what
+     proves a run started: the button alone is enabled both before the click
+     and after the run. The run's 15-30s floor keeps the line on screen far
+     longer than the assertion's retry interval, so it cannot come and go
+     unseen. */
   await clickHoisted(sync);
 
-  await expect
-    .poll(
-      async () => {
-        const text = await statusText();
-        return (
-          text !== null && text.startsWith("Last imported") && text !== before
-        );
-      },
-      { timeout: 120_000 },
-    )
-    .toBe(true);
+  const importing = frame.getByText(/^Importing/u);
+  await expect(importing).toBeVisible({ timeout: 30_000 });
+  await expect(importing).toBeHidden({ timeout: 120_000 });
+  await expect.poll(() => hoistedEnabled(sync)).toBe(true);
 
   const rows = frame.locator("s-table-row");
   await expect(rows.first()).toBeVisible({ timeout: 30_000 });
@@ -157,8 +139,8 @@ test("the orders index names the team an open order is waiting on", async ({
 });
 
 /**
- * Order-number search: the field narrows the table to the one order, the chip
- * says a search is on, and removing it puts the rest of the list back. Two
+ * Order-number search: the field narrows the table to the one order, and
+ * emptying the field puts the rest of the list back. Two
  * orders are seeded because a filter that cannot hide anything proves nothing.
  */
 test("the orders index searches by order number and clears back to the list", async ({
@@ -195,33 +177,29 @@ test("the orders index searches by order number and clears back to the list", as
   await clickHoisted(appNavLink(page, "Orders"));
   await expect(frame.getByRole("link", { name: "#9302" })).toBeVisible();
 
-  /* The digits alone: `normaliseOrderSearch` supplies the `#`, which is what
-     the chip then shows back. Enter submits; the field does not debounce. */
-  await frame.getByRole("textbox", { name: "Order number" }).fill("9301");
-  await frame.getByRole("textbox", { name: "Order number" }).press("Enter");
+  /* The digits alone: `normaliseOrderSearch` supplies the `#`. Enter submits;
+     the field does not debounce. */
+  const search = frame.getByRole("searchbox", { name: "Order number" });
+  await search.fill("9301");
+  await search.press("Enter");
   await expect(frame.getByRole("link", { name: "#9301" })).toBeVisible();
   await expect(frame.getByRole("link", { name: "#9302" })).toHaveCount(0);
-  const chip = frame.getByRole("button", { name: "Order #9301", exact: true });
-  await expect(chip).toBeVisible();
+  await expect(search).toHaveValue("9301");
 
-  /* Removing the chip is the same write as clearing the field, so the list
-     comes back and the field empties with it. */
-  await chip.click();
+  /* Emptying the field is the search cleared, with no Enter: the list comes
+     back. */
+  await search.fill("");
   await expect(frame.getByRole("link", { name: "#9302" })).toBeVisible();
-  await expect(
-    frame.getByRole("textbox", { name: "Order number" }),
-  ).toHaveValue("");
 
   /* A number no order carries: the empty state names it rather than falling
      back to the filter copy. */
-  await frame.getByRole("textbox", { name: "Order number" }).fill("9999");
-  await frame.getByRole("textbox", { name: "Order number" }).press("Enter");
+  await search.fill("9999");
+  await search.press("Enter");
   await expect(
-    frame.getByText('No order matches "#9999".', { exact: false }),
+    frame.getByRole("heading", { name: "No order matches #9999" }),
   ).toBeVisible();
-  /* `button`, not `link`: an `s-link` with no `href` is an action, and that
-     is what it exposes to a screen reader. */
-  await frame.getByRole("button", { name: "Clear the search" }).click();
+
+  await search.fill("");
   await expect(frame.getByRole("link", { name: "#9302" })).toBeVisible();
 });
 
@@ -1099,10 +1077,9 @@ test("the needs row counts what its button shows", async ({ page }) => {
   await clickHoisted(appNavLink(page, "Orders"));
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
 
-  const search = frame.getByRole("textbox", { name: "Order number" });
+  const search = frame.getByRole("searchbox", { name: "Order number" });
   await search.fill("#950");
   await search.press("Enter");
-  await expect(frame.getByRole("button", { name: "Order #950" })).toBeVisible();
 
   const rows = frame.locator("s-table-row", { hasText: /#950\d/u });
   await expect(
@@ -1123,7 +1100,7 @@ test("the needs row counts what its button shows", async ({ page }) => {
   await expect(rows).toHaveCount(2);
 
   /* Fulfilled hides the open-only filters and drops a pressed need, keeping
-     the search and its chip; All brings the row back with the need cleared. */
+     the search; All brings the row back with the need cleared. */
   await frame.getByRole("button", { name: "Blocked · 1", exact: true }).click();
   await expect(rows).toHaveCount(1);
   await frame.getByRole("button", { name: "Fulfilled", exact: true }).click();
@@ -1132,7 +1109,7 @@ test("the needs row counts what its button shows", async ({ page }) => {
     .toBeNull();
   await expect(frame.getByText("Needs", { exact: true })).toHaveCount(0);
   await expect(frame.getByRole("combobox", { name: "Team" })).toHaveCount(0);
-  await expect(frame.getByRole("button", { name: "Order #950" })).toBeVisible();
+  await expect(search).toHaveValue("#950");
   await frame.getByRole("button", { name: "All", exact: true }).click();
   await expect(
     frame.getByRole("button", { name: "Anything", exact: true }),

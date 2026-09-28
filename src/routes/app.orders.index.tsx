@@ -101,8 +101,7 @@ const NEEDS: readonly FilterButton<Domain.OrderNeed>[] = [
  * (`Domain.OrderRow.waitingOn`), so neither can match there and every need
  * count would be zero. Pressing Fulfilled also drops the need and the team, or
  * the list would be filtered to nothing by a control that is no longer on
- * screen. The search chip moves to the Status row while the Needs row is
- * hidden: the search still applies, so the control to clear it stays.
+ * screen. The order-number search is outside these rows and stays.
  */
 const openOnlyFiltersShown = (value: Domain.OrdersStatus | null) =>
   value !== "fulfilled" && value !== "cancelled";
@@ -172,10 +171,11 @@ const needBadges = (row: Domain.OrderRow) =>
   ));
 
 /**
- * The import's whole status line. A shop that has never imported gets
- * nothing: the button beside it says what to do, and "Never imported" would
- * read as a fault on a shop whose orders all arrived by webhook, which is the
- * ordinary case after the first day.
+ * The import's whole status line: only while an import runs. At rest there is
+ * no line, not even a "Last imported" time: order webhooks keep the list
+ * current after the first import, so a standing timestamp would read as
+ * something the merchant has to keep fresh, and an old one would make a
+ * current list look stale.
  */
 const syncStatusText = (
   view: Domain.OrdersView | undefined,
@@ -183,13 +183,9 @@ const syncStatusText = (
 ) => {
   if (isError) return "Could not read import status.";
   if (view === undefined) return "Loading…";
-  if (view.syncState.inFlight)
-    return "Importing… this page updates as orders arrive.";
-  return view.syncState.lastCompletedAt === null ? null : (
-    <>
-      Last imported <LocalDateTime value={view.syncState.lastCompletedAt} />.
-    </>
-  );
+  return view.syncState.inFlight
+    ? "Importing… this page updates as orders arrive."
+    : null;
 };
 
 /**
@@ -374,8 +370,8 @@ function RouteComponent() {
   /**
    * The field's text while it is being typed. The URL is the filter; this is
    * the draft on the way to it, so a keystroke is not a navigation and not a
-   * read. It re-seeds whenever `q` changes from outside the field — the
-   * chip, "Clear the search", a back button — the same seeded-state shape
+   * read. It re-seeds whenever `q` changes from outside the field — "Clear
+   * the search", a back button — the same seeded-state shape
    * the workflow pages use for a loaded name.
    */
   const [searchDraft, setSearchDraft] = React.useState(q ?? "");
@@ -384,7 +380,8 @@ function RouteComponent() {
     setSeededSearch(q);
     setSearchDraft(q ?? "");
   }
-  const searchField = React.useRef<HTMLElementTagNameMap["s-text-field"]>(null);
+  const searchField =
+    React.useRef<HTMLElementTagNameMap["s-search-field"]>(null);
 
   const {
     data: view,
@@ -414,9 +411,10 @@ function RouteComponent() {
    * on the merchant's own action (a press-button click, a select change), and
    * a timer that navigated mid-number would page the table under the typing.
    * A no-op submit is dropped so re-blurring an unchanged field costs nothing.
+   * An emptied field submits at once (see the field's `onInput`).
    */
-  const submitSearch = () => {
-    const next = Option.getOrNull(decodeOrderSearch(searchDraft));
+  const submitSearch = (draft: string = searchDraft) => {
+    const next = Option.getOrNull(decodeOrderSearch(draft));
     if (next === q) return;
     setFilters({ q: next });
   };
@@ -499,8 +497,11 @@ function RouteComponent() {
   );
 
   /**
-   * Rendered twice: once into the page's `primary-action` slot, and once
-   * inside the empty state where it is the only thing to do. The slot has to
+   * Rendered twice: once into the page's `secondary-actions` slot, and once
+   * inside the empty state where it is the only thing to do and so primary.
+   * In the title bar it is secondary: importing is a first-day step and a
+   * repair when the list looks out of sync, not the page's routine action,
+   * and a primary button there reads as a chore to repeat. The slot has to
    * sit on the button itself — `s-page` hoists the slotted element into the
    * admin's title bar, and a wrapper element in the slot is dropped. Because
    * App Bridge hoists the slotted copy out of the iframe, the in-card twin is
@@ -509,8 +510,9 @@ function RouteComponent() {
    */
   const syncButton = (slotted: boolean) => (
     <s-button
-      {...(slotted ? { slot: "primary-action" as const } : {})}
-      variant="primary"
+      {...(slotted
+        ? { slot: "secondary-actions" as const }
+        : { variant: "primary" as const })}
       loading={syncing}
       disabled={!identified || syncing || syncInFlight}
       onClick={startSync}
@@ -562,29 +564,31 @@ function RouteComponent() {
           </s-banner>
         </s-box>
       );
+    /**
+     * A filtered list with nothing in it: centred like `emptyState`, since a
+     * lone line in the card's corner read as leftover text rather than the
+     * answer. The search names what it did not find, because the number the
+     * merchant typed is the whole question they asked; the filter copy
+     * answers a different one and would read as a non sequitur under a
+     * search that missed. No "Clear the search": the field's own clear
+     * control does that.
+     */
     if (orders.length === 0 && filtered)
       return (
         <s-box padding="base">
-          {/* The search names what it did not find, because the number the
-              merchant typed is the whole question they asked; the filter copy
-              answers a different one and would read as a non sequitur under a
-              search that missed. */}
-          {q === null ? (
-            <s-paragraph color="subdued">{emptyText(status, need)}</s-paragraph>
-          ) : (
-            <s-stack direction="inline" gap="small-300" alignItems="center">
-              <s-text color="subdued">
-                {`No order matches "${Domain.normaliseOrderSearch(q)}".`}
-              </s-text>
-              <s-link
-                onClick={() => {
-                  setFilters({ q: null });
-                }}
-              >
-                Clear the search
-              </s-link>
-            </s-stack>
-          )}
+          <s-grid justifyItems="center" paddingBlock="large-400">
+            <s-grid justifyItems="center" maxInlineSize="450px" gap="base">
+              {q === null ? (
+                <s-paragraph color="subdued">
+                  {emptyText(status, need)}
+                </s-paragraph>
+              ) : (
+                <s-heading>
+                  {`No order matches ${Domain.normaliseOrderSearch(q)}`}
+                </s-heading>
+              )}
+            </s-grid>
+          </s-grid>
         </s-box>
       );
     if (orders.length === 0) return emptyState();
@@ -697,24 +701,6 @@ function RouteComponent() {
     );
   };
 
-  /**
-   * The search chip: the one filter whose control does not show its own
-   * value at rest, so it says so here. It ends the Needs row, or the Status
-   * row while that one is hidden (`openOnlyFiltersShown`). No
-   * `accessibilityLabel`: the visible text is the accessible name, so a
-   * locator and a screen reader read the same string.
-   */
-  const searchChip = q !== null && (
-    <s-button
-      variant="tertiary"
-      onClick={() => {
-        setFilters({ q: null });
-      }}
-    >
-      {`Order ${Domain.normaliseOrderSearch(q)}`}
-    </s-button>
-  );
-
   const syncError = view?.syncState.lastError ?? null;
   const syncStatus = syncStatusText(view, ordersQuery.isError);
 
@@ -725,9 +711,8 @@ function RouteComponent() {
           missing here is the one these two banners are for. */}
       <QuotaBanners usage={usage} />
       {/* Unconditional, empty list included: the resource-index template keeps
-          the title-bar primary action and lets the empty state carry a second
-          copy, so "sync is top right" holds on the visit where it matters most
-          — a shop that has never synced has nothing else to do here.
+          the title-bar action and lets the empty state carry a second copy,
+          so "import is top right" holds on every visit.
           https://shopify.dev/docs/api/app-home/latest/patterns/templates/resource-index */}
       {syncButton(true)}
 
@@ -757,22 +742,30 @@ function RouteComponent() {
                   merchant arriving with an order in hand, not a facet crossed
                   with the others, and the placeholder is its own label. Width
                   capped like the team select, which fills whatever it is
-                  given. The chip that says a search is on is `searchChip`,
-                  on the row below. */}
+                  given. The field shows the search that is on, so no chip
+                  repeats it; clearing the field clears the search. */}
               <s-grid
                 gridTemplateColumns="minmax(0, 16rem)"
                 justifyContent="start"
               >
-                <s-text-field
+                {/* An emptied field is the search cleared, so it submits
+                    without waiting for Enter or blur: no half-typed number is
+                    in it to page the table under, and the field's own clear
+                    control leaves focus where it was. */}
+                <s-search-field
                   ref={searchField}
                   label="Order number"
                   labelAccessibilityVisibility="exclusive"
                   placeholder="Order number"
                   value={searchDraft}
                   onInput={(event) => {
-                    setSearchDraft(event.currentTarget.value);
+                    const draft = event.currentTarget.value;
+                    setSearchDraft(draft);
+                    if (draft === "") submitSearch(draft);
                   }}
-                  onBlur={submitSearch}
+                  onBlur={() => {
+                    submitSearch();
+                  }}
                 />
               </s-grid>
               <s-grid
@@ -792,7 +785,6 @@ function RouteComponent() {
                       });
                     }),
                   )}
-                  {!openOnlyFiltersShown(status) && searchChip}
                 </s-stack>
                 {openOnlyFiltersShown(status) && (
                   <>
@@ -803,7 +795,6 @@ function RouteComponent() {
                           setFilters({ need: value });
                         }),
                       )}
-                      {searchChip}
                     </s-stack>
                     <s-text color="subdued">Team</s-text>
                     {/* A select rather than press-buttons: the team list is
