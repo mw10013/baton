@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import { storageStatePath } from "../playwright.config";
 import {
   adminSessionFresh,
-  chromeProfile,
+  CHROME_PROFILE,
   refreshShopifyAuth,
 } from "../scripts/lib/shopify-playwright-auth.ts";
 import { gotoApp } from "./app";
@@ -48,7 +48,7 @@ setup("shopify admin auth", async () => {
   await Effect.runPromise(
     refreshShopifyAuth({
       output: storageStatePath,
-      profile: chromeProfile(),
+      profile: CHROME_PROFILE,
     }).pipe(
       Effect.tap((count) =>
         Console.log(`Wrote ${count.toString()} cookies to ${storageStatePath}`),

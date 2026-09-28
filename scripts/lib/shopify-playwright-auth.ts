@@ -88,8 +88,13 @@ export const readSafeStoragePassword = Effect.gen(function* () {
   ),
 );
 
-export const chromeProfile = () =>
-  process.env.SHOPIFY_CHROME_PROFILE ?? "Default";
+/**
+ * The Chrome profile directory the admin session is read from. Chrome names
+ * its first profile `Default`; another one (`Profile 1`, shown at
+ * chrome://version as Profile Path) is passed with the refresh script's
+ * `--profile`.
+ */
+export const CHROME_PROFILE = "Default";
 
 /**
  * How long an exported admin session is trusted before the setup re-reads

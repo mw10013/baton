@@ -7,9 +7,6 @@ export class SeedError extends Data.TaggedError("SeedError")<{
   readonly cause?: unknown;
 }> {}
 
-/** The shop the dev server serves and `pnpm seed` fills, unless `SEED_SHOP` names another. */
-export const DEFAULT_SEED_SHOP = "sandbox-shop-01.myshopify.com";
-
 /**
  * Posts the development fixture (`e2e/fixture.ts`, which documents the naming
  * and what each row exercises) to `/api/dev/seed` (`src/routes/api.dev.seed.ts`,

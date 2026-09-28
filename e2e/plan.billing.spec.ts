@@ -24,9 +24,9 @@ import { seedConfig } from "./seed";
  * card-not-found timeout. Solve it once in the headed window, or let the store
  * cool down, and rerun.
  *
- * Free of charge because `sandbox-shop-01` is a development store in the same
- * Partner organization as `baton-local`, which makes every public plan $0 for
- * it. It still moves the shared store's real subscription, so whatever plan
+ * Free of charge because the checkout's `SHOPIFY_DEV_STORE` (every
+ * `sandbox-shop-NN`) is a development store in the same Partner organization
+ * as `baton-local`, which makes every public plan $0 for it. It still moves the shared store's real subscription, so whatever plan
  * the store started on is restored in `finally`.
  *
  * The tier is read from the `max` of the home page's orders capacity meter:

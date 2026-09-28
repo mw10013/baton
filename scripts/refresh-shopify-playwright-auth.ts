@@ -5,16 +5,9 @@ import { Console, Effect } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 
 import {
-  chromeProfile,
+  CHROME_PROFILE,
   refreshShopifyAuth,
 } from "./lib/shopify-playwright-auth.ts";
-
-try {
-  process.loadEnvFile(".env.playwright");
-} catch (error) {
-  if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
-    throw error;
-}
 
 const command = Command.make(
   "refresh-shopify-playwright-auth",
@@ -24,9 +17,9 @@ const command = Command.make(
     ),
     profile: Flag.string("profile").pipe(
       Flag.withDescription(
-        "Chrome profile directory; defaults to SHOPIFY_CHROME_PROFILE or Default",
+        "Chrome profile directory (chrome://version → Profile Path)",
       ),
-      Flag.withDefault(chromeProfile()),
+      Flag.withDefault(CHROME_PROFILE),
     ),
     dryRun: Flag.boolean("dry-run").pipe(
       Flag.withDescription(

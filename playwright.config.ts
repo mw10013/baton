@@ -1,6 +1,8 @@
 import { defineConfig } from "@playwright/test";
 import path from "path";
 
+import { localUrl, previewUrl } from "./e2e/devStore";
+
 export const storageStatePath = path.join(
   process.cwd(),
   "playwright",
@@ -10,12 +12,6 @@ export const storageStatePath = path.join(
 
 try {
   process.loadEnvFile(path.join(process.cwd(), ".env"));
-} catch (_error) {
-  void _error;
-}
-
-try {
-  process.loadEnvFile(path.join(process.cwd(), ".env.playwright"));
 } catch (_error) {
   void _error;
 }
@@ -61,7 +57,7 @@ export default defineConfig({
       testMatch: ["**/*.setup.ts"],
       use: {
         channel: "chrome",
-        baseURL: process.env.SHOPIFY_PREVIEW_URL,
+        baseURL: previewUrl(),
       },
     },
     {
@@ -75,7 +71,7 @@ export default defineConfig({
       dependencies: ["setup"],
       use: {
         channel: "chrome",
-        baseURL: process.env.SHOPIFY_PREVIEW_URL,
+        baseURL: previewUrl(),
         storageState: storageStatePath,
       },
     },
@@ -96,7 +92,7 @@ export default defineConfig({
       testMatch: ["**/*.member.spec.ts"],
       use: {
         channel: "chrome",
-        baseURL: `http://localhost:${process.env.PORT ?? "3000"}`,
+        baseURL: localUrl(),
         storageState: { cookies: [], origins: [] },
       },
     },
@@ -111,7 +107,7 @@ export default defineConfig({
       testMatch: ["**/*.admin.spec.ts"],
       use: {
         channel: "chrome",
-        baseURL: `http://localhost:${process.env.PORT ?? "3000"}`,
+        baseURL: localUrl(),
         storageState: { cookies: [], origins: [] },
       },
     },
@@ -133,7 +129,7 @@ export default defineConfig({
       use: {
         channel: "chrome",
         headless: false,
-        baseURL: process.env.SHOPIFY_PREVIEW_URL,
+        baseURL: previewUrl(),
         storageState: storageStatePath,
       },
     },

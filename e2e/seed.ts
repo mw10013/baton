@@ -1,29 +1,15 @@
-/**
- * Local endpoint URL from `PORT` in `.env` and the shop domain derived from
- * `SHOPIFY_PREVIEW_URL` in `.env.playwright` (`/store/<handle>/…` →
- * `<handle>.myshopify.com`).
- */
+import { devShop, localUrl } from "./devStore";
+
+/** The local endpoint and the shop to seed, from {@link localUrl} and {@link devShop}. */
 export interface SeedConfig {
   readonly appUrl: string;
   readonly shop: string;
 }
 
-export const seedConfig = (): SeedConfig => {
-  const port = process.env.PORT;
-  const preview = process.env.SHOPIFY_PREVIEW_URL;
-  const handle =
-    preview && URL.canParse(preview)
-      ? new URL(preview).pathname.split("/")[2]
-      : undefined;
-  if (!port || !handle)
-    throw new Error(
-      "Seed e2e requires PORT in .env plus SHOPIFY_PREVIEW_URL in .env.playwright.",
-    );
-  return {
-    appUrl: `http://localhost:${port}`,
-    shop: `${handle}.myshopify.com`,
-  };
-};
+export const seedConfig = (): SeedConfig => ({
+  appUrl: localUrl(),
+  shop: devShop(),
+});
 
 /** A member to seed, by email. */
 export type SeedMember = string;

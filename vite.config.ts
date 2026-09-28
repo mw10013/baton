@@ -60,6 +60,14 @@ const config = defineConfig({
      * `allowedHosts` still guards the host check either way.
      */
     host: "127.0.0.1",
+    /**
+     * Fail when `PORT` is taken instead of moving to the next free port: the
+     * Shopify CLI proxy keeps dialing `PORT` (it passes it in as
+     * `BACKEND_PORT`), so a silent move serves the app on a port nothing
+     * reaches. Two checkouts (git worktrees) given the same `PORT` then fail
+     * loudly at startup.
+     */
+    strictPort: true,
     allowedHosts,
   },
   // `vite-tsconfig-paths` should cover `@/*`, but Vite's dependency scan / SSR pre-bundling

@@ -7,8 +7,10 @@
  * The server is `pnpm app:dev` (the Shopify CLI, which runs `pnpm dev`), never
  * `pnpm dev` alone: `automatically_update_urls_on_dev` points the app at this
  * session's tunnel, and the admin cannot load the embedded app without it.
- * Its `--config` and `--store` are read from the `app:dev` script, so that
- * script stays the one definition of how the server starts.
+ * Its `--config` is read from the `app:dev` script, so that script stays the
+ * one definition of how the server starts; the store is `SHOPIFY_DEV_STORE`
+ * in `.env`, which `app:dev` passes as `--store`, so each checkout (git
+ * worktree) serves its own store.
  *
  * Where the server runs, decided by {@link placeServer}; the first rule that
  * applies wins:
@@ -93,10 +95,14 @@ const loadConfig = Effect.gen(function* () {
     yield* readText("package.json"),
   )).scripts["app:dev"];
   const appConfig = /--config\s+(?<config>\S+)/u.exec(appDev)?.groups?.config;
-  const store = /--store\s+(?<store>[a-z0-9-]+)/u.exec(appDev)?.groups?.store;
-  if (appConfig === undefined || store === undefined)
+  if (appConfig === undefined)
     return yield* new ConfigError({
-      message: `the app:dev script must pass --config and --store: ${appDev}`,
+      message: `the app:dev script must pass --config: ${appDev}`,
+    });
+  const store = process.env.SHOPIFY_DEV_STORE;
+  if (store === undefined || store === "")
+    return yield* new ConfigError({
+      message: "SHOPIFY_DEV_STORE is missing from .env",
     });
   const clientId = /^client_id\s*=\s*"(?<clientId>[^"]+)"/mu.exec(
     yield* readText(appConfig),

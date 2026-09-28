@@ -1,10 +1,12 @@
 name = "baton"
 roles = ["frontend", "backend"]
 webhooks_path = "/webhooks/app/uninstalled"
-# Must equal PORT in .env: Shopify CLI proxies to this port and passes it to the
-# dev command as PORT, but `pnpm dev` sources .env afterwards and overwrites it --
-# so a mismatch leaves vite listening on one port while the proxy dials the other.
-port = 3800
+# No `port`: `pnpm app:dev` starts the CLI with BACKEND_PORT=$PORT from .env,
+# which the CLI reads before this file's `port`, proxies to, and passes to the dev
+# command as PORT. So .env is the one place the port is written, and each
+# checkout (git worktree) can use its own without editing this tracked file. The
+# file has no env interpolation, and a hard-coded port would collide between two
+# checkouts' `shopify app dev` sessions.
 
 [commands]
 # Why this command uses `env CLOUDFLARE_INCLUDE_PROCESS_ENV=true`:

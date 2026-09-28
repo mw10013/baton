@@ -32,6 +32,7 @@ import {
 } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import { checkoutKind } from "./lib/worktree.ts";
 import * as ShopifyDocs from "./refs-shopify-docs.ts";
 
 interface VersionSource {
@@ -1237,6 +1238,20 @@ const fetchCommand = Command.make(
     ),
   },
   Effect.fn(function* ({ all, names }) {
+    /**
+     * Only the main checkout fetches. A linked worktree's `refs` is a symlink
+     * to the main checkout's, so a fetch there replaces the ref for every
+     * checkout, pinned to the linked worktree's `package.json`, which may be
+     * ahead of `main`'s. A dependency bump on a branch reaches `refs` when it
+     * is merged and fetched on `main`.
+     */
+    if ((yield* checkoutKind.pipe(Effect.mapError(toUserError))).linked) {
+      yield* new CliError.UserError({
+        cause: "linked worktree",
+        userMessage:
+          "refs is shared with the main checkout: run refs fetch there",
+      });
+    }
     if (!all && names.length === 0) {
       yield* new CliError.UserError({
         cause: "no refs named",
