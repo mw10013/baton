@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Effect, Option, Schema } from "effect";
 
 import { runCommand } from "./command.ts";
 
@@ -62,6 +62,30 @@ export const processInfo = (paneId: string) =>
       idle: info.foreground_process_group_id === info.shell_pid,
       processes: info.foreground_processes,
     })),
+  );
+
+/**
+ * The workspace Herdr has open on the checkout at `path`, from
+ * `worktree list`, which answers for the main checkout and every linked
+ * worktree of its repository. None when no workspace is open on it.
+ */
+export const checkoutWorkspace = (path: string) =>
+  herdr(
+    ["worktree", "list", "--cwd", path],
+    Schema.Struct({
+      worktrees: Schema.Array(
+        Schema.Struct({
+          path: Schema.String,
+          open_workspace_id: Schema.optional(Schema.NullOr(Schema.String)),
+        }),
+      ),
+    }),
+  ).pipe(
+    Effect.map(({ worktrees }) =>
+      Option.fromNullishOr(
+        worktrees.find((worktree) => worktree.path === path)?.open_workspace_id,
+      ),
+    ),
   );
 
 const Tab = Schema.Struct({ tab_id: Schema.String, label: Schema.String });

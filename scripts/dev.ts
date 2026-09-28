@@ -18,16 +18,22 @@
  * 1. A `shopify app dev` already serving this checkout, wherever it runs, is
  *    adopted: `start` leaves it running, `stop` and `reset` stop it, whoever
  *    started it. It is found by process and working directory, not by label.
- * 2. Inside Herdr, typed by a person (a TTY) with no tab labelled `server`:
- *    the caller's tab becomes the `server` tab and the server runs in the
- *    caller's pane, in the foreground.
+ * Inside Herdr, the server belongs to the checkout's workspace: the one Herdr
+ * has open on this checkout (`herdr worktree list`), which for a linked
+ * worktree is not the caller's when the command is run from another
+ * checkout's workspace. With none open, the caller's workspace.
+ *
+ * 2. Inside Herdr, typed by a person (a TTY) in the checkout's workspace with
+ *    no tab labelled `server`: the caller's tab becomes the `server` tab and
+ *    the server runs in the caller's pane, in the foreground.
  * 3. Inside Herdr, typed by a person in the `server` tab: the caller's pane,
  *    in the foreground.
- * 4. Inside Herdr otherwise (an agent, or a person typing in another tab): an
- *    idle pane of the `server` tab, preferring the pane a `reset` just
- *    stopped, then layout order; a new split when none is idle; a new tab
- *    labelled `server` when there is none. It never types into a busy pane,
- *    and never renames an agent's tab.
+ * 4. Inside Herdr otherwise (an agent, a person typing in another tab, or a
+ *    caller in another workspace): an idle pane of the checkout workspace's
+ *    `server` tab, preferring the pane a `reset` just stopped, then layout
+ *    order; a new split when none is idle; a new tab labelled `server` when
+ *    there is none. It never types into a busy pane, and never renames an
+ *    agent's tab.
  * 5. Outside Herdr, typed by a person: the caller's terminal, in the
  *    foreground.
  * 6. Otherwise: a detached background process logging to `logs/local-cli.log`.
@@ -394,16 +400,27 @@ const idlePaneIn = (tabId: string, preferred: Option.Option<string>) =>
 /** Where a new server runs: rules 2 to 6 of the module JSDoc (rule 1, adoption, is the caller's). */
 const placeServer = (preferred: Option.Option<string>) =>
   Effect.gen(function* () {
-    const workspaceId = process.env.HERDR_WORKSPACE_ID;
+    const callerWorkspaceId = process.env.HERDR_WORKSPACE_ID;
     const tabId = process.env.HERDR_TAB_ID;
-    if (!Herdr.inHerdr() || workspaceId === undefined || tabId === undefined)
+    if (
+      !Herdr.inHerdr() ||
+      callerWorkspaceId === undefined ||
+      tabId === undefined
+    )
       return isTty()
         ? ({ _tag: "Foreground" } as const)
         : ({ _tag: "Background" } as const);
+    const workspaceId = Option.getOrElse(
+      yield* Herdr.checkoutWorkspace(ROOT).pipe(
+        Effect.orElseSucceed(() => Option.none<string>()),
+      ),
+      () => callerWorkspaceId,
+    );
+    const inCallerWorkspace = workspaceId === callerWorkspaceId;
     const serverTab = (yield* Herdr.listTabs(workspaceId)).find(
       (tab) => tab.label === SERVER_TAB,
     );
-    if (isTty() && serverTab === undefined) {
+    if (inCallerWorkspace && isTty() && serverTab === undefined) {
       yield* Herdr.renameTab(tabId, SERVER_TAB);
       yield* Console.log(`this tab is now the "${SERVER_TAB}" tab`);
       return { _tag: "Foreground" } as const;
