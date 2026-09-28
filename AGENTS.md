@@ -8,7 +8,7 @@
 - Status, flag and role predicates are `Domain` functions, never inline comparisons in routes or the object (`scripts/rules-lint.ts`, run by `pnpm lint`, refuses them).
 - A JSDoc must carry its reasoning inline and never reference files under `docs/` — research docs go stale and get deleted. External URLs are acceptable. A `refs/` path is acceptable because `refs/` is pinned to the dependency versions in use (`pnpm refs:check`); cite the file and, if needed, a heading or symbol name, never a line number, which does not survive a version bump.
 - Do not git commit unless you are explicitly instructed.
-- In the main checkout, commit to `main`. In a linked worktree, commit to that worktree's branch (`wt/NN`) and never check out `main` there; merging is done from the main checkout. Do not create other branches.
+- In the main checkout, commit to `main`. In a linked worktree, commit to that worktree's branch (`wt-NN`) and never check out `main` there; merging is done from the main checkout. Do not create other branches.
 - Write replies, comments, and docs in plain, direct prose: no flourishes, hedging, or ornamental phrasing.
 
 ## Project
@@ -19,10 +19,10 @@
 
 ## Worktrees
 
-Each checkout is a slot with its own branch, port and Shopify dev store. The main checkout is slot 01: `main`, port 3800, `sandbox-shop-01`. A linked worktree is slot `NN`: branch `wt/NN`, port `3799+NN`, store `sandbox-shop-NN`, Herdr workspace `baton-NN`. `PORT` and `SHOPIFY_DEV_STORE` in `.env` say which slot you are in; every script, the Playwright config and the Shopify CLI (through `BACKEND_PORT`) read them from there.
+Each git worktree has its own branch, port and Shopify dev store, all named by one index: the main worktree is 0 (`main`, port 3800, `sandbox-shop-00`); linked worktree `NN` is `wt-NN` (branch, folder and Herdr workspace), port `3800+NN`, store `sandbox-shop-NN`. `PORT` and `SHOPIFY_DEV_STORE` in `.env` say which worktree you are in; every script, the Playwright config and the Shopify CLI (through `BACKEND_PORT`) read them from there.
 
-- Create a slot from the main checkout: `herdr worktree create --branch wt/NN --label baton-NN`, then in it `pnpm worktree:init --port <port> --store sandbox-shop-NN` and `pnpm dev:start --seed`.
-- Before a new task in a slot: `git merge --ff-only main`.
+- `docs/worktrees-runbook.md` is the procedure: creating a linked worktree, the git cycle (`git merge --ff-only main` to start a task, `git rebase main` to take in `main`, `git merge --ff-only wt-NN` in the main worktree to merge back), and the rules for agents.
+- In a linked worktree, do not merge into `main`, push, or touch another worktree's server.
 - `refs` in a linked worktree is a symlink to the main checkout's `refs/`; `pnpm refs fetch` runs only in the main checkout.
 
 ## Port Configuration
@@ -67,7 +67,7 @@ Downloaded source code of libraries are in `refs/` for reference.
 
 ```bash
 pnpm app:dev            # Start dev server via Shopify CLI (runs pnpm dev internally)
-pnpm worktree:init      # Prepare a linked worktree: .env, refs link, install, local D1 (--port, --store)
+pnpm worktree:init      # Prepare a linked worktree: .env, refs link, install, local D1 (--index NN)
 pnpm dev:start          # Start the dev server, or adopt the running one; install on the dev store if needed (--seed to seed)
 pnpm dev:status         # Report the dev server: where it runs, port, tunnel, ShopSession (--json)
 pnpm dev:stop           # Stop the dev server wherever it runs

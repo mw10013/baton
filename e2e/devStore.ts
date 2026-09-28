@@ -21,7 +21,7 @@ export const localUrl = () => `http://localhost:${required("PORT")}`;
 export const devShop = () => `${required("SHOPIFY_DEV_STORE")}.myshopify.com`;
 
 /** `handle` in `shopify.app.toml`, the app's path segment in the admin. */
-const appHandle = () => {
+export const appHandle = () => {
   const handle = /^handle\s*=\s*"(?<handle>[^"]+)"/mu.exec(
     readFileSync("shopify.app.toml", "utf8"),
   )?.groups?.handle;

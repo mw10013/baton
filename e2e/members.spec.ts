@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import * as Domain from "@/lib/Domain";
 
-import { clickHoisted, gotoApp } from "./app";
+import { appNavLink, clickHoisted, gotoApp } from "./app";
 import { seedConfig, seedMembers } from "./seed";
 
 /**
@@ -35,7 +35,7 @@ test("members screen adds, staffs, normalizes, and removes a member", async ({
      is ambiguous; scope to the modal in play. */
   const addModal = frame.locator("#add-member");
   const editModal = frame.locator("#edit-member-teams");
-  await clickHoisted(page.getByRole("link", { name: "Members", exact: true }));
+  await clickHoisted(appNavLink(page, "Members"));
   await expect(frame.locator('s-page[heading="Members"]')).toBeVisible();
   await expect(frame.getByText(EMPTY_STATE)).toBeVisible();
 
@@ -111,7 +111,7 @@ test("adding a member past the included seats succeeds and the home tile says it
   await expect(
     frame.getByText(/past your plan's included seats/u),
   ).toBeVisible();
-  await clickHoisted(page.getByRole("link", { name: "Members", exact: true }));
+  await clickHoisted(appNavLink(page, "Members"));
   await expect(frame.locator('s-page[heading="Members"]')).toBeVisible();
   await expect(frame.getByText(seeded[0] ?? "", { exact: true })).toBeVisible();
 

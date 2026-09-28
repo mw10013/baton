@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 /**
- * `pnpm worktree:init --port <port> --store <store>`: prepares a linked
- * worktree (created with `herdr worktree create --branch wt/NN`) to run its
- * own dev server beside the main checkout's. A slot is a checkout, a port and
- * a dev store: `wt/02` serves `sandbox-shop-02` on 3801, the main checkout
- * serves `sandbox-shop-01` on 3800. The model is in `scripts/lib/worktree.ts`.
+ * `pnpm worktree:init --index <N>`: prepares linked worktree `wt-NN` (created
+ * with `herdr worktree create --branch wt-NN`) to run its own dev server
+ * beside the main checkout's. The index names everything else
+ * ({@link worktreeEnv}): `wt-01` serves `sandbox-shop-01` on 3801, the main
+ * checkout (index 0) serves `sandbox-shop-00` on 3800.
  *
  * Idempotent: a file that exists is verified, never rewritten, and a second
  * run only checks. Steps, in order:
  *
- * 1. Refuse the main checkout, and a port or store another checkout's `.env`
- *    already holds.
+ * 1. Refuse the main checkout, a branch other than `wt-NN`, and a port or
+ *    store another checkout's `.env` already holds.
  * 2. `.env`: copied from the main checkout's (not `.env.example`, whose
  *    secrets are blank) with `PORT`, `BETTER_AUTH_URL` and `SHOPIFY_DEV_STORE`
- *    set for this slot.
+ *    set for this worktree.
  * 3. `refs`: a symlink to the main checkout's `refs/`.
  * 4. `pnpm install`.
  * 5. The D1 migrations, applied to this checkout's empty local D1: without
@@ -37,10 +37,13 @@ import {
   checkoutKind,
   checkoutPaths,
   claimConflicts,
+  currentBranch,
   envDisagreements,
   setEnvKeys,
-  slotEnv,
+  MAX_INDEX,
+  worktreeEnv,
   WorktreeError,
+  worktreeName,
 } from "./lib/worktree.ts";
 
 const fail = (message: string) => Effect.fail(new WorktreeError({ message }));
@@ -53,13 +56,23 @@ const readIfExists = (file: string) =>
       : undefined;
   });
 
-const init = Effect.fn(function* (port: number, store: string) {
+const init = Effect.fn(function* (index: number) {
   const fs = yield* FileSystem.FileSystem;
-  const expected = slotEnv(port, store);
+  if (!Number.isInteger(index) || index < 1 || index > MAX_INDEX)
+    return yield* fail(
+      `--index must be 1 to ${String(MAX_INDEX)}; 0 is the main checkout`,
+    );
+  const expected = worktreeEnv(index);
+  const name = worktreeName(index);
   const { linked, mainCheckout } = yield* checkoutKind;
   if (!linked)
     return yield* fail(
       "this is the main checkout: run worktree:init in a linked worktree",
+    );
+  const branch = yield* currentBranch;
+  if (branch !== name)
+    return yield* fail(
+      `this worktree is on ${branch === "" ? "a detached HEAD" : branch}, expected ${name} for --index ${String(index)}`,
     );
   const here = process.cwd();
 
@@ -84,7 +97,7 @@ const init = Effect.fn(function* (port: number, store: string) {
     const disagreements = envDisagreements(env, expected);
     if (disagreements.length > 0)
       return yield* fail(
-        `.env disagrees with --port/--store; fix it by hand:\n${disagreements.join("\n")}`,
+        `.env disagrees with --index; fix it by hand:\n${disagreements.join("\n")}`,
       );
     yield* Console.log("ok    .env verified");
   }
@@ -120,24 +133,21 @@ const init = Effect.fn(function* (port: number, store: string) {
   yield* Console.log("ok    local D1 migrations applied");
 
   return yield* Console.log(
-    `\nslot ready: port ${expected.PORT}, store ${store}. Next: pnpm dev:start --seed`,
+    `\n${name} ready: port ${expected.PORT}, store ${expected.SHOPIFY_DEV_STORE}. Next: pnpm dev:start --seed`,
   );
 });
 
 const initCommand = Command.make(
   "init",
   {
-    port: Flag.integer("port").pipe(
-      Flag.withDescription("This checkout's dev server port, e.g. 3801"),
-    ),
-    store: Flag.string("store").pipe(
+    index: Flag.integer("index").pipe(
       Flag.withDescription(
-        "This checkout's dev store handle, e.g. sandbox-shop-02",
+        "This worktree's index, 1 for wt-01: port 3800+index, store sandbox-shop-NN",
       ),
     ),
   },
-  ({ port, store }) =>
-    init(port, store).pipe(
+  ({ index }) =>
+    init(index).pipe(
       Effect.mapError(
         (error) =>
           new CliError.UserError({

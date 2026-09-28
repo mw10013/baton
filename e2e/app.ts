@@ -5,6 +5,7 @@ import {
   type Page,
 } from "@playwright/test";
 
+import { appHandle } from "./devStore";
 import { awaitHydration } from "./hydration";
 
 /**
@@ -158,6 +159,20 @@ export const hoistedEnabled = async (locator: Locator): Promise<boolean> =>
       !(el as HTMLButtonElement).disabled &&
       el.getAttribute("aria-disabled") !== "true",
   );
+
+/**
+ * A link of the app's own nav (`s-app-nav`), which App Bridge hoists into the
+ * admin sidebar beside Shopify's own links. Matched by name AND by pointing
+ * into this app (`/apps/<handle>/`), never by name alone: Shopify's sidebar has
+ * an Orders link too, and its name carries the store's order count ("Orders
+ * 88"), except on a store with no orders, where it is exactly "Orders". A
+ * name-only locator therefore passed on a store with orders and hit a strict
+ * mode violation on an empty one.
+ */
+export const appNavLink = (page: Page, name: string): Locator =>
+  page
+    .getByRole("link", { name, exact: true })
+    .and(page.locator(`a[href*="/apps/${appHandle()}/"]`));
 
 /**
  * Click an App-Bridge-hoisted control (e.g. an `s-app-nav` link). App Bridge

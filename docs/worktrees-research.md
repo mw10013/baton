@@ -1,5 +1,7 @@
 # Linked worktrees with Herdr — research
 
+> Superseded in places. "Slot" is now just "worktree" (main worktree, linked worktree `wt-NN`), and decision 10 replaced the numbering: main is index 0, linked worktrees count from 1, and branch, port and store all derive from the index. `docs/worktrees-runbook.md` is current.
+
 Goal: run several coding agents on Baton at once, each in its own Git linked worktree and Herdr workspace, each with its own dev server, port and Shopify dev store, all against the one `baton-local` app.
 
 Versions checked: herdr 0.9.0, Shopify CLI 4.7.0 (`refs/shopify-cli`, the installed binary), git 2.55.0. The pasted plan from another LLM was checked against the repo; where it and the repo disagree, the repo wins and the difference is called out.
@@ -123,16 +125,17 @@ Workflow (one long-lived worktree per slot, decision 8):
 
 ```
 # once, in the baton workspace (main checkout)
-herdr worktree create --branch wt/02 --label baton-02
+herdr worktree create --branch wt-02 --label wt-02
 # once, in the new workspace
 pnpm worktree:init --port 3801 --store sandbox-shop-02
 pnpm dev:start --seed
 
 # per task, in baton-02
 git merge --ff-only main        # start from current main
-# ... agent works, commits to wt/02 ...
+# ... agent works, commits to wt-02 ...
+git rebase main                 # if main moved meanwhile
 # per task, back in main
-git merge wt/02
+git merge --ff-only wt-02
 ```
 
 ## Decisions
@@ -144,31 +147,37 @@ git merge wt/02
 5. **Only the main checkout changes `refs`.** `pnpm refs fetch` refuses in a linked worktree and says to run it in main; `refs:check` runs anywhere. A dependency bump made on a branch reaches `refs` when it is merged and fetched on `main`.
 6. **`AGENTS.md` git rule becomes:** "In the main checkout, commit to `main`. In a linked worktree, commit to that worktree's branch; never check out `main` there. Merging is done from the main checkout."
 7. **`worktree:init` runs `pnpm install` but does not start the server.** `dev:start` already decides where the server runs, and keeping it separate keeps `init` safe to re-run.
-8. **One long-lived worktree per slot, branch `wt/NN`**, where `NN` is the store number (`wt/02` ↔ `sandbox-shop-02` ↔ port 3801), Herdr label `baton-NN`. The main checkout is slot 01 (`main`, `sandbox-shop-01`, 3800). Setup happens once per slot, not once per task. Options considered are below.
+8. **One long-lived worktree per slot, branch `wt-NN`**, where `NN` is the store number (`wt-02` ↔ `sandbox-shop-02` ↔ port 3801), Herdr label `wt-NN`. The main checkout is slot 01 (`main`, `sandbox-shop-01`, 3800). Setup happens once per slot, not once per task. Options considered are below.
 9. **`.env.playwright` is removed.** With `SHOPIFY_PREVIEW_URL` derived, its only other key was `SHOPIFY_CHROME_PROFILE`, which picks the Chrome profile whose Shopify cookies the Playwright `setup` project exports. It was never set (bang's copy does not have it either), so every run used Chrome's `Default`. The profile is now the constant `CHROME_PROFILE = "Default"` in `scripts/lib/shopify-playwright-auth.ts`; `node scripts/refresh-shopify-playwright-auth.ts --profile "Profile 1"` still covers a login kept in another Chrome profile. One fewer file per checkout.
+
+10. **Naming from one index (replaces 3 and the numbering in 8).** Decided from first principles, so the pattern carries to projects without Shopify:
+    - The main worktree is index 0 and keeps the name `main`: it is where merges, pushes and `refs` fetches happen, not a peer. Linked worktrees are interchangeable peers counted from 1: `wt-01`, `wt-02`. The earlier scheme (main as 01, first linked worktree `wt-02`) left a visible gap and an off-by-one in the port (`3799+NN`).
+    - Everything a worktree must not share derives from the index: branch, folder and Herdr label `wt-NN`, port `3800 + NN`, dev store `sandbox-shop-NN`. `worktree:init --index NN` takes only the number and refuses a branch that is not `wt-NN`.
+    - Dev stores stay a pool shared across projects (bang uses the same stores), named `sandbox-shop-NN`, not per project (`baton-dev-NN` was considered and rejected as too granular). Sharing is safe because each project is its own app on the store; only store data is shared. `sandbox-shop-00` was created for the main worktree; the first linked worktree moves to `sandbox-shop-01`, and `sandbox-shop-02` waits for a `wt-02`.
+    - Numbers, not names: they sort, give ports by arithmetic, and say nothing about the work, which changes task to task.
 
 ## Branch naming: options considered
 
 The names are generic, not feature names. The real choice underneath is whether a worktree lives for one task or for many.
 
-| Option               | Example              | Lifetime                                                                                                     | Per-task cost                                                                                                                                                                               | Trade-offs                                                                                                                                                                                                                                                                                                                                                 |
-| -------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A. Slot branch       | `wt/02`              | worktree kept across tasks; after each merge into `main`, the worktree fast-forwards to `main` and continues | none                                                                                                                                                                                        | `02` ties branch, Herdr label `baton-02`, store `sandbox-shop-02` and port 3801 together. `.wrangler` state, `node_modules`, the store install and the Herdr workspace survive between tasks. The branch never gets deleted, and its name says nothing about its content (which you want). Local data accumulates; `pnpm dev:reset` clears it when needed. |
-| B. Slot plus counter | `wt/02-1`, `wt/02-2` | worktree removed after each merge, a new one created per task                                                | `herdr worktree create`, `worktree:init`, `pnpm install`, `dev:start --seed` and the admin install/token exchange again, because `.wrangler` (and its `ShopSession`) goes with the checkout | Clean state every task. Counter has to be tracked or found from `git branch --list 'wt/02-*'`.                                                                                                                                                                                                                                                             |
-| C. Dated             | `wt/2026-09-27-a`    | as B                                                                                                         | as B                                                                                                                                                                                        | No counter to track, but two worktrees on one day need a suffix, and the name no longer points at a slot.                                                                                                                                                                                                                                                  |
+| Option               | Example              | Lifetime                                                                                                     | Per-task cost                                                                                                                                                                               | Trade-offs                                                                                                                                                                                                                                                                                                                                              |
+| -------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. Slot branch       | `wt-02`              | worktree kept across tasks; after each merge into `main`, the worktree fast-forwards to `main` and continues | none                                                                                                                                                                                        | `02` ties branch, Herdr label `wt-02`, store `sandbox-shop-02` and port 3801 together. `.wrangler` state, `node_modules`, the store install and the Herdr workspace survive between tasks. The branch never gets deleted, and its name says nothing about its content (which you want). Local data accumulates; `pnpm dev:reset` clears it when needed. |
+| B. Slot plus counter | `wt-02-1`, `wt-02-2` | worktree removed after each merge, a new one created per task                                                | `herdr worktree create`, `worktree:init`, `pnpm install`, `dev:start --seed` and the admin install/token exchange again, because `.wrangler` (and its `ShopSession`) goes with the checkout | Clean state every task. Counter has to be tracked or found from `git branch --list 'wt-02-*'`.                                                                                                                                                                                                                                                          |
+| C. Dated             | `wt/2026-09-27-a`    | as B                                                                                                         | as B                                                                                                                                                                                        | No counter to track, but two worktrees on one day need a suffix, and the name no longer points at a slot.                                                                                                                                                                                                                                               |
 
 Rules for A (chosen):
 
 - Before a new task, in the worktree: `git merge --ff-only main`. It fails loudly if the worktree has commits that were never merged, which is the case to catch.
-- Merge from the main checkout with `git merge wt/02` (fast-forward or merge commit both leave `wt/02` an ancestor of `main`, so the fast-forward above works either way).
-- A slot is removed only when you retire it: `herdr worktree remove --workspace <id>`, then `git branch -D wt/02`.
-- Git lets a branch be checked out in only one worktree, so `wt/02` cannot be opened twice by accident.
+- Merge from the main checkout with `git merge wt-02` (fast-forward or merge commit both leave `wt-02` an ancestor of `main`, so the fast-forward above works either way).
+- A slot is removed only when you retire it: `herdr worktree remove --workspace <id>`, then `git branch -D wt-02`.
+- Git lets a branch be checked out in only one worktree, so `wt-02` cannot be opened twice by accident.
 
 ## Verified by hand (2026-09-27)
 
 Slot 02 was set up by hand as `worktree:init` would, with the main checkout's server running on 3800 / `sandbox-shop-01` throughout.
 
-1. `herdr worktree create --workspace w1 --branch wt/02 --base main --label baton-02 --no-focus` created the checkout at `~/.herdr/worktrees/baton/wt-02` (`<directory>/<repo>/<branch with / as ->`) and workspace `baton-02`.
+1. `herdr worktree create --workspace w1 --branch wt/02 --base main --label baton-02 --no-focus` created the checkout at `~/.herdr/worktrees/baton/wt-02` (`<directory>/<repo>/<branch with / as ->`) and workspace `baton-02`. Both were renamed to `wt-02` afterwards.
 2. With `port` removed from `shopify.web.toml`, `BACKEND_PORT=3801 shopify app dev --config shopify.app.toml --store sandbox-shop-02` started Vite on `127.0.0.1:3801` behind its own tunnel. Both 3800 and 3801 answered 200 at the same time.
 3. A fresh checkout has no local D1 tables: the CLI's sample `app/uninstalled` webhook failed with `no such table: ShopSession` until `pnpm d1:migrate:apply` ran. `worktree:init` has to apply the migrations.
 4. Installing from the store 02 admin, with plan selection (`plan_handle=baton-basic`), wrote a `ShopSession` for `sandbox-shop-02` into the worktree's D1 only; main's D1 still holds only `sandbox-shop-01`.

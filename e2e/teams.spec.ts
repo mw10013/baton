@@ -1,6 +1,6 @@
 import { expect, type FrameLocator, test } from "@playwright/test";
 
-import { clickHoisted, gotoApp } from "./app";
+import { appNavLink, clickHoisted, gotoApp } from "./app";
 import { seedConfig, seedMembers } from "./seed";
 
 /**
@@ -47,7 +47,7 @@ test("teams screen creates, staffs, renames, and deletes a team", async ({
   await seedMembers(seedConfig(), [MEMBER_EMAIL]);
 
   const frame = await gotoApp(page);
-  await clickHoisted(page.getByRole("link", { name: "Teams", exact: true }));
+  await clickHoisted(appNavLink(page, "Teams"));
   await expect(frame.locator('s-page[heading="Teams"]')).toBeVisible();
   await expect(frame.getByText(EMPTY_STATE)).toBeVisible();
 
@@ -67,7 +67,7 @@ test("teams screen creates, staffs, renames, and deletes a team", async ({
   /* Uniqueness is a unique constraint, not a pre-check, so the
      duplicate has to come back as the field error in the dialog rather than
      as a raw constraint error. */
-  await clickHoisted(page.getByRole("link", { name: "Teams", exact: true }));
+  await clickHoisted(appNavLink(page, "Teams"));
   await expect(frame.getByRole("link", { name: TEAM })).toBeVisible();
   /* With teams present the Create button is the title-bar primary action,
      hoisted into the admin chrome by App Bridge (see `clickHoisted`); the
@@ -182,7 +182,7 @@ test("the team page drills in to the orders waiting on that team", async ({
   );
 
   const frame = await gotoApp(page);
-  await clickHoisted(page.getByRole("link", { name: "Teams", exact: true }));
+  await clickHoisted(appNavLink(page, "Teams"));
   await frame.getByRole("link", { name: DRILL_TEAM }).click();
   await expect(frame.locator(`s-page[heading="${DRILL_TEAM}"]`)).toBeVisible();
 

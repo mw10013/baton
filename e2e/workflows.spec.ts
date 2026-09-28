@@ -4,7 +4,7 @@ import { expect, test } from "@playwright/test";
 
 import * as Domain from "@/lib/Domain";
 
-import { clickHoisted, editorFrame, gotoApp } from "./app";
+import { appNavLink, clickHoisted, editorFrame, gotoApp } from "./app";
 import { awaitHydration } from "./hydration";
 import { seedConfig, seedMembers } from "./seed";
 
@@ -134,9 +134,7 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
 
   const frame = await gotoApp(page);
   const editor = editorFrame(page);
-  await clickHoisted(
-    page.getByRole("link", { name: "Workflows", exact: true }),
-  );
+  await clickHoisted(appNavLink(page, "Workflows"));
   await expect(frame.locator('s-page[heading="Workflows"]')).toBeVisible();
   await expect(frame.getByRole("link", { name: EXISTING })).toBeVisible();
 
@@ -341,9 +339,7 @@ test("turning on a workflow offers to include earlier unfulfilled orders, and in
   );
 
   const frame = await gotoApp(page);
-  await clickHoisted(
-    page.getByRole("link", { name: "Workflows", exact: true }),
-  );
+  await clickHoisted(appNavLink(page, "Workflows"));
   await frame.getByRole("link", { name: EXISTING }).click();
   await expect(frame.locator(`s-page[heading="${EXISTING}"]`)).toBeVisible();
 
@@ -362,7 +358,7 @@ test("turning on a workflow offers to include earlier unfulfilled orders, and in
      it the card carries no workflow picker at rest. Scoped to the section
      because another item's picker on the same page lists every workflow by
      name. */
-  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await clickHoisted(appNavLink(page, "Orders"));
   await frame.getByRole("link", { name: "#9101" }).click();
   await expect(frame.locator('s-page[heading="#9101"]')).toBeVisible();
   const band = frame.locator("s-section").filter({
@@ -400,9 +396,7 @@ test("creating a workflow with a taken tag is refused under the field and names 
   );
 
   const frame = await gotoApp(page);
-  await clickHoisted(
-    page.getByRole("link", { name: "Workflows", exact: true }),
-  );
+  await clickHoisted(appNavLink(page, "Workflows"));
   await expect(frame.locator('s-page[heading="Workflows"]')).toBeVisible();
 
   await clickHoisted(page.getByRole("button", { name: "Create workflow" }));
@@ -448,9 +442,7 @@ test("duplicate asks for a name and a tag, and the copy is off with the given ta
   );
 
   const frame = await gotoApp(page);
-  await clickHoisted(
-    page.getByRole("link", { name: "Workflows", exact: true }),
-  );
+  await clickHoisted(appNavLink(page, "Workflows"));
   await frame.getByRole("link", { name: SOURCE, exact: true }).click();
   await expect(frame.locator(`s-page[heading="${SOURCE}"]`)).toBeVisible();
 
@@ -474,9 +466,7 @@ test("duplicate asks for a name and a tag, and the copy is off with the given ta
   await expect(frame.locator(`s-page[heading="${SOURCE} copy"]`)).toBeVisible();
 
   /* The copy carries the tag the dialog collected, and is off. */
-  await clickHoisted(
-    page.getByRole("link", { name: "Workflows", exact: true }),
-  );
+  await clickHoisted(appNavLink(page, "Workflows"));
   const copyRow = frame
     .locator("s-table-row")
     .filter({ hasText: `${SOURCE} copy` });
@@ -517,9 +507,7 @@ test("editing the tag from the detail page writes immediately and starts no draf
   );
 
   const frame = await gotoApp(page);
-  await clickHoisted(
-    page.getByRole("link", { name: "Workflows", exact: true }),
-  );
+  await clickHoisted(appNavLink(page, "Workflows"));
   await frame.getByRole("link", { name: SOURCE, exact: true }).click();
   await expect(frame.locator(`s-page[heading="${SOURCE}"]`)).toBeVisible();
 
@@ -574,9 +562,7 @@ test("the workflows index keeps its status filter across the workflow page", asy
   );
 
   const frame = await gotoApp(page);
-  await clickHoisted(
-    page.getByRole("link", { name: "Workflows", exact: true }),
-  );
+  await clickHoisted(appNavLink(page, "Workflows"));
   await expect(frame.getByRole("link", { name: OFF })).toBeVisible();
   const status = () => new URL(page.url()).searchParams.get("status");
 

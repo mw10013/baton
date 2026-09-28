@@ -2,7 +2,7 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 
 import * as Domain from "@/lib/Domain";
 
-import { clickHoisted, gotoApp, hoistedEnabled } from "./app";
+import { appNavLink, clickHoisted, gotoApp, hoistedEnabled } from "./app";
 import { seedConfig, seedMembers } from "./seed";
 
 /**
@@ -38,12 +38,17 @@ import { seedConfig, seedMembers } from "./seed";
  * it: on a shop with orders the empty state is on screen for exactly as long
  * as it takes the first page to paint, and a locator captured in that window
  * points at a button that is about to be removed.
+ *
+ * The one e2e test that reads the store's own orders, not the seed: it
+ * requires the dev store (`SHOPIFY_DEV_STORE`) to have at least one open order
+ * in Shopify. A store with none imports nothing, and the wait for the first
+ * row times out.
  */
 test("orders screen imports open orders and lists them", async ({ page }) => {
   test.setTimeout(180_000);
 
   const frame = await gotoApp(page);
-  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await clickHoisted(appNavLink(page, "Orders"));
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
 
   const sync = page.getByRole("button", { name: "Import open orders" });
@@ -132,7 +137,7 @@ test("the orders index names the team an open order is waiting on", async ({
   );
 
   const frame = await gotoApp(page);
-  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await clickHoisted(appNavLink(page, "Orders"));
 
   /* The waiting-on column, on the way past: the seeded run's first task is on
      E2E Bench, so the row names the team that is holding the order. Located
@@ -187,7 +192,7 @@ test("the orders index searches by order number and clears back to the list", as
   );
 
   const frame = await gotoApp(page);
-  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await clickHoisted(appNavLink(page, "Orders"));
   await expect(frame.getByRole("link", { name: "#9302" })).toBeVisible();
 
   /* The digits alone: `normaliseOrderSearch` supplies the `#`, which is what
@@ -264,7 +269,7 @@ test("the merchant marks a task done, reopens it, and blocks the run", async ({
   );
 
   const frame = await gotoApp(page);
-  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await clickHoisted(appNavLink(page, "Orders"));
   await frame.getByRole("link", { name: "#9301" }).click();
   await expect(frame.locator('s-page[heading="#9301"]')).toBeVisible();
 
@@ -370,7 +375,7 @@ test("the merchant puts back a task a member started", async ({ page }) => {
   );
 
   const frame = await gotoApp(page);
-  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await clickHoisted(appNavLink(page, "Orders"));
   await frame.getByRole("link", { name: "#9304" }).click();
   await frame.getByRole("button", { name: "Manage" }).click();
 
@@ -429,7 +434,7 @@ test("the merchant cannot reopen a task whose next step is done", async ({
   );
 
   const frame = await gotoApp(page);
-  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await clickHoisted(appNavLink(page, "Orders"));
   await frame.getByRole("link", { name: "#9302" }).click();
   await frame.getByRole("button", { name: "Manage" }).click();
 
@@ -480,7 +485,7 @@ test("the merchant blocks a run with a reason, edits it, notes the run, and unbl
   );
 
   const frame = await gotoApp(page);
-  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await clickHoisted(appNavLink(page, "Orders"));
   await frame.getByRole("link", { name: "#9303" }).click();
   await frame.getByRole("button", { name: "Manage" }).click();
   /* No reason field on the card: the only one is in the closed modal. */
@@ -598,7 +603,7 @@ test("the order card puts the run's badges on the title line, Manage above its d
   );
 
   const frame = await gotoApp(page);
-  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await clickHoisted(appNavLink(page, "Orders"));
   await frame.getByRole("link", { name: "#9311" }).click();
   const item = frame.locator("s-section").filter({
     has: frame.getByRole("heading", { name: "E2E Board", exact: true }),
@@ -714,7 +719,7 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   );
 
   const frame = await gotoApp(page);
-  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await clickHoisted(appNavLink(page, "Orders"));
 
   /* The Needs row carries the button with a count, and the row's badge says
      the same thing. Scoped to the row for the badge, because the button above
@@ -849,7 +854,7 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   await expect(manage).toBeVisible();
 
   /* And the order has left the need: one live run, nothing left to choose. */
-  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await clickHoisted(appNavLink(page, "Orders"));
   await expect(
     frame
       .locator("s-table-row", { hasText: "#9401" })
@@ -1091,7 +1096,7 @@ test("the needs row counts what its button shows", async ({ page }) => {
   );
 
   const frame = await gotoApp(page);
-  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await clickHoisted(appNavLink(page, "Orders"));
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
 
   const search = frame.getByRole("textbox", { name: "Order number" });
@@ -1188,7 +1193,7 @@ test("the orders index keeps its filters and page across the order page", async 
   await seedTwoPages(TEAM);
 
   const frame = await gotoApp(page);
-  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await clickHoisted(appNavLink(page, "Orders"));
   const rows = frame.locator("s-table-row", { hasText: /#96\d\d/u });
   await frame.getByRole("button", { name: /^Making/u }).click();
   await frame
@@ -1263,7 +1268,7 @@ test("a filter change resets the page and replaces history", async ({
   await seedTwoPages(TEAM);
 
   const frame = await gotoApp(page);
-  await clickHoisted(page.getByRole("link", { name: "Orders", exact: true }));
+  await clickHoisted(appNavLink(page, "Orders"));
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
   const rows = frame.locator("s-table-row", { hasText: /#96\d\d/u });
   await frame.getByRole("button", { name: /^Making/u }).click();
