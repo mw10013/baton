@@ -205,7 +205,8 @@ const stepCount = (tasks: readonly Domain.RunTask[]) =>
 
 /**
  * Where the run is, as the card's one read-only answer: `Step 1 of 3 · Cut ·
- * since 3:10 PM`. Position and task names only: the team is inside Manage, on
+ * since 3:10 PM`, or `Step 2 of 3 · 3 tasks · since 3:10 PM` on a parallel
+ * step. Position and task names only: the team is inside Manage, on
  * its own line under the task, where a 64-character team name has room. It
  * replaced the inline task trail, which said the same thing in a notation the
  * merchant had to learn — a step number, bold for current, `✓` and `●` marks,
@@ -238,14 +239,14 @@ const nowLine = ({ run, tasks }: Domain.RunDetail): React.ReactNode => {
   /* Every remaining task unassigned, or an inconsistent run: the team issue
      rows below are the answer, not a position. */
   if (current.length === 0 || lowest === null) return null;
-  /* One name, then a count. On a parallel step every current task can carry a
-     name at `Domain.NAME_MAX_LENGTH`, and listing three of them runs the line
-     to four rows on a card meant to be glanced at. The Manage drawer lists
-     each task; this line says where the run is. */
+  /* The name, or on a parallel step a count. Every current task can carry a
+     name at `Domain.NAME_MAX_LENGTH`: listing three runs the line to four rows,
+     and `<name> and 2 more` reads as part of the name when the name is long.
+     The Manage drawer lists each task; this line says where the run is. */
   const names =
     current.length === 1
       ? current[0].name
-      : `${current[0].name} and ${formatNumber(current.length - 1)} more`;
+      : `${formatNumber(current.length)} tasks`;
   /** The step's start, not a task's: on a parallel step the earliest claim is when the run got here. */
   const since = current.reduce<number | null>((earliest, task) => {
     if (task.startedAt === null) return earliest;

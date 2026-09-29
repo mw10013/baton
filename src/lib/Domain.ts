@@ -682,16 +682,29 @@ export const TeamId = Schema.NonEmptyString.pipe(Schema.brand("TeamId"));
 export type TeamId = typeof TeamId.Type;
 
 /**
+ * The length of a trimmed team name: half of {@link NAME_MAX_LENGTH}. The
+ * schema check and the Create and Rename fields read this. A team name is a
+ * label printed in a badge, and the Orders screen's Waiting on column puts up
+ * to two of them side by side in one table cell; `s-badge` never wraps or
+ * truncates, so the cap is what bounds the column's width. 32 still admits
+ * the names a shop gives a bench or a crew ("Leather finishing, bench 3");
+ * 24 would refuse some of them. Task and workflow names keep 64 because they
+ * sit on their own line of a card, where they can wrap.
+ */
+export const TEAM_NAME_MAX_LENGTH = 32;
+
+/**
  * Trimmed on decode for the same structural reason as {@link Email}: the
  * `Team.name` check constraint rejects untrimmed text, and uniqueness
  * compares exactly, so a leading space would otherwise be the difference
  * between a duplicate the database refuses and one it silently accepts.
  * Case is *not* folded: a name is a label compared as typed, so "Sewing" and
  * "sewing" are two teams, and merchants write "Cut & Sew", not "cut & sew".
+ * At most {@link TEAM_NAME_MAX_LENGTH} characters.
  */
 export const TeamName = Schema.String.pipe(
   Schema.decodeTo(
-    Schema.NonEmptyString.check(Schema.isMaxLength(64)).pipe(
+    Schema.NonEmptyString.check(Schema.isMaxLength(TEAM_NAME_MAX_LENGTH)).pipe(
       Schema.brand("TeamName"),
     ),
     {

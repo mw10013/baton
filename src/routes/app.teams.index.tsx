@@ -1,5 +1,3 @@
-import type * as Domain from "@/lib/Domain";
-
 import * as React from "react";
 
 import { useAppBridge } from "@shopify/app-bridge-react";
@@ -10,6 +8,7 @@ import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
+import * as Domain from "@/lib/Domain";
 import { fieldError, mutationErrorMessage } from "@/lib/form";
 import { Repository } from "@/lib/Repository";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
@@ -301,7 +300,7 @@ function RouteComponent() {
                 label="Name"
                 name={field.name}
                 value={field.state.value}
-                maxLength={64}
+                maxLength={Domain.TEAM_NAME_MAX_LENGTH}
                 error={nameError ?? fieldError(field.state.meta.errors)}
                 onInput={(event) => {
                   setNameError(null);

@@ -93,12 +93,11 @@ const FINISHING = "Finishing";
 const RUSH = "Rush";
 export const RETIRED_TEAM_EMPTY = "Retired team (empty)";
 /**
- * Exactly 64 characters, `Domain.NAME_MAX_LENGTH`: the longest team name the
- * app accepts, so a task's team line has to wrap under a task name that is
- * just as long.
+ * Exactly 32 characters, `Domain.TEAM_NAME_MAX_LENGTH`: the longest team name
+ * the app accepts, so the Orders screen's Waiting on badges are judged at
+ * their widest.
  */
-const AT_CAP_TEAM =
-  "Hand stitching, edge painting and final inspection bench, room 2";
+const AT_CAP_TEAM = "Hand stitching and edge painting";
 
 export const members: readonly SeedMember[] = [LEAD, maker(1), maker(2)];
 
@@ -139,15 +138,37 @@ const TAG = {
   rush: "rush",
 } as const;
 
-/**
- * A name cut to exactly `Domain.NAME_MAX_LENGTH` (64) characters. `AT_CAP_TASK`
- * is longer than that behind every numbered prefix, and the cut lands inside
- * a word, so the name keeps all 64 characters after the seed trims it.
- */
-const atCap = (name: string) => name.slice(0, 64);
-
+/** Exactly 64 characters, `Domain.NAME_MAX_LENGTH`: the longest task name. */
 const AT_CAP_TASK =
-  "Condition, burnish and inspect the edges against the customer's reference";
+  "Condition and burnish the edges against the customer's reference";
+
+/**
+ * The at-cap workflow's tasks, in order. Distinct names a leather shop would
+ * write, so a screen that lists them reads as a real process; copies of one
+ * sentence made every row look the same and hid which one a line meant.
+ */
+const HEIRLOOM_TASKS = [
+  "Select and inspect the hide",
+  AT_CAP_TASK,
+  "Cut the cover panels to pattern",
+  "Skive the turn-ins",
+  "Emboss the monogram",
+  "Dye the cover",
+  "Fold and press the signatures",
+  "Punch the stitching holes",
+  "Sew the signatures onto tapes",
+  "Glue and round the spine",
+  "Hand-stitch the spine",
+  "Case in the text block",
+  "Paste down the endpapers",
+  "Press overnight",
+  "Paint the edges",
+  "Attach the ribbon marker",
+  "Wax and buff the cover",
+  "Check against the order",
+  "Wrap in tissue",
+  "Box and label",
+] as const;
 
 /** Exactly 64 characters: the longest workflow name, which the Manage drawer prints as its header. */
 const AT_CAP_WORKFLOW =
@@ -334,18 +355,17 @@ export const workflows: readonly SeedWorkflow[] = [
     tasks: [task("Cut", LEATHER), task("Attach ring", RETIRED_TEAM_EMPTY)],
   },
   {
-    // at the caps: `Domain.WorkflowLimits.maxTasks` tasks and every name at
-    // `Domain.NAME_MAX_LENGTH`, so the Manage drawer and the member run page
-    // are judged at their longest, not at three short tasks. One task, then
-    // three in parallel, then one per step.
+    // at the caps: `Domain.WorkflowLimits.maxTasks` tasks, the workflow name
+    // and one task name at `Domain.NAME_MAX_LENGTH`, and every other task on
+    // the at-cap team, so the Manage drawer and the member run page are
+    // judged at their longest, not at three short tasks. One task, then three
+    // in parallel (the at-cap task among them), then one per step.
     name: AT_CAP_WORKFLOW,
     tag: TAG.heirloom,
-    tasks: Array.from({ length: 20 }, (_, index) =>
-      task(
-        atCap(`${String(index + 1)}. ${AT_CAP_TASK}`),
-        index % 2 === 0 ? LEATHER : AT_CAP_TEAM,
-        { step: index <= 3 ? Math.min(index + 1, 2) : index - 1 },
-      ),
+    tasks: HEIRLOOM_TASKS.map((name, index) =>
+      task(name, index % 2 === 0 ? LEATHER : AT_CAP_TEAM, {
+        step: index <= 3 ? Math.min(index + 1, 2) : index - 1,
+      }),
     ),
   },
 ];

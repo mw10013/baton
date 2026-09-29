@@ -31,8 +31,14 @@ const ORDERS_PAGE_SIZE = 25;
  * no order number comes near the limit.
  */
 const decodeOrderSearch = Schema.decodeUnknownOption(Domain.OrderSearch);
-/** Caps the Waiting on cell, so a shop with many teams cannot widen the table without bound. */
-const TAG_BADGE_LIMIT = 3;
+/**
+ * Caps the Waiting on cell at two team badges and a `+n`. With
+ * `Domain.TEAM_NAME_MAX_LENGTH` this bounds the cell's width: two names at the
+ * cap are about 500px, where three pushed the table past the admin's content
+ * width. Three or more current teams on one order is a parallel step across
+ * three teams, rare enough that a count serves it.
+ */
+const TAG_BADGE_LIMIT = 2;
 
 /**
  * Keyed by the view, every filter and the page as well as the shop: each

@@ -885,3 +885,14 @@ describe("Domain.OrdersCursor", () => {
     strictEqual(decode("1700000000000:")._tag, "None");
   });
 });
+
+describe("Domain.TeamName", () => {
+  it("a team name is at most 32 characters, half a task name", () => {
+    const decode = Schema.decodeUnknownExit(Domain.TeamName);
+    strictEqual(Domain.TEAM_NAME_MAX_LENGTH, 32);
+    strictEqual(Domain.TEAM_NAME_MAX_LENGTH * 2, Domain.NAME_MAX_LENGTH);
+    strictEqual(decode("a".repeat(32))._tag, "Success");
+    strictEqual(decode(` ${"a".repeat(32)} `)._tag, "Success");
+    strictEqual(decode("a".repeat(33))._tag, "Failure");
+  });
+});

@@ -505,7 +505,7 @@ function RouteComponent() {
                 label="Name"
                 name={field.name}
                 value={field.state.value}
-                maxLength={64}
+                maxLength={Domain.TEAM_NAME_MAX_LENGTH}
                 error={nameError ?? fieldError(field.state.meta.errors)}
                 onInput={(event) => {
                   setNameError(null);
