@@ -22,9 +22,7 @@ const EDIT_TEAMS_MODAL = "edit-member-teams";
 const REMOVE_MODAL = "remove-member";
 
 const AddMemberInput = Schema.Struct({
-  email: Schema.String.check(
-    Schema.isNonEmpty({ message: "Email is required" }),
-  ),
+  email: Schema.String.check(Schema.isNonEmpty({ message: "Enter an email" })),
   teamIds: Schema.Array(Schema.String),
 });
 type AddMemberInput = typeof AddMemberInput.Type;
@@ -254,9 +252,9 @@ function RouteComponent() {
   });
 
   const failedMutation = [
-    { mutation: addMutation, fallback: "Could not add the member." },
-    { mutation: editMutation, fallback: "Could not update their teams." },
-    { mutation: deleteMutation, fallback: "Could not remove the member." },
+    { mutation: addMutation, fallback: "Couldn't add the member." },
+    { mutation: editMutation, fallback: "Couldn't update their teams." },
+    { mutation: deleteMutation, fallback: "Couldn't remove the member." },
   ].find(({ mutation }) => mutation.isError);
   const mutationError =
     failedMutation &&
@@ -315,9 +313,8 @@ function RouteComponent() {
               <s-stack alignItems="center" gap="small-300">
                 <s-heading>No members yet</s-heading>
                 <s-paragraph color="subdued">
-                  Add an email to grant access. Members sign in with it on the
-                  member area; put each one on a team, or they have nothing to
-                  do.
+                  Members sign in with their email. Put each one on a team, or
+                  they have nothing to do.
                 </s-paragraph>
               </s-stack>
               {addButton(false)}
@@ -336,7 +333,7 @@ function RouteComponent() {
                 setQuery("");
               }}
             >
-              Clear filters
+              Clear search
             </s-button>
           </s-stack>
         </s-box>
@@ -414,8 +411,8 @@ function RouteComponent() {
         {members.length > 0 && (
           <s-box padding="base" paddingBlockEnd="none">
             <s-paragraph color="subdued">
-              Members sign in with their email on the member area. Put each one
-              on a team, or they have nothing to do.
+              Members sign in with their email. Put each one on a team, or they
+              have nothing to do.
             </s-paragraph>
           </s-box>
         )}
@@ -466,7 +463,7 @@ function RouteComponent() {
                 <s-email-field
                   label="Email"
                   name={field.name}
-                  details="They'll sign in with this email on the member area. No Shopify account needed."
+                  details="They sign in with this email. No Shopify account needed."
                   value={field.state.value}
                   error={fieldError(field.state.meta.errors)}
                   onInput={(event) => {

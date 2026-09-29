@@ -145,10 +145,7 @@ function RouteComponent() {
   return (
     <s-page heading="Baton" inlineSize="large">
       <QuotaBanners usage={usage} />
-      <s-section
-        heading="Usage and capacity"
-        accessibilityLabel="Orders and member capacity"
-      >
+      <s-section heading="Usage and capacity">
         <s-stack gap="base">
           {/* `auto-fit` down to 300px: two tiles side by side where the
               embedded pane is wide enough for both, one column where it is
@@ -183,7 +180,7 @@ function RouteComponent() {
               detail={
                 membersOverBy > 0
                   ? `${formatNumber(membersOverBy)} past your plan's included seats ${membersOverBy === 1 ? "is" : "are"} billed at your plan's rate.`
-                  : "Members sign in with their email on the member area."
+                  : "Members sign in with their email."
               }
             />
           </s-grid>

@@ -236,7 +236,7 @@ function RouteComponent() {
         <s-box padding="base">
           <s-grid gap="base" justifyItems="center" paddingBlock="large-400">
             <s-grid justifyItems="center" maxInlineSize="450px" gap="base">
-              <s-heading>No item workflows yet</s-heading>
+              <s-heading>No workflows yet</s-heading>
               {createButton(false)}
             </s-grid>
           </s-grid>
@@ -246,7 +246,7 @@ function RouteComponent() {
       return (
         <s-box padding="base">
           <s-stack gap="base" alignItems="start">
-            <s-paragraph color="subdued">No item workflows match.</s-paragraph>
+            <s-paragraph color="subdued">No workflows match.</s-paragraph>
             <s-button
               variant="secondary"
               onClick={() => {
@@ -358,7 +358,6 @@ function RouteComponent() {
           <s-text-field
             label="Name"
             placeholder="e.g. Engraved ring"
-            details="You'll add the steps next."
             value={name}
             maxLength={Domain.NAME_MAX_LENGTH}
             {...(nameError === null ? {} : { error: nameError })}

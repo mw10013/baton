@@ -184,7 +184,7 @@ function RouteComponent() {
         return;
       }
       await shopify.modal.hide(DUPLICATE_MODAL);
-      shopify.toast.show(`Copied to “${result.workflow.name}”.`);
+      shopify.toast.show(`Copied to “${result.workflow.name}”`);
       await navigate({
         to: "/app/workflows/$workflowId/edit",
         params: { workflowId: result.workflow.id },

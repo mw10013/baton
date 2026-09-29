@@ -158,7 +158,7 @@ const syncStatusText = (
   data: Domain.OrdersIndexData | undefined,
   isError: boolean,
 ) => {
-  if (isError) return "Could not read import status.";
+  if (isError) return "Couldn't read import status.";
   if (data === undefined) return "Loading…";
   return data.syncState.inFlight
     ? "Importing… this page updates as orders arrive."
@@ -197,7 +197,7 @@ const emptyText = (
         ),
         Match.when("fulfilled", () => "No orders have been fulfilled yet."),
         Match.when("cancelled", () => "No cancelled orders."),
-        Match.when("all", () => "No orders stored."),
+        Match.when("all", () => "No orders yet."),
         Match.exhaustive,
       )
     : "No orders match these filters.";
@@ -414,9 +414,7 @@ function RouteComponent() {
       .then(() => invalidate())
       .catch((error: unknown) => {
         shopify.toast.show(
-          error instanceof Error
-            ? error.message
-            : "Could not start the import.",
+          error instanceof Error ? error.message : "Couldn't start the import.",
           { isError: true },
         );
       })
@@ -453,7 +451,7 @@ function RouteComponent() {
   const waitingOnBadges = (ids: readonly Domain.TeamId[]) => (
     <s-stack direction="inline" gap="small-300">
       {ids.slice(0, TAG_BADGE_LIMIT).map((id) => (
-        <s-badge key={id}>{teamName.get(id) ?? "Unknown team"}</s-badge>
+        <s-badge key={id}>{teamName.get(id) ?? "Deleted team"}</s-badge>
       ))}
       {ids.length > TAG_BADGE_LIMIT && (
         <s-text color="subdued">{`+${String(ids.length - TAG_BADGE_LIMIT)}`}</s-text>
@@ -525,7 +523,7 @@ function RouteComponent() {
           <s-banner tone="critical">
             {ordersQuery.error instanceof Error
               ? ordersQuery.error.message
-              : "Could not load orders."}
+              : "Couldn't load orders."}
           </s-banner>
         </s-box>
       );

@@ -100,7 +100,7 @@ export function StepFlow({
   readonly trigger?: React.ReactNode;
   readonly selectedTaskId?: string | null;
   readonly onSelectTask?: (taskId: string) => void;
-  /** The editor's "Add a task to this step" control, keyed by the step it adds to. */
+  /** The editor's "Add task" control, keyed by the step it adds to. */
   readonly renderStepFooter?: (step: number) => React.ReactNode;
   readonly footer?: React.ReactNode;
 }) {

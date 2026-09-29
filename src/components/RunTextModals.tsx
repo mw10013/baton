@@ -36,7 +36,6 @@ function TextModal({
   heading,
   label,
   labelHidden,
-  placeholder,
   saved,
   maxLength,
   pending,
@@ -50,7 +49,6 @@ function TextModal({
   readonly label: string;
   /** Hide the label visually when the heading already says it; screen readers still get it. */
   readonly labelHidden?: boolean;
-  readonly placeholder?: string;
   readonly saved: string;
   readonly maxLength: number;
   readonly pending: boolean;
@@ -111,7 +109,6 @@ function TextModal({
         {...(labelHidden === true
           ? { labelAccessibilityVisibility: "exclusive" as const }
           : {})}
-        {...(placeholder === undefined ? {} : { placeholder })}
         rows={6}
         value={value}
         disabled={pending}
@@ -180,7 +177,10 @@ export function RunNoteModal({
  * asks the question, naming the run as the member's row does ("Block <item>
  * on <order>?"), and the primary is a critical Block. Blocked, it rewrites
  * the reason and nothing else: there is no Block to press on a run that is
- * already held.
+ * already held. The field has no placeholder: it is free text and the label
+ * says what goes in, so a placeholder could only ask a question or give an
+ * instruction, and both are filler (`scripts/lib/rules-lint.ts` refuses a
+ * placeholder on any `s-text-area`).
  */
 export function BlockModal({
   id,
@@ -208,7 +208,6 @@ export function BlockModal({
           : `Block ${run.lineItemTitle} on ${run.orderName}?`
       }
       label="Reason"
-      placeholder="What is stopping this? Who needs to know?"
       saved={blocked ? (run.blockReason ?? "") : ""}
       maxLength={Domain.BLOCK_REASON_MAX_LENGTH}
       pending={pending}

@@ -25,7 +25,7 @@ test("an anonymous visitor is bounced from the member area to /login", async ({
 }) => {
   await gotoMember(page, "/shop");
   await expect(page).toHaveURL(/\/login$/u);
-  await expect(page.locator('s-page[heading="Log in"]')).toBeVisible();
+  await expect(page.locator('s-page[heading="Sign in"]')).toBeVisible();
 });
 
 /**

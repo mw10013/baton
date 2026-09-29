@@ -63,7 +63,7 @@ const decodeDeleteWorkflowResult = Schema.decodeUnknownPromise(
 const taskResultMessage = Match.typeTags<Domain.TaskResult, string | null>()({
   Ok: () => null,
   NotFound: () => "That task no longer exists. Reload the page.",
-  Limit: ({ limit }) => `A workflow can have at most ${String(limit)} tasks.`,
+  Limit: ({ limit }) => `A workflow can have ${String(limit)} tasks.`,
   TeamNotFound: () => "That team no longer exists. Choose another.",
 });
 
@@ -299,7 +299,7 @@ function RouteComponent() {
       setBanner(discardResultMessage(result));
       if (result._tag !== "Ok") return;
       hideModal(DISCARD_MODAL);
-      shopify.toast.show("Draft discarded.");
+      shopify.toast.show("Draft discarded");
       setSelectedTaskId(null);
       setAdding(null);
       await invalidate();
@@ -582,7 +582,7 @@ function RouteComponent() {
             openAdd(step);
           }}
         >
-          Add a task to this step
+          Add task
         </s-button>
       </s-stack>
     );
@@ -609,7 +609,7 @@ function RouteComponent() {
             openAdd(null);
           }}
         >
-          {tasks.length === 0 ? "Add the first step" : "Add a step"}
+          Add step
         </s-button>
       </s-stack>
     );

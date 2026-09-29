@@ -33,11 +33,11 @@ function RouteComponent() {
 
   return (
     <s-page heading="Your shops" inlineSize="small">
-      <s-section heading={email} accessibilityLabel="Your shops">
+      <s-section heading={email}>
         {shops.length === 0 ? (
           <s-paragraph color="subdued">
-            You do not have access to any shops yet. Ask your shop owner to add
-            your email in their Baton members list.
+            You don’t have access to any shops yet. Ask the merchant to add your
+            email on their Members page.
           </s-paragraph>
         ) : (
           <s-stack gap="base">

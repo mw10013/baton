@@ -53,7 +53,7 @@ export function DefaultErrorComponent({ error }: ErrorComponentProps) {
               variant="secondary"
               onClick={() => void navigate({ to: "/app" })}
             >
-              Back to app home
+              Back to Baton
             </s-button>
           )}
         </s-banner>

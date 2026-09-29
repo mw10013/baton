@@ -43,7 +43,7 @@ export const workflowResultMessage = Match.typeTags<
   TagTaken: tagTakenMessage,
   NotFound: () => "That workflow no longer exists.",
   Limit: ({ limit }) =>
-    `This shop has reached its limit of ${String(limit)} workflows.`,
+    `A shop can have ${String(limit)} workflows. Delete one to add another.`,
 });
 
 export const deleteWorkflowResultMessage = Match.typeTags<
@@ -73,9 +73,9 @@ export const neverApplied = (detail: {
  */
 export const APPLY_HEADING = "Apply changes?";
 export const APPLY_BODY =
-  "This workflow is turned on. Once you apply changes, they'll take effect immediately. Items already on it keep the tasks they started with.";
+  "This workflow is on, so the changes take effect now. Items already on it keep the tasks they started with.";
 export const DISCARD_HEADING = "Discard changes?";
-export const DISCARD_BODY = "Are you sure you want to discard these changes?";
+export const DISCARD_BODY = "Your unsaved changes will be lost.";
 export const TURN_OFF_HEADING = "Turn off workflow?";
 export const TURN_OFF_BODY =
   "New orders won't start this workflow. Items already on it keep going.";

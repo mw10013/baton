@@ -75,9 +75,39 @@ describe("a retired word stays off every merchant and member screen", () => {
     expect(hits(source)).toEqual([1, 3]);
   });
 
+  it("please, successfully, oops, sorry, click here and are you sure are retired in every slot", () => {
+    const source = [
+      'const a = "Please choose a team.";',
+      'const b = "Note saved successfully";',
+      "<s-paragraph>",
+      "  Oops, that did not work. Sorry.",
+      "</s-paragraph>",
+      '<s-link href="/app/teams">click here</s-link>',
+      'const c = "Note saved";',
+      'const d = "Are you sure you want to discard these changes?";',
+    ].join("\n");
+    expect(hits(source)).toEqual([1, 2, 4, 6, 8]);
+  });
+
   it("names the line and its text", () => {
     expect(
       RulesLint.retiredCopyHits('x;\nconst t = "Keep run";', false),
     ).toEqual([{ line: 2, text: 'const t = "Keep run";' }]);
+  });
+});
+
+describe("an s-text-area has a label and no placeholder", () => {
+  it("reads the opening tag across lines and leaves s-text-field alone", () => {
+    const source = [
+      "<s-text-area",
+      '  label="Reason"',
+      '  placeholder="What is stopping this?"',
+      "/>",
+      '<s-text-field label="Name" placeholder="e.g. Engrave" />',
+      '<s-text-area label="Note" rows={6} />',
+    ].join("\n");
+    expect(RulesLint.textAreaPlaceholderHits(source)).toEqual([
+      { line: 1, text: "<s-text-area" },
+    ]);
   });
 });

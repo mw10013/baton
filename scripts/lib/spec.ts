@@ -812,3 +812,118 @@ export const checkPinned = (
         `${symbol}, line ${String(row.line)}: no test titled "${row.pinnedBy}"`,
     );
 };
+
+/** One parsed row of the copy table on `CopySlot` in `src/lib/Screen.ts`. */
+export interface CopyRow {
+  readonly line: number;
+  readonly slot: string;
+  readonly example: string;
+}
+
+/**
+ * Read the copy table out of the JSDoc on `CopySlot` in `src/lib/Screen.ts`.
+ * The header is `slot | job | form | empty when | example | never`; `slot`
+ * is one of `slots`, each exactly once; every cell is non-empty. Fails with
+ * a message naming the line and the offending cell.
+ */
+export const parseCopyTable = (
+  source: string,
+  slots: readonly string[],
+): Result.Result<readonly CopyRow[], ParseError> =>
+  Result.flatMap(
+    firstTable(source, "CopySlot", [
+      "slot",
+      "job",
+      "form",
+      "empty when",
+      "example",
+      "never",
+    ]),
+    ({ body }) =>
+      Result.flatMap(
+        Result.all(
+          body.map(({ line, text }): Result.Result<CopyRow, ParseError> => {
+            const fail = (message: string) =>
+              Result.fail(
+                new ParseError({
+                  message: `CopySlot, line ${String(line)}: ${message}`,
+                }),
+              );
+            const values = cellsOf(text);
+            if (values.length !== 6)
+              return fail(
+                `${String(values.length)} cells, expected 6: ${text}`,
+              );
+            const slot = values[0] ?? "";
+            const example = values[4] ?? "";
+            if (!slots.includes(slot))
+              return fail(
+                `unknown slot "${slot}"; expected one of: ${slots.join(", ")}`,
+              );
+            if (values.some((cell) => cell === "")) return fail("empty cell");
+            return Result.succeed({ line, slot, example });
+          }),
+        ),
+        (rows) => {
+          const seen = rows.map((row) => row.slot);
+          const missing = slots.filter((slot) => !seen.includes(slot));
+          const doubled = seen.filter((slot, i) => seen.indexOf(slot) !== i);
+          return missing.length > 0 || doubled.length > 0
+            ? Result.fail(
+                new ParseError({
+                  message: `CopySlot: ${[
+                    ...missing.map((slot) => `no row for ${slot}`),
+                    ...doubled.map((slot) => `two rows for ${slot}`),
+                  ].join("; ")}`,
+                }),
+              )
+            : Result.succeed(rows);
+        },
+      ),
+  );
+
+/**
+ * **Every copy-table example is on a screen.** Each row's `example` occurs
+ * verbatim in one of `screenSources` (the files `scripts/lib/copy-files.ts`
+ * lists), so the table cannot cite copy that was since rewritten. Reports
+ * each example nothing shows.
+ */
+export const checkCopyExamples = (
+  rows: readonly CopyRow[],
+  screenSources: Readonly<Record<string, string>>,
+): readonly string[] => {
+  const texts = Object.values(screenSources);
+  return rows
+    .filter((row) => !texts.some((text) => text.includes(row.example)))
+    .map(
+      (row) =>
+        `CopySlot, line ${String(row.line)}: no screen shows "${row.example}"`,
+    );
+};
+
+/**
+ * Read the controls table out of the JSDoc on `Control` in
+ * `src/lib/Screen.ts`: `job | control | never`, every cell non-empty.
+ */
+export const parseControls = (
+  source: string,
+): Result.Result<
+  readonly { readonly line: number; readonly job: string }[],
+  ParseError
+> =>
+  Result.flatMap(
+    firstTable(source, "Control", ["job", "control", "never"]),
+    ({ body }) =>
+      Result.all(
+        body.map(({ line, text }) => {
+          const values = cellsOf(text);
+          return values.length !== 3 || values.some((cell) => cell === "")
+            ? Result.fail(
+                new ParseError({
+                  message: `Control, line ${String(line)}: 3 non-empty cells expected: ${text}`,
+                }),
+              )
+            : Result.succeed({ line, job: values[0] ?? "" });
+        }),
+      ),
+  );

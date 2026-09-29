@@ -422,7 +422,7 @@ describe("login-callback", () => {
         strictEqual(response.status, 200);
         assertTrue(
           (yield* Effect.promise(() => response.text())).includes(
-            "invalid or has expired",
+            "has expired or was already used",
           ),
         );
       }),

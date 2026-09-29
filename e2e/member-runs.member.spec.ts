@@ -66,8 +66,8 @@ const FINISHED = `${CUT_TEAM} · ${MAKER}`;
  */
 const MINE_STATE = "Step 1 of 1";
 /** Per-view empty text (`VIEW_EMPTY` in `src/lib/workflowsListViews.ts`). */
-const EMPTY_MINE = "Nothing in hand.";
-const EMPTY_TEAMMATES = "Nobody else has work.";
+const EMPTY_MINE = "Nothing started by you.";
+const EMPTY_TEAMMATES = "Nothing started by others.";
 const EMPTY_DONE = "Nothing done or closed in the last day.";
 /**
  * Every seeded order is `#94xx`, which is how a row is counted rather than

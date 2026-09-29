@@ -61,9 +61,9 @@ export const VIEW_EMPTY: Record<
   Domain.WorkflowsListView,
   { readonly text: string; readonly goTo: Domain.WorkflowsListView | null }
 > = {
-  mine: { text: "Nothing in hand.", goTo: "upNext" },
-  teammates: { text: "Nobody else has work.", goTo: null },
-  upNext: { text: "Nothing to start.", goTo: null },
+  mine: { text: "Nothing started by you.", goTo: "upNext" },
+  teammates: { text: "Nothing started by others.", goTo: null },
+  upNext: { text: "Nothing is ready.", goTo: null },
   blocked: { text: "Nothing is blocked.", goTo: null },
   done: { text: "Nothing done or closed in the last day.", goTo: null },
 };

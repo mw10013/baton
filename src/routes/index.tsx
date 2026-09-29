@@ -35,7 +35,7 @@ function RouteComponent() {
         </s-stack>
       </s-section>
       <s-section accessibilityLabel="Member login">
-        <s-link href="/login">Log in</s-link>
+        <s-link href="/login">Sign in</s-link>
       </s-section>
       <s-section accessibilityLabel="Legal">
         <s-link href="/privacy">Privacy policy</s-link>

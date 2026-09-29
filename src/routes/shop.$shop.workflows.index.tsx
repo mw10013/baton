@@ -800,8 +800,8 @@ function RouteComponent() {
             )}
             {teams.length === 0 ? (
               <s-paragraph color="subdued">
-                You&rsquo;re not on a team yet. Ask the shop owner to add you to
-                a team to see work.
+                You&rsquo;re not on a team yet. Ask the merchant to add you to a
+                team.
               </s-paragraph>
             ) : (
               <>

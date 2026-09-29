@@ -4,7 +4,7 @@
 // src/lib/ShopAgentSchema.ts (the object) and on `D1_TABLES` in
 // src/lib/D1Schema.ts (D1).
 //
-//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the glossary, its screen columns and its Screens table, parse both data-model tables and refuse a pinned title no test carries (exit 1 on any failure)
+//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the glossary, its screen columns and its Screens table, parse both data-model tables and refuse a pinned title no test carries, parse the copy and controls tables in src/lib/Screen.ts and refuse an example no screen shows (exit 1 on any failure)
 //   node scripts/spec.ts print   render the parsed rows and how many fixtures each expands to, then the data-model rows
 
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
@@ -13,6 +13,8 @@ import { CliError, Command } from "effect/unstable/cli";
 import { globSync, readdirSync, readFileSync } from "node:fs";
 
 import * as Domain from "../src/lib/Domain.ts";
+import * as Screen from "../src/lib/Screen.ts";
+import { copyFiles } from "./lib/copy-files.ts";
 import * as ActionTable from "./lib/spec.ts";
 
 const DOMAIN = new URL("../src/lib/Domain.ts", import.meta.url).pathname;
@@ -20,6 +22,7 @@ const ROUTES = new URL("../src/routes/", import.meta.url).pathname;
 const SCHEMA = new URL("../src/lib/ShopAgentSchema.ts", import.meta.url)
   .pathname;
 const D1_SCHEMA = new URL("../src/lib/D1Schema.ts", import.meta.url).pathname;
+const SCREEN = new URL("../src/lib/Screen.ts", import.meta.url).pathname;
 const ROOT = new URL("../", import.meta.url).pathname;
 const NAMES: readonly ActionTable.TableName[] = ["runActions", "taskActions"];
 
@@ -68,6 +71,13 @@ const readTestSources = Effect.sync(() =>
   ),
 );
 
+const readScreen = Effect.sync(() => ({
+  source: readFileSync(SCREEN, "utf8"),
+  screens: Object.fromEntries(
+    copyFiles().map((file) => [file, readFileSync(file, "utf8")]),
+  ),
+}));
+
 const readRouteFiles = Effect.sync(() =>
   Object.fromEntries(
     readdirSync(ROUTES).map((file) => [
@@ -85,6 +95,7 @@ const checkCommand = Command.make(
     const routeFiles = yield* readRouteFiles;
     const dataModels = yield* readDataModels;
     const testSources = yield* readTestSources;
+    const screen = yield* readScreen;
     const failures = [
       ...NAMES.flatMap((name) =>
         Result.match(ActionTable.parse(source, name), {
@@ -114,6 +125,18 @@ const checkCommand = Command.make(
             ActionTable.checkPinned(rows, testSources, options.symbol),
         }),
       ),
+      ...Result.match(
+        ActionTable.parseCopyTable(screen.source, Screen.CopySlot.literals),
+        {
+          onFailure: (error) => [error.message],
+          onSuccess: (rows) =>
+            ActionTable.checkCopyExamples(rows, screen.screens),
+        },
+      ),
+      ...Result.match(ActionTable.parseControls(screen.source), {
+        onFailure: (error) => [error.message],
+        onSuccess: () => [],
+      }),
     ];
     for (const failure of failures) yield* Console.error(failure);
     if (failures.length > 0)
@@ -124,7 +147,7 @@ const checkCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Parse the action tables in Domain.ts, check the glossary, and check the data-model tables in ShopAgentSchema.ts and D1Schema.ts; exit 1 on any failure",
+    "Parse the action tables in Domain.ts, check the glossary, check the data-model tables in ShopAgentSchema.ts and D1Schema.ts, and check the copy and controls tables in Screen.ts; exit 1 on any failure",
   ),
 );
 

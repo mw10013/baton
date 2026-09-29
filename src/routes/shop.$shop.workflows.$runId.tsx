@@ -72,7 +72,7 @@ export const Route = createFileRoute("/shop/$shop/workflows/$runId")({
   head: ({ loaderData }) => ({
     meta: [
       {
-        title: `${loaderData?.page?.run.lineItemTitle ?? "Not found"} — Baton`,
+        title: `${loaderData?.page?.run.lineItemTitle ?? "Workflow not found"} — Baton`,
       },
     ],
   }),
@@ -182,8 +182,8 @@ function RouteComponent() {
     return (
       <>
         <MemberBar shop={shop} email={memberEmail} />
-        <s-page heading="Not found" inlineSize="small">
-          <s-section accessibilityLabel="Not found">
+        <s-page heading="Workflow not found" inlineSize="small">
+          <s-section accessibilityLabel="Workflow not found">
             <s-paragraph color="subdued">
               This workflow is not on one of your teams, or it no longer exists.
             </s-paragraph>
@@ -206,7 +206,7 @@ function RouteComponent() {
    * broken one.
    */
   const reviewNote = (
-    <s-text color="subdued">Your merchant will review this.</s-text>
+    <s-text color="subdued">The merchant will review this.</s-text>
   );
   const blockActions =
     can.editReason || can.unblock ? (

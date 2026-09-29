@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import d1Source from "@/lib/D1Schema.ts?raw";
 import * as Domain from "@/lib/Domain";
 import source from "@/lib/Domain.ts?raw";
+import * as Screen from "@/lib/Screen";
+import screenSource from "@/lib/Screen.ts?raw";
 import schemaSource from "@/lib/ShopAgentSchema.ts?raw";
 
 import * as ActionTable from "../../scripts/lib/spec.ts";
@@ -423,5 +425,57 @@ describe("action table parser", () => {
       );
       expect(ActionTable.checkPinned(rows, testSources, D1.symbol)).toEqual([]);
     });
+  });
+});
+
+const copyTableOf = (row: string) =>
+  [
+    "/**",
+    " * | slot | job | form | empty when | example | never |",
+    " * | - | - | - | - | - | - |",
+    ` * ${row}`,
+    " */",
+    "export const CopySlot = 0;",
+  ].join("\n");
+
+describe("the copy table on CopySlot", () => {
+  it("has one row per slot, each with an example", () => {
+    const rows = Result.getOrThrow(
+      ActionTable.parseCopyTable(screenSource, Screen.CopySlot.literals),
+    );
+    expect(rows.map((row) => row.slot)).toEqual([...Screen.CopySlot.literals]);
+  });
+
+  it("refuses an unknown slot, a missing slot and an empty cell", () => {
+    const message = (row: string, slots: readonly string[]) => {
+      const parsed = ActionTable.parseCopyTable(copyTableOf(row), slots);
+      if (Result.isSuccess(parsed)) throw new Error("parsed");
+      return parsed.failure.message;
+    };
+    expect(message("| toast | a | b | c | d | e |", ["heading"])).toContain(
+      'unknown slot "toast"',
+    );
+    expect(
+      message("| heading | a | b | c | d | e |", ["heading", "toast"]),
+    ).toContain("no row for toast");
+    expect(message("| heading | a | b | c |  | e |", ["heading"])).toContain(
+      "empty cell",
+    );
+  });
+
+  it("every copy-table example is on a screen", () => {
+    const rows = [
+      { line: 1, slot: "toast", example: "Note saved" },
+      { line: 2, slot: "toast", example: "Saved successfully!" },
+    ];
+    expect(
+      ActionTable.checkCopyExamples(rows, { a: 'toast: "Note saved",' }),
+    ).toEqual(['CopySlot, line 2: no screen shows "Saved successfully!"']);
+  });
+
+  it("the controls table on Control parses with three non-empty cells per row", () => {
+    expect(
+      Result.getOrThrow(ActionTable.parseControls(screenSource)).length,
+    ).toBeGreaterThan(5);
   });
 });

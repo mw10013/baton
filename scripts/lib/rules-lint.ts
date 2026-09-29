@@ -19,6 +19,26 @@
  * | staff, staffed, unstaffed | a team's people are members; Shopify's staff are the merchant side |
  * | attention                 | an issue is named by its fault: unassigned, empty team, blocked    |
  *
+ * And the copy words that are wrong in every slot, whatever the noun: copy
+ * states facts and names the act, so it never pleads, apologises, exclaims
+ * over a routine write, or points at a link with "here" (Shopify's own
+ * guidance, `refs/shopify-docs/docs/apps/design/content/voice-and-tone.md`,
+ * "Acknowledging effort, progress, or completion" and "Simple errors"):
+ *
+ * | pattern      | why                                                                    |
+ * | ------------ | ---------------------------------------------------------------------- |
+ * | please       | a field's label or error says what to do; nobody is asked              |
+ * | successfully | a toast says the verb ("Note saved"); a routine write is not a success |
+ * | oops, sorry  | an error says what was refused and the fix, not a feeling              |
+ * | click here   | a link's text is the screen it goes to                                 |
+ * | are you sure | a modal that asks names the thing in its heading and says the consequence in its body (`Screen.ts`) |
+ *
+ * A placeholder on an `s-text-area` is refused outright
+ * ({@link textAreaPlaceholderHits}): free text has a label that says what
+ * goes in, so the only placeholder possible is a question or an instruction,
+ * and both are filler. A placeholder on an `s-text-field` shows the shape of
+ * a value ("e.g. Engrave", "Search by email") and stays.
+ *
  * A grep. It reads string literals, including the literals inside a
  * template's `${...}`, and in `.tsx` JSX text: text between tags on one
  * line, and a line of plain words inside an element, with `{...}`
@@ -40,6 +60,12 @@ export const RETIRED: readonly RegExp[] = [
   /\btabs?\b/iu,
   /\b(?:un)?staff(?:s|ed|ing)?\b/iu,
   /\battention\b/iu,
+  /\bplease\b/iu,
+  /\bsuccessfully\b/iu,
+  /\boops\b/iu,
+  /\bsorry\b/iu,
+  /\bclick here\b/iu,
+  /\bare you sure\b/iu,
 ];
 
 const LITERAL =
@@ -107,3 +133,18 @@ export const retiredCopyHits = (
       : [];
   });
 };
+
+/**
+ * The lines, 1-based, on which an `s-text-area` element sets `placeholder`,
+ * with the element's opening line. The element's attributes may span lines,
+ * so this reads the whole opening tag, not one line.
+ */
+export const textAreaPlaceholderHits = (
+  source: string,
+): readonly { readonly line: number; readonly text: string }[] =>
+  [...source.matchAll(/<s-text-area\b[^>]*?\bplaceholder=/gsu)].map(
+    ({ index }) => ({
+      line: source.slice(0, index).split("\n").length,
+      text: source.slice(index).split("\n")[0]?.trim() ?? "",
+    }),
+  );

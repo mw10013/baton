@@ -171,7 +171,7 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
     editor.getByText("Add a step to this workflow.", { exact: true }),
   ).toBeVisible();
 
-  await editor.getByRole("button", { name: "Add the first step" }).click();
+  await editor.getByRole("button", { name: "Add step" }).click();
   await taskName.fill("Bake");
   await editor
     .getByRole("combobox", { name: "Team", exact: true })
@@ -231,7 +231,7 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
   /* Two decisions, three verbs. A second task lands in its own step;
      "Join the previous step" is the only thing that makes the two parallel,
      "Move to its own step" splits them back, and moving only reorders. */
-  await editor.getByRole("button", { name: "Add a step", exact: true }).click();
+  await editor.getByRole("button", { name: "Add step", exact: true }).click();
   await taskName.fill("Ice");
   await editor
     .getByRole("combobox", { name: "Team", exact: true })
@@ -272,7 +272,7 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
   await openEditor(page);
   await clickHoisted(page.getByRole("button", { name: "Discard changes" }));
   await expect(
-    editor.getByText("Are you sure you want to discard these changes?", {
+    editor.getByText("Your unsaved changes will be lost.", {
       exact: true,
     }),
   ).toBeVisible();
@@ -293,7 +293,7 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
     .click();
   await clickHoisted(page.getByRole("button", { name: "Apply changes" }));
   await expect(
-    editor.getByText("This workflow is turned on.", { exact: false }),
+    editor.getByText("This workflow is on,", { exact: false }),
   ).toBeVisible();
   await editor.getByRole("button", { name: "Apply", exact: true }).click();
   await expect(frame.locator(`s-page[heading="${CREATED}"]`)).toBeVisible();

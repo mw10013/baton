@@ -71,7 +71,7 @@ test("an anonymous visitor is bounced from /admin to /login", async ({
 }) => {
   await gotoMember(page, "/admin");
   await expect(page).toHaveURL(/\/login$/u);
-  await expect(page.locator('s-page[heading="Log in"]')).toBeVisible();
+  await expect(page.locator('s-page[heading="Sign in"]')).toBeVisible();
 });
 
 test("an anonymous visitor is bounced from /admin/shops to /login", async ({
@@ -79,7 +79,7 @@ test("an anonymous visitor is bounced from /admin/shops to /login", async ({
 }) => {
   await gotoMember(page, "/admin/shops");
   await expect(page).toHaveURL(/\/login$/u);
-  await expect(page.locator('s-page[heading="Log in"]')).toBeVisible();
+  await expect(page.locator('s-page[heading="Sign in"]')).toBeVisible();
 });
 
 test("the dashboard names the three consoles and links to each", async ({

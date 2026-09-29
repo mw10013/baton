@@ -343,9 +343,7 @@ test("the merchant marks a task done, reopens it, and blocks the run", async ({
   const team = assign.getByRole("combobox", { name: "Team" });
   await expect(team).toBeVisible();
   await expect(team.locator("option:checked")).toHaveText(CUT_TEAM);
-  await assign
-    .getByRole("button", { name: `Keep ${CUT_TEAM}`, exact: true })
-    .click();
+  await assign.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(team).toBeHidden();
 
   /* The badge carries the state; the line under it is the team, then who. */
@@ -484,7 +482,7 @@ test("the merchant cannot reopen a task whose next step is done", async ({
 
   await expect(
     frame.getByText(
-      `Can’t reopen: Polish (${POLISH_TEAM}) already started — put it back or reopen it first`,
+      `Can’t reopen: Polish (${POLISH_TEAM}) already started. Put it back or reopen it first.`,
     ),
   ).toBeVisible();
   /* Polish itself is the last step, so exactly one Reopen is on the page. */
@@ -795,7 +793,7 @@ test("an item matching two workflows waits for the merchant to choose, then chan
       { exact: true },
     ),
   ).toBeVisible();
-  const picker = item.getByRole("combobox", { name: "Choose workflow" });
+  const picker = item.getByRole("combobox", { name: "Workflow" });
   const options = picker.getByRole("option");
   await expect(options.nth(0)).toHaveText(ENGRAVING);
   await expect(options.nth(1)).toHaveText(RUSH);
@@ -883,7 +881,7 @@ test("an item matching two workflows waits for the merchant to choose, then chan
     item.getByText("Cancelled by you", { exact: false }),
   ).toBeVisible();
   await item
-    .getByRole("combobox", { name: "Choose workflow" })
+    .getByRole("combobox", { name: "Workflow" })
     .selectOption({ label: RUSH });
   await item
     .getByRole("button", {
@@ -1072,7 +1070,7 @@ test("each order-page state draws the controls its action set allows", async ({
 
   const triple = await open(9505, "E2E Triple");
   const options = triple
-    .getByRole("combobox", { name: "Choose workflow" })
+    .getByRole("combobox", { name: "Workflow" })
     .getByRole("option");
   await expect(options.nth(0)).toHaveText("E2E State A");
   await expect(options.nth(1)).toHaveText("E2E State B");
@@ -1084,7 +1082,7 @@ test("each order-page state draws the controls its action set allows", async ({
     stopped.getByText("Cancelled by you", { exact: false }),
   ).toBeVisible();
   await expect(
-    stopped.getByRole("combobox", { name: "Choose workflow" }),
+    stopped.getByRole("combobox", { name: "Workflow" }),
   ).toBeVisible();
   /* The done step stays on record under Manage, with no buttons. */
   await button(stopped, "Manage").click();

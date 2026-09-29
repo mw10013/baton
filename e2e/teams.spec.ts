@@ -98,7 +98,7 @@ test("teams screen creates, adds members to, renames, and deletes a team", async
   await expect(search).toHaveValue("zzz");
   await expect(frame.getByText("Showing 0 of")).toBeVisible();
   await expect(frame.getByText("No teams match.")).toBeVisible();
-  await frame.getByRole("button", { name: "Clear filters" }).click();
+  await frame.getByRole("button", { name: "Clear search" }).click();
   await frame.getByRole("link", { name: TEAM }).click();
   await expect(frame.locator(`s-page[heading="${TEAM}"]`)).toBeVisible();
 

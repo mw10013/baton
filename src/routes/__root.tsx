@@ -27,7 +27,7 @@ export const Route = createRootRouteWithContext<{
         content: "width=device-width, initial-scale=1",
       },
       {
-        title: "Baton | Made-to-order production workflows",
+        title: "Baton — Made-to-order production workflows",
       },
     ],
     links: [
@@ -43,7 +43,7 @@ export const Route = createRootRouteWithContext<{
     ],
   }),
   shellComponent: RootDocument,
-  notFoundComponent: () => <div>Not Found</div>,
+  notFoundComponent: () => <div>Not found</div>,
   component: RouteComponent,
 });
 

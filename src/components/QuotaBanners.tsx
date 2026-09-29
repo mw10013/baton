@@ -24,7 +24,7 @@ export function QuotaBanners({ usage }: { readonly usage: Domain.ShopUsage }) {
     <>
       {usage.ordersLimitedAt !== null && (
         <s-banner tone="critical">
-          {`Baton is built for shops under ${formatNumber(Domain.ShopLimits.maxOrdersPerCycle)} orders a billing period, so new orders have stopped syncing.`}
+          {`New orders stopped syncing at ${formatNumber(Domain.ShopLimits.maxOrdersPerCycle)} this billing period.`}
           {usage.cycleEndAt !== null && (
             <>
               {" Syncing resumes on "}

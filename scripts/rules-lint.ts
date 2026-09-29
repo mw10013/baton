@@ -10,10 +10,11 @@
  * quiet. Union narrowing on `actor.role` and the connection state's `role`
  * is not matched, because those are discriminants of a union, not rules.
  */
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { readFileSync } from "node:fs";
+import { relative } from "node:path";
 
-import { retiredCopyHits } from "./lib/rules-lint.ts";
+import { copyFiles, walk } from "./lib/copy-files.ts";
+import { retiredCopyHits, textAreaPlaceholderHits } from "./lib/rules-lint.ts";
 
 const ROOT = new URL("../src/", import.meta.url).pathname;
 const ALLOWED = new Set(["lib/Domain.ts", "routeTree.gen.ts"]);
@@ -21,13 +22,6 @@ const PATTERNS: readonly RegExp[] = [
   /\.(?:status|flag) (?:===|!==) "/u,
   /\.role (?:===|!==) "admin"/u,
 ];
-
-const walk = (dir: string): string[] =>
-  readdirSync(dir).flatMap((name) => {
-    const path = join(dir, name);
-    if (statSync(path).isDirectory()) return walk(path);
-    return /\.tsx?$/u.test(name) ? [path] : [];
-  });
 
 const hits = walk(ROOT).flatMap((path) => {
   const file = relative(ROOT, path);
@@ -48,28 +42,7 @@ if (hits.length > 0) {
   for (const hit of hits) console.error(`  ${hit}`);
 }
 
-/**
- * The glossary's screen rule: `scripts/lib/rules-lint.ts` says which words
- * are retired and how a line's copy is read. The screens are the merchant's
- * and the member's: `src/components/`, the routes that render them, and the
- * modules that hold their copy. The operator console (`admin.*`), the API
- * routes (`api.*`), and the public home and privacy pages (`index.tsx`,
- * `privacy.tsx`) are not glossary screens and are left out.
- */
-const COPY_FILES = [
-  ...walk(join(ROOT, "routes")).filter(
-    (path) =>
-      !/\/routes\/(?:admin\.|api\.|index\.tsx$|privacy\.tsx$)/u.test(path) &&
-      !path.endsWith("routeTree.gen.ts"),
-  ),
-  ...walk(join(ROOT, "components")),
-  ...[
-    "useMemberRunActions.ts",
-    "changeWarning.ts",
-    "workflowShared.ts",
-    "workflowsListViews.ts",
-  ].map((name) => join(ROOT, "lib", name)),
-];
+const COPY_FILES = copyFiles();
 
 const copyHits = COPY_FILES.flatMap((path) => {
   const file = relative(ROOT, path);
@@ -85,4 +58,19 @@ if (copyHits.length > 0) {
   for (const hit of copyHits) console.error(`  ${hit}`);
 }
 
-if (hits.length > 0 || copyHits.length > 0) process.exit(1);
+const placeholderHits = COPY_FILES.flatMap((path) => {
+  const file = relative(ROOT, path);
+  return textAreaPlaceholderHits(readFileSync(path, "utf8")).map(
+    ({ line, text }) => `src/${file}:${String(line)}: ${text}`,
+  );
+});
+
+if (placeholderHits.length > 0) {
+  console.error(
+    "rules-lint: placeholder on an s-text-area; free text has a label and no placeholder:",
+  );
+  for (const hit of placeholderHits) console.error(`  ${hit}`);
+}
+
+if (hits.length > 0 || copyHits.length > 0 || placeholderHits.length > 0)
+  process.exit(1);

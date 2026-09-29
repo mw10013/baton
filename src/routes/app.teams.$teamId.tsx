@@ -42,7 +42,7 @@ const SEARCH_FROM = 6;
 const TeamIdInput = Schema.Struct({ teamId: Schema.String });
 
 const NameInput = Schema.Struct({
-  name: Schema.String.check(Schema.isNonEmpty({ message: "Name is required" })),
+  name: Schema.String.check(Schema.isNonEmpty({ message: "Enter a name" })),
 });
 type NameInput = typeof NameInput.Type;
 
@@ -233,7 +233,7 @@ function RouteComponent() {
       await shopify.modal.hide(RENAME_MODAL);
     },
     onError: (error: Error) => {
-      const message = mutationErrorMessage(error, "Could not rename the team.");
+      const message = mutationErrorMessage(error, "Couldn't rename the team.");
       if (message === NAME_TAKEN) setNameError(message);
     },
   });
@@ -295,12 +295,12 @@ function RouteComponent() {
   });
 
   const renameError = renameMutation.isError
-    ? mutationErrorMessage(renameMutation.error, "Could not rename the team.")
+    ? mutationErrorMessage(renameMutation.error, "Couldn't rename the team.")
     : null;
   const failedMutation = [
-    { mutation: addMutation, fallback: "Could not add members." },
-    { mutation: removeMutation, fallback: "Could not remove the member." },
-    { mutation: deleteMutation, fallback: "Could not delete the team." },
+    { mutation: addMutation, fallback: "Couldn't add members." },
+    { mutation: removeMutation, fallback: "Couldn't remove the member." },
+    { mutation: deleteMutation, fallback: "Couldn't delete the team." },
   ].find(({ mutation }) => mutation.isError);
   /** The name-taken case is shown on the rename field; everything else is a banner. */
   const mutationError =
@@ -352,12 +352,12 @@ function RouteComponent() {
     if (members.length === 0)
       return emptyState(
         "No members yet",
-        "This shop has no members yet. Add them once, then put them on teams.",
+        "This shop has no members yet. Add them on Members, then put them on teams.",
         <s-button href="/app/members">Add members</s-button>,
       );
     if (current.length === 0)
       return emptyState(
-        "No members yet",
+        "Nobody on this team yet",
         "Nobody is on this team, so its tasks wait until a member joins.",
         addButton(false),
       );
@@ -450,7 +450,7 @@ function RouteComponent() {
 
       <SocketBanner />
 
-      <s-section heading="Members" accessibilityLabel="Team members">
+      <s-section heading="Members">
         <s-stack gap="base">
           {mutationError && (
             <s-banner tone="critical">{mutationError}</s-banner>
@@ -618,7 +618,7 @@ function RouteComponent() {
         {candidates.length === 0 ? (
           <s-paragraph>
             {members.length === 0
-              ? "This shop has no members yet. Add them once, then put them on teams."
+              ? "This shop has no members yet. Add them on Members, then put them on teams."
               : "Everyone is already on this team."}
           </s-paragraph>
         ) : (

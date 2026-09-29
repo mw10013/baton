@@ -80,7 +80,7 @@ const loginFn = createServerFn({ method: "POST" })
 
 export const Route = createFileRoute("/login")({
   loader: () => getLoaderData(),
-  head: () => ({ meta: [{ title: "Log in — Baton" }] }),
+  head: () => ({ meta: [{ title: "Sign in — Baton" }] }),
   component: RouteComponent,
 });
 
@@ -108,12 +108,12 @@ function RouteComponent() {
     (loginMutation.isError
       ? mutationErrorMessage(
           loginMutation.error,
-          "Could not send the magic link.",
+          "Couldn't send the magic link.",
         )
       : undefined);
 
   return (
-    <s-page heading="Log in" inlineSize="small">
+    <s-page heading="Sign in" inlineSize="small">
       <s-section accessibilityLabel="Baton">
         <s-stack direction="inline" gap="small-300" alignItems="center">
           <BatonMark size={32} />
@@ -121,10 +121,7 @@ function RouteComponent() {
         </s-stack>
       </s-section>
       {sent ? (
-        <s-section
-          heading="Check your email"
-          accessibilityLabel="Check your email"
-        >
+        <s-section heading="Check your email">
           <s-stack gap="base">
             <s-paragraph color="subdued">
               If that email has access to a shop, a magic sign-in link has been

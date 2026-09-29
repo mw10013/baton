@@ -59,10 +59,10 @@ const attachResultMessage = Match.typeTags<
   string | null
 >()({
   Ok: () => null,
-  AlreadyExists: () => "That workflow is already running on this item.",
+  AlreadyExists: () => "That workflow is already on this item.",
   LineItemNotFound: () => "That item no longer exists.",
   WorkflowCannotStart: () =>
-    "That workflow cannot start: it is off, has no tasks, or has an unassigned task.",
+    "That workflow can't start: it's off, has no steps, or has a task with no team.",
   RunLimit: ({ limit }) =>
     `${formatNumber(limit)} items are in production, the most Baton tracks at once. Cancel a workflow, or wait until an item is done or closed.`,
   /* The page offers no change on a done run (`Domain.runActions`); this is
@@ -518,8 +518,8 @@ function RouteComponent() {
            run: "Attached", never "resumed". */
         shopify.toast.show(
           result.replaced === null
-            ? `Attached ${result.run.workflowName}.`
-            : `Changed to ${result.run.workflowName}.`,
+            ? `Attached ${result.run.workflowName}`
+            : `Changed to ${result.run.workflowName}`,
         );
       }
       await invalidate();
@@ -653,7 +653,7 @@ function RouteComponent() {
         <s-banner tone="critical">
           {detailQuery.error instanceof Error
             ? detailQuery.error.message
-            : "Could not load the order."}
+            : "Couldn't load the order."}
         </s-banner>
       </s-page>
     );
@@ -664,8 +664,8 @@ function RouteComponent() {
           Orders
         </s-link>
         <s-paragraph color="subdued">
-          That order is not stored here. It may be outside the sync window, or
-          it may have been deleted in Shopify.
+          This order isn't in Baton. It may be older than the import window, or
+          deleted in Shopify.
         </s-paragraph>
       </s-page>
     );
@@ -910,7 +910,7 @@ function RouteComponent() {
                  is cleared with Put back on its own row, hence both verbs. */
               return (
                 <s-text color="subdued">
-                  {`Can’t reopen: ${blocker.taskName} (${blocker.teamName}) already started — put it back or reopen it first`}
+                  {`Can’t reopen: ${blocker.taskName} (${blocker.teamName}) already started. Put it back or reopen it first.`}
                 </s-text>
               );
             }}
@@ -1166,7 +1166,7 @@ function RouteComponent() {
       >
         <s-text color="subdued">Workflow</s-text>
         <s-select
-          label="Choose workflow"
+          label="Workflow"
           labelAccessibilityVisibility="exclusive"
           placeholder="Choose workflow"
           value={chosen ?? ""}
@@ -1244,8 +1244,8 @@ function RouteComponent() {
         case "unmatched": {
           return orderOpen ? (
             <s-paragraph color="subdued">
-              No workflows can start.{" "}
-              <s-link href="/app/workflows">Create one.</s-link>
+              No workflow matches this item. Create one on{" "}
+              <s-link href="/app/workflows">Workflows</s-link>.
             </s-paragraph>
           ) : null;
         }
@@ -1381,7 +1381,7 @@ function RouteComponent() {
             <s-banner tone="success">
               Every item is done.{" "}
               <s-link href={adminOrderUrl(order)} target={resourceLinkTarget}>
-                Fulfil this order in the Shopify admin
+                Fulfil in Shopify
               </s-link>
               .
             </s-banner>
@@ -1449,7 +1449,7 @@ function RouteComponent() {
           commandFor={CHANGE_WORKFLOW_MODAL}
           command="--hide"
         >
-          {changing === null ? "Cancel" : `Keep ${changing.from}`}
+          Cancel
         </s-button>
         <s-button
           slot="primary-action"
@@ -1474,7 +1474,9 @@ function RouteComponent() {
       {/* Cancel workflow closes the run (`Domain.RunStatus`) and there is no
           undo after it, so the question is asked here, naming the workflow
           and the item, and says what happens to the work
-          ({@link CANCEL_WARNING}). */}
+          ({@link CANCEL_WARNING}). The dismiss reads Keep workflow, not the
+          Cancel that the controls table in `Screen.ts` gives every other modal: a
+          Cancel beside a primary Cancel workflow is two Cancels. */}
       <s-modal
         id={CANCEL_RUN_MODAL}
         heading={
@@ -1504,7 +1506,7 @@ function RouteComponent() {
             if (cancelling !== null)
               cancel.mutate({
                 runId: cancelling.runId,
-                toast: `${cancelling.workflowName} cancelled on ${cancelling.item}.`,
+                toast: `${cancelling.workflowName} cancelled on ${cancelling.item}`,
               });
           }}
         >
@@ -1547,7 +1549,7 @@ function RouteComponent() {
           commandFor={ASSIGN_MODAL}
           command="--hide"
         >
-          {assigning === null ? "Cancel" : `Keep ${assigning.teamName}`}
+          Cancel
         </s-button>
         <s-button
           slot="primary-action"

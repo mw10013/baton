@@ -23,23 +23,23 @@ export const runResultMessage = Match.typeTags<
   string | null
 >()({
   Ok: () => null,
-  NotFound: () => "That work no longer exists.",
+  NotFound: () => "This workflow no longer exists.",
   /* The page offers only what `Domain.runActions` and `Domain.taskActions`
      allow; a refusal is the work changing under the page (closed by Shopify
      or the merchant while it was open), or another team's task. */
   NotAllowed: () =>
-    "That isn't available on this work now. It changed, or it belongs to another team.",
+    "This changed just now, or belongs to another team. Refresh.",
   /* Only the reason editor can reach this: somebody unblocked the run while
      it was open, so the edit has nothing to write on. */
-  NotBlocked: () => "This work is no longer blocked.",
+  NotBlocked: () => "This workflow is no longer blocked.",
   /* Also a Put back on a task whose Put back or Done by someone else landed just now. */
   NotReady: () =>
     "This task or an earlier one changed just now, or this task is waiting on another team. Refresh.",
   /* A done run, or one Shopify or the merchant closed under the page. */
-  Terminal: () => "This work is already done or closed.",
+  Terminal: () => "This workflow is already done or closed.",
   /* The page hides Start and Done behind the block; a block that landed
      after the render is the only way here. */
-  Blocked: () => "This work was blocked just now. Unblock it first.",
+  Blocked: () => "This workflow was blocked just now. Unblock it first.",
   ReopenBlocked: ({ taskName, teamName }) =>
     `${teamName} already started ${taskName}. Ask them.`,
 });

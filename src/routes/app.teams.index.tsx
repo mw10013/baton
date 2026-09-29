@@ -23,7 +23,7 @@ const teamLimitMessage = (limit: number) =>
   `A shop can have ${String(limit)} teams. Delete one to add another.`;
 
 const TeamNameInput = Schema.Struct({
-  name: Schema.String.check(Schema.isNonEmpty({ message: "Name is required" })),
+  name: Schema.String.check(Schema.isNonEmpty({ message: "Enter a name" })),
 });
 type TeamNameInput = typeof TeamNameInput.Type;
 
@@ -99,7 +99,7 @@ function RouteComponent() {
       });
     },
     onError: (error: Error) => {
-      const message = mutationErrorMessage(error, "Could not create the team.");
+      const message = mutationErrorMessage(error, "Couldn't create the team.");
       if (message === NAME_TAKEN) setNameError(message);
     },
   });
@@ -113,7 +113,7 @@ function RouteComponent() {
   });
 
   const createError = createMutation.isError
-    ? mutationErrorMessage(createMutation.error, "Could not create the team.")
+    ? mutationErrorMessage(createMutation.error, "Couldn't create the team.")
     : null;
   /** The name-taken case is shown on the field; everything else is a banner. */
   const banner = createError === NAME_TAKEN ? null : createError;
@@ -167,7 +167,7 @@ function RouteComponent() {
                 setQuery("");
               }}
             >
-              Clear filters
+              Clear search
             </s-button>
           </s-stack>
         </s-box>
@@ -248,7 +248,7 @@ function RouteComponent() {
         {teams.length > 0 && (
           <s-box padding="base" paddingBlockEnd="none">
             <s-paragraph color="subdued">
-              Teams are who can work a task. Assign a team to each task in a
+              A team is who can work a task. Assign one to each task in a
               workflow.
             </s-paragraph>
           </s-box>
@@ -300,7 +300,6 @@ function RouteComponent() {
               <s-text-field
                 label="Name"
                 name={field.name}
-                details="You'll add members next."
                 value={field.state.value}
                 maxLength={64}
                 error={nameError ?? fieldError(field.state.meta.errors)}

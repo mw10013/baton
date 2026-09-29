@@ -27,7 +27,7 @@ const resolveLoginCallback = createServerFn({ method: "GET" }).handler(
         const auth = yield* Auth;
         const sessionContext = yield* auth.getSession(request.headers);
         if (Option.isNone(sessionContext))
-          return { error: "Magic link sign-in could not be completed." };
+          return { error: "Couldn't complete sign-in." };
         const { user } = sessionContext.value;
         if (Domain.userIsAdmin(user))
           return yield* Effect.fail(redirect({ to: "/admin" }));
@@ -49,7 +49,7 @@ export const Route = createFileRoute("/login-callback")({
   loaderDeps: ({ search }) => ({ error: search.error }),
   loader: ({ deps }) =>
     deps.error
-      ? { error: "This magic link is invalid or has expired." }
+      ? { error: "This magic link has expired or was already used." }
       : resolveLoginCallback(),
   component: RouteComponent,
 });
