@@ -150,7 +150,7 @@ const json = (value: unknown) => JSON.stringify(value);
  * fragments are correlated to the outer `ShopOrder` row and served by
  * `Run_orderId_idx`. A closed run still holds its item
  * (`Domain.RunStatus`): it is in `RUN_FOR_ITEM`, so an item whose run closed
- * is not "Choose a workflow" (a closed run is a decided item), and it is in
+ * is not "Needs a workflow" (a closed run is a decided item), and it is in
  * no position fragment
  * but `not_started`'s, which asks for no open and no done run.
  */

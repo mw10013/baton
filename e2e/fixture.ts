@@ -70,7 +70,7 @@ import type {
  *
  * `Rush order` is the fixture's one cross-cutting workflow: a product carrying
  * `rush` beside its own tag is claimed by two workflows, nothing starts, and
- * the row reads **Choose a workflow**. It is deliberately the kind of mistake
+ * the row reads **Needs a workflow**. It is deliberately the kind of mistake
  * a merchant makes — "rush" was meant as an order label, not a workflow.
  *
  * The rows from `#2001` are generated rather than hand-written, and are always
@@ -508,7 +508,7 @@ const floorOrders: readonly SeedOrder[] = [
   },
   {
     // two workflows claim the one item (its own tag plus `rush`), so nothing
-    // starts: a "Choose a workflow" issue badge on the index, and the order page's picker
+    // starts: a "Needs a workflow" issue badge on the index, and the order page's picker
     // offers exactly those two
     n: 1011,
     lineItems: [
@@ -520,7 +520,7 @@ const floorOrders: readonly SeedOrder[] = [
   },
   {
     // one ambiguous item beside one that started fine: Making in the Status
-    // column, "Choose a workflow" in the Issues column
+    // column, "Needs a workflow" in the Issues column
     n: 1012,
     lineItems: [
       item("Engraved cutting board", [TAG.board, TAG.rush], 1, {

@@ -129,7 +129,7 @@
  *
  * | word            | meaning                                           | screen              |
  * | --------------- | ------------------------------------------------- | ------------------- |
- * | choose workflow | an item matched two or more workflows             | Choose a workflow   |
+ * | choose workflow | an item matched two or more workflows             | Needs a workflow    |
  * | team            | an open task unassigned                           | Needs a team        |
  * | empty team      | a current task on a team with no members          | Team has no members |
  * | blocked         | a run on the order is blocked, the run-state word | Blocked             |
@@ -271,7 +271,7 @@ export const PRODUCTION_STATE_LABEL = {
  * one label and one tone on every screen.
  */
 export const ORDER_ISSUE_LABEL = {
-  choose_workflow: "Choose a workflow",
+  choose_workflow: "Needs a workflow",
   team: "Needs a team",
   empty_team: "Team has no members",
   blocked: "Blocked",
