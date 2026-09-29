@@ -1376,18 +1376,18 @@ test("a bad filter value reads as no filter", async ({ page }) => {
 /**
  * The Issues banner on the orders index. The sandbox holds real orders, so
  * the team select keeps this test to its own: `#9601` waits on a team with a
- * member and has an item matching two workflows, a Choose a workflow issue,
- * which is a warning; `#9602`'s only task is on a team with no members, a
- * Team has no members issue, which is a warning; `#9603` has an unassigned
- * task on a later step, a Needs a team issue, which is critical. The
- * banner's count honours the team (`Domain.OrderCounts`), so each team shows
- * its own order's tone.
+ * member and has an item matching two workflows, a Choose a workflow issue;
+ * `#9602`'s only task is on a team with no members, a Team has no members
+ * issue; `#9603` has an unassigned task on a later step, a Needs a team
+ * issue. The banner's count honours the team (`Domain.OrderCounts`), so each
+ * team shows its own order, and every one of the three is critical
+ * (`Domain.ORDER_ISSUE_TONE`).
  *
  * The seed refuses to turn on a workflow with an unassigned task, so
  * `#9603`'s second step is seeded on a team that is then deleted on the
  * teams screen, which is how a task becomes unassigned in the app.
  */
-test("the Issues banner stands while any open order has an issue and goes with the Issues view", async ({
+test("the Issues banner stands while any open order has an issue, is critical for every issue, and goes with the Issues view", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -1490,7 +1490,7 @@ test("the Issues banner stands while any open order has an issue and goes with t
     /^\d+ open orders? ha(?:s|ve) (?:an )?issues?$/u,
   );
   await expect(banner).toHaveAttribute("heading", "1 open order has an issue");
-  await expect(banner).toHaveAttribute("tone", "warning");
+  await expect(banner).toHaveAttribute("tone", "critical");
 
   await banner.getByRole("button", { name: "Show issues" }).click();
   await expect.poll(() => listContext(page).view).toBe("issues");
@@ -1504,17 +1504,17 @@ test("the Issues banner stands while any open order has an issue and goes with t
   await viewButton(frame, "Open").click();
   await expect(banner).toBeVisible();
 
-  /* The team with only a Team has no members order: a warning. */
+  /* The team with only a Team has no members order. */
   await team.selectOption({ label: EMPTY_TEAM });
   await expect(
     frame
       .locator("s-table-row", { hasText: "#9602" })
       .getByText("Team has no members", { exact: true }),
   ).toBeVisible();
-  await expect(banner).toHaveAttribute("tone", "warning");
+  await expect(banner).toHaveAttribute("tone", "critical");
   await expect(banner).toHaveAttribute("heading", "1 open order has an issue");
 
-  /* The team with only a Needs a team order: the banner goes critical. */
+  /* The team with only a Needs a team order. */
   await team.selectOption({ label: ORPHAN_TEAM });
   await expect(
     frame

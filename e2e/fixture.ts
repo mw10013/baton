@@ -45,7 +45,7 @@ import type {
  * single-workflow, and every hand-off crosses a team boundary. Tags are the
  * workflow names in tag form, which is what the create dialog prefills.
  *
- * The derived team issues are all seeded so every warning is visible
+ * The derived team issues are all seeded so every one is visible
  * after one `pnpm seed`, and each carries its reading in its name so the row
  * cannot be mistaken for a mistake: `Retired team (empty)` has nobody on it,
  * `Tag stamping (unassigned task)` has a task with no team (what a team delete

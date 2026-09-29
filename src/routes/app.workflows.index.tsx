@@ -28,7 +28,7 @@ const decodeWorkflowResult = Schema.decodeUnknownPromise(
 /**
  * One place for every status badge. The `team` and `empty_team` badges are
  * the orders index's, label and tone ({@link Domain.ORDER_ISSUE_LABEL},
- * {@link Domain.orderIssueTone}), for the same faults on a workflow:
+ * {@link Domain.ORDER_ISSUE_TONE}), for the same faults on a workflow:
  * `unassigned` and `emptyTeam`, derived by the object on every read.
  */
 export const statusBadges = (workflow: Domain.WorkflowSummary) => (
@@ -40,12 +40,12 @@ export const statusBadges = (workflow: Domain.WorkflowSummary) => (
     )}
     {workflow.stepCount === 0 && <s-badge tone="warning">No steps</s-badge>}
     {workflow.unassigned && (
-      <s-badge tone={Domain.orderIssueTone("team")}>
+      <s-badge tone={Domain.ORDER_ISSUE_TONE}>
         {Domain.ORDER_ISSUE_LABEL.team}
       </s-badge>
     )}
     {workflow.emptyTeam && (
-      <s-badge tone={Domain.orderIssueTone("empty_team")}>
+      <s-badge tone={Domain.ORDER_ISSUE_TONE}>
         {Domain.ORDER_ISSUE_LABEL.empty_team}
       </s-badge>
     )}

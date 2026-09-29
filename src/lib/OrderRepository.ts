@@ -198,14 +198,11 @@ const CHOOSING = `fullyPaid = 1 and exists (${AMBIGUOUS_ITEM})`;
  * statement in `listOrders`: `viewFilter` restated over per-order facts
  * instead of correlated subqueries, and moving with it. `OPEN` is the
  * statement's own `where`, so `open` is every row. `issues` is the four
- * `Domain.orderIssues` elements or'd. `criticalIssues` is the ones
- * `Domain.orderIssueIsCritical` holds, restated in SQL, and must move with
- * it; it has no view.
+ * `Domain.orderIssues` elements or'd.
  */
 const COUNT_FACT = {
   open: "1",
   issues: "choosing or unassigned or emptyTeam or blockedRuns > 0",
-  criticalIssues: "unassigned or blockedRuns > 0",
   not_started: "openRuns = 0 and doneRuns = 0",
   making: "openRuns > 0",
   made: "doneRuns > 0 and openRuns = 0",
@@ -1315,8 +1312,7 @@ export class OrderRepository extends Context.Service<
                 sum(${sql.literal(COUNT_FACT.issues)}),
                 sum(${sql.literal(COUNT_FACT.not_started)}),
                 sum(${sql.literal(COUNT_FACT.making)}),
-                sum(${sql.literal(COUNT_FACT.made)}),
-                sum(${sql.literal(COUNT_FACT.criticalIssues)})
+                sum(${sql.literal(COUNT_FACT.made)})
               from facts
             `.values;
           const counts = {
@@ -1325,7 +1321,6 @@ export class OrderRepository extends Context.Service<
             not_started: Number(countRow?.[2] ?? 0),
             making: Number(countRow?.[3] ?? 0),
             made: Number(countRow?.[4] ?? 0),
-            criticalIssues: Number(countRow?.[5] ?? 0),
           } satisfies Domain.OrderCounts;
           const last = orders.at(-1);
           return {

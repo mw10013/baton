@@ -71,11 +71,7 @@ const rowsOf = (source: string) =>
   Result.getOrThrow(ActionTable.parse(source, "taskActions"));
 
 const checkOrderIssues = (doctored: string) =>
-  ActionTable.checkOrderIssues(
-    doctored,
-    Domain.OrderIssue.literals,
-    Domain.orderIssueIsCritical,
-  );
+  ActionTable.checkOrderIssues(doctored, Domain.OrderIssue.literals);
 
 describe("action table parser", () => {
   it("the table is the first one in the JSDoc before the export", () => {
@@ -251,9 +247,9 @@ describe("action table parser", () => {
 
   describe("the order issue table", () => {
     const TEAM_ROW =
-      "| `team`            | {@link OrderRow} `unassigned`                                            | critical | Assign team on the order page       |";
+      "| `team`            | {@link OrderRow} `unassigned`                                            | Assign team on the order page       |";
     const EMPTY_TEAM_ROW =
-      "| `empty_team`      | {@link OrderRow} `emptyTeam`                                             | warning  | add a member on the team page       |";
+      "| `empty_team`      | {@link OrderRow} `emptyTeam`                                             | add a member on the team page       |";
 
     it("Domain.ts passes", () => {
       expect(source).toContain(TEAM_ROW);
@@ -264,22 +260,11 @@ describe("action table parser", () => {
     it("each order issue has one remedy", () => {
       const doctored = source.replace(
         EMPTY_TEAM_ROW,
-        "| `empty_team`      | {@link OrderRow} `emptyTeam`                                             | warning  | assign a team, or add a member      |",
+        "| `empty_team`      | {@link OrderRow} `emptyTeam`                                             | assign a team, or add a member      |",
       );
       expect(doctored).not.toBe(source);
       expect(checkOrderIssues(doctored)).toEqual([
         "OrderIssue `empty_team`: a remedy names one action; this one says or",
-      ]);
-    });
-
-    it("the Tone column is orderIssueIsCritical", () => {
-      const doctored = source.replace(
-        EMPTY_TEAM_ROW,
-        EMPTY_TEAM_ROW.replace("| warning  |", "| critical |"),
-      );
-      expect(doctored).not.toBe(source);
-      expect(checkOrderIssues(doctored)).toEqual([
-        "OrderIssue `empty_team`: Tone says critical; orderIssueIsCritical says warning",
       ]);
     });
 

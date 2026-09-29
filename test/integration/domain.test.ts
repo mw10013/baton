@@ -168,15 +168,6 @@ describe("Domain.orderIssues", () => {
   });
 });
 
-describe("Domain.orderIssueIsCritical", () => {
-  it("team and blocked are critical, choose workflow and empty team are warnings", () => {
-    deepStrictEqual(
-      Domain.OrderIssue.literals.filter(Domain.orderIssueIsCritical),
-      ["team", "blocked"],
-    );
-  });
-});
-
 const run = (status: Domain.RunStatus, blocked = false): Domain.Run => ({
   id: Schema.decodeUnknownSync(Domain.RunId)("r"),
   workflowId: Schema.decodeUnknownSync(Domain.WorkflowId)("w"),

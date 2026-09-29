@@ -137,12 +137,11 @@ const positionBadge = (row: Domain.OrderRow) => {
 
 /**
  * The Issues cell: one badge per `Domain.orderIssues` element, in that order,
- * labelled by `Domain.ORDER_ISSUE_LABEL`, with its tone from
- * `Domain.orderIssueTone`.
+ * labelled by `Domain.ORDER_ISSUE_LABEL`, toned `Domain.ORDER_ISSUE_TONE`.
  */
 const issueBadges = (row: Domain.OrderRow) =>
   Domain.orderIssues(row).map((issue) => (
-    <s-badge key={issue} tone={Domain.orderIssueTone(issue)}>
+    <s-badge key={issue} tone={Domain.ORDER_ISSUE_TONE}>
       {Domain.ORDER_ISSUE_LABEL[issue]}
     </s-badge>
   ));
@@ -613,7 +612,7 @@ function RouteComponent() {
               {/* No placeholder for an empty cell. On an order in
                   production, empty means every current task is unassigned
                   (a team with no members still shows, so the merchant knows
-                  which team needs a member), and the critical badge
+                  which team needs a member), and the Needs a team badge
                   beside it already says so. A dash would flatten that into
                   "nothing to see". A fulfilled or cancelled order is always
                   empty (`Domain.OrderRow.waitingOn`). */}
@@ -699,9 +698,8 @@ function RouteComponent() {
           away. Not dismissible, because dismissing would hide a state that
           is still true and it would return on the next load. Hidden while
           the Issues view is pressed, because the table below is that list.
-          Critical while `counts.criticalIssues` is above zero
-          ({@link Domain.orderIssueIsCritical}), otherwise a warning,
-          matching the Issues badges. The count is
+          Toned {@link Domain.ORDER_ISSUE_TONE}, matching the Issues
+          badges. The count is
           `Domain.OrderCounts`, which honours the team select, so it is the
           Issues button's number. On the orders index only, not the home
           page, so one screen owns it. After the quota banners, which say
@@ -711,7 +709,7 @@ function RouteComponent() {
         !(q === null && view === "issues") && (
           <s-banner
             heading={issuesHeading(data.page.counts.issues)}
-            tone={data.page.counts.criticalIssues > 0 ? "critical" : "warning"}
+            tone={Domain.ORDER_ISSUE_TONE}
           >
             <s-button
               slot="secondary-actions"

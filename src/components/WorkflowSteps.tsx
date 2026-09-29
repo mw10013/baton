@@ -140,11 +140,11 @@ export function StepFlow({
 
 /**
  * One banner per team issue a workflow carries, the `team` and `empty_team`
- * {@link Domain.OrderIssue}s, headed by the issue's label and toned by its
- * tone so a fault reads the same here as on the indexes. Nothing when the
- * workflow has neither. Two banners rather than one because the faults have
- * different tones and different remedies, and one heading over both would
- * name neither.
+ * {@link Domain.OrderIssue}s, headed by the issue's label and toned
+ * {@link Domain.ORDER_ISSUE_TONE} so a fault reads the same here as on the
+ * indexes. Nothing when the workflow has neither. Two banners rather than one
+ * because the faults have different remedies, and one heading over both
+ * would name neither.
  */
 export function TeamIssueBanners({
   tasks,
@@ -161,7 +161,7 @@ export function TeamIssueBanners({
         line === null ? null : (
           <s-banner
             key={issue}
-            tone={Domain.orderIssueTone(issue)}
+            tone={Domain.ORDER_ISSUE_TONE}
             heading={Domain.ORDER_ISSUE_LABEL[issue]}
           >
             {/* An element, not a bare string: `s-banner` renders its body

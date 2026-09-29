@@ -591,8 +591,9 @@ test("the workflows index keeps its status filter across the workflow page", asy
  * index's: "Needs a team" for an unassigned task and "Team has no members"
  * for a task on a team with no members (`statusBadges`). A workflow with
  * both shows both, and its workflow page shows one banner per issue under
- * the same headings and tones (`TeamIssueBanners`). Seeded off, because the
- * seed refuses to turn on a workflow with an unassigned task.
+ * the same headings, both critical like every issue (`TeamIssueBanners`,
+ * `Domain.ORDER_ISSUE_TONE`). Seeded off, because the seed refuses to turn
+ * on a workflow with an unassigned task.
  */
 test("the workflows index and the workflow page show Needs a team and Team has no members apart", async ({
   page,
@@ -635,6 +636,6 @@ test("the workflows index and the workflow page show Needs a team and Team has n
   await expect(needsTeam).toHaveAttribute("tone", "critical");
   await expect(needsTeam).toContainText("No team on Stamp.");
   const noMembers = frame.locator('s-banner[heading="Team has no members"]');
-  await expect(noMembers).toHaveAttribute("tone", "warning");
+  await expect(noMembers).toHaveAttribute("tone", "critical");
   await expect(noMembers).toContainText(`Nobody is on ${EMPTY}.`);
 });

@@ -267,8 +267,8 @@ export const PRODUCTION_STATE_LABEL = {
  * Issues column. A row of filter buttons used to carry these words too; now
  * only the badges do, and the Issues view holds all of them. The workflows
  * index's badges and the workflow page's banners read `team` and
- * `empty_team` from here too, with the tone from {@link orderIssueTone}, so
- * a fault has one label and one tone on every screen.
+ * `empty_team` from here too, with {@link ORDER_ISSUE_TONE}, so a fault has
+ * one label and one tone on every screen.
  */
 export const ORDER_ISSUE_LABEL = {
   choose_workflow: "Choose a workflow",
@@ -1260,17 +1260,20 @@ export type WorkflowTag = typeof WorkflowTag.Type;
  * least one task, every one assigned at the moment of Turn on.
  * A task whose team was deleted is **unassigned** (`teamId` null, or an id
  * no D1 row carries — read as null everywhere). A workflow with an
- * unassigned task carries the `team` {@link OrderIssue} (**Needs a team**,
- * critical) and one with a task on a team with no members the `empty_team`
- * issue (**Team has no members**, warning), with the orders index's labels
- * and tones ({@link ORDER_ISSUE_LABEL}, {@link orderIssueTone}), on the
- * workflows index as badges and on the workflow page as banners. Both are
- * derived on every read and never stored.
- * Unassigned refuses Apply and Turn on; an empty team is a warning only, for
- * the reason on {@link OrderIssue}. Tasks change only through Apply,
- * so an order arriving between two edits sees a whole definition, never a
- * half one; the tag and the name are immediate, because runs snapshot both at
- * start. Encoded side is the Durable Object row
+ * unassigned task carries the `team` {@link OrderIssue} (**Needs a team**)
+ * and one with a task on a team with no members the `empty_team` issue
+ * (**Team has no members**), with the orders index's labels and tone
+ * ({@link ORDER_ISSUE_LABEL}, {@link ORDER_ISSUE_TONE}), on the workflows
+ * index as badges and on the workflow page as banners. Both are derived on
+ * every read and never stored.
+ * **Apply and Turn on refuse only a fault the draft itself can fix.** An
+ * unassigned task is fixed in the draft, so both refuse it. An empty team is
+ * fixed on the team page, outside the draft, so neither refuses it: refusing
+ * would make the merchant staff every team before defining the workflow.
+ * Either fault is still an {@link OrderIssue} on every order it stops.
+ * Tasks change only through Apply, so an order arriving between two edits
+ * sees a whole definition, never a half one; the tag and the name are
+ * immediate, because runs snapshot both at start. Encoded side is the Durable Object row
  * (epoch-ms integers).
  */
 const WorkflowFields = {
@@ -1432,7 +1435,7 @@ export type WorkflowPageData = typeof WorkflowPageData.Type;
 /** A task is unassigned when its team is null or resolves to no team; the name is the tell after the roster join. */
 export const isUnassigned = (task: TaskWithTeamName) => task.teamName === null;
 
-/** Assigned to a team nobody is on: a warning, never a blocker ({@link OrderIssue} says why). */
+/** Assigned to a team nobody is on: an issue, but Apply and Turn on allow it ({@link OrderIssue} says why). */
 export const hasEmptyTeam = (task: TaskWithTeamName) =>
   task.teamName !== null && task.memberCount === 0;
 
@@ -2284,12 +2287,12 @@ export type OrdersIndexView = typeof OrdersIndexView.Type;
  * {@link orderIssues}; the SQL predicates in `OrderRepository.listOrders`
  * restate each element and must move with it.
  *
- * | Issue             | Rule                                                                     | Tone     | Remedy                              |
- * | ----------------- | ------------------------------------------------------------------------ | -------- | ----------------------------------- |
- * | `choose_workflow` | `ambiguousItems > 0` and the order can start runs ({@link canStartRuns}) | warning  | choose a workflow on the order page |
- * | `team`            | {@link OrderRow} `unassigned`                                            | critical | Assign team on the order page       |
- * | `empty_team`      | {@link OrderRow} `emptyTeam`                                             | warning  | add a member on the team page       |
- * | `blocked`         | `runs.blocked > 0`                                                       | critical | the order page                      |
+ * | Issue             | Rule                                                                     | Remedy                              |
+ * | ----------------- | ------------------------------------------------------------------------ | ----------------------------------- |
+ * | `choose_workflow` | `ambiguousItems > 0` and the order can start runs ({@link canStartRuns}) | choose a workflow on the order page |
+ * | `team`            | {@link OrderRow} `unassigned`                                            | Assign team on the order page       |
+ * | `empty_team`      | {@link OrderRow} `emptyTeam`                                             | add a member on the team page       |
+ * | `blocked`         | `runs.blocked > 0`                                                       | the order page                      |
  *
  * **Each issue has one remedy: the action that fixes the fault the issue
  * names.** A Remedy cell never names two actions. An action that only routes
@@ -2298,14 +2301,20 @@ export type OrdersIndexView = typeof OrdersIndexView.Type;
  * names neither: that is how Needs a team came to be shown for a team that
  * was assigned but had no members.
  *
- * **Critical means a person cannot proceed without the merchant deciding
- * something about this order**: the task has no team, or a person has put a
- * hold on the run. An empty team is a warning because a team with no members
- * is valid (Turn on allows it, {@link Workflow}), it is the ordinary state of
- * a new team while the merchant is still adding members, and adding one
- * member clears every order waiting on that team. Critical has to stay rare
- * enough to mean something. {@link orderIssueIsCritical} reads the Tone
- * column.
+ * **Every issue is critical, on every screen that shows it**
+ * ({@link ORDER_ISSUE_TONE}). An issue is an order that will not move until
+ * the merchant acts, which is what the critical tone says, so a warning among
+ * issues would say "stuck, but not very", and no issue is that: an ambiguous
+ * item has no run at all, and a task on a team with no members reaches
+ * nobody, exactly as a task with no team does. The definition, not the tone,
+ * keeps critical rare: it leaves out every order that is not stuck (an
+ * unmatched item, an unpaid order, a cancelled run, below).
+ *
+ * **The tone is not whether Apply allows the fault.** Apply asks whether
+ * the draft can fix it, and allows an empty team ({@link Workflow}); an issue
+ * asks whether this order is stuck, and an order waiting on an empty team
+ * is. A team with no members that no current task is on stops no order,
+ * which is why the teams index's No members badge stays a warning.
  *
  * **An issue is an undecided item.** An item whose run the merchant
  * cancelled was decided (Cancel workflow says "Baton is not making this"),
@@ -2510,8 +2519,8 @@ export const OrderRow = Schema.Struct({
    * alarm. A team on the roster with no members does contribute: it is
    * `emptyTeam`, and the Waiting on cell names the team the merchant has to
    * add a member to. So an order being made with an empty list is exactly an
-   * order whose every current task is unassigned, which is when the critical
-   * badge is showing.
+   * order whose every current task is unassigned, which is when the Needs a
+   * team badge is showing.
    *
    * Ids, not names: the Durable Object has no team names. The route resolves
    * them through `OrdersIndexData.teams`, the roster the page was read against.
@@ -2593,20 +2602,13 @@ export const orderIssues = ({
   return OrderIssue.literals.filter((literal) => issue[literal]);
 };
 
-const ORDER_ISSUE_IS_CRITICAL = {
-  choose_workflow: false,
-  team: true,
-  empty_team: false,
-  blocked: true,
-} as const satisfies Record<OrderIssue, boolean>;
-
-/** The Tone column of {@link OrderIssue}: true where it says critical. */
-export const orderIssueIsCritical = (issue: OrderIssue): boolean =>
-  ORDER_ISSUE_IS_CRITICAL[issue];
-
-/** {@link orderIssueIsCritical} as the `s-badge` and `s-banner` tone word every screen passes. */
-export const orderIssueTone = (issue: OrderIssue): "critical" | "warning" =>
-  orderIssueIsCritical(issue) ? "critical" : "warning";
+/**
+ * The `s-badge` and `s-banner` tone of every {@link OrderIssue}, on every
+ * screen that shows one: the orders index's Issues badges and banner, the
+ * workflows index's badges, the workflow page's banners. One tone for all,
+ * for the reason on {@link OrderIssue}.
+ */
+export const ORDER_ISSUE_TONE = "critical";
 
 /**
  * The index's per-order ambiguity count, recomputed from a detail page's line
@@ -2651,12 +2653,6 @@ export const runCounts = (runs: readonly Run[]): RunCounts =>
  * when the team changes, which is what a merchant expects a team select to
  * do. `open` is the sum of the three positions.
  *
- * `criticalIssues` is the open orders with an issue
- * {@link orderIssueIsCritical} holds, given the team, a subset of `issues`;
- * it has no view.
- * It sets the Issues banner's tone on the orders index, critical only while
- * a person is stopped, so critical stays rare enough to mean something.
- *
  * All are computed over open orders only. They are read through the partial
  * index over unfulfilled, uncancelled orders, so a count costs one row per
  * open order, not one per order ever stored. So Fulfilled and All carry no
@@ -2673,7 +2669,6 @@ export const OrderCounts = Schema.Struct({
   not_started: Schema.Number,
   making: Schema.Number,
   made: Schema.Number,
-  criticalIssues: Schema.Number,
 });
 export type OrderCounts = typeof OrderCounts.Type;
 

@@ -38,11 +38,6 @@ const runInRepository = <A, E>(
 const orderId = (n: number) => `gid://shopify/Order/${String(n)}`;
 const names = (page: Domain.OrdersPage) =>
   page.orders.map(({ order }) => order.name);
-/** The page's orders with an issue `Domain.orderIssueIsCritical` holds. */
-const critical = (page: Domain.OrdersPage) =>
-  page.orders.filter((row) =>
-    Domain.orderIssues(row).some(Domain.orderIssueIsCritical),
-  ).length;
 const lineItemId = (n: number) => `gid://shopify/LineItem/${String(n)}`;
 const aTeamId = (value: string) =>
   Schema.decodeUnknownSync(Domain.TeamId)(value);
@@ -549,8 +544,6 @@ describe("OrderRepository.listOrders views", () => {
           "fulfilled",
           "all",
         ] as const;
-        /* `criticalIssues` has no view, so it is not here; its own test
-           checks it. */
         const counted = {
           open: null,
           issues: "issues",
@@ -558,7 +551,7 @@ describe("OrderRepository.listOrders views", () => {
           making: "making",
           made: "made",
         } as const satisfies Record<
-          Exclude<keyof Domain.OrderCounts, "criticalIssues">,
+          keyof Domain.OrderCounts,
           Domain.OrdersIndexView | null
         >;
         const out: {
@@ -592,7 +585,6 @@ describe("OrderRepository.listOrders views", () => {
       not_started: 4,
       making: 5,
       made: 3,
-      criticalIssues: 2,
     });
     // Cut holds `#1013` and `#1014`, both making; `#1013` is choosing.
     deepStrictEqual(checks.cut, {
@@ -601,28 +593,7 @@ describe("OrderRepository.listOrders views", () => {
       not_started: 0,
       making: 2,
       made: 0,
-      criticalIssues: 0,
     });
-  });
-
-  it("criticalIssues counts the open orders with a critical issue, and an empty team is not one", async () => {
-    const { all, cut } = await runInRepository(
-      Effect.gen(function* () {
-        const { list } = yield* seedIssues;
-        return {
-          all: yield* list("all"),
-          cut: yield* list("all", aTeamId("team-cut")),
-        };
-      }),
-    );
-    // Unassigned `#1004` and blocked `#1003`; empty team `#1015` is an issue
-    // but not a critical one.
-    strictEqual(all.counts.criticalIssues, 2);
-    strictEqual(all.counts.issues, 5);
-    strictEqual(rowOf(all, "#1015")?.emptyTeam, true);
-    strictEqual(rowOf(all, "#1015")?.unassigned, false);
-    strictEqual(all.counts.criticalIssues, critical(all));
-    strictEqual(cut.counts.criticalIssues, critical(cut));
   });
 
   it("search ignores the view and the team", async () => {
@@ -1080,7 +1051,6 @@ describe("OrderRepository.listOrders waitingOn", () => {
       not_started: 0,
       making: 0,
       made: 0,
-      criticalIssues: 0,
     };
     deepStrictEqual(cut.counts, { ...none, open: 2, making: 2 });
     deepStrictEqual(unknown.counts, none);
