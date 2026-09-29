@@ -166,7 +166,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
               return Option.getOrThrow(session).planHandleExpiresAt;
             });
           // Never fetched: stays never fetched, or an absent handle would
-          // start reading as a verified absence of any contract.
+          // start reading as a verified absence of any app subscription.
           yield* repo.shortenShopSessionPlanExpiry({ shop, notAfter: 500 });
           strictEqual(yield* deadline(), null);
           yield* repo.updateShopSessionPlan({

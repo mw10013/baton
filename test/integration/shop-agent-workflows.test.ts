@@ -1446,6 +1446,8 @@ describe("ShopAgent seed callables", () => {
     };
     await agent.seedOrders({ ...seedMember, orders });
     strictEqual(await countedOrders(), 0);
+    const usage = await agent.getUsage();
+    strictEqual(usage.pendingUsageEvents, 0);
     // Five orders the seed does not own, counted the way a sync would count
     // them: a reseed leaves their share alone.
     await runInDurableObject(env.SHOP_AGENT.getByName(shop), (instance) => {

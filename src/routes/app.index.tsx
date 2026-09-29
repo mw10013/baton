@@ -126,6 +126,11 @@ function CapacityTile({
  * ({@link QuotaBanners}). The steady-state numbers are not banners: the meters
  * carry them, and a banner that is present on the ordinary day is a banner
  * nobody reads on the bad one.
+ *
+ * The Members tile shows today's roster, not the seats billed this cycle
+ * (`Domain.ShopUsage.membersHighWater`). The two differ only after a member
+ * is removed during the cycle: the roster drops and the seats do not. The
+ * roster is what the merchant manages from the tile, so it stays the number.
  */
 function RouteComponent() {
   const { entitlements, usage, memberCount } = Route.useLoaderData();
@@ -157,7 +162,7 @@ function RouteComponent() {
             {/* Used against included, in that order: the number a merchant is
                 looking for is what they have spent, not what they were sold. */}
             <CapacityTile
-              heading="Orders this billing period"
+              heading="Orders this billing cycle"
               href="/app/orders"
               headline={`${formatNumber(usage.ordersThisCycle)} of ${formatNumber(entitlements.ordersPerCycle)} included`}
               count={usage.ordersThisCycle}

@@ -18,6 +18,7 @@
  * | tab, tabs                 | a list's button is a view (`Domain.WorkflowsListView`)             |
  * | staff, staffed, unstaffed | a team's people are members; Shopify's staff are the merchant side |
  * | attention                 | an issue is named by its fault: unassigned, empty team, blocked    |
+ * | billing period            | the screen word is billing cycle (`Domain.ShopUsage`)              |
  *
  * And the copy words that are wrong in every slot, whatever the noun: copy
  * states facts and names the act, so it never pleads, apologises, exclaims
@@ -60,6 +61,7 @@ export const RETIRED: readonly RegExp[] = [
   /\btabs?\b/iu,
   /\b(?:un)?staff(?:s|ed|ing)?\b/iu,
   /\battention\b/iu,
+  /\bbilling periods?\b/iu,
   /\bplease\b/iu,
   /\bsuccessfully\b/iu,
   /\boops\b/iu,

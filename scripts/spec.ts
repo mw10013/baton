@@ -1,11 +1,12 @@
 // Checks and prints the spec: the action matrices in src/lib/Domain.ts (the
 // JSDoc on `runActions` and `taskActions`), which the test reads as the spec,
-// and the data-model tables on `initializeSchema` in
-// src/lib/ShopAgentSchema.ts (the object) and on `D1_TABLES` in
-// src/lib/D1Schema.ts (D1).
+// the triggers table on `ShopUsage` in src/lib/Domain.ts (what each trigger
+// does to the usage counts and the usage-event queue), and the data-model
+// tables on `initializeSchema` in src/lib/ShopAgentSchema.ts (the object) and
+// on `D1_TABLES` in src/lib/D1Schema.ts (D1).
 //
-//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the glossary, its screen columns and its Screens table, parse both data-model tables and refuse a pinned title no test carries, parse the copy and controls tables in src/lib/Screen.ts and refuse an example no screen shows (exit 1 on any failure)
-//   node scripts/spec.ts print   render the parsed rows and how many fixtures each expands to, then the data-model rows
+//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the glossary, its screen columns and its Screens table, parse the triggers table and both data-model tables and refuse a pinned title no test carries, parse the copy and controls tables in src/lib/Screen.ts and refuse an example no screen shows (exit 1 on any failure)
+//   node scripts/spec.ts print   render the parsed rows and how many fixtures each expands to, then the triggers rows, then the data-model rows
 
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import { Console, Effect, Result } from "effect";
@@ -114,6 +115,11 @@ const checkCommand = Command.make(
       ...ActionTable.checkScreenColumns(source, SCREEN_LABELS),
       ...ActionTable.checkOrderIssues(source, Domain.OrderIssue.literals),
       ...ActionTable.checkScreens(source, routeFiles),
+      ...Result.match(ActionTable.parseTriggerTable(source), {
+        onFailure: (error) => [error.message],
+        onSuccess: (rows) =>
+          ActionTable.checkPinned(rows, testSources, "ShopUsage"),
+      }),
       ...dataModels.flatMap(({ source, options }) =>
         Result.match(ActionTable.parseDataModel(source, options), {
           onFailure: (error) => [error.message],
@@ -143,7 +149,7 @@ const checkCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Parse the action tables in Domain.ts, check the glossary, check the data-model tables in ShopAgentSchema.ts and D1Schema.ts, and check the copy and controls tables in Screen.ts; exit 1 on any failure",
+    "Parse the action tables in Domain.ts, check the glossary, check the triggers table on ShopUsage in Domain.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts, and check the copy and controls tables in Screen.ts; exit 1 on any failure",
   ),
 );
 
@@ -164,6 +170,16 @@ const printCommand = Command.make(
       });
       for (const line of lines) yield* Console.log(`  ${line}`);
     }
+    yield* Console.log("ShopUsage");
+    const triggers = Result.match(ActionTable.parseTriggerTable(source), {
+      onFailure: (error) => [error.message],
+      onSuccess: (rows) =>
+        rows.map(
+          (row) =>
+            `${row.trigger}: orders ${row.orderCount}, seats ${row.seatMark}, queue ${row.queue} — ${row.pinnedBy}`,
+        ),
+    });
+    for (const line of triggers) yield* Console.log(`  ${line}`);
     for (const { source: dataModel, options } of yield* readDataModels) {
       yield* Console.log(options.symbol);
       const rows = Result.match(
@@ -182,13 +198,13 @@ const printCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Render the parsed action tables and their fixture counts, then the data-model rows",
+    "Render the parsed action tables and their fixture counts, then the triggers rows, then the data-model rows",
   ),
 );
 
 const specCommand = Command.make("spec").pipe(
   Command.withDescription(
-    "The action matrices in src/lib/Domain.ts and the data-model tables in src/lib/ShopAgentSchema.ts and src/lib/D1Schema.ts",
+    "The action matrices and the triggers table in src/lib/Domain.ts, and the data-model tables in src/lib/ShopAgentSchema.ts and src/lib/D1Schema.ts",
   ),
   Command.withSubcommands([checkCommand, printCommand]),
 );

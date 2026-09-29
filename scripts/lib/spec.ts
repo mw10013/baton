@@ -763,17 +763,103 @@ export const parseDataModel = (
       ),
   );
 
+/** The order-count cells a triggers-table row may hold: unchanged, one more, or recounted from the rows. */
+export const ORDER_COUNT_WORDS = ["—", "+1", "recounted"] as const;
+
+/** The seat-mark cells a triggers-table row may hold. */
+export const SEAT_MARK_WORDS = [
+  "—",
+  "→ 0",
+  "→ roster",
+  "→ roster if above",
+] as const;
+
+/** One parsed row of the triggers table on `ShopUsage` in `src/lib/Domain.ts`. */
+export interface TriggerRow {
+  readonly line: number;
+  readonly trigger: string;
+  readonly orderCount: (typeof ORDER_COUNT_WORDS)[number];
+  readonly seatMark: (typeof SEAT_MARK_WORDS)[number];
+  readonly queue: string;
+  readonly pinnedBy: string;
+}
+
+/**
+ * Read the triggers table out of the JSDoc on `ShopUsage` in `source`
+ * (`src/lib/Domain.ts`). The header is `trigger | order count | seat mark |
+ * queue | pinned by`. `trigger` and `queue` are non-empty free text; `order
+ * count` is one of {@link ORDER_COUNT_WORDS} and `seat mark` one of {@link
+ * SEAT_MARK_WORDS}, so a row cannot say what the counts do in words the
+ * reader has to interpret; `pinned by` is a test title or {@link NONE_YET}.
+ * Fails with a message naming the line and the offending cell.
+ */
+export const parseTriggerTable = (
+  source: string,
+): Result.Result<readonly TriggerRow[], ParseError> =>
+  Result.flatMap(
+    firstTable(source, "ShopUsage", [
+      "trigger",
+      "order count",
+      "seat mark",
+      "queue",
+      "pinned by",
+    ]),
+    ({ body }) =>
+      Result.all(
+        body.map(({ line, text }): Result.Result<TriggerRow, ParseError> => {
+          const fail = (message: string) =>
+            Result.fail(
+              new ParseError({
+                message: `ShopUsage, line ${String(line)}: ${message}`,
+              }),
+            );
+          const values = cellsOf(text);
+          if (values.length !== 5)
+            return fail(`${String(values.length)} cells, expected 5: ${text}`);
+          const [
+            trigger = "",
+            orderCount = "",
+            seatMark = "",
+            queue = "",
+            pinnedBy = "",
+          ] = values;
+          if (trigger === "") return fail("empty trigger");
+          const count = ORDER_COUNT_WORDS.find((word) => word === orderCount);
+          if (count === undefined)
+            return fail(
+              `unknown order count "${orderCount}"; expected one of: ${ORDER_COUNT_WORDS.join(", ")}`,
+            );
+          const mark = SEAT_MARK_WORDS.find((word) => word === seatMark);
+          if (mark === undefined)
+            return fail(
+              `unknown seat mark "${seatMark}"; expected one of: ${SEAT_MARK_WORDS.join(", ")}`,
+            );
+          if (queue === "") return fail("empty queue");
+          if (pinnedBy === "") return fail("empty pinned by");
+          return Result.succeed({
+            line,
+            trigger,
+            orderCount: count,
+            seatMark: mark,
+            queue,
+            pinnedBy,
+          });
+        }),
+      ),
+  );
+
 /**
  * **Every `pinned by` title is carried by a test.** A row whose cell is not
  * {@link NONE_YET} needs an `it(`, `it.effect(`, `it.live(` or any other
  * `it.<name>(` in some test source followed, after optional whitespace, by
  * the title as a whole quoted string. A string search, not a TypeScript
- * parse: the titles are plain strings. `testSources` maps each test file to
- * its text; `symbol` names the table in the messages. Reports each missing
- * title.
+ * parse: the titles are plain strings. The rows are any table's with a
+ * `pinned by` column: the data-model tables and the triggers table.
+ * `testSources` maps each test file to its text; `symbol` names the table in
+ * the messages. Reports each missing title.
  */
 export const checkPinned = (
-  rows: readonly DataModelRow[],
+  rows: readonly { readonly line: number; readonly pinnedBy: string }[],
   testSources: Readonly<Record<string, string>>,
   symbol: string,
 ): readonly string[] => {

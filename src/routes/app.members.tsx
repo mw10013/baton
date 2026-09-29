@@ -71,11 +71,10 @@ const getLoaderData = createServerFn({ method: "GET" })
  * primary connection, so a miss cannot happen and is reported as the
  * repository's own invariant failure.
  *
- * The roster size after the insert goes to `ShopAgent.recordRoster`, which
- * meters the seat (`Domain.seatEventValue`). Best-effort: a seat event that
+ * The roster size after the insert goes to `ShopAgent.recordRoster` (the
+ * "member added" rows on `Domain.ShopUsage`). Best-effort: a seat event that
  * failed to record is an operator signal, not a reason to fail the add, and
- * the next plan revalidation raises the mark to the roster anyway
- * (`OrderRepository.setBillingCycle`).
+ * the next revalidation's "cycle pushed, same start" row sends it.
  */
 const addMemberFn = createServerFn({ method: "POST" })
   .validator(Schema.toStandardSchemaV1(AddMemberInput))

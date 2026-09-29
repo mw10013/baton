@@ -32,7 +32,7 @@ import { Repository } from "@/lib/Repository";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { ResponseError, Shopify } from "@/lib/Shopify";
 import { ShopifyPartner } from "@/lib/ShopifyPartner";
-import { SubscriptionPlan } from "@/lib/SubscriptionPlan";
+import { revalidateStalePlans, SubscriptionPlan } from "@/lib/SubscriptionPlan";
 export { ShopAgent } from "@/lib/ShopAgent";
 export { OrdersSyncWorkflow } from "@/lib/OrdersSyncWorkflow";
 
@@ -495,7 +495,56 @@ const authorizeShopAgentRequest = Effect.fn("authorizeShopAgentRequest")(
   },
 );
 
+/**
+ * The layers the daily check needs: the `SubscriptionPlan` stack
+ * {@link makeAppLayer} builds for a request, without the request. D1 on
+ * `"first-primary"`, as a webhook is: nothing is waiting on the latency, and
+ * the run writes what it reads.
+ */
+const makeScheduledLayer = (env: Env) => {
+  const envLayer = makeEnvLayer(env);
+  const repositoryLayer = Layer.provideMerge(
+    Repository.layerNoDeps,
+    Layer.mergeAll(
+      D1Session.layer(env.D1.withSession("first-primary")),
+      Layer.provide(D1Primary.layerNoDeps, envLayer),
+      envLayer,
+    ),
+  );
+  return Layer.mergeAll(
+    Layer.provideMerge(
+      SubscriptionPlan.layerNoDeps,
+      Layer.mergeAll(
+        repositoryLayer,
+        Layer.provideMerge(ShopifyPartner.layer, envLayer),
+        Layer.provideMerge(ShopAgentClient.layerNoDeps, envLayer),
+      ),
+    ),
+    makeLoggerLayer(env),
+  );
+};
+
 export default {
+  /**
+   * The daily cron (`triggers` in `wrangler.jsonc`): the rule and the run are
+   * {@link revalidateStalePlans}. A failure is logged here and not thrown,
+   * because the next day's run is the retry.
+   */
+  async scheduled(_controller, env, ctx) {
+    const managedRuntime = ManagedRuntime.make(makeScheduledLayer(env));
+    const run = managedRuntime.runPromise(
+      revalidateStalePlans().pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError(
+            `scheduled.revalidatePlans: ${causeToErrorMessage(cause)}`,
+          ).pipe(Effect.annotateLogs({ cause: causeToErrorMessage(cause) })),
+        ),
+      ),
+    );
+    const dispose = () => managedRuntime.dispose();
+    ctx.waitUntil(run.then(dispose, dispose));
+    await run;
+  },
   async fetch(request, env, ctx) {
     const { runEffect, managedRuntime } = makeRunEffect(env, request);
     const routed = await routeAgentRequest(request, env, {

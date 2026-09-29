@@ -76,8 +76,8 @@ const TokenResponse = Schema.Struct({
  * Sends billing events to Shopify's App Events API.
  *
  * Separate from `ShopifyPartner` even though both talk to Shopify about
- * billing, because they are opposite directions with different credentials:
- * the Partner API *reads* a contract with a Partner API token, and this
+ * billing, because they are opposite directions with different credentials: the
+ * Partner API *reads* an app subscription with a Partner API token, and this
  * *writes* usage with the app's own Client ID and Secret. Nothing here reads
  * anything back — the API answers `202` to an event it will later refuse, so
  * the only confirmation that exists is the metered quantity the Partner client
@@ -95,10 +95,10 @@ export class ShopifyAppEvents extends Context.Service<
      *
      * Success means Shopify received the request, never that the event was
      * billable: a handle that matches no meter, a timestamp outside the cycle,
-     * and a shop with no contract all answer `202` and show up only in the Dev
-     * Dashboard log. The caller deletes its outbox row on success for that
-     * reason — there is nothing better to wait for — and the divergence check
-     * against the metered quantity is what catches the rest.
+     * and a shop with no app subscription all answer `202` and show up only in
+     * the Dev Dashboard log. The caller deletes its outbox row on success for
+     * that reason — there is nothing better to wait for — and the divergence
+     * check against the metered quantity is what catches the rest.
      */
     readonly send: (
       event: Domain.UsageEvent,

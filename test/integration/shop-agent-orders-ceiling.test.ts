@@ -12,7 +12,7 @@ import * as Domain from "@/lib/Domain";
 /**
  * The enterprise ceiling on the webhook path: at
  * `Domain.ShopLimits.maxOrdersPerCycle`, a *new* order is refused for the rest
- * of the billing period and the refusal is flagged for the merchant.
+ * of the billing cycle and the refusal is flagged for the merchant.
  *
  * The real ceiling is more orders than a test should sync, so these lower
  * the constant for the duration — the same seam the open-run

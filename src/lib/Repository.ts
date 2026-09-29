@@ -122,16 +122,31 @@ export class Repository extends Context.Service<
      * Pulls the plan cache deadline forward to at most `notAfter`, never
      * backward, and never on a never-fetched row.
      *
-     * The `min` is what makes it safe to call speculatively: a shop whose
-     * contract boundary already falls sooner keeps that tighter deadline, and a
-     * row that has never been fetched stays "never fetched" rather than
+     * The `min` is what makes it safe to call speculatively: a shop whose app
+     * subscription boundary already falls sooner keeps that tighter deadline,
+     * and a row that has never been fetched stays "never fetched" rather than
      * acquiring a deadline that would make an absent handle look like a
-     * verified absence of any contract.
+     * verified absence of any app subscription.
      */
     readonly shortenShopSessionPlanExpiry: (input: {
       readonly shop: Domain.Shop;
       readonly notAfter: number;
     }) => Effect.Effect<void, SqlError.SqlError>;
+    /**
+     * The shops whose cached plan is stale at `now`: never fetched, or past
+     * its deadline. The daily check's list (`revalidateStalePlans`). A scan
+     * of `ShopSession`, with no index on `planHandleExpiresAt`: the table
+     * holds one row per installed shop, and the query runs once a day, so an
+     * index would cost a write on every revalidation to save a read nobody
+     * waits on. Read from the primary: no request carries a bookmark, and a
+     * lagging replica would re-read shops just revalidated.
+     */
+    readonly listShopsWithStalePlan: (
+      now: number,
+    ) => Effect.Effect<
+      readonly Domain.Shop[],
+      SqlError.SqlError | RepositoryError
+    >;
     readonly deleteShopSession: (
       shop: Domain.ShopSession["shop"],
     ) => Effect.Effect<void, SqlError.SqlError>;
@@ -427,6 +442,21 @@ export class Repository extends Context.Service<
             set planHandleExpiresAt = min(planHandleExpiresAt, ${input.notAfter})
             where shop = ${input.shop} and planHandleExpiresAt is not null
           `;
+      });
+
+      const listShopsWithStalePlan = Effect.fn(
+        "Repository.listShopsWithStalePlan",
+      )(function* (now: number) {
+        return yield* decodeRepository(
+          Schema.Array(Domain.Shop),
+          "Invalid ShopSession shop",
+        )(
+          (yield* sqlPrimary`
+            select shop from ShopSession
+            where planHandleExpiresAt is null or planHandleExpiresAt <= ${now}
+            order by shop
+          `.values).map((row) => row[0]),
+        );
       });
 
       const deleteShopSession = Effect.fn("Repository.deleteShopSession")(
@@ -1044,6 +1074,7 @@ export class Repository extends Context.Service<
         updateShopSessionTokens,
         updateShopSessionPlan,
         shortenShopSessionPlanExpiry,
+        listShopsWithStalePlan,
         deleteShopSession,
         updateShopSessionScope,
         findShopSessionRedacted,

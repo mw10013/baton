@@ -52,7 +52,7 @@ const PLAN_CARD_NAME = { basic: "Basic", pro: "Pro" } as const;
 /* `aria-label` is the tile heading (`CapacityTile`), and the meter is the only
    `progress` on the page carrying it. */
 const ordersMeter = (frame: FrameLocator) =>
-  frame.locator('progress[aria-label="Orders this billing period"]');
+  frame.locator('progress[aria-label="Orders this billing cycle"]');
 
 const readPlan = async (frame: FrameLocator): Promise<Domain.Plan> => {
   await expect(ordersMeter(frame)).toBeVisible({ timeout: 30_000 });
@@ -148,9 +148,9 @@ test("switching plans on Shopify's pricing page moves the ceiling on the Plan ca
  *
  * The match is anchored to the start of the row because one label contains
  * another: `hasText` is a case-insensitive substring, so a bare "Billing
- * period" also matches the "Orders this billing period" row, which renders
+ * cycle" also matches the "Orders this billing cycle" row, which renders
  * first and which `.first()` therefore returned — the recording carried the
- * order count under the billing-period key and the real cycle dates were never
+ * order count under the billing-cycle key and the real cycle dates were never
  * read. A row's text begins with its own label, so `^` disambiguates. Labels
  * here are plain words; one containing a regex metacharacter would need
  * escaping.
@@ -175,10 +175,11 @@ const readAdminFields = async (page: Page, labels: readonly string[]) => {
 const ADMIN_FIELDS = [
   "Cached plan",
   "Plan boundary",
-  "Billing period",
-  "Orders this billing period",
+  "Billing cycle",
+  "Orders this billing cycle",
   "Usage events pending",
-  "Shopify metered quantity",
+  "Shopify metered orders",
+  "Shopify metered members",
 ] as const;
 
 test("a paid-to-paid downgrade applies at once, and the usage outbox drains", async ({

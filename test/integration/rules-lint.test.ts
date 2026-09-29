@@ -75,6 +75,15 @@ describe("a retired word stays off every merchant and member screen", () => {
     expect(hits(source)).toEqual([1, 3]);
   });
 
+  it("billing period is a retired word in screen copy", () => {
+    const source = [
+      "<s-heading>Orders this billing period</s-heading>",
+      'const a = "Orders this billing cycle";',
+      "// the billing period Shopify reports",
+    ].join("\n");
+    expect(hits(source)).toEqual([1]);
+  });
+
   it("please, successfully, oops, sorry, click here and are you sure are retired in every slot", () => {
     const source = [
       'const a = "Please choose a team.";',

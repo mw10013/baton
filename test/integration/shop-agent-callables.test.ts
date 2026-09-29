@@ -129,7 +129,7 @@ describe("ShopAgent callable role gate", () => {
 
   /**
    * The Worker-only RPCs stay off the socket. Each carries an input a browser
-   * must never supply — a billing period, a roster size, Shopify's meter reading, a revoke —
+   * must never supply — a billing cycle, a roster size, Shopify's meter reading, a revoke —
    * and the first test would catch a stray decorator by set equality, but
    * naming them here is what says the omission is deliberate.
    */

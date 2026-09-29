@@ -105,10 +105,16 @@
       "simple": { "limit": 1000, "period": 60 }
     }
   ],
+  // The daily plan re-read for shops nobody opens (the `scheduled` handler in
+  // src/worker.ts). `triggers` is inheritable, so the named envs below get it
+  // without redeclaring it.
+  "triggers": {
+    "crons": ["17 4 * * *"]
+  },
   // Skeleton deploy targets. Wrangler does NOT inherit bindings or `vars` into
   // a named env (https://developers.cloudflare.com/workers/wrangler/environments/),
-  // so every binding is re-declared here; `observability`, `compatibility_*`
-  // and `main` are inherited. Placeholders (`database_id`, KV `id`,
+  // so every binding is re-declared here; `observability`, `compatibility_*`,
+  // `triggers` and `main` are inherited. Placeholders (`database_id`, KV `id`,
   // `SHOPIFY_PARTNER_APP_ID`) are filled by `pnpm d1:reset:<env>` (writes the
   // real D1 id back into this block), `wrangler kv namespace create baton-kv
   // --env <env>`, and `shopify app info --config <env>`. The blocks exist now

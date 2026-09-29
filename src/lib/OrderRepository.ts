@@ -301,18 +301,14 @@ export class OrderRepository extends Context.Service<
      * refuses to bring back an order retention deleted
      * ({@link Domain.ShopLimits.orderRetentionDays}).
      *
-     * A seeded order is never counted ({@link Domain.orderIsSeeded}): no
-     * mark, no counter, no event. Checked here, the one door into the meter,
-     * so a reseed has nothing to give back.
-     *
      * Runs inside the caller's transaction — Durable Object SQLite refuses
      * nested ones — so the marker, the counter and the outbox row cannot come
      * apart. `now` is the caller's clock, and it dates the usage event, which
-     * Shopify accepts only inside the merchant's open period.
+     * Shopify accepts only inside the merchant's open billing cycle.
      *
      * Resolves the cycle before it increments, exactly as `upsertOrder` does,
      * so a run started by hand on a quiet shop past its cycle end counts into
-     * the new period rather than the outgoing one. On the reconcile path the
+     * the new cycle rather than the outgoing one. On the reconcile path the
      * upsert has already rolled it and this is a re-read. A missing
      * `ShopUsage` row is a defect in the schema, not a billing condition, and
      * is a die rather than an error the run paths would have to carry.
@@ -430,30 +426,27 @@ export class OrderRepository extends Context.Service<
       SqlError.SqlError | OrderRepositoryError
     >;
     /**
-     * Records the shop's billing period, pushed in by the Worker after a plan
-     * revalidation (`Domain.BillingCycleInput`).
+     * Records the shop's billing cycle (`Domain.BillingCycleInput`). What it
+     * does to the counts and the queue is the three "cycle pushed" rows on
+     * `Domain.ShopUsage`; the mechanics are here.
      *
      * A changed `cycleStartAt` is a new cycle: the order count is recounted
-     * from rows and the seat mark is reset to the roster
-     * (`input.memberCount`), which is queued as the cycle's first seat event,
-     * dated `cycleStartAt`. The seat meter at Shopify starts every cycle at
-     * zero and prices the whole roster by the plan's tiers
-     * (`Domain.ActiveSubscription`), so the value is the roster, not the
-     * overage.
+     * from rows, seat events queued inside the new cycle are dropped, and the
+     * seat mark is reset to the roster (`input.memberCount`), queued as the
+     * cycle's first seat event dated `cycleStartAt`. The value is the roster,
+     * not the overage, because the seat meter starts every cycle at zero and
+     * the plan's tiers price it (`Domain.AppSubscription`). On a shop no push
+     * had addressed yet, every event dated before the start is dropped too.
      *
      * An unchanged start writes the columns and leaves the count alone, which
      * is what makes it safe to call on every revalidation. It still raises the
-     * seat mark to the roster when the roster is past it, by
-     * {@link Domain.seatEventValue}: that covers an add whose
-     * `recordRoster` failed (it is best-effort), and a cycle the counting path
-     * rolled forward on its own, which starts with no mark.
+     * seat mark to a roster past it ({@link Domain.seatEventValue}): that
+     * covers an add whose `recordRoster` failed (it is best-effort), and a
+     * cycle the counting path rolled forward on its own, which starts with no
+     * mark.
      *
-     * The cycle columns are seeded null. Until the Worker has pushed a real
-     * period, the object opens a cycle at its first stored order and rolls it
-     * forward on its own, so a shop meters from its first run rather than from
-     * its first plan revalidation. `shopGid` is stored here rather than
-     * derived because addressing a usage event at Shopify needs it and the
-     * object has no other source.
+     * `shopGid` is stored here rather than derived because addressing a usage
+     * event at Shopify needs it and the object has no other source.
      */
     readonly setBillingCycle: (
       input: Domain.BillingCycleInput,
@@ -461,8 +454,8 @@ export class OrderRepository extends Context.Service<
     /**
      * Raises the cycle's seat mark to `size` when past it and queues the rise
      * as one seat event ({@link Domain.seatEventValue} is the rule); answers
-     * the units queued, `0` when not past the mark. A removal is never
-     * reported, so nothing lowers the mark within a cycle.
+     * the units queued, `0` when not past the mark. The "member added" and
+     * "member removed" rows on `Domain.ShopUsage`.
      *
      * Resolves the cycle first, as `countOrder` does: a shop with no cycle
      * opens the provisional one so the key has a cycle to name, and a cycle
@@ -514,14 +507,33 @@ export class OrderRepository extends Context.Service<
      * replaced has no trail worth keeping, and a run outliving its order
      * carries its own snapshot of the order name and item, so it would sit on
      * a queue as a card nothing can clear. Usage is untouched: a seeded order
-     * is never counted ({@link Domain.orderIsSeeded}), so there is nothing to
+     * is never counted ({@link markSeedOrdersCounted}), so there is nothing to
      * give back.
      */
     readonly deleteSeedOrders: () => Effect.Effect<void, SqlError.SqlError>;
     /**
+     * Seed only: marks `orderIds` counted at `0` where they are not counted
+     * yet, so {@link countOrder} never counts them. Zero is before every
+     * billing cycle, so the recount (`countedSince`) never counts them either:
+     * no share of `ShopUsage.ordersThisCycle`, no usage event.
+     *
+     * A fixture that reaches Shopify's meter costs money under a permanent
+     * idempotency key, and one that moved the local count would climb by a
+     * fixture's worth on every reseed. The rule lives with the seed rather
+     * than as a check in `countOrder`, so the meter has one rule and no
+     * exception for ids that only a local environment writes. Runs inside the
+     * seed's `upsertOrder` transaction, before the reconcile that creates the
+     * order's first run.
+     */
+    readonly markSeedOrdersCounted: (
+      orderIds: readonly string[],
+    ) => Effect.Effect<void, SqlError.SqlError>;
+    /**
      * One retention pass: at most `ShopLimits.sweepBatch` orders older than
      * `ShopLimits.orderRetentionDays` — open or closed, with runs or without —
-     * plus a batch of runs whose order is no longer stored. What goes with an
+     * plus a batch of runs whose order is no longer stored, plus a batch of
+     * dead usage events older than
+     * `ShopLimits.deadUsageEventRetentionDays`. What goes with an
      * expired order is the data model on `initializeSchema`
      * (`ShopAgentSchema.ts`). Deliberately batched and deliberately carried
      * by a request that was already doing
@@ -532,8 +544,12 @@ export class OrderRepository extends Context.Service<
     readonly sweepExpiredOrders: (input: {
       readonly now: number;
     }) => Effect.Effect<
-      { readonly orders: number; readonly runs: number },
-      SqlError.SqlError
+      {
+        readonly orders: number;
+        readonly runs: number;
+        readonly usageEvents: number;
+      },
+      SqlError.SqlError | OrderRepositoryError
     >;
   }
 >()("OrderRepository") {
@@ -658,17 +674,17 @@ export class OrderRepository extends Context.Service<
 
       /**
        * Orders whose `countedAt` is at or after `since`: what a cycle
-       * starting there is worth, used to recount when the Worker pushes a new
-       * billing period.
+       * starting there is worth, the `recounted` of the triggers table on
+       * `Domain.ShopUsage`.
        *
-       * Correct only while a cycle is a month or less. `countedAt` is a
-       * single timestamp per order, so an order counted in *any* earlier
-       * period still inside `since` would be counted again — which cannot
-       * happen for consecutive monthly cycles, where everything before the
-       * new start belongs to a period that has closed. A yearly cycle would
-       * break it, which is why `README.md` forbids one; nothing in code
-       * enforces that, because the plan's interval lives in the Partner
-       * Dashboard.
+       * Correct only while a cycle is a month or less (the table's second
+       * assumption). `countedAt` is a single timestamp per order, so an order
+       * counted in *any* earlier cycle still inside `since` would be counted
+       * again — which cannot happen for consecutive monthly cycles, where
+       * everything before the new start belongs to a cycle that has closed. A
+       * yearly cycle would break it; nothing in code enforces that, because
+       * the plan's interval lives in the Partner Dashboard, which offers usage
+       * meters on monthly plans only.
        */
       const countedSince = (since: number) =>
         sql`select count(*) from ShopOrder where countedAt >= ${since}`.values.pipe(
@@ -677,15 +693,16 @@ export class OrderRepository extends Context.Service<
 
       /**
        * The cycle this write counts against, rolling the stored one forward
-       * when the write lands past its end.
+       * when the write lands past its end: the "first count past the cycle
+       * end" row on `Domain.ShopUsage`.
        *
        * The rollover rides the counting path rather than a clock: a quiet
-       * shop's stored cycle may lag by periods, and the only moment that can
+       * shop's stored cycle may lag by cycles, and the only moment that can
        * matter is the first order of a new one — which is exactly here. The
        * rolled-forward cycle is deliberately open-ended (`cycleEndAt` null):
-       * only Shopify knows where the next period really ends, and
-       * `setBillingCycle` lands the exact answer within minutes, because the
-       * plan cache deadline is clamped to the boundary.
+       * only Shopify knows where the next cycle really ends, and the next
+       * revalidation's `setBillingCycle` lands the exact answer, within a day
+       * at the latest (`revalidateStalePlans`).
        *
        * A shop with no cycle at all opens a provisional one
        * ({@link Domain.provisionalCycleStart}) rather than skipping the count:
@@ -747,7 +764,6 @@ export class OrderRepository extends Context.Service<
         orderId: string,
         now: number,
       ) {
-        if (Domain.orderIsSeeded(orderId)) return;
         // The cycle is resolved before the marker is written: a roll-forward
         // recounts from `countedAt`, so a marker written first would be
         // counted by the recount and again by the increment below.
@@ -796,7 +812,8 @@ export class OrderRepository extends Context.Service<
        * `or ignore`, so re-queuing a key Shopify has already been told about is
        * a no-op rather than a second charge. The row carries no shop: the shop
        * is the object, and `ShopUsage.shopGid` is read once at flush time.
-       * A seeded order never gets here: `countOrder` returns first.
+       * A seeded order never gets here: the seed marks it counted before its
+       * first run ({@link OrderRepository.markSeedOrdersCounted}).
        */
       const queueUsageEvent = (input: {
         readonly idempotencyKey: string;
@@ -1450,8 +1467,8 @@ export class OrderRepository extends Context.Service<
                  * The object may already have counted orders into a provisional
                  * cycle, or into the one it rolled forward on its own, and those
                  * orders were billed — zeroing would make the merchant-facing
-                 * count disagree with the invoice for the rest of the period.
-                 * Orders counted before the new start belong to a closed period
+                 * count disagree with the invoice for the rest of the cycle.
+                 * Orders counted before the new start belong to a closed cycle
                  * and drop out, which is what a cycle change means.
                  */
                 const count = yield* countedSince(input.cycleStartAt);
@@ -1463,10 +1480,9 @@ export class OrderRepository extends Context.Service<
                 /**
                  * Events queued while the shop could not be addressed — before
                  * any cycle was pushed, or through a trial, when Shopify
-                 * reports no billing cycle — belong to no billable period:
-                 * their orders were just recounted out, and sending them into
-                 * the first real cycle would bill work the period never
-                 * carried. Only then: once a shop has been addressed, an event
+                 * reports no billing cycle — belong to no billing cycle: their
+                 * orders were just recounted out, and sending them into the
+                 * first real cycle would bill work the cycle never carried. Only then: once a shop has been addressed, an event
                  * that misses its cycle is a real loss and is kept as one
                  * (`Domain.usageEventIsDead`).
                  */
@@ -1638,6 +1654,13 @@ export class OrderRepository extends Context.Service<
           },
         ),
 
+        markSeedOrdersCounted: Effect.fn(
+          "OrderRepository.markSeedOrdersCounted",
+        )(function* (orderIds: readonly string[]) {
+          if (orderIds.length === 0) return;
+          yield* sql`update ShopOrder set countedAt = 0 where ${sql.in("id", orderIds)} and countedAt is null`;
+        }),
+
         sweepExpiredOrders: Effect.fn("OrderRepository.sweepExpiredOrders")(
           function* ({ now }: { readonly now: number }) {
             const expiredBefore = Domain.retentionCutoff(now);
@@ -1703,8 +1726,42 @@ export class OrderRepository extends Context.Service<
                   )
                   returning id
                 `;
+                /**
+                 * Dead usage events ({@link Domain.usageEventIsDead}) dated
+                 * more than {@link
+                 * Domain.ShopLimits.deadUsageEventRetentionDays} ago. Sixty
+                 * days covers the billing cycle the event died in and the next,
+                 * which is as long as the admin shop page's dead count is worth
+                 * reading; each failed send was also logged when it happened,
+                 * so the row is not the only record. Without this nothing
+                 * bounds them: a dead event can never be sent, so the flush
+                 * never deletes one.
+                 */
+                const [cycle] = yield* readCycle();
+                const cycleStartAt = cycle?.cycleStartAt ?? null;
+                const deadBefore =
+                  now -
+                  Domain.ShopLimits.deadUsageEventRetentionDays * 86_400_000;
+                const deadEvents =
+                  cycleStartAt === null
+                    ? []
+                    : yield* sql`
+                        delete from UsageEvent
+                        where idempotencyKey in (
+                          select idempotencyKey from UsageEvent
+                          where occurredAt < ${cycleStartAt}
+                            and occurredAt < ${deadBefore}
+                          order by occurredAt
+                          limit ${Domain.ShopLimits.sweepBatch}
+                        )
+                        returning idempotencyKey
+                      `;
                 yield* sql`update ShopUsage set lastSweepAt = ${now} where id = 1`;
-                return { orders: ids.length, runs: runs + orphaned.length };
+                return {
+                  orders: ids.length,
+                  runs: runs + orphaned.length,
+                  usageEvents: deadEvents.length,
+                };
               }),
             );
           },

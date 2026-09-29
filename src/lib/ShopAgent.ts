@@ -368,9 +368,22 @@ const shopifyAdminLayer = (session: ShopifyApi.Session) =>
  * One pass over the usage-event outbox, logged and never raised.
  *
  * Every caller is a request whose real work has already succeeded — a webhook
- * that stored an order, a bulk import that finished its stream, an uninstall
- * that is about to delete everything — and none of them may fail because a
- * billing event could not go out. The rows survive a failure, so the next
+ * that stored an order, a bulk import that finished its stream, a merchant's
+ * Attach, Resync or workflow edit that created runs, an uninstall that is
+ * about to delete everything — and none of them may fail because a billing
+ * event could not go out.
+ *
+ * **Every path that creates a run sends the queue after its write commits**
+ * (the "then sent" of the triggers table on `Domain.ShopUsage`), so an order
+ * counted near a cycle's end goes out inside that cycle rather than waiting
+ * for the next webhook. The paths: the webhook and bulk import syncs, Attach
+ * ("attaching a workflow sends the usage event it queued"), every workflow
+ * edit through {@link ShopAgent.reconcileAllNow} ("turning a workflow on
+ * sends the usage events for the orders it counted"), Resync ("resyncing an
+ * order sends the usage queue, even when the resync fails") and the seed. A
+ * cycle push is sent by the reconcile push that follows it
+ * ({@link ShopAgent.reconcileUsage}). Never inside a transaction: it does
+ * network I/O. The rows survive a failure, so the next
  * order's flush retries them, and `ShopUsage.pendingUsageEvents` is what makes
  * a queue that never drains visible on the admin page.
  */
@@ -728,11 +741,23 @@ const isWorkflowInstanceNotFoundError = (cause: unknown) =>
 /**
  * How long a tracking row is trusted on its own before the object asks
  * Cloudflare what really became of the instance. The SDK never reaps a row: a
- * Workflow that dies without reporting leaves one reading `running` forever,
- * and with it a permanently disabled button. Ten minutes is comfortably past
- * the workflow's own give-up bound plus its stream.
+ * Workflow that dies without reporting leaves one reading `running` forever.
+ * Ten minutes is comfortably past the workflow's own give-up bound plus its
+ * stream.
+ *
+ * **A tracking row disables Import open orders only while it is fresh**
+ * ({@link importRowIsFresh}). The orders index reads a stale row as no import,
+ * so the button comes back, and the click asks Cloudflare
+ * ({@link ShopAgent.syncOrders}): a live instance answers `in_flight`, a gone
+ * one has its row cleared and a new import starts. Were a stale row to keep
+ * the button disabled, the click that clears it could never happen, and one
+ * dead instance would disable the button for good.
  */
 const IMPORT_STALE_MS = 10 * 60 * 1000;
+
+/** A tracking row younger than {@link IMPORT_STALE_MS} at `now`: trusted without asking Cloudflare. */
+const importRowIsFresh = (row: { readonly createdAt: Date }, now: number) =>
+  now - row.createdAt.getTime() < IMPORT_STALE_MS;
 
 /**
  * What `/webhooks/orders` resolved a delivery down to: the order it names, the
@@ -1365,9 +1390,7 @@ export class ShopAgent extends Agent {
         const inFlight = Effect.fn("ShopAgent.syncOrders.inFlight")(
           function* () {
             const running = runningImports();
-            const stale = running.filter(
-              (row) => now - row.createdAt.getTime() >= IMPORT_STALE_MS,
-            );
+            const stale = running.filter((row) => !importRowIsFresh(row, now));
             if (stale.length === 0) return running.length > 0;
             yield* Effect.forEach(
               stale,
@@ -1403,7 +1426,7 @@ export class ShopAgent extends Agent {
             }),
           );
           yield* repository.setSyncError({
-            error: `Baton is built for shops under ${Domain.ShopLimits.maxOrdersPerCycle.toLocaleString("en-US")} orders a billing period; importing resumes when the period ends.`,
+            error: `Baton is built for shops under ${Domain.ShopLimits.maxOrdersPerCycle.toLocaleString("en-US")} orders a billing cycle; importing resumes when the billing cycle ends.`,
           });
           yield* repository.markOrdersLimited(now);
           yield* publish();
@@ -1471,13 +1494,14 @@ export class ShopAgent extends Agent {
           });
           const size = databaseSize();
           yield* Effect.logInfo(
-            `ShopAgent.onOrdersStream: shop=${shop} ordersSeen=${String(counts.ordersSeen)} ordersUpserted=${String(counts.ordersUpserted)} ordersInserted=${String(counts.ordersInserted)} ordersRefused=${String(counts.ordersRefused)} lineItemsUpserted=${String(counts.lineItemsUpserted)} ordersTruncated=${String(counts.ordersTruncated)} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)} databaseSize=${String(size)}`,
+            `ShopAgent.onOrdersStream: shop=${shop} ordersSeen=${String(counts.ordersSeen)} ordersUpserted=${String(counts.ordersUpserted)} ordersInserted=${String(counts.ordersInserted)} ordersRefused=${String(counts.ordersRefused)} lineItemsUpserted=${String(counts.lineItemsUpserted)} ordersTruncated=${String(counts.ordersTruncated)} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)} sweptUsageEvents=${String(swept.usageEvents)} databaseSize=${String(size)}`,
           ).pipe(
             Effect.annotateLogs({
               shop,
               ...counts,
               sweptOrders: swept.orders,
               sweptRuns: swept.runs,
+              sweptUsageEvents: swept.usageEvents,
               databaseSize: size,
             }),
           );
@@ -1707,14 +1731,15 @@ export class ShopAgent extends Agent {
               now - usage.lastSweepAt >= Domain.ShopLimits.sweepIntervalMs
             ) {
               const swept = yield* repository.sweepExpiredOrders({ now });
-              if (swept.orders > 0 || swept.runs > 0)
+              if (swept.orders > 0 || swept.runs > 0 || swept.usageEvents > 0)
                 yield* Effect.logInfo(
-                  `ShopAgent.syncOrder: shop=${shop} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)}`,
+                  `ShopAgent.syncOrder: shop=${shop} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)} sweptUsageEvents=${String(swept.usageEvents)}`,
                 ).pipe(
                   Effect.annotateLogs({
                     shop,
                     sweptOrders: swept.orders,
                     sweptRuns: swept.runs,
+                    sweptUsageEvents: swept.usageEvents,
                   }),
                 );
             }
@@ -1744,7 +1769,7 @@ export class ShopAgent extends Agent {
    * (`OrderRepository.upsertOrder`) is the one place that may move it. A shop
    * whose cycle has ended but has synced nothing since shows the finished
    * cycle's count until either an order or a plan revalidation arrives —
-   * which is the truth, because Shopify has not billed the next period yet
+   * which is the truth, because Shopify has not billed the next cycle yet
    * either.
    */
   @callable()
@@ -1762,10 +1787,10 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Records the shop's billing period. Plain RPC, not `@callable()`: the
-   * caller is `SubscriptionPlan`, which is the only thing that reads an App
-   * Pricing contract, and a browser naming its own billing period would be
-   * naming its own bill.
+   * Records the shop's billing cycle (`OrderRepository.setBillingCycle`).
+   * Plain RPC, not `@callable()`: the caller is `SubscriptionPlan`, which is
+   * the only thing that reads an app subscription, and a browser naming its
+   * own billing cycle would be naming its own bill.
    *
    * Does not flush, though a new cycle queues its first seat event: the
    * revalidation reconciles next, against meter readings taken before this
@@ -1787,11 +1812,11 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Reports the D1 roster size after a member add, which raises the cycle's
-   * seat mark and queues the rise (`OrderRepository.recordRoster`), then
-   * flushes. Plain RPC for the same reason as {@link setBillingCycle}: the
-   * caller is the Worker's add-member action, and the roster is D1's, so the
-   * object cannot count it. Answers the units queued.
+   * Reports the D1 roster size after a member add
+   * (`OrderRepository.recordRoster`), then sends the queue. Plain RPC for the
+   * same reason as {@link setBillingCycle}: the caller is the members page's
+   * add, and the roster is D1's, so the object cannot count it. Answers the
+   * units queued.
    */
   recordRoster(
     input: typeof Domain.RecordRosterInput.Encoded,
@@ -1874,9 +1899,12 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Drains the usage-event outbox and answers how many rows are left. Plain
-   * RPC: the caller is the uninstall webhook, which has 24 hours before Shopify
-   * closes the billing period and is about to destroy this object's storage.
+   * Drains the usage-event outbox and answers how many rows are left
+   * ({@link flushUsageEvents}). Plain RPC: the callers are the Worker's
+   * uninstall webhook, which has 24 hours before Shopify closes the billing
+   * cycle and is about to destroy this object's storage, and the Manage plan
+   * button (`SubscriptionPlan.expectChange`), before a plan change ends the
+   * app subscription.
    */
   flushUsageEvents(): Promise<number> {
     const shop = this.name;
@@ -1895,9 +1923,14 @@ export class ShopAgent extends Agent {
    * foreign one fails at Shopify rather than reaching another shop's data. No
    * dedupe and no staleness check: a merchant clicking Resync is asking for the
    * fetch, and the upsert guard still protects the row.
+   *
+   * Sends the usage queue afterwards ({@link flushUsageEvents}), whether or
+   * not the fetch succeeded: the reconcile may have started the order's first
+   * run, which counts it.
    */
   @callable()
   resyncOrder(input: Domain.ResyncOrderInput): Promise<void> {
+    const shop = this.name;
     const publish = (touched: PublishScope) => this.publish(touched);
     const fetchAndUpsert = (orderId: string) =>
       this.fetchAndUpsertOrder(orderId, "manual");
@@ -1909,7 +1942,7 @@ export class ShopAgent extends Agent {
         Effect.gen(function* () {
           yield* fetchAndUpsert(orderId);
           yield* publish([orderId]);
-        }),
+        }).pipe(Effect.ensuring(flushUsageEvents(shop))),
       )(input),
     );
   }
@@ -1918,15 +1951,15 @@ export class ShopAgent extends Agent {
     const readTeams = () => this.teams();
     /**
      * Read, never refreshed: this is the loader half of a page and must not
-     * reach the Workflows API. A row wedged by a dead instance is cleared by
-     * the next click ({@link ShopAgent.syncOrders}), which is also the only
-     * place the merchant can be waiting on the answer.
+     * reach the Workflows API. Fresh rows only ({@link IMPORT_STALE_MS} is the
+     * rule), so a row wedged by a dead instance leaves the button enabled and
+     * the next click ({@link ShopAgent.syncOrders}) clears it.
      */
-    const importInFlight = () =>
+    const importInFlight = (now: number) =>
       this.getWorkflows({
         status: [...IMPORT_IN_FLIGHT],
         workflowName: ORDERS_SYNC_WORKFLOW_NAME,
-      }).workflows.length > 0;
+      }).workflows.some((row) => importRowIsFresh(row, now));
     return Effect.gen(function* () {
       const repository = yield* OrderRepository;
       /* One roster read for both consumers: the repository derives
@@ -1944,7 +1977,7 @@ export class ShopAgent extends Agent {
           teams,
         }),
         syncState: {
-          inFlight: importInFlight(),
+          inFlight: importInFlight(yield* Clock.currentTimeMillis),
           ...(yield* repository.getSyncState()),
         },
         teams,
@@ -2533,13 +2566,18 @@ export class ShopAgent extends Agent {
    * {@link removeWorkflow} call this directly rather than through
    * {@link reconcileAllIfActive}, and why `ActivateResult.Ok.started` is
    * meaningful on Turn off.
+   *
+   * Sends the usage queue after the pass ({@link flushUsageEvents}), whether
+   * or not it finished: every order a run started on was counted, and its
+   * event is owed now.
    */
   private reconcileAllNow(caller: string, workflowId: string) {
     const shop = this.name;
     const startContext = () => this.startContext();
     return Effect.gen(function* () {
-      const { orders, created, ambiguous } =
-        yield* (yield* RunRepository).reconcileAll(yield* startContext());
+      const { orders, created, ambiguous } = yield* (yield* RunRepository)
+        .reconcileAll(yield* startContext())
+        .pipe(Effect.ensuring(flushUsageEvents(shop)));
       yield* Effect.logInfo(
         `ShopAgent.reconcileAll: shop=${shop} caller=${caller} workflowId=${workflowId} orders=${String(orders)} created=${String(created)} ambiguous=${String(ambiguous)}`,
       ).pipe(
@@ -2721,11 +2759,15 @@ export class ShopAgent extends Agent {
    * server cannot know whether the merchant has seen the trail of work
    * already done on the run it is about to delete, and a server-side refusal
    * would leave the page with nothing to offer but the same click again.
+   *
+   * Sends the usage queue afterwards ({@link flushUsageEvents}): the run it
+   * creates may be the order's first, which counts it.
    */
   @callable()
   merchantAttachWorkflow(
     input: typeof Domain.AttachWorkflowInput.Encoded,
   ): Promise<Domain.AttachResult> {
+    const shop = this.name;
     const publish = (touched: PublishScope) => this.publish(touched);
     const teams = () => this.teams();
     return this.runEffect(
@@ -2808,6 +2850,7 @@ export class ShopAgent extends Agent {
                 workflowName,
               }),
           }),
+          Effect.ensuring(flushUsageEvents(shop)),
         ),
       )(input),
     );
@@ -4122,9 +4165,9 @@ export class ShopAgent extends Agent {
                     lineItem: target.value.lineItem,
                   });
             });
-          // Orders, items, runs and the usage they counted, together;
-          // the upserts below then count each fresh paid order the ordinary
-          // way, so a reseed lands on the number one seed would have produced.
+          // Orders, items and runs, together. The upserts below mark each
+          // order counted before its first run (`markSeedOrdersCounted`), so
+          // a reseed leaves the usage count where it was.
           yield* orderRepository.deleteSeedOrders();
           let runCount = 0;
           for (const [index, seed] of orders.entries()) {
@@ -4180,7 +4223,9 @@ export class ShopAgent extends Agent {
             yield* orderRepository.upsertOrder({
               order,
               lineItems: lineItemsOf(),
-              afterWrite: reconcile(order),
+              afterWrite: orderRepository
+                .markSeedOrdersCounted([id])
+                .pipe(Effect.andThen(reconcile(order))),
             });
             for (const [position, item] of seed.lineItems.entries())
               if (item.workflowId !== undefined)

@@ -74,8 +74,8 @@ const getLoaderData = createServerFn({ method: "GET" })
  * otherwise uncorrectable before its deadline — the exact situation an admin is
  * in when a merchant reports an upgrade or a payment that did not take effect.
  *
- * Both outcomes are success. No contract writes a null handle under a fresh
- * deadline: the verified-absence state, not a failure.
+ * Both outcomes are success. No app subscription writes a null handle under a
+ * fresh deadline: the verified-absence state, not a failure.
  */
 const refreshPlan = createServerFn({ method: "POST" })
   .validator(Schema.toStandardSchemaV1(shopInput))
@@ -257,7 +257,7 @@ function FoundShop({
               }
             />
             <Field
-              label="Orders this billing period"
+              label="Orders this billing cycle"
               value={`${formatNumber(usage.ordersThisCycle)} of ${
                 entitlements === null
                   ? "—"
@@ -265,7 +265,7 @@ function FoundShop({
               }`}
             />
             <Field
-              label="Billing period"
+              label="Billing cycle"
               value={
                 usage.cycleStartAt === null ? null : (
                   <>
@@ -368,9 +368,9 @@ function FoundShop({
               Refresh plan
             </s-button>
             <s-paragraph color="subdued">
-              Asks Shopify for the current contract and rewrites the cache. Use
-              it when a merchant reports a subscription change that has not
-              taken effect.
+              Asks Shopify for the current app subscription and rewrites the
+              cache. Use it when a merchant reports a subscription change that
+              has not taken effect.
             </s-paragraph>
           </s-stack>
         </s-stack>

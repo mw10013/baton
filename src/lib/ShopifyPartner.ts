@@ -69,7 +69,7 @@ const SubscriptionItem = Schema.Struct({
   ),
 });
 
-const ActiveSubscriptionResponse = Schema.Struct({
+const AppSubscriptionResponse = Schema.Struct({
   data: Schema.optional(
     Schema.Struct({
       activeSubscription: Schema.NullOr(
@@ -105,9 +105,10 @@ const parseBoundary = (value: string | null | undefined): number | null => {
  *
  * Matching, never position: the usage meter is its own item in the same array,
  * and so is anything else Shopify decides to itemize. Zero matches (a catalog
- * change) and more than one (a contract shape this app does not model) are both
- * `Option.none()` rather than a guess, and both log — allowlist drift is
- * operationally interesting even where the response to it is simply no answer.
+ * change) and more than one (an app subscription shape this app does not model)
+ * are both `Option.none()` rather than a guess, and both log — allowlist drift
+ * is operationally interesting even where the response to it is simply no
+ * answer.
  */
 const matchPlanHandle = Effect.fn("ShopifyPartner.matchPlanHandle")(function* (
   shopGid: Domain.ShopGid,
@@ -119,7 +120,7 @@ const matchPlanHandle = Effect.fn("ShopifyPartner.matchPlanHandle")(function* (
   const [handle] = handles;
   if (handle === undefined || handles.length > 1) {
     yield* Effect.logWarning(
-      `ShopifyPartner.activeSubscription: shopGid=${shopGid} matches=${String(handles.length)}: contract carries no single known plan handle`,
+      `ShopifyPartner.activeSubscription: shopGid=${shopGid} matches=${String(handles.length)}: app subscription carries no single known plan handle`,
     ).pipe(
       Effect.annotateLogs({
         shopGid,
@@ -133,7 +134,7 @@ const matchPlanHandle = Effect.fn("ShopifyPartner.matchPlanHandle")(function* (
 
 /**
  * Shopify's own count for the meter `handle` this cycle, read off the meter's
- * item. `null` when the contract carries no such item, which is not
+ * item. `null` when the app subscription carries no such item, which is not
  * an error: a plan with no meter configured yet reads as "nothing to reconcile
  * against" rather than as zero usage, and zero would look like a divergence
  * from every local count.
@@ -151,27 +152,31 @@ export class ShopifyPartner extends Context.Service<
   ShopifyPartner,
   {
     /**
-     * Resolves a shop's App Pricing contract to the plan it grants.
+     * Resolves a shop's app subscription to the plan it grants. The method
+     * keeps the name of Shopify's `activeSubscription` query, whose "active"
+     * means the app subscription in force now, as opposed to the shop's past
+     * ones.
      *
-     * `Option.none()` is a verified negative — no contract, or one this app
-     * cannot interpret — and never an "unknown". Every failure to reach an
+     * `Option.none()` is a verified negative — no app subscription, or one this
+     * app cannot interpret — and never an "unknown". Every failure to reach an
      * answer stays in the error channel, because callers gate access on this
      * value and must not confuse "could not check" with "not subscribed".
      *
      * The plan is identified by {@link matchPlanHandle}, never by position.
      * Everything else on the returned value — the boundary, the cycle, the
-     * metered quantity — is display or bookkeeping and never gates access:
-     * a contract with a plan handle grants that plan's entitlements even if
-     * every other field is missing.
+     * metered quantity — is display or bookkeeping and never gates access: an
+     * app subscription with a plan handle grants that plan's entitlements even
+     * if every other field is missing.
      *
-     * Contract presence is the whole signal. `activeSubscription` exposes no
-     * status field, and App Pricing sends no webhooks, so nothing distinguishes
-     * a frozen contract from a paying one and nothing here tries to.
+     * App subscription presence is the whole signal. `activeSubscription`
+     * exposes no status field, and App Pricing sends no webhooks, so nothing
+     * distinguishes a frozen app subscription from a paying one and nothing
+     * here tries to.
      */
     readonly activeSubscription: (
       shopGid: Domain.ShopGid,
     ) => Effect.Effect<
-      Option.Option<Domain.ActiveSubscription>,
+      Option.Option<Domain.AppSubscription>,
       ShopifyPartnerError
     >;
     readonly planSelectionUrl: (shop: string) => string;
@@ -218,7 +223,7 @@ export class ShopifyPartner extends Context.Service<
             }),
             client.execute,
             Effect.flatMap(
-              HttpClientResponse.schemaBodyJson(ActiveSubscriptionResponse),
+              HttpClientResponse.schemaBodyJson(AppSubscriptionResponse),
             ),
             Effect.mapError(partnerError("Partner API request failed")),
           );
@@ -251,7 +256,7 @@ export class ShopifyPartner extends Context.Service<
                 Domain.USAGE_METER_MEMBER,
               ),
             },
-          } satisfies Domain.ActiveSubscription);
+          } satisfies Domain.AppSubscription);
         },
       );
 

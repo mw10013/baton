@@ -1118,7 +1118,7 @@ describe("OrderRepository.recordWebhookDelivery", () => {
 });
 
 describe("OrderRepository usage", () => {
-  /** Mid-month, so `processedAt: CYCLE_START - 1` is unambiguously the period before. */
+  /** Mid-month, so `processedAt: CYCLE_START - 1` is unambiguously the cycle before. */
   const CYCLE_START = Date.UTC(2026, 5, 15);
   const CYCLE_END = Date.UTC(2026, 6, 15);
   const shopGid = Schema.decodeUnknownSync(Domain.ShopGid)(
@@ -1175,7 +1175,7 @@ describe("OrderRepository usage", () => {
     strictEqual(usage.cycleEndAt, CYCLE_END);
   });
 
-  it("opens a provisional cycle before a billing period is known", async () => {
+  it("opens a provisional cycle before a billing cycle is known", async () => {
     const usage = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
@@ -1236,7 +1236,7 @@ describe("OrderRepository usage", () => {
     strictEqual(usage.cycleEndAt, null);
   });
 
-  it("recounts the cycle from the orders when a new period is pushed", async () => {
+  it("recounts the cycle from the orders when a new billing cycle is pushed", async () => {
     const usage = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
@@ -1245,7 +1245,7 @@ describe("OrderRepository usage", () => {
         yield* upsert(repository, paid(2), []);
         yield* count(repository, 1);
         yield* count(repository, 2);
-        // The next period: the two above fall outside it and drop out.
+        // The next cycle: the two above fall outside it and drop out.
         yield* repository.setBillingCycle({
           shopGid,
           cycleStartAt: CYCLE_END,
@@ -1275,26 +1275,43 @@ describe("OrderRepository usage", () => {
 
   it("a seeded order is never counted", async () => {
     const seedId = `${Domain.SEED_ORDER_ID_PREFIX}1`;
-    const { usage, events, countedAt } = await runInRepository(
+    const { counted, usage, events, countedAt } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
         const sql = yield* SqlClient.SqlClient;
         yield* openCycle(repository);
-        yield* upsert(repository, paid(1, { id: seedId }), []);
-        yield* repository.countOrder(seedId, CYCLE_START);
+        // What the seed does: mark the order inside its upsert, before the
+        // reconcile that creates its first run.
+        yield* repository.upsertOrder({
+          order: paid(1, { id: seedId }),
+          lineItems: [],
+          afterWrite: repository
+            .markSeedOrdersCounted([seedId])
+            .pipe(Effect.andThen(repository.countOrder(seedId, CYCLE_START))),
+        });
+        // Skipped by the count itself, and by the recount a new cycle runs.
+        const counted = (yield* repository.getUsage()).ordersThisCycle;
+        yield* repository.setBillingCycle({
+          shopGid,
+          cycleStartAt: CYCLE_END,
+          cycleEndAt: null,
+          memberCount: 0,
+        });
         const [row] =
           yield* sql`select countedAt from ShopOrder where id = ${seedId}`
             .values;
         return {
+          counted,
           usage: yield* repository.getUsage(),
           events: yield* usageEvents(),
           countedAt: row?.[0],
         };
       }),
     );
+    strictEqual(counted, 0);
     strictEqual(usage.ordersThisCycle, 0);
     deepStrictEqual(events, []);
-    strictEqual(countedAt, null);
+    strictEqual(countedAt, 0);
   });
 
   it("a re-sync never queues a second count", async () => {
@@ -1323,7 +1340,7 @@ describe("OrderRepository usage", () => {
         yield* openCycle(repository);
         yield* upsert(repository, paid(1), []);
         yield* count(repository, 1);
-        // Refused through the end of the period, then the period rolls.
+        // Refused through the end of the cycle, then the cycle rolls.
         yield* repository
           .flushUsageEvents("shop.myshopify.com")
           .pipe(Effect.provide(refusingAppEvents));
@@ -1370,7 +1387,7 @@ describe("OrderRepository usage", () => {
         yield* upsert(repository, paid(2), []);
         yield* count(repository, 1);
         yield* count(repository, 2);
-        // The trial ends and the first real period starts after both.
+        // The trial ends and the first real billing cycle starts after both.
         yield* repository.setBillingCycle({
           shopGid,
           cycleStartAt: CYCLE_START + 10,
@@ -1431,6 +1448,73 @@ describe("OrderRepository usage", () => {
     } finally {
       limits.maxOrdersPerCycle = original;
     }
+  });
+
+  it("the retention sweep deletes dead usage events older than 60 days and keeps younger ones", async () => {
+    const DAY = 86_400_000;
+    const now = CYCLE_START + DAY;
+    const { swept, usage, keys } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        const sql = yield* SqlClient.SqlClient;
+        yield* openCycle(repository);
+        // Written straight to the outbox: two dead events either side of the
+        // window, and one live event in the current cycle.
+        for (const [key, occurredAt] of [
+          ["dead-old", now - 61 * DAY],
+          ["dead-young", now - 59 * DAY],
+          ["live", CYCLE_START + 1],
+        ] as const)
+          yield* sql`
+            insert into UsageEvent (idempotencyKey, eventHandle, orderId, value, occurredAt)
+            values (${key}, ${Domain.USAGE_METER_ORDER}, null, 1, ${occurredAt})
+          `;
+        const swept = yield* repository.sweepExpiredOrders({ now });
+        const keys =
+          (yield* sql`select idempotencyKey from UsageEvent order by idempotencyKey`
+            .values).map((row) => String(row[0]));
+        return { swept, usage: yield* repository.getUsage(), keys };
+      }),
+    );
+    strictEqual(swept.usageEvents, 1);
+    deepStrictEqual(keys, ["dead-young", "live"]);
+    strictEqual(usage.deadUsageEvents, 1);
+    strictEqual(usage.pendingUsageEvents, 1);
+  });
+
+  it("a usage event is one row per idempotency key, kept until Shopify accepts it", async () => {
+    const key = `${orderId(1)}#count`;
+    const { duplicate, afterRefusal, afterAcceptance } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        const sql = yield* SqlClient.SqlClient;
+        const keys = () =>
+          sql`select idempotencyKey, attempts from UsageEvent`.values.pipe(
+            Effect.map((rows) => rows.map(([k, n]) => [String(k), Number(n)])),
+          );
+        yield* openCycle(repository);
+        yield* upsert(repository, paid(1), []);
+        yield* count(repository, 1);
+        const duplicate = yield* sql`
+          insert into UsageEvent (idempotencyKey, eventHandle, orderId, value, occurredAt)
+          values (${key}, ${Domain.USAGE_METER_ORDER}, ${orderId(1)}, 1, ${CYCLE_START})
+        `.pipe(
+          Effect.as("inserted"),
+          Effect.catch(() => Effect.succeed("refused")),
+        );
+        yield* repository
+          .flushUsageEvents("shop.myshopify.com")
+          .pipe(Effect.provide(refusingAppEvents));
+        const afterRefusal = yield* keys();
+        yield* repository
+          .flushUsageEvents("shop.myshopify.com")
+          .pipe(Effect.provide(acceptingAppEvents));
+        return { duplicate, afterRefusal, afterAcceptance: yield* keys() };
+      }),
+    );
+    strictEqual(duplicate, "refused");
+    deepStrictEqual(afterRefusal, [[key, 1]]);
+    deepStrictEqual(afterAcceptance, []);
   });
 
   it("flush deletes accepted events and keeps refused ones with the error", async () => {
@@ -1847,7 +1931,7 @@ describe("OrderRepository.sweepExpiredOrders", () => {
         return { swept, orders, runs, usage: yield* repository.getUsage() };
       }),
     );
-    deepStrictEqual(swept, { orders: 2, runs: 3 });
+    deepStrictEqual(swept, { orders: 2, runs: 3, usageEvents: 0 });
     deepStrictEqual(orders, [orderId(3), orderId(4)]);
     deepStrictEqual(runs, []);
     strictEqual(usage.lastSweepAt, NOW);

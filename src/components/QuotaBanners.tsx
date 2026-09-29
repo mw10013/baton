@@ -24,7 +24,7 @@ export function QuotaBanners({ usage }: { readonly usage: Domain.ShopUsage }) {
     <>
       {usage.ordersLimitedAt !== null && (
         <s-banner tone="critical">
-          {`New orders stopped syncing at ${formatNumber(Domain.ShopLimits.maxOrdersPerCycle)} this billing period.`}
+          {`New orders stopped syncing at ${formatNumber(Domain.ShopLimits.maxOrdersPerCycle)} this billing cycle.`}
           {usage.cycleEndAt !== null && (
             <>
               {" Syncing resumes on "}

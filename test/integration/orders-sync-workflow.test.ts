@@ -255,10 +255,36 @@ describe("OrdersSyncWorkflow shape", () => {
     expect(instances.length).toBe(1);
   });
 
+  it("a tracking row disables Import open orders only while it is fresh", async () => {
+    const shop = "orders-fresh-row.myshopify.com";
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    await agent.listOrders(listOrdersInput);
+    const track = (id: string, ageSeconds: number) =>
+      runInDurableObject(env.SHOP_AGENT.getByName(shop), (instance) => {
+        (
+          instance as unknown as { ctx: DurableObjectState }
+        ).ctx.storage.sql.exec(
+          `insert into cf_agents_workflows (id, workflow_id, workflow_name, status, created_at, updated_at)
+           values (?, ?, ?, 'running', unixepoch() - ?, unixepoch() - ?)`,
+          id,
+          `wf_${id}`,
+          ORDERS_SYNC_WORKFLOW_NAME,
+          ageSeconds,
+          ageSeconds,
+        );
+      });
+    await track("stale", 3600);
+    const staleOnly = await agent.listOrders(listOrdersInput);
+    expect(staleOnly.syncState.inFlight).toBe(false);
+    await track("fresh", 60);
+    const withFresh = await agent.listOrders(listOrdersInput);
+    expect(withFresh.syncState.inFlight).toBe(true);
+  });
+
   /**
    * The SDK never reaps a tracking row, and a callback can be lost. Once the
-   * platform has forgotten the instance too, the row is the only thing
-   * disabling the button, so the click that finds it must clear it.
+   * platform has forgotten the instance too, the stale row leaves the button
+   * enabled, and the click that finds it must clear it.
    *
    * The local Workflows binding rejects `get()` on a missing id and also
    * prints an "uncaught exception ... instance.not_found" line plus a
@@ -278,7 +304,7 @@ describe("OrdersSyncWorkflow shape", () => {
       );
     });
     const before = await agent.listOrders(listOrdersInput);
-    expect(before.syncState.inFlight).toBe(true);
+    expect(before.syncState.inFlight).toBe(false);
 
     await using introspector = await introspectWorkflow(
       env.ORDERS_SYNC_WORKFLOW,

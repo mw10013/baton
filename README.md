@@ -21,7 +21,7 @@ Baton runs on TanStack Start, Cloudflare Workers, Durable Objects, D1, and Effec
 
 The home page is the shop's standing against its plan, as two capacity meters:
 
-- **Orders this billing period** — counted in the shop's Durable Object, against the orders the plan includes (`Domain.Entitlements.ordersPerCycle`). Past the allowance orders keep syncing and are billed; the hard stop is `Domain.ShopLimits.maxOrdersPerCycle`.
+- **Orders this billing cycle** — counted in the shop's Durable Object, against the orders the plan includes (`Domain.Entitlements.ordersPerCycle`). Past the allowance orders keep syncing and are billed; the hard stop is `Domain.ShopLimits.maxOrdersPerCycle`.
 - **Members** — counted in D1, against the seats the plan includes (`Domain.Entitlements.membersIncluded`). Members past the included seats keep access and are billed by the `members` meter; the hard stop is `Domain.ShopLimits.maxMembers`.
 
 Each meter's denominator is what the plan grants, never the count, so a shop past its allowance shows a full bar rather than a rescaled one. **No tier is named anywhere in the merchant UI**: the names live in the Partner Dashboard and change without a deploy, the cached handle can be stale, and the numbers the app actually enforces say the same thing. Manage plan links out to Shopify, which owns both the names and the prices.
@@ -80,26 +80,19 @@ only displayed, or that no workflow matches, costs the merchant nothing. Avoid "
 plan's rate. Avoid "a month" — the period is the billing cycle, which is what every other
 surface now says.
 
-- The meter counts orders Baton started work on. The app posts one event per counted order to
-  the App Events API under the meter handle, and never a reversal. The $0.00 first tier is the
-  included allowance: Flat rate has no included units field, and graduated tiers price each unit
-  by the tier it falls in, so the 21st order is the first one billed. Tier 1's size must equal
-  `ordersPerCycle` in `ENTITLEMENTS`.
-- The member meter counts seats per billing cycle: the roster size at the start of each cycle,
-  plus one for each add that raises the cycle's high-water mark, never a reversal. The $0.00
-  first tier is the included seats and must equal `membersIncluded` in `ENTITLEMENTS`. A plan
-  change is a new contract with a new cycle and both meters at zero (measured 2026-09-22,
-  `Domain.ActiveSubscription`), so the roster is re-sent under the new plan's tiers.
+- What counts, when it is sent to Shopify, and what each event does to the counts is the
+  triggers table on `ShopUsage` in `src/lib/Domain.ts`. Each meter's $0.00 first tier is the
+  included allowance and must equal `ordersPerCycle` or `membersIncluded` in `ENTITLEMENTS`.
 - Handles match display names (`production-orders` / "Production orders", `members` /
   "Members"), so the Dev Dashboard billing log and the invoice use the same words. The name is
   the invoice line and is capped at **18 characters**; the handle at 30. Neither can be changed
   once saved. The
   orders handle was `orders-synced` until 2026-09-22, renamed before launch because counting
   moved from sync to first run; renaming after launch needs the migration below.
-- **Do not add or re-handle a meter on a live plan without a migration.** An App Pricing
-  contract carries the item set it was created with, so existing subscribers keep a contract
-  with no meter item: their events are accepted but the contract never reports a usage quantity,
-  and reconciliation is blind for them until a plan switch replaces the contract. Measured
+- **Do not add or re-handle a meter on a live plan without a migration.** An app subscription
+  carries the item set it was created with, so existing subscribers keep an app subscription
+  with no meter item: their events are accepted but it never reports a usage quantity, and
+  reconciliation is blind for them until a plan switch replaces the app subscription. Measured
   2026-09-19 on the dev store.
 - No free plan. No yearly option: usage meters require monthly billing.
 - The welcome link is a relative App Home path. Shopify appends `?plan_handle=<handle>` to it,

@@ -2,6 +2,7 @@ import { redirect } from "@tanstack/react-router";
 import { Clock, Context, Effect, Layer, Match, Option, Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
+import { causeToErrorMessage } from "@/lib/LayerEx";
 import { Repository } from "@/lib/Repository";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import {
@@ -31,8 +32,8 @@ export class SubscriptionPlanError extends Schema.TaggedError<SubscriptionPlanEr
 ) {}
 
 /**
- * How long a cached plan handle stays fresh when no contract boundary falls
- * sooner.
+ * How long a cached plan handle stays fresh when no app subscription boundary
+ * falls sooner.
  *
  * This is a ceiling on ignorance, not a refresh interval. Plan changes are
  * caught by the billing redirect forcing a revalidation, and cycle rolls by
@@ -41,6 +42,12 @@ export class SubscriptionPlanError extends Schema.TaggedError<SubscriptionPlanEr
  * immediate cancellation, an expiration. App Pricing sends no webhooks — it
  * explicitly directs apps to poll the Partner API for exactly those cases — so
  * this window is their entire detection latency.
+ *
+ * An expired entry is re-read by whichever navigation or socket connect finds
+ * it stale, and for a shop nobody opens, by the daily check
+ * ({@link revalidateStalePlans}). So a quiet shop re-reads within a day of
+ * its entry expiring, and an entry expires at its cycle's end at the latest:
+ * the daily check, not a page load, is what bounds a quiet shop.
  *
  * A day looks long until the two transitions it covers are separated:
  *
@@ -63,11 +70,11 @@ export class SubscriptionPlanError extends Schema.TaggedError<SubscriptionPlanEr
 const PLAN_HANDLE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Grace added past a contract boundary before trusting a revalidation.
+ * Grace added past an app subscription boundary before trusting a revalidation.
  *
  * Expiring exactly at the boundary races Shopify's own transition and can read
- * back the outgoing contract, which would then be cached for a full max age.
- * Landing slightly late costs nothing and reads the settled state.
+ * back the outgoing app subscription, which would then be cached for a full max
+ * age. Landing slightly late costs nothing and reads the settled state.
  */
 const PLAN_HANDLE_BOUNDARY_SKEW_MS = 5 * 60 * 1000;
 
@@ -89,13 +96,13 @@ const PLAN_HANDLE_MANAGE_WINDOW_MS = 15 * 60 * 1000;
 /**
  * The freshness deadline for a revalidation performed at `now`.
  *
- * The deadline is clamped to the contract boundary because the contract
- * changes there with no plan change and no redirect: the billing cycle rolls,
- * or a trial ends and the first cycle begins. The revalidation after it reads
- * the new cycle and pushes it, with the roster size, to
- * `ShopAgent.setBillingCycle`, which restarts order counting and the seat
- * mark. The boundary does not move within a cycle, so every
- * revalidation re-pins to the same instant.
+ * The deadline is clamped to the app subscription boundary because the app
+ * subscription changes there with no plan change and no redirect: the billing
+ * cycle rolls, or a trial ends and the first cycle begins. The revalidation
+ * after it reads the new cycle and pushes it, with the roster size, to
+ * `ShopAgent.setBillingCycle`, which restarts order counting and the seat mark.
+ * The boundary does not move within a cycle, so every revalidation re-pins to
+ * the same instant.
  *
  * A boundary already in the past is ignored. Honoring it would write a deadline
  * behind `now`, making the entry permanently stale and turning every subsequent
@@ -117,7 +124,7 @@ const decodePlanHandle = Schema.decodeUnknownOption(Domain.PlanHandle);
 
 /**
  * The one place a `Subscribed` status is built, so the cached path and the
- * revalidated path cannot drift about what a contract is.
+ * revalidated path cannot drift about what an app subscription is.
  */
 const subscribed = (input: {
   readonly handle: Domain.PlanHandle;
@@ -138,7 +145,7 @@ const subscribed = (input: {
  * column stores a plain string — a handle this build no longer recognizes means
  * the catalog moved, and moving the entry back to Shopify is the only honest
  * response. A null handle inside the deadline is not a miss: it is a verified
- * absence of any contract.
+ * absence of any app subscription.
  */
 const cachedStatus = (
   shopSession: Domain.ShopSession,
@@ -162,9 +169,10 @@ export class SubscriptionPlan extends Context.Service<
     /**
      * The shop's plan, from cache when fresh and from Shopify when not.
      *
-     * A shop with no `ShopSession` row resolves to `Unsubscribed` without touching
-     * Shopify: uninstall deletes the row, so its absence means the app is not
-     * installed, which grants no more access than an absent contract does.
+     * A shop with no `ShopSession` row resolves to `Unsubscribed` without
+     * touching Shopify: uninstall deletes the row, so its absence means the app
+     * is not installed, which grants no more access than an absent app
+     * subscription does.
      */
     readonly resolve: (
       shop: Domain.Shop,
@@ -173,7 +181,7 @@ export class SubscriptionPlan extends Context.Service<
      * Revalidates unconditionally, ignoring any fresh entry.
      *
      * For the billing redirect, whose `plan_handle` parameter announces that
-     * the contract just changed. The parameter triggers the refresh and is
+     * the plan just changed. The parameter triggers the refresh and is
      * never itself stored — Shopify directs apps to confirm subscription status
      * against the Partner API when handling that redirect, and this is also
      * what lets a single max age serve the no-plan case: a merchant who just
@@ -191,6 +199,17 @@ export class SubscriptionPlan extends Context.Service<
      * the redirect that would otherwise force the revalidation. Never extends a
      * deadline and never writes a never-fetched row, so calling it on a shop
      * that then changes nothing costs one Partner call at worst.
+     *
+     * Then sends the shop's usage queue. A plan change ends the app
+     * subscription, and an event still queued when it ends is dated inside a
+     * billing cycle that has closed, so it can never be sent
+     * (`Domain.usageEventIsDead`). The button waits at most 1.5 s before it
+     * opens the pricing page; a flush that takes longer still finishes,
+     * because the Worker holds the request's promise in `ctx.waitUntil`
+     * (`worker.ts`), which outlives the client for up to 30 s. The exposure
+     * is small either way: every path that counts an order sends the queue
+     * as it goes, so what this flush finds is only what an earlier send
+     * failed to deliver.
      */
     readonly expectChange: (
       shop: Domain.Shop,
@@ -226,17 +245,17 @@ export class SubscriptionPlan extends Context.Service<
             ),
           );
         const now = yield* Clock.currentTimeMillis;
-        const contract = Option.getOrNull(active);
-        const handle = contract?.handle ?? null;
+        const appSubscription = Option.getOrNull(active);
+        const handle = appSubscription?.handle ?? null;
         yield* repository
           .updateShopSessionPlan({
             shop: shopSession.shop,
             planHandle: handle,
             planHandleExpiresAt: planHandleExpiresAt(
               now,
-              contract?.boundaryAt ?? null,
+              appSubscription?.boundaryAt ?? null,
             ),
-            planBoundaryAt: contract?.boundaryAt ?? null,
+            planBoundaryAt: appSubscription?.boundaryAt ?? null,
           })
           .pipe(
             Effect.mapError(
@@ -267,21 +286,21 @@ export class SubscriptionPlan extends Context.Service<
               message: `SubscriptionPlan.revalidate: shop=${shopSession.shop}: revoke on plan change failed`,
             }),
           );
-        if (contract === null) return Unsubscribed;
+        if (appSubscription === null) return Unsubscribed;
         // The object counts orders against the cycle and meters them and the
-        // seats, so it needs the period and the roster size (the roster is
+        // seats, so it needs the billing cycle and the roster size (the roster is
         // D1's); it still learns nothing about the plan itself. The pushes
         // are best-effort for the same reason the revoke is: the plan answer
         // this function exists to give is correct regardless, and the next
         // revalidation retries.
-        const cycleStartAt = contract.cycleStartAt;
+        const cycleStartAt = appSubscription.cycleStartAt;
         if (cycleStartAt !== null)
           yield* repository.countMembers(shopSession.shop).pipe(
             Effect.flatMap((memberCount) =>
               shopAgentClient.setBillingCycle(shopSession.shop, {
                 shopGid: shopSession.shopGid,
                 cycleStartAt,
-                cycleEndAt: contract.boundaryAt,
+                cycleEndAt: appSubscription.boundaryAt,
                 memberCount,
               }),
             ),
@@ -290,12 +309,13 @@ export class SubscriptionPlan extends Context.Service<
               message: `SubscriptionPlan.revalidate: shop=${shopSession.shop}: billing cycle push failed`,
             }),
           );
-        // Pushed even when both readings are null: a contract that cannot
-        // report (a trial, a pre-meter contract) then clears the readings the
-        // last reporting contract left, rather than showing them as current.
-        // Null already means "cannot report" on `Domain.ShopUsage`.
+        // Pushed even when both readings are null: an app subscription that
+        // cannot report (a trial, a pre-meter app subscription) then clears the
+        // readings the last reporting app subscription left, rather than
+        // showing them as current. Null already means "cannot report" on
+        // `Domain.ShopUsage`.
         yield* shopAgentClient
-          .reconcileUsage(shopSession.shop, contract.usage)
+          .reconcileUsage(shopSession.shop, appSubscription.usage)
           .pipe(
             Effect.ignore({
               log: "Warn",
@@ -303,8 +323,8 @@ export class SubscriptionPlan extends Context.Service<
             }),
           );
         return subscribed({
-          handle: contract.handle,
-          boundaryAt: contract.boundaryAt,
+          handle: appSubscription.handle,
+          boundaryAt: appSubscription.boundaryAt,
         });
       });
 
@@ -351,6 +371,15 @@ export class SubscriptionPlan extends Context.Service<
                 planError(`Plan cache deadline write failed for ${shop}`),
               ),
             );
+          // After the deadline, which is what the click must not lose if the
+          // button stops waiting. Best-effort, as the pushes in `revalidate`
+          // are: the rows survive a failure and the next flush sends them.
+          yield* shopAgentClient.flushUsageEvents(shop).pipe(
+            Effect.ignore({
+              log: "Warn",
+              message: `SubscriptionPlan.expectChange: shop=${shop}: usage flush failed`,
+            }),
+          );
         },
       );
 
@@ -358,6 +387,57 @@ export class SubscriptionPlan extends Context.Service<
     }),
   );
 }
+
+/**
+ * **Every installed shop re-reads its plan at least once a day, whether or not
+ * anyone opens the app.** Run by the Worker's daily cron (`scheduled` in
+ * `worker.ts`): {@link SubscriptionPlan.refresh} for every shop whose cached
+ * plan is stale ({@link Repository.listShopsWithStalePlan}), four at a time.
+ *
+ * A revalidation is also what tells the shop's object where its billing cycle
+ * is, and nothing else does: without it a shop whose orders arrive by webhook
+ * alone rolls its cycle forward once on its own and never again, so its
+ * order count grows across months and its members meter is never sent a new
+ * cycle's roster. The refresh pushes the cycle and the meter readings
+ * (`ShopAgent.setBillingCycle`, `ShopAgent.reconcileUsage`), and the second
+ * sends the usage queue.
+ *
+ * Only stale shops: a fresh entry was read within
+ * {@link PLAN_HANDLE_MAX_AGE_MS} and is clamped to its boundary, so it
+ * already knows the current cycle. One shop's failure is logged and does not
+ * stop the others; the next day's run retries it.
+ */
+export const revalidateStalePlans = Effect.fn("revalidateStalePlans")(
+  function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const shops = yield* (yield* Repository).listShopsWithStalePlan(now);
+    const plan = yield* SubscriptionPlan;
+    const results = yield* Effect.forEach(
+      shops,
+      (shop) =>
+        plan.refresh(shop).pipe(
+          Effect.as(true),
+          Effect.catchCause((cause) =>
+            Effect.logWarning(
+              `revalidateStalePlans: shop=${shop}: ${causeToErrorMessage(cause)}`,
+            ).pipe(
+              Effect.annotateLogs({
+                shop,
+                cause: causeToErrorMessage(cause),
+              }),
+              Effect.as(false),
+            ),
+          ),
+        ),
+      { concurrency: 4 },
+    );
+    const failed = results.filter((ok) => !ok).length;
+    yield* Effect.logInfo(
+      `scheduled.revalidatePlans: shops=${String(shops.length)} failed=${String(failed)}`,
+    ).pipe(Effect.annotateLogs({ shops: shops.length, failed }));
+    return { shops: shops.length, failed };
+  },
+);
 
 /**
  * The shop's entitlements for *this* request, or a redirect to plan selection.

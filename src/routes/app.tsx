@@ -131,7 +131,7 @@ export const Route = createFileRoute("/app")({
    * from the router's location rather than the request: this runs as a server
    * function whose own URL carries none of the document's search parameters.
    * The handle itself is never trusted as a value — it only says that the
-   * contract just changed, and the Partner API supplies what it changed to.
+   * plan just changed, and the Partner API supplies what it changed to.
    */
   beforeLoad: ({ location }) =>
     authenticateAppRoute({

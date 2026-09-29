@@ -413,6 +413,55 @@ describe("action table parser", () => {
   });
 });
 
+const triggerError = (doctored: string) => {
+  expect(doctored).not.toBe(source);
+  const parsed = ActionTable.parseTriggerTable(doctored);
+  if (Result.isSuccess(parsed)) throw new Error("parsed");
+  return parsed.failure.message;
+};
+
+describe("triggers table parser", () => {
+  it("the real table parses and every pinned title is carried by a test", () => {
+    const testSources = import.meta.glob<string>(
+      "/test/integration/*.test.ts",
+      { query: "?raw", import: "default", eager: true },
+    );
+    const rows = Result.getOrThrow(ActionTable.parseTriggerTable(source));
+    expect(rows.map((row) => row.trigger)).toContain("first run on an order");
+    expect(ActionTable.checkPinned(rows, testSources, "ShopUsage")).toEqual([]);
+  });
+
+  it("a word outside the list in a count column is refused", () => {
+    expect(
+      triggerError(
+        source.replace(
+          "| first run on an order                        | +1          |",
+          "| first run on an order                        | plus one    |",
+        ),
+      ),
+    ).toMatch(/unknown order count "plus one"/u);
+    expect(
+      triggerError(
+        source.replace(
+          "| first count past the cycle end               | recounted   | → 0               |",
+          "| first count past the cycle end               | recounted   | reset             |",
+        ),
+      ),
+    ).toMatch(/unknown seat mark "reset"/u);
+  });
+
+  it("an empty pinned by is refused", () => {
+    expect(
+      triggerError(
+        source.replace(
+          "| a seeded order is never counted                                                                                                |",
+          "|                                                                                                                                |",
+        ),
+      ),
+    ).toMatch(/empty pinned by/u);
+  });
+});
+
 const copyTableOf = (row: string) =>
   [
     "/**",

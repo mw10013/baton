@@ -150,21 +150,18 @@ export class ShopAgentClient extends Context.Service<
       shop: string,
     ) => Effect.Effect<void, ShopAgentClientError>;
     /**
-     * Pushes the shop's billing period into the object, which counts orders
-     * against it and dates the usage events it queues.
-     *
-     * The object cannot learn this on its own: the period lives on the App
-     * Pricing contract, which only the Worker's Partner client reads. It is the
-     * one plan-adjacent fact the object stores, and it is a period rather than
-     * an entitlement — the object still never learns what the plan grants.
+     * Pushes the shop's billing cycle into the object
+     * (`ShopAgent.setBillingCycle`). The object cannot learn it on its own:
+     * it lives on the app subscription, which only the Worker's Partner client
+     * reads. It is a date range rather than an entitlement — the object still
+     * never learns what the plan grants.
      */
     readonly setBillingCycle: (
       shop: string,
       input: Domain.BillingCycleInput,
     ) => Effect.Effect<void, ShopAgentClientError>;
     /**
-     * Reports the roster size after a member add, so the object can raise the
-     * cycle's seat mark and queue the rise (`OrderRepository.recordRoster`).
+     * Reports the roster size after a member add (`ShopAgent.recordRoster`).
      * Answers the units queued.
      */
     readonly recordRoster: (
@@ -173,19 +170,17 @@ export class ShopAgentClient extends Context.Service<
     ) => Effect.Effect<number, ShopAgentClientError>;
     /**
      * Hands the object Shopify's own meter readings so the divergence from the
-     * local count is observable. Nothing is corrected from it: the App Events
-     * API answers `202` to an event it will later refuse, so this is the only
-     * signal that a shop's usage is not being billed, and a silent auto-correct
-     * would hide exactly the condition it exists to expose.
+     * local count is observable (`ShopAgent.reconcileUsage`, which says why
+     * nothing is corrected from it).
      */
     readonly reconcileUsage: (
       shop: string,
       input: Domain.ReconcileUsageInput,
     ) => Effect.Effect<void, ShopAgentClientError>;
     /**
-     * Drains the object's usage-event outbox now rather than on the next order.
-     * The uninstall path's call: Shopify closes the billing period 24 hours
-     * after an uninstall, and the object's storage is about to be destroyed.
+     * Drains the object's usage-event outbox now rather than on the next order
+     * (`ShopAgent.flushUsageEvents`). Called by the uninstall webhook and by
+     * `SubscriptionPlan.expectChange`.
      */
     readonly flushUsageEvents: (
       shop: string,

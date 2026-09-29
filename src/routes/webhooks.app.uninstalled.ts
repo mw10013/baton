@@ -7,7 +7,7 @@ import { destroyShopAgent, handleWebhook, Shopify } from "@/lib/Shopify";
 /**
  * Drains the shop's usage-event outbox before its storage goes.
  *
- * Shopify closes the billing period 24 hours after an uninstall and refuses
+ * Shopify closes the billing cycle 24 hours after an uninstall and refuses
  * events after that, and `destroyShopAgent` deletes the outbox outright — so
  * this is the last moment an order the merchant was already billed for can be
  * reported. Best-effort on purpose: a failed flush must not stop the destroy,

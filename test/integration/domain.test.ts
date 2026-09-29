@@ -866,16 +866,6 @@ describe("Domain.cycleAtOrderCeiling", () => {
   });
 });
 
-describe("Domain.orderIsSeeded", () => {
-  it("a seeded order is one whose id carries the fixture prefix", () => {
-    strictEqual(
-      Domain.orderIsSeeded(`${Domain.SEED_ORDER_ID_PREFIX}1001`),
-      true,
-    );
-    strictEqual(Domain.orderIsSeeded("gid://shopify/Order/1001"), false);
-  });
-});
-
 describe("Domain.OrdersCursor", () => {
   const decode = Schema.decodeUnknownOption(Domain.OrdersCursor);
   it("a cursor is `<processedAt>:<id>`, so text that is not one is refused rather than read as page one", () => {

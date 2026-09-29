@@ -16,6 +16,7 @@ import {
   ShopifyPartnerError,
 } from "@/lib/ShopifyPartner";
 import {
+  revalidateStalePlans,
   SubscriptionPlan,
   SubscriptionPlanError,
 } from "@/lib/SubscriptionPlan";
@@ -66,19 +67,19 @@ const seedShopSession = (
     });
   });
 
-/** A contract with no boundary and no meter, which is what most cases are about. */
-const contract = (
-  overrides: Partial<Domain.ActiveSubscription> & {
+/** An app subscription with no boundary and no meter, which is what most cases are about. */
+const appSubscription = (
+  overrides: Partial<Domain.AppSubscription> & {
     readonly handle: Domain.PlanHandle;
   },
-): Domain.ActiveSubscription => ({
+): Domain.AppSubscription => ({
   boundaryAt: null,
   cycleStartAt: null,
   usage: { orders: null, members: null },
   ...overrides,
 });
 
-/** The `Subscribed` status such a contract resolves to. */
+/** The `Subscribed` status such an app subscription resolves to. */
 const subscribedTo = (
   handle: Domain.PlanHandle,
   overrides: Partial<Extract<Domain.PlanStatus, { _tag: "Subscribed" }>> = {},
@@ -95,6 +96,7 @@ interface Pushes {
   readonly revoked: Ref.Ref<readonly string[]>;
   readonly cycles: Ref.Ref<readonly Domain.BillingCycleInput[]>;
   readonly reconciled: Ref.Ref<readonly Domain.ReconcileUsageInput[]>;
+  readonly flushed: Ref.Ref<readonly string[]>;
 }
 
 const makePushes = Effect.gen(function* () {
@@ -102,6 +104,7 @@ const makePushes = Effect.gen(function* () {
     revoked: yield* Ref.make<readonly string[]>([]),
     cycles: yield* Ref.make<readonly Domain.BillingCycleInput[]>([]),
     reconciled: yield* Ref.make<readonly Domain.ReconcileUsageInput[]>([]),
+    flushed: yield* Ref.make<readonly string[]>([]),
   } satisfies Pushes;
 });
 
@@ -165,6 +168,14 @@ const run = <A, E>(
                 pushes === undefined
                   ? Effect.void
                   : Ref.update(pushes.reconciled, (seen) => [...seen, input]);
+            if (name === "flushUsageEvents")
+              return (flushedShop: string) =>
+                pushes === undefined
+                  ? Effect.succeed(0)
+                  : Ref.update(pushes.flushed, (shops) => [
+                      ...shops,
+                      flushedShop,
+                    ]).pipe(Effect.as(0));
             return () =>
               Effect.die(`ShopAgentClient.${String(name)} not stubbed`);
           },
@@ -175,15 +186,15 @@ const run = <A, E>(
 
 const activeProAtFutureBoundary = () =>
   Effect.succeed(
-    Option.some(contract({ handle: "baton-pro", boundaryAt: 601_000 })),
+    Option.some(appSubscription({ handle: "baton-pro", boundaryAt: 601_000 })),
   );
 
 const activeProAtPastBoundary = () =>
   Effect.succeed(
-    Option.some(contract({ handle: "baton-pro", boundaryAt: 600_000 })),
+    Option.some(appSubscription({ handle: "baton-pro", boundaryAt: 600_000 })),
   );
 
-const failedActiveSubscription = () =>
+const failedAppSubscription = () =>
   Effect.fail(
     new ShopifyPartnerError({
       message: "unavailable",
@@ -194,7 +205,7 @@ const failedActiveSubscription = () =>
 afterEach(() => env.D1.exec("delete from ShopSession"));
 
 describe("ShopifyPartner.meterQuantity", () => {
-  it("reports each meter's quantity by handle, null when the contract lacks the item", () => {
+  it("reports each meter's quantity by handle, null when the app subscription lacks the item", () => {
     const items = [
       { handle: "baton-basic", usage: null },
       { handle: Domain.USAGE_METER_ORDER, usage: { quantity: 21 } },
@@ -218,7 +229,7 @@ describe("SubscriptionPlan", () => {
         const calls = yield* Ref.make(0);
         const activeSubscription = () =>
           Ref.update(calls, (count) => count + 1).pipe(
-            Effect.as(Option.none<Domain.ActiveSubscription>()),
+            Effect.as(Option.none<Domain.AppSubscription>()),
           );
 
         yield* run(
@@ -247,7 +258,7 @@ describe("SubscriptionPlan", () => {
         const calls = yield* Ref.make(0);
         const activeSubscription = () =>
           Ref.update(calls, (count) => count + 1).pipe(
-            Effect.as(Option.none<Domain.ActiveSubscription>()),
+            Effect.as(Option.none<Domain.AppSubscription>()),
           );
         assert.deepStrictEqual(
           yield* run(
@@ -271,7 +282,7 @@ describe("SubscriptionPlan", () => {
         const calls = yield* Ref.make(0);
         const activeSubscription = () =>
           Ref.update(calls, (count) => count + 1).pipe(
-            Effect.as(Option.some(contract({ handle: "baton-basic" }))),
+            Effect.as(Option.some(appSubscription({ handle: "baton-basic" }))),
           );
         yield* run(
           activeSubscription,
@@ -305,7 +316,7 @@ describe("SubscriptionPlan", () => {
       const calls = yield* Ref.make(0);
       const activeSubscription = () =>
         Ref.update(calls, (count) => count + 1).pipe(
-          Effect.as(Option.none<Domain.ActiveSubscription>()),
+          Effect.as(Option.none<Domain.AppSubscription>()),
         );
       yield* run(
         activeSubscription,
@@ -334,7 +345,7 @@ describe("SubscriptionPlan", () => {
         () =>
           Effect.succeed(
             Option.some(
-              contract({
+              appSubscription({
                 handle: "baton-pro",
                 boundaryAt: 601_000,
                 cycleStartAt: 500,
@@ -364,7 +375,7 @@ describe("SubscriptionPlan", () => {
       yield* run(
         () =>
           Ref.update(calls, (count) => count + 1).pipe(
-            Effect.as(Option.none<Domain.ActiveSubscription>()),
+            Effect.as(Option.none<Domain.AppSubscription>()),
           ),
         Effect.gen(function* () {
           yield* seedShopSession("baton-pro", 2000, {
@@ -388,7 +399,9 @@ describe("SubscriptionPlan", () => {
         const pushes = yield* makePushes;
         yield* run(
           () =>
-            Effect.succeed(Option.some(contract({ handle: "baton-basic" }))),
+            Effect.succeed(
+              Option.some(appSubscription({ handle: "baton-basic" })),
+            ),
           Effect.gen(function* () {
             yield* seedShopSession("baton-pro", 500);
             assert.deepStrictEqual(
@@ -407,7 +420,7 @@ describe("SubscriptionPlan", () => {
       yield* TestClock.setTime(1000);
       const pushes = yield* makePushes;
       yield* run(
-        () => Effect.succeed(Option.none<Domain.ActiveSubscription>()),
+        () => Effect.succeed(Option.none<Domain.AppSubscription>()),
         Effect.gen(function* () {
           const plan = yield* SubscriptionPlan;
           yield* seedShopSession("baton-pro", 500);
@@ -426,7 +439,8 @@ describe("SubscriptionPlan", () => {
       yield* TestClock.setTime(1000);
       const pushes = yield* makePushes;
       yield* run(
-        () => Effect.succeed(Option.some(contract({ handle: "baton-pro" }))),
+        () =>
+          Effect.succeed(Option.some(appSubscription({ handle: "baton-pro" }))),
         Effect.gen(function* () {
           yield* seedShopSession(null, null);
           yield* (yield* SubscriptionPlan).resolve(shop);
@@ -442,7 +456,7 @@ describe("SubscriptionPlan", () => {
       yield* TestClock.setTime(1000);
       const pushes = yield* makePushes;
       yield* run(
-        () => Effect.succeed(Option.none<Domain.ActiveSubscription>()),
+        () => Effect.succeed(Option.none<Domain.AppSubscription>()),
         Effect.gen(function* () {
           const plan = yield* SubscriptionPlan;
           // Expired verified absence: revalidates, lands on null again.
@@ -478,7 +492,7 @@ describe("SubscriptionPlan", () => {
     Effect.gen(function* () {
       yield* TestClock.setTime(1000);
       yield* run(
-        () => Effect.succeed(Option.none<Domain.ActiveSubscription>()),
+        () => Effect.succeed(Option.none<Domain.AppSubscription>()),
         Effect.gen(function* () {
           yield* seedShopSession("baton-pro", 500);
           assert.deepStrictEqual(
@@ -499,7 +513,7 @@ describe("SubscriptionPlan", () => {
         () =>
           Effect.succeed(
             Option.some(
-              contract({
+              appSubscription({
                 handle: "baton-pro",
                 boundaryAt: 601_000,
                 cycleStartAt: 500,
@@ -525,7 +539,9 @@ describe("SubscriptionPlan", () => {
       yield* run(
         () =>
           Effect.succeed(
-            Option.some(contract({ handle: "baton-pro", boundaryAt: 601_000 })),
+            Option.some(
+              appSubscription({ handle: "baton-pro", boundaryAt: 601_000 }),
+            ),
           ),
         Effect.gen(function* () {
           yield* seedShopSession("baton-pro", 500);
@@ -547,7 +563,7 @@ describe("SubscriptionPlan", () => {
           () =>
             Effect.succeed(
               Option.some(
-                contract({
+                appSubscription({
                   handle: "baton-pro",
                   cycleStartAt: 500,
                   usage: { orders: 42, members: 5 },
@@ -577,7 +593,7 @@ describe("SubscriptionPlan", () => {
   );
 
   it.effect(
-    "pushes null readings when the contract carries no meter, so stale readings clear",
+    "pushes null readings when the app subscription carries no meter, so stale readings clear",
     () =>
       Effect.gen(function* () {
         yield* TestClock.setTime(1000);
@@ -585,7 +601,9 @@ describe("SubscriptionPlan", () => {
         yield* run(
           () =>
             Effect.succeed(
-              Option.some(contract({ handle: "baton-pro", cycleStartAt: 500 })),
+              Option.some(
+                appSubscription({ handle: "baton-pro", cycleStartAt: 500 }),
+              ),
             ),
           Effect.gen(function* () {
             yield* seedShopSession("baton-pro", 500);
@@ -639,7 +657,7 @@ describe("SubscriptionPlan", () => {
       Effect.gen(function* () {
         yield* TestClock.setTime(1000);
         yield* run(
-          () => Effect.succeed(Option.none<Domain.ActiveSubscription>()),
+          () => Effect.succeed(Option.none<Domain.AppSubscription>()),
           Effect.gen(function* () {
             const repository = yield* Repository;
             const plan = yield* SubscriptionPlan;
@@ -666,12 +684,84 @@ describe("SubscriptionPlan", () => {
   );
 
   it.effect(
+    "Manage plan sends the usage queue before the plan can change",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(1000);
+        const pushes = yield* makePushes;
+        yield* run(
+          () => Effect.succeed(Option.none<Domain.AppSubscription>()),
+          Effect.gen(function* () {
+            yield* seedShopSession("baton-pro", 86_401_000);
+            yield* (yield* SubscriptionPlan).expectChange(shop);
+            const session = Option.getOrThrow(
+              yield* (yield* Repository).findShopSession(shop),
+            );
+            assert.strictEqual(session.planHandleExpiresAt, 901_000);
+          }),
+          { pushes },
+        );
+        assert.deepStrictEqual(yield* Ref.get(pushes.flushed), [shop]);
+      }),
+  );
+
+  it.effect(
+    "the daily check re-reads every shop whose cached plan is stale, and only those",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(10_000);
+        const asked = yield* Ref.make<readonly string[]>([]);
+        const summary = yield* run(
+          (gid) =>
+            Ref.update(asked, (gids) => [...gids, gid]).pipe(
+              Effect.as(Option.some(appSubscription({ handle: "baton-pro" }))),
+            ),
+          Effect.gen(function* () {
+            const repository = yield* Repository;
+            for (const [name, expiresAt] of [
+              ["stale", 10_000],
+              ["never", null],
+              ["fresh", 10_001],
+            ] as const) {
+              const each = Schema.decodeUnknownSync(Domain.Shop)(
+                `${name}.myshopify.com`,
+              );
+              yield* repository.upsertShopSession({
+                ...shopSession(),
+                shop: each,
+                shopGid: Schema.decodeUnknownSync(Domain.ShopGid)(
+                  `gid://shopify/Shop/${name}`,
+                ),
+                shopAgentId: Schema.decodeUnknownSync(Domain.ShopAgentId)(
+                  `agent-${name}`,
+                ),
+              });
+              yield* repository.updateShopSessionPlan({
+                shop: each,
+                planHandle: expiresAt === null ? null : "baton-pro",
+                planHandleExpiresAt: expiresAt,
+                planBoundaryAt: null,
+              });
+            }
+            return yield* revalidateStalePlans();
+          }),
+          { pushes: yield* makePushes },
+        );
+        assert.deepStrictEqual(summary, { shops: 2, failed: 0 });
+        assert.deepStrictEqual([...(yield* Ref.get(asked))].toSorted(), [
+          "gid://shopify/Shop/never",
+          "gid://shopify/Shop/stale",
+        ]);
+      }),
+  );
+
+  it.effect(
     "keeps Partner failures distinct from unsubscribed and preserves cache",
     () =>
       Effect.gen(function* () {
         yield* TestClock.setTime(1000);
         yield* run(
-          failedActiveSubscription,
+          failedAppSubscription,
           Effect.gen(function* () {
             yield* seedShopSession("baton-pro", 1000);
             const error = yield* Effect.flip(

@@ -11,7 +11,7 @@ test("embedded app home loads", async ({ page }) => {
 /** Both capacity meters render: a tile that fails to mount leaves the section looking intact while saying nothing about the plan. The `aria-label` is the tile heading (`CapacityTile`) and is what `plan.billing.spec.ts` reads the entitlement off. */
 test("home renders a capacity meter per dimension", async ({ page }) => {
   const frame = await gotoApp(page);
-  for (const label of ["Orders this billing period", "Members"])
+  for (const label of ["Orders this billing cycle", "Members"])
     await expect(
       frame.locator(`progress[aria-label="${label}"]`),
     ).toBeVisible();
