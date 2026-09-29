@@ -629,7 +629,7 @@ function RouteComponent() {
                   target={resourceLinkTarget}
                 >
                   {Domain.productionState(row) === "made"
-                    ? "Fulfil in Shopify"
+                    ? "Fulfill in Shopify"
                     : "View in Shopify"}
                 </s-link>
               </s-table-cell>

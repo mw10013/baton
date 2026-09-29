@@ -1381,7 +1381,7 @@ function RouteComponent() {
             <s-banner tone="success">
               Every item is done.{" "}
               <s-link href={adminOrderUrl(order)} target={resourceLinkTarget}>
-                Fulfil in Shopify
+                Fulfill in Shopify
               </s-link>
               .
             </s-banner>
