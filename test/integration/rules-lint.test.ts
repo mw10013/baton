@@ -139,6 +139,11 @@ describe("an exported identifier carries no reserved stem", () => {
       { name: "RunTier", line: 3, kind: "const" },
     ]);
   });
+  it("an export named ProductionAgent is refused", () => {
+    expect(
+      RulesLint.reservedStemHits("export class ProductionAgent {}"),
+    ).toEqual([{ name: "ProductionAgent", line: 1, kind: "class" }]);
+  });
 });
 
 describe("a state predicate names its noun before the state", () => {
@@ -164,14 +169,14 @@ describe("an import follows the map's direction", () => {
 
   it("the map in Domain.ts reads as each context file's allowed imports", () => {
     expect(Object.fromEntries(map)).toEqual({
-      Production: ["Orders", "Platform"],
+      ShopWork: ["Orders", "Platform"],
       Orders: ["Platform"],
       Billing: ["Orders", "Platform"],
       Platform: [],
     });
   });
 
-  it("Orders importing Production is refused", () => {
+  it("Orders importing ShopWork is refused", () => {
     expect(
       importHits(
         "lib/domain/Orders.ts",
@@ -181,18 +186,16 @@ describe("an import follows the map's direction", () => {
           'import { WorkflowId } from "./Platform.ts";',
           "import {",
           "  RunStatus,",
-          '} from "./Production.ts";',
+          '} from "./ShopWork.ts";',
         ].join("\n"),
       ),
-    ).toEqual([
-      { line: 4, specifier: "./Production.ts", allowed: ["Platform"] },
-    ]);
+    ).toEqual([{ line: 4, specifier: "./ShopWork.ts", allowed: ["Platform"] }]);
   });
 
-  it("Production importing Orders is allowed", () => {
+  it("ShopWork importing Orders is allowed", () => {
     expect(
       importHits(
-        "lib/domain/Production.ts",
+        "lib/domain/ShopWork.ts",
         [
           'import { orderIsOpen } from "./Orders.ts";',
           'import { Shop } from "./Platform.ts";',
@@ -216,18 +219,18 @@ describe("an import follows the map's direction", () => {
     ]);
   });
 
-  it("a route importing @/lib/domain/Production is refused", () => {
+  it("a route importing @/lib/domain/ShopWork is refused", () => {
     expect(
       importHits(
         "routes/app.index.tsx",
         [
           'import * as Domain from "@/lib/Domain";',
-          'import { runActions } from "@/lib/domain/Production";',
+          'import { runActions } from "@/lib/domain/ShopWork";',
           'import { Shop } from "../lib/domain/Platform.ts";',
         ].join("\n"),
       ),
     ).toEqual([
-      { line: 2, specifier: "@/lib/domain/Production" },
+      { line: 2, specifier: "@/lib/domain/ShopWork" },
       { line: 3, specifier: "../lib/domain/Platform.ts" },
     ]);
   });
@@ -244,7 +247,7 @@ describe("loader data lives in its route", () => {
   it("a LoaderData export under lib/ is refused", () => {
     expect(
       loaderDataNames(
-        "lib/domain/Production.ts",
+        "lib/domain/ShopWork.ts",
         "export interface TeamLoaderData {\n  readonly id: string;\n}",
       ),
     ).toEqual(["TeamLoaderData"]);
@@ -262,7 +265,7 @@ describe("loader data lives in its route", () => {
   it("a local type is ignored", () => {
     expect(
       loaderDataNames(
-        "lib/domain/Production.ts",
+        "lib/domain/ShopWork.ts",
         "interface TeamLoaderData {\n  readonly id: string;\n}",
       ),
     ).toEqual([]);
@@ -270,47 +273,47 @@ describe("loader data lives in its route", () => {
 });
 
 describe("an import follows the object map's direction", () => {
-  it("Orders importing Production is refused", () => {
+  it("Orders importing ShopWork is refused", () => {
     expect(
       RulesLint.objectImportHits(
         "lib/agent/Orders.ts",
-        'import { ShopAgentHost } from "./Host.ts";\nimport { ProductionAgent } from "./Production.ts";',
+        'import { ShopAgentHost } from "./Host.ts";\nimport { ShopWorkAgent } from "./ShopWork.ts";',
       ),
-    ).toEqual([{ line: 2, specifier: "./Production.ts", allowed: ["Host"] }]);
+    ).toEqual([{ line: 2, specifier: "./ShopWork.ts", allowed: ["Host"] }]);
   });
 
-  it("Production importing Billing is allowed", () => {
+  it("ShopWork importing Billing is allowed", () => {
     expect(
       RulesLint.objectImportHits(
-        "lib/agent/Production.ts",
+        "lib/agent/ShopWork.ts",
         'import { BillingAgent } from "./Billing.ts";\nimport { ShopAgentHost } from "./Host.ts";',
       ),
     ).toEqual([]);
   });
 
-  it("Billing importing Production is refused", () => {
+  it("Billing importing ShopWork is refused", () => {
     expect(
       RulesLint.objectImportHits(
         "lib/agent/Billing.ts",
-        'import { ProductionAgent } from "@/lib/agent/Production";',
+        'import { ShopWorkAgent } from "@/lib/agent/ShopWork";',
       ),
     ).toEqual([
       {
         line: 1,
-        specifier: "@/lib/agent/Production",
+        specifier: "@/lib/agent/ShopWork",
         allowed: ["Host"],
       },
     ]);
   });
 
-  it("a route importing @/lib/agent/Production is refused", () => {
+  it("a route importing @/lib/agent/ShopWork is refused", () => {
     expect(
       RulesLint.objectImportHits(
         "routes/app.index.tsx",
-        'import * as Domain from "@/lib/Domain";\nimport { ProductionAgent } from "@/lib/agent/Production";\nimport { ShopAgentHost } from "../lib/agent/Host.ts";',
+        'import * as Domain from "@/lib/Domain";\nimport { ShopWorkAgent } from "@/lib/agent/ShopWork";\nimport { ShopAgentHost } from "../lib/agent/Host.ts";',
       ),
     ).toEqual([
-      { line: 2, specifier: "@/lib/agent/Production" },
+      { line: 2, specifier: "@/lib/agent/ShopWork" },
       { line: 3, specifier: "../lib/agent/Host.ts" },
     ]);
   });
@@ -323,7 +326,7 @@ describe("an import follows the object map's direction", () => {
           'import { BillingAgent } from "@/lib/agent/Billing";',
           'import { ShopAgentHost } from "@/lib/agent/Host";',
           'import { OrdersAgent } from "@/lib/agent/Orders";',
-          'import { ProductionAgent } from "@/lib/agent/Production";',
+          'import { ShopWorkAgent } from "@/lib/agent/ShopWork";',
         ].join("\n"),
       ),
     ).toEqual([]);

@@ -47,7 +47,7 @@ const VOCABULARY_FILES = [
   "domain/Platform.ts",
   "domain/Orders.ts",
   "domain/Billing.ts",
-  "domain/Production.ts",
+  "domain/ShopWork.ts",
 ];
 const known = new Set(
   VOCABULARY_FILES.map((file) => readFileSync(join(SRC, "lib", file), "utf8"))

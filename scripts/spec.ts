@@ -1,4 +1,4 @@
-// Checks and prints the spec: the action matrices in src/lib/domain/Production.ts
+// Checks and prints the spec: the action matrices in src/lib/domain/ShopWork.ts
 // (the JSDoc on `runActions` and `taskActions`), which the test reads as the
 // spec, the vocabulary (the map in src/lib/Domain.ts and each context file's
 // block under src/lib/domain/), the triggers table on `ShopUsage` in
@@ -22,7 +22,7 @@ import * as ActionTable from "./lib/spec.ts";
 
 const DOMAIN = new URL("../src/lib/Domain.ts", import.meta.url).pathname;
 /** The context files under src/lib/domain/, each opening with its own vocabulary. */
-const CONTEXTS = ["Platform", "Orders", "Billing", "Production"] as const;
+const CONTEXTS = ["Platform", "Orders", "Billing", "ShopWork"] as const;
 const contextPath = (name: (typeof CONTEXTS)[number]) =>
   new URL(`../src/lib/domain/${name}.ts`, import.meta.url).pathname;
 const ROUTES = new URL("../src/routes/", import.meta.url).pathname;
@@ -135,7 +135,7 @@ const checkCommand = Command.make(
     const contextSources = Object.values(contexts);
     const failures = [
       ...NAMES.flatMap((name) =>
-        Result.match(ActionTable.parse(contexts.Production, name), {
+        Result.match(ActionTable.parse(contexts.ShopWork, name), {
           onFailure: (error) => [error.message],
           onSuccess: (rows) =>
             ActionTable.overlaps(name, rows).map(
@@ -157,10 +157,10 @@ const checkCommand = Command.make(
             `Vocabulary: \`${word}\` does not occur in src/lib/${file} outside the vocabulary`,
         ),
       ),
-      ...ActionTable.checkScreenColumns(contexts.Production, SCREEN_LABELS),
+      ...ActionTable.checkScreenColumns(contexts.ShopWork, SCREEN_LABELS),
       ...ActionTable.checkContexts(barrel, contextSources),
       ...ActionTable.checkOrderIssues(
-        contexts.Production,
+        contexts.ShopWork,
         Domain.OrderIssue.literals,
       ),
       ...ActionTable.checkScreens(barrel, routeFiles),
@@ -202,7 +202,7 @@ const checkCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Parse the action tables in domain/Production.ts, check the vocabulary in Domain.ts and domain/, check the triggers table on ShopUsage in domain/Billing.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts, and check the copy and controls tables in Screen.ts; exit 1 on any failure",
+    "Parse the action tables in domain/ShopWork.ts, check the vocabulary in Domain.ts and domain/, check the triggers table on ShopUsage in domain/Billing.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts, and check the copy and controls tables in Screen.ts; exit 1 on any failure",
   ),
 );
 
@@ -222,7 +222,7 @@ const printCommand = Command.make(
       );
     for (const name of NAMES) {
       yield* Console.log(name);
-      const lines = Result.match(ActionTable.parse(contexts.Production, name), {
+      const lines = Result.match(ActionTable.parse(contexts.ShopWork, name), {
         onFailure: (error) => [error.message],
         onSuccess: (rows) =>
           rows.map(
@@ -269,7 +269,7 @@ const printCommand = Command.make(
 
 const specCommand = Command.make("spec").pipe(
   Command.withDescription(
-    "The action matrices in src/lib/domain/Production.ts, the vocabulary in src/lib/Domain.ts and src/lib/domain/, the triggers table in src/lib/domain/Billing.ts, and the data-model tables in src/lib/ShopAgentSchema.ts and src/lib/D1Schema.ts",
+    "The action matrices in src/lib/domain/ShopWork.ts, the vocabulary in src/lib/Domain.ts and src/lib/domain/, the triggers table in src/lib/domain/Billing.ts, and the data-model tables in src/lib/ShopAgentSchema.ts and src/lib/D1Schema.ts",
   ),
   Command.withSubcommands([checkCommand, printCommand]),
 );

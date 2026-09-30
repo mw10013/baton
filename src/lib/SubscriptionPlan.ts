@@ -58,7 +58,7 @@ export class SubscriptionPlanError extends Schema.TaggedError<SubscriptionPlanEr
  *   buys a grace period, because it is the *only* grace period that exists.
  *   What waits on the far side is a `402` on every socket and a billing
  *   redirect on every navigation: the shop's makers are locked out of the
- *   production floor mid-shift, with work in progress they cannot record,
+ *   shop's work mid-shift, with work in progress they cannot record,
  *   over a card their merchant has not been told about yet.
  *
  * So shortening this buys back cents and pays for them by stopping the floor

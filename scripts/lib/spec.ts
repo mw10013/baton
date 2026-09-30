@@ -2,7 +2,7 @@ import type { OrderState, RunStatus } from "../../src/lib/Domain.ts";
 
 /**
  * Reads the action matrices out of the JSDoc on `runActions` and
- * `taskActions` in `src/lib/domain/Production.ts`, so the table a person edits is the
+ * `taskActions` in `src/lib/domain/ShopWork.ts`, so the table a person edits is the
  * table the test asserts. Pure: it takes the source text as a parameter,
  * because the test runs inside workerd (no `node:fs`) and gets the text
  * through Vite's `?raw` import, while `scripts/spec.ts` reads the
@@ -696,9 +696,9 @@ export const checkScreens = (
  * paragraph starts `Contexts.`) lists the contexts and says what `kind` each
  * is; every other table names one or more of them, either in a `context`
  * column whose every cell is a context, or in its intro's first line up to
- * the first `.` or `:`, as `<Name>, <context>` ("Run states, production:") or
+ * the first `.` or `:`, as `<Name>, <context>` ("Run states, shop work:") or
  * as the bare context ("Billing."). Several contexts, in a cell or an intro,
- * are joined with " and " ("production and orders"). The Shared words table
+ * are joined with " and " ("shop work and orders"). The Shared words table
  * (paragraph `Shared words.`) names its contexts per row, in a `contexts`
  * cell joined with ", ". The Screens table is exempt: its rows name pages,
  * and a page's spec name is spoken in every context. The Shape families
@@ -777,7 +777,7 @@ const CONTEXT_FILES = [
   "Platform.ts",
   "Orders.ts",
   "Billing.ts",
-  "Production.ts",
+  "ShopWork.ts",
 ] as const;
 
 /**

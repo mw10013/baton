@@ -36,7 +36,7 @@ const make = Effect.gen(function* () {
    * counted near a cycle's end goes out inside that cycle rather than waiting
    * for the next webhook. The paths: the webhook and bulk import syncs, Attach
    * ("attaching a workflow sends the usage event it queued"), every workflow
-   * edit through `ProductionAgent`'s `reconcileAllNow` ("turning a workflow on
+   * edit through `ShopWorkAgent`'s `reconcileAllNow` ("turning a workflow on
    * sends the usage events for the orders it counted"), Resync ("resyncing an
    * order sends the usage queue, even when the resync fails") and the seed. A
    * cycle push is sent by the reconcile push that follows it

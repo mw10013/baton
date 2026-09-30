@@ -4,11 +4,11 @@
  * as one module.
  *
  * - A rule is stated once, on the symbol that *is* the concept (a
- *   `Schema.Literals` such as `RunStatus` in Production) or the function that
- *   enforces it (`reopenBlockedBy`, `currentTasks` in Production). A concept with
+ *   `Schema.Literals` such as `RunStatus` in ShopWork) or the function that
+ *   enforces it (`reopenBlockedBy`, `currentTasks` in ShopWork). A concept with
  *   more than one rule carries a table naming each rule's predicate.
  * - Every other site calls the predicate (`runIsOpen`,
- *   `runIsBlocked` in Production, `userIsAdmin` in Platform, ...) rather than comparing a
+ *   `runIsBlocked` in ShopWork, `userIsAdmin` in Platform, ...) rather than comparing a
  *   literal. `scripts/rules-lint.ts`, run by `pnpm lint`, refuses an inline
  *   `.status`, `.flag` or admin `.role` comparison anywhere else under `src/`.
  * - A site that follows a different rule from its siblings says so and why,
@@ -39,21 +39,21 @@
  * reads the cell and refuses both. Every vocabulary table
  * names its context, in its first line or in a `context` column:
  *
- * | context    | kind       | about                                                                 | whose words                  | file            | may import         |
- * | ---------- | ---------- | --------------------------------------------------------------------- | ---------------------------- | --------------- | ------------------ |
- * | production | core       | what the shop makes and who makes it                                  | Baton's and the shop floor's | `Production.ts` | orders, platform   |
- * | orders     | supporting | what Shopify says about an order                                      | Shopify's admin              | `Orders.ts`     | platform           |
- * | billing    | generic    | what the shop pays for                                                | Shopify's Partner API        | `Billing.ts`    | orders, platform   |
- * | platform   | dialect    | dialect, not a context: the technical words; no model of the business | Cloudflare's and Baton's     | `Platform.ts`   | (nothing)          |
+ * | context   | kind       | about                                                                                      | whose words                              | file          | may import       |
+ * | --------- | ---------- | ------------------------------------------------------------------------------------------ | ---------------------------------------- | ------------- | ---------------- |
+ * | shop work | core       | the work of making what the shop sold: who does it, in what steps, and how far along it is | Baton's, the merchant's and the members' | `ShopWork.ts` | orders, platform |
+ * | orders    | supporting | what Shopify says about an order                                                           | Shopify's admin                          | `Orders.ts`   | platform         |
+ * | billing   | generic    | what the shop pays for                                                                     | Shopify's Partner API                    | `Billing.ts`  | orders, platform |
+ * | platform  | dialect    | dialect, not a context: the technical words; no model of the business                      | Cloudflare's and Baton's                 | `Platform.ts` | (nothing)        |
  *
- * Production is downstream of orders: conformist on words, a translation on
+ * Shop work is downstream of orders: conformist on words, a translation on
  * model. It crosses at `OrderState`, `orderIsOpen`, `unitsToMake`,
  * `ShopOrder` and `OrderLineItem`, and what it makes of an order (positions,
- * issues, an item's card) is production's, not orders'. Billing is
+ * issues, an item's card) is shop work's, not orders'. Billing is
  * downstream of orders through one shared field, `ShopOrder` field
  * `countedAt`, the counted order. Every context uses the platform dialect:
  * the ids (`Shop`, `ShopGid`, `EpochMillis`), `ShopLimits`, `ShopSession`
- * and the connection. Orders never reads production, and platform reads
+ * and the connection. Orders never reads shop work, and platform reads
  * none of the three.
  *
  * Shared words. A word two contexts share always travels with its noun,
@@ -62,12 +62,12 @@
  * not fulfilled and not cancelled: the orders index's default view,
  * labelled Open. One row per shared word:
  *
- * | word   | contexts           | noun form                                                                                                                  |
- * | ------ | ------------------ | -------------------------------------------------------------------------------------------------------------------------- |
- * | open   | orders, production | "open order" (`orderIsOpen`), "open run" (`runIsOpen`)                                                                     |
- * | closed | orders, production | "closed order" (the matrices' `order` column: cancelled or fulfilled), "closed run" (`runIsClosed`)                        |
- * | cancel | orders, production | "cancelled order" (`orderIsCancelled`, Shopify's), "Cancel workflow" (the run verb, `merchant_cancelled`)                  |
- * | start  | production         | two senses: a member starts a task (the verb, `StartTaskInput`); a workflow starts for an item, in merchant copy, and in identifiers a workflow creates a run (`workflowIsEligible`) |
+ * | word   | contexts          | noun form                                                                                                                  |
+ * | ------ | ----------------- | -------------------------------------------------------------------------------------------------------------------------- |
+ * | open   | orders, shop work | "open order" (`orderIsOpen`), "open run" (`runIsOpen`)                                                                     |
+ * | closed | orders, shop work | "closed order" (the matrices' `order` column: cancelled or fulfilled), "closed run" (`runIsClosed`)                        |
+ * | cancel | orders, shop work | "cancelled order" (`orderIsCancelled`, Shopify's), "Cancel workflow" (the run verb, `merchant_cancelled`)                  |
+ * | start  | shop work         | two senses: a member starts a task (the verb, `StartTaskInput`); a workflow starts for an item, in merchant copy, and in identifiers a workflow creates a run (`workflowIsEligible`) |
  *
  * Shape families. These are the developer dialect's suffixes for what
  * crosses a boundary, not vocabulary words: a word here gets no nouns row,
@@ -76,9 +76,9 @@
  * | family      | suffix                              | what it is                                                     | decoded by                                  | lives in                       | rule on                                       |
  * | ----------- | ----------------------------------- | -------------------------------------------------------------- | ------------------------------------------- | ------------------------------ | --------------------------------------------- |
  * | input       | `Input`                             | what the browser or the Worker sends, and nothing more         | the object's `@callable()` gate             | its context file               | `MarkTaskDoneInput`                           |
- * | command     | `Command`                           | the whole write, input joined to the actor from the connection | nothing; assembled from decoded values      | `Production.ts`                | `StartTaskCommand`                            |
+ * | command     | `Command`                           | the whole write, input joined to the actor from the connection | nothing; assembled from decoded values      | `ShopWork.ts`                  | `StartTaskCommand`                            |
  * | result      | `Result`                            | the outcomes of one write, a tagged union                      | `ShopAgentClient` on the way back           | its context file               | `ApplyResult`                                 |
- * | screen data | `PageData`, `IndexData`, `ListData` | everything one screen reads, in one round trip                 | `ShopAgentClient`                           | `Production.ts`                | `OrdersIndexData`                             |
+ * | screen data | `PageData`, `IndexData`, `ListData` | everything one screen reads, in one round trip                 | `ShopAgentClient`                           | `ShopWork.ts`                  | `OrdersIndexData`                             |
  * | loader data | `LoaderData`                        | a route's loader contract, owned by the route                  | nothing; `satisfies` on the server function | the route, under `src/routes/` | `ShopAgentClient` (its loader-data paragraph) |
  *
  * What a word must pass to get a row:
@@ -117,10 +117,10 @@
  * | member   | `shop.$shop_.lapsed`              | the shop's domain            | the lapsed page             |
  *
  * The orders index's view row speaks the two order tables plus Open, Issues
- * and All (`ORDERS_INDEX_VIEW_LABEL` in Production); the member's workflows list's
+ * and All (`ORDERS_INDEX_VIEW_LABEL` in ShopWork); the member's workflows list's
  * view row reads its labels from `workflowsListViews.ts`.
  */
 export * from "./domain/Platform.ts";
 export * from "./domain/Orders.ts";
 export * from "./domain/Billing.ts";
-export * from "./domain/Production.ts";
+export * from "./domain/ShopWork.ts";

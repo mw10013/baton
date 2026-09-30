@@ -28,7 +28,7 @@ import {
   unionTeams,
 } from "@/lib/agent/Host";
 import { OrdersAgent } from "@/lib/agent/Orders";
-import { ProductionAgent } from "@/lib/agent/Production";
+import { ShopWorkAgent } from "@/lib/agent/ShopWork";
 import { D1Primary } from "@/lib/D1Primary";
 import { D1Session } from "@/lib/D1Session";
 import * as Domain from "@/lib/Domain";
@@ -314,7 +314,7 @@ const makeRunEffect = (
     FetchHttpClient.layer,
     Layer.succeed(ShopAgentHost, host),
   );
-  const layer = Layer.mergeAll(OrdersAgent.layer, ProductionAgent.layer).pipe(
+  const layer = Layer.mergeAll(OrdersAgent.layer, ShopWorkAgent.layer).pipe(
     Layer.provideMerge(BillingAgent.layer),
     Layer.provideMerge(baseLayer),
   );
@@ -333,11 +333,9 @@ const flushUsageEvents = BillingAgent.pipe(
   Effect.flatMap((billing) => billing.flushUsageEvents),
 );
 
-/** Production's per-order reconciler for `source`, loaded before the store's transaction opens. */
+/** Shop work's per-order reconciler for `source`, loaded before the store's transaction opens. */
 const reconcilerFor = (source: Domain.OrderSyncSource) =>
-  ProductionAgent.pipe(
-    Effect.flatMap((production) => production.reconciler(source)),
-  );
+  ShopWorkAgent.pipe(Effect.flatMap((shopWork) => shopWork.reconciler(source)));
 
 /** Stores one order ({@link OrdersAgent}) and reconciles it ({@link reconcilerFor}). */
 const fetchAndUpsertOrder = (orderId: string, source: Domain.OrderSyncSource) =>
@@ -414,7 +412,7 @@ const OrdersStreamInput = Schema.Struct({ url: Schema.String });
  * `this.name` is the shop and no method takes one.
  *
  * The action set is the one gate on every run write; the rule is on
- * `requireRunAction` in `src/lib/agent/Production.ts`.
+ * `requireRunAction` in `src/lib/agent/ShopWork.ts`.
  */
 export class ShopAgent extends Agent {
   declare private readonly runEffect: ReturnType<typeof makeRunEffect>;
@@ -1086,7 +1084,7 @@ export class ShopAgent extends Agent {
    * arrives here and why an out-of-order delivery is still correct.
    *
    * Each order goes through four steps, each owned by one module: store
-   * ({@link OrdersAgent}), reconcile (production's reconciler, passed to the
+   * ({@link OrdersAgent}), reconcile (shop work's reconciler, passed to the
    * store as its `afterWrite`), flush ({@link BillingAgent}) and publish
    * (this object's `publish`).
    */
@@ -1141,8 +1139,8 @@ export class ShopAgent extends Agent {
             /**
              * The enterprise ceiling, and the only hard stop on orders. It
              * gates *new* orders only — `getOrderUpdatedAt` answering none is
-             * what makes it one — so every order already on the production
-             * floor keeps receiving its updates. The webhook still returns
+             * what makes it one — so every order Baton already carries
+             * keeps receiving its updates. The webhook still returns
              * 2xx: a retry cannot change the answer, and making Shopify replay
              * a delivery for four hours to reach the same refusal helps nobody.
              *
@@ -1176,8 +1174,8 @@ export class ShopAgent extends Agent {
               yield* publish(orderId, []);
               return;
             }
-            const production = yield* ProductionAgent;
-            const before = yield* production.orderTeamIds({ orderId });
+            const shopWork = yield* ShopWorkAgent;
+            const before = yield* shopWork.orderTeamIds({ orderId });
             yield* fetchAndUpsertOrder(orderId, "webhook");
             /**
              * The second retention carrier, rate-limited by `lastSweepAt`
@@ -1213,7 +1211,7 @@ export class ShopAgent extends Agent {
             }
             yield* publish(
               orderId,
-              unionTeams(before, yield* production.orderTeamIds({ orderId })),
+              unionTeams(before, yield* shopWork.orderTeamIds({ orderId })),
             );
             // Outside the upsert's transaction, because it does network I/O
             // and Durable Object SQLite transactions must not await anything
@@ -1350,7 +1348,7 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * The orders index's loader read; the rule is on {@link ProductionAgent}'s
+   * The orders index's loader read; the rule is on {@link ShopWorkAgent}'s
    * `listOrders`. Plain RPC, not `@callable()`: the loader half of the orders
    * index, read through `ShopAgentClient` so the first page paints during
    * SSR. The socket half is {@link ShopAgent.subscribeOrders}.
@@ -1360,14 +1358,14 @@ export class ShopAgent extends Agent {
       callableEffect("ShopAgent.listOrders", Domain.ListOrdersInput, {
         role: "rpc",
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.listOrders(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.listOrders(decoded)),
         ),
       )(input),
     );
   }
 
-  /** The orders index's read and subscribe; the rule is on {@link ProductionAgent}'s `subscribeOrders`. */
+  /** The orders index's read and subscribe; the rule is on {@link ShopWorkAgent}'s `subscribeOrders`. */
   @callable()
   subscribeOrders(
     input: Domain.SubscribeOrdersInput,
@@ -1377,15 +1375,15 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.subscribeOrders(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.subscribeOrders(decoded)),
         ),
       )(input),
     );
   }
 
   /**
-   * The workflows index's loader read; the rule is on {@link ProductionAgent}'s
+   * The workflows index's loader read; the rule is on {@link ShopWorkAgent}'s
    * `listWorkflows`. Plain RPC, not `@callable()`: workflow definitions are
    * configuration, so `/app/workflows` reads them through its loader via
    * `ShopAgentClient` (the loader-versus-socket rule documented there). Only
@@ -1393,15 +1391,15 @@ export class ShopAgent extends Agent {
    */
   listWorkflows(): Promise<readonly Domain.WorkflowSummary[]> {
     return this.runEffect(
-      ProductionAgent.pipe(
-        Effect.flatMap((production) => production.listWorkflows()),
+      ShopWorkAgent.pipe(
+        Effect.flatMap((shopWork) => shopWork.listWorkflows()),
         Effect.withLogSpan("ShopAgent.listWorkflows"),
       ),
     );
   }
 
   /**
-   * The workflow page's loader read; the rule is on {@link ProductionAgent}'s
+   * The workflow page's loader read; the rule is on {@link ShopWorkAgent}'s
    * `getWorkflowDetail`. Plain RPC, not `@callable()`, for the reason on
    * {@link ShopAgent.listWorkflows}.
    */
@@ -1413,8 +1411,8 @@ export class ShopAgent extends Agent {
         role: "rpc",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.getWorkflowDetail(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.getWorkflowDetail(decoded)),
         ),
       )(input),
     );
@@ -1429,14 +1427,14 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.createWorkflow(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.createWorkflow(decoded)),
         ),
       )(input),
     );
   }
 
-  /** Duplicates a workflow; the rule is on {@link ProductionAgent}'s `duplicateWorkflow`. */
+  /** Duplicates a workflow; the rule is on {@link ShopWorkAgent}'s `duplicateWorkflow`. */
   @callable()
   duplicateWorkflow(
     input: typeof Domain.DuplicateWorkflowInput.Encoded,
@@ -1447,8 +1445,8 @@ export class ShopAgent extends Agent {
         Domain.DuplicateWorkflowInput,
         { role: "merchant", parse: { onExcessProperty: "error" } },
       )((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.duplicateWorkflow(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.duplicateWorkflow(decoded)),
         ),
       )(input),
     );
@@ -1463,14 +1461,14 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.updateWorkflow(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.updateWorkflow(decoded)),
         ),
       )(input),
     );
   }
 
-  /** Changes a workflow's tag; the rule is on {@link ProductionAgent}'s `updateWorkflowTag`. */
+  /** Changes a workflow's tag; the rule is on {@link ShopWorkAgent}'s `updateWorkflowTag`. */
   @callable()
   updateWorkflowTag(
     input: typeof Domain.UpdateWorkflowTagInput.Encoded,
@@ -1481,14 +1479,14 @@ export class ShopAgent extends Agent {
         Domain.UpdateWorkflowTagInput,
         { role: "merchant", parse: { onExcessProperty: "error" } },
       )((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.updateWorkflowTag(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.updateWorkflowTag(decoded)),
         ),
       )(input),
     );
   }
 
-  /** Edit: creates the draft; the rule is on {@link ProductionAgent}'s `createDraft`. */
+  /** Edit: creates the draft; the rule is on {@link ShopWorkAgent}'s `createDraft`. */
   @callable()
   createDraft(
     input: typeof Domain.CreateDraftInput.Encoded,
@@ -1498,14 +1496,14 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.createDraft(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.createDraft(decoded)),
         ),
       )(input),
     );
   }
 
-  /** Apply changes; the rule is on {@link ProductionAgent}'s `applyDraft`. */
+  /** Apply changes; the rule is on {@link ShopWorkAgent}'s `applyDraft`. */
   @callable()
   applyDraft(
     input: typeof Domain.ApplyDraftInput.Encoded,
@@ -1515,8 +1513,8 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.applyDraft(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.applyDraft(decoded)),
         ),
       )(input),
     );
@@ -1531,14 +1529,14 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.discardDraft(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.discardDraft(decoded)),
         ),
       )(input),
     );
   }
 
-  /** The on/off switch; the rule is on {@link ProductionAgent}'s `setWorkflowOn`. */
+  /** The on/off switch; the rule is on {@link ShopWorkAgent}'s `setWorkflowOn`. */
   @callable()
   setWorkflowOn(
     input: typeof Domain.SetWorkflowOnInput.Encoded,
@@ -1548,14 +1546,14 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.setWorkflowOn(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.setWorkflowOn(decoded)),
         ),
       )(input),
     );
   }
 
-  /** The editor's Turn on; the rule is on {@link ProductionAgent}'s `applyAndTurnOn`. */
+  /** The editor's Turn on; the rule is on {@link ShopWorkAgent}'s `applyAndTurnOn`. */
   @callable()
   applyAndTurnOn(
     input: typeof Domain.ApplyAndTurnOnInput.Encoded,
@@ -1565,14 +1563,14 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.applyAndTurnOn(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.applyAndTurnOn(decoded)),
         ),
       )(input),
     );
   }
 
-  /** The workflow page's Change control; the rule is on {@link ProductionAgent}'s `setWorkflowActivatedAt`. */
+  /** The workflow page's Change control; the rule is on {@link ShopWorkAgent}'s `setWorkflowActivatedAt`. */
   @callable()
   setWorkflowActivatedAt(
     input: typeof Domain.SetWorkflowActivatedAtInput.Encoded,
@@ -1583,16 +1581,16 @@ export class ShopAgent extends Agent {
         Domain.SetWorkflowActivatedAtInput,
         { role: "merchant", parse: { onExcessProperty: "error" } },
       )((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.setWorkflowActivatedAt(decoded),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) =>
+            shopWork.setWorkflowActivatedAt(decoded),
           ),
         ),
       )(input),
     );
   }
 
-  /** The Turn on dialog's count; the rule is on {@link ProductionAgent}'s `countWaitingOrders`. */
+  /** The Turn on dialog's count; the rule is on {@link ShopWorkAgent}'s `countWaitingOrders`. */
   @callable()
   countWaitingOrders(
     input: typeof Domain.CountWaitingOrdersInput.Encoded,
@@ -1603,16 +1601,14 @@ export class ShopAgent extends Agent {
         Domain.CountWaitingOrdersInput,
         { role: "merchant", parse: { onExcessProperty: "error" } },
       )((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.countWaitingOrders(decoded),
-          ),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.countWaitingOrders(decoded)),
         ),
       )(input),
     );
   }
 
-  /** Deletes a workflow; the rule is on {@link ProductionAgent}'s `removeWorkflow`. */
+  /** Deletes a workflow; the rule is on {@link ShopWorkAgent}'s `removeWorkflow`. */
   @callable()
   removeWorkflow(
     input: typeof Domain.DeleteWorkflowInput.Encoded,
@@ -1622,15 +1618,15 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.removeWorkflow(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.removeWorkflow(decoded)),
         ),
       )(input),
     );
   }
 
   /**
-   * The order page's loader read; the rule is on {@link ProductionAgent}'s
+   * The order page's loader read; the rule is on {@link ShopWorkAgent}'s
    * `getOrderDetail`. Plain RPC, not `@callable()`: the loader half of the
    * order detail page, as {@link ShopAgent.listOrders} is for the index.
    */
@@ -1641,8 +1637,8 @@ export class ShopAgent extends Agent {
       callableEffect("ShopAgent.getOrderDetail", Domain.GetOrderDetailInput, {
         role: "rpc",
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.getOrderDetail(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.getOrderDetail(decoded)),
         ),
       )(input),
     );
@@ -1657,8 +1653,8 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.subscribeOrder(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.subscribeOrder(decoded)),
         ),
       )(input),
     );
@@ -1682,16 +1678,16 @@ export class ShopAgent extends Agent {
         Domain.ListRunsForOrderInput,
         { role: "merchant", parse: { onExcessProperty: "error" } },
       )((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.merchantListRunsForOrder(decoded),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) =>
+            shopWork.merchantListRunsForOrder(decoded),
           ),
         ),
       )(input),
     );
   }
 
-  /** Sets an item's workflow; the rule is on {@link ProductionAgent}'s `merchantAttachWorkflow`. */
+  /** Sets an item's workflow; the rule is on {@link ShopWorkAgent}'s `merchantAttachWorkflow`. */
   @callable()
   merchantAttachWorkflow(
     input: typeof Domain.AttachWorkflowInput.Encoded,
@@ -1705,16 +1701,16 @@ export class ShopAgent extends Agent {
           parse: { onExcessProperty: "error" },
         },
       )((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.merchantAttachWorkflow(decoded),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) =>
+            shopWork.merchantAttachWorkflow(decoded),
           ),
         ),
       )(input),
     );
   }
 
-  /** The merchant cancels a run; the rule is on {@link ProductionAgent}'s `merchantCancelRun`. */
+  /** The merchant cancels a run; the rule is on {@link ShopWorkAgent}'s `merchantCancelRun`. */
   @callable()
   merchantCancelRun(
     input: typeof Domain.RunIdInput.Encoded,
@@ -1724,15 +1720,15 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.merchantCancelRun(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.merchantCancelRun(decoded)),
         ),
       )(input),
     );
   }
 
   /**
-   * The merchant marks a task done; the rule is on {@link ProductionAgent}'s
+   * The merchant marks a task done; the rule is on {@link ShopWorkAgent}'s
    * `merchantMarkTaskDone`. The merchant's task and block writes are separate
    * methods rather than a role branch inside the member ones because the
    * role gate is declared *per method* — `CALLABLE_ROLES` in
@@ -1751,10 +1747,8 @@ export class ShopAgent extends Agent {
         Domain.MarkTaskDoneInput,
         { role: "merchant", parse: { onExcessProperty: "error" } },
       )((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.merchantMarkTaskDone(decoded),
-          ),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.merchantMarkTaskDone(decoded)),
         ),
       )(input),
     );
@@ -1769,16 +1763,14 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.merchantReopenTask(decoded),
-          ),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.merchantReopenTask(decoded)),
         ),
       )(input),
     );
   }
 
-  /** The merchant puts a task back; the rule is on {@link ProductionAgent}'s `merchantPutBackTask`. */
+  /** The merchant puts a task back; the rule is on {@link ShopWorkAgent}'s `merchantPutBackTask`. */
   @callable()
   merchantPutBackTask(
     input: typeof Domain.PutBackTaskInput.Encoded,
@@ -1788,16 +1780,14 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.merchantPutBackTask(decoded),
-          ),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.merchantPutBackTask(decoded)),
         ),
       )(input),
     );
   }
 
-  /** The merchant sets a run's note; the rule is on {@link ProductionAgent}'s `merchantSetRunNote`. */
+  /** The merchant sets a run's note; the rule is on {@link ShopWorkAgent}'s `merchantSetRunNote`. */
   @callable()
   merchantSetRunNote(
     input: typeof Domain.SetRunNoteInput.Encoded,
@@ -1807,10 +1797,8 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.merchantSetRunNote(decoded),
-          ),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.merchantSetRunNote(decoded)),
         ),
       )(input),
     );
@@ -1825,8 +1813,8 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.merchantBlockRun(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.merchantBlockRun(decoded)),
         ),
       )(input),
     );
@@ -1842,9 +1830,9 @@ export class ShopAgent extends Agent {
         Domain.SetBlockReasonInput,
         { role: "merchant", parse: { onExcessProperty: "error" } },
       )((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.merchantSetBlockReason(decoded),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) =>
+            shopWork.merchantSetBlockReason(decoded),
           ),
         ),
       )(input),
@@ -1860,10 +1848,8 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.merchantUnblockRun(decoded),
-          ),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.merchantUnblockRun(decoded)),
         ),
       )(input),
     );
@@ -1886,7 +1872,7 @@ export class ShopAgent extends Agent {
    * them), reached a different way: `memberCallableEffect` proves the role and
    * hands the identity to the handler, and the wire input is decoded strict.
    */
-  /** The member's workflows list loader read; the rule is on {@link ProductionAgent}'s `listRuns`. */
+  /** The member's workflows list loader read; the rule is on {@link ShopWorkAgent}'s `listRuns`. */
   listRuns(
     input: typeof Domain.ListRunsInput.Encoded,
   ): Promise<Domain.WorkflowsListData> {
@@ -1894,14 +1880,14 @@ export class ShopAgent extends Agent {
       callableEffect("ShopAgent.listRuns", Domain.ListRunsInput, {
         role: "rpc",
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.listRuns(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.listRuns(decoded)),
         ),
       )(input),
     );
   }
 
-  /** The member's workflows list read and subscribe; the rule is on {@link ProductionAgent}'s `subscribeRuns`. */
+  /** The member's workflows list read and subscribe; the rule is on {@link ShopWorkAgent}'s `subscribeRuns`. */
   @callable()
   subscribeRuns(
     input: typeof Domain.SubscribeRunsInput.Encoded,
@@ -1912,10 +1898,8 @@ export class ShopAgent extends Agent {
         Domain.SubscribeRunsInput,
         { onExcessProperty: "error" },
       )((decoded, member) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.subscribeRuns(decoded, member),
-          ),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.subscribeRuns(decoded, member)),
         ),
       )(input),
     );
@@ -1929,16 +1913,16 @@ export class ShopAgent extends Agent {
       memberCallableEffect("ShopAgent.memberStartTask", Domain.StartTaskInput, {
         onExcessProperty: "error",
       })((decoded, member) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.memberStartTask(decoded, member),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) =>
+            shopWork.memberStartTask(decoded, member),
           ),
         ),
       )(input),
     );
   }
 
-  /** A member puts a task back; the rule is on {@link ProductionAgent}'s `memberPutBackTask`. */
+  /** A member puts a task back; the rule is on {@link ShopWorkAgent}'s `memberPutBackTask`. */
   @callable()
   memberPutBackTask(
     input: typeof Domain.PutBackTaskInput.Encoded,
@@ -1951,16 +1935,16 @@ export class ShopAgent extends Agent {
           onExcessProperty: "error",
         },
       )((decoded, member) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.memberPutBackTask(decoded, member),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) =>
+            shopWork.memberPutBackTask(decoded, member),
           ),
         ),
       )(input),
     );
   }
 
-  /** A member sets a run's note; the rule is on {@link ProductionAgent}'s `memberSetRunNote`. */
+  /** A member sets a run's note; the rule is on {@link ShopWorkAgent}'s `memberSetRunNote`. */
   @callable()
   memberSetRunNote(
     input: typeof Domain.SetRunNoteInput.Encoded,
@@ -1973,9 +1957,9 @@ export class ShopAgent extends Agent {
           onExcessProperty: "error",
         },
       )((decoded, member) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.memberSetRunNote(decoded, member),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) =>
+            shopWork.memberSetRunNote(decoded, member),
           ),
         ),
       )(input),
@@ -1990,9 +1974,9 @@ export class ShopAgent extends Agent {
       memberCallableEffect("ShopAgent.memberBlockRun", Domain.BlockRunInput, {
         onExcessProperty: "error",
       })((decoded, member) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.memberBlockRun(decoded, member),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) =>
+            shopWork.memberBlockRun(decoded, member),
           ),
         ),
       )(input),
@@ -2009,9 +1993,9 @@ export class ShopAgent extends Agent {
         Domain.SetBlockReasonInput,
         { onExcessProperty: "error" },
       )((decoded, member) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.memberSetBlockReason(decoded, member),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) =>
+            shopWork.memberSetBlockReason(decoded, member),
           ),
         ),
       )(input),
@@ -2030,16 +2014,16 @@ export class ShopAgent extends Agent {
           onExcessProperty: "error",
         },
       )((decoded, member) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.memberMarkTaskDone(decoded, member),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) =>
+            shopWork.memberMarkTaskDone(decoded, member),
           ),
         ),
       )(input),
     );
   }
 
-  /** A member reopens a task; the rule is on {@link ProductionAgent}'s `memberReopenTask`. */
+  /** A member reopens a task; the rule is on {@link ShopWorkAgent}'s `memberReopenTask`. */
   @callable()
   memberReopenTask(
     input: typeof Domain.ReopenTaskInput.Encoded,
@@ -2050,16 +2034,16 @@ export class ShopAgent extends Agent {
         Domain.ReopenTaskInput,
         { onExcessProperty: "error" },
       )((decoded, member) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.memberReopenTask(decoded, member),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) =>
+            shopWork.memberReopenTask(decoded, member),
           ),
         ),
       )(input),
     );
   }
 
-  /** The member's workflow page loader read; the rule is on {@link ProductionAgent}'s `memberGetRun`. */
+  /** The member's workflow page loader read; the rule is on {@link ShopWorkAgent}'s `memberGetRun`. */
   memberGetRun(
     input: typeof Domain.GetRunForMemberInput.Encoded,
   ): Promise<Domain.RunPageData | null> {
@@ -2067,14 +2051,14 @@ export class ShopAgent extends Agent {
       callableEffect("ShopAgent.memberGetRun", Domain.GetRunForMemberInput, {
         role: "rpc",
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.memberGetRun(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.memberGetRun(decoded)),
         ),
       )(input),
     );
   }
 
-  /** The member's workflow page read and subscribe; the rule is on {@link ProductionAgent}'s `subscribeRun`. */
+  /** The member's workflow page read and subscribe; the rule is on {@link ShopWorkAgent}'s `subscribeRun`. */
   @callable()
   subscribeRun(
     input: typeof Domain.SubscribeRunInput.Encoded,
@@ -2083,10 +2067,8 @@ export class ShopAgent extends Agent {
       memberCallableEffect("ShopAgent.subscribeRun", Domain.SubscribeRunInput, {
         onExcessProperty: "error",
       })((decoded, member) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.subscribeRun(decoded, member),
-          ),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.subscribeRun(decoded, member)),
         ),
       )(input),
     );
@@ -2100,9 +2082,9 @@ export class ShopAgent extends Agent {
       memberCallableEffect("ShopAgent.memberUnblockRun", Domain.RunIdInput, {
         onExcessProperty: "error",
       })((decoded, member) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.memberUnblockRun(decoded, member),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) =>
+            shopWork.memberUnblockRun(decoded, member),
           ),
         ),
       )(input),
@@ -2118,14 +2100,14 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.addStep(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.addStep(decoded)),
         ),
       )(input),
     );
   }
 
-  /** Adds a task to a step; the rule is on {@link ProductionAgent}'s `addTask`. */
+  /** Adds a task to a step; the rule is on {@link ShopWorkAgent}'s `addTask`. */
   @callable()
   addTask(
     input: typeof Domain.AddTaskInput.Encoded,
@@ -2135,8 +2117,8 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.addTask(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.addTask(decoded)),
         ),
       )(input),
     );
@@ -2151,8 +2133,8 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.updateTask(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.updateTask(decoded)),
         ),
       )(input),
     );
@@ -2167,8 +2149,8 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.moveTask(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.moveTask(decoded)),
         ),
       )(input),
     );
@@ -2183,8 +2165,8 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.separateTask(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.separateTask(decoded)),
         ),
       )(input),
     );
@@ -2199,8 +2181,8 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.joinTask(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.joinTask(decoded)),
         ),
       )(input),
     );
@@ -2215,14 +2197,14 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.removeTask(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.removeTask(decoded)),
         ),
       )(input),
     );
   }
 
-  /** Deletes a team; the rule is on {@link ProductionAgent}'s `deleteTeam`. */
+  /** Deletes a team; the rule is on {@link ShopWorkAgent}'s `deleteTeam`. */
   @callable()
   deleteTeam(
     input: typeof Domain.DeleteTeamInput.Encoded,
@@ -2232,14 +2214,14 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.deleteTeam(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.deleteTeam(decoded)),
         ),
       )(input),
     );
   }
 
-  /** Points a run task at a team; the rule is on {@link ProductionAgent}'s `merchantAssignRunTaskTeam`. */
+  /** Points a run task at a team; the rule is on {@link ShopWorkAgent}'s `merchantAssignRunTaskTeam`. */
   @callable()
   merchantAssignRunTaskTeam(
     input: typeof Domain.AssignRunTaskTeamInput.Encoded,
@@ -2250,9 +2232,9 @@ export class ShopAgent extends Agent {
         Domain.AssignRunTaskTeamInput,
         { role: "merchant", parse: { onExcessProperty: "error" } },
       )((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) =>
-            production.merchantAssignRunTaskTeam(decoded),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) =>
+            shopWork.merchantAssignRunTaskTeam(decoded),
           ),
         ),
       )(input),
@@ -2260,7 +2242,7 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Development seed for workflows; the rule is on {@link ProductionAgent}'s
+   * Development seed for workflows; the rule is on {@link ShopWorkAgent}'s
    * `seedWorkflows`. One callable rather than `createWorkflow` + an `addStep`
    * round trip per task, so the fixture arrives as a single declarative
    * payload.
@@ -2274,14 +2256,14 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.seedWorkflows(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.seedWorkflows(decoded)),
         ),
       )(input),
     );
   }
 
-  /** Development seed for orders; the rule is on {@link ProductionAgent}'s `seedOrders`. */
+  /** Development seed for orders; the rule is on {@link ShopWorkAgent}'s `seedOrders`. */
   @callable()
   seedOrders(input: typeof Domain.SeedOrdersInput.Encoded): Promise<void> {
     return this.runEffect(
@@ -2289,15 +2271,15 @@ export class ShopAgent extends Agent {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.seedOrders(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.seedOrders(decoded)),
         ),
       )(input),
     );
   }
 
   /**
-   * The team page's loader read; the rule is on {@link ProductionAgent}'s
+   * The team page's loader read; the rule is on {@link ShopWorkAgent}'s
    * `listTeamWorkflows`. Plain RPC, not `@callable()`: the team detail page
    * reads this through its loader via `ShopAgentClient`, so nothing
    * browser-side calls it. Task ownership is configuration that only changes
@@ -2312,36 +2294,36 @@ export class ShopAgent extends Agent {
       callableEffect("ShopAgent.listTeamWorkflows", Domain.TeamIdInput, {
         role: "rpc",
       })((decoded) =>
-        ProductionAgent.pipe(
-          Effect.flatMap((production) => production.listTeamWorkflows(decoded)),
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.listTeamWorkflows(decoded)),
         ),
       )(input),
     );
   }
 
   /**
-   * The teams index's loader read; the rule is on {@link ProductionAgent}'s
+   * The teams index's loader read; the rule is on {@link ShopWorkAgent}'s
    * `listAllTeamWorkflows`. Plain RPC for the same reason as
    * {@link ShopAgent.listTeamWorkflows}.
    */
   listAllTeamWorkflows(): Promise<readonly Domain.TeamWorkflowByTeam[]> {
     return this.runEffect(
-      ProductionAgent.pipe(
-        Effect.flatMap((production) => production.listAllTeamWorkflows()),
+      ShopWorkAgent.pipe(
+        Effect.flatMap((shopWork) => shopWork.listAllTeamWorkflows()),
         Effect.withLogSpan("ShopAgent.listAllTeamWorkflows"),
       ),
     );
   }
 
   /**
-   * The team delete dialogs' counts; the rule is on {@link ProductionAgent}'s
+   * The team delete dialogs' counts; the rule is on {@link ShopWorkAgent}'s
    * `countTasksByTeam`. Plain RPC for the same reason as
    * {@link ShopAgent.listTeamWorkflows}.
    */
   countTasksByTeam(): Promise<readonly Domain.TeamTaskCounts[]> {
     return this.runEffect(
-      ProductionAgent.pipe(
-        Effect.flatMap((production) => production.countTasksByTeam()),
+      ShopWorkAgent.pipe(
+        Effect.flatMap((shopWork) => shopWork.countTasksByTeam()),
         Effect.withLogSpan("ShopAgent.countTasksByTeam"),
       ),
     );

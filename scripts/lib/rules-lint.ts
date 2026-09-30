@@ -174,13 +174,14 @@ export const exportedNames = (source: string): readonly ExportedName[] =>
  * The word stems the vocabulary retired or reserved, refused in any exported
  * identifier under `src/lib/`, case-insensitive, as a substring:
  *
- * | stem     | why                                                                                 |
- * | -------- | ----------------------------------------------------------------------------------- |
- * | active   | a workflow is on, a run is open; "active" is Shopify's word for an app subscription |
- * | roster   | a synonym: the shop's members, the member count, or its teams                       |
- * | slot     | a metaphor for the rule "one run per item"                                          |
- * | tier     | a view of the member's workflows list; billing's tier is Shopify's and not exported |
- * | glossary | the block is the vocabulary                                                         |
+ * | stem       | why                                                                                 |
+ * | ---------- | ----------------------------------------------------------------------------------- |
+ * | active     | a workflow is on, a run is open; "active" is Shopify's word for an app subscription |
+ * | roster     | a synonym: the shop's members, the member count, or its teams                       |
+ * | slot       | a metaphor for the rule "one run per item"                                          |
+ * | tier       | a view of the member's workflows list; billing's tier is Shopify's and not exported |
+ * | glossary   | the block is the vocabulary                                                         |
+ * | production | the deploy environment; the core context is shop work                               |
  *
  * {@link RESERVED_STEM_ALLOWED} names the exports that keep a stem on
  * purpose.
@@ -191,6 +192,7 @@ export const RESERVED_STEMS: readonly string[] = [
   "slot",
   "tier",
   "glossary",
+  "production",
 ];
 
 /**
@@ -327,7 +329,7 @@ export const loaderDataExportHits = (
 /**
  * The object map: what each file under `src/lib/agent/` may import from that
  * folder, by file stem. The table is on `ShopAgentHost` (`src/lib/agent/Host.ts`),
- * which says why Production's one crossing into Billing exists; this constant is
+ * which says why shop work's one crossing into Billing exists; this constant is
  * that table's `may import` column. Every other file may import none of them,
  * except `lib/ShopAgent.ts`, the class, which imports all four.
  */
@@ -335,7 +337,7 @@ export const OBJECT_MAP: ReadonlyMap<string, readonly string[]> = new Map([
   ["Host", []],
   ["Billing", ["Host"]],
   ["Orders", ["Host"]],
-  ["Production", ["Host", "Billing"]],
+  ["ShopWork", ["Host", "Billing"]],
 ]);
 
 /**

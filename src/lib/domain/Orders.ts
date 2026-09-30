@@ -41,7 +41,7 @@ export type LineItemProperty = typeof LineItemProperty.Type;
  * page renders.
  *
  * Deliberately carries no customer identity: no `customer`, `shippingAddress`,
- * email, or phone. Baton is a production-floor tool, so the buyer never needs
+ * email, or phone. Baton is a tool for the shop's work, so the buyer never needs
  * naming, and staying off those fields keeps the app clear of Level 2 protected
  * customer data. `note` stays because it can carry instructions a maker
  * works from. Order-level `customAttributes` (the cart attributes the admin
@@ -93,9 +93,9 @@ export type ShopOrder = typeof ShopOrder.Type;
  * fulfilled early still reads as work until the whole order is `FULFILLED`
  * ({@link orderIsFulfilled}). `quantity` stays as "ordered" for display.
  *
- * `matchedWorkflowIds` holds `WorkflowId`s in Production as plain strings, the
- * way `ShopSession` holds `planHandle`: it is production's writing on the
- * orders row, and orders reads nothing from production. It is the eligible workflows whose tag matched
+ * `matchedWorkflowIds` holds `WorkflowId`s in ShopWork as plain strings, the
+ * way `ShopSession` holds `planHandle`: it is shop work's writing on the
+ * orders row, and orders reads nothing from shop work. It is the eligible workflows whose tag matched
  * this item at the last reconcile, whether or not a run was created. Two or
  * more with no run is an **ambiguity** the merchant resolves from the
  * order page; the picker there offers these first, then every other
@@ -136,14 +136,14 @@ export type OrderLineItem = typeof OrderLineItem.Type;
 export const orderCanCreateRuns = (order: ShopOrder) =>
   order.fullyPaid && order.cancelledAt === null;
 
-/** A stop gate, with {@link orderIsFulfilled}: reconcile closes every open run on the order, reason `order_cancelled` (`ClosedReason` in Production). */
+/** A stop gate, with {@link orderIsFulfilled}: reconcile closes every open run on the order, reason `order_cancelled` (`ClosedReason` in ShopWork). */
 export const orderIsCancelled = (order: Pick<ShopOrder, "cancelledAt">) =>
   order.cancelledAt !== null;
 
 /**
  * Shopify reports the order `FULFILLED`: nothing is left to make or pack.
  * The other stop gate: reconcile closes every open run, reason `fulfilled`
- * (`ClosedReason` in Production). The only fulfillment value Baton acts on; every
+ * (`ClosedReason` in ShopWork). The only fulfillment value Baton acts on; every
  * other `displayFulfillmentStatus` (partially fulfilled, on hold, in
  * progress, scheduled, ...) is displayed as Shopify sends it and read as open.
  */
@@ -152,8 +152,8 @@ export const orderIsFulfilled = (order: Pick<ShopOrder, "fulfillmentStatus">) =>
 
 /**
  * The two order fields {@link orderIsOpen} reads, and so every action set
- * (`runActions`, `taskActions` in Production). Carried on the member's run
- * reads (`RunPageData`, `RunListItem`, `RecentItem` in Production) because a
+ * (`runActions`, `taskActions` in ShopWork). Carried on the member's run
+ * reads (`RunPageData`, `RunListItem`, `RecentItem` in ShopWork) because a
  * member page never holds the order itself, and without them it would offer
  * work on an order Shopify has closed.
  */
@@ -170,9 +170,9 @@ export type OrderState = typeof OrderState.Type;
  * open, whatever its runs say.
  *
  * **A closed order is read only.** Every write that does work on its runs is
- * refused (`runActions`, `taskActions` in Production); only the note stays,
+ * refused (`runActions`, `taskActions` in ShopWork); only the note stays,
  * because a note is a record, not work. There is nothing to cancel either:
- * reconcile has already closed every open run on it (`RunStatus` in Production).
+ * reconcile has already closed every open run on it (`RunStatus` in ShopWork).
  *
  * Manual attach (`ShopAgent.merchantAttachWorkflow`) is the merchant
  * overriding the tag, activation-date and payment gates on purpose; it is not
@@ -288,7 +288,7 @@ export const SyncState = Schema.Struct({
 });
 export type SyncState = typeof SyncState.Type;
 
-/** {@link SyncState} as `OrdersIndexData` in Production carries it, plus whether an import is tracked as running right now; only a fresh tracking row counts (`IMPORT_STALE_MS` in `ShopAgent.ts` is the rule). */
+/** {@link SyncState} as `OrdersIndexData` in ShopWork carries it, plus whether an import is tracked as running right now; only a fresh tracking row counts (`IMPORT_STALE_MS` in `ShopAgent.ts` is the rule). */
 export const OrdersSyncStatus = Schema.Struct({
   inFlight: Schema.Boolean,
   ...SyncState.fields,
@@ -299,7 +299,7 @@ export type OrdersSyncStatus = typeof OrdersSyncStatus.Type;
  * What the Import open orders button is told it did. `in_flight` is an import
  * already tracked as running, `refused` is a refusal recorded on
  * {@link SyncState.lastError} for the banner to carry; neither is an error,
- * and in all three cases the page re-reads `OrdersIndexData` in Production.
+ * and in all three cases the page re-reads `OrdersIndexData` in ShopWork.
  */
 export const OrdersSyncResult = Schema.Struct({
   status: Schema.Literals(["started", "in_flight", "refused"]),

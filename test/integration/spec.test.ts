@@ -7,7 +7,7 @@ import source from "@/lib/Domain.ts?raw";
 import billingSource from "@/lib/domain/Billing.ts?raw";
 import ordersSource from "@/lib/domain/Orders.ts?raw";
 import platformSource from "@/lib/domain/Platform.ts?raw";
-import productionSource from "@/lib/domain/Production.ts?raw";
+import shopWorkSource from "@/lib/domain/ShopWork.ts?raw";
 import * as Screen from "@/lib/Screen";
 import screenSource from "@/lib/Screen.ts?raw";
 import clientSource from "@/lib/ShopAgentClient.ts?raw";
@@ -57,7 +57,7 @@ const CONTEXT_SOURCES = [
   platformSource,
   ordersSource,
   billingSource,
-  productionSource,
+  shopWorkSource,
 ];
 
 const OBJECT: ActionTable.DataModelOptions = {
@@ -231,7 +231,7 @@ describe("action table parser", () => {
       Platform: platformSource,
       Orders: ordersSource,
       Billing: billingSource,
-      Production: productionSource,
+      ShopWork: shopWorkSource,
     };
     expect(
       [
@@ -253,40 +253,40 @@ describe("action table parser", () => {
       verbs: Domain.VERB_LABEL,
     };
 
-    it("Production.ts passes", () => {
-      expect(ActionTable.checkScreenColumns(productionSource, labels)).toEqual(
+    it("ShopWork.ts passes", () => {
+      expect(ActionTable.checkScreenColumns(shopWorkSource, labels)).toEqual(
         [],
       );
     });
 
     it("a doctored cell is reported", () => {
-      const doctored = productionSource.replace(
+      const doctored = shopWorkSource.replace(
         "| put back        | task     | started → ready                          | Put back    | Put back        |",
         "| put back        | task     | started → ready                          | Put back    | Take back       |",
       );
-      expect(doctored).not.toBe(productionSource);
+      expect(doctored).not.toBe(shopWorkSource);
       expect(ActionTable.checkScreenColumns(doctored, labels)).toEqual([
         'Vocabulary: Verbs put back: merchant says "Take back", constant says "Put back"',
       ]);
     });
 
     it("a spaced word finds its snake-case literal key", () => {
-      const doctored = productionSource.replace(
+      const doctored = shopWorkSource.replace(
         "| not started | open, no open run and no done run | Not started |",
         "| not started | open, no open run and no done run | To make     |",
       );
-      expect(doctored).not.toBe(productionSource);
+      expect(doctored).not.toBe(shopWorkSource);
       expect(ActionTable.checkScreenColumns(doctored, labels)).toEqual([
         'Vocabulary: Order positions not started: screen says "To make", constant says "Not started"',
       ]);
     });
 
     it("a constant with no row, and a row with no constant, are reported", () => {
-      const doctored = productionSource.replace(
+      const doctored = shopWorkSource.replace(
         "| waiting | its step is not current            |",
         "| idle    | its step is not current            |",
       );
-      expect(doctored).not.toBe(productionSource);
+      expect(doctored).not.toBe(shopWorkSource);
       expect(ActionTable.checkScreenColumns(doctored, labels)).toEqual([
         "Vocabulary: Task states idle: no constant",
         "Vocabulary: Task states: no row for waiting",
@@ -300,11 +300,11 @@ describe("action table parser", () => {
     });
 
     it("an intro with no context, and a context cell outside the Contexts table, are reported", () => {
-      const doctored = productionSource.replace(
-        " * Run states, production:",
+      const doctored = shopWorkSource.replace(
+        " * Run states, shop work:",
         " * Run states:",
       );
-      expect(doctored).not.toBe(productionSource);
+      expect(doctored).not.toBe(shopWorkSource);
       const byCell = [
         "/**",
         " * Vocabulary, platform.",
@@ -324,9 +324,9 @@ describe("action table parser", () => {
 
     it("a map with no kind column, and a shared word in a context outside the map, are reported", () => {
       const doctored = source
-        .replace("| context    | kind       |", "| context    | sort       |")
+        .replace("| context   | kind       |", "| context   | sort       |")
         .replace(
-          "| cancel | orders, production |",
+          "| cancel | orders, shop work |",
           "| cancel | orders, shipping   |",
         );
       expect(doctored).not.toBe(source);
@@ -343,29 +343,29 @@ describe("action table parser", () => {
     const EMPTY_TEAM_ROW =
       "| `empty_team`      | {@link OrderRow} `emptyTeam`                                             | add a member on the team page       |";
 
-    it("Production.ts passes", () => {
-      expect(productionSource).toContain(TEAM_ROW);
-      expect(productionSource).toContain(EMPTY_TEAM_ROW);
-      expect(checkOrderIssues(productionSource)).toEqual([]);
+    it("ShopWork.ts passes", () => {
+      expect(shopWorkSource).toContain(TEAM_ROW);
+      expect(shopWorkSource).toContain(EMPTY_TEAM_ROW);
+      expect(checkOrderIssues(shopWorkSource)).toEqual([]);
     });
 
     it("each order issue has one remedy", () => {
-      const doctored = productionSource.replace(
+      const doctored = shopWorkSource.replace(
         EMPTY_TEAM_ROW,
         "| `empty_team`      | {@link OrderRow} `emptyTeam`                                             | assign a team, or add a member      |",
       );
-      expect(doctored).not.toBe(productionSource);
+      expect(doctored).not.toBe(shopWorkSource);
       expect(checkOrderIssues(doctored)).toEqual([
         "OrderIssue `empty_team`: a remedy names one action; this one says or",
       ]);
     });
 
     it("the Issue column is the OrderIssue literals, in order", () => {
-      const doctored = productionSource.replace(
+      const doctored = shopWorkSource.replace(
         `${TEAM_ROW}\n * ${EMPTY_TEAM_ROW}`,
         `${EMPTY_TEAM_ROW}\n * ${TEAM_ROW}`,
       );
-      expect(doctored).not.toBe(productionSource);
+      expect(doctored).not.toBe(shopWorkSource);
       expect(checkOrderIssues(doctored)).toEqual([
         "OrderIssue: the Issue column is choose_workflow, empty_team, unassigned, blocked; the literals are choose_workflow, unassigned, empty_team, blocked",
       ]);
@@ -406,7 +406,7 @@ describe("action table parser", () => {
       "src/lib/domain/Platform.ts": platformSource,
       "src/lib/domain/Orders.ts": ordersSource,
       "src/lib/domain/Billing.ts": billingSource,
-      "src/lib/domain/Production.ts": productionSource,
+      "src/lib/domain/ShopWork.ts": shopWorkSource,
       "src/lib/ShopAgentClient.ts": clientSource,
     };
 
@@ -432,7 +432,7 @@ describe("action table parser", () => {
           "src/lib/domain/Orders.ts": `${ordersSource}\nexport interface ResyncOrderCommand {}\n`,
         }),
       ).toEqual([
-        "Shape families command: ResyncOrderCommand is in Orders.ts, the row says `Production.ts`",
+        "Shape families command: ResyncOrderCommand is in Orders.ts, the row says `ShopWork.ts`",
       ]);
     });
   });

@@ -49,7 +49,7 @@ const make = Effect.gen(function* () {
    * `reconciler` loads what the per-order reconcile needs and returns it; it
    * runs after the fetch and before the upsert's transaction opens, and the
    * function it returns is the upsert's `afterWrite`. The caller supplies
-   * it, so this module never reads production.
+   * it, so this module never reads shop work.
    */
   const fetchAndUpsertOrder = <E, E2, R2>(
     {

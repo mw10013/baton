@@ -33,14 +33,14 @@ export const unionTeams = (a: PublishTeams, b: PublishTeams): PublishTeams =>
  * | `Host.ts`       | `ShopAgentHost`: what every module needs from the object itself                              | nothing                   |
  * | `Billing.ts`    | `BillingAgent`: usage, the billing cycle, the member count, the usage-event flush            | `Host`                    |
  * | `Orders.ts`     | `OrdersAgent`: fetch and upsert one order                                                    | `Host`                    |
- * | `Production.ts` | `ProductionAgent`: workflows, drafts, runs, tasks, teams, the orders index, reconcile, seed  | `Host`, `Billing`         |
+ * | `ShopWork.ts`   | `ShopWorkAgent`: workflows, drafts, runs, tasks, teams, the orders index, reconcile, seed    | `Host`, `Billing`         |
  *
- * Production importing Billing is the one crossing, one symbol wide:
+ * Shop work importing Billing is the one crossing, one symbol wide:
  * `BillingAgent.flushUsageEvents`, because every path that creates a run
  * sends the usage queue (the triggers table on `Domain.ShopUsage`), and
- * production's reconcile is where runs are created. The class's sync wiring
+ * shop work's reconcile is where runs are created. The class's sync wiring
  * is the other place the contexts meet: store (orders), reconcile
- * (production), flush (billing), publish (host).
+ * (shop work), flush (billing), publish (host).
  */
 export class ShopAgentHost extends Context.Service<
   ShopAgentHost,

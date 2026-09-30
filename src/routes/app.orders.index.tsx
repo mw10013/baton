@@ -629,8 +629,8 @@ function RouteComponent() {
                   {issueBadges(row)}
                 </s-stack>
               </s-table-cell>
-              {/* No placeholder for an empty cell. On an order in
-                  production, empty means every current task is unassigned
+              {/* No placeholder for an empty cell. On an order with
+                  open runs, empty means every current task is unassigned
                   (a team with no members still shows, so the merchant knows
                   which team needs a member), and the Needs a team badge
                   beside it already says so. A dash would flatten that into

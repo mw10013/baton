@@ -400,7 +400,7 @@ export const usageEventIsExpired = (occurredAt: number, cycleStartAt: number) =>
  * storage is nowhere near its limit at this volume, but a shop above it is
  * outside what Baton is built for, and saying so with a number the merchant can
  * read beats letting an import fail late inside a stream. Updates to orders
- * already stored keep flowing — the production floor must not lose the work it
+ * already stored keep flowing — the shop must not lose the work it
  * is already carrying.
  *
  * **An order refused here is lost to Baton for the rest of the cycle.** The

@@ -1,5 +1,6 @@
 /**
- * Vocabulary, production. What the shop makes and who makes it. The screen
+ * Vocabulary, shop work. The work of making what the shop sold: who does it,
+ * in what steps, and how far along it is. The screen
  * columns are checked: each cell is the value of the label constant beside
  * the table ({@link TASK_STATE_LABEL},
  * {@link RUN_STATE_LABEL}, {@link WORKFLOW_STATE_LABEL},
@@ -7,7 +8,7 @@
  * {@link VERB_LABEL}), and `pnpm spec check` refuses a cell that differs, so
  * a label change starts here.
  *
- * Nouns, production. "(none)" means no screen says the word; the
+ * Nouns, shop work. "(none)" means no screen says the word; the
  * cell says what a screen shows instead:
  *
  * | word     | meaning                                                                                 | symbol                                 | screen                                                      |
@@ -36,7 +37,7 @@
  * workflow name is the definition; on the member's Workflows list, which
  * never shows a definition, every row is a run and names its item.
  *
- * Run states, production:
+ * Run states, shop work:
  *
  * | word    | meaning                                           | stored          | screen                                                  |
  * | ------- | ------------------------------------------------- | --------------- | ------------------------------------------------------- |
@@ -45,7 +46,7 @@
  * | done    | a person marked the last task done                | `done`          | Done                                                    |
  * | closed  | something else ended it; `closedReason` says what | `closed`        | Closed · <reason>                                       |
  *
- * Task states, production. `current` is the flag: the task's step is the lowest with
+ * Task states, shop work. `current` is the flag: the task's step is the lowest with
  * an open task ({@link currentTasks}), whether or not someone has it. The
  * one derivation is {@link taskStateOf}; it reads `startedAt` before
  * `current`, so a task someone had when its run closed still reads started:
@@ -63,7 +64,7 @@
  * column means teams holding a current task, a fact about orders, and the
  * two never render together.
  *
- * Workflow states, production:
+ * Workflow states, shop work:
  *
  * | word | meaning                               | stored             | screen |
  * | ---- | ------------------------------------- | ------------------ | ------ |
@@ -72,11 +73,11 @@
  *
  * The switch's screen words are Shopify Flow's (Turn on, Turn off;
  * `refs/flow-manual/manage/manual.md`); the badge says On and Off where Flow
- * says Active and Inactive, because "active" is not a production word here,
+ * says Active and Inactive, because "active" is not a shop-work word here,
  * and one execution is never called a run on a screen, because a run in
  * Baton is a member's work.
  *
- * Order positions, production: one per order, derived by {@link orderPosition} and
+ * Order positions, shop work: one per order, derived by {@link orderPosition} and
  * never stored:
  *
  * | word        | meaning                           | screen      |
@@ -87,7 +88,7 @@
  * | fulfilled   | Shopify says `FULFILLED`          | Fulfilled   |
  * | cancelled   | Shopify says `cancelledAt`        | Cancelled   |
  *
- * Order issues, production: zero or more per open order, derived by {@link orderIssues}:
+ * Order issues, shop work: zero or more per open order, derived by {@link orderIssues}:
  *
  * | word            | meaning                                           | screen              |
  * | --------------- | ------------------------------------------------- | ------------------- |
@@ -100,7 +101,7 @@
  * rows' screen words for a workflow with the same fault, so one fault has one
  * label wherever it shows.
  *
- * Verbs, production. Who may do each, and in which state, is the matrix on
+ * Verbs, shop work. Who may do each, and in which state, is the matrix on
  * {@link taskActions} or {@link runActions}, not here; the four workflow
  * verbs are the merchant's alone, on the merchant's workflow page and the
  * workflow editor, and {@link ApplyResult}, {@link DiscardResult} and
@@ -1345,7 +1346,7 @@ export const SeedOrdersInput = Schema.Struct({
 export type SeedOrdersInput = typeof SeedOrdersInput.Type;
 
 /**
- * An order's lifecycle position, the production ladder: **Not started ·
+ * An order's lifecycle position, the ladder: **Not started ·
  * Making · Made · Fulfilled**, and **Cancelled** beside it. One per order,
  * derived from the order row and its run counts on every read and never
  * stored. Issues are not positions: an order being made can also be
@@ -1675,7 +1676,7 @@ export const OrderRow = Schema.Struct({
 export type OrderRow = typeof OrderRow.Type;
 
 /**
- * Production's reading of an order, from {@link orderIsCancelled} and
+ * Shop work's reading of an order, from {@link orderIsCancelled} and
  * {@link orderIsFulfilled} in Orders: its {@link OrderPosition}, one for
  * every order.
  *
@@ -1716,7 +1717,7 @@ export const orderPosition = ({
   );
 
 /**
- * Production's reading of an order, from {@link orderIsOpen} and
+ * Shop work's reading of an order, from {@link orderIsOpen} and
  * {@link orderCanCreateRuns} in Orders: its {@link OrderIssue}s, in
  * `OrderIssue` order; `[]` for a closed order. The one definition: the orders index's
  * Issues column renders this result, and its Issues view is this result's
@@ -3032,7 +3033,7 @@ export const runTaskRows = (
 };
 
 /**
- * Production's reading of an order's item, from {@link OrderLineItem} and
+ * Shop work's reading of an order's item, from {@link OrderLineItem} and
  * {@link unitsToMake} in Orders: its card on the order page, one of the
  * {@link LineItemState} kinds.
  */

@@ -201,7 +201,7 @@ export const WorkflowLimits = {
 export const ShopLimits = {
   /** `Team` rows per shop. */
   maxTeams: 25,
-  /** `Run` rows that are `runIsOpen` in Production per shop; a safety valve, not a product limit. A `done` run still holds its item but no longer counts here. */
+  /** `Run` rows that are `runIsOpen` in ShopWork per shop; a safety valve, not a product limit. A `done` run still holds its item but no longer counts here. */
   maxOpenRuns: 5000,
   /** `ShopUsage.ordersThisCycle` in Billing at which syncing of *new* orders stops for the rest of the cycle. Provisional; enterprise fencing, not a tier — see `cycleAtOrderCeiling` in Billing. */
   maxOrdersPerCycle: 100,

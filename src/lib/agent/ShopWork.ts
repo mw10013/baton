@@ -2347,15 +2347,15 @@ const make = Effect.gen(function* () {
 });
 
 /**
- * The object's production: workflows, drafts, runs, tasks, teams, the
+ * The object's shop work: workflows, drafts, runs, tasks, teams, the
  * orders index, reconcile and the seed. Each method takes the decoded input
  * (and, for a `member*` write, the connection's
  * {@link Domain.MemberConnectionState}); the class's callable is the role
  * guard and the decode. The object map is on {@link ShopAgentHost}.
  */
-export class ProductionAgent extends Context.Service<
-  ProductionAgent,
+export class ShopWorkAgent extends Context.Service<
+  ShopWorkAgent,
   Effect.Success<typeof make>
->()("ProductionAgent") {
-  static readonly layer = Layer.effect(ProductionAgent, make);
+>()("ShopWorkAgent") {
+  static readonly layer = Layer.effect(ShopWorkAgent, make);
 }
