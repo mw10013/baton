@@ -630,9 +630,7 @@ export class Repository extends Context.Service<
             shop: member.shop,
             limit: Domain.ShopLimits.maxMembers,
           });
-        const createdAt = new Date(
-          yield* Clock.currentTimeMillis,
-        ).toISOString();
+        const createdAt = yield* Clock.currentTimeMillis;
         yield* sqlPrimary`
           insert into Member (id, shop, email, createdAt)
           values (${crypto.randomUUID()}, ${member.shop}, ${member.email}, ${createdAt})
@@ -712,9 +710,7 @@ export class Repository extends Context.Service<
           readonly memberId: Domain.MemberId;
           readonly teamIds: readonly Domain.TeamId[];
         }) {
-          const createdAt = new Date(
-            yield* Clock.currentTimeMillis,
-          ).toISOString();
+          const createdAt = yield* Clock.currentTimeMillis;
           yield* sqlPrimary.batch([
             sqlPrimary`
               delete from TeamMember where memberId in (
@@ -809,9 +805,7 @@ export class Repository extends Context.Service<
             shop: team.shop,
             limit: Domain.ShopLimits.maxTeams,
           });
-        const createdAt = new Date(
-          yield* Clock.currentTimeMillis,
-        ).toISOString();
+        const createdAt = yield* Clock.currentTimeMillis;
         const rows = yield* sqlPrimary`
           insert or ignore into Team (id, shop, name, createdAt)
           values (${crypto.randomUUID()}, ${team.shop}, ${team.name}, ${createdAt})
@@ -944,9 +938,7 @@ export class Repository extends Context.Service<
           `;
             return;
           }
-          const createdAt = new Date(
-            yield* Clock.currentTimeMillis,
-          ).toISOString();
+          const createdAt = yield* Clock.currentTimeMillis;
           const inserted = yield* sqlPrimary`
           insert into TeamMember (teamId, memberId, createdAt)
           select t.id, m.id, ${createdAt}
@@ -989,9 +981,7 @@ export class Repository extends Context.Service<
               teamId: params.teamId,
             });
           if (params.memberIds.length === 0) return;
-          const createdAt = new Date(
-            yield* Clock.currentTimeMillis,
-          ).toISOString();
+          const createdAt = yield* Clock.currentTimeMillis;
           yield* sqlPrimary.batch(
             params.memberIds.map(
               (memberId) => sqlPrimary`

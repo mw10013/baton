@@ -16,11 +16,12 @@ create table if not exists ShopSession (
 -- No soft delete: uniqueness is among existing rows only, so re-adding an
 -- email mints a new id.
 -- The rules are on D1_TABLES (src/lib/D1Schema.ts).
+-- Times are epoch-ms integers: the rule on EpochMillis (src/lib/domain/Platform.ts).
 create table if not exists Member (
   id text primary key,
   shop text not null references ShopSession (shop) on delete cascade,
   email text not null check (email = lower(trim(email))),
-  createdAt text not null,
+  createdAt integer not null,
   unique (shop, email)
 );
 
@@ -39,7 +40,7 @@ create table if not exists Team (
   id text primary key,
   shop text not null references ShopSession (shop) on delete cascade,
   name text not null check (name = trim(name) and length(name) > 0),
-  createdAt text not null,
+  createdAt integer not null,
   unique (shop, name)
 );
 
@@ -50,7 +51,7 @@ create table if not exists Team (
 create table if not exists TeamMember (
   teamId text not null references Team (id) on delete cascade,
   memberId text not null references Member (id) on delete cascade,
-  createdAt text not null,
+  createdAt integer not null,
   primary key (teamId, memberId)
 );
 

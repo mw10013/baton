@@ -366,7 +366,7 @@ export const Member = Schema.Struct({
   id: MemberId,
   shop: Shop,
   email: Email,
-  createdAt: Schema.String,
+  createdAt: Schema.Number,
 });
 export type Member = typeof Member.Type;
 
@@ -422,7 +422,7 @@ export const Team = Schema.Struct({
   id: TeamId,
   shop: Shop,
   name: TeamName,
-  createdAt: Schema.String,
+  createdAt: Schema.Number,
 });
 export type Team = typeof Team.Type;
 
@@ -456,7 +456,7 @@ export const TeamDetail = Schema.Struct({
       ...Member.fields,
       inTeam: SqliteBoolean,
       /** The `TeamMember.createdAt` of the edge; `null` when `inTeam` is false. */
-      inTeamSince: Schema.NullOr(Schema.String),
+      inTeamSince: Schema.NullOr(Schema.Number),
     }),
   ),
 });

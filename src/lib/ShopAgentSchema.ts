@@ -73,8 +73,7 @@ import { causeToErrorMessage } from "@/lib/LayerEx";
 export const initializeSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`
-    -- Every table stores time as epoch-ms integers, not D1 Team's ISO text:
-    -- the two stores already differ, and one store should not mix.
+    -- Times are epoch-ms integers: the rule on EpochMillis (src/lib/domain/Platform.ts).
     --
     -- ShopOrder, not Order: see the exceptions on the vocabulary in Domain.ts.
     -- Shopify's numeric ids are text: they exceed the 52-bit integers

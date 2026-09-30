@@ -17,7 +17,8 @@ import { Repository } from "@/lib/Repository";
  * database refuses it and not merely that the write paths tried so far
  * avoid it. D1 enforces foreign keys and `on delete cascade` by default.
  * The last test reads `sqlite_master` so a migration that adds a table no
- * row describes fails here.
+ * row describes fails here; the one before it holds the time rule on
+ * `EpochMillis` for every table in `D1_TABLES`.
  *
  * "A team never crosses shops" is not here: the database does not refuse a
  * cross-shop edge, and the row is pinned by `setTeamMember refuses
@@ -33,7 +34,7 @@ const layer = Repository.layerNoDeps.pipe(
   ),
 );
 
-const NOW = "2026-01-01T00:00:00.000Z";
+const NOW = Date.UTC(2026, 0, 1);
 
 const insertShop = (shop: string, shopAgentId = `agent-${shop}`) =>
   env.D1.prepare(
@@ -154,6 +155,26 @@ describe("D1 data model", () => {
     await rejects(insertTeam("t3", "a.myshopify.com", " Sew"));
     await rejects(insertTeam("t4", "a.myshopify.com", ""));
     await insertTeam("t5", "b.myshopify.com", "Cut");
+  });
+
+  it("Baton stores every time as epoch-ms integers in a column whose name ends in At", async () => {
+    // The table name is interpolated as a constant: D1's authorizer rejects a
+    // pragma table function with a bound or joined argument (auth.test.ts).
+    const perTable = await Promise.all(
+      D1_TABLES.map(async (table) => {
+        const { results } = await env.D1.prepare(
+          `select name, type from pragma_table_info('${table}')`,
+        ).all<{ name: string; type: string }>();
+        return results.map((column) => ({ table, ...column }));
+      }),
+    );
+    const columns = perTable
+      .flat()
+      .filter((column) => column.name.endsWith("At"));
+    expect(columns.length).toBeGreaterThan(0);
+    expect(
+      columns.filter((column) => column.type.toLowerCase() !== "integer"),
+    ).toEqual([]);
   });
 
   it("the migrations create exactly D1_TABLES and better-auth's tables", async () => {

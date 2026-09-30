@@ -260,9 +260,23 @@ export const ShopSessionRedactedPage = Schema.Struct({
 export type ShopSessionRedactedPage = typeof ShopSessionRedactedPage.Type;
 
 /**
- * A Shopify `DateTime` (ISO 8601) as the epoch milliseconds every stored
- * timestamp uses, matching `ShopSession.*ExpiresAt`.
+ * Baton stores every time as epoch-ms integers in a column whose name ends in At.
  *
+ * "Baton" means the tables Baton writes the DDL for: {@link D1_TABLES} in D1
+ * and every table in {@link initializeSchema}. A vendor's table stores time as
+ * the vendor writes it, and Baton reads it through the vendor's API or a
+ * decoding schema: better-auth writes ISO 8601 text through its adapter
+ * (`refs/better-auth/packages/core/src/db/adapter/factory.ts`, the
+ * `supportsDates` branch), and the `agents` SDK writes epoch seconds in its
+ * `cf_agents_*` tables.
+ *
+ * Milliseconds because the source is milliseconds (`Clock.currentTimeMillis`,
+ * `Date.now()`, this schema's decode); an integer compares correctly with no
+ * format discipline; and seconds would lose order within a second, where a
+ * shop can place several orders (the `ShopOrder_processedAt` index sorts on
+ * `processedAt` with `id` as the tiebreak for the same millisecond).
+ *
+ * The schema itself decodes a Shopify `DateTime` (ISO 8601) to that number.
  * Routed through {@link Schema.DateFromString}, whose target rejects an
  * invalid `Date`, so an unparseable timestamp fails the decode rather than
  * storing `NaN` — which would silently defeat the `updatedAt` upsert guard

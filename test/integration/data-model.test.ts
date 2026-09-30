@@ -18,7 +18,8 @@ import { WorkflowRepository } from "@/lib/WorkflowRepository";
  * rule verbatim, which is what `pnpm spec check` looks for. Each test
  * writes the forbidden row with raw SQL, bypassing the repositories, so it
  * proves the database refuses it and not merely that the write paths tried so
- * far avoid it.
+ * far avoid it. The last test holds the time rule on `EpochMillis` for every
+ * table the migrations create.
  */
 
 type Services =
@@ -354,6 +355,47 @@ describe("data model", () => {
           sql`insert into ShopUsage (id) values (2)`,
         );
         strictEqual(shopUsage._tag, "SqlError");
+      }),
+    ));
+
+  it("Baton stores every time as epoch-ms integers in a column whose name ends in At", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        // effect_sql_migrations is SqliteMigrator's own table; cf_* and _cf_*
+        // are the agents SDK's and the runtime's.
+        const tables = (yield* sql<{ readonly name: string }>`
+          select name from sqlite_master where type = 'table'
+        `)
+          .map((row) => row.name)
+          .filter(
+            (name) =>
+              !name.startsWith("sqlite_") &&
+              !name.startsWith("_cf_") &&
+              !name.startsWith("cf_") &&
+              name !== "effect_sql_migrations",
+          );
+        const columns = (yield* Effect.all(
+          tables.map((table) =>
+            sql
+              .unsafe<{
+                readonly name: string;
+                readonly type: string;
+              }>(`select name, type from pragma_table_info('${table}')`)
+              .pipe(
+                Effect.map((rows) =>
+                  rows.map((column) => ({ table, ...column })),
+                ),
+              ),
+          ),
+        ))
+          .flat()
+          .filter((column) => column.name.endsWith("At"));
+        strictEqual(columns.length > 0, true);
+        deepStrictEqual(
+          columns.filter((column) => column.type.toLowerCase() !== "integer"),
+          [],
+        );
       }),
     ));
 });

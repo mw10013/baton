@@ -29,7 +29,7 @@ export function LocalDateTime({
   value,
   format = "dateTime",
 }: {
-  readonly value: string | number;
+  readonly value: number;
   /** `time` is the clock-only form ("… at 3:12 PM", "… · since 3:12 PM"); `relative` the workflows list's "ordered 3d ago". */
   readonly format?: "dateTime" | "time" | "relative";
 }) {

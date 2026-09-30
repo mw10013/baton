@@ -192,4 +192,38 @@ production D1 from the edited `0001_init.sql`.
 Record here, one entry per item: the step, what the plan said, what you did instead or what went
 wrong, and why.
 
-- (none yet)
+- Step 0: baseline `pnpm typecheck`, `pnpm lint` and `pnpm test` (562 tests) all passed before
+  the change. `docs/stored-column-plan.md` had already landed; worked from the current text.
+- Step 5.3: the search under `src/lib/` found no restatement of the rule in `Domain.ts` or
+  `D1Schema.ts`. `Orders.ts` (`ShopOrder`) and `ShopWork.ts` (`WorkflowFields`) say their encoded
+  side is "epoch-ms integers"; that describes the row, not the rule, and was left as is.
+- Step 5.1: the `{@link D1_TABLES}` and `{@link initializeSchema}` in the `EpochMillis` JSDoc are
+  not imported into `Platform.ts`, the same form `ShopWork.ts` already uses for both.
+- Step 5.1: the milliseconds reason cites the `ShopOrder_processedAt` index for the same-millisecond
+  orders (the index comment says so), with `id` as its tiebreak.
+- Step 6: the object file had no `sqlite_master` test to sit beside, so the object test is the
+  last test in `data-model.test.ts`. The migrator's table is `effect_sql_migrations` (the
+  `table` default in `effect/src/unstable/sql/Migrator.ts`). The object test reads
+  `pragma_table_info` through `sql.unsafe` with the table name interpolated, as the D1 test does.
+- Step 6: oxlint warned on the first drafts of both tests (`no-await-expression-member` in the D1
+  test; `no-array-method-this-argument` on `Effect.forEach` in the object test, a false positive
+  that reads it as `Array.prototype.forEach`). Rewrote with a destructured `results` and
+  `Effect.all(tables.map(...))`; lint is clean.
+- Step 6, test bites: with `Member.createdAt` back to `text` and `pnpm d1:reset`, the D1 test
+  failed with
+  `AssertionError: expected [ { table: 'Member', …(2) } ] to deeply equal []`, received
+  `[{ name: "createdAt", table: "Member", type: "TEXT" }]`. Restored the column; the full suite
+  passes (564 tests).
+- Step 7.3 and 7.4: used a temporary Playwright spec in `e2e/` (reusing `gotoApp` and
+  `clickHoisted`) instead of `pnpm playwright-cli`, since the embedded app needs the admin's
+  stored auth state that the e2e project already loads. It added `ts.check@example.com` and team
+  `TsCheck` through the UI, then read the members table, the teams table and the Engraving team
+  page. Every Added, Created and On team since cell rendered as a date (`Sep 30, 4:57 PM`), the
+  new rows included. The spec was deleted afterwards and `pnpm seed` re-run to reset the data.
+- Step 7.5: ran `npm run test:e2e -- e2e/members.spec.ts e2e/teams.spec.ts
+e2e/member-area.member.spec.ts e2e/admin.admin.spec.ts`: 18 passed.
+- Step 7.6: `pnpm fmt` changed nothing beyond this change's files.
+- Files changed (`git status --short`): `migrations/0001_init.sql`,
+  `src/components/LocalDateTime.tsx`, `src/lib/Repository.ts`, `src/lib/ShopAgentSchema.ts`,
+  `src/lib/domain/Platform.ts`, `src/lib/domain/ShopWork.ts`, `src/lib/format.ts`,
+  `test/integration/d1-data-model.test.ts`, `test/integration/data-model.test.ts`, and this file.

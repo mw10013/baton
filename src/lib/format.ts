@@ -10,7 +10,7 @@
  * Spaces are replaced with non-breaking spaces so the timestamp stays on one
  * line in table columns.
  */
-export const formatDateTime = (value: string | number | null | undefined) =>
+export const formatDateTime = (value: number | null | undefined) =>
   value
     ? new Date(value)
         .toLocaleString(undefined, {
@@ -26,7 +26,7 @@ export const formatDateTime = (value: string | number | null | undefined) =>
     : "";
 
 /** Time of day in the browser's timezone, e.g. `3:12 PM`. Same SSR caveat as `formatDateTime`: render through `LocalDateTime`. */
-export const formatTime = (value: string | number) =>
+export const formatTime = (value: number) =>
   new Date(value).toLocaleTimeString(undefined, {
     hour: "numeric",
     minute: "2-digit",
@@ -49,7 +49,7 @@ export const formatNumber = (value: number) =>
  * SSR caveat as `formatDateTime`: `Date.now()` differs between the server
  * render and hydration, so render through `LocalDateTime`.
  */
-export const formatRelative = (value: string | number, now = Date.now()) => {
+export const formatRelative = (value: number, now = Date.now()) => {
   const minutes = Math.max(
     0,
     Math.round((now - new Date(value).getTime()) / 60_000),
