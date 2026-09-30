@@ -1088,7 +1088,7 @@ const make = Effect.gen(function* () {
    * incumbent is deleted in the same transaction and comes back as
    * `replaced` for the toast. The same workflow again is `AlreadyExists`.
    * Over a closed run it is a fresh start, the closed workflow included, and
-   * `replaced` is null (`Domain.RunStatus`). An item with no
+   * `replaced` is null (`Domain.RunState`). An item with no
    * units to make is `NothingToMake`, the same rule as `changeWorkflow` on
    * `Domain.runActions`. Confirmation is the UI's job, not this one's — the
    * server cannot know whether the merchant has seen the trail of work
@@ -1178,7 +1178,7 @@ const make = Effect.gen(function* () {
 
   /**
    * Closes the run, reason `merchant_cancelled`
-   * (`RunRepository.cancelRun`, rule on `Domain.RunStatus`). Gated by
+   * (`RunRepository.cancelRun`, rule on `Domain.RunState`). Gated by
    * `Domain.runActions` `cancel`, which is false on a closed order: reconcile
    * has already closed every open run there. The run leaves every team's
    * lists, so the publish reaches every team on the order.
@@ -1213,7 +1213,7 @@ const make = Effect.gen(function* () {
    * which is the entire permission difference (`Domain.MarkTaskDoneCommand`):
    * the task's team need not be one of the caller's, because the merchant has
    * none, and an unassigned task is exactly the case they are here to fix.
-   * Step order, the run's status, and the downstream reopen guard still apply.
+   * Step order, the run's state, and the downstream reopen guard still apply.
    *
    * They publish with {@link publishToTeams}, not `publish("all")`: the
    * merchant's own order page is subscribed by order and the workers by team,

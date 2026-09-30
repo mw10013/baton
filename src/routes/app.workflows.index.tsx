@@ -26,12 +26,12 @@ const decodeWorkflowResult = Schema.decodeUnknownPromise(
 );
 
 /**
- * One place for every status badge. The `team` and `empty_team` badges are
+ * One place for every state badge. The `team` and `empty_team` badges are
  * the orders index's, label and tone ({@link Domain.ORDER_ISSUE_LABEL},
  * {@link Domain.ORDER_ISSUE_TONE}), for the same faults on a workflow:
  * `unassigned` and `emptyTeam`, derived by the object on every read.
  */
-export const statusBadges = (workflow: Domain.WorkflowSummary) => (
+export const stateBadges = (workflow: Domain.WorkflowSummary) => (
   <s-stack direction="inline" gap="small-300">
     {Domain.workflowIsOn(workflow) ? (
       <s-badge tone="success">{Domain.WORKFLOW_STATE_LABEL.on}</s-badge>
@@ -94,7 +94,7 @@ export const Route = createFileRoute("/app/workflows/")({
  */
 function RouteComponent() {
   const { workflows } = Route.useLoaderData();
-  const { status } = Route.useSearch();
+  const { view } = Route.useSearch();
   const router = useRouter();
   const navigate = useNavigate({ from: Route.fullPath });
   const shopify = useAppBridge();
@@ -187,34 +187,36 @@ function RouteComponent() {
   };
 
   /**
-   * `status: undefined` is how the filter is removed; leaving the key out
+   * `view: undefined` is how the filter is removed; leaving the key out
    * would let the layout's middleware retain the old value
    * (`WorkflowsSearch` in `app.workflows.tsx`). `replace: true` for the
    * member's workflows list's reason (`selectTab` in `shop.$shop.workflows.index.tsx`): the filters are a
    * screen's state, not a trail.
    */
-  const setFilters = (next: { readonly status: "on" | "off" | undefined }) => {
+  const setFilters = (next: {
+    readonly view: Domain.WorkflowsIndexView | undefined;
+  }) => {
     void navigate({
-      search: (prev) => ({ ...prev, status: next.status }),
+      search: (prev) => ({ ...prev, view: next.view }),
       replace: true,
     });
   };
 
   const trimmed = query.trim().toLowerCase();
   const rows = workflows.filter((workflow) => {
-    if (status === "on" && !Domain.workflowIsOn(workflow)) return false;
-    if (status === "off" && Domain.workflowIsOn(workflow)) return false;
+    if (view === "on" && !Domain.workflowIsOn(workflow)) return false;
+    if (view === "off" && Domain.workflowIsOn(workflow)) return false;
     if (trimmed !== "" && !workflow.name.toLowerCase().includes(trimmed))
       return false;
     return true;
   });
-  const filtered = status !== undefined || trimmed !== "";
+  const filtered = view !== undefined || trimmed !== "";
 
-  const statusButton = (label: string, value?: "on" | "off") => (
+  const viewButton = (label: string, value?: Domain.WorkflowsIndexView) => (
     <s-button
-      variant={status === value ? "primary" : "tertiary"}
+      variant={view === value ? "primary" : "tertiary"}
       onClick={() => {
-        setFilters({ status: value });
+        setFilters({ view: value });
       }}
     >
       {label}
@@ -253,7 +255,7 @@ function RouteComponent() {
               variant="secondary"
               onClick={() => {
                 setQuery("");
-                setFilters({ status: undefined });
+                setFilters({ view: undefined });
               }}
             >
               Clear filters
@@ -278,7 +280,7 @@ function RouteComponent() {
                   {workflow.name}
                 </s-link>
               </s-table-cell>
-              <s-table-cell>{statusBadges(workflow)}</s-table-cell>
+              <s-table-cell>{stateBadges(workflow)}</s-table-cell>
               <s-table-cell>
                 <s-badge>{workflow.tag}</s-badge>
               </s-table-cell>
@@ -322,9 +324,9 @@ function RouteComponent() {
                 alignItems="center"
               >
                 <s-stack direction="inline" gap="small-300">
-                  {statusButton("All")}
-                  {statusButton(Domain.WORKFLOW_STATE_LABEL.on, "on")}
-                  {statusButton(Domain.WORKFLOW_STATE_LABEL.off, "off")}
+                  {viewButton("All")}
+                  {viewButton(Domain.WORKFLOW_STATE_LABEL.on, "on")}
+                  {viewButton(Domain.WORKFLOW_STATE_LABEL.off, "off")}
                 </s-stack>
                 <s-search-field
                   label="Search workflows by name"

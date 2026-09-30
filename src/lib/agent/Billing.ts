@@ -121,7 +121,7 @@ const make = Effect.gen(function* () {
   /**
    * Stores Shopify's meter readings beside the local counts and logs each
    * meter whose two disagree by more than the outbox can explain. Orders compare
-   * `ordersThisCycle`, members compare `membersHighWater`, each by
+   * `ordersThisCycle`, members compare `seatsThisCycle`, each by
    * {@link Domain.meterDiverges}.
    *
    * Nothing is corrected. The App Events API answers `202` to an event it will
@@ -148,7 +148,7 @@ const make = Effect.gen(function* () {
         },
         {
           meter: Domain.USAGE_METER_MEMBER,
-          local: usage.membersHighWater,
+          local: usage.seatsThisCycle,
           shopify: readings.members,
           pending: usage.pendingMemberUnits,
         },

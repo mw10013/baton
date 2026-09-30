@@ -4,13 +4,13 @@
  * as one module.
  *
  * - A rule is stated once, on the symbol that *is* the concept (a
- *   `Schema.Literals` such as `RunStatus` in ShopWork) or the function that
+ *   `Schema.Literals` such as `RunState` in ShopWork) or the function that
  *   enforces it (`reopenBlockedBy`, `currentTasks` in ShopWork). A concept with
  *   more than one rule carries a table naming each rule's predicate.
  * - Every other site calls the predicate (`runIsOpen`,
  *   `runIsBlocked` in ShopWork, `userIsAdmin` in Platform, ...) rather than comparing a
  *   literal. `scripts/rules-lint.ts`, run by `pnpm lint`, refuses an inline
- *   `.status`, `.flag` or admin `.role` comparison anywhere else under `src/`.
+ *   `.status`, `.state`, `.flag` or admin `.role` comparison anywhere else under `src/`.
  * - A site that follows a different rule from its siblings says so and why,
  *   in its own JSDoc, and links the rule it departs from.
  * - Each rule is pinned by a test whose title is the rule in plain words.
@@ -92,12 +92,36 @@
  * - A word has one meaning in its context. A word two contexts share is a
  *   row of the Shared words table and always travels with its noun.
  * - Shopify's things get Shopify's words, unchanged. Baton's things get
- *   plain words, and an invented word never reaches a screen.
+ *   plain words, and an invented word never reaches a screen. In
+ *   particular, `status` is Shopify's and the platform's word
+ *   (`fulfillmentStatus`, `BulkOperationStatus`, an HTTP status) and `state`
+ *   is Baton's (`RunState`, the state tables); a Baton field, literal or
+ *   URL key is never named `status`.
  * - A stored literal is the vocabulary word where the store is ours;
- *   Shopify's literals are stored as sent and read through a predicate.
+ *   Shopify's literals are stored as sent and read through a predicate. A
+ *   state table's `stored` column says how each word is held, in one of
+ *   three forms, the data-model table's derivation words: a bare literal in
+ *   backticks (`open`) is stored, never derived, and the literal is the
+ *   word, so renaming the word renames the literal; a column with `set` or
+ *   `null` (`blockedAt` set) means the word is derived, never stored, from
+ *   that column, and lives in its predicate (`runIsBlocked`); a table whose
+ *   words are derived from other rows has no `stored` column and its intro
+ *   names the derivation. `pnpm spec check` holds every `stored` cell to a
+ *   column or literal of `initializeSchema`.
  * - A word that fails is mapped to the existing word, retired, or split. A
  *   retired word goes on the retired list and `scripts/rules-lint.ts`
  *   refuses it.
+ *
+ * Where a stored name is not the word, and why:
+ *
+ * - A foreign vocabulary's table, field or literal keeps its owner's name
+ *   and is read through a predicate: Shopify's (`fulfillmentStatus`,
+ *   `FULFILLED`, `eventHandle`) and better-auth's tables (User, Session,
+ *   Account, Verification, in D1).
+ * - A SQL reserved word takes the noun's symbol form: `ShopOrder`, because
+ *   `Order` collides with `order by` in every hand-written query.
+ * - A mechanism column (idempotencyKey, attempts, webhookId, lastError,
+ *   syncedAt) names no concept, has no row, and is named plainly.
  *
  * Screens. A JSDoc, a test or a research doc names a screen by its spec
  * name, never by its route segment and never with "run". The heading is

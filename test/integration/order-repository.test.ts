@@ -293,7 +293,7 @@ describe("OrderRepository.listOrders", () => {
  * the fixture covers each branch, and each view must return exactly the
  * names the TypeScript functions give it. Runs are written directly because
  * `RunRepository` is not in this test's layer and the views only read
- * status. `#1005`, `#1009`, `#1010` and `#1012` are open with no open and no
+ * state. `#1005`, `#1009`, `#1010` and `#1012` are open with no open and no
  * done run: `not_started`. `#1005` matched no workflow, which is Not started
  * with no issue. `#1010`'s only run is closed, which still reads not started
  * but decides the item, so it is no issue.
@@ -312,32 +312,32 @@ const seedStates = Effect.gen(function* () {
   const cases: readonly {
     readonly n: number;
     readonly order?: Partial<Domain.ShopOrder>;
-    readonly statuses: readonly Domain.RunStatus[];
+    readonly states: readonly Domain.RunState[];
     /** Written onto the order's own item; two or more with no run on it is ambiguous. */
     readonly matched?: readonly string[];
   }[] = [
-    { n: 1, statuses: ["done"] }, // made
-    { n: 2, statuses: ["done", "closed"] }, // made
-    { n: 3, statuses: ["done", "open"] }, // making
-    { n: 4, statuses: ["done", "open"] }, // making
-    { n: 5, statuses: [] }, // not started, no workflow
-    { n: 6, order: { cancelledAt: 5 }, statuses: ["done"] }, // cancelled
-    { n: 7, order: { fulfillmentStatus: "FULFILLED" }, statuses: ["done"] }, // fulfilled
-    { n: 8, statuses: ["done", "done"] }, // made
-    { n: 9, order: { fullyPaid: false }, statuses: [] }, // not started, unpaid: no issue
-    { n: 10, statuses: ["closed"] }, // not started, and decided: no issue
-    { n: 11, order: { fulfillmentStatus: "FULFILLED" }, statuses: [] }, // fulfilled, never started
-    { n: 12, statuses: [], matched: ["w1", "w2"] }, // not started, choose a workflow
-    { n: 13, statuses: ["open"], matched: ["w1", "w2"] }, // making, and choose a workflow
+    { n: 1, states: ["done"] }, // made
+    { n: 2, states: ["done", "closed"] }, // made
+    { n: 3, states: ["done", "open"] }, // making
+    { n: 4, states: ["done", "open"] }, // making
+    { n: 5, states: [] }, // not started, no workflow
+    { n: 6, order: { cancelledAt: 5 }, states: ["done"] }, // cancelled
+    { n: 7, order: { fulfillmentStatus: "FULFILLED" }, states: ["done"] }, // fulfilled
+    { n: 8, states: ["done", "done"] }, // made
+    { n: 9, order: { fullyPaid: false }, states: [] }, // not started, unpaid: no issue
+    { n: 10, states: ["closed"] }, // not started, and decided: no issue
+    { n: 11, order: { fulfillmentStatus: "FULFILLED" }, states: [] }, // fulfilled, never started
+    { n: 12, states: [], matched: ["w1", "w2"] }, // not started, choose a workflow
+    { n: 13, states: ["open"], matched: ["w1", "w2"] }, // making, and choose a workflow
     // Unpaid: the ambiguity is not a choice yet, so no issue.
     {
       n: 14,
       order: { fullyPaid: false },
-      statuses: ["open"],
+      states: ["open"],
       matched: ["w1", "w2"],
     }, // making
   ];
-  for (const { n, order, statuses, matched } of cases) {
+  for (const { n, order, states, matched } of cases) {
     yield* upsert(
       repository,
       anOrder({
@@ -361,18 +361,18 @@ const seedStates = Effect.gen(function* () {
         }),
       ],
     );
-    for (const [index, status] of statuses.entries())
+    for (const [index, state] of states.entries())
       yield* sql`
         insert into Run (
           id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
           lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
-          status, closedAt, closedReason, createdAt, updatedAt
+          state, closedAt, closedReason, createdAt, updatedAt
         ) values (
           ${`run-${String(n)}-${String(index)}`}, 'wf', 'Workflow',
           ${orderId(n)}, ${`#10${String(n).padStart(2, "0")}`}, 0,
           ${`${lineItemId(n)}-${String(index)}`}, 'Item', null, null, 1,
-          '[]', ${status}, ${status === "closed" ? 1 : null},
-          ${status === "closed" ? "merchant_cancelled" : null}, 0, 0
+          '[]', ${state}, ${state === "closed" ? 1 : null},
+          ${state === "closed" ? "merchant_cancelled" : null}, 0, 0
         )
       `;
   }
@@ -414,7 +414,7 @@ const seedIssues = Effect.gen(function* () {
     insert into Run (
       id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
       lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
-      status, closedAt, closedReason, createdAt, updatedAt
+      state, closedAt, closedReason, createdAt, updatedAt
     ) values (
       'run-15-0', 'wf', 'Workflow', ${orderId(15)}, '#1015', 0,
       ${`${lineItemId(15)}-0`}, 'Item', null, null, 1, '[]', 'open', null,
@@ -505,7 +505,7 @@ describe("OrderRepository.listOrders views", () => {
         const { list } = yield* seedIssues;
         const sql = yield* SqlClient.SqlClient;
         // A stale block on a fulfilled order's run is not an issue.
-        yield* sql`update Run set status = 'open', blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-7-0'`;
+        yield* sql`update Run set state = 'open', blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-7-0'`;
         return { all: yield* list("all"), issues: yield* list("issues") };
       }),
     );
@@ -620,7 +620,7 @@ describe("OrderRepository.listOrders views", () => {
         const { list } = yield* seedIssues;
         const sql = yield* SqlClient.SqlClient;
         // A leftover open run with a current task on Cut, on a fulfilled order.
-        yield* sql`update Run set status = 'open' where id = 'run-7-0'`;
+        yield* sql`update Run set state = 'open' where id = 'run-7-0'`;
         yield* sql`
           insert into RunTask
             (id, runId, position, step, name, teamId, teamName, doneAt)
@@ -916,7 +916,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
       insert into Run (
         id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
         lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
-        status, createdAt, updatedAt
+        state, createdAt, updatedAt
       ) values (
         'run-3-2', 'wf', 'Workflow', ${orderId(3)}, '#1003', 0,
         ${`${lineItemId(3)}-2`}, 'Item', null, null, 1, '[]', 'open',
@@ -956,8 +956,8 @@ describe("OrderRepository.listOrders waitingOn", () => {
     const { all, cut, issues } = await runInRepository(
       Effect.gen(function* () {
         const { sql, task, list } = yield* waitingFixture;
-        yield* sql`update Run set status = 'open', blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-7-0'`;
-        yield* sql`update Run set status = 'open' where id = 'run-6-0'`;
+        yield* sql`update Run set state = 'open', blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-7-0'`;
+        yield* sql`update Run set state = 'open' where id = 'run-6-0'`;
         yield* task("s7", "run-7-0", 1, "team-cut");
         yield* task("s6", "run-6-0", 1, "team-cut");
         yield* task("s6b", "run-6-0", 1, "team-gone");
@@ -1585,7 +1585,7 @@ describe("OrderRepository usage", () => {
       }),
     );
     strictEqual(queued, 1);
-    strictEqual(usage.membersHighWater, 4);
+    strictEqual(usage.seatsThisCycle, 4);
     deepStrictEqual(events, [
       {
         idempotencyKey: seatKey(CYCLE_START, 3),
@@ -1617,7 +1617,7 @@ describe("OrderRepository usage", () => {
       }),
     );
     deepStrictEqual(queued, [0, 0]);
-    strictEqual(usage.membersHighWater, 3);
+    strictEqual(usage.seatsThisCycle, 3);
     strictEqual(events.length, 1);
   });
 
@@ -1642,7 +1642,7 @@ describe("OrderRepository usage", () => {
         };
       }),
     );
-    strictEqual(usage.membersHighWater, 4);
+    strictEqual(usage.seatsThisCycle, 4);
     deepStrictEqual(
       events.map((event) => event.value),
       [3, 1],
@@ -1667,7 +1667,7 @@ describe("OrderRepository usage", () => {
         };
       }),
     );
-    strictEqual(usage.membersHighWater, 4);
+    strictEqual(usage.seatsThisCycle, 4);
     deepStrictEqual(events.at(-1), {
       idempotencyKey: seatKey(CYCLE_END, 4),
       value: 4,
@@ -1687,7 +1687,7 @@ describe("OrderRepository usage", () => {
         };
       }),
     );
-    strictEqual(usage.membersHighWater, 3);
+    strictEqual(usage.seatsThisCycle, 3);
     strictEqual(events.length, 1);
   });
 
@@ -1703,7 +1703,7 @@ describe("OrderRepository usage", () => {
         };
       }),
     );
-    strictEqual(usage.membersHighWater, 5);
+    strictEqual(usage.seatsThisCycle, 5);
     deepStrictEqual(
       events.map(({ idempotencyKey, value }) => ({ idempotencyKey, value })),
       [
@@ -1818,7 +1818,7 @@ describe("OrderRepository usage", () => {
     strictEqual(pending.pendingOrderUnits, 1);
     strictEqual(
       Domain.meterDiverges({
-        local: pending.membersHighWater,
+        local: pending.seatsThisCycle,
         shopify: 0,
         pending: pending.pendingMemberUnits,
       }),
@@ -1827,7 +1827,7 @@ describe("OrderRepository usage", () => {
     // Drained and still unreported: now it is a divergence.
     strictEqual(
       Domain.meterDiverges({
-        local: drained.membersHighWater,
+        local: drained.seatsThisCycle,
         shopify: 0,
         pending: drained.pendingMemberUnits,
       }),
@@ -1862,17 +1862,17 @@ const KEPT = NOW - (Domain.ShopLimits.orderRetentionDays - 1) * 86_400_000;
 
 /** A run written straight to SQL: these tests care about the sweep, not how the run got there. */
 const runWith =
-  (orderId: string, status: string, updatedAt: number) =>
+  (orderId: string, state: string, updatedAt: number) =>
   (sql: SqlClient.SqlClient) =>
     sql`
       insert into Run (
         id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
         lineItemId, lineItemTitle, variantTitle, sku, quantity,
-        lineItemProperties, status, createdAt, updatedAt
+        lineItemProperties, state, createdAt, updatedAt
       ) values (
-        ${`run-${orderId}-${status}`}, 'wf', 'Workflow', ${orderId}, '#1',
+        ${`run-${orderId}-${state}`}, 'wf', 'Workflow', ${orderId}, '#1',
         0, ${`li-${orderId}`}, 'Item', null, null, 1, '[]',
-        ${status}, ${updatedAt}, ${updatedAt}
+        ${state}, ${updatedAt}, ${updatedAt}
       )
     `;
 

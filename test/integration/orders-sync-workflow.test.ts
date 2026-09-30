@@ -249,8 +249,8 @@ describe("OrdersSyncWorkflow shape", () => {
     const first = await agent.syncOrders();
     const second = await agent.syncOrders();
 
-    expect(first.status).toBe("started");
-    expect(second.status).toBe("in_flight");
+    expect(first._tag).toBe("Started");
+    expect(second._tag).toBe("InFlight");
     const instances = await introspector.get();
     expect(instances.length).toBe(1);
   });
@@ -319,7 +319,7 @@ describe("OrdersSyncWorkflow shape", () => {
     });
     const result = await agent.syncOrders();
 
-    expect(result.status).toBe("started");
+    expect(result._tag).toBe("Started");
     const instances = await introspector.get();
     expect(instances.length).toBe(1);
   });

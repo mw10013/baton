@@ -12,6 +12,23 @@ import * as RulesLint from "../../scripts/lib/rules-lint.ts";
 const hits = (source: string, tsx = true) =>
   RulesLint.retiredCopyHits(source, tsx).map(({ line }) => line);
 
+const matches = (line: string) =>
+  RulesLint.INLINE_COMPARISONS.some((pattern) => pattern.test(line));
+
+describe("a state, status, flag or admin role comparison is a Domain predicate", () => {
+  it("refuses an inline run state comparison", () => {
+    expect(matches('if (run.state === "open") return;')).toBe(true);
+    expect(matches('if (run.state !== "done") return;')).toBe(true);
+  });
+
+  it("refuses status, flag and admin role comparisons, and passes a predicate", () => {
+    expect(matches('order.status === "COMPLETED"')).toBe(true);
+    expect(matches('task.flag !== "x"')).toBe(true);
+    expect(matches('user.role === "admin"')).toBe(true);
+    expect(matches("Domain.runIsOpen(run)")).toBe(false);
+  });
+});
+
 describe("a retired word stays off every merchant and member screen", () => {
   it("reads string literals, a sentence ending in run., and the literals inside a template's interpolation", () => {
     const source = [
@@ -47,7 +64,7 @@ describe("a retired word stays off every merchant and member screen", () => {
       " * is done */",
       "{/* Every run */}",
       // oxlint-disable-next-line no-template-curly-in-string -- source under test, not a template
-      'const key = ["shop-runs", run.status, "run-actions-1", `${run}`];',
+      'const key = ["shop-runs", run.state, "run-actions-1", `${run}`];',
       // oxlint-disable-next-line no-template-curly-in-string -- source under test, not a template
       "<s-link href={`/work/${runId}`}>",
       "const run = runs.find(isRun);",
@@ -185,7 +202,7 @@ describe("an import follows the map's direction", () => {
           "",
           'import { WorkflowId } from "./Platform.ts";',
           "import {",
-          "  RunStatus,",
+          "  RunState,",
           '} from "./ShopWork.ts";',
         ].join("\n"),
       ),

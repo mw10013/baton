@@ -130,7 +130,7 @@ const insertRun = (id: string) =>
         insert into Run (
           id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
           lineItemId, lineItemTitle, variantTitle, sku, quantity,
-          lineItemProperties, status, createdAt, updatedAt
+          lineItemProperties, state, createdAt, updatedAt
         ) values (
           ${id}, 'wf', 'Mugs', ${ORDER_ID}, '#1001', 0,
           ${LINE_ITEM_ID}, 'Mug', null, null, 1, '[]', 'open', 0, 0
@@ -291,17 +291,17 @@ describe("data model", () => {
         const refused = [
           sql`update Run set closedAt = 1 where id = ${runId}`,
           sql`update Run set closedReason = 'merchant_cancelled' where id = ${runId}`,
-          sql`update Run set status = 'closed' where id = ${runId}`,
+          sql`update Run set state = 'closed' where id = ${runId}`,
         ];
         for (const write of refused)
           strictEqual((yield* Effect.flip(write))._tag, "SqlError");
         yield* (yield* RunRepository).cancelRun({ runId });
         const [run] = yield* sql<{
-          readonly status: string;
+          readonly state: string;
           readonly closedAt: number | null;
           readonly closedReason: string | null;
-        }>`select status, closedAt, closedReason from Run where id = ${runId}`;
-        strictEqual(run?.status, "closed");
+        }>`select state, closedAt, closedReason from Run where id = ${runId}`;
+        strictEqual(run?.state, "closed");
         strictEqual(typeof run?.closedAt, "number");
         strictEqual(run?.closedReason, "merchant_cancelled");
       }),
@@ -331,7 +331,7 @@ describe("data model", () => {
         strictEqual(blockClosed._tag, "SqlError");
         yield* sql`delete from Run where id = ${runId}`;
         yield* insertRun("done");
-        yield* sql`update Run set status = 'done' where id = 'done'`;
+        yield* sql`update Run set state = 'done' where id = 'done'`;
         const blockDone = yield* Effect.flip(sql`
           update Run set blockedAt = 1, blockedBy = '{"role":"merchant"}'
           where id = 'done'

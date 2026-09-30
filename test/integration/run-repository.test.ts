@@ -406,7 +406,7 @@ const matchedIds = (lineItemId: string) =>
   );
 
 /**
- * One row per item, whatever its status, `closed` included. The invariant is
+ * One row per item, whatever its state, `closed` included. The invariant is
  * `unique (lineItemId)`, so these cover both halves: what the write paths do
  * about it, and that the index itself is really there.
  */
@@ -520,7 +520,7 @@ describe("RunRepository one row per item", () => {
         );
         strictEqual(set.replaced?.id, before.run.id);
         strictEqual(set.run.workflowId, b.id);
-        strictEqual(set.run.status, "open");
+        strictEqual(set.run.state, "open");
         const after = yield* runsForOrder();
         deepStrictEqual(
           after.map((d) => d.run.id),
@@ -589,7 +589,7 @@ describe("RunRepository one row per item", () => {
         // A new row from the definition, even of the closed workflow:
         // nothing of the closed run comes back, and it was not open.
         strictEqual(set.replaced, null);
-        strictEqual(set.run.status, "open");
+        strictEqual(set.run.state, "open");
         const [fresh, ...rest] = yield* runsForOrder();
         strictEqual(rest.length, 0);
         strictEqual(fresh?.run.id, set.run.id);
@@ -615,7 +615,7 @@ describe("RunRepository one row per item", () => {
           insert into Run (
             id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
             lineItemId, lineItemTitle, variantTitle, sku, quantity,
-            lineItemProperties, status,
+            lineItemProperties, state,
             createdAt, updatedAt
           ) values (
             'raw', ${b.id}, 'Workflow b', ${ORDER_ID}, '#1001', 0,
@@ -635,7 +635,7 @@ describe("RunRepository one row per item", () => {
           insert into Run (
             id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
             lineItemId, lineItemTitle, variantTitle, sku, quantity,
-            lineItemProperties, status,
+            lineItemProperties, state,
             createdAt, updatedAt
           ) values (
             'raw', ${b.id}, 'Workflow b', ${ORDER_ID}, '#1001', 0,
@@ -676,7 +676,7 @@ describe("RunRepository one row per item", () => {
           insert into Run (
             id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
             lineItemId, lineItemTitle, variantTitle, sku, quantity,
-            lineItemProperties, status,
+            lineItemProperties, state,
             createdAt, updatedAt
           ) values (
             'busy', 'other', 'Other', 'o2', 'o2', 0,
@@ -715,7 +715,7 @@ describe("RunRepository.reconcileOrder", () => {
         const runs = yield* runsForOrder();
         strictEqual(runs.length, 2);
         const [first] = runs;
-        strictEqual(first?.run.status, "open");
+        strictEqual(first?.run.state, "open");
         strictEqual(Domain.runIsUnstarted(first?.tasks ?? []), true);
         strictEqual(first?.run.quantity, 2);
         strictEqual(first?.run.lineItemProperties?.[0]?.value, "Hello 1");
@@ -778,7 +778,7 @@ describe("RunRepository.reconcileOrder", () => {
         const closed = Option.getOrThrow(
           yield* runs.getRun({ runId: target.run.id }),
         );
-        strictEqual(closed.run.status, "closed");
+        strictEqual(closed.run.state, "closed");
         strictEqual(closed.run.closedReason, "merchant_cancelled");
         strictEqual(closed.run.closedAt !== null, true);
         strictEqual(closed.tasks.length, 2);
@@ -878,10 +878,10 @@ describe("RunRepository.reconcileOrder", () => {
         const p = after.find((d) => d.run.id === unstartedRun.run.id);
         const a = after.find((d) => d.run.id === startedRun.run.id);
         // Started or not, one rule: both close, and both keep their tasks.
-        strictEqual(p?.run.status, "closed");
+        strictEqual(p?.run.state, "closed");
         strictEqual(p?.run.closedReason, "item_removed");
         strictEqual(p?.tasks.length, 2);
-        strictEqual(a?.run.status, "closed");
+        strictEqual(a?.run.state, "closed");
         strictEqual(a?.run.closedReason, "item_removed");
         strictEqual(a?.tasks.length, 2);
         strictEqual(a?.tasks[0]?.doneAt !== null, true);
@@ -939,7 +939,7 @@ describe("RunRepository.reconcileOrder", () => {
           ambiguous: 0,
         });
         const [p] = yield* runsForOrder();
-        strictEqual(p?.run.status, "open");
+        strictEqual(p?.run.state, "open");
         strictEqual(Domain.runIsUnstarted(p?.tasks ?? []), true);
         strictEqual(p?.run.quantity, 3);
         strictEqual(p?.run.quantityChangedFrom, null);
@@ -960,7 +960,7 @@ describe("RunRepository.reconcileOrder", () => {
         );
         strictEqual(first.resized, 1);
         const once = (yield* runsForOrder())[0];
-        strictEqual(once?.run.status, "open");
+        strictEqual(once?.run.state, "open");
         strictEqual(once?.run.quantity, 3);
         strictEqual(once?.run.quantityChangedFrom, 2);
         // A second change keeps the original "from": that is the number the
@@ -974,7 +974,7 @@ describe("RunRepository.reconcileOrder", () => {
         // It is never a gate: the next Done goes through, and clears it.
         yield* complete(run, 2, [TEAM_B.id]);
         const cleared = (yield* runsForOrder())[0];
-        strictEqual(cleared?.run.status, "done");
+        strictEqual(cleared?.run.state, "done");
         strictEqual(cleared?.run.quantity, 4);
         strictEqual(cleared?.run.quantityChangedFrom, null);
       }),
@@ -1014,7 +1014,7 @@ describe("RunRepository.reconcileOrder", () => {
         if (run === undefined) throw new Error("expected one run");
         yield* complete(run, 1, [TEAM_A.id]);
         yield* complete(run, 2, [TEAM_B.id]);
-        strictEqual((yield* runsForOrder())[0]?.run.status, "done");
+        strictEqual((yield* runsForOrder())[0]?.run.state, "done");
 
         const counts = yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 1 }),
@@ -1027,7 +1027,7 @@ describe("RunRepository.reconcileOrder", () => {
           ambiguous: 0,
         });
         const unchanged = (yield* runsForOrder())[0];
-        strictEqual(unchanged?.run.status, "done");
+        strictEqual(unchanged?.run.state, "done");
         strictEqual(unchanged?.run.quantity, 2);
         strictEqual(unchanged?.run.quantityChangedFrom, null);
         strictEqual(unchanged?.tasks.length, 2);
@@ -1045,7 +1045,7 @@ describe("RunRepository.reconcileOrder", () => {
           ambiguous: 0,
         });
         const after = (yield* runsForOrder())[0];
-        strictEqual(after?.run.status, "done");
+        strictEqual(after?.run.state, "done");
         strictEqual(after?.run.quantity, 2);
       }),
     ));
@@ -1103,11 +1103,11 @@ describe("RunRepository.reconcileOrder", () => {
           const during = yield* runsForOrder();
           strictEqual(during.length, 2);
           strictEqual(
-            during.find((d) => d.run.id === unstartedRun.run.id)?.run.status,
+            during.find((d) => d.run.id === unstartedRun.run.id)?.run.state,
             "open",
           );
           const active = during.find((d) => d.run.id === startedRun.run.id);
-          strictEqual(active?.run.status, "open");
+          strictEqual(active?.run.state, "open");
           strictEqual(active?.run.blockedAt, null);
           const paid = yield* upsertAndReconcile(
             order({ updatedAt: PROCESSED_AT + 2 }),
@@ -1218,7 +1218,7 @@ describe("RunRepository.reconcileOrder", () => {
           });
           deepStrictEqual(
             (yield* runsForOrder()).map((d) => [
-              d.run.status,
+              d.run.state,
               d.run.closedReason,
             ]),
             [
@@ -1287,16 +1287,16 @@ describe("RunRepository.reconcileOrder", () => {
           const after = yield* runsForOrder();
           strictEqual(after.length, 3);
           const unstarted = after.find((d) => d.run.id === unstartedRun.id);
-          strictEqual(unstarted?.run.status, "closed");
+          strictEqual(unstarted?.run.state, "closed");
           strictEqual(unstarted?.run.closedReason, "fulfilled");
           const active = after.find((d) => d.run.id === startedRun.run.id);
-          strictEqual(active?.run.status, "closed");
+          strictEqual(active?.run.state, "closed");
           strictEqual(active?.run.closedReason, "fulfilled");
           strictEqual(active?.run.closedAt !== null, true);
           // The tasks stay as the record of who did what.
           strictEqual(active?.tasks[0]?.startedAt !== null, true);
           const done = after.find((d) => d.run.id === doneRun.run.id);
-          strictEqual(done?.run.status, "done");
+          strictEqual(done?.run.state, "done");
           strictEqual(done?.run.closedReason, null);
         }),
       ));
@@ -1330,10 +1330,10 @@ describe("RunRepository.reconcileOrder", () => {
           });
           const after = yield* runsForOrder();
           const shipped = after.find((d) => d.run.id === shippedRun.run.id);
-          strictEqual(shipped?.run.status, "open");
+          strictEqual(shipped?.run.state, "open");
           strictEqual(shipped?.run.quantityChangedFrom, null);
           const other = after.find((d) => d.run.id === otherRun.run.id);
-          strictEqual(other?.run.status, "open");
+          strictEqual(other?.run.state, "open");
           strictEqual(other?.run.quantityChangedFrom, null);
         }),
       ));
@@ -1372,11 +1372,11 @@ describe("RunRepository.reconcileOrder", () => {
         const after = yield* runsForOrder();
         for (const open of [unstartedRun, startedRun]) {
           const closed = after.find((d) => d.run.id === open.run.id);
-          strictEqual(closed?.run.status, "closed");
+          strictEqual(closed?.run.state, "closed");
           strictEqual(closed?.run.closedReason, "order_cancelled");
         }
         const done = after.find((d) => d.run.id === doneRun.run.id);
-        strictEqual(done?.run.status, "done");
+        strictEqual(done?.run.state, "done");
         strictEqual(done?.run.closedReason, null);
       }),
     ));
@@ -1462,7 +1462,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         const active = Option.getOrThrow(
           yield* runs.getRun({ runId: detail.run.id }),
         );
-        strictEqual(active.run.status, "open");
+        strictEqual(active.run.state, "open");
         strictEqual(active.tasks[0]?.doneByEmail, "member-1@example.com");
 
         const repeat = yield* complete(detail, 1, [TEAM_A.id]).pipe(
@@ -1474,7 +1474,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         const done = Option.getOrThrow(
           yield* runs.getRun({ runId: detail.run.id }),
         );
-        strictEqual(done.run.status, "done");
+        strictEqual(done.run.state, "done");
 
         const terminal = yield* runs
           .cancelRun({ runId: detail.run.id })
@@ -1506,7 +1506,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         const closed = Option.getOrThrow(
           yield* runs.getRun({ runId: detail.run.id }),
         );
-        strictEqual(closed.run.status, "closed");
+        strictEqual(closed.run.state, "closed");
         strictEqual(closed.run.closedReason, "merchant_cancelled");
         strictEqual(closed.run.closedAt !== null, true);
         // The note and the tasks are the record; the block is open state.
@@ -1724,7 +1724,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         const done = Option.getOrThrow(
           yield* runs.getRun({ runId: detail.run.id }),
         );
-        strictEqual(done.run.status, "done");
+        strictEqual(done.run.state, "done");
       }),
     ));
 
@@ -1979,7 +1979,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         const started = Option.getOrThrow(
           yield* runs.getRun({ runId: detail.run.id }),
         );
-        strictEqual(started.run.status, "open");
+        strictEqual(started.run.state, "open");
         strictEqual(started.tasks[0]?.startedByEmail, "m1@example.com");
         strictEqual(started.tasks[0]?.startedAt !== null, true);
         strictEqual(started.tasks[0]?.doneAt, null);
@@ -2055,7 +2055,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         strictEqual(undone.tasks[0]?.startedAt, null);
         strictEqual(undone.tasks[0]?.startedByEmail, null);
         strictEqual(undone.tasks[0]?.startedByRole, null);
-        strictEqual(undone.run.status, "open");
+        strictEqual(undone.run.state, "open");
         // Produce left Team C's list: step 1 is open again.
         strictEqual((yield* runListRows({ teamIds: [TEAM_C.id] })).length, 0);
         strictEqual(
@@ -2088,7 +2088,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         yield* complete(detail, 4, [TEAM_A.id]);
         strictEqual(
           Option.getOrThrow(yield* runs.getRun({ runId: detail.run.id })).run
-            .status,
+            .state,
           "done",
         );
         yield* runs.reopenTask({
@@ -2098,7 +2098,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         });
         strictEqual(
           Option.getOrThrow(yield* runs.getRun({ runId: detail.run.id })).run
-            .status,
+            .state,
           "open",
         );
 
@@ -2131,7 +2131,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         });
         strictEqual(
           Option.getOrThrow(yield* runs.getRun({ runId: detail.run.id })).run
-            .status,
+            .state,
           "open",
         );
         // Anyone on the task's team, not only the starter.
@@ -2149,7 +2149,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         strictEqual(task?.startedByRole, null);
         strictEqual(task?.reopenedAt, null);
         // The only started task put back: the run is untouched again.
-        strictEqual(after.run.status, "open");
+        strictEqual(after.run.state, "open");
         strictEqual(Domain.runIsUnstarted(after.tasks), true);
         // Ready again: it is on Team A's list as a Start.
         const view = Option.getOrThrow(
@@ -2415,7 +2415,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         const gate = Option.getOrThrow(
           yield* runs.getRunGate({ runId: detail.run.id }),
         );
-        strictEqual(gate.run.status, "closed");
+        strictEqual(gate.run.state, "closed");
         const view = Option.getOrThrow(
           yield* runs.getRunPage({
             runId: detail.run.id,
@@ -2440,7 +2440,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         const closed = Option.getOrThrow(
           yield* runs.getRun({ runId: detail.run.id }),
         );
-        strictEqual(closed.run.status, "closed");
+        strictEqual(closed.run.state, "closed");
         strictEqual(closed.tasks[0]?.doneAt !== null, true);
       }),
     ));
@@ -2497,7 +2497,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         yield* complete(detail, 4, [TEAM_A.id]);
         strictEqual(
           Option.getOrThrow(yield* runs.getRun({ runId: detail.run.id })).run
-            .status,
+            .state,
           "done",
         );
         yield* set(note("noticed after the last Done"));
@@ -2651,7 +2651,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         const after = Option.getOrThrow(
           yield* runs.getRun({ runId: detail.run.id }),
         );
-        strictEqual(after.run.status, "closed");
+        strictEqual(after.run.state, "closed");
         strictEqual(after.run.closedReason, "item_removed");
         strictEqual(after.run.blockedAt, null);
         const late = yield* runs
@@ -3085,7 +3085,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           ],
         );
         const done = remaining.find((d) => d.run.id === finished.run.id);
-        strictEqual(done?.run.status, "done");
+        strictEqual(done?.run.state, "done");
         strictEqual(
           done?.tasks.every((task) => task.doneAt !== null),
           true,
@@ -3126,7 +3126,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         yield* runs.cancelRun({ runId: stillOpen.run.id });
         strictEqual(
           Option.getOrThrow(yield* runs.getRun({ runId: stillOpen.run.id })).run
-            .status,
+            .state,
           "closed",
         );
 

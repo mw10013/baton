@@ -364,7 +364,7 @@ test("the merchant marks a task done, reopens it, and blocks the run", async ({
   await expect(frame.getByText("Ready", { exact: true })).toBeVisible();
 
   /* Both steps done takes the run to `done`. The card says it in merchant
-     words, not `Run.status`: its badge, and the now line counting the
+     words, not `Run.state`: its badge, and the now line counting the
      steps. */
   await frame
     .getByRole("button", {
@@ -850,7 +850,7 @@ test("an item matching two workflows waits for the merchant to choose, then chan
     item.getByText(`${RUSH} workflow`, { exact: true }),
   ).toBeVisible();
   /* The replaced run is gone, not kept beside the new one: Change workflow
-     deletes it (`Domain.RunStatus`), and the modal already said what it cost. */
+     deletes it (`Domain.RunState`), and the modal already said what it cost. */
   await expect(item.getByText("Cancelled", { exact: true })).toHaveCount(0);
   await expect(item.getByRole("button", { name: "Manage" })).toHaveCount(1);
 

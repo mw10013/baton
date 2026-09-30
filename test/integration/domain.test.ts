@@ -168,7 +168,7 @@ describe("Domain.orderIssues", () => {
   });
 });
 
-const run = (status: Domain.RunStatus, blocked = false): Domain.Run => ({
+const run = (state: Domain.RunState, blocked = false): Domain.Run => ({
   id: Schema.decodeUnknownSync(Domain.RunId)("r"),
   workflowId: Schema.decodeUnknownSync(Domain.WorkflowId)("w"),
   workflowName: Schema.decodeUnknownSync(Domain.WorkflowName)("W"),
@@ -181,7 +181,7 @@ const run = (status: Domain.RunStatus, blocked = false): Domain.Run => ({
   sku: null,
   quantity: 1,
   lineItemProperties: [],
-  status,
+  state,
   blockedAt: blocked ? 1 : null,
   blockReason: null,
   blockedBy: null,
@@ -189,8 +189,8 @@ const run = (status: Domain.RunStatus, blocked = false): Domain.Run => ({
   note: null,
   createdAt: 0,
   updatedAt: 0,
-  closedAt: status === "closed" ? 1 : null,
-  closedReason: status === "closed" ? "fulfilled" : null,
+  closedAt: state === "closed" ? 1 : null,
+  closedReason: state === "closed" ? "fulfilled" : null,
 });
 
 describe("Domain.runCounts", () => {
@@ -228,8 +228,8 @@ const lineItem = (
   properties: [],
 });
 
-const runOn = (lineItemId: string, status: Domain.RunStatus): Domain.Run => ({
-  ...run(status),
+const runOn = (lineItemId: string, state: Domain.RunState): Domain.Run => ({
+  ...run(state),
   lineItemId,
 });
 
@@ -238,7 +238,7 @@ describe("Domain.ambiguousItems", () => {
    * The same three conditions `OrderRepository`'s `AMBIGUOUS_ITEM` spells out
    * in SQL. A `done` run counts on purpose: a done item does not get a
    * second route, so it is not a decision anyone is waiting on. A cancelled
-   * run is deleted (`Domain.RunStatus`), so a cancel makes the item a
+   * run is deleted (`Domain.RunState`), so a cancel makes the item a
    * decision again with no rule of its own: the "two matches and no run"
    * case below.
    */
@@ -530,17 +530,15 @@ describe("Domain.SeedOrdersInput", () => {
 describe("Domain.runIsOpen / Domain.runIsDone / Domain.runIsClosed", () => {
   it("open is stored as open; done is the last task's Done; closed is ended by something else", () => {
     deepStrictEqual(
-      Domain.RunStatus.literals.map((status) => Domain.runIsOpen(run(status))),
+      Domain.RunState.literals.map((state) => Domain.runIsOpen(run(state))),
       [true, false, false],
     );
     deepStrictEqual(
-      Domain.RunStatus.literals.map((status) => Domain.runIsDone(run(status))),
+      Domain.RunState.literals.map((state) => Domain.runIsDone(run(state))),
       [false, true, false],
     );
     deepStrictEqual(
-      Domain.RunStatus.literals.map((status) =>
-        Domain.runIsClosed(run(status)),
-      ),
+      Domain.RunState.literals.map((state) => Domain.runIsClosed(run(state))),
       [false, false, true],
     );
   });

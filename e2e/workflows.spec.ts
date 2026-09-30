@@ -533,10 +533,10 @@ test("editing the tag from the detail page writes immediately and starts no draf
 });
 
 /**
- * `WorkflowsSearch` on the `/app/workflows` layout: the status filter rides
- * the workflow page's URL, so its breadcrumb returns to the filtered list.
+ * `WorkflowsSearch` on the `/app/workflows` layout: the view rides the
+ * workflow page's URL, so its breadcrumb returns to the filtered list.
  */
-test("the workflows index keeps its status filter across the workflow page", async ({
+test("the workflows index keeps its view across the workflow page", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -564,7 +564,7 @@ test("the workflows index keeps its status filter across the workflow page", asy
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Workflows"));
   await expect(frame.getByRole("link", { name: OFF })).toBeVisible();
-  const status = () => new URL(page.url()).searchParams.get("status");
+  const view = () => new URL(page.url()).searchParams.get("view");
 
   await frame
     .getByRole("button", {
@@ -572,24 +572,24 @@ test("the workflows index keeps its status filter across the workflow page", asy
       exact: true,
     })
     .click();
-  await expect.poll(status).toBe("on");
+  await expect.poll(view).toBe("on");
   await expect(frame.getByRole("link", { name: OFF })).toHaveCount(0);
 
   await frame.getByRole("link", { name: EXISTING }).click();
   await expect(frame.locator(`s-page[heading="${EXISTING}"]`)).toBeVisible();
-  await expect.poll(status).toBe("on");
+  await expect.poll(view).toBe("on");
 
   /* The hoisted breadcrumb's back arrow; see the orders round trip. */
   await clickHoisted(page.locator('button[aria-label="Workflows"]'));
   await expect(frame.getByRole("link", { name: EXISTING })).toBeVisible();
-  await expect.poll(status).toBe("on");
+  await expect.poll(view).toBe("on");
   await expect(frame.getByRole("link", { name: OFF })).toHaveCount(0);
 });
 
 /**
  * The workflows index's two derived badges are separate and are the orders
  * index's: "Needs a team" for an unassigned task and "Team has no members"
- * for a task on a team with no members (`statusBadges`). A workflow with
+ * for a task on a team with no members (`stateBadges`). A workflow with
  * both shows both, and its workflow page shows one banner per issue under
  * the same headings, both critical like every issue (`TeamIssueBanners`,
  * `Domain.ORDER_ISSUE_TONE`). Seeded off, because the seed refuses to turn

@@ -7,7 +7,7 @@
 // tables on `initializeSchema` in src/lib/ShopAgentSchema.ts (the object) and
 // on `D1_TABLES` in src/lib/D1Schema.ts (D1).
 //
-//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the vocabulary, its contexts, its screen columns and its Screens table, parse the triggers table and both data-model tables and refuse a pinned title no test carries, parse the copy and controls tables in src/lib/Screen.ts and refuse an example no screen shows (exit 1 on any failure)
+//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the vocabulary, its contexts, its screen columns, its stored cells against the DDL and its Screens table, parse the triggers table and both data-model tables and refuse a pinned title no test carries, parse the copy and controls tables in src/lib/Screen.ts and refuse an example no screen shows (exit 1 on any failure)
 //   node scripts/spec.ts print   render the parsed rows and how many fixtures each expands to, then the triggers rows, then the data-model rows
 
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
@@ -158,6 +158,7 @@ const checkCommand = Command.make(
         ),
       ),
       ...ActionTable.checkScreenColumns(contexts.ShopWork, SCREEN_LABELS),
+      ...ActionTable.checkStoredCells(contexts.ShopWork, dataModels[0].source),
       ...ActionTable.checkContexts(barrel, contextSources),
       ...ActionTable.checkOrderIssues(
         contexts.ShopWork,
@@ -202,7 +203,7 @@ const checkCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Parse the action tables in domain/ShopWork.ts, check the vocabulary in Domain.ts and domain/, check the triggers table on ShopUsage in domain/Billing.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts, and check the copy and controls tables in Screen.ts; exit 1 on any failure",
+    "Parse the action tables in domain/ShopWork.ts, check the vocabulary in Domain.ts and domain/ and its stored cells against the DDL in ShopAgentSchema.ts, check the triggers table on ShopUsage in domain/Billing.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts, and check the copy and controls tables in Screen.ts; exit 1 on any failure",
   ),
 );
 

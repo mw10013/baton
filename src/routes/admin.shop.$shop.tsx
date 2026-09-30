@@ -349,7 +349,7 @@ function FoundShop({
             />
             <Field
               label="Members high-water"
-              value={formatNumber(usage.membersHighWater)}
+              value={formatNumber(usage.seatsThisCycle)}
             />
             {/* One decimal, not a rounded integer: a healthy shop sits well
                 under a megabyte, and "0 MB" reads as "not measured". */}

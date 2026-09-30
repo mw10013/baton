@@ -50,7 +50,7 @@ export const ShopUsageRow = Schema.Struct({
   ordersLimitedAt: Schema.NullOr(Schema.Number),
   openRunsLimitedAt: Schema.NullOr(Schema.Number),
   lastSweepAt: Schema.NullOr(Schema.Number),
-  membersHighWater: Schema.Number,
+  seatsThisCycle: Schema.Number,
   lastReconciledOrders: Schema.NullOr(Schema.Number),
   lastReconciledMembers: Schema.NullOr(Schema.Number),
   pendingUsageEvents: Schema.Number,
@@ -71,7 +71,7 @@ const ShopUsageCycle = Schema.Struct({
   cycleStartAt: Schema.NullOr(Schema.Number),
   cycleEndAt: Schema.NullOr(Schema.Number),
   ordersThisCycle: Schema.Number,
-  membersHighWater: Schema.Number,
+  seatsThisCycle: Schema.Number,
 });
 
 /**
@@ -149,7 +149,7 @@ const json = (value: unknown) => JSON.stringify(value);
  * proves that by matching terms, not by reasoning about them. The run
  * fragments are correlated to the outer `ShopOrder` row and served by
  * `Run_orderId_idx`. A closed run still holds its item
- * (`Domain.RunStatus`): it is in `RUN_FOR_ITEM`, so an item whose run closed
+ * (`Domain.RunState`): it is in `RUN_FOR_ITEM`, so an item whose run closed
  * is not "Needs a workflow" (a closed run is a decided item), and it is in
  * no position fragment
  * but `not_started`'s, which asks for no open and no done run.
@@ -163,16 +163,16 @@ const OPEN = "fulfillmentStatus <> 'FULFILLED' and cancelledAt is null";
 const openAs = (alias: string) =>
   `${alias}.fulfillmentStatus <> 'FULFILLED' and ${alias}.cancelledAt is null`;
 const OPEN_RUN = `select 1 from Run r
-  where r.orderId = ShopOrder.id and r.status = 'open'`;
+  where r.orderId = ShopOrder.id and r.state = 'open'`;
 const DONE_RUN = `select 1 from Run r
-  where r.orderId = ShopOrder.id and r.status = 'done'`;
+  where r.orderId = ShopOrder.id and r.state = 'done'`;
 /** The `blocked` {@link Domain.OrderIssue}: an open run a worker or the merchant blocked. */
 const BLOCKED_RUN = `select 1 from Run r
-  where r.orderId = ShopOrder.id and r.status = 'open'
+  where r.orderId = ShopOrder.id and r.state = 'open'
     and r.blockedAt is not null`;
 /**
  * `Domain.ambiguousItems` in SQL: an item with units still to make, two or
- * more workflows matched at the last reconcile, and no run of any status.
+ * more workflows matched at the last reconcile, and no run in any state.
  * Change workflow away and back reads correctly with no further reconcile —
  * which is the point of deriving the issue rather than storing it.
  *
@@ -668,7 +668,7 @@ export class OrderRepository extends Context.Service<
       );
 
       const readCycle = () =>
-        sql`select shopGid, cycleStartAt, cycleEndAt, ordersThisCycle, membersHighWater from ShopUsage where id = 1`.pipe(
+        sql`select shopGid, cycleStartAt, cycleEndAt, ordersThisCycle, seatsThisCycle from ShopUsage where id = 1`.pipe(
           Effect.flatMap(decodeCycle),
         );
 
@@ -725,14 +725,14 @@ export class OrderRepository extends Context.Service<
           yield* sql`
             update ShopUsage
             set cycleStartAt = ${cycleStartAt}, ordersThisCycle = 0, ordersLimitedAt = null,
-                membersHighWater = 0
+                seatsThisCycle = 0
             where id = 1
           `;
           return {
             shopGid: stored.shopGid,
             cycleStartAt,
             ordersThisCycle: 0,
-            membersHighWater: 0,
+            seatsThisCycle: 0,
           };
         }
         if (stored.cycleEndAt !== null && now >= stored.cycleEndAt) {
@@ -746,14 +746,14 @@ export class OrderRepository extends Context.Service<
             update ShopUsage
             set cycleStartAt = cycleEndAt, cycleEndAt = null,
                 ordersThisCycle = ${count}, ordersLimitedAt = null,
-                membersHighWater = 0
+                seatsThisCycle = 0
             where id = 1
           `;
           return {
             shopGid: stored.shopGid,
             cycleStartAt: stored.cycleEndAt,
             ordersThisCycle: count,
-            membersHighWater: 0,
+            seatsThisCycle: 0,
           };
         }
         return { ...stored, cycleStartAt: stored.cycleStartAt };
@@ -796,7 +796,7 @@ export class OrderRepository extends Context.Service<
         }) {
           const value = Domain.seatEventValue(input.size, input.highWater);
           if (value === 0) return 0;
-          yield* sql`update ShopUsage set membersHighWater = ${input.size} where id = 1`;
+          yield* sql`update ShopUsage set seatsThisCycle = ${input.size} where id = 1`;
           yield* queueUsageEvent({
             idempotencyKey: seatKey(input.cycleStartAt, input.size),
             eventHandle: Domain.USAGE_METER_MEMBER,
@@ -846,7 +846,7 @@ export class OrderRepository extends Context.Service<
         const [usage] = yield* decodeUsage(
           yield* sql`
             select cycleStartAt, cycleEndAt, ordersThisCycle, ordersLimitedAt,
-                   openRunsLimitedAt, lastSweepAt, membersHighWater,
+                   openRunsLimitedAt, lastSweepAt, seatsThisCycle,
                    lastReconciledOrders, lastReconciledMembers,
                    (select count(*) from UsageEvent
                     where cycleStartAt is null or occurredAt >= cycleStartAt) as pendingUsageEvents,
@@ -1015,7 +1015,7 @@ export class OrderRepository extends Context.Service<
               : sql`(${sql.in("s.teamId", emptyIds)} and ${sql.literal(CurrentWhere.currentWhere("s"))})`;
           const runWithTask = (task: typeof unassigned) => sql`exists (
             select 1 from Run r
-            where r.orderId = ShopOrder.id and r.status = 'open'
+            where r.orderId = ShopOrder.id and r.state = 'open'
               and exists (
                 select 1 from RunTask s
                 where s.runId = r.id and s.doneAt is null and ${task}
@@ -1038,7 +1038,7 @@ export class OrderRepository extends Context.Service<
                   select 1 from Run wr
                   join RunTask s on s.runId = wr.id
                   where wr.orderId = ShopOrder.id
-                    and wr.status = 'open'
+                    and wr.state = 'open'
                     and wr.blockedAt is null
                     and s.teamId = ${team}
                     and ${sql.literal(CurrentWhere.currentWhere("s"))}
@@ -1161,9 +1161,9 @@ export class OrderRepository extends Context.Service<
               : yield* sql`
                   select
                     orderId,
-                    sum(status = 'open') as open,
-                    sum(status = 'done') as done,
-                    sum(blockedAt is not null and status = 'open') as blocked
+                    sum(state = 'open') as open,
+                    sum(state = 'done') as done,
+                    sum(blockedAt is not null and state = 'open') as blocked
                   from Run
                   where ${sql.in("orderId", ids)}
                   group by orderId
@@ -1219,7 +1219,7 @@ export class OrderRepository extends Context.Service<
                   join ShopOrder o on o.id = wr.orderId
                   where ${sql.in("wr.orderId", ids)}
                     and ${sql.literal(openAs("o"))}
-                    and wr.status = 'open'
+                    and wr.state = 'open'
                     and wr.blockedAt is null
                     and ${sql.in("s.teamId", liveIds)}
                     and ${sql.literal(CurrentWhere.currentWhere("s"))}
@@ -1294,7 +1294,7 @@ export class OrderRepository extends Context.Service<
            * `run_summary` is a `cross join`, which SQLite reads as "keep this
            * table order" (https://www.sqlite.org/optoverview.html#crossjoin):
            * with no `sqlite_stat1` the planner otherwise drives from
-           * `Run_status_idx` and reads every run the retention window
+           * `Run_state_idx` and reads every run the retention window
            * keeps, closed orders included. Driven from `ShopOrder_open_idx`
            * through `Run_orderId_idx`, the read is the open orders'
            * runs only. The `ShopOrder` columns are qualified for the reason
@@ -1303,9 +1303,9 @@ export class OrderRepository extends Context.Service<
           const [countRow] = yield* sql`
               with run_summary as (
                 select r.orderId,
-                  sum(r.status = 'open') as openRuns,
-                  sum(r.status = 'done') as doneRuns,
-                  sum(r.status = 'open' and r.blockedAt is not null) as blockedRuns
+                  sum(r.state = 'open') as openRuns,
+                  sum(r.state = 'done') as doneRuns,
+                  sum(r.state = 'open' and r.blockedAt is not null) as blockedRuns
                 from ShopOrder o
                 cross join Run r on r.orderId = o.id
                 where ${sql.literal(openAs("o"))}
@@ -1455,7 +1455,7 @@ export class OrderRepository extends Context.Service<
                 if (!changed) {
                   yield* raiseSeatMark({
                     cycleStartAt: input.cycleStartAt,
-                    highWater: stored?.membersHighWater ?? 0,
+                    highWater: stored?.seatsThisCycle ?? 0,
                     size: input.memberCount,
                     occurredAt: now,
                   });
@@ -1499,7 +1499,7 @@ export class OrderRepository extends Context.Service<
                   where eventHandle = ${Domain.USAGE_METER_MEMBER}
                     and occurredAt >= ${input.cycleStartAt}
                 `;
-                yield* sql`update ShopUsage set membersHighWater = 0 where id = 1`;
+                yield* sql`update ShopUsage set seatsThisCycle = 0 where id = 1`;
                 yield* raiseSeatMark({
                   cycleStartAt: input.cycleStartAt,
                   highWater: 0,
@@ -1518,7 +1518,7 @@ export class OrderRepository extends Context.Service<
                 const cycle = yield* currentCycle(now);
                 return yield* raiseSeatMark({
                   cycleStartAt: cycle.cycleStartAt,
-                  highWater: cycle.membersHighWater,
+                  highWater: cycle.seatsThisCycle,
                   size: input.size,
                   occurredAt: now,
                 });

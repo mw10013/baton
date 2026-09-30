@@ -45,12 +45,24 @@
  * line, and a line of plain words inside an element, with `{...}`
  * expressions blanked first. Comments are skipped, including block comments
  * that span lines. `run` is matched only as a word not joined to an
- * identifier or a path (`run-actions-`, `shop-runs`, `$runId`, `run.status`
+ * identifier or a path (`run-actions-`, `shop-runs`, `$runId`, `run.state`
  * are not copy); a sentence may end in "run." and is caught. A line holding
  * one bare word of JSX text is not read, because a lone identifier on its
  * own line looks the same.
  */
 import { vocabularyTables } from "./spec.ts";
+
+/**
+ * An inline state, status, flag or admin role comparison: a line outside
+ * `src/lib/Domain.ts` and `src/lib/domain/` that matches one needs a
+ * `Domain` predicate instead. `state` is Baton's word and `status` is
+ * Shopify's (the entry test on the vocabulary in `src/lib/Domain.ts`), and
+ * both are read through predicates.
+ */
+export const INLINE_COMPARISONS: readonly RegExp[] = [
+  /\.(?:status|state|flag) (?:===|!==) "/u,
+  /\.role (?:===|!==) "admin"/u,
+];
 
 export const RETIRED: readonly RegExp[] = [
   /(?<![-_/.$\w])runs?\b(?![-_/$]|\.\w)/iu,

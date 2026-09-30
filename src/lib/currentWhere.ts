@@ -6,16 +6,16 @@
  * `exists` and stops at its first row. One definition, interpolated as a
  * literal with the outer alias, so the workflows list and every action agree.
  *
- * **It does not test the run's status.** `Domain.currentTasks` returns nothing
+ * **It does not test the run's state.** `Domain.currentTasks` returns nothing
  * on a run that is not open ({@link Domain.runIsOpen}); this predicate reads
  * the task's own run's tasks and nothing else, so on a closed run it still
  * matches the open tasks the run keeps as its record. Every caller supplies
  * the run test: `RunRepository.listRuns` and `OrderRepository`'s waiting-on
- * column and team filter join `Run` with `status = 'open'`, the task guards
+ * column and team filter join `Run` with `state = 'open'`, the task guards
  * check {@link Domain.runIsOpen} in `requireActionable` before they ask, and
  * `getRunPage` reads it only for an open run. Block's team gate
  * (`requireCurrentTeam`) runs inside writes that refuse a run that is not
- * open. A new caller adds the run test or reads the wrong tasks. The status
+ * open. A new caller adds the run test or reads the wrong tasks. The state
  * stays out of the predicate because every caller already joins or holds the
  * run, and a second `Run` lookup per task row would be paid on the workflows list's
  * hottest query.

@@ -1433,8 +1433,8 @@ test("the workflow page shows the task history and takes a note, a block, and Do
 });
 
 /**
- * A Shopify event never creates a to-do (`Domain.RunStatus`): a run the order's
- * fulfilment or cancel closed leaves Started by you, Started by others, Ready and Blocked by its status,
+ * A Shopify event never creates a to-do (`Domain.RunState`): a run the order's
+ * fulfilment or cancel closed leaves Started by you, Started by others, Ready and Blocked by its state,
  * and Done or closed says why, with no verb on the row.
  */
 test("closed runs leave Started by you, Started by others, Ready and Blocked and show on Done or closed with their reason", async ({

@@ -115,34 +115,31 @@ const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
 });
 
 /**
- * Merchant words, not `Run.status`. An open run nobody has touched
+ * Merchant words, not `Run.state`. An open run nobody has touched
  * ({@link Domain.runIsUnstarted}) reads {@link Domain.RUN_UNSTARTED_LABEL}, not
  * {@link Domain.RUN_STATE_LABEL}'s `open`:
  * the merchant is asking whether the bench has picked it up yet, and the
- * stored status cannot say, since a run is `open` from creation. Closed is
+ * stored state cannot say, since a run is `open` from creation. Closed is
  * neutral, not red: the work ended and nothing waits on anyone
- * ({@link Domain.RunStatus}); red stays for a hold. The reason is the line
+ * ({@link Domain.RunState}); red stays for a hold. The reason is the line
  * under it ({@link ClosedLine}), not a badge of its own.
  */
-const RUN_STATUS_BADGE = {
+const RUN_STATE_BADGE = {
   open: { label: Domain.RUN_STATE_LABEL.open, tone: "info" },
   done: { label: Domain.RUN_STATE_LABEL.done, tone: "success" },
   closed: { label: Domain.RUN_STATE_LABEL.closed, tone: "neutral" },
-} as const satisfies Record<Domain.RunStatus, { label: string; tone: string }>;
+} as const satisfies Record<Domain.RunState, { label: string; tone: string }>;
 
-/** {@link RUN_STATUS_BADGE}'s open run before any task is started or done. */
+/** {@link RUN_STATE_BADGE}'s open run before any task is started or done. */
 const NOT_STARTED_BADGE = {
   label: Domain.RUN_UNSTARTED_LABEL,
   tone: "neutral",
 } as const;
 
-const runStatusBadge = (
-  run: Domain.Run,
-  tasks: readonly Domain.RunTaskRow[],
-) =>
+const runStateBadge = (run: Domain.Run, tasks: readonly Domain.RunTaskRow[]) =>
   Domain.runIsOpen(run) && Domain.runIsUnstarted(tasks)
     ? NOT_STARTED_BADGE
-    : RUN_STATUS_BADGE[run.status];
+    : RUN_STATE_BADGE[run.state];
 
 /** The one modal that both asks and confirms: the select and, on a touched run, the warning. */
 const CHANGE_WORKFLOW_MODAL = "change-workflow";
@@ -513,7 +510,7 @@ function RouteComponent() {
         });
         setChanging(null);
         hideModal(CHANGE_WORKFLOW_MODAL);
-        /* The replaced run is deleted (`Domain.RunStatus`), and the modal
+        /* The replaced run is deleted (`Domain.RunState`), and the modal
            already named what it cost, so the toast says only where the item
            is now. An attach over nothing, or over a closed run, is a fresh
            run: "Attached", never "resumed". */
@@ -776,7 +773,7 @@ function RouteComponent() {
    * the workflow, because the card does not; then the run-level actions —
    * Block, Cancel workflow, Change workflow — in one row under a rule. Every
    * intervention lives here and nowhere else, so the card above stays a
-   * read-only glance: item, status, where the run is, and its team issues.
+   * read-only glance: item, state, where the run is, and its team issues.
    *
    * No action here is primary — not `Done`, not `Block`. Every write on
    * this page is a merchant reaching past a worker — the bench claims and
@@ -964,7 +961,7 @@ function RouteComponent() {
   };
 
   /**
-   * A run's badges: its status, Blocked while {@link Domain.runIsBlocked},
+   * A run's badges: its state, Blocked while {@link Domain.runIsBlocked},
    * and, after a Shopify quantity change, the {@link QuantityBadge}; no
    * buttons. They end the card's facts line, under the title, because the
    * badge is the item's state at a glance and belongs next to the item it
@@ -975,8 +972,8 @@ function RouteComponent() {
    */
   const runBadges = (run: Domain.Run, tasks: readonly Domain.RunTaskRow[]) => (
     <>
-      <s-badge tone={runStatusBadge(run, tasks).tone}>
-        {runStatusBadge(run, tasks).label}
+      <s-badge tone={runStateBadge(run, tasks).tone}>
+        {runStateBadge(run, tasks).label}
       </s-badge>
       {Domain.runIsBlocked(run) && (
         <s-badge tone="critical">{Domain.RUN_STATE_LABEL.blocked}</s-badge>
@@ -1018,7 +1015,7 @@ function RouteComponent() {
    * every test addresses by its visible word, for a state a screen reader
    * then hears as part of the name rather than as a state.
    *
-   * The card is headed by the item, and the run line is the status badge
+   * The card is headed by the item, and the run line is the state badge
    * and where the run is. The workflow's name is the Manage drawer's header
    * (`manageRows`): the merchant who wants it is the one who opened Manage,
    * and on a shop whose workflows are named after products the card would
@@ -1472,7 +1469,7 @@ function RouteComponent() {
         </s-button>
       </s-modal>
 
-      {/* Cancel workflow closes the run (`Domain.RunStatus`) and there is no
+      {/* Cancel workflow closes the run (`Domain.RunState`) and there is no
           undo after it, so the question is asked here, naming the workflow
           and the item, and says what happens to the work
           ({@link CANCEL_WARNING}). The dismiss reads Keep workflow, not the

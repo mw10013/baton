@@ -13,7 +13,7 @@
  * | trial            | the days before an app subscription's first billing cycle; nothing is billed | `AppSubscription` field `cycleStartAt` null     | (none)                         |
  * | meter            | a counter Shopify keeps per app subscription                                 | `USAGE_METER_ORDER`, `USAGE_METER_MEMBER`       | (none)                         |
  * | counted order    | an order Baton created a run for; one unit, once                             | `ShopOrder` field `countedAt`                   | "Orders this billing cycle"    |
- * | seat             | one unit of the members meter; a cycle's seats are its highest member count  | `ShopUsage` field `membersHighWater`            | (none): members                |
+ * | seat             | one unit of the members meter; a cycle's seats are its highest member count  | `ShopUsage` field `seatsThisCycle`              | (none): members                |
  * | included         | a plan's $0.00 first tier on a meter: a paid allowance, not a "free tier"    | `Entitlements`                                  | included                       |
  * | usage event      | one report of units to Shopify, queued until Shopify accepts it              | `UsageEvent`                                    | (none)                         |
  * | expired event    | a usage event dated before the current billing cycle; never sent             | `usageEventIsExpired`                              | (none)                         |
@@ -195,7 +195,7 @@ export type AppSubscription = typeof AppSubscription.Type;
  *
  * What each trigger does to the order count ({@link
  * ShopUsage.ordersThisCycle}), the seat mark ({@link
- * ShopUsage.membersHighWater}) and the usage-event queue ({@link UsageEvent}).
+ * ShopUsage.seatsThisCycle}) and the usage-event queue ({@link UsageEvent}).
  * `—` is unchanged; `recounted` is the orders whose `countedAt` is at or after
  * the new cycle's start; "then sent" is a flush after the write commits:
  * every path that creates a run sends the queue, and a cycle push is sent by
@@ -276,7 +276,7 @@ export const ShopUsage = Schema.Struct({
    * defines it. Everything sent to {@link USAGE_METER_MEMBER} this cycle sums
    * to this number once the queue drains.
    */
-  membersHighWater: Schema.Number,
+  seatsThisCycle: Schema.Number,
   /**
    * Shopify's own {@link USAGE_METER_ORDER} reading at the last revalidation;
    * null until one has reported it. Diagnostic only — nothing is corrected

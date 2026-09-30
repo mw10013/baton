@@ -369,7 +369,7 @@ const isWorkflowInstanceNotFoundError = (cause: unknown) =>
  * **A tracking row disables Import open orders only while it is fresh**
  * ({@link importRowIsFresh}). The orders index reads a stale row as no import,
  * so the button comes back, and the click asks Cloudflare
- * ({@link ShopAgent.syncOrders}): a live instance answers `in_flight`, a gone
+ * ({@link ShopAgent.syncOrders}): a live instance answers `InFlight`, a gone
  * one has its row cleared and a new import starts. Were a stale row to keep
  * the button disabled, the click that clears it could never happen, and one
  * dead instance would disable the button for good.
@@ -868,7 +868,7 @@ export class ShopAgent extends Agent {
           yield* Effect.logInfo(
             `ShopAgent.syncOrders: shop=${shop} status=in-flight`,
           ).pipe(Effect.annotateLogs({ shop, status: "in-flight" }));
-          return { status: "in_flight" } satisfies Domain.OrdersSyncResult;
+          return { _tag: "InFlight" } satisfies Domain.OrdersSyncResult;
         }
         /**
          * The order ceiling: an import that would be refused order by order
@@ -894,7 +894,7 @@ export class ShopAgent extends Agent {
           });
           yield* repository.markOrdersLimited(now);
           yield* publish();
-          return { status: "refused" } satisfies Domain.OrdersSyncResult;
+          return { _tag: "Refused" } satisfies Domain.OrdersSyncResult;
         }
         yield* repository.clearSyncError();
         const workflowId = yield* Effect.acquireUseRelease(
@@ -906,7 +906,7 @@ export class ShopAgent extends Agent {
           `ShopAgent.syncOrders: shop=${shop} status=started workflowId=${workflowId}`,
         ).pipe(Effect.annotateLogs({ shop, status: "started", workflowId }));
         yield* publish();
-        return { status: "started" } satisfies Domain.OrdersSyncResult;
+        return { _tag: "Started" } satisfies Domain.OrdersSyncResult;
       }).pipe(Effect.withLogSpan("ShopAgent.syncOrders")),
     );
   }

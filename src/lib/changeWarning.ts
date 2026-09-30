@@ -52,7 +52,7 @@ export const cancelHeading = (workflow: Domain.WorkflowName, item: string) =>
  * The Cancel workflow modal's body. Cancel workflow closes the run
  * (`merchant_cancelled`, `Domain.ClosedReason`): work on it stops, the steps
  * already done stay on the run as the record, and nothing starts on the item
- * until the merchant chooses a workflow (`Domain.RunStatus`). There is no way
+ * until the merchant chooses a workflow (`Domain.RunState`). There is no way
  * back, so this is the guard against a mistaken cancel. The heading
  * ({@link cancelHeading}) names what is cancelled, so the body does not.
  */

@@ -1,4 +1,4 @@
-import type { OrderState, RunStatus } from "../../src/lib/Domain.ts";
+import type { OrderState, RunState } from "../../src/lib/Domain.ts";
 
 /**
  * Reads the action matrices out of the JSDoc on `runActions` and
@@ -89,7 +89,7 @@ const ORDERS: Record<typeof OrderWord.Type, readonly OrderState[]> = {
     { cancelledAt: null, fulfillmentStatus: "FULFILLED" },
   ],
 };
-const RUNS: Record<typeof RunWord.Type, readonly RunStatus[]> = {
+const RUNS: Record<typeof RunWord.Type, readonly RunState[]> = {
   open: ["open"],
   done: ["done"],
   closed: ["closed"],
@@ -122,7 +122,7 @@ const TASKS: Record<typeof TaskWord.Type, readonly TaskState[]> = {
 export interface Fixture<TeamId, Blocker> {
   readonly order: OrderState;
   readonly run: {
-    readonly status: RunStatus;
+    readonly state: RunState;
     readonly blockedAt: number | null;
   };
   readonly task: TaskState & {
@@ -141,9 +141,9 @@ export interface Fixture<TeamId, Blocker> {
  * | ---------- | ------------ | ------------------------------------------------------------------------------------ |
  * | order      | open         | `{ cancelledAt: null, fulfillmentStatus: "UNFULFILLED" }`                            |
  * | order      | closed       | cancelled `{ cancelledAt: 1, ... "UNFULFILLED" }`; fulfilled `{ null, "FULFILLED" }` |
- * | run        | open         | status `open`                                                                        |
- * | run        | done         | status `done`                                                                        |
- * | run        | closed       | status `closed`                                                                      |
+ * | run        | open         | state `open`                                                                         |
+ * | run        | done         | state `done`                                                                         |
+ * | run        | closed       | state `closed`                                                                       |
  * | run        | open or done | `open`; `done`                                                                       |
  * | blocked    | yes / no     | `blockedAt` 1 / null                                                                 |
  * | blocked    | any          | both on an open run; null on a done run                                              |
@@ -175,12 +175,12 @@ export const expand = <TeamId, Blocker>(
   const word = <K extends keyof typeof WORDS>(column: K) =>
     Schema.decodeUnknownSync(WORDS[column])(row.state[column]);
   const states = ORDERS[word("order")].flatMap((order) =>
-    RUNS[word("run")].flatMap((status) =>
+    RUNS[word("run")].flatMap((state) =>
       BLOCKED[word("blocked")]
-        .filter((blockedAt) => blockedAt === null || status === "open")
+        .filter((blockedAt) => blockedAt === null || state === "open")
         .map((blockedAt) => ({
           order,
-          run: { status, blockedAt },
+          run: { state, blockedAt },
         })),
     ),
   );
@@ -193,7 +193,7 @@ export const expand = <TeamId, Blocker>(
           teamId: context.teamId,
           // `Domain.runIsOpen`, spelled out: this module imports `Domain`
           // for types only, so the CLI runs without the app's runtime.
-          current: run.status === "open",
+          current: run.state === "open",
           startedAt: null,
           doneAt: null,
           reopenBlockedBy: null,
@@ -434,7 +434,7 @@ export const checkVocabulary = (
   const block = source.slice(start, end).replace(SHAPE_FAMILIES_BLOCK, "");
   const rest = [source.slice(0, start) + source.slice(end), ...others];
   const qualified = [
-    ...block.matchAll(/`(?<word>[^`]+)` in (?<context>[A-Z][a-z]+)\b/gu),
+    ...block.matchAll(/`(?<word>[^`]+)` in (?<context>[A-Z][A-Za-z]+)\b/gu),
   ]
     .map((match) => ({
       word: match.groups?.word ?? "",
@@ -445,7 +445,7 @@ export const checkVocabulary = (
     [
       ...block
         .replaceAll(
-          /`[^`]+` in (?<context>[A-Z][a-z]+)\b/gu,
+          /`[^`]+` in (?<context>[A-Z][A-Za-z]+)\b/gu,
           (text, context) => (context in contexts ? "" : text),
         )
         .matchAll(/`(?<word>[^`]+)`/gu),
@@ -614,6 +614,120 @@ export const checkScreenColumns = (
     ...compare("Order issues", "Order issues", screen(labels.orderIssues)),
     ...compare("Verbs", "Verbs", labels.verbs),
   ];
+};
+
+/** One table of the object's DDL: its column names and the literals of its `check (<column> in (...))` constraints. */
+export interface DdlTable {
+  readonly columns: ReadonlySet<string>;
+  readonly literals: ReadonlySet<string>;
+}
+
+/**
+ * The object's tables, read from the SQL in `initializeSchema`
+ * (`src/lib/ShopAgentSchema.ts`), by name. A regex over the text, because the
+ * DDL is one hand-written template: a table's body runs from
+ * `create table if not exists <name> (` to the first `);` at the start of a
+ * line; a body line whose first word is followed by `text`, `integer` or
+ * `real` is a column; `--` comment lines, table-level `check` and `unique`,
+ * and index statements are not.
+ */
+export const ddlColumns = (source: string): ReadonlyMap<string, DdlTable> =>
+  new Map(
+    [
+      ...source.matchAll(
+        /create table if not exists (?<name>\w+) \((?<body>[\s\S]*?)\n\s*\);/gu,
+      ),
+    ].map((match) => {
+      const body = match.groups?.body ?? "";
+      const lines = body
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => !line.startsWith("--"));
+      const columns = lines.flatMap((line) => {
+        const column = /^(?<column>[A-Za-z_]\w*) (?:text|integer|real)\b/u.exec(
+          line,
+        )?.groups?.column;
+        return column === undefined ? [] : [column];
+      });
+      const literals = [
+        ...body.matchAll(/check \(\w+ in \((?<list>[^)]*)\)\)/gu),
+      ].flatMap((each) =>
+        [...(each.groups?.list ?? "").matchAll(/'(?<literal>[^']*)'/gu)].map(
+          (literal) => literal.groups?.literal ?? "",
+        ),
+      );
+      return [
+        match.groups?.name ?? "",
+        { columns: new Set(columns), literals: new Set(literals) },
+      ] as const;
+    }),
+  );
+
+/** The trailing clause a task-state `stored` cell may carry: the `current` flag, which is computed, not a column. */
+const CURRENT_CLAUSE = /^(?:not )?current$/u;
+
+/**
+ * **The vocabulary's stored column is a column or literal of
+ * initializeSchema.** For every vocabulary table in `context` with a `stored`
+ * header, each cell is a comma-separated list of the forms the map names
+ * (the entry test in `Domain.ts`): a backticked literal, or a backticked
+ * column followed by `set` or `null`, with an optional trailing
+ * `; current` or `; not current`. A literal must be in some
+ * `check (<column> in (...))` of `ddl`; a column must be in some table of
+ * `ddl`. The column's table is not checked against the row's noun: the
+ * vocabulary table names no table, and inferring one would be a guess.
+ * Reports each bad form, unknown literal and unknown column.
+ */
+export const checkStoredCells = (
+  context: string,
+  ddl: string,
+): readonly string[] => {
+  const tables = [...ddlColumns(ddl).values()];
+  const hasLiteral = (literal: string) =>
+    tables.some((table) => table.literals.has(literal));
+  const hasColumn = (column: string) =>
+    tables.some((table) => table.columns.has(column));
+  return vocabularyTables(context)
+    .filter((table) => table.rows.some((row) => "stored" in row))
+    .flatMap((table) => {
+      const name = table.intro.split(/[,.:]/u)[0] ?? table.intro;
+      return table.rows.flatMap((row) => {
+        const word = row.word ?? "";
+        const cell = row.stored ?? "";
+        const where = `ShopWork.ts, ${name}, ${word}`;
+        const clauses = cell.split(";").map((part) => part.trim());
+        const last = clauses.at(-1) ?? "";
+        const forms =
+          clauses.length > 1 && CURRENT_CLAUSE.test(last)
+            ? clauses.slice(0, -1)
+            : clauses;
+        if (forms.length !== 1)
+          return [
+            `${where}: stored cell "${cell}" is not a literal, \`<column>\` set or \`<column>\` null`,
+          ];
+        return (forms[0] ?? "").split(",").flatMap((part) => {
+          const form = part.trim();
+          const literal = /^`(?<literal>[^`]+)`$/u.exec(form)?.groups?.literal;
+          if (literal !== undefined)
+            return hasLiteral(literal)
+              ? []
+              : [
+                  `${where}: stored literal \`${literal}\` is in no check constraint of initializeSchema`,
+                ];
+          const column = /^`(?<column>[^`]+)` (?:set|null)$/u.exec(form)?.groups
+            ?.column;
+          if (column !== undefined)
+            return hasColumn(column)
+              ? []
+              : [
+                  `${where}: stored column \`${column}\` is in no table of initializeSchema`,
+                ];
+          return [
+            `${where}: stored cell "${cell}" is not a literal, \`<column>\` set or \`<column>\` null`,
+          ];
+        });
+      });
+    });
 };
 
 /**

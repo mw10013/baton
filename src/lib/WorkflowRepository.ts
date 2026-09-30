@@ -505,7 +505,7 @@ export class WorkflowRepository extends Context.Service<
     /**
      * The object-side half of a team delete: every workflow task, draft task
      * and run task that points at `teamId` becomes unassigned, in one
-     * transaction, done or not and whatever the run's status. A run task
+     * transaction, done or not and whatever the run's state. A run task
      * keeps its `teamName` snapshot, which is all history reads; the pointer
      * on a done or closed task had no reader once the team was gone, because
      * every team-scoped list takes its team ids from D1 (the data model on
@@ -1722,7 +1722,7 @@ export class WorkflowRepository extends Context.Service<
                   from RunTask s
                   join Run r on r.id = s.runId
                   where s.teamId is not null and s.doneAt is null
-                    and r.status = 'open'
+                    and r.state = 'open'
                 )
                 group by teamId
                 order by teamId

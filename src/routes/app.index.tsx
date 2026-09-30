@@ -143,7 +143,7 @@ function CapacityTile({
  * nobody reads on the bad one.
  *
  * The Members tile shows today's member count, not the seats billed this cycle
- * (`Domain.ShopUsage.membersHighWater`). The two differ only after a member
+ * (`Domain.ShopUsage.seatsThisCycle`). The two differ only after a member
  * is removed during the cycle: the member count drops and the seats do not. The
  * members are what the merchant manages from the tile, so it stays the number.
  */

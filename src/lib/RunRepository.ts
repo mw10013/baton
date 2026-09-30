@@ -25,13 +25,13 @@ export class RunNotFoundError extends Schema.TaggedError<RunNotFoundError>()(
 ) {}
 
 /**
- * The run's status refuses the write. Start, Done, Put back, Block, Unblock,
+ * The run's state refuses the write. Start, Done, Put back, Block, Unblock,
  * Cancel and team assignment need `Domain.runIsOpen`; Reopen refuses a
- * closed run. The table on {@link Domain.RunStatus} is the rule.
+ * closed run. The table on {@link Domain.RunState} is the rule.
  */
 export class RunTerminalError extends Schema.TaggedError<RunTerminalError>()(
   "RunTerminalError",
-  { runId: Schema.String, status: Domain.RunStatus },
+  { runId: Schema.String, state: Domain.RunState },
 ) {}
 
 /**
@@ -322,7 +322,7 @@ export class RunRepository extends Context.Service<
      *
      * A workflow the item ran before, the closed one included, starts fresh
      * from its definition. Nothing of the earlier run is resumed: closed is
-     * final ({@link Domain.RunStatus}). The merchant confirmed the loss in
+     * final ({@link Domain.RunState}). The merchant confirmed the loss in
      * the Change workflow modal, or chose a new workflow for an item whose
      * run had already ended.
      *
@@ -377,7 +377,7 @@ export class RunRepository extends Context.Service<
      * ({@link Domain.ClosedReason}), in one transaction. The tasks stay as the
      * record of who did what, the note stays, and the block and the quantity
      * badge are cleared with the rest of the run's open state. The row keeps
-     * its item, one run per item, so reconcile creates nothing on it ({@link Domain.RunStatus}).
+     * its item, one run per item, so reconcile creates nothing on it ({@link Domain.RunState}).
      * Gate: {@link Domain.runIsOpen} and the order open
      * ({@link Domain.orderIsOpen}); a `done` run is not cancelled, it is
      * reopened.
@@ -404,7 +404,7 @@ export class RunRepository extends Context.Service<
      * and cut to `query.limit`. `view: "done"` returns no items at all and the
      * caller reads `listRecent` for that view's rows. Only open runs have
      * current tasks, so a closed or done run is never listed
-     * ({@link Domain.RunStatus}).
+     * ({@link Domain.RunState}).
      *
      * `teamCounts` and `total` are over all of `teamIds` whatever `query.team`
      * narrows to, so the team select does not move under the finger, while the
@@ -451,7 +451,7 @@ export class RunRepository extends Context.Service<
      * Reopen returns a task to Ready: it clears the Done columns (`doneAt`,
      * `doneBy*`) and every Start column, member or merchant, and writes the
      * `reopened*` columns (`reopenedAt` / `reopenedByRole` / `reopenedByEmail`)
-     * with who sent it back, then recomputes the run's status. The task is Ready for a worker
+     * with who sent it back, then recomputes the run's state. The task is Ready for a worker
      * to Start. Keeping a member's Start would leave the task "Started · A ·
      * since <original time>": a claim A no longer makes and a time that is
      * no longer true, and it would take Undo then Put back to reach Ready
@@ -461,7 +461,7 @@ export class RunRepository extends Context.Service<
      * (`TaskReopenBlockedError` otherwise, naming the blocker). Gate: not
      * {@link Domain.runIsClosed}, rather than `runIsOpen` — reopening a `done`
      * run's last task is the point, while a closed run is final; see
-     * {@link Domain.RunStatus}.
+     * {@link Domain.RunState}.
      */
     readonly reopenTask: (
       input: Domain.ReopenTaskCommand,
@@ -477,7 +477,7 @@ export class RunRepository extends Context.Service<
     >;
     /**
      * Put back clears the Start record of a started task, and the run's
-     * status is recomputed (a run whose only started task is put back is
+     * state is recomputed (a run whose only started task is put back is
      * {@link Domain.runIsUnstarted} again). Refused on a done task or an
      * unstarted task
      * (`TaskNotReadyError`), a run that is not {@link Domain.runIsOpen}
@@ -565,7 +565,7 @@ export class RunRepository extends Context.Service<
      * Writes the run's note; `null` clears it. No requirement that the run have a current task — a
      * note on a done run is allowed: a note is a record, not work, and the
      * thing noticed after the last Done is exactly what wants writing down,
-     * and a closed run keeps its record too; see {@link Domain.RunStatus}. A member
+     * and a closed run keeps its record too; see {@link Domain.RunState}. A member
      * needs to see the run ({@link Domain.runIsVisibleTo}), not to hold a
      * current task as Block does: a done run has none and would
      * refuse every member. Last write wins; see
@@ -583,7 +583,7 @@ export class RunRepository extends Context.Service<
     /**
      * Blocks the run ({@link Domain.runIsBlocked}): `blockedAt`, the optional
      * reason, and the actor as `blockedBy`. Allowed when a current
-     * task belongs to `teamIds`. Gate: {@link Domain.runIsOpen}; see {@link Domain.RunStatus}.
+     * task belongs to `teamIds`. Gate: {@link Domain.runIsOpen}; see {@link Domain.RunState}.
      */
     readonly blockRun: (
       input: Domain.BlockRunCommand,
@@ -785,7 +785,7 @@ export class RunRepository extends Context.Service<
 
       /**
        * The guard every task action shares: task exists, the run passes
-       * `gate` ({@link Domain.runIsOpen} for Start and Done; any status for
+       * `gate` ({@link Domain.runIsOpen} for Start and Done; any state for
        * reopen), task's team among the caller's.
        *
        * `teamIds` undefined means the merchant, and then the team clause is
@@ -807,7 +807,7 @@ export class RunRepository extends Context.Service<
           const task = yield* requireTask(runTaskId);
           const run = yield* requireRun(task.runId);
           if (!gate(run))
-            yield* new RunTerminalError({ runId: run.id, status: run.status });
+            yield* new RunTerminalError({ runId: run.id, state: run.state });
           if (teamIds !== undefined && !Domain.taskIsOnTeams(task, teamIds))
             yield* new RunNotAllowedError({
               runId: run.id,
@@ -925,7 +925,7 @@ export class RunRepository extends Context.Service<
           yield* sql`
               select s.* from RunTask s
               join Run r on r.id = s.runId
-              where r.status = 'open'
+              where r.state = 'open'
                 and ${currentWhere("s")}
                 and exists (
                   select 1 from RunTask m
@@ -1003,21 +1003,21 @@ export class RunRepository extends Context.Service<
         });
 
       /**
-       * `status` is a function of the tasks; recomputing it in SQL from the
+       * `state` is a function of the tasks; recomputing it in SQL from the
        * same rows the task write just touched is what keeps the two in one
-       * transaction with nothing to drift. Two statuses are derived: `done`
+       * transaction with nothing to drift. Two states are derived: `done`
        * when every task is done, `open` otherwise.
        *
        * Only ever called on an open run: every caller gates on
        * {@link Domain.runIsOpen}, or on not {@link Domain.runIsClosed} for
-       * reopen, so a closed run's status, which is written rather than derived,
+       * reopen, so a closed run's state, which is written rather than derived,
        * is never recomputed away.
        */
-      const recomputeStatus = (runId: string, now: number) =>
+      const recomputeState = (runId: string, now: number) =>
         Effect.andThen(
           sql`
           update Run set
-            status = (
+            state = (
               select case
                 when count(*) = sum(doneAt is not null) then 'done'
                 else 'open'
@@ -1033,7 +1033,7 @@ export class RunRepository extends Context.Service<
         );
 
       /**
-       * `Run_status_idx` serves this; the scan it costs is bounded by
+       * `Run_state_idx` serves this; the scan it costs is bounded by
        * the ceiling itself, which is the whole reason the ceiling exists. A
        * second maintained counter would be cheaper per insert and would have
        * to stay correct across cancel, reconcile and every task write — one
@@ -1041,8 +1041,8 @@ export class RunRepository extends Context.Service<
        */
       const openRunCount = Effect.fn("RunRepository.openRunCount")(
         function* () {
-          const rows =
-            yield* sql`select count(*) from Run where status = 'open'`.values;
+          const rows = yield* sql`select count(*) from Run where state = 'open'`
+            .values;
           return Number(rows[0]?.[0] ?? 0);
         },
       );
@@ -1069,7 +1069,7 @@ export class RunRepository extends Context.Service<
        * ({@link Domain.ClosedReason}), and returns how many. The one close
        * write, for reconcile and Cancel workflow alike. The tasks and the note
        * stay as the record; the block and the quantity badge go, because they
-       * are about work that has stopped ({@link Domain.RunStatus}). Closing
+       * are about work that has stopped ({@link Domain.RunState}). Closing
        * lowers the open-run count, so the ceiling banner is re-checked.
        */
       const closeOpenRuns = (
@@ -1079,10 +1079,10 @@ export class RunRepository extends Context.Service<
       ) =>
         sql`
           update Run
-          set status = 'closed', closedAt = ${now}, closedReason = ${reason},
+          set state = 'closed', closedAt = ${now}, closedReason = ${reason},
               blockedAt = null, blockReason = null, blockedBy = null,
               quantityChangedFrom = null, updatedAt = ${now}
-          where ${where} and status = 'open'
+          where ${where} and state = 'open'
           returning id
         `.pipe(
           Effect.tap(() => releaseOpenRunLimit()),
@@ -1117,7 +1117,7 @@ export class RunRepository extends Context.Service<
               insert into Run (
                 id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
                 lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
-                status, createdAt, updatedAt
+                state, createdAt, updatedAt
               ) values (
                 ${runId}, ${workflow.id}, ${workflow.name}, ${order.id},
                 ${order.name}, ${order.processedAt},
@@ -1171,7 +1171,7 @@ export class RunRepository extends Context.Service<
        * moment it pays.
        *
        * **Close, never flag.** A Shopify change is applied to the runs and
-       * waits on nobody ({@link Domain.RunStatus}): the order cancelled or
+       * waits on nobody ({@link Domain.RunState}): the order cancelled or
        * fulfilled closes every open run, a line at zero units closes its
        * open run, and a quantity change resizes an open run. A `done` run is
        * never touched, whatever the order does, because it is the record of
@@ -1249,7 +1249,7 @@ export class RunRepository extends Context.Service<
            * - two or more matches is an ambiguity, and picking for the
            *   merchant would route work to the wrong team silently, so
            *   nothing starts and the order page asks;
-           * - a run of any status, `done` and `closed` included, already owns
+           * - a run in any state, `done` and `closed` included, already owns
            *   the item, so a workflow turned on later never displaces it —
            *   which is the whole of the "existing runs win" rule, no extra
            *   code.
@@ -1592,7 +1592,7 @@ export class RunRepository extends Context.Service<
             Effect.gen(function* () {
               const run = yield* requireRun(runId);
               if (!Domain.runIsOpen(run))
-                yield* new RunTerminalError({ runId, status: run.status });
+                yield* new RunTerminalError({ runId, state: run.state });
               const order = (yield* orderStates([run.orderId])).get(
                 run.orderId,
               );
@@ -1700,7 +1700,7 @@ export class RunRepository extends Context.Service<
            * partial over `closed`. So each counts a day, not the table.
            */
           const closedWhere = sql`
-            r.status = 'closed' and r.closedAt >= ${since}
+            r.state = 'closed' and r.closedAt >= ${since}
               and exists (
                 select 1 from RunTask t
                 where t.runId = r.id
@@ -1822,7 +1822,7 @@ export class RunRepository extends Context.Service<
                       reopenedByEmail = ${by.email}
                   where id = ${runTaskId}
                 `;
-              yield* recomputeStatus(run.id, now);
+              yield* recomputeState(run.id, now);
             }),
           );
         }),
@@ -1853,7 +1853,7 @@ export class RunRepository extends Context.Service<
                     startedByRole = null
                 where id = ${runTaskId}
               `;
-              yield* recomputeStatus(run.id, now);
+              yield* recomputeState(run.id, now);
             }),
           );
         }),
@@ -1927,7 +1927,7 @@ export class RunRepository extends Context.Service<
                     startedByRole = coalesce(startedByRole, ${by.role})
                 where id = ${runTaskId}
               `;
-              yield* recomputeStatus(run.id, now);
+              yield* recomputeState(run.id, now);
             }),
           );
         }),
@@ -1961,7 +1961,7 @@ export class RunRepository extends Context.Service<
                   where id = ${runTaskId}
                 `;
               yield* sql`update Run set quantityChangedFrom = null where id = ${run.id}`;
-              yield* recomputeStatus(run.id, now);
+              yield* recomputeState(run.id, now);
             }),
           );
         }),
@@ -1994,7 +1994,7 @@ export class RunRepository extends Context.Service<
             Effect.gen(function* () {
               const run = yield* requireRun(runId);
               if (!Domain.runIsOpen(run))
-                yield* new RunTerminalError({ runId, status: run.status });
+                yield* new RunTerminalError({ runId, state: run.state });
               yield* requireCurrentTeam(runId, teamIds);
               const now = yield* Clock.currentTimeMillis;
               yield* sql`
@@ -2069,7 +2069,7 @@ export class RunRepository extends Context.Service<
             Effect.gen(function* () {
               const run = yield* requireRun(runId);
               if (!Domain.runIsOpen(run))
-                yield* new RunTerminalError({ runId, status: run.status });
+                yield* new RunTerminalError({ runId, state: run.state });
               if (!Domain.runIsBlocked(run))
                 yield* new RunNotBlockedError({ runId });
               yield* requireCurrentTeam(runId, teamIds);
@@ -2106,7 +2106,7 @@ export class RunRepository extends Context.Service<
                 if (!Domain.runIsOpen(run))
                   yield* new RunTerminalError({
                     runId: run.id,
-                    status: run.status,
+                    state: run.state,
                   });
                 const now = yield* Clock.currentTimeMillis;
                 yield* sql`

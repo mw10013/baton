@@ -19,7 +19,7 @@ import { causeToErrorMessage } from "@/lib/LayerEx";
  * and the write paths, then the pinned test. A failing pinned test says the
  * row and the code disagree, not which is wrong; the fix is to one of them,
  * never to the test. Behavioural rules (what a state permits) are not here;
- * they live on the `Domain` symbol that is the concept, `Domain.RunStatus`
+ * they live on the `Domain` symbol that is the concept, `Domain.RunState`
  * and the action matrices.
  *
  * Vocabulary, so the same fact is always said the same way: cardinality is
@@ -42,7 +42,7 @@ import { causeToErrorMessage } from "@/lib/LayerEx";
  * | order             | an order's counted mark is set at most once, by its first run or, for a seed order, by the seed, and survives every sync; only deleting the order removes it | app        | an order is counted once, when its first run is created                                                          |
  * | order             | an order older than retention is deleted, its items and its runs go with it, and it is never stored again                                                    | schema+app | an order older than retention is never stored again                                                              |
  * | item              | an item has exactly one order and goes with it                                                                                                               | schema     | an item has exactly one order and goes with it                                                                   |
- * | item              | an item has at most one run, over every status; a closed run holds its item until a person replaces it                                                       | schema     | the unique index itself refuses a second row for an item, and a closed run still holds its item                 |
+ * | item              | an item has at most one run, in every state; a closed run holds its item until a person replaces it                                                          | schema     | the unique index itself refuses a second row for an item, and a closed run still holds its item                  |
  * | workflow          | a workflow is identified by its tag and by its name; no two workflows share either; the name is compared exactly                                             | schema     | a workflow is identified by its tag and by its name; no two workflows share either; the name is compared exactly |
  * | workflow          | a workflow has zero or more steps in order; a step has one or more tasks, done in parallel; a task is in exactly one step                                    | app        | (none yet)                                                                                                       |
  * | workflow          | a workflow has at most one draft; the draft holds tasks only                                                                                                 | schema     | a workflow has at most one draft; the draft holds tasks only                                                     |
@@ -54,7 +54,7 @@ import { causeToErrorMessage } from "@/lib/LayerEx";
  * | run               | a run's tasks go with it; only deleting the run deletes tasks                                                                                                | schema     | a run's tasks go with it; only deleting the run deletes tasks                                                    |
  * | run               | a run's tasks and steps are a snapshot of the definition's at creation                                                                                       | app        | creates one run per matching item with copied tasks and team names                                               |
  * | task              | a run task also snapshots its team's name; history shows the name and never resolves the team                                                                | app        | creates one run per matching item with copied tasks and team names                                               |
- * | run               | `status` is derived from the tasks and stored, recomputed by every task write in the same transaction; `closed` is the exception, written never derived      | app        | (none yet)                                                                                                       |
+ * | run               | `state` is derived from the tasks and stored, recomputed by every task write in the same transaction; `closed` is the exception, written never derived       | app        | (none yet)                                                                                                       |
  * | run               | `closedAt` and `closedReason` are set together, once, and only on a closed run; nothing leaves closed                                                        | schema+app | `closedAt` and `closedReason` are set together, once, and only on a closed run                                   |
  * | run               | only an open run can be blocked; a run that is done or closed carries no block                                                                               | schema+app | only an open run can be blocked; a run that is done or closed carries no block                                   |
  * | run               | who did what is a snapshot (`*ByEmail`, `teamName`); history never resolves through `Member` or `Team`                                                       | app        | (none yet)                                                                                                       |
@@ -63,7 +63,7 @@ import { causeToErrorMessage } from "@/lib/LayerEx";
  * | `ShopUsage`       | exactly one row                                                                                                                                              | schema     | `SyncState` and `ShopUsage` have exactly one row each                                                            |
  * | `WebhookDelivery` | one row per Shopify delivery id, kept for a while and swept by age                                                                                           | schema+app | (none yet)                                                                                                       |
  * | `UsageEvent`      | one row per idempotency key, kept until Shopify accepts it                                                                                                   | schema+app | a usage event is one row per idempotency key, kept until Shopify accepts it                                      |
- * | `UsageEvent`      | an expired usage event is kept until 60 days after it was dated, then deleted                                                                                    | app        | the retention sweep deletes expired usage events older than 60 days and keeps younger ones                       |
+ * | `UsageEvent`      | an expired usage event is kept until 60 days after it was dated, then deleted                                                                                | app        | the retention sweep deletes expired usage events older than 60 days and keeps younger ones                       |
  *
  * The other half of each cross-store row is on {@link D1_TABLES}.
  *
@@ -76,8 +76,7 @@ export const initializeSchema = Effect.gen(function* () {
     -- Every table stores time as epoch-ms integers, not D1 Team's ISO text:
     -- the two stores already differ, and one store should not mix.
     --
-    -- ShopOrder, not Order: order is a SQL reserved word, and an unquoted
-    -- identifier collides with order by in every hand-written query.
+    -- ShopOrder, not Order: see the exceptions on the vocabulary in Domain.ts.
     -- Shopify's numeric ids are text: they exceed the 52-bit integers
     -- SqlStorage.exec round-trips losslessly, and a truncated legacy id would
     -- silently mismatch the webhook payload it is meant to correlate with.
@@ -151,7 +150,7 @@ export const initializeSchema = Effect.gen(function* () {
       ordersLimitedAt integer,
       openRunsLimitedAt integer,
       lastSweepAt integer,
-      membersHighWater integer not null default 0,
+      seatsThisCycle integer not null default 0,
       lastReconciledOrders integer,
       lastReconciledMembers integer
     );
@@ -218,7 +217,7 @@ export const initializeSchema = Effect.gen(function* () {
     create index if not exists WorkflowDraftTask_teamId_idx on WorkflowDraftTask (teamId);
     -- Run / RunTask are the instances: one workflow applied to one item, with
     -- the definition's tasks copied in. No foreign key to ShopOrder,
-    -- OrderLineItem or Workflow. lineItemId is unique over every status, not
+    -- OrderLineItem or Workflow. lineItemId is unique over every state, not
     -- partial, so reconcile, manual attach and replace all have to be correct
     -- under it.
     create table if not exists Run (
@@ -235,8 +234,8 @@ export const initializeSchema = Effect.gen(function* () {
       quantity integer not null,
       lineItemProperties text not null,
       -- Denormalized from the tasks for the workflows list and the
-      -- definitions badge (RunRepository's recomputeStatus).
-      status text not null check (status in ('open', 'done', 'closed')),
+      -- definitions badge (RunRepository's recomputeState).
+      state text not null check (state in ('open', 'done', 'closed')),
       -- The one hold a person sets; blockedBy is the JSON
       -- Domain.ActorDisplay (role and email, no id).
       -- blockReason is optional text, so only blockedAt and blockedBy move
@@ -250,20 +249,20 @@ export const initializeSchema = Effect.gen(function* () {
       updatedAt integer not null,
       closedAt integer,
       closedReason text check (closedReason in ('fulfilled', 'order_cancelled', 'item_removed', 'merchant_cancelled')),
-      -- Each check is one statement's worth: the close sets status, closedAt
+      -- Each check is one statement's worth: the close sets state, closedAt
       -- and closedReason and clears the block in a single update, since SQLite
       -- checks every statement, not the transaction.
-      check ((status = 'closed') = (closedAt is not null)),
+      check ((state = 'closed') = (closedAt is not null)),
       check ((closedAt is null) = (closedReason is null)),
-      check (blockedAt is null or status = 'open'),
+      check (blockedAt is null or state = 'open'),
       check ((blockedAt is null) = (blockedBy is null))
     );
     create index if not exists Run_orderId_idx on Run (orderId);
-    create index if not exists Run_status_idx on Run (status);
+    create index if not exists Run_state_idx on Run (state);
     create index if not exists Run_open_age_idx
-      on Run (orderProcessedAt, lineItemId, id) where status = 'open';
+      on Run (orderProcessedAt, lineItemId, id) where state = 'open';
     create index if not exists Run_closed_idx
-      on Run (closedAt) where status = 'closed';
+      on Run (closedAt) where state = 'closed';
     -- *ByRole is the actor discriminator (Domain.ActorDisplay): a 'member'
     -- role has its email beside it, and a 'merchant' role, who acts from the
     -- order page and has no Member row, has null. No actor has an id column:

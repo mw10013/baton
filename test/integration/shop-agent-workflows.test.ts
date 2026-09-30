@@ -757,7 +757,7 @@ describe("ShopAgent workflow run callables", () => {
     });
     if (again._tag !== "Ok") throw new Error(again._tag);
     strictEqual(again.replaced, null);
-    strictEqual(again.run.status, "open");
+    strictEqual(again.run.state, "open");
     expect(again.run.id).not.toBe(replaced.run.id);
   });
 
@@ -1116,7 +1116,7 @@ describe("ShopAgent workflow run callables", () => {
       memberEmail,
       view: "mine",
     });
-    strictEqual(item?.run.status, "open");
+    strictEqual(item?.run.state, "open");
     strictEqual(item?.tasks[0]?.startedByEmail, "w@example.com");
     strictEqual(item?.stepCount, 1);
     // startedByEmail is a snapshot: it survives the member's delete.
@@ -1322,13 +1322,13 @@ describe("ShopAgent seed callables", () => {
       runs
         .map(({ run, tasks }) => ({
           workflow: run.workflowName,
-          status: run.status,
+          state: run.state,
           done: tasks.filter((task) => task.doneAt !== null).length,
         }))
         .toSorted((a, b) => a.workflow.localeCompare(b.workflow)),
     ).toEqual([
-      { workflow: "Board", status: "done", done: 2 },
-      { workflow: "Ring", status: "open", done: 1 },
+      { workflow: "Board", state: "done", done: 2 },
+      { workflow: "Ring", state: "open", done: 1 },
     ]);
   });
 
@@ -1417,7 +1417,7 @@ describe("ShopAgent seed callables", () => {
       return runs[0]?.run;
     };
     const cancelled = await runOf(1);
-    strictEqual(cancelled?.status, "closed");
+    strictEqual(cancelled?.state, "closed");
     strictEqual(cancelled?.closedReason, "order_cancelled");
     const resized = await runOf(2);
     strictEqual(resized?.quantity, 1);

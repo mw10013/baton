@@ -86,6 +86,16 @@ const rowsOf = (source: string) =>
 const checkOrderIssues = (doctored: string) =>
   ActionTable.checkOrderIssues(doctored, Domain.OrderIssue.literals);
 
+const checkStored = (doctored: string) =>
+  ActionTable.checkStoredCells(doctored, schemaSource);
+
+/** ShopWork.ts with one string replaced; fails if the string is not there. */
+const doctorShopWork = (from: string, to: string) => {
+  const doctored = shopWorkSource.replace(from, to);
+  expect(doctored).not.toBe(shopWorkSource);
+  return doctored;
+};
+
 describe("action table parser", () => {
   it("the table is the first one in the JSDoc before the export", () => {
     const rows = rowsOf(
@@ -171,9 +181,9 @@ describe("action table parser", () => {
       blocker: "b",
     });
     expect(fixtures.map((fixture) => fixture.run)).toEqual([
-      { status: "open", blockedAt: null },
-      { status: "open", blockedAt: 1 },
-      { status: "done", blockedAt: null },
+      { state: "open", blockedAt: null },
+      { state: "open", blockedAt: 1 },
+      { state: "done", blockedAt: null },
     ]);
   });
 
@@ -224,6 +234,26 @@ describe("action table parser", () => {
         Platform: "export const Subscription = 1;",
       }),
     ).toEqual(["Shop in Platform"]);
+  });
+
+  it("a qualified word may name a context spelled with two capitals", () => {
+    const source = [
+      "/**",
+      " * Vocabulary, orders.",
+      " *",
+      " * | word | symbol |",
+      " * | item | `OrderLineItem`, `lineItemId` in ShopWork |",
+      " */",
+      "export const OrderLineItem = 1;",
+    ].join("\n");
+    expect(
+      ActionTable.checkVocabulary(source, [], {
+        ShopWork: "export const lineItemId = 1;",
+      }),
+    ).toEqual([]);
+    expect(ActionTable.checkVocabulary(source, [], { ShopWork: "" })).toEqual([
+      "lineItemId in ShopWork",
+    ]);
   });
 
   it("Domain.ts and every context file name only words that exist", () => {
@@ -291,6 +321,64 @@ describe("action table parser", () => {
         "Vocabulary: Task states idle: no constant",
         "Vocabulary: Task states: no row for waiting",
       ]);
+    });
+  });
+
+  describe("the vocabulary's stored column is a column or literal of initializeSchema", () => {
+    it("ShopWork.ts passes", () => {
+      expect(checkStored(shopWorkSource)).toEqual([]);
+    });
+
+    it("a doctored cell form is reported", () => {
+      expect(
+        checkStored(
+          doctorShopWork(
+            "| work can be recorded                              | `open`          |",
+            "| work can be recorded                              | `open` sometimes |",
+          ),
+        ),
+      ).toEqual([
+        'ShopWork.ts, Run states, open: stored cell "`open` sometimes" is not a literal, `<column>` set or `<column>` null',
+      ]);
+    });
+
+    it("a literal in no check constraint is reported", () => {
+      expect(
+        checkStored(
+          doctorShopWork(
+            "| work can be recorded                              | `open`          |",
+            "| work can be recorded                              | `opened`        |",
+          ),
+        ),
+      ).toEqual([
+        "ShopWork.ts, Run states, open: stored literal `opened` is in no check constraint of initializeSchema",
+      ]);
+    });
+
+    it("a column in no table is reported", () => {
+      expect(
+        checkStored(
+          doctorShopWork(
+            "| open, and a person holds it                       | `blockedAt` set |",
+            "| open, and a person holds it                       | `blockedOn` set |",
+          ),
+        ),
+      ).toEqual([
+        "ShopWork.ts, Run states, blocked: stored column `blockedOn` is in no table of initializeSchema",
+      ]);
+    });
+
+    it("a trailing current clause is accepted", () => {
+      const task = ActionTable.vocabularyTables(shopWorkSource).find((table) =>
+        table.intro.startsWith("Task states"),
+      );
+      expect(task?.rows.map((row) => row.stored)).toEqual([
+        "`startedAt` null, `doneAt` null; not current",
+        "`startedAt` null, `doneAt` null; current",
+        "`startedAt` set",
+        "`doneAt` set",
+      ]);
+      expect(checkStored(shopWorkSource)).toEqual([]);
     });
   });
 

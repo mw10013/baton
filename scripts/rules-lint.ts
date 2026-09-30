@@ -1,7 +1,7 @@
 /**
- * Holds the line drawn in `src/lib/Domain.ts`: status, flag and role rules
+ * Holds the line drawn in `src/lib/Domain.ts`: state, status, flag and role rules
  * are `Domain` predicates, never inline comparisons in routes, components or
- * the object. A site that needs `run.status === "done"` needs a predicate
+ * the object. A site that needs `run.state === "done"` needs a predicate
  * that says what "done" means to it (`runIsOpen`, `runIsDone`,
  * `runIsUnstarted`), and a site that needs `user.role === "admin"` needs
  * `userIsAdmin`. `Domain.ts` and the context files under `src/lib/domain/`
@@ -28,6 +28,7 @@ import {
   bareStatePredicateHits,
   contextImportHits,
   contextImports,
+  INLINE_COMPARISONS,
   loaderDataExportHits,
   modelShapeReferenceHits,
   objectImportHits,
@@ -41,10 +42,6 @@ import {
 const ROOT = new URL("../src/", import.meta.url).pathname;
 const ALLOWED = new Set(["lib/Domain.ts", "routeTree.gen.ts"]);
 const ALLOWED_DIR = "lib/domain/";
-const PATTERNS: readonly RegExp[] = [
-  /\.(?:status|flag) (?:===|!==) "/u,
-  /\.role (?:===|!==) "admin"/u,
-];
 
 const hits = walk(ROOT).flatMap((path) => {
   const file = relative(ROOT, path);
@@ -52,7 +49,7 @@ const hits = walk(ROOT).flatMap((path) => {
   return readFileSync(path, "utf8")
     .split("\n")
     .flatMap((line, index) =>
-      PATTERNS.some((pattern) => pattern.test(line))
+      INLINE_COMPARISONS.some((pattern) => pattern.test(line))
         ? [`src/${file}:${String(index + 1)}: ${line.trim()}`]
         : [],
     );
@@ -60,7 +57,7 @@ const hits = walk(ROOT).flatMap((path) => {
 
 if (hits.length > 0) {
   console.error(
-    "rules-lint: inline status/flag/role comparison outside src/lib/Domain.ts and src/lib/domain/; use a Domain predicate:",
+    "rules-lint: inline status/state/flag/role comparison outside src/lib/Domain.ts and src/lib/domain/; use a Domain predicate:",
   );
   for (const hit of hits) console.error(`  ${hit}`);
 }

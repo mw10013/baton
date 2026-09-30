@@ -46,8 +46,8 @@ const OPEN_ORDER: Domain.OrderState = {
   fulfillmentStatus: "UNFULFILLED",
 };
 
-const run = (status: Domain.RunStatus, blocked = false) => ({
-  status,
+const run = (state: Domain.RunState, blocked = false) => ({
+  state,
   blockedAt: blocked ? 1 : null,
 });
 
@@ -193,7 +193,7 @@ const lineItemOf = (
 });
 
 const detailOf = (
-  status: Domain.RunStatus,
+  state: Domain.RunState,
   lineItemId = "li",
 ): Domain.RunDetail => ({
   run: {
@@ -209,7 +209,7 @@ const detailOf = (
     sku: null,
     quantity: 1,
     lineItemProperties: [],
-    status,
+    state,
     blockedAt: null,
     blockReason: null,
     blockedBy: null,
@@ -217,8 +217,8 @@ const detailOf = (
     note: null,
     createdAt: 0,
     updatedAt: 0,
-    closedAt: status === "closed" ? 1 : null,
-    closedReason: status === "closed" ? "merchant_cancelled" : null,
+    closedAt: state === "closed" ? 1 : null,
+    closedReason: state === "closed" ? "merchant_cancelled" : null,
   },
   tasks: [],
 });
@@ -445,8 +445,8 @@ const reset = (
         LINE_ITEM_ID,
       );
       sql.exec(
-        "update Run set status = ?, blockedAt = ?, blockedBy = ?, blockReason = null, closedAt = ?, closedReason = ?, quantityChangedFrom = null where id = ?",
-        target.status,
+        "update Run set state = ?, blockedAt = ?, blockedBy = ?, blockReason = null, closedAt = ?, closedReason = ?, quantityChangedFrom = null where id = ?",
+        target.state,
         target.blockedAt,
         target.blockedAt === null ? null : JSON.stringify(MERCHANT),
         closed ? 1 : null,

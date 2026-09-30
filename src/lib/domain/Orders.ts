@@ -16,7 +16,10 @@
  * and beside it in the member's row (`<item> · <workflow> · <order>`), so
  * the order carries the disambiguation and the word stays short. Copy with
  * no order beside it qualifies the word ("items on open orders", "N items
- * in production") rather than saying "items" bare.
+ * in production") rather than saying "items" bare. The identifiers and
+ * columns say `lineItem` (`OrderLineItem`, `lineItemId` in ShopWork) because that is
+ * Shopify's `LineItem`, and "item" is the screen's short form beside its
+ * order; neither is renamed to match the other.
  */
 import { Schema } from "effect";
 
@@ -172,7 +175,7 @@ export type OrderState = typeof OrderState.Type;
  * **A closed order is read only.** Every write that does work on its runs is
  * refused (`runActions`, `taskActions` in ShopWork); only the note stays,
  * because a note is a record, not work. There is nothing to cancel either:
- * reconcile has already closed every open run on it (`RunStatus` in ShopWork).
+ * reconcile has already closed every open run on it (`RunState` in ShopWork).
  *
  * Manual attach (`ShopAgent.merchantAttachWorkflow`) is the merchant
  * overriding the tag, activation-date and payment gates on purpose; it is not
@@ -296,12 +299,16 @@ export const OrdersSyncStatus = Schema.Struct({
 export type OrdersSyncStatus = typeof OrdersSyncStatus.Type;
 
 /**
- * What the Import open orders button is told it did. `in_flight` is an import
- * already tracked as running, `refused` is a refusal recorded on
- * {@link SyncState.lastError} for the banner to carry; neither is an error,
- * and in all three cases the page re-reads `OrdersIndexData` in ShopWork.
+ * What the Import open orders button is told it did: a `Result` (the Shape
+ * families table on the map in `Domain.ts`), a tagged union like every
+ * other. `InFlight` is an import already tracked as running, `Refused` is a
+ * refusal recorded on {@link SyncState.lastError} for the banner to carry;
+ * neither is an error, and in all three cases the page re-reads
+ * `OrdersIndexData` in ShopWork.
  */
-export const OrdersSyncResult = Schema.Struct({
-  status: Schema.Literals(["started", "in_flight", "refused"]),
-});
+export const OrdersSyncResult = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("Started") }),
+  Schema.Struct({ _tag: Schema.Literal("InFlight") }),
+  Schema.Struct({ _tag: Schema.Literal("Refused") }),
+]);
 export type OrdersSyncResult = typeof OrdersSyncResult.Type;
