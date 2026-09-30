@@ -4,11 +4,13 @@
  * the object. A site that needs `run.status === "done"` needs a predicate
  * that says what "done" means to it (`runIsOpen`, `runIsDone`,
  * `runIsUnstarted`), and a site that needs `user.role === "admin"` needs
- * `userIsAdmin`. `Domain.ts` is the one file allowed to spell the literals.
+ * `userIsAdmin`. `Domain.ts` and the context files under `src/lib/domain/`
+ * it re-exports are the only files allowed to spell the literals.
  *
  * It also holds the vocabulary's two identifier rules on the exports under
  * `src/lib/`: no reserved stem ({@link reservedStemHits}) and no `is<State>`
- * without its noun ({@link bareStatePredicateHits}).
+ * without its noun ({@link bareStatePredicateHits}); and the map's import
+ * direction ({@link contextImportHits}) on every file under `src/`.
  *
  * A grep, not an oxlint rule: the pattern is three tokens and has stayed
  * quiet. Union narrowing on `actor.role` and the connection state's `role`
@@ -20,6 +22,8 @@ import { join, relative } from "node:path";
 import { copyFiles, walk } from "./lib/copy-files.ts";
 import {
   bareStatePredicateHits,
+  contextImportHits,
+  contextImports,
   RESERVED_STEMS,
   reservedStemHits,
   retiredCopyHits,
@@ -28,6 +32,7 @@ import {
 
 const ROOT = new URL("../src/", import.meta.url).pathname;
 const ALLOWED = new Set(["lib/Domain.ts", "routeTree.gen.ts"]);
+const ALLOWED_DIR = "lib/domain/";
 const PATTERNS: readonly RegExp[] = [
   /\.(?:status|flag) (?:===|!==) "/u,
   /\.role (?:===|!==) "admin"/u,
@@ -35,7 +40,7 @@ const PATTERNS: readonly RegExp[] = [
 
 const hits = walk(ROOT).flatMap((path) => {
   const file = relative(ROOT, path);
-  if (ALLOWED.has(file)) return [];
+  if (ALLOWED.has(file) || file.startsWith(ALLOWED_DIR)) return [];
   return readFileSync(path, "utf8")
     .split("\n")
     .flatMap((line, index) =>
@@ -47,7 +52,7 @@ const hits = walk(ROOT).flatMap((path) => {
 
 if (hits.length > 0) {
   console.error(
-    "rules-lint: inline status/flag/role comparison outside src/lib/Domain.ts; use a Domain predicate:",
+    "rules-lint: inline status/flag/role comparison outside src/lib/Domain.ts and src/lib/domain/; use a Domain predicate:",
   );
   for (const hit of hits) console.error(`  ${hit}`);
 }
@@ -112,7 +117,24 @@ if (predicateHits.length > 0) {
   for (const hit of predicateHits) console.error(`  ${hit}`);
 }
 
+const CONTEXT_MAP = contextImports(
+  readFileSync(join(ROOT, "lib", "Domain.ts"), "utf8"),
+);
+
+const importHits = walk(ROOT).flatMap((path) => {
+  const file = relative(ROOT, path);
+  return contextImportHits(file, readFileSync(path, "utf8"), CONTEXT_MAP).map(
+    ({ line, specifier, allowed }) =>
+      allowed === undefined
+        ? `rules-lint: src/${file}:${String(line)} imports a context file directly (${specifier}); import @/lib/Domain`
+        : `rules-lint: src/${file}:${String(line)} imports ${specifier}; the map in src/lib/Domain.ts allows ${allowed.length === 0 ? "nothing" : allowed.join(", ")}`,
+  );
+});
+
+for (const hit of importHits) console.error(hit);
+
 if (
+  importHits.length > 0 ||
   hits.length > 0 ||
   copyHits.length > 0 ||
   placeholderHits.length > 0 ||

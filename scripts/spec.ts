@@ -1,6 +1,8 @@
-// Checks and prints the spec: the action matrices in src/lib/Domain.ts (the
-// JSDoc on `runActions` and `taskActions`), which the test reads as the spec,
-// the triggers table on `ShopUsage` in src/lib/Domain.ts (what each trigger
+// Checks and prints the spec: the action matrices in src/lib/domain/Production.ts
+// (the JSDoc on `runActions` and `taskActions`), which the test reads as the
+// spec, the vocabulary (the map in src/lib/Domain.ts and each context file's
+// block under src/lib/domain/), the triggers table on `ShopUsage` in
+// src/lib/domain/Billing.ts (what each trigger
 // does to the usage counts and the usage-event queue), and the data-model
 // tables on `initializeSchema` in src/lib/ShopAgentSchema.ts (the object) and
 // on `D1_TABLES` in src/lib/D1Schema.ts (D1).
@@ -19,6 +21,10 @@ import { copyFiles } from "./lib/copy-files.ts";
 import * as ActionTable from "./lib/spec.ts";
 
 const DOMAIN = new URL("../src/lib/Domain.ts", import.meta.url).pathname;
+/** The context files under src/lib/domain/, each opening with its own vocabulary. */
+const CONTEXTS = ["Platform", "Orders", "Billing", "Production"] as const;
+const contextPath = (name: (typeof CONTEXTS)[number]) =>
+  new URL(`../src/lib/domain/${name}.ts`, import.meta.url).pathname;
 const ROUTES = new URL("../src/routes/", import.meta.url).pathname;
 const SCHEMA = new URL("../src/lib/ShopAgentSchema.ts", import.meta.url)
   .pathname;
@@ -36,7 +42,13 @@ const SCREEN_LABELS: ActionTable.ScreenLabels = {
   verbs: Domain.VERB_LABEL,
 };
 
-const readSource = Effect.sync(() => readFileSync(DOMAIN, "utf8"));
+/** The barrel's source (the map and the Screens table) and each context file's, by name. */
+const readSources = Effect.sync(() => ({
+  barrel: readFileSync(DOMAIN, "utf8"),
+  contexts: Object.fromEntries(
+    CONTEXTS.map((name) => [name, readFileSync(contextPath(name), "utf8")]),
+  ) as Record<(typeof CONTEXTS)[number], string>,
+}));
 
 /** Each data-model table: its symbol, its source, and the table names its `about` may use. */
 const readDataModels = Effect.sync(() => {
@@ -92,14 +104,15 @@ const checkCommand = Command.make(
   "check",
   {},
   Effect.fn(function* () {
-    const source = yield* readSource;
+    const { barrel, contexts } = yield* readSources;
     const routeFiles = yield* readRouteFiles;
     const dataModels = yield* readDataModels;
     const testSources = yield* readTestSources;
     const screen = yield* readScreen;
+    const contextSources = Object.values(contexts);
     const failures = [
       ...NAMES.flatMap((name) =>
-        Result.match(ActionTable.parse(source, name), {
+        Result.match(ActionTable.parse(contexts.Production, name), {
           onFailure: (error) => [error.message],
           onSuccess: (rows) =>
             ActionTable.overlaps(name, rows).map(
@@ -108,15 +121,27 @@ const checkCommand = Command.make(
             ),
         }),
       ),
-      ...ActionTable.checkVocabulary(source).map(
-        (word) =>
-          `Vocabulary: \`${word}\` does not occur in src/lib/Domain.ts outside the vocabulary`,
+      ...[
+        { file: "Domain.ts", source: barrel, others: contextSources },
+        ...CONTEXTS.map((name) => ({
+          file: `domain/${name}.ts`,
+          source: contexts[name],
+          others: [barrel],
+        })),
+      ].flatMap(({ file, source, others }) =>
+        ActionTable.checkVocabulary(source, others, contexts).map(
+          (word) =>
+            `Vocabulary: \`${word}\` does not occur in src/lib/${file} outside the vocabulary`,
+        ),
       ),
-      ...ActionTable.checkScreenColumns(source, SCREEN_LABELS),
-      ...ActionTable.checkContexts(source),
-      ...ActionTable.checkOrderIssues(source, Domain.OrderIssue.literals),
-      ...ActionTable.checkScreens(source, routeFiles),
-      ...Result.match(ActionTable.parseTriggerTable(source), {
+      ...ActionTable.checkScreenColumns(contexts.Production, SCREEN_LABELS),
+      ...ActionTable.checkContexts(barrel, contextSources),
+      ...ActionTable.checkOrderIssues(
+        contexts.Production,
+        Domain.OrderIssue.literals,
+      ),
+      ...ActionTable.checkScreens(barrel, routeFiles),
+      ...Result.match(ActionTable.parseTriggerTable(contexts.Billing), {
         onFailure: (error) => [error.message],
         onSuccess: (rows) =>
           ActionTable.checkPinned(rows, testSources, "ShopUsage"),
@@ -150,7 +175,7 @@ const checkCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Parse the action tables in Domain.ts, check the vocabulary, check the triggers table on ShopUsage in Domain.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts, and check the copy and controls tables in Screen.ts; exit 1 on any failure",
+    "Parse the action tables in domain/Production.ts, check the vocabulary in Domain.ts and domain/, check the triggers table on ShopUsage in domain/Billing.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts, and check the copy and controls tables in Screen.ts; exit 1 on any failure",
   ),
 );
 
@@ -158,10 +183,10 @@ const printCommand = Command.make(
   "print",
   {},
   Effect.fn(function* () {
-    const source = yield* readSource;
+    const { contexts } = yield* readSources;
     for (const name of NAMES) {
       yield* Console.log(name);
-      const lines = Result.match(ActionTable.parse(source, name), {
+      const lines = Result.match(ActionTable.parse(contexts.Production, name), {
         onFailure: (error) => [error.message],
         onSuccess: (rows) =>
           rows.map(
@@ -172,14 +197,17 @@ const printCommand = Command.make(
       for (const line of lines) yield* Console.log(`  ${line}`);
     }
     yield* Console.log("ShopUsage");
-    const triggers = Result.match(ActionTable.parseTriggerTable(source), {
-      onFailure: (error) => [error.message],
-      onSuccess: (rows) =>
-        rows.map(
-          (row) =>
-            `${row.trigger}: orders ${row.orderCount}, seats ${row.seatMark}, queue ${row.queue} — ${row.pinnedBy}`,
-        ),
-    });
+    const triggers = Result.match(
+      ActionTable.parseTriggerTable(contexts.Billing),
+      {
+        onFailure: (error) => [error.message],
+        onSuccess: (rows) =>
+          rows.map(
+            (row) =>
+              `${row.trigger}: orders ${row.orderCount}, seats ${row.seatMark}, queue ${row.queue} — ${row.pinnedBy}`,
+          ),
+      },
+    );
     for (const line of triggers) yield* Console.log(`  ${line}`);
     for (const { source: dataModel, options } of yield* readDataModels) {
       yield* Console.log(options.symbol);
@@ -205,7 +233,7 @@ const printCommand = Command.make(
 
 const specCommand = Command.make("spec").pipe(
   Command.withDescription(
-    "The action matrices and the triggers table in src/lib/Domain.ts, and the data-model tables in src/lib/ShopAgentSchema.ts and src/lib/D1Schema.ts",
+    "The action matrices in src/lib/domain/Production.ts, the vocabulary in src/lib/Domain.ts and src/lib/domain/, the triggers table in src/lib/domain/Billing.ts, and the data-model tables in src/lib/ShopAgentSchema.ts and src/lib/D1Schema.ts",
   ),
   Command.withSubcommands([checkCommand, printCommand]),
 );

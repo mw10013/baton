@@ -1,12 +1,12 @@
 # Vocabulary runbook
 
-How to add, rename or retire a word. For people and for agents. The rules of the vocabulary itself (the contexts, and what a word must pass to get a row) are in the JSDoc block that starts `Vocabulary.` at the top of `src/lib/Domain.ts`; this runbook is the procedure around them.
+How to add, rename or retire a word. For people and for agents. The rules of the vocabulary itself (the contexts, and what a word must pass to get a row) are in the JSDoc block that starts `Vocabulary.` at the top of `src/lib/Domain.ts` (the map), and each context's words are in the block that starts `Vocabulary, <context>.` at the top of its file under `src/lib/domain/`; this runbook is the procedure around them.
 
 ## A new word
 
-1. **Look it up.** Read the vocabulary block. If a row already names the concept, use that word; stop.
+1. **Look it up.** Read the map and the vocabulary block of the word's context. If a row already names the concept, use that word; stop.
 2. **Grep the stem.** `grep -rn -i '<stem>' src scripts test e2e`. Every identifier, JSDoc line and label that comes back must mean the same thing in the same context. If one means something else, the word is taken: pick another, or split the old sense first (step 5).
-3. **Write the row first**, in the table of the word's context: word, meaning, symbol, screen. A word with no screen says "(none)". A word only one symbol uses stays a JSDoc term on that symbol and gets no row.
+3. **Write the row first**, in the table of the word's context, in that context's file under `src/lib/domain/`: word, meaning, symbol, screen. The row goes in the file that holds its symbol. When the word crosses into a second context, the map in `src/lib/Domain.ts` gains a Shared words row. A word with no screen says "(none)". A word only one symbol uses stays a JSDoc term on that symbol and gets no row.
 4. **Rename in the same change.** Every identifier, type, callable, JSDoc, test title, log message and label constant moves with the row. A stored literal in our own store moves too (`initializeSchema` in `src/lib/ShopAgentSchema.ts`; while prototyping, edit in place and run `pnpm dev:reset`).
 5. **Retire the loser.** The old word goes on a retired list (below), in the same change.
 
@@ -26,7 +26,7 @@ Then run `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm fmt`.
 
 ## Shared words
 
-A word two contexts share (open, closed, cancel) always travels with its noun: "open order", "open run". In identifiers that is `<noun>Is<State>` (`orderIsOpen`, `runIsOpen`, `workflowIsOn`). `pnpm lint` refuses an exported `is<State>` under `src/lib/`.
+A word two contexts share (open, closed, cancel) is a row of the Shared words table in the map at the top of `src/lib/Domain.ts`, and always travels with its noun: "open order", "open run". In identifiers that is `<noun>Is<State>` (`orderIsOpen`, `runIsOpen`, `workflowIsOn`). `pnpm lint` refuses an exported `is<State>` under `src/lib/`.
 
 ## The audit
 

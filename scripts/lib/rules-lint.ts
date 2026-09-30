@@ -50,6 +50,7 @@
  * one bare word of JSX text is not read, because a lone identifier on its
  * own line looks the same.
  */
+import { vocabularyTables } from "./spec.ts";
 
 export const RETIRED: readonly RegExp[] = [
   /(?<![-_/.$\w])runs?\b(?![-_/$]|\.\w)/iu,
@@ -225,3 +226,87 @@ export const bareStatePredicateHits = (
       kind !== "interface" &&
       kind !== "class",
   );
+
+/** What each context file under `src/lib/domain/` may import, by file stem (`Orders` → `["Platform"]`). */
+export type ContextImports = ReadonlyMap<string, readonly string[]>;
+
+/**
+ * The map's `file` and `may import` columns, read out of the barrel's source
+ * (`src/lib/Domain.ts`) so the table a person edits is the table the lint
+ * enforces. A `may import` cell names contexts, joined with ", ", or says
+ * "(nothing)"; each context becomes the stem of its row's `file`.
+ */
+export const contextImports = (barrel: string): ContextImports => {
+  const rows =
+    vocabularyTables(barrel).find(({ intro }) => intro.startsWith("Contexts."))
+      ?.rows ?? [];
+  const stemOf = (context: string) =>
+    (rows.find((row) => row.context === context)?.file ?? context)
+      .replaceAll("`", "")
+      .replace(/\.ts$/u, "");
+  return new Map(
+    rows.map((row) => [
+      stemOf(row.context ?? ""),
+      row["may import"] === "(nothing)"
+        ? []
+        : (row["may import"] ?? "").split(", ").map(stemOf),
+    ]),
+  );
+};
+
+/** One import a file may not make: its 1-based line, the specifier, and, for a context file, the stems the map allows it. */
+export interface ContextImportHit {
+  readonly line: number;
+  readonly specifier: string;
+  readonly allowed?: readonly string[];
+}
+
+const FROM = /^\s*(?:import|export)\b[^;]*?\bfrom\s+"(?<specifier>[^"]+)"/gmu;
+
+/** `dir` joined with the relative `specifier`, `..` and `.` resolved: `lib`, `./domain/Orders.ts` → `lib/domain/Orders.ts`. */
+const resolve = (dir: string, specifier: string) =>
+  [...dir.split("/"), ...specifier.split("/")]
+    .reduce<string[]>((parts, part) => {
+      if (part === "" || part === ".") return parts;
+      if (part === "..") return parts.slice(0, -1);
+      return [...parts, part];
+    }, [])
+    .join("/");
+
+/**
+ * **An import follows the map's direction.** `file` is the path under
+ * `src/` (`lib/domain/Orders.ts`, `routes/app.index.tsx`). A context file
+ * under `lib/domain/` may import only the context files its map row's `may
+ * import` cell names ({@link contextImports}); a stem the map has no row for
+ * may import none. Any other file imports the barrel (`@/lib/Domain`), never
+ * a context file, by alias or by relative path: the barrel is the public
+ * surface. The barrel itself (`lib/Domain.ts`) is exempt, since re-exporting
+ * the four is its job. Returns each import that breaks the rule.
+ */
+export const contextImportHits = (
+  file: string,
+  source: string,
+  map: ContextImports,
+): readonly ContextImportHit[] => {
+  if (file === "lib/Domain.ts") return [];
+  const dir = file.split("/").slice(0, -1).join("/");
+  const imports = [...source.matchAll(FROM)].map(({ index, groups }) => ({
+    line: source.slice(0, index).split("\n").length,
+    specifier: groups?.specifier ?? "",
+  }));
+  const intoDomain = (specifier: string) =>
+    specifier.startsWith("@/lib/domain/") ||
+    (specifier.startsWith(".") &&
+      resolve(dir, specifier).startsWith("lib/domain/"));
+  if (!file.startsWith("lib/domain/"))
+    return imports.filter(({ specifier }) => intoDomain(specifier));
+  const allowed =
+    map.get(file.slice("lib/domain/".length, -".ts".length)) ?? [];
+  return imports.flatMap(({ line, specifier }) => {
+    if (!intoDomain(specifier)) return [];
+    const stem = resolve(dir, specifier)
+      .slice("lib/domain/".length)
+      .replace(/\.ts$/u, "");
+    return allowed.includes(stem) ? [] : [{ line, specifier, allowed }];
+  });
+};

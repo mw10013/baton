@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { D1Primary } from "@/lib/D1Primary";
 import { D1Session } from "@/lib/D1Session";
 import * as Domain from "@/lib/Domain";
-import source from "@/lib/Domain.ts?raw";
+import source from "@/lib/domain/Production.ts?raw";
 import { makeEnvLayer } from "@/lib/LayerEx";
 import { OrderRepository } from "@/lib/OrderRepository";
 import { Repository } from "@/lib/Repository";
@@ -20,7 +20,7 @@ import { openMemberSocket, openMerchantSocket } from "./agent-socket";
 
 /**
  * The action matrices on `Domain.runActions` and `Domain.taskActions`, read
- * out of their JSDoc in `Domain.ts` rather than copied here, one test per
+ * out of their JSDoc in `domain/Production.ts` rather than copied here, one test per
  * row, titled with the row rendered back so a failing test names the cell.
  * The second half drives every `ShopAgent` callable into every row's state
  * and asserts it answers as the cell says: the page and the server read one

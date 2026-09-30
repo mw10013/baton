@@ -4,6 +4,10 @@ import { describe, expect, it } from "vitest";
 import d1Source from "@/lib/D1Schema.ts?raw";
 import * as Domain from "@/lib/Domain";
 import source from "@/lib/Domain.ts?raw";
+import billingSource from "@/lib/domain/Billing.ts?raw";
+import ordersSource from "@/lib/domain/Orders.ts?raw";
+import platformSource from "@/lib/domain/Platform.ts?raw";
+import productionSource from "@/lib/domain/Production.ts?raw";
 import * as Screen from "@/lib/Screen";
 import screenSource from "@/lib/Screen.ts?raw";
 import schemaSource from "@/lib/ShopAgentSchema.ts?raw";
@@ -46,6 +50,14 @@ const parseError = (source: string) => {
   if (Result.isSuccess(parsed)) throw new Error("parsed");
   return parsed.failure.message;
 };
+
+/** The context files, which the barrel's map (`source`) names. */
+const CONTEXT_SOURCES = [
+  platformSource,
+  ordersSource,
+  billingSource,
+  productionSource,
+];
 
 const OBJECT: ActionTable.DataModelOptions = {
   symbol: "initializeSchema",
@@ -196,6 +208,40 @@ describe("action table parser", () => {
     expect(ActionTable.checkVocabulary(source)).toEqual(["RunTask", "pending"]);
   });
 
+  it("a word written as another context's is checked against that context's file", () => {
+    const source = [
+      "/**",
+      " * Vocabulary, billing.",
+      " *",
+      " * | word | symbol |",
+      " * | plan | `Plan`, `Subscription` in Platform, `Shop` in Platform |",
+      " */",
+      "export const Plan = 1;",
+    ].join("\n");
+    expect(
+      ActionTable.checkVocabulary(source, [], {
+        Platform: "export const Subscription = 1;",
+      }),
+    ).toEqual(["Shop in Platform"]);
+  });
+
+  it("Domain.ts and every context file name only words that exist", () => {
+    const contexts = {
+      Platform: platformSource,
+      Orders: ordersSource,
+      Billing: billingSource,
+      Production: productionSource,
+    };
+    expect(
+      [
+        ActionTable.checkVocabulary(source, CONTEXT_SOURCES, contexts),
+        ...CONTEXT_SOURCES.map((each) =>
+          ActionTable.checkVocabulary(each, [source], contexts),
+        ),
+      ].flat(),
+    ).toEqual([]);
+  });
+
   describe("the vocabulary's screen column is the label constant", () => {
     const labels: ActionTable.ScreenLabels = {
       taskStates: Domain.TASK_STATE_LABEL,
@@ -206,38 +252,40 @@ describe("action table parser", () => {
       verbs: Domain.VERB_LABEL,
     };
 
-    it("Domain.ts passes", () => {
-      expect(ActionTable.checkScreenColumns(source, labels)).toEqual([]);
+    it("Production.ts passes", () => {
+      expect(ActionTable.checkScreenColumns(productionSource, labels)).toEqual(
+        [],
+      );
     });
 
     it("a doctored cell is reported", () => {
-      const doctored = source.replace(
+      const doctored = productionSource.replace(
         "| put back        | task     | started → ready                          | Put back    | Put back        |",
         "| put back        | task     | started → ready                          | Put back    | Take back       |",
       );
-      expect(doctored).not.toBe(source);
+      expect(doctored).not.toBe(productionSource);
       expect(ActionTable.checkScreenColumns(doctored, labels)).toEqual([
         'Vocabulary: Verbs put back: merchant says "Take back", constant says "Put back"',
       ]);
     });
 
     it("a spaced word finds its snake-case literal key", () => {
-      const doctored = source.replace(
+      const doctored = productionSource.replace(
         "| not started | open, no open run and no done run | Not started |",
         "| not started | open, no open run and no done run | To make     |",
       );
-      expect(doctored).not.toBe(source);
+      expect(doctored).not.toBe(productionSource);
       expect(ActionTable.checkScreenColumns(doctored, labels)).toEqual([
         'Vocabulary: Order positions not started: screen says "To make", constant says "Not started"',
       ]);
     });
 
     it("a constant with no row, and a row with no constant, are reported", () => {
-      const doctored = source.replace(
+      const doctored = productionSource.replace(
         "| waiting | its step is not current            |",
         "| idle    | its step is not current            |",
       );
-      expect(doctored).not.toBe(source);
+      expect(doctored).not.toBe(productionSource);
       expect(ActionTable.checkScreenColumns(doctored, labels)).toEqual([
         "Vocabulary: Task states idle: no constant",
         "Vocabulary: Task states: no row for waiting",
@@ -246,18 +294,44 @@ describe("action table parser", () => {
   });
 
   describe("every vocabulary table names its context", () => {
-    it("Domain.ts passes", () => {
-      expect(ActionTable.checkContexts(source)).toEqual([]);
+    it("Domain.ts and the context files pass", () => {
+      expect(ActionTable.checkContexts(source, CONTEXT_SOURCES)).toEqual([]);
     });
 
     it("an intro with no context, and a context cell outside the Contexts table, are reported", () => {
+      const doctored = productionSource.replace(
+        " * Run states, production:",
+        " * Run states:",
+      );
+      expect(doctored).not.toBe(productionSource);
+      const byCell = [
+        "/**",
+        " * Vocabulary, platform.",
+        " *",
+        " * Nouns, by cell:",
+        " *",
+        " * | word | context |",
+        " * | ---- | ------- |",
+        " * | shop | tenancy |",
+        " */",
+      ].join("\n");
+      expect(ActionTable.checkContexts(source, [doctored, byCell])).toEqual([
+        "Vocabulary: Run states: its intro names no context",
+        'Vocabulary: Nouns shop: context "tenancy" is not in the Contexts table',
+      ]);
+    });
+
+    it("a map with no kind column, and a shared word in a context outside the map, are reported", () => {
       const doctored = source
-        .replace(" * Run states, production:", " * Run states:")
-        .replace("| shop     | platform   |", "| shop     | tenancy    |");
+        .replace("| context    | kind       |", "| context    | sort       |")
+        .replace(
+          "| cancel | orders, production |",
+          "| cancel | orders, shipping   |",
+        );
       expect(doctored).not.toBe(source);
       expect(ActionTable.checkContexts(doctored)).toEqual([
-        'Vocabulary: Nouns shop: context "tenancy" is not in the Contexts table',
-        "Vocabulary: Run states: its intro names no context",
+        "Vocabulary: Contexts: the map has no kind column",
+        'Vocabulary: Shared words cancel: context "shipping" is not in the Contexts table',
       ]);
     });
   });
@@ -268,29 +342,29 @@ describe("action table parser", () => {
     const EMPTY_TEAM_ROW =
       "| `empty_team`      | {@link OrderRow} `emptyTeam`                                             | add a member on the team page       |";
 
-    it("Domain.ts passes", () => {
-      expect(source).toContain(TEAM_ROW);
-      expect(source).toContain(EMPTY_TEAM_ROW);
-      expect(checkOrderIssues(source)).toEqual([]);
+    it("Production.ts passes", () => {
+      expect(productionSource).toContain(TEAM_ROW);
+      expect(productionSource).toContain(EMPTY_TEAM_ROW);
+      expect(checkOrderIssues(productionSource)).toEqual([]);
     });
 
     it("each order issue has one remedy", () => {
-      const doctored = source.replace(
+      const doctored = productionSource.replace(
         EMPTY_TEAM_ROW,
         "| `empty_team`      | {@link OrderRow} `emptyTeam`                                             | assign a team, or add a member      |",
       );
-      expect(doctored).not.toBe(source);
+      expect(doctored).not.toBe(productionSource);
       expect(checkOrderIssues(doctored)).toEqual([
         "OrderIssue `empty_team`: a remedy names one action; this one says or",
       ]);
     });
 
     it("the Issue column is the OrderIssue literals, in order", () => {
-      const doctored = source.replace(
+      const doctored = productionSource.replace(
         `${TEAM_ROW}\n * ${EMPTY_TEAM_ROW}`,
         `${EMPTY_TEAM_ROW}\n * ${TEAM_ROW}`,
       );
-      expect(doctored).not.toBe(source);
+      expect(doctored).not.toBe(productionSource);
       expect(checkOrderIssues(doctored)).toEqual([
         "OrderIssue: the Issue column is choose_workflow, empty_team, unassigned, blocked; the literals are choose_workflow, unassigned, empty_team, blocked",
       ]);
@@ -431,7 +505,7 @@ describe("action table parser", () => {
 });
 
 const triggerError = (doctored: string) => {
-  expect(doctored).not.toBe(source);
+  expect(doctored).not.toBe(billingSource);
   const parsed = ActionTable.parseTriggerTable(doctored);
   if (Result.isSuccess(parsed)) throw new Error("parsed");
   return parsed.failure.message;
@@ -443,7 +517,9 @@ describe("triggers table parser", () => {
       "/test/integration/*.test.ts",
       { query: "?raw", import: "default", eager: true },
     );
-    const rows = Result.getOrThrow(ActionTable.parseTriggerTable(source));
+    const rows = Result.getOrThrow(
+      ActionTable.parseTriggerTable(billingSource),
+    );
     expect(rows.map((row) => row.trigger)).toContain("first run on an order");
     expect(ActionTable.checkPinned(rows, testSources, "ShopUsage")).toEqual([]);
   });
@@ -451,7 +527,7 @@ describe("triggers table parser", () => {
   it("a word outside the list in a count column is refused", () => {
     expect(
       triggerError(
-        source.replace(
+        billingSource.replace(
           "| first run on an order                           | +1          |",
           "| first run on an order                           | plus one    |",
         ),
@@ -459,7 +535,7 @@ describe("triggers table parser", () => {
     ).toMatch(/unknown order count "plus one"/u);
     expect(
       triggerError(
-        source.replace(
+        billingSource.replace(
           "| first count past the cycle end                  | recounted   | → 0                     |",
           "| first count past the cycle end                  | recounted   | reset                   |",
         ),
@@ -470,7 +546,7 @@ describe("triggers table parser", () => {
   it("an empty pinned by is refused", () => {
     expect(
       triggerError(
-        source.replace(
+        billingSource.replace(
           "| a seeded order is never counted                                                                                                           |",
           "|                                                                                                                                           |",
         ),

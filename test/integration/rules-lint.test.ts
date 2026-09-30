@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import barrel from "@/lib/Domain.ts?raw";
+
 import * as RulesLint from "../../scripts/lib/rules-lint.ts";
 
 /**
@@ -152,5 +154,85 @@ describe("a state predicate names its noun before the state", () => {
     expect(
       RulesLint.bareStatePredicateHits(source).map(({ name }) => name),
     ).toEqual(["isCancelled", "isValid"]);
+  });
+});
+
+describe("an import follows the map's direction", () => {
+  const map = RulesLint.contextImports(barrel);
+  const importHits = (file: string, source: string) =>
+    RulesLint.contextImportHits(file, source, map);
+
+  it("the map in Domain.ts reads as each context file's allowed imports", () => {
+    expect(Object.fromEntries(map)).toEqual({
+      Production: ["Orders", "Platform"],
+      Orders: ["Platform"],
+      Billing: ["Orders", "Platform"],
+      Platform: [],
+    });
+  });
+
+  it("Orders importing Production is refused", () => {
+    expect(
+      importHits(
+        "lib/domain/Orders.ts",
+        [
+          'import { Schema } from "effect";',
+          "",
+          'import { WorkflowId } from "./Platform.ts";',
+          "import {",
+          "  RunStatus,",
+          '} from "./Production.ts";',
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { line: 4, specifier: "./Production.ts", allowed: ["Platform"] },
+    ]);
+  });
+
+  it("Production importing Orders is allowed", () => {
+    expect(
+      importHits(
+        "lib/domain/Production.ts",
+        [
+          'import { orderIsOpen } from "./Orders.ts";',
+          'import { Shop } from "./Platform.ts";',
+        ].join("\n"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("Platform importing anything under domain/ is refused", () => {
+    expect(
+      importHits(
+        "lib/domain/Platform.ts",
+        [
+          'import { Plan } from "./Billing.ts";',
+          'export { ShopOrder } from "./Orders.ts";',
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { line: 1, specifier: "./Billing.ts", allowed: [] },
+      { line: 2, specifier: "./Orders.ts", allowed: [] },
+    ]);
+  });
+
+  it("a route importing @/lib/domain/Production is refused", () => {
+    expect(
+      importHits(
+        "routes/app.index.tsx",
+        [
+          'import * as Domain from "@/lib/Domain";',
+          'import { runActions } from "@/lib/domain/Production";',
+          'import { Shop } from "../lib/domain/Platform.ts";',
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { line: 2, specifier: "@/lib/domain/Production" },
+      { line: 3, specifier: "../lib/domain/Platform.ts" },
+    ]);
+  });
+
+  it("the barrel re-exports the context files", () => {
+    expect(importHits("lib/Domain.ts", barrel)).toEqual([]);
   });
 });

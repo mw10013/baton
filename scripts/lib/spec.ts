@@ -2,7 +2,7 @@ import type { OrderState, RunStatus } from "../../src/lib/Domain.ts";
 
 /**
  * Reads the action matrices out of the JSDoc on `runActions` and
- * `taskActions` in `src/lib/Domain.ts`, so the table a person edits is the
+ * `taskActions` in `src/lib/domain/Production.ts`, so the table a person edits is the
  * table the test asserts. Pure: it takes the source text as a parameter,
  * because the test runs inside workerd (no `node:fs`) and gets the text
  * through Vite's `?raw` import, while `scripts/spec.ts` reads the
@@ -391,24 +391,68 @@ export const overlaps = (
 };
 
 /**
- * Every backticked identifier in the Vocabulary block occurs as a word
- * elsewhere in the source. A rename that skipped the vocabulary is the
- * failure this catches; it does not prove the word is the right kind of
- * thing (a literal, an export). Reports the missing words.
+ * Where the vocabulary block starts: the JSDoc whose first line is
+ * `Vocabulary.` (the map, in `Domain.ts`) or `Vocabulary, <context>.` (a
+ * context file under `src/lib/domain/`). -1 when there is none.
  */
-export const checkVocabulary = (source: string): readonly string[] => {
-  const start = source.indexOf("/**\n * Vocabulary.");
+const vocabularyStart = (source: string): number =>
+  /^\/\*\*\n \* Vocabulary[.,]/mu.exec(source)?.index ?? -1;
+
+/** `word` occurs as a whole word in one of `texts`. */
+const occurs = (word: string, texts: readonly string[]) => {
+  const pattern = new RegExp(`\\b${word}\\b`, "u");
+  return texts.some((text) => pattern.test(text));
+};
+
+const identifier = (word: string) => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(word);
+
+/**
+ * Every backticked identifier in the Vocabulary block occurs as a word
+ * elsewhere in the source or in one of `others`. A rename that skipped the
+ * vocabulary is the failure this catches; it does not prove the word is the
+ * right kind of thing (a literal, an export). A context file is checked
+ * against itself plus the barrel (`Domain.ts`), whose map names words of
+ * every context; the barrel is checked against itself plus the four context
+ * files. A word written as another context's (`` `Subscription` in
+ * Platform ``, the form a `{@link}` across files takes) is checked against
+ * that context's file in `contexts`, by name. Reports the missing words.
+ */
+export const checkVocabulary = (
+  source: string,
+  others: readonly string[] = [],
+  contexts: Readonly<Record<string, string>> = {},
+): readonly string[] => {
+  const start = vocabularyStart(source);
   if (start === -1) return ["(no Vocabulary block)"];
   const end = source.indexOf("*/", start) + 2;
-  const rest = source.slice(0, start) + source.slice(end);
+  const block = source.slice(start, end);
+  const rest = [source.slice(0, start) + source.slice(end), ...others];
+  const qualified = [
+    ...block.matchAll(/`(?<word>[^`]+)` in (?<context>[A-Z][a-z]+)\b/gu),
+  ]
+    .map((match) => ({
+      word: match.groups?.word ?? "",
+      context: match.groups?.context ?? "",
+    }))
+    .filter(({ word, context }) => identifier(word) && context in contexts);
   const words = new Set(
-    [...source.slice(start, end).matchAll(/`(?<word>[^`]+)`/gu)]
+    [
+      ...block
+        .replaceAll(
+          /`[^`]+` in (?<context>[A-Z][a-z]+)\b/gu,
+          (text, context) => (context in contexts ? "" : text),
+        )
+        .matchAll(/`(?<word>[^`]+)`/gu),
+    ]
       .map((match) => match.groups?.word ?? "")
-      .filter((word) => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(word)),
+      .filter(identifier),
   );
-  return [...words].filter(
-    (word) => !new RegExp(`\\b${word}\\b`, "u").test(rest),
-  );
+  return [
+    ...[...words].filter((word) => !occurs(word, rest)),
+    ...qualified
+      .filter(({ word, context }) => !occurs(word, [contexts[context] ?? ""]))
+      .map(({ word, context }) => `${word} in ${context}`),
+  ];
 };
 
 /**
@@ -439,7 +483,7 @@ export interface VocabularyTable {
 export const vocabularyTables = (
   source: string,
 ): readonly VocabularyTable[] => {
-  const start = source.indexOf("/**\n * Vocabulary.");
+  const start = vocabularyStart(source);
   if (start === -1) return [];
   const lines = source
     .slice(start, source.indexOf("*/", start))
@@ -642,48 +686,75 @@ export const checkScreens = (
 };
 
 /**
- * **Every vocabulary table names its context.** The Contexts table (the one
- * whose paragraph starts `Contexts.`) lists the contexts; every other table
- * names one or more of them, either in a `context` column whose every cell is
- * a context, or in its intro's first line up to the first `.` or `:`, as
- * `<Name>, <context>` ("Run states, production:") or as the bare context
- * ("Billing."). Several contexts, in a cell or an intro, are joined with
- * " and " ("production and orders"). The Screens table is
- * exempt: its rows name pages, and a page's spec name is spoken in every
- * context. Reports each table that names none, and each unknown context.
+ * **Every vocabulary table names its context.** The map (the table whose
+ * paragraph starts `Contexts.`) lists the contexts and says what `kind` each
+ * is; every other table names one or more of them, either in a `context`
+ * column whose every cell is a context, or in its intro's first line up to
+ * the first `.` or `:`, as `<Name>, <context>` ("Run states, production:") or
+ * as the bare context ("Billing."). Several contexts, in a cell or an intro,
+ * are joined with " and " ("production and orders"). The Shared words table
+ * (paragraph `Shared words.`) names its contexts per row, in a `contexts`
+ * cell joined with ", ". The Screens table is exempt: its rows name pages,
+ * and a page's spec name is spoken in every context. `source` holds the map
+ * (`Domain.ts`); the tables of `others` (the context files) are checked
+ * against it too. Reports a map with no `kind` column, each table that names
+ * none, and each unknown context.
  */
-export const checkContexts = (source: string): readonly string[] => {
-  const tables = vocabularyTables(source);
+export const checkContexts = (
+  source: string,
+  others: readonly string[] = [],
+): readonly string[] => {
+  const tables = [source, ...others].flatMap(vocabularyTables);
   const contextTable = tables.find((each) =>
     each.intro.startsWith("Contexts."),
   );
   if (contextTable === undefined) return ["Vocabulary: no Contexts table"];
   const contexts = new Set(contextTable.rows.map((row) => row.context ?? ""));
-  return tables
-    .filter(
-      (each) => each !== contextTable && !each.intro.startsWith("Screens."),
-    )
-    .flatMap(({ intro, rows }) => {
-      const name = intro.split(/[.,:]/u)[0] ?? intro;
-      if (rows.every((row) => "context" in row))
-        return rows
-          .filter(
-            (row) =>
-              !(row.context ?? "")
-                .split(" and ")
-                .every((each) => contexts.has(each)),
-          )
-          .map(
-            (row) =>
-              `Vocabulary: ${name} ${row.word ?? ""}: context "${row.context ?? ""}" is not in the Contexts table`,
-          );
-      const head = intro.split(/[.:]/u)[0] ?? "";
-      const parts = head.split(", ");
-      const named = (parts[1] ?? parts[0] ?? "").toLowerCase().split(" and ");
-      return named.every((each) => contexts.has(each))
-        ? []
-        : [`Vocabulary: ${name}: its intro names no context`];
-    });
+  const sharedWords = tables.find((each) =>
+    each.intro.startsWith("Shared words."),
+  );
+  return [
+    ...(contextTable.rows.every((row) => "kind" in row)
+      ? []
+      : ["Vocabulary: Contexts: the map has no kind column"]),
+    ...(sharedWords?.rows ?? []).flatMap((row) =>
+      (row.contexts ?? "")
+        .split(", ")
+        .filter((each) => !contexts.has(each))
+        .map(
+          (each) =>
+            `Vocabulary: Shared words ${row.word ?? ""}: context "${each}" is not in the Contexts table`,
+        ),
+    ),
+    ...tables
+      .filter(
+        (each) =>
+          each !== contextTable &&
+          each !== sharedWords &&
+          !each.intro.startsWith("Screens."),
+      )
+      .flatMap(({ intro, rows }) => {
+        const name = intro.split(/[.,:]/u)[0] ?? intro;
+        if (rows.every((row) => "context" in row))
+          return rows
+            .filter(
+              (row) =>
+                !(row.context ?? "")
+                  .split(" and ")
+                  .every((each) => contexts.has(each)),
+            )
+            .map(
+              (row) =>
+                `Vocabulary: ${name} ${row.word ?? ""}: context "${row.context ?? ""}" is not in the Contexts table`,
+            );
+        const head = intro.split(/[.:]/u)[0] ?? "";
+        const parts = head.split(", ");
+        const named = (parts[1] ?? parts[0] ?? "").toLowerCase().split(" and ");
+        return named.every((each) => contexts.has(each))
+          ? []
+          : [`Vocabulary: ${name}: its intro names no context`];
+      }),
+  ];
 };
 
 /** One parsed row of a data-model table (`initializeSchema`, `D1_TABLES`). */
@@ -821,7 +892,7 @@ export const SEAT_MARK_WORDS = [
   "→ member count if above",
 ] as const;
 
-/** One parsed row of the triggers table on `ShopUsage` in `src/lib/Domain.ts`. */
+/** One parsed row of the triggers table on `ShopUsage` in `src/lib/domain/Billing.ts`. */
 export interface TriggerRow {
   readonly line: number;
   readonly trigger: string;
@@ -833,7 +904,7 @@ export interface TriggerRow {
 
 /**
  * Read the triggers table out of the JSDoc on `ShopUsage` in `source`
- * (`src/lib/Domain.ts`). The header is `trigger | order count | seat mark |
+ * (`src/lib/domain/Billing.ts`). The header is `trigger | order count | seat mark |
  * queue | pinned by`. `trigger` and `queue` are non-empty free text; `order
  * count` is one of {@link ORDER_COUNT_WORDS} and `seat mark` one of {@link
  * SEAT_MARK_WORDS}, so a row cannot say what the counts do in words the

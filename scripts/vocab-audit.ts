@@ -1,5 +1,6 @@
 // Lists the words in exported identifiers under src/lib/ that the vocabulary
-// (the block at the top of src/lib/Domain.ts) does not have, so a word that
+// (the map at the top of src/lib/Domain.ts and the block at the top of each
+// context file under src/lib/domain/) does not have, so a word that
 // never got a row, or a retired word still in the code, shows up. An audit,
 // not a check: it always exits 0, and what to do with each word is the
 // vocabulary's entry test.
@@ -41,9 +42,16 @@ const singular = (word: string) => {
 
 const LITERALS = /Schema\.Literals\(\s*\[(?<body>[^\]]*)\]/gu;
 
-const domain = readFileSync(join(SRC, "lib", "Domain.ts"), "utf8");
+const VOCABULARY_FILES = [
+  "Domain.ts",
+  "domain/Platform.ts",
+  "domain/Orders.ts",
+  "domain/Billing.ts",
+  "domain/Production.ts",
+];
 const known = new Set(
-  vocabularyTables(domain)
+  VOCABULARY_FILES.map((file) => readFileSync(join(SRC, "lib", file), "utf8"))
+    .flatMap(vocabularyTables)
     .flatMap(({ rows }) => rows.flatMap((row) => [row.word, row.context]))
     .flatMap((cell) => wordsOf(cell ?? ""))
     .map(singular),
