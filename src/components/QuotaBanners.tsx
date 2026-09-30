@@ -9,7 +9,7 @@ import { formatNumber } from "@/lib/format";
  * never arrived would be missed.
  *
  * Both are `critical` and appear only after the fact: the open-run banner once
- * reconcile declined to start a run, the order-ceiling banner once a new order
+ * reconcile declined to create a run, the order-ceiling banner once a new order
  * was refused. Each names what clears it.
  *
  * Going past the plan's included orders is not one of them: syncing continues

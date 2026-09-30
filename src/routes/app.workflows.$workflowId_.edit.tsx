@@ -135,14 +135,14 @@ export const Route = createFileRoute("/app/workflows/$workflowId_/edit")({
  *
  * The header is the state, in one primary button and one badge:
  *
- * - never applied — `Draft`, and **Turn on**, which applies and activates in
- *   one confirmed step (`ShopAgent.applyAndActivate`). Apply on its own would
- *   leave the merchant with tasks in force that start nothing, then ask them
+ * - never applied — `Draft`, and **Turn on**, which applies and turns on in
+ *   one confirmed step (`ShopAgent.applyAndTurnOn`). Apply on its own would
+ *   leave the merchant with tasks in force that create nothing, then ask them
  *   to turn on the thing they just applied;
  * - applied with no draft — no badge, and the plain on/off switch, because
  *   there is nothing here to commit;
  * - applied with a draft — `Draft`, **Discard changes** and **Apply changes**,
- *   and no activation control: the switch is about what is in force, and what
+ *   and no on/off control: the switch is about what is in force, and what
  *   is in force is not what is on the canvas.
  *
  * Close leaves the draft alone; only Apply and Discard end it.
@@ -387,7 +387,7 @@ function RouteComponent() {
     loadedTasks?.find((task) => task.id === selectedTaskId) ?? null;
   const loadedTaskName = loadedTask?.name;
   const loadedTaskTeamId =
-    loadedTask === null || Domain.isUnassigned(loadedTask)
+    loadedTask === null || Domain.workflowTaskIsUnassigned(loadedTask)
       ? ""
       : (loadedTask.teamId ?? "");
   const loadedTaskInstructions = loadedTask?.instructions ?? "";
@@ -654,14 +654,14 @@ function RouteComponent() {
             commandFor={DISCARD_MODAL}
             command="--show"
           >
-            Discard changes
+            {Domain.VERB_LABEL.discard.merchant}
           </s-button>
           <s-button
             slot="primary-action"
             variant="primary"
             loading={applyMutation.isPending}
             disabled={!identified || busy || blocker !== null}
-            {...(Domain.isActive(workflow)
+            {...(Domain.workflowIsOn(workflow)
               ? { commandFor: APPLY_MODAL, command: "--show" as const }
               : {
                   onClick: () => {
@@ -669,7 +669,7 @@ function RouteComponent() {
                   },
                 })}
           >
-            Apply changes
+            {Domain.VERB_LABEL.apply.merchant}
           </s-button>
         </>
       )}
@@ -692,22 +692,23 @@ function RouteComponent() {
       <s-section accessibilityLabel="Steps">
         <s-stack gap="base">
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
-          {/* Only while the header offers Turn on or Apply: an active
-              workflow with no draft has neither, and its unassigned tasks are
+          {/* Only while the header offers Turn on or Apply: a workflow that is
+              on with no draft has neither, and its unassigned tasks are
               `TeamIssueBanners`' to report. */}
-          {blocker !== null && !(showSwitch && Domain.isActive(workflow)) && (
-            <s-banner
-              tone="warning"
-              heading={
-                showSwitch ? "Turn on is unavailable" : "Not ready to apply"
-              }
-            >
-              {/* Wrapped, like {@link TeamIssueBanners}' lines: `s-banner`
+          {blocker !== null &&
+            !(showSwitch && Domain.workflowIsOn(workflow)) && (
+              <s-banner
+                tone="warning"
+                heading={
+                  showSwitch ? "Turn on is unavailable" : "Not ready to apply"
+                }
+              >
+                {/* Wrapped, like {@link TeamIssueBanners}' lines: `s-banner`
                   renders its body from elements, and a bare string child
                   never reaches the page. */}
-              <s-paragraph>{applyResultMessage(blocker)}</s-paragraph>
-            </s-banner>
-          )}
+                <s-paragraph>{applyResultMessage(blocker)}</s-paragraph>
+              </s-banner>
+            )}
           <TeamIssueBanners tasks={tasks} />
 
           <StepFlow

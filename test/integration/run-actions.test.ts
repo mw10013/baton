@@ -95,7 +95,7 @@ describe("Domain.runActions matrix", () => {
 
   it("without the item, Change workflow is not offered", () => {
     strictEqual(
-      Domain.runActions(MERCHANT, OPEN_ORDER, run("active"), [
+      Domain.runActions(MERCHANT, OPEN_ORDER, run("open"), [
         { teamId: T, current: true },
       ]).changeWorkflow,
       false,
@@ -105,7 +105,7 @@ describe("Domain.runActions matrix", () => {
   it("a member whose team holds no current task gets only the note, and only if the run is theirs to see", () => {
     const tasks = [{ teamId: T, current: false }];
     deepStrictEqual(
-      Domain.runActions(MEMBER, OPEN_ORDER, run("active", true), tasks),
+      Domain.runActions(MEMBER, OPEN_ORDER, run("open", true), tasks),
       {
         note: true,
         block: false,
@@ -116,7 +116,7 @@ describe("Domain.runActions matrix", () => {
       },
     );
     strictEqual(
-      Domain.runActions(OUTSIDER, OPEN_ORDER, run("active"), tasks).note,
+      Domain.runActions(OUTSIDER, OPEN_ORDER, run("open"), tasks).note,
       false,
     );
   });
@@ -156,7 +156,7 @@ describe("Domain.taskActions matrix", () => {
 
   it("a task on none of the member's teams offers the member nothing", () => {
     deepStrictEqual(
-      Domain.taskActions(OUTSIDER, OPEN_ORDER, run("active"), task()),
+      Domain.taskActions(OUTSIDER, OPEN_ORDER, run("open"), task()),
       {
         start: false,
         done: false,
@@ -239,28 +239,28 @@ describe("Domain.lineItemState", () => {
       runs: readonly Domain.RunDetail[],
       offered: readonly Domain.Workflow[] = workflows,
     ) => kindOf(item, runs, offered);
-    strictEqual(kind(lineItemOf(), [detailOf("active")]), "open");
+    strictEqual(kind(lineItemOf(), [detailOf("open")]), "open");
     strictEqual(kind(lineItemOf(), [detailOf("done")]), "done");
     strictEqual(kind(lineItemOf(), [detailOf("closed")]), "closed");
     // A run is the news even when the line went to zero under it.
     strictEqual(
-      kind(lineItemOf({ currentQuantity: 0 }), [detailOf("active")]),
+      kind(lineItemOf({ currentQuantity: 0 }), [detailOf("open")]),
       "open",
     );
     strictEqual(kind(lineItemOf({ currentQuantity: 0 }), []), "removed");
     strictEqual(kind(lineItemOf(), [], []), "unmatched");
-    strictEqual(kind(lineItemOf(), [detailOf("active", "other")]), "startable");
+    strictEqual(kind(lineItemOf(), [detailOf("open", "other")]), "attachable");
 
-    const startable = Domain.lineItemState(
+    const attachable = Domain.lineItemState(
       lineItemOf({ matchedWorkflowIds: [engrave.id, polish.id] }),
       [],
       [polish, engrave, workflowOf("w3", "Rush")],
     );
-    if (startable.kind !== "startable") throw new Error(startable.kind);
-    strictEqual(startable.ambiguous, true);
-    // Matched first, in the roster's order, then the rest.
+    if (attachable.kind !== "attachable") throw new Error(attachable.kind);
+    strictEqual(attachable.ambiguous, true);
+    // Matched first, in the teams' order, then the rest.
     deepStrictEqual(
-      startable.options.map((workflow) => workflow.name),
+      attachable.options.map((workflow) => workflow.name),
       ["Polish", "Engrave", "Rush"],
     );
 
@@ -279,7 +279,7 @@ describe("Domain.lineItemState", () => {
       closed.options.map((workflow) => workflow.id),
       [polish.id, engrave.id],
     );
-    strictEqual(closed.startable, true);
+    strictEqual(closed.attachable, true);
     // Nothing left to make: the closed run stands, and no workflow starts.
     const emptied = Domain.lineItemState(
       lineItemOf({ currentQuantity: 0 }),
@@ -287,7 +287,7 @@ describe("Domain.lineItemState", () => {
       workflows,
     );
     if (emptied.kind !== "closed") throw new Error(emptied.kind);
-    strictEqual(emptied.startable, false);
+    strictEqual(emptied.attachable, false);
   });
 });
 
@@ -523,9 +523,9 @@ describe("ShopAgent refuses what the action set refuses", () => {
         workflowId: created.workflow.id,
       });
       if (applied._tag !== "Ok") throw new Error(applied._tag);
-      const on = await agent.setWorkflowActive({
+      const on = await agent.setWorkflowOn({
         workflowId: created.workflow.id,
-        active: true,
+        on: true,
       });
       if (on._tag !== "Ok") throw new Error(on._tag);
       return created.workflow.id;

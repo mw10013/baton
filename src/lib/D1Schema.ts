@@ -49,7 +49,7 @@
  * nothing in the database compares the two shops, so a raw cross-shop edge
  * inserts; `setTeamMember` and `setMemberTeams` scope both sides through
  * the shop. A trigger would make it `schema` and is not worth a migration
- * at the current roster size.
+ * at the current member count.
  *
  * The uninstall row records the current behaviour: `deleteShopSession`
  * cascades D1 and nothing else, and `findOrphanShopAgentIds` exists because

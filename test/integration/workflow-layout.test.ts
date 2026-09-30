@@ -29,7 +29,7 @@ const others = (l: WorkflowLayout.Layout, id: string) =>
     .filter((group) => group.length > 0);
 
 const check = (before: WorkflowLayout.Layout, after: WorkflowLayout.Layout) => {
-  strictEqual(WorkflowLayout.isValid(after), true, shape(after));
+  strictEqual(WorkflowLayout.layoutIsValid(after), true, shape(after));
   deepStrictEqual(ids(after), ids(before));
 };
 
@@ -60,7 +60,7 @@ describe("WorkflowLayout", () => {
     strictEqual(shape(three), "a1 b2 c3");
     const parallel = WorkflowLayout.appendTask(three, 1, "d");
     strictEqual(shape(parallel), "a1 d1 b2 c3");
-    strictEqual(WorkflowLayout.isValid(parallel), true);
+    strictEqual(WorkflowLayout.layoutIsValid(parallel), true);
     deepStrictEqual(ids(parallel), ["a", "b", "c", "d"]);
     strictEqual(shape(WorkflowLayout.appendTask(three, 9, "d")), shape(three));
   });
@@ -167,27 +167,30 @@ describe("WorkflowLayout", () => {
       removed.map((p) => p.position),
       [1, 2, 3],
     );
-    strictEqual(WorkflowLayout.isValid(removed), true);
+    strictEqual(WorkflowLayout.layoutIsValid(removed), true);
     const fromShared = WorkflowLayout.remove(start, "c");
     strictEqual(shape(fromShared), "a1 b2 d3");
   });
 
-  it("step is dense from 1 and non-decreasing along position, a step of one task being the linear case; isValid rejects gaps, decreases, and duplicate positions", () => {
-    strictEqual(WorkflowLayout.isValid(layout("a1 b1 c2 d3 e3 f3 g4")), true);
-    strictEqual(WorkflowLayout.isValid(layout("a1 b2 c3")), true);
-    strictEqual(WorkflowLayout.isValid([]), true);
-    strictEqual(WorkflowLayout.isValid(layout("a1 b3")), false);
-    strictEqual(WorkflowLayout.isValid(layout("a2 b1")), false);
-    strictEqual(WorkflowLayout.isValid(layout("a2")), false);
+  it("step is dense from 1 and non-decreasing along position, a step of one task being the linear case; layoutIsValid rejects gaps, decreases, and duplicate positions", () => {
     strictEqual(
-      WorkflowLayout.isValid([
+      WorkflowLayout.layoutIsValid(layout("a1 b1 c2 d3 e3 f3 g4")),
+      true,
+    );
+    strictEqual(WorkflowLayout.layoutIsValid(layout("a1 b2 c3")), true);
+    strictEqual(WorkflowLayout.layoutIsValid([]), true);
+    strictEqual(WorkflowLayout.layoutIsValid(layout("a1 b3")), false);
+    strictEqual(WorkflowLayout.layoutIsValid(layout("a2 b1")), false);
+    strictEqual(WorkflowLayout.layoutIsValid(layout("a2")), false);
+    strictEqual(
+      WorkflowLayout.layoutIsValid([
         { id: "a", position: 1, step: 1 },
         { id: "b", position: 1, step: 1 },
       ]),
       false,
     );
     strictEqual(
-      WorkflowLayout.isValid([
+      WorkflowLayout.layoutIsValid([
         { id: "a", position: 1, step: 1 },
         { id: "a", position: 2, step: 1 },
       ]),

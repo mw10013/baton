@@ -32,7 +32,7 @@ function RouteComponent() {
   const signOutMutation = useMutation({ mutationFn: () => signOut({}) });
 
   return (
-    <s-page heading="Your shops" inlineSize="small">
+    <s-page heading="Your stores" inlineSize="small">
       <s-section heading={email}>
         {shops.length === 0 ? (
           <s-paragraph color="subdued">

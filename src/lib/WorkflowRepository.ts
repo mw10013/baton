@@ -97,7 +97,7 @@ export class NoTasksError extends Schema.TaggedError<NoTasksError>()(
 
 /**
  * Apply or turn-on refused because these tasks are unassigned: `teamId` null
- * (a team delete nulled it) or an id the live roster does not carry (the
+ * (a team delete nulled it) or an id the shop's live teams does not carry (the
  * cross-store window, read as null). An empty team is deliberately not here —
  * that is a warning, never a refusal.
  */
@@ -110,7 +110,7 @@ export class TaskUnassignedError extends Schema.TaggedError<TaskUnassignedError>
 const validLayout = (
   tasks: readonly { readonly position: number; readonly step: number }[],
 ) =>
-  WorkflowLayout.isValid(
+  WorkflowLayout.layoutIsValid(
     tasks.map((task, index) => ({
       id: String(index),
       position: task.position,
@@ -121,27 +121,30 @@ const validLayout = (
 const count = (query: Statement.Statement<SqlConnection.Row>) =>
   query.values.pipe(Effect.map((rows) => Number(rows[0]?.[0] ?? 0)));
 
-/** The live D1 roster as the object passes it in; `memberCount` only matters to `emptyTeam`. */
+/** The shop's teams, read live from D1 as the object passes it in; `memberCount` only matters to `emptyTeam`. */
 type Teams = readonly {
   readonly id: Domain.TeamId;
   readonly memberCount?: number;
 }[];
 
 /** Unassigned: `teamId` null, or an id no team in `teams` carries. */
-const isUnassigned = (task: Domain.WorkflowTask, teams: Teams) =>
+const taskIsUnassigned = (task: Domain.WorkflowTask, teams: Teams) =>
   task.teamId === null || !teams.some((team) => team.id === task.teamId);
 
 /** The names of the unassigned `tasks`, in position order. */
 const unassignedTaskNames = (
   tasks: readonly Domain.WorkflowTask[],
   teams: Teams,
-) => tasks.filter((task) => isUnassigned(task, teams)).map((task) => task.name);
+) =>
+  tasks
+    .filter((task) => taskIsUnassigned(task, teams))
+    .map((task) => task.name);
 
 export class WorkflowRepository extends Context.Service<
   WorkflowRepository,
   {
     /**
-     * `teams` is the live roster: `unassigned` and `emptyTeam` are derived
+     * `teams` is the shop's live teams: `unassigned` and `emptyTeam` are derived
      * per row from the workflow's tasks against it and never stored.
      * {@link Domain.WorkflowSummary} carries them.
      */
@@ -173,11 +176,11 @@ export class WorkflowRepository extends Context.Service<
     /**
      * Every switched-on workflow with its tasks, in two statements rather
      * than one per workflow: this is what an order upsert
-     * loads before starting runs for its items, and a bulk stream loads
+     * loads before creating runs for its items, and a bulk stream loads
      * it once for thousands of orders. Drafts are invisible here by
      * construction — nothing in run creation reads `WorkflowDraft*`.
      */
-    readonly listActiveWorkflowDetails: () => Effect.Effect<
+    readonly listOnWorkflowDetails: () => Effect.Effect<
       readonly Domain.WorkflowDetail[],
       SqlError.SqlError | WorkflowRepositoryError
     >;
@@ -278,9 +281,9 @@ export class WorkflowRepository extends Context.Service<
      * physical work and keep going; only new runs stop. Neither direction
      * creates, applies, or discards a draft, or looks at whether one exists.
      */
-    readonly setWorkflowActive: (input: {
+    readonly setWorkflowOn: (input: {
       readonly workflowId: string;
-      readonly active: boolean;
+      readonly on: boolean;
       readonly activatedAt?: number;
       readonly teams: Teams;
     }) => Effect.Effect<
@@ -347,11 +350,11 @@ export class WorkflowRepository extends Context.Service<
      * run and then switching the workflow on are one decision, and doing them
      * as two calls leaves a window where the first succeeded and the second
      * did not. An absent draft is not a refusal here — there is simply nothing
-     * to promote, and the startable check on the workflow's own tasks then
+     * to promote, and the eligibility check on the workflow's own tasks then
      * decides. Otherwise the same rules as {@link applyDraft} and
-     * {@link setWorkflowActive}, including `activatedAt`.
+     * {@link setWorkflowOn}, including `activatedAt`.
      */
-    readonly applyAndActivate: (input: {
+    readonly applyAndTurnOn: (input: {
       readonly workflowId: string;
       readonly activatedAt?: number;
       readonly teams: Teams;
@@ -845,7 +848,7 @@ export class WorkflowRepository extends Context.Service<
         });
 
       /** Apply and turn-on share the content checks: at least one task, every task assigned. */
-      const requireStartableTasks = (
+      const requireEligibleTasks = (
         workflowId: string,
         tasks: readonly Domain.WorkflowTask[],
         teams: Teams,
@@ -863,7 +866,7 @@ export class WorkflowRepository extends Context.Service<
        * The Apply write itself, with neither the transaction nor the question
        * of whether a draft exists: the draft's tasks replace the workflow's,
        * the draft goes, and `updatedAt` moves so "Last updated on" reflects
-       * the Apply. Shared by `applyDraft` and `applyAndActivate`, which ask
+       * the Apply. Shared by `applyDraft` and `applyAndTurnOn`, which ask
        * that question differently — Apply refuses without a draft, while the
        * editor's Turn on on a never-applied workflow simply has nothing to
        * promote. The tag is not drafted, so nothing here reads or writes it.
@@ -871,7 +874,7 @@ export class WorkflowRepository extends Context.Service<
       const promoteDraft = (workflowId: string, teams: Teams) =>
         Effect.gen(function* () {
           const tasks = yield* draftTasks(workflowId);
-          yield* requireStartableTasks(workflowId, tasks, teams);
+          yield* requireEligibleTasks(workflowId, tasks, teams);
           const now = yield* Clock.currentTimeMillis;
           yield* sql`delete from WorkflowTask where workflowId = ${workflowId}`;
           yield* sql`
@@ -969,7 +972,7 @@ export class WorkflowRepository extends Context.Service<
               `,
             );
             // Derived, never stored: the badges are computed from the workflow's
-            // tasks against the roster on every list read, so assigning a
+            // tasks against the teams on every list read, so assigning a
             // team or adding a member clears it with no other write.
             const tasks = yield* decodeTasks(
               yield* sql`select * from WorkflowTask order by workflowId, position`,
@@ -982,7 +985,7 @@ export class WorkflowRepository extends Context.Service<
               ...row,
               unassigned: tasks.some(
                 (task) =>
-                  task.workflowId === row.id && isUnassigned(task, teams),
+                  task.workflowId === row.id && taskIsUnassigned(task, teams),
               ),
               emptyTeam: tasks.some(
                 (task) => task.workflowId === row.id && emptyTeam(task),
@@ -1019,8 +1022,8 @@ export class WorkflowRepository extends Context.Service<
           } satisfies Domain.WorkflowWithDraft);
         }),
 
-        listActiveWorkflowDetails: Effect.fn(
-          "WorkflowRepository.listActiveWorkflowDetails",
+        listOnWorkflowDetails: Effect.fn(
+          "WorkflowRepository.listOnWorkflowDetails",
         )(function* () {
           const workflows = yield* decodeWorkflows(
             yield* sql`
@@ -1046,7 +1049,7 @@ export class WorkflowRepository extends Context.Service<
         /**
          * A fixture's `tasks` become the workflow's tasks, switched on
          * (`activatedAt = now`, so orders seeded afterwards qualify) unless
-         * `active: false` or a task is unassigned. A fixture with no tasks and
+         * `on: false` or a task is unassigned. A fixture with no tasks and
          * no `draft` has no draft either, the state `createWorkflow` leaves a
          * fresh workflow in. `draft` seeds a pending draft beside the
          * workflow.
@@ -1090,8 +1093,8 @@ export class WorkflowRepository extends Context.Service<
               ...workflow,
               tasks: step(workflow.tasks),
               draft: draftOf(workflow),
-              active:
-                workflow.active ??
+              on:
+                workflow.on ??
                 (workflow.tasks.length > 0 &&
                   workflow.tasks.every((task) => task.teamId !== null)),
             }));
@@ -1107,25 +1110,25 @@ export class WorkflowRepository extends Context.Service<
               });
             // The invariants the ordinary write path enforces that a fixture
             // could otherwise silently break.
-            const badActive = staged.find(
-              (workflow) => workflow.active && workflow.tasks.length === 0,
+            const onWithoutTasks = staged.find(
+              (workflow) => workflow.on && workflow.tasks.length === 0,
             );
-            if (badActive !== undefined)
+            if (onWithoutTasks !== undefined)
               return yield* new WorkflowRepositoryError({
-                message: `replaceWorkflows: workflow=${badActive.name}: an active workflow needs tasks`,
-                cause: badActive.name,
+                message: `replaceWorkflows: workflow=${onWithoutTasks.name}: a workflow that is on needs tasks`,
+                cause: onWithoutTasks.name,
               });
-            // Mirrors `ActivateResult.TaskUnassigned`: on with a task nobody
-            // owns is a workflow the list shows as Active that starts nothing.
-            const unassignedActive = staged.find(
+            // Mirrors `SwitchResult.TaskUnassigned`: on with a task nobody
+            // owns is a workflow the list shows as On that creates nothing.
+            const onWithUnassigned = staged.find(
               (workflow) =>
-                workflow.active &&
+                workflow.on &&
                 workflow.tasks.some((task) => task.teamId === null),
             );
-            if (unassignedActive !== undefined)
+            if (onWithUnassigned !== undefined)
               return yield* new WorkflowRepositoryError({
-                message: `replaceWorkflows: workflow=${unassignedActive.name}: an active workflow needs every task assigned`,
-                cause: unassignedActive.name,
+                message: `replaceWorkflows: workflow=${onWithUnassigned.name}: a workflow that is on needs every task assigned`,
+                cause: onWithUnassigned.name,
               });
             if (staged.length > Domain.WorkflowLimits.maxWorkflows)
               return yield* new WorkflowRepositoryError({
@@ -1193,7 +1196,7 @@ export class WorkflowRepository extends Context.Service<
                     insert into Workflow
                       (id, name, tag, activatedAt, updatedAt)
                     values
-                      (${workflowId}, ${workflow.name}, ${workflow.tag}, ${workflow.active ? now : null}, ${now})
+                      (${workflowId}, ${workflow.name}, ${workflow.tag}, ${workflow.on ? now : null}, ${now})
                   `;
                   yield* writeTasks(
                     sql.literal("WorkflowTask"),
@@ -1378,21 +1381,21 @@ export class WorkflowRepository extends Context.Service<
           },
         ),
 
-        setWorkflowActive: Effect.fn("WorkflowRepository.setWorkflowActive")(
+        setWorkflowOn: Effect.fn("WorkflowRepository.setWorkflowOn")(
           function* ({
             workflowId,
-            active,
+            on,
             activatedAt,
             teams,
           }: {
             readonly workflowId: string;
-            readonly active: boolean;
+            readonly on: boolean;
             readonly activatedAt?: number;
             readonly teams: Teams;
           }) {
             yield* requireWorkflow(workflowId);
-            if (active)
-              yield* requireStartableTasks(
+            if (on)
+              yield* requireEligibleTasks(
                 workflowId,
                 yield* workflowTasks(workflowId),
                 teams,
@@ -1401,7 +1404,7 @@ export class WorkflowRepository extends Context.Service<
             const [workflow] = yield* decodeWorkflows(
               yield* sql`
                 update Workflow
-                set activatedAt = ${active ? (activatedAt ?? now) : null}, updatedAt = ${now}
+                set activatedAt = ${on ? (activatedAt ?? now) : null}, updatedAt = ${now}
                 where id = ${workflowId}
                 returning *
               `,
@@ -1464,7 +1467,7 @@ export class WorkflowRepository extends Context.Service<
           );
         }),
 
-        applyAndActivate: Effect.fn("WorkflowRepository.applyAndActivate")(
+        applyAndTurnOn: Effect.fn("WorkflowRepository.applyAndTurnOn")(
           function* ({
             workflowId,
             activatedAt,
@@ -1480,7 +1483,7 @@ export class WorkflowRepository extends Context.Service<
                 const draft = yield* findDraft(workflowId);
                 if (Option.isSome(draft))
                   yield* promoteDraft(workflowId, teams);
-                yield* requireStartableTasks(
+                yield* requireEligibleTasks(
                   workflowId,
                   yield* workflowTasks(workflowId),
                   teams,
@@ -1719,7 +1722,7 @@ export class WorkflowRepository extends Context.Service<
                   from RunTask s
                   join Run r on r.id = s.runId
                   where s.teamId is not null and s.doneAt is null
-                    and r.status = 'active'
+                    and r.status = 'open'
                 )
                 group by teamId
                 order by teamId

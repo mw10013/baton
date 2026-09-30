@@ -86,7 +86,7 @@ const lineItem: Domain.OrderLineItem = {
   properties: [],
 };
 
-/** One workflow tagged `mug` with one task on `TEAM`, applied and on, and one order whose item it starts a run on. */
+/** One workflow tagged `mug` with one task on `TEAM`, applied and on, and one order whose item it creates a run on. */
 const seedRun = Effect.gen(function* () {
   const workflows = yield* WorkflowRepository;
   const runs = yield* RunRepository;
@@ -101,13 +101,13 @@ const seedRun = Effect.gen(function* () {
     teamId: TEAM.id,
   });
   yield* workflows.applyDraft({ workflowId: workflow.id, teams: [TEAM] });
-  yield* workflows.setWorkflowActive({
+  yield* workflows.setWorkflowOn({
     workflowId: workflow.id,
-    active: true,
+    on: true,
     teams: [TEAM],
   });
   const context = {
-    workflows: yield* workflows.listActiveWorkflowDetails(),
+    workflows: yield* workflows.listOnWorkflowDetails(),
     teams: [TEAM],
   };
   yield* orders.upsertOrder({
@@ -133,7 +133,7 @@ const insertRun = (id: string) =>
           lineItemProperties, status, createdAt, updatedAt
         ) values (
           ${id}, 'wf', 'Mugs', ${ORDER_ID}, '#1001', 0,
-          ${LINE_ITEM_ID}, 'Mug', null, null, 1, '[]', 'active', 0, 0
+          ${LINE_ITEM_ID}, 'Mug', null, null, 1, '[]', 'open', 0, 0
         )
       `,
     ),

@@ -7,7 +7,7 @@ import { causeToErrorMessage } from "@/lib/LayerEx";
 /**
  * The data model of one shop's Durable Object, as rules. The table is the
  * spec: it says what is true of the data, never which column or index makes
- * it true; the DDL below conforms to it. `about` is a glossary noun
+ * it true; the DDL below conforms to it. `about` is a vocabulary noun
  * (`Domain`) or a table name. `holds by` is the implementer's report of who
  * guarantees the rule: `schema` when the database refuses a violating row,
  * `app` when a write path or transaction does, `schema+app` when both are
@@ -42,7 +42,7 @@ import { causeToErrorMessage } from "@/lib/LayerEx";
  * | order             | an order's counted mark is set at most once, by its first run or, for a seed order, by the seed, and survives every sync; only deleting the order removes it | app        | an order is counted once, when its first run is created                                                          |
  * | order             | an order older than retention is deleted, its items and its runs go with it, and it is never stored again                                                    | schema+app | an order older than retention is never stored again                                                              |
  * | item              | an item has exactly one order and goes with it                                                                                                               | schema     | an item has exactly one order and goes with it                                                                   |
- * | item              | an item has at most one run, over every status; a closed run holds the slot until a person replaces it                                                       | schema     | the unique index itself refuses a second row for an item, and a closed run still holds the slot                  |
+ * | item              | an item has at most one run, over every status; a closed run holds its item until a person replaces it                                                       | schema     | the unique index itself refuses a second row for an item, and a closed run still holds its item                 |
  * | workflow          | a workflow is identified by its tag and by its name; no two workflows share either; the name is compared exactly                                             | schema     | a workflow is identified by its tag and by its name; no two workflows share either; the name is compared exactly |
  * | workflow          | a workflow has zero or more steps in order; a step has one or more tasks, done in parallel; a task is in exactly one step                                    | app        | (none yet)                                                                                                       |
  * | workflow          | a workflow has at most one draft; the draft holds tasks only                                                                                                 | schema     | a workflow has at most one draft; the draft holds tasks only                                                     |
@@ -63,7 +63,7 @@ import { causeToErrorMessage } from "@/lib/LayerEx";
  * | `ShopUsage`       | exactly one row                                                                                                                                              | schema     | `SyncState` and `ShopUsage` have exactly one row each                                                            |
  * | `WebhookDelivery` | one row per Shopify delivery id, kept for a while and swept by age                                                                                           | schema+app | (none yet)                                                                                                       |
  * | `UsageEvent`      | one row per idempotency key, kept until Shopify accepts it                                                                                                   | schema+app | a usage event is one row per idempotency key, kept until Shopify accepts it                                      |
- * | `UsageEvent`      | a dead usage event is kept until 60 days after it was dated, then deleted                                                                                    | app        | the retention sweep deletes dead usage events older than 60 days and keeps younger ones                          |
+ * | `UsageEvent`      | an expired usage event is kept until 60 days after it was dated, then deleted                                                                                    | app        | the retention sweep deletes expired usage events older than 60 days and keeps younger ones                       |
  *
  * The other half of each cross-store row is on {@link D1_TABLES}.
  *
@@ -236,7 +236,7 @@ export const initializeSchema = Effect.gen(function* () {
       lineItemProperties text not null,
       -- Denormalized from the tasks for the workflows list and the
       -- definitions badge (RunRepository's recomputeStatus).
-      status text not null check (status in ('active', 'done', 'closed')),
+      status text not null check (status in ('open', 'done', 'closed')),
       -- The one hold a person sets; blockedBy is the JSON
       -- Domain.ActorDisplay (role and email, no id).
       -- blockReason is optional text, so only blockedAt and blockedBy move
@@ -255,18 +255,18 @@ export const initializeSchema = Effect.gen(function* () {
       -- checks every statement, not the transaction.
       check ((status = 'closed') = (closedAt is not null)),
       check ((closedAt is null) = (closedReason is null)),
-      check (blockedAt is null or status = 'active'),
+      check (blockedAt is null or status = 'open'),
       check ((blockedAt is null) = (blockedBy is null))
     );
     create index if not exists Run_orderId_idx on Run (orderId);
     create index if not exists Run_status_idx on Run (status);
     create index if not exists Run_open_age_idx
-      on Run (orderProcessedAt, lineItemId, id) where status = 'active';
+      on Run (orderProcessedAt, lineItemId, id) where status = 'open';
     create index if not exists Run_closed_idx
       on Run (closedAt) where status = 'closed';
     -- *ByRole is the actor discriminator (Domain.ActorDisplay): a 'member'
     -- role has its email beside it, and a 'merchant' role, who acts from the
-    -- order page and has no Member row, has null. No slot has an id column:
+    -- order page and has no Member row, has null. No actor has an id column:
     -- who did what is a snapshot, never resolved through Member. reopened*
     -- hold the most recent reopen only; the check keeps reopenedAt and
     -- reopenedByRole one fact.

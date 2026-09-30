@@ -11,7 +11,7 @@ import type * as Domain from "@/lib/Domain";
  * whatever view is pressed.
  *
  * Presentation only. Which view a row is in, and how many of each the read
- * counts, are the object's (`Domain.tierOf`, `Domain.RunQuery`): one read
+ * counts, are the object's (`Domain.viewOf`, `Domain.RunQuery`): one read
  * returns one view's rows, so the page can no longer group rows it does not
  * hold. What a view is: {@link Domain.WorkflowsListView}.
  */
@@ -24,18 +24,18 @@ export const VIEWS = [
 ] as const satisfies readonly Domain.WorkflowsListView[];
 
 /**
- * Four of the labels are the glossary's state words, so the list and the
+ * Four of the labels are the vocabulary's state words, so the list and the
  * member's workflow page say the same word for one fact: a row under Ready
  * opens on a task that reads Ready.
  *
  * The `mine` and `teammates` views read **Started by you** and **Started by
  * others**: both hold started tasks and differ only in who started them.
  * "Teammates" was wrong for a task the merchant started, which lands in the
- * `teammates` tier (`Domain.tierOf`) and is nobody's teammate.
+ * `teammates` view (`Domain.viewOf`) and is nobody's teammate.
  *
  * The `upNext` view reads **Ready**, the task state its rows are in
  * (`Domain.taskStateOf`): current, and nobody has it. "Up next" read as
- * later, which is the glossary's waiting, and those tasks are not listed.
+ * later, which is the vocabulary's waiting, and those tasks are not listed.
  *
  * The `blocked` view reads **Blocked**: a block is the only thing it holds
  * (`Domain.WorkflowsListView`), and a Shopify change never lands here.

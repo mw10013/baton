@@ -152,9 +152,9 @@ const seedShopWithWork = async (shopName: string) => {
   });
   const applied = await agent.applyDraft({ workflowId: created.workflow.id });
   if (applied._tag !== "Ok") throw new Error(applied._tag);
-  const live = await agent.setWorkflowActive({
+  const live = await agent.setWorkflowOn({
     workflowId: created.workflow.id,
-    active: true,
+    on: true,
   });
   if (live._tag !== "Ok") throw new Error(live._tag);
   const attached = await agent.merchantAttachWorkflow({
@@ -229,7 +229,7 @@ describe("member workflows list socket", () => {
    * The query is the browser's to choose and the object's to honour: the same
    * connection, re-subscribing with a different view, gets that view's rows
    * while every read agrees on the counts. What this proves is that `query`
-   * reaches the object and selects the view — the tiering itself is the
+   * reaches the object and selects the view — sorting by view itself is the
    * repository's test.
    */
   it("re-subscribing with a different query changes what the read returns", async () => {

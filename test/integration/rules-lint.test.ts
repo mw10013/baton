@@ -120,3 +120,37 @@ describe("an s-text-area has a label and no placeholder", () => {
     ]);
   });
 });
+
+describe("an exported identifier carries no reserved stem", () => {
+  it("refuses a stem anywhere in an exported name, in any case, and leaves locals and the allowed names alone", () => {
+    const source = [
+      "export const isActive = () => true;",
+      "export type TeamRoster = { id: string };",
+      "export const RunTier = 1;",
+      "const rosterAtCeiling = 1;",
+      "export const CopySlot = 1;",
+      "export const workflowIsOn = () => true;",
+    ].join("\n");
+    expect(RulesLint.reservedStemHits(source)).toEqual([
+      { name: "isActive", line: 1, kind: "const" },
+      { name: "TeamRoster", line: 2, kind: "type" },
+      { name: "RunTier", line: 3, kind: "const" },
+    ]);
+  });
+});
+
+describe("a state predicate names its noun before the state", () => {
+  it("refuses an exported is<State> function or const and leaves <noun>Is<State>, types and locals alone", () => {
+    const source = [
+      "export const isCancelled = () => true;",
+      "export function isValid() { return true; }",
+      "export const orderIsCancelled = () => true;",
+      "export type IsOpen = boolean;",
+      "const isOpen = () => true;",
+      "export const issues = [];",
+    ].join("\n");
+    expect(
+      RulesLint.bareStatePredicateHits(source).map(({ name }) => name),
+    ).toEqual(["isCancelled", "isValid"]);
+  });
+});

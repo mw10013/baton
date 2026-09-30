@@ -16,7 +16,7 @@ export function MemberTeamsFields({
   value,
   onChange,
 }: {
-  readonly teams: readonly Domain.TeamRoster[];
+  readonly teams: readonly Domain.TeamWithMemberCount[];
   readonly value: readonly string[];
   readonly onChange: (next: readonly string[]) => void;
 }) {

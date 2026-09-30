@@ -31,7 +31,7 @@ import { lenientSearchKey } from "@/lib/searchParams";
  * condition.
  */
 const WorkflowsSearch = Schema.Struct({
-  status: lenientSearchKey(Schema.Literals(["active", "inactive"])),
+  status: lenientSearchKey(Schema.Literals(["on", "off"])),
 });
 
 /** Layout for the workflows pages: the search context ({@link WorkflowsSearch}) and nothing else. */

@@ -96,12 +96,15 @@ export const DELETE_WORKFLOW_WARNING =
  * The trigger line: what has to be true of an order for this workflow to
  * start. Every workflow has exactly one tag, so there is no empty case. The
  * match sentence speaks from the order's side ("a product tagged"), which is
- * where "product tag" is the right phrase.
+ * where "product tag" is the right phrase. "Starts" is the screen's word on
+ * purpose: the vocabulary says a workflow creates a run and only a member
+ * starts a task, but the merchant reads the workflow as the thing that
+ * begins, so the copy keeps the plain verb.
  */
 export const itemTriggerLine = (tag: string) =>
   `Starts when an order contains a product tagged \u201C${tag}\u201D. Orders placed before this workflow was turned on are skipped.`;
 
-/** The Turn on dialog's first line, both surfaces: the rule that will start runs once the switch is on. */
+/** The Turn on dialog's first line, both surfaces: the rule that will create runs once the switch is on. */
 export const turnOnBody = (tag: string) =>
   `Every order placed from now with an item tagged \u201C${tag}\u201D will start this workflow on that item.`;
 
@@ -124,26 +127,26 @@ export const waitingOrdersLine = ({ count }: Domain.WaitingOrders) =>
     ? null
     : `${String(count)} earlier ${count === 1 ? "order is" : "orders are"} unfulfilled and would match.`;
 
-/** The `startedToast` verb for Turn off, shared so the fork below stays in step with the caller. */
+/** The `createdToast` verb for Turn off, shared so the fork below stays in step with the caller. */
 export const TURNED_OFF = "Turned off";
 
 /**
  * The toast after Turn on, Turn off or Change: counts the runs the
- * reconcile-all started, when it started any. The screen has no word for a
- * run, so the count is of items, qualified by their orders as the glossary
+ * reconcile-all created, when it created any. The screen has no word for a
+ * run, so the count is of items, qualified by their orders as the vocabulary
  * asks ("items on waiting orders").
  *
- * Turn **off** can start runs too, which is why the sentence does not say
- * "waiting orders": an item matched by two active workflows carries no run, so
+ * Turn **off** can create runs too, which is why the sentence does not say
+ * "waiting orders": an item matched by two workflows that are on carries no run, so
  * taking one of them away leaves a single match and the survivor begins. That
  * is the same number in a different story, so the copy forks on the verb.
  */
-export const startedToast = (verb: string, started: number) => {
-  if (started === 0) return `${verb}.`;
-  const orders = `${String(started)} ${started === 1 ? "order" : "orders"}`;
+export const createdToast = (verb: string, created: number) => {
+  if (created === 0) return `${verb}.`;
+  const orders = `${String(created)} ${created === 1 ? "order" : "orders"}`;
   return verb === TURNED_OFF
     ? `${verb}. ${orders} moved to the workflow that still matches.`
-    : `${verb}. Attached to ${String(started)} ${started === 1 ? "item" : "items"} on waiting orders.`;
+    : `${verb}. Attached to ${String(created)} ${created === 1 ? "item" : "items"} on waiting orders.`;
 };
 
 const taskList = (tasks: readonly Domain.TaskWithTeamName[]) =>
@@ -153,13 +156,13 @@ const taskList = (tasks: readonly Domain.TaskWithTeamName[]) =>
  * Why Turn on would be refused, decided from the workflow's own tasks — the
  * same facts the object checks — so the button can be disabled with its
  * reason instead of failing after a round trip. An empty team is not a
- * blocker: the run starts and waits for a member.
+ * blocker: the run is created and waits for a member.
  */
 export const turnOnBlocker = (
   tasks: readonly Domain.TaskWithTeamName[],
-): Domain.ActivateResult | null => {
+): Domain.SwitchResult | null => {
   if (tasks.length === 0) return { _tag: "NoTasks" };
-  const orphans = tasks.filter(Domain.isUnassigned);
+  const orphans = tasks.filter(Domain.workflowTaskIsUnassigned);
   if (orphans.length > 0)
     return {
       _tag: "TaskUnassigned",
@@ -173,7 +176,7 @@ export const applyBlocker = (
   tasks: readonly Domain.TaskWithTeamName[],
 ): Domain.ApplyResult | null => {
   if (tasks.length === 0) return { _tag: "NoTasks" };
-  const orphans = tasks.filter(Domain.isUnassigned);
+  const orphans = tasks.filter(Domain.workflowTaskIsUnassigned);
   if (orphans.length > 0)
     return {
       _tag: "TaskUnassigned",
@@ -189,7 +192,7 @@ export const applyBlocker = (
 export const unassignedLine = (
   tasks: readonly Domain.TaskWithTeamName[],
 ): string | null => {
-  const orphans = tasks.filter(Domain.isUnassigned);
+  const orphans = tasks.filter(Domain.workflowTaskIsUnassigned);
   return orphans.length > 0
     ? `No team on ${taskList(orphans)}. Assign one before you apply.`
     : null;

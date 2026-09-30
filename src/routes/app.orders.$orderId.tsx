@@ -61,7 +61,7 @@ const attachResultMessage = Match.typeTags<
   Ok: () => null,
   AlreadyExists: () => "That workflow is already on this item.",
   LineItemNotFound: () => "That item no longer exists.",
-  WorkflowCannotStart: () =>
+  WorkflowNotEligible: () =>
     "That workflow can't start: it's off, has no steps, or has a task with no team.",
   RunLimit: ({ limit }) =>
     `${formatNumber(limit)} items are in production, the most Baton tracks at once. Cancel a workflow, or wait until an item is done or closed.`,
@@ -119,13 +119,13 @@ const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
  * ({@link Domain.runIsUnstarted}) reads {@link Domain.RUN_UNSTARTED_LABEL}, not
  * {@link Domain.RUN_STATE_LABEL}'s `open`:
  * the merchant is asking whether the bench has picked it up yet, and the
- * stored status cannot say, since a run is `active` from creation. Closed is
+ * stored status cannot say, since a run is `open` from creation. Closed is
  * neutral, not red: the work ended and nothing waits on anyone
  * ({@link Domain.RunStatus}); red stays for a hold. The reason is the line
  * under it ({@link ClosedLine}), not a badge of its own.
  */
 const RUN_STATUS_BADGE = {
-  active: { label: Domain.RUN_STATE_LABEL.open, tone: "info" },
+  open: { label: Domain.RUN_STATE_LABEL.open, tone: "info" },
   done: { label: Domain.RUN_STATE_LABEL.done, tone: "success" },
   closed: { label: Domain.RUN_STATE_LABEL.closed, tone: "neutral" },
 } as const satisfies Record<Domain.RunStatus, { label: string; tone: string }>;
@@ -176,8 +176,8 @@ interface TextWrite extends RunWrite {
 /** The merchant as the actor every action set on this page is computed for. */
 const MERCHANT: Domain.Actor = { role: "merchant" };
 
-/** The roster as select options, an empty team named so the pick is not a surprise. */
-const teamOptions = (teams: readonly Domain.TeamRoster[]) =>
+/** The teams as select options, an empty team named so the pick is not a surprise. */
+const teamOptions = (teams: readonly Domain.TeamWithMemberCount[]) =>
   teams.map((team) => (
     <s-option key={team.id} value={team.id}>
       {team.memberCount === 0 ? `${team.name} (no members)` : team.name}
@@ -280,12 +280,12 @@ type ActionableTask = Domain.RunTaskRow & {
  */
 const unassignedRows = (
   tasks: readonly ActionableTask[],
-  teams: readonly Domain.TeamRoster[],
+  teams: readonly Domain.TeamWithMemberCount[],
   assign: (runTaskId: string) => React.ReactNode,
 ) =>
   tasks
     .filter(({ actions }) => actions.assign)
-    .filter((task) => Domain.isRunTaskUnassigned(task, teams))
+    .filter((task) => Domain.runTaskIsUnassigned(task, teams))
     .map((task) => (
       <s-stack
         key={task.id}
@@ -308,9 +308,9 @@ const unassignedRows = (
  */
 const emptyTeamWarning = (
   tasks: readonly ActionableTask[],
-  teams: readonly Domain.TeamRoster[],
+  teams: readonly Domain.TeamWithMemberCount[],
 ) => {
-  /** The roster row, not the snapshot name, so the warning can link to the team page. */
+  /** The team row, not the snapshot name, so the warning can link to the team page. */
   const emptyTeams = [
     ...new Map(
       tasks
@@ -341,7 +341,7 @@ const emptyTeamWarning = (
 
 /**
  * The team issues of a run, {@link unassignedRows} then
- * {@link emptyTeamWarning}, against the live team roster
+ * {@link emptyTeamWarning}, against the shop's live teams
  * {@link Domain.OrderPageData} carries; `null` when it has neither.
  *
  * They render on the card, outside the Manage disclosure, because they are the
@@ -352,7 +352,7 @@ const emptyTeamWarning = (
  */
 const teamIssueRows = (
   tasks: readonly ActionableTask[],
-  teams: readonly Domain.TeamRoster[],
+  teams: readonly Domain.TeamWithMemberCount[],
   assign: (runTaskId: string) => React.ReactNode,
 ) => {
   const unassigned = unassignedRows(tasks, teams, assign);
@@ -675,11 +675,11 @@ function RouteComponent() {
   const orderOpen = Domain.orderIsOpen(order);
   /**
    * The same aggregate the index computes in SQL, rebuilt from the runs
-   * this page already carries so both pages read one `productionState`.
+   * this page already carries so both pages read one `orderPosition`.
    * Only the `made` banner reads it: every other state here is per item, and
    * the cards carry it.
    */
-  const state = Domain.productionState({
+  const state = Domain.orderPosition({
     order,
     runs: Domain.runCounts(runs.map(({ run }) => run)),
   });
@@ -731,9 +731,9 @@ function RouteComponent() {
   /**
    * The team picker and Assign button beside an unassigned task in
    * `unassignedRows`, open at rest because a task with no team is a required
-   * slot left empty, the one thing on the card that must be acted on. A task
+   * field left empty, the one thing on the card that must be acted on. A task
    * that has a team changes it through the Assign team modal instead: a filled
-   * slot is changed in a modal, an empty one is filled at rest.
+   * field is changed in a modal, an empty one is filled at rest.
    *
    * The picker starts empty so Assign stays disabled until a team is chosen.
    */
@@ -1041,7 +1041,7 @@ function RouteComponent() {
     );
     /**
      * `Change workflow`, handed to `manageRows`. Absent when the field is
-     * false or when the shop's only active workflow is the one the item
+     * false or when the shop's only workflow that is on is the one the item
      * already has.
      */
     const change =
@@ -1139,7 +1139,7 @@ function RouteComponent() {
    * a modal. A change on an item with an open run goes through the Change workflow
    * modal instead, which deletes what is there.
    *
-   * The options are the matched workflows first, then every other active
+   * The options are the matched workflows first, then every other
    * workflow ({@link Domain.lineItemState}): on an ambiguous item the item
    * has no Manage, so the select is the only way to a workflow the tags did
    * not pull in. On a closed item the closed workflow is among them; picking
@@ -1213,7 +1213,7 @@ function RouteComponent() {
   /**
    * One item's card: title, facts, properties, then the body its
    * {@link Domain.lineItemState} kind draws. On a closed order the resting
-   * controls of `startable`, `unmatched` and `closed` draw nothing: the
+   * controls of `attachable`, `unmatched` and `closed` draw nothing: the
    * sidebar's Fulfillment and Cancelled lines already say why no work can
    * start.
    */
@@ -1250,7 +1250,7 @@ function RouteComponent() {
             </s-paragraph>
           ) : null;
         }
-        case "startable": {
+        case "attachable": {
           return orderOpen ? (
             <>
               {itemState.ambiguous && (
@@ -1266,7 +1266,7 @@ function RouteComponent() {
           return (
             <>
               {renderRun(item, itemState.run, itemState.tasks)}
-              {orderOpen && itemState.startable && (
+              {orderOpen && itemState.attachable && (
                 <>
                   <s-paragraph color="subdued">
                     Nothing starts on this item until you choose a workflow.
@@ -1407,7 +1407,7 @@ function RouteComponent() {
 
       {/* One modal for the page, driven by `changing`: a per-item one would
           mount a dialog under every item of every order. The select
-          lives in it rather than inline under Manage because a filled slot
+          lives in it rather than inline under Manage because a filled field
           is changed in a modal; only an empty one is filled at rest. */}
       <s-modal
         id={CHANGE_WORKFLOW_MODAL}
@@ -1515,7 +1515,7 @@ function RouteComponent() {
         </s-button>
       </s-modal>
 
-      {/* Assign team changes a filled slot, so it is a modal like Change
+      {/* Assign team changes a filled field, so it is a modal like Change
           workflow; the select opens on the current team so the merchant
           sees what they are replacing. */}
       <s-modal

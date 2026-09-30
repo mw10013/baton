@@ -161,12 +161,12 @@ export class ShopAgentClient extends Context.Service<
       input: Domain.BillingCycleInput,
     ) => Effect.Effect<void, ShopAgentClientError>;
     /**
-     * Reports the roster size after a member add (`ShopAgent.recordRoster`).
+     * Reports the member count after a member add (`ShopAgent.recordMemberCount`).
      * Answers the units queued.
      */
-    readonly recordRoster: (
+    readonly recordMemberCount: (
       shop: string,
-      input: Domain.RecordRosterInput,
+      input: Domain.RecordMemberCountInput,
     ) => Effect.Effect<number, ShopAgentClientError>;
     /**
      * Hands the object Shopify's own meter readings so the divergence from the
@@ -326,10 +326,10 @@ export class ShopAgentClient extends Context.Service<
               stub.setBillingCycle(input),
             ),
         ),
-        recordRoster: Effect.fn("ShopAgentClient.recordRoster")(
-          (shop: string, input: Domain.RecordRosterInput) =>
-            call("recordRoster", Schema.Number, shop, (stub) =>
-              stub.recordRoster(input),
+        recordMemberCount: Effect.fn("ShopAgentClient.recordMemberCount")(
+          (shop: string, input: Domain.RecordMemberCountInput) =>
+            call("recordMemberCount", Schema.Number, shop, (stub) =>
+              stub.recordMemberCount(input),
             ),
         ),
         reconcileUsage: Effect.fn("ShopAgentClient.reconcileUsage")(

@@ -99,7 +99,7 @@ const PLAN_HANDLE_MANAGE_WINDOW_MS = 15 * 60 * 1000;
  * The deadline is clamped to the app subscription boundary because the app
  * subscription changes there with no plan change and no redirect: the billing
  * cycle rolls, or a trial ends and the first cycle begins. The revalidation
- * after it reads the new cycle and pushes it, with the roster size, to
+ * after it reads the new cycle and pushes it, with the member count, to
  * `ShopAgent.setBillingCycle`, which restarts order counting and the seat mark.
  * The boundary does not move within a cycle, so every revalidation re-pins to
  * the same instant.
@@ -203,7 +203,7 @@ export class SubscriptionPlan extends Context.Service<
      * Then sends the shop's usage queue. A plan change ends the app
      * subscription, and an event still queued when it ends is dated inside a
      * billing cycle that has closed, so it can never be sent
-     * (`Domain.usageEventIsDead`). The button waits at most 1.5 s before it
+     * (`Domain.usageEventIsExpired`). The button waits at most 1.5 s before it
      * opens the pricing page; a flush that takes longer still finishes,
      * because the Worker holds the request's promise in `ctx.waitUntil`
      * (`worker.ts`), which outlives the client for up to 30 s. The exposure
@@ -288,7 +288,7 @@ export class SubscriptionPlan extends Context.Service<
           );
         if (appSubscription === null) return Unsubscribed;
         // The object counts orders against the cycle and meters them and the
-        // seats, so it needs the billing cycle and the roster size (the roster is
+        // seats, so it needs the billing cycle and the member count (the members are
         // D1's); it still learns nothing about the plan itself. The pushes
         // are best-effort for the same reason the revoke is: the plan answer
         // this function exists to give is correct regardless, and the next
@@ -398,7 +398,7 @@ export class SubscriptionPlan extends Context.Service<
  * is, and nothing else does: without it a shop whose orders arrive by webhook
  * alone rolls its cycle forward once on its own and never again, so its
  * order count grows across months and its members meter is never sent a new
- * cycle's roster. The refresh pushes the cycle and the meter readings
+ * cycle's member count. The refresh pushes the cycle and the meter readings
  * (`ShopAgent.setBillingCycle`, `ShopAgent.reconcileUsage`), and the second
  * sends the usage queue.
  *

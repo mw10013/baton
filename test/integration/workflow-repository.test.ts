@@ -179,7 +179,7 @@ describe("WorkflowRepository", () => {
       }),
     ));
 
-  it("enforces the workflow limit; a delete frees a slot", () =>
+  it("enforces the workflow limit; a delete makes room", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -410,7 +410,7 @@ describe("WorkflowRepository", () => {
             },
           ],
         });
-        const [linear, stepped] = yield* repo.listActiveWorkflowDetails();
+        const [linear, stepped] = yield* repo.listOnWorkflowDetails();
         deepStrictEqual(
           stepped?.tasks.map((s) => [
             s.name,
@@ -446,7 +446,7 @@ describe("WorkflowRepository", () => {
           })
           .pipe(Effect.flip);
         strictEqual(invalid._tag, "WorkflowRepositoryError");
-        strictEqual((yield* repo.listActiveWorkflowDetails()).length, 2);
+        strictEqual((yield* repo.listOnWorkflowDetails()).length, 2);
       }),
     ));
 
@@ -469,14 +469,14 @@ describe("WorkflowRepository", () => {
           ],
         });
         deepStrictEqual(
-          (yield* repo.listActiveWorkflowDetails())
+          (yield* repo.listOnWorkflowDetails())
             .map(({ workflow }) => workflow.name)
             .toSorted(),
           ["Live"],
         );
         const all = yield* repo.listWorkflows({ teams: ALL_TEAMS });
         deepStrictEqual(
-          all.map((w) => [w.name, Domain.isActive(w), w.unassigned]),
+          all.map((w) => [w.name, Domain.workflowIsOn(w), w.unassigned]),
           [
             ["Live", true, false],
             ["Lost", false, true],
@@ -488,20 +488,20 @@ describe("WorkflowRepository", () => {
           (yield* refused([
             {
               name: name("Active but empty"),
-              active: true,
+              on: true,
               tag: tag("x"),
               tasks: [],
             },
           ]))._tag,
           "WorkflowRepositoryError",
         );
-        // On with a task nobody owns: what `setWorkflowActive` answers
+        // On with a task nobody owns: what `setWorkflowOn` answers
         // `TaskUnassigned` to, and a fixture must not be able to write it.
         strictEqual(
           (yield* refused([
             {
               name: name("Active but unassigned"),
-              active: true,
+              on: true,
               tag: tag("y"),
               tasks: [{ name: taskName("a"), teamId: null }],
             },
@@ -749,9 +749,9 @@ describe("WorkflowRepository duplicate", () => {
           teamId: T3.id,
         });
         yield* repo.applyDraft({ workflowId: w.id, teams: ALL_TEAMS });
-        yield* repo.setWorkflowActive({
+        yield* repo.setWorkflowOn({
           workflowId: w.id,
-          active: true,
+          on: true,
           teams: ALL_TEAMS,
         });
 
@@ -761,7 +761,7 @@ describe("WorkflowRepository duplicate", () => {
           tag: tag("Engraved copy"),
         });
         strictEqual(copy.name, "Engraved ring copy");
-        strictEqual(Domain.isActive(copy), false);
+        strictEqual(Domain.workflowIsOn(copy), false);
         strictEqual(tagOf(copy), "engraved copy");
         const copied = Option.getOrThrow(
           yield* repo.getWorkflow({ workflowId: copy.id }),
@@ -780,7 +780,7 @@ describe("WorkflowRepository duplicate", () => {
           false,
         );
         // The source is untouched and still on.
-        strictEqual(Domain.isActive(source.workflow), true);
+        strictEqual(Domain.workflowIsOn(source.workflow), true);
         strictEqual(tagOf(source.workflow), "engraved");
 
         // A second copy under the first copy's name is refused.
@@ -841,9 +841,9 @@ describe("WorkflowRepository tag uniqueness", () => {
         // Still refused once the holder is on; the rule does not depend on it.
         yield* twoTasks(holder.id);
         yield* repo.applyDraft({ workflowId: holder.id, teams: ALL_TEAMS });
-        yield* repo.setWorkflowActive({
+        yield* repo.setWorkflowOn({
           workflowId: holder.id,
-          active: true,
+          on: true,
           teams: ALL_TEAMS,
         });
         strictEqual(
@@ -878,7 +878,7 @@ describe("WorkflowRepository tag uniqueness", () => {
       }),
     ));
 
-  it("Turn on and Apply ignore tags: two active workflows with different tags coexist", () =>
+  it("Turn on and Apply ignore tags: two workflows that are on, with different tags, coexist", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -890,18 +890,18 @@ describe("WorkflowRepository tag uniqueness", () => {
             });
             yield* twoTasks(w.id);
             yield* repo.applyDraft({ workflowId: w.id, teams: ALL_TEAMS });
-            return yield* repo.setWorkflowActive({
+            return yield* repo.setWorkflowOn({
               workflowId: w.id,
-              active: true,
+              on: true,
               teams: ALL_TEAMS,
             });
           });
         const first = yield* live("Engraving", "engraved");
         const second = yield* live("Rush", "rush");
-        strictEqual(Domain.isActive(first), true);
-        strictEqual(Domain.isActive(second), true);
+        strictEqual(Domain.workflowIsOn(first), true);
+        strictEqual(Domain.workflowIsOn(second), true);
 
-        // Apply on an active workflow leaves the tag alone.
+        // Apply on a workflow that is on leaves the tag alone.
         yield* repo.addStep({
           workflowId: second.id,
           name: taskName("Pack"),
@@ -993,7 +993,7 @@ describe("WorkflowRepository name uniqueness", () => {
 });
 
 /** The editor's Turn on on a never-applied workflow: one call, one transaction. */
-describe("WorkflowRepository applyAndActivate", () => {
+describe("WorkflowRepository applyAndTurnOn", () => {
   it("promotes the draft and turns the switch on; refuses an empty workflow and leaves it off", () =>
     runInRepository(
       Effect.gen(function* () {
@@ -1005,28 +1005,28 @@ describe("WorkflowRepository applyAndActivate", () => {
 
         // Nothing to promote and nothing in force: refused, and still off.
         const empty = yield* repo
-          .applyAndActivate({ workflowId: w.id, teams: ALL_TEAMS })
+          .applyAndTurnOn({ workflowId: w.id, teams: ALL_TEAMS })
           .pipe(Effect.flip);
         strictEqual(empty._tag, "NoTasksError");
         strictEqual(
-          Domain.isActive(
+          Domain.workflowIsOn(
             yield* found(w.id).pipe(Effect.map((detail) => detail.workflow)),
           ),
           false,
         );
 
         yield* twoTasks(w.id);
-        const on = yield* repo.applyAndActivate({
+        const on = yield* repo.applyAndTurnOn({
           workflowId: w.id,
           teams: ALL_TEAMS,
         });
-        strictEqual(Domain.isActive(on), true);
+        strictEqual(Domain.workflowIsOn(on), true);
         const after = yield* found(w.id);
         strictEqual(after.draft, null);
         deepStrictEqual(taskNames(after.tasks), ["Cut", "Finish"]);
 
         // No draft left: the second call is a plain re-activation.
-        const again = yield* repo.applyAndActivate({
+        const again = yield* repo.applyAndTurnOn({
           workflowId: w.id,
           activatedAt: 1000,
           teams: ALL_TEAMS,
@@ -1080,12 +1080,12 @@ describe("WorkflowRepository workflow and draft", () => {
           name: name("A"),
           tag: tag("a"),
         });
-        strictEqual(Domain.isActive(w), false);
+        strictEqual(Domain.workflowIsOn(w), false);
         strictEqual(tagOf(w), "a");
         const fresh = yield* found(w.id);
         deepStrictEqual(fresh.tasks, []);
         strictEqual(fresh.draft, null);
-        deepStrictEqual(yield* repo.listActiveWorkflowDetails(), []);
+        deepStrictEqual(yield* repo.listOnWorkflowDetails(), []);
         const [row] = yield* repo.listWorkflows({ teams: ALL_TEAMS });
         deepStrictEqual([row?.stepCount, tagOf(row)], [0, "a"]);
         const noDraft = yield* repo
@@ -1100,9 +1100,9 @@ describe("WorkflowRepository workflow and draft", () => {
           .pipe(Effect.flip);
         strictEqual(empty._tag, "NoTasksError");
         const on = yield* repo
-          .setWorkflowActive({
+          .setWorkflowOn({
             workflowId: w.id,
-            active: true,
+            on: true,
             teams: ALL_TEAMS,
           })
           .pipe(Effect.flip);
@@ -1136,7 +1136,7 @@ describe("WorkflowRepository workflow and draft", () => {
           teams: ALL_TEAMS,
         });
         strictEqual(tagOf(applied), "a");
-        strictEqual(Domain.isActive(applied), false);
+        strictEqual(Domain.workflowIsOn(applied), false);
         const after = yield* found(w.id);
         strictEqual(after.draft, null);
         deepStrictEqual(taskNames(after.tasks), ["Cut", "Finish"]);
@@ -1147,13 +1147,13 @@ describe("WorkflowRepository workflow and draft", () => {
         const [row] = yield* repo.listWorkflows({ teams: ALL_TEAMS });
         deepStrictEqual([row?.stepCount, tagOf(row)], [2, "a"]);
         // Off: still invisible to run creation until turned on.
-        deepStrictEqual(yield* repo.listActiveWorkflowDetails(), []);
-        yield* repo.setWorkflowActive({
+        deepStrictEqual(yield* repo.listOnWorkflowDetails(), []);
+        yield* repo.setWorkflowOn({
           workflowId: w.id,
-          active: true,
+          on: true,
           teams: ALL_TEAMS,
         });
-        const [detail] = yield* repo.listActiveWorkflowDetails();
+        const [detail] = yield* repo.listOnWorkflowDetails();
         deepStrictEqual(taskNames(detail?.tasks ?? []), ["Cut", "Finish"]);
         strictEqual(tagOf(detail?.workflow), "a");
         // No draft: apply and discard refuse. There is nothing to promote or throw away.
@@ -1225,9 +1225,9 @@ describe("WorkflowRepository workflow and draft", () => {
         });
         yield* twoTasks(w.id);
         yield* repo.applyDraft({ workflowId: w.id, teams: ALL_TEAMS });
-        yield* repo.setWorkflowActive({
+        yield* repo.setWorkflowOn({
           workflowId: w.id,
-          active: true,
+          on: true,
           teams: ALL_TEAMS,
         });
         const draft = yield* repo.createDraft({ workflowId: w.id });
@@ -1248,7 +1248,7 @@ describe("WorkflowRepository workflow and draft", () => {
           forked.draft?.tasks.map((s) => [s.position, s.step, s.teamId]),
           forked.tasks.map((s) => [s.position, s.step, s.teamId]),
         );
-        // Every edit lands on the draft; the workflow and what starts runs
+        // Every edit lands on the draft; the workflow and what creates runs
         // are untouched.
         const [cut, finish] = draftIds;
         yield* repo.updateTask({
@@ -1277,7 +1277,7 @@ describe("WorkflowRepository workflow and draft", () => {
         );
         deepStrictEqual(taskNames(edited.tasks), ["Cut", "Finish"]);
         strictEqual(tagOf(edited.workflow), "a");
-        const [detail] = yield* repo.listActiveWorkflowDetails();
+        const [detail] = yield* repo.listOnWorkflowDetails();
         deepStrictEqual(taskNames(detail?.tasks ?? []), ["Cut", "Finish"]);
         const missing = yield* repo
           .createDraft({ workflowId: "nope" })
@@ -1286,7 +1286,7 @@ describe("WorkflowRepository workflow and draft", () => {
       }),
     ));
 
-  it("apply while on replaces the tasks in place and leaves active alone; discard deletes the draft and leaves the workflow", () =>
+  it("apply while on replaces the tasks in place and leaves the switch alone; discard deletes the draft and leaves the workflow", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -1297,9 +1297,9 @@ describe("WorkflowRepository workflow and draft", () => {
         });
         yield* twoTasks(w.id);
         yield* repo.applyDraft({ workflowId: w.id, teams: ALL_TEAMS });
-        yield* repo.setWorkflowActive({
+        yield* repo.setWorkflowOn({
           workflowId: w.id,
-          active: true,
+          on: true,
           teams: ALL_TEAMS,
         });
         yield* repo.createDraft({ workflowId: w.id });
@@ -1314,7 +1314,7 @@ describe("WorkflowRepository workflow and draft", () => {
           workflowId: w.id,
           teams: ALL_TEAMS,
         });
-        strictEqual(Domain.isActive(applied), true);
+        strictEqual(Domain.workflowIsOn(applied), true);
         strictEqual(tagOf(applied), "b");
         const after = yield* found(w.id);
         strictEqual(after.draft, null);
@@ -1335,7 +1335,7 @@ describe("WorkflowRepository workflow and draft", () => {
         });
         const discarded = yield* repo.discardDraft({ workflowId: w.id });
         strictEqual(tagOf(discarded), "b");
-        strictEqual(Domain.isActive(discarded), true);
+        strictEqual(Domain.workflowIsOn(discarded), true);
         const back = yield* found(w.id);
         strictEqual(back.draft, null);
         deepStrictEqual(taskNames(back.tasks), ["Cut", "Finish", "Pack"]);
@@ -1384,13 +1384,13 @@ describe("WorkflowRepository workflow and draft", () => {
           yield* repo.discardDraft({ workflowId: w.id });
         });
         yield* check;
-        yield* repo.setWorkflowActive({
+        yield* repo.setWorkflowOn({
           workflowId: w.id,
-          active: true,
+          on: true,
           teams: ALL_TEAMS,
         });
         yield* check;
-        strictEqual(Domain.isActive((yield* found(w.id)).workflow), true);
+        strictEqual(Domain.workflowIsOn((yield* found(w.id)).workflow), true);
       }),
     ));
 
@@ -1399,7 +1399,7 @@ describe("WorkflowRepository workflow and draft", () => {
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
         const on = (workflowId: string, teams = ALL_TEAMS) =>
-          repo.setWorkflowActive({ workflowId, active: true, teams });
+          repo.setWorkflowOn({ workflowId, on: true, teams });
         const empty = yield* repo.createWorkflow({
           name: name("Empty"),
           tag: tag("empty"),
@@ -1426,17 +1426,17 @@ describe("WorkflowRepository workflow and draft", () => {
         if (orphan._tag === "TaskUnassignedError")
           deepStrictEqual<readonly string[]>(orphan.taskNames, ["Finish"]);
         const onA = yield* on(a.id, [T1, { ...T2, memberCount: 0 }]);
-        strictEqual(Domain.isActive(onA), true);
-        // A draft on an active workflow changes nothing about the switch.
+        strictEqual(Domain.workflowIsOn(onA), true);
+        // A draft on a workflow that is on changes nothing about the switch.
         yield* repo.createDraft({ workflowId: a.id });
-        const off = yield* repo.setWorkflowActive({
+        const off = yield* repo.setWorkflowOn({
           workflowId: a.id,
-          active: false,
+          on: false,
           teams: ALL_TEAMS,
         });
-        strictEqual(Domain.isActive(off), false);
+        strictEqual(Domain.workflowIsOn(off), false);
         strictEqual((yield* found(a.id)).draft !== null, true);
-        strictEqual(Domain.isActive(yield* on(a.id)), true);
+        strictEqual(Domain.workflowIsOn(yield* on(a.id)), true);
 
         // A team delete nulls the pointer; turn on is refused until assigned.
         const lost = yield* repo.createWorkflow({
@@ -1468,9 +1468,9 @@ describe("WorkflowRepository workflow and draft", () => {
         yield* twoTasks(pack);
         yield* repo.applyDraft({ workflowId: pack, teams: ALL_TEAMS });
         const before = Date.now();
-        const on = yield* repo.setWorkflowActive({
+        const on = yield* repo.setWorkflowOn({
           workflowId: pack,
-          active: true,
+          on: true,
           teams: ALL_TEAMS,
         });
         strictEqual(on.activatedAt !== null && on.activatedAt >= before, true);
@@ -1490,9 +1490,9 @@ describe("WorkflowRepository workflow and draft", () => {
           teams: ALL_TEAMS,
         });
         strictEqual(applied.activatedAt, 1000);
-        const off = yield* repo.setWorkflowActive({
+        const off = yield* repo.setWorkflowOn({
           workflowId: pack,
-          active: false,
+          on: false,
           teams: ALL_TEAMS,
         });
         strictEqual(off.activatedAt, null);
@@ -1509,9 +1509,9 @@ describe("WorkflowRepository workflow and draft", () => {
           "WorkflowNotFoundError",
         );
         // Include them: an earlier date on the way on.
-        const included = yield* repo.setWorkflowActive({
+        const included = yield* repo.setWorkflowOn({
           workflowId: pack,
-          active: true,
+          on: true,
           activatedAt: 42,
           teams: ALL_TEAMS,
         });
@@ -1596,7 +1596,7 @@ describe("WorkflowRepository workflow and draft", () => {
       }),
     ));
 
-  it("seed: active defaults, explicit off, pending draft, empty tasks with no draft, unassigned, duplicate tag refused", () =>
+  it("seed: on defaults, explicit off, pending draft, empty tasks with no draft, unassigned, duplicate tag refused", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -1609,7 +1609,7 @@ describe("WorkflowRepository workflow and draft", () => {
             { name: name("On"), tag: tag("on"), tasks: [task("a", T1.id)] },
             {
               name: name("Off"),
-              active: false,
+              on: false,
               tag: tag("off"),
               tasks: [task("a", T1.id)],
             },
@@ -1637,7 +1637,7 @@ describe("WorkflowRepository workflow and draft", () => {
         deepStrictEqual<readonly (readonly unknown[])[]>(
           rows.map((w) => [
             w.name,
-            Domain.isActive(w),
+            Domain.workflowIsOn(w),
             w.stepCount,
             w.unassigned,
             tagOf(w),
@@ -1663,17 +1663,17 @@ describe("WorkflowRepository workflow and draft", () => {
         deepStrictEqual(emptyDetail.tasks, []);
         strictEqual(emptyDetail.draft, null);
         deepStrictEqual(
-          (yield* repo.listActiveWorkflowDetails())
+          (yield* repo.listOnWorkflowDetails())
             .map(({ workflow }) => workflow.name)
             .toSorted(),
           ["On", "Pending", "Second draft"],
         );
-        // An active fixture with no tasks is refused.
+        // A fixture that is on with no tasks is refused.
         strictEqual(
           (yield* repo
             .replaceWorkflows({
               workflows: [
-                { name: name("Bad"), active: true, tag: tag("bad"), tasks: [] },
+                { name: name("Bad"), on: true, tag: tag("bad"), tasks: [] },
               ],
             })
             .pipe(Effect.flip))._tag,

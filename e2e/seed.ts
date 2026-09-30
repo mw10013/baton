@@ -108,7 +108,7 @@ export interface SeedOrder extends SeedProgress {
 export interface SeedWorkflow {
   readonly name: string;
   /** On/off switch; defaults to on when there are tasks and every task is assigned. */
-  readonly active?: boolean;
+  readonly on?: boolean;
   /** The workflow's one tag; products carrying it follow this workflow. */
   readonly tag: string;
   /** The workflow's tasks; may be empty. */

@@ -33,7 +33,7 @@ const decodeWorkflowResult = Schema.decodeUnknownPromise(
  */
 export const statusBadges = (workflow: Domain.WorkflowSummary) => (
   <s-stack direction="inline" gap="small-300">
-    {Domain.isActive(workflow) ? (
+    {Domain.workflowIsOn(workflow) ? (
       <s-badge tone="success">{Domain.WORKFLOW_STATE_LABEL.on}</s-badge>
     ) : (
       <s-badge>{Domain.WORKFLOW_STATE_LABEL.off}</s-badge>
@@ -41,7 +41,7 @@ export const statusBadges = (workflow: Domain.WorkflowSummary) => (
     {workflow.stepCount === 0 && <s-badge tone="warning">No steps</s-badge>}
     {workflow.unassigned && (
       <s-badge tone={Domain.ORDER_ISSUE_TONE}>
-        {Domain.ORDER_ISSUE_LABEL.team}
+        {Domain.ORDER_ISSUE_LABEL.unassigned}
       </s-badge>
     )}
     {workflow.emptyTeam && (
@@ -189,9 +189,7 @@ function RouteComponent() {
    * member's workflows list's reason (`selectTab` in `shop.$shop.workflows.index.tsx`): the filters are a
    * screen's state, not a trail.
    */
-  const setFilters = (next: {
-    readonly status: "active" | "inactive" | undefined;
-  }) => {
+  const setFilters = (next: { readonly status: "on" | "off" | undefined }) => {
     void navigate({
       search: (prev) => ({ ...prev, status: next.status }),
       replace: true,
@@ -200,15 +198,15 @@ function RouteComponent() {
 
   const trimmed = query.trim().toLowerCase();
   const rows = workflows.filter((workflow) => {
-    if (status === "active" && !Domain.isActive(workflow)) return false;
-    if (status === "inactive" && Domain.isActive(workflow)) return false;
+    if (status === "on" && !Domain.workflowIsOn(workflow)) return false;
+    if (status === "off" && Domain.workflowIsOn(workflow)) return false;
     if (trimmed !== "" && !workflow.name.toLowerCase().includes(trimmed))
       return false;
     return true;
   });
   const filtered = status !== undefined || trimmed !== "";
 
-  const statusButton = (label: string, value?: "active" | "inactive") => (
+  const statusButton = (label: string, value?: "on" | "off") => (
     <s-button
       variant={status === value ? "primary" : "tertiary"}
       onClick={() => {
@@ -321,8 +319,8 @@ function RouteComponent() {
               >
                 <s-stack direction="inline" gap="small-300">
                   {statusButton("All")}
-                  {statusButton(Domain.WORKFLOW_STATE_LABEL.on, "active")}
-                  {statusButton(Domain.WORKFLOW_STATE_LABEL.off, "inactive")}
+                  {statusButton(Domain.WORKFLOW_STATE_LABEL.on, "on")}
+                  {statusButton(Domain.WORKFLOW_STATE_LABEL.off, "off")}
                 </s-stack>
                 <s-search-field
                   label="Search workflows by name"

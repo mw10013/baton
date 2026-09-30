@@ -11,7 +11,7 @@
  * the task's own run's tasks and nothing else, so on a closed run it still
  * matches the open tasks the run keeps as its record. Every caller supplies
  * the run test: `RunRepository.listRuns` and `OrderRepository`'s waiting-on
- * column and team filter join `Run` with `status = 'active'`, the task guards
+ * column and team filter join `Run` with `status = 'open'`, the task guards
  * check {@link Domain.runIsOpen} in `requireActionable` before they ask, and
  * `getRunPage` reads it only for an open run. Block's team gate
  * (`requireCurrentTeam`) runs inside writes that refuse a run that is not

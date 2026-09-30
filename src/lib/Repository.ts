@@ -35,7 +35,7 @@ export class TeamNameTakenError extends Schema.TaggedError<TeamNameTakenError>()
   { shop: Domain.Shop, name: Domain.TeamName },
 ) {}
 
-/** The roster is at its ceiling ({@link Domain.rosterAtCeiling}) and the email is not already a member. */
+/** The shop's members are at their ceiling ({@link Domain.membersAtCeiling}) and the email is not already a member. */
 export class MemberCeilingError extends Schema.TaggedError<MemberCeilingError>()(
   "MemberCeilingError",
   { shop: Domain.Shop, limit: Schema.Number },
@@ -194,8 +194,8 @@ export class Repository extends Context.Service<
       SqlError.SqlError | RepositoryError
     >;
     /**
-     * Idempotent for the row, and the ceiling ({@link Domain.rosterAtCeiling})
-     * is applied to *additions* only: an email already on the roster is
+     * Idempotent for the row, and the ceiling ({@link Domain.membersAtCeiling})
+     * is applied to *additions* only: an email already a member is
      * re-added without consulting it, so a shop at or over the ceiling (a
      * lowered constant) can still re-run the same add without being told it
      * is full.
@@ -624,7 +624,7 @@ export class Repository extends Context.Service<
         `;
         if (
           existing.length === 0 &&
-          Domain.rosterAtCeiling(yield* countMembers(member.shop))
+          Domain.membersAtCeiling(yield* countMembers(member.shop))
         )
           yield* new MemberCeilingError({
             shop: member.shop,
@@ -862,7 +862,7 @@ export class Repository extends Context.Service<
       });
 
       /**
-       * The roster is read *before* the delete because `TeamMember` cascades
+       * The team's members are read *before* the delete because `TeamMember` cascades
        * with the row: after the delete there is nothing left to say whose open
        * sockets were scoped to this team, and those connections carry the
        * team in a connect-time snapshot that the delete has just invalidated.
@@ -890,7 +890,7 @@ export class Repository extends Context.Service<
       });
 
       /**
-       * The roster is a left join from `Member`, not from `TeamMember`: the
+       * The team's member list is a left join from `Member`, not from `TeamMember`: the
        * screen toggles membership, so a member who is *not* on the team is as
        * much part of the view as one who is.
        */
@@ -926,7 +926,7 @@ export class Repository extends Context.Service<
        * "no rows returned" ambiguous with a genuine miss; the existence check
        * disambiguates, and only runs on that path. A miss is
        * `TeamNotFoundError` whichever side is absent: the pair is addressed
-       * as one edge, and the member id came from this shop's own roster.
+       * as one edge, and the member id came from this shop's own members.
        * Removal is unconditional and cannot fail.
        */
       const setTeamMember = Effect.fn("Repository.setTeamMember")(

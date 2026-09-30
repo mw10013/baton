@@ -161,7 +161,7 @@ export const remove = (layout: Layout, id: string): Layout =>
   normalize(layout.filter((p) => p.id !== id));
 
 /** The two invariants, plus unique ids. */
-export const isValid = (layout: Layout): boolean => {
+export const layoutIsValid = (layout: Layout): boolean => {
   const sorted = layout.toSorted((a, b) => a.position - b.position);
   const ids = new Set(sorted.map((p) => p.id));
   if (ids.size !== sorted.length) return false;

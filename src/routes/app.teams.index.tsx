@@ -174,7 +174,7 @@ function RouteComponent() {
     return (
       <s-table>
         {/* No "orders waiting on this team" link per row, though the detail
-            page carries one: this index is the roster, and the row already
+            page carries one: this index is the teams, and the row already
             links to the page where that drill-in lives. */}
         <s-table-header-row>
           <s-table-header listSlot="primary">Team</s-table-header>

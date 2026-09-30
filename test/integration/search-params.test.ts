@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { lenientSearchKey } from "@/lib/searchParams";
 
 const Search = Schema.Struct({
-  status: lenientSearchKey(Schema.Literals(["active", "inactive"])),
+  status: lenientSearchKey(Schema.Literals(["on", "off"])),
 });
 const decode = Schema.decodeUnknownSync(Search);
 
@@ -16,7 +16,7 @@ describe("lenientSearchKey", () => {
   });
 
   it("a readable value decodes, and an absent key stays absent", () => {
-    expect(decode({ status: "active" })).toStrictEqual({ status: "active" });
+    expect(decode({ status: "on" })).toStrictEqual({ status: "on" });
     expect(decode({})).toStrictEqual({});
   });
 });

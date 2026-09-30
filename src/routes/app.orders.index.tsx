@@ -115,8 +115,8 @@ const orderLocation = ({ legacyId }: Domain.ShopOrder) =>
   }) as const;
 
 /**
- * The Status cell: the ladder badge, from `Domain.productionState` over the
- * row, one for every order, labelled by `Domain.PRODUCTION_STATE_LABEL`.
+ * The Status cell: the ladder badge, from `Domain.orderPosition` over the
+ * row, one for every order, labelled by `Domain.ORDER_POSITION_LABEL`.
  * The Issues cell says when a not-started order waits on the merchant; an
  * order whose items matched no workflow is Not started and shows nothing
  * there, on purpose ({@link Domain.OrderIssue} says why). Made is
@@ -124,7 +124,7 @@ const orderLocation = ({ legacyId }: Domain.ShopOrder) =>
  * reports the fulfilment.
  */
 const positionBadge = (row: Domain.OrderRow) => {
-  const state = Domain.productionState(row);
+  const state = Domain.orderPosition(row);
   return (
     <s-badge
       tone={Match.value(state).pipe(
@@ -136,7 +136,7 @@ const positionBadge = (row: Domain.OrderRow) => {
         Match.exhaustive,
       )}
     >
-      {Domain.PRODUCTION_STATE_LABEL[state]}
+      {Domain.ORDER_POSITION_LABEL[state]}
     </s-badge>
   );
 };
@@ -255,7 +255,7 @@ export const Route = createFileRoute("/app/orders/")({
 
 /**
  * The orders index: one table of what the Durable Object has stored, with
- * production state per order, and the window-sync button as a header action.
+ * the order position per order, and the window-sync button as a header action.
  * Everything per order — items, their properties, workflows — lives on
  * `/app/orders/$orderId`.
  *
@@ -440,7 +440,7 @@ function RouteComponent() {
   const neverStored = orders.length === 0 && !filtered;
   /**
    * `OrderRow.waitingOn` is ids — the Durable Object has no team names — and
-   * this is the roster it was derived against, carried in the same read.
+   * these are the teams it was derived against, carried in the same read.
    */
   const teamName = new Map(
     (data?.teams ?? []).map(({ id, name }) => [id, name]),
@@ -449,7 +449,7 @@ function RouteComponent() {
   /**
    * Who is holding the order: the teams with a current task on one of its open
    * runs, collapsed and capped like `tagBadges`. `"Unknown team"` should
-   * never render — the repository only emits ids that were in the roster it
+   * never render — the repository only emits ids that were among the teams it
    * read — but the lookup is nullable and a blank badge is worse than a
    * named gap.
    */
@@ -633,7 +633,7 @@ function RouteComponent() {
                   href={adminOrderUrl(row.order)}
                   target={resourceLinkTarget}
                 >
-                  {Domain.productionState(row) === "made"
+                  {Domain.orderPosition(row) === "made"
                     ? "Fulfill in Shopify"
                     : "View in Shopify"}
                 </s-link>

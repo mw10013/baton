@@ -1,6 +1,6 @@
 // Inventories the screen copy so the human can read it by slot rather than
 // by page: every string literal or JSX text of two or more words on a
-// merchant or member screen, tagged with the screen (the glossary's Screens
+// merchant or member screen, tagged with the screen (the vocabulary's Screens
 // table) and the slot it fills (a guess from the nearest attribute or
 // element; blank when nothing nearby says). Run once per audit, never as a
 // check: the output is a markdown table to annotate, and what the
@@ -277,7 +277,7 @@ const today = new Date().toISOString().slice(0, 10);
 const out: string[] = [
   "# Screen copy audit",
   "",
-  `Every string of two or more words on a merchant or member screen, read by slot rather than by page, from \`scripts/copy-audit.ts\` on ${today}. The slot is a guess from the nearest attribute or element. Words already retired by \`scripts/lib/rules-lint.ts\` do not appear. Button and badge text are listed last; label constants read from the glossary (\`Domain.ts\`) are not listed.`,
+  `Every string of two or more words on a merchant or member screen, read by slot rather than by page, from \`scripts/copy-audit.ts\` on ${today}. The slot is a guess from the nearest attribute or element. Words already retired by \`scripts/lib/rules-lint.ts\` do not appear. Button and badge text are listed last; label constants read from the vocabulary (\`Domain.ts\`) are not listed.`,
   "",
   "One block per string. The quoted line is the copy as it is now, with «…» where a value is filled in. **Recommend** is the implementer's call: keep, cut, or rewrite with the new text, and for a link, keep or cut. **You** is yours: leave it blank to accept the recommendation, or write keep, cut, or the text you want, and anything else you want said. What the blocks agree on becomes the copy table and tone list on `Screen.ts` (`docs/ui-copy-spec-research.md`).",
   "",

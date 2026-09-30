@@ -297,8 +297,8 @@ function FoundShop({
               value={formatNumber(usage.pendingUsageEvents)}
             />
             <Field
-              label="Usage events dead"
-              value={formatNumber(usage.deadUsageEvents)}
+              label="Usage events expired"
+              value={formatNumber(usage.expiredUsageEvents)}
             />
             <Field
               label="Shopify metered orders"

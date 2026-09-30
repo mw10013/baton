@@ -190,7 +190,7 @@ describe("ShopAgent connection identity", () => {
 /**
  * Deleting a team is the case revocation exists for: the D1 row and its
  * `TeamMember` edges go, and every member who was on it is holding a socket
- * whose `teamIds` still name it. The roster has to be read before the delete
+ * whose `teamIds` still name it. The team's members have to be read before the delete
  * cascades it away, which is why `Repository.deleteTeam` returns it.
  */
 describe("ShopAgent team delete revocation", () => {

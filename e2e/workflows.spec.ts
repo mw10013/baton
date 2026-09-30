@@ -325,7 +325,7 @@ test("turning on a workflow offers to include earlier unfulfilled orders, and in
     [
       {
         name: EXISTING,
-        active: false,
+        on: false,
         tag: "e2e-ring",
         tasks: [{ name: "Cut", team: TEAM }],
       },
@@ -388,7 +388,7 @@ test("creating a workflow with a taken tag is refused under the field and names 
     [
       {
         name: HOLDER,
-        active: true,
+        on: true,
         tag: "e2e-ring",
         tasks: [{ name: "Cut", team: TEAM }],
       },
@@ -434,7 +434,7 @@ test("duplicate asks for a name and a tag, and the copy is off with the given ta
     [
       {
         name: SOURCE,
-        active: true,
+        on: true,
         tag: "e2e-ring",
         tasks: [{ name: "Cut", team: TEAM }],
       },
@@ -493,13 +493,13 @@ test("editing the tag from the detail page writes immediately and starts no draf
     [
       {
         name: SOURCE,
-        active: true,
+        on: true,
         tag: "e2e-ring",
         tasks: [{ name: "Cut", team: TEAM }],
       },
       {
         name: RIVAL,
-        active: true,
+        on: true,
         tag: "e2e-rush",
         tasks: [{ name: "Cut", team: TEAM }],
       },
@@ -555,7 +555,7 @@ test("the workflows index keeps its status filter across the workflow page", asy
       {
         name: OFF,
         tag: "e2e-keep-off",
-        active: false,
+        on: false,
         tasks: [{ name: "Cut", team: TEAM }],
       },
     ],
@@ -572,17 +572,17 @@ test("the workflows index keeps its status filter across the workflow page", asy
       exact: true,
     })
     .click();
-  await expect.poll(status).toBe("active");
+  await expect.poll(status).toBe("on");
   await expect(frame.getByRole("link", { name: OFF })).toHaveCount(0);
 
   await frame.getByRole("link", { name: EXISTING }).click();
   await expect(frame.locator(`s-page[heading="${EXISTING}"]`)).toBeVisible();
-  await expect.poll(status).toBe("active");
+  await expect.poll(status).toBe("on");
 
   /* The hoisted breadcrumb's back arrow; see the orders round trip. */
   await clickHoisted(page.locator('button[aria-label="Workflows"]'));
   await expect(frame.getByRole("link", { name: EXISTING })).toBeVisible();
-  await expect.poll(status).toBe("active");
+  await expect.poll(status).toBe("on");
   await expect(frame.getByRole("link", { name: OFF })).toHaveCount(0);
 });
 
@@ -613,7 +613,7 @@ test("the workflows index and the workflow page show Needs a team and Team has n
       {
         name: BOTH,
         tag: "e2e-both-faults",
-        active: false,
+        on: false,
         tasks: [
           { name: "Stamp", team: null },
           { name: "Attach ring", team: EMPTY },

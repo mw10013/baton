@@ -5,7 +5,7 @@
 // tables on `initializeSchema` in src/lib/ShopAgentSchema.ts (the object) and
 // on `D1_TABLES` in src/lib/D1Schema.ts (D1).
 //
-//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the glossary, its screen columns and its Screens table, parse the triggers table and both data-model tables and refuse a pinned title no test carries, parse the copy and controls tables in src/lib/Screen.ts and refuse an example no screen shows (exit 1 on any failure)
+//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the vocabulary, its contexts, its screen columns and its Screens table, parse the triggers table and both data-model tables and refuse a pinned title no test carries, parse the copy and controls tables in src/lib/Screen.ts and refuse an example no screen shows (exit 1 on any failure)
 //   node scripts/spec.ts print   render the parsed rows and how many fixtures each expands to, then the triggers rows, then the data-model rows
 
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
@@ -31,7 +31,7 @@ const SCREEN_LABELS: ActionTable.ScreenLabels = {
   taskStates: Domain.TASK_STATE_LABEL,
   runStates: Domain.RUN_STATE_LABEL,
   workflowStates: Domain.WORKFLOW_STATE_LABEL,
-  productionStates: Domain.PRODUCTION_STATE_LABEL,
+  orderPositions: Domain.ORDER_POSITION_LABEL,
   orderIssues: Domain.ORDER_ISSUE_LABEL,
   verbs: Domain.VERB_LABEL,
 };
@@ -108,11 +108,12 @@ const checkCommand = Command.make(
             ),
         }),
       ),
-      ...ActionTable.checkGlossary(source).map(
+      ...ActionTable.checkVocabulary(source).map(
         (word) =>
-          `Glossary: \`${word}\` does not occur in src/lib/Domain.ts outside the glossary`,
+          `Vocabulary: \`${word}\` does not occur in src/lib/Domain.ts outside the vocabulary`,
       ),
       ...ActionTable.checkScreenColumns(source, SCREEN_LABELS),
+      ...ActionTable.checkContexts(source),
       ...ActionTable.checkOrderIssues(source, Domain.OrderIssue.literals),
       ...ActionTable.checkScreens(source, routeFiles),
       ...Result.match(ActionTable.parseTriggerTable(source), {
@@ -149,7 +150,7 @@ const checkCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Parse the action tables in Domain.ts, check the glossary, check the triggers table on ShopUsage in Domain.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts, and check the copy and controls tables in Screen.ts; exit 1 on any failure",
+    "Parse the action tables in Domain.ts, check the vocabulary, check the triggers table on ShopUsage in Domain.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts, and check the copy and controls tables in Screen.ts; exit 1 on any failure",
   ),
 );
 

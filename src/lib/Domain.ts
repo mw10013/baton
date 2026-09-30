@@ -13,11 +13,11 @@
  * - A site that follows a different rule from its siblings says so and why,
  *   in its own JSDoc, and links the rule it departs from.
  * - Each rule is pinned by a test whose title is the rule in plain words.
- * - Which tier a site speaks. Identifiers, types, callables, route
+ * - Which word a site speaks. Identifiers, types, callables, route
  *   parameters (`$runId`), log messages, JSDoc, tests and research speak
- *   the domain tier: "run" is the word there. Route segments, string
- *   literals, JSX text, headings and labels speak the screen tier: the
- *   glossary's screen columns, and `scripts/rules-lint.ts` refuses the
+ *   the vocabulary word: "run" is the word there. Route segments, string
+ *   literals, JSX text, headings and labels speak the screen word: the
+ *   vocabulary's screen columns, and `scripts/rules-lint.ts` refuses the
  *   retired words in them. A JSDoc that explains copy quotes the copy.
  *   A JSDoc that names a screen uses the Screens table's spec name.
  *
@@ -33,34 +33,62 @@
  */
 
 /**
- * Glossary. These are the words for code, JSDoc, research and screen; a
+ * Vocabulary. These are the words for code, JSDoc, tests, research and screen; a
  * symbol named here is an export of this file, or a field of one. A row
  * says what a word means, where it lives, and what a screen calls it; the
  * rule stays on the symbol. The screen columns are checked: each cell is
  * the value of the label constant beside the table ({@link TASK_STATE_LABEL},
  * {@link RUN_STATE_LABEL}, {@link WORKFLOW_STATE_LABEL},
- * {@link PRODUCTION_STATE_LABEL}, {@link ORDER_ISSUE_LABEL},
+ * {@link ORDER_POSITION_LABEL}, {@link ORDER_ISSUE_LABEL},
  * {@link VERB_LABEL}), and `pnpm spec check` refuses a cell that differs, so
  * a label change starts here.
  *
- * Nouns. "(none)" means no screen says the word; the cell says what a
- * screen shows instead:
+ * Contexts. A word means one thing inside its context. Every table below
+ * names its context, in its first line or in a `context` column:
  *
- * | word     | meaning                                                                                                   | symbol                                 | screen                                                      |
- * | -------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------- |
- * | merchant | the shop's owner, acting from the Shopify admin                                                           | `Actor` role `merchant`                | "you" to the merchant, "the merchant" to a member           |
- * | shop     | one Shopify store, the tenant                                                                             | `ShopSession`, `Shop`                  | its domain                                                  |
- * | member   | a person at the bench, on one or more teams                                                               | `Actor` role `member`, `Member`        | member (merchant screens); "you" or a name (member screens) |
- * | team     | the group a task is assigned to                                                                           | `Team`                                 | team, or its name                                           |
- * | order    | a Shopify order                                                                                           | `ShopOrder`                            | its name (#1001)                                            |
- * | item     | one line item of an order                                                                                 | `OrderLineItem`                        | item; never "line item"                                     |
- * | workflow | the definition: steps of tasks                                                                            | `Workflow`, `WorkflowTask`             | workflow, or its name                                       |
- * | step     | a position in a workflow; its tasks are done in parallel                                                  | `WorkflowTask`, `RunTask` field        | Step k of n                                                 |
- * | run      | one item going through one workflow                                                                       | `Run`                                  | the item's workflow, on both sides; never bare, never "run" |
- * | task     | one unit of work on a run, on one team                                                                    | `RunTask`                              | task, or its name                                           |
- * | block    | a person's hold on a run                                                                                  | `runIsBlocked`                         | Blocked                                                     |
- * | note     | free text on a run                                                                                        | `RunNote`                              | Note                                                        |
- * | view     | one whole question about a list, chosen by pressing its button; exclusive; the row's first is the default | `WorkflowsListView`, `OrdersIndexView` | its label (Started by you, Issues, ...)                     |
+ * | context    | about                                | whose words                  |
+ * | ---------- | ------------------------------------ | ---------------------------- |
+ * | production | what the shop makes and who makes it | Baton's and the shop floor's |
+ * | orders     | what Shopify says about an order     | Shopify's admin              |
+ * | billing    | what the shop pays for               | Shopify's Partner API        |
+ * | platform   | how the software runs                | Cloudflare's and Baton's     |
+ *
+ * What a word must pass to get a row:
+ *
+ * - A word names a concept the domain has, not a mechanism or a metaphor.
+ * - A word has one meaning in its context. A word two contexts share always
+ *   travels with its noun: "open order", "open run"; in identifiers,
+ *   `<noun>Is<State>`, never `is<State>`.
+ * - Shopify's things get Shopify's words, unchanged. Baton's things get
+ *   plain words, and an invented word never reaches a screen.
+ * - A stored literal is the vocabulary word where the store is ours;
+ *   Shopify's literals are stored as sent and read through a predicate.
+ * - A word that fails is mapped to the existing word, retired, or split. A
+ *   retired word goes on the retired list and `scripts/rules-lint.ts`
+ *   refuses it.
+ *
+ * Nouns, each in the context its `context` cell names. "(none)" means no
+ * screen says the word; the cell says what a screen shows instead:
+ *
+ * | word     | context    | meaning                                                                                                   | symbol                                 | screen                                                      |
+ * | -------- | ---------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------- |
+ * | merchant | production | the shop's owner, acting from the Shopify admin                                                           | `Actor` role `merchant`                | "you" to the merchant, "the merchant" to a member           |
+ * | shop     | platform   | one Shopify store, the tenant                                                                             | `ShopSession`, `Shop`                  | store (Shopify's merchant word); its domain as the name     |
+ * | member   | production | a person at the bench, on one or more teams                                                               | `Actor` role `member`, `Member`        | member (merchant screens); "you" or a name (member screens) |
+ * | team     | production | the group a task is assigned to                                                                           | `Team`                                 | team, or its name                                           |
+ * | order    | orders     | a Shopify order                                                                                           | `ShopOrder`                            | its name (#1001)                                            |
+ * | item     | orders     | one line item of an order                                                                                 | `OrderLineItem`                        | item; never "line item"                                     |
+ * | workflow | production | the definition: steps of tasks                                                                            | `Workflow`, `WorkflowTask`             | workflow, or its name                                       |
+ * | step     | production | a position in a workflow; its tasks are done in parallel                                                  | `WorkflowTask`, `RunTask` field        | Step k of n                                                 |
+ * | run      | production | one item going through one workflow                                                                       | `Run`                                  | the item's workflow, on both sides; never bare, never "run" |
+ * | task     | production | one unit of work on a run, on one team                                                                    | `RunTask`                              | task, or its name                                           |
+ * | block    | production | a person's hold on a run                                                                                  | `runIsBlocked`                         | Blocked                                                     |
+ * | note     | production | free text on a run                                                                                        | `RunNote`                              | Note                                                        |
+ * | draft    | production | the workflow's edited copy of its tasks, from Edit until Apply or Discard; one or none                    | `WorkflowDraft`                        | Draft                                                       |
+ * | import   | platform   | the bulk fetch of the shop's open orders from Shopify                                                     | `OrdersSyncResult`, `SyncState`        | Import open orders                                          |
+ * | sync     | platform   | writing one Shopify order into the object, from a webhook, an import or a resync                          | `OrderSyncSource`                      | Resync from Shopify                                         |
+ * | ceiling  | platform   | a per-shop limit the object enforces: `maxOpenRuns`, `maxOrdersPerCycle`, `maxMembers` on `ShopLimits`    | `ShopLimits`                           | the banner that names what stopped                          |
+ * | view     | production and orders | a preset of a list, one at a time, chosen by its button; the row's first is the default                   | `WorkflowsListView`, `OrdersIndexView` | its label (Started by you, Issues, ...)                     |
  *
  * An item is always shown under its order on the merchant's order page,
  * and beside it in the member's row (`<item> · <workflow> · <order>`), so
@@ -88,30 +116,30 @@
  * | billing cycle    | one month of an app subscription; both meters start at zero                  | `ShopUsage` fields `cycleStartAt`, `cycleEndAt` | billing cycle                  |
  * | trial            | the days before an app subscription's first billing cycle; nothing is billed | `AppSubscription` field `cycleStartAt` null     | (none)                         |
  * | meter            | a counter Shopify keeps per app subscription                                 | `USAGE_METER_ORDER`, `USAGE_METER_MEMBER`       | (none)                         |
- * | counted order    | an order Baton started a run for; one unit, once                             | `ShopOrder` field `countedAt`                   | "Orders this billing cycle"    |
- * | seat             | one unit of the members meter; a cycle's seats are its highest roster size   | `ShopUsage` field `membersHighWater`            | (none): members                |
- * | included         | a plan's $0.00 first tier on a meter                                         | `Entitlements`                                  | included                       |
+ * | counted order    | an order Baton created a run for; one unit, once                             | `ShopOrder` field `countedAt`                   | "Orders this billing cycle"    |
+ * | seat             | one unit of the members meter; a cycle's seats are its highest member count  | `ShopUsage` field `membersHighWater`            | (none): members                |
+ * | included         | a plan's $0.00 first tier on a meter: a paid allowance, not a "free tier"    | `Entitlements`                                  | included                       |
  * | usage event      | one report of units to Shopify, queued until Shopify accepts it              | `UsageEvent`                                    | (none)                         |
- * | dead event       | a usage event dated before the current billing cycle; never sent             | `usageEventIsDead`                              | (none)                         |
+ * | expired event    | a usage event dated before the current billing cycle; never sent             | `usageEventIsExpired`                              | (none)                         |
  *
  * "Billing cycle" is the word on screens and in code, and
  * `scripts/rules-lint.ts` refuses its retired synonym in screen copy.
  * "Provisional cycle", "high-water mark" and "boundary" are JSDoc terms on
  * their own symbols ({@link provisionalCycleStart}, {@link seatEventValue},
- * {@link AppSubscription}), not glossary words. "Subscription" alone is the
+ * {@link AppSubscription}), not vocabulary words. "Subscription" alone is the
  * live query a socket registers ({@link Subscription}); the billing word is
  * always "app subscription".
  *
- * Run states:
+ * Run states, production:
  *
  * | word    | meaning                                           | stored          | screen                                                  |
  * | ------- | ------------------------------------------------- | --------------- | ------------------------------------------------------- |
- * | open    | work can be recorded                              | `active`        | In progress (merchant: Not started until a task starts) |
+ * | open    | work can be recorded                              | `open`          | In progress (merchant: Not started until a task starts) |
  * | blocked | open, and a person holds it                       | `blockedAt` set | Blocked                                                 |
  * | done    | a person marked the last task done                | `done`          | Done                                                    |
  * | closed  | something else ended it; `closedReason` says what | `closed`        | Closed · <reason>                                       |
  *
- * Task states. `current` is the flag: the task's step is the lowest with
+ * Task states, production. `current` is the flag: the task's step is the lowest with
  * an open task ({@link currentTasks}), whether or not someone has it. The
  * one derivation is {@link taskStateOf}; it reads `startedAt` before
  * `current`, so a task someone had when its run closed still reads started:
@@ -129,14 +157,20 @@
  * column means teams holding a current task, a fact about orders, and the
  * two never render together.
  *
- * Workflow states:
+ * Workflow states, production:
  *
- * | word | meaning                             | stored         | screen |
- * | ---- | ----------------------------------- | -------------- | ------ |
- * | on   | new items get runs from it          | `active` true  | On     |
- * | off  | it starts nothing; open runs carry on | `active` false | Off    |
+ * | word | meaning                               | stored             | screen |
+ * | ---- | ------------------------------------- | ------------------ | ------ |
+ * | on   | new items get runs from it            | `activatedAt` set  | On     |
+ * | off  | it creates nothing; open runs carry on | `activatedAt` null | Off    |
  *
- * Order positions, one per order, derived by {@link productionState} and
+ * The switch's screen words are Shopify Flow's (Turn on, Turn off;
+ * `refs/flow-manual/manage/manual.md`); the badge says On and Off where Flow
+ * says Active and Inactive, because "active" is not a production word here,
+ * and one execution is never called a run on a screen, because a run in
+ * Baton is a member's work.
+ *
+ * Order positions, production: one per order, derived by {@link orderPosition} and
  * never stored:
  *
  * | word        | meaning                           | screen      |
@@ -150,40 +184,48 @@
  * "open" is {@link orderIsOpen}, not fulfilled and not cancelled: the orders
  * index's default view, labelled Open.
  *
- * Order issues, zero or more per open order, derived by {@link orderIssues}:
+ * Order issues, production: zero or more per open order, derived by {@link orderIssues}:
  *
  * | word            | meaning                                           | screen              |
  * | --------------- | ------------------------------------------------- | ------------------- |
  * | choose workflow | an item matched two or more workflows             | Needs a workflow    |
- * | team            | an open task unassigned                           | Needs a team        |
+ * | unassigned      | an open task on no team                           | Needs a team        |
  * | empty team      | a current task on a team with no members          | Team has no members |
  * | blocked         | a run on the order is blocked, the run-state word | Blocked             |
  *
- * The workflows index and the workflow page show the `team` and `empty team`
+ * The workflows index and the workflow page show the `unassigned` and `empty team`
  * rows' screen words for a workflow with the same fault, so one fault has one
  * label wherever it shows.
  *
- * Verbs. Who may do each, and in which state, is the matrix on
- * {@link taskActions} or {@link runActions}, not here. The two screen
+ * Verbs, production. Who may do each, and in which state, is the matrix on
+ * {@link taskActions} or {@link runActions}, not here; the four workflow
+ * verbs are the merchant's alone, on the merchant's workflow page and the
+ * workflow editor, and {@link ApplyResult}, {@link DiscardResult} and
+ * {@link SwitchResult} say what each refuses. The two screen
  * columns are the member's and the merchant's label; "(none)" means that
  * screen never offers the verb. Undo and Reopen are two words for one
  * verb on purpose: the member takes back their own Done, the merchant
- * reopens someone's record.
+ * reopens someone's record. "done" is the verb "mark done", the state it
+ * leaves the task in; the identifiers say `markTaskDone`.
  *
- * | word            | on a | effect                              | member      | merchant        |
- * | --------------- | ---- | ----------------------------------- | ----------- | --------------- |
- * | start           | task | ready → started                     | Start       | (none)          |
- * | done            | task | ready or started → done             | Done        | Done            |
- * | put back        | task | started → ready                     | Put back    | Put back        |
- * | reopen          | task | done → ready                        | Undo        | Reopen          |
- * | assign          | task | moves it to a team                  | (none)      | Assign team     |
- * | note            | run  | writes the note                     | Edit note   | Edit note       |
- * | block           | run  | open → blocked                      | Block       | Block           |
- * | edit reason     | run  | changes the block's reason          | Edit reason | Edit reason     |
- * | unblock         | run  | blocked → open                      | Unblock     | Unblock         |
- * | cancel          | run  | open → closed, `merchant_cancelled` | (none)      | Cancel workflow |
- * | attach workflow | item | creates the run                     | (none)      | Attach          |
- * | change workflow | item | replaces the run                    | (none)      | Change workflow |
+ * | word            | on a     | effect                                   | member      | merchant        |
+ * | --------------- | -------- | ---------------------------------------- | ----------- | --------------- |
+ * | start           | task     | ready → started                          | Start       | (none)          |
+ * | done            | task     | ready or started → done                  | Done        | Done            |
+ * | put back        | task     | started → ready                          | Put back    | Put back        |
+ * | reopen          | task     | done → ready                             | Undo        | Reopen          |
+ * | assign          | task     | moves it to a team                       | (none)      | Assign team     |
+ * | note            | run      | writes the note                          | Edit note   | Edit note       |
+ * | block           | run      | open → blocked                           | Block       | Block           |
+ * | edit reason     | run      | changes the block's reason               | Edit reason | Edit reason     |
+ * | unblock         | run      | blocked → open                           | Unblock     | Unblock         |
+ * | cancel          | run      | open → closed, `merchant_cancelled`      | (none)      | Cancel workflow |
+ * | attach workflow | item     | creates the run                          | (none)      | Attach          |
+ * | change workflow | item     | replaces the run                         | (none)      | Change workflow |
+ * | apply           | workflow | the draft's tasks replace the workflow's | (none)      | Apply changes   |
+ * | discard         | workflow | deletes the draft                        | (none)      | Discard changes |
+ * | turn on         | workflow | off → on                                 | (none)      | Turn on         |
+ * | turn off        | workflow | on → off                                 | (none)      | Turn off        |
  *
  * Screens. A JSDoc, a test or a research doc names a screen by its spec
  * name, never by its route segment and never with "run". The heading is
@@ -202,7 +244,7 @@
  * | merchant | `app.teams.index`                 | Teams                        | the teams index             |
  * | merchant | `app.teams.$teamId`               | the team's name              | the team page               |
  * | merchant | `app.members`                     | Members                      | the members page            |
- * | member   | `shop.index`                      | Your shops                   | the shop picker             |
+ * | member   | `shop.index`                      | Your stores                  | the shop picker             |
  * | member   | `shop.$shop.workflows.index`      | Workflows                    | the workflows list          |
  * | member   | `shop.$shop.workflows.$runId`     | the item's title             | the workflow page           |
  * | member   | `shop.$shop_.lapsed`              | the shop's domain            | the lapsed page             |
@@ -214,7 +256,7 @@
 import { Match, Option, Schema, SchemaGetter, Struct } from "effect";
 
 /**
- * The glossary's task-state words. Derived, never stored: {@link taskStateOf}
+ * The vocabulary's task-state words. Derived, never stored: {@link taskStateOf}
  * reads them off a task's row and its `current` flag.
  */
 export const TaskState = Schema.Literals([
@@ -245,7 +287,7 @@ export const taskStateOf = (
   return task.current ? "ready" : "waiting";
 };
 
-/** The glossary's task-states screen column. `null` is "(none)". */
+/** The vocabulary's task-states screen column. `null` is "(none)". */
 export const TASK_STATE_LABEL = {
   waiting: null,
   ready: "Ready",
@@ -254,7 +296,7 @@ export const TASK_STATE_LABEL = {
 } as const satisfies Record<TaskState, string | null>;
 
 /**
- * The glossary's run-states screen column. `open` is the member's word for
+ * The vocabulary's run-states screen column. `open` is the member's word for
  * an open run and the merchant's once a task has started; the merchant's
  * word before that is {@link RUN_UNSTARTED_LABEL} ({@link runIsUnstarted}).
  * `closed` is the prefix of `Closed · <reason>` ({@link ClosedReason}).
@@ -266,56 +308,56 @@ export const RUN_STATE_LABEL = {
   closed: "Closed",
 } as const;
 
-/** The merchant's word for an open run nobody has touched ({@link runIsUnstarted}); the glossary's run-states `open` row names it. */
+/** The merchant's word for an open run nobody has touched ({@link runIsUnstarted}); the vocabulary's run-states `open` row names it. */
 export const RUN_UNSTARTED_LABEL = "Not started";
 
-/** The glossary's workflow-states screen column, for `Workflow.active`. */
+/** The vocabulary's workflow-states screen column, for {@link workflowIsOn}. */
 export const WORKFLOW_STATE_LABEL = { on: "On", off: "Off" } as const;
 
 /**
- * The glossary's order-positions screen column: the orders index's Status
+ * The vocabulary's order-positions screen column: the orders index's Status
  * badge and its position views. "Not started" is also
  * {@link RUN_UNSTARTED_LABEL}, the merchant's word for an open run nobody has
  * touched: it is the same fact one level down, and the two never render on
  * one row (the orders index shows positions, the order page shows runs).
  */
-export const PRODUCTION_STATE_LABEL = {
+export const ORDER_POSITION_LABEL = {
   not_started: "Not started",
   making: "Making",
   made: "Made",
   fulfilled: "Fulfilled",
   cancelled: "Cancelled",
-} as const satisfies Record<ProductionState, string>;
+} as const satisfies Record<OrderPosition, string>;
 
 /**
- * The glossary's order-issues screen column: the badges in the orders index's
+ * The vocabulary's order-issues screen column: the badges in the orders index's
  * Issues column. A row of filter buttons used to carry these words too; now
  * only the badges do, and the Issues view holds all of them. The workflows
- * index's badges and the workflow page's banners read `team` and
+ * index's badges and the workflow page's banners read `unassigned` and
  * `empty_team` from here too, with {@link ORDER_ISSUE_TONE}, so a fault has
  * one label and one tone on every screen.
  */
 export const ORDER_ISSUE_LABEL = {
   choose_workflow: "Needs a workflow",
-  team: "Needs a team",
+  unassigned: "Needs a team",
   empty_team: "Team has no members",
   blocked: "Blocked",
 } as const satisfies Record<OrderIssue, string>;
 
 /**
  * The orders index's view-row labels, in view-row order: the positions of
- * {@link PRODUCTION_STATE_LABEL} plus Open, Issues and All, the three views
+ * {@link ORDER_POSITION_LABEL} plus Open, Issues and All, the three views
  * that are scopes rather than positions ({@link OrdersIndexView}). Not a
- * glossary table: Open and All carry no rule of their own, and the two
- * glossary tables cover the words. `open` keys the default view, which is
+ * vocabulary table: Open and All carry no rule of their own, and the two
+ * vocabulary tables cover the words. `open` keys the default view, which is
  * `null` in the URL; `cancelled` has no button.
  */
 export const ORDERS_INDEX_VIEW_LABEL = {
   open: "Open",
-  not_started: PRODUCTION_STATE_LABEL.not_started,
-  making: PRODUCTION_STATE_LABEL.making,
-  made: PRODUCTION_STATE_LABEL.made,
-  fulfilled: PRODUCTION_STATE_LABEL.fulfilled,
+  not_started: ORDER_POSITION_LABEL.not_started,
+  making: ORDER_POSITION_LABEL.making,
+  made: ORDER_POSITION_LABEL.made,
+  fulfilled: ORDER_POSITION_LABEL.fulfilled,
   all: "All",
   issues: "Issues",
 } as const satisfies Record<
@@ -324,8 +366,8 @@ export const ORDERS_INDEX_VIEW_LABEL = {
 >;
 
 /**
- * The glossary's verbs, as the action structs name them ({@link RunActions},
- * {@link TaskActions}), plus the two item verbs.
+ * The vocabulary's verbs, as the action structs name them ({@link RunActions},
+ * {@link TaskActions}), plus the two item verbs and the four workflow verbs.
  */
 export const Verb = Schema.Literals([
   "start",
@@ -340,10 +382,14 @@ export const Verb = Schema.Literals([
   "cancel",
   "attachWorkflow",
   "changeWorkflow",
+  "apply",
+  "discard",
+  "turnOn",
+  "turnOff",
 ]);
 export type Verb = typeof Verb.Type;
 
-/** The glossary's two screen columns for verbs. `null` is "(none)": that screen never offers the verb. */
+/** The vocabulary's two screen columns for verbs. `null` is "(none)": that screen never offers the verb. */
 export const VERB_LABEL = {
   start: { member: "Start", merchant: null },
   done: { member: "Done", merchant: "Done" },
@@ -357,6 +403,10 @@ export const VERB_LABEL = {
   cancel: { member: null, merchant: "Cancel workflow" },
   attachWorkflow: { member: null, merchant: "Attach" },
   changeWorkflow: { member: null, merchant: "Change workflow" },
+  apply: { member: null, merchant: "Apply changes" },
+  discard: { member: null, merchant: "Discard changes" },
+  turnOn: { member: null, merchant: "Turn on" },
+  turnOff: { member: null, merchant: "Turn off" },
 } as const satisfies Record<
   Verb,
   { readonly member: string | null; readonly merchant: string | null }
@@ -418,9 +468,9 @@ export interface Entitlements {
   /**
    * Seats included; seats past this many are billed by the
    * {@link USAGE_METER_MEMBER} meter, never refused. Nothing in the app
-   * compares the roster to this number except the home page's Members tile:
+   * compares the member count to this number except the home page's Members tile:
    * the meter's $0.00 band absorbs the included seats, so the object sends the
-   * roster size and Shopify prices it. The only refusal is
+   * member count and Shopify prices it. The only refusal is
    * {@link ShopLimits.maxMembers}, which is plan-independent.
    */
   readonly membersIncluded: number;
@@ -431,8 +481,8 @@ export interface Entitlements {
  * never sees it, but the split is *compare here, count there*, not "pass the
  * number in": `ordersPerCycle` is compared in the Worker against the
  * {@link ShopUsage} row the object keeps and reports, and `membersIncluded` is
- * compared nowhere but the home page's Members tile; the roster size reaches
- * the object as a number to send ({@link RecordRosterInput}), not to compare.
+ * compared nowhere but the home page's Members tile; the member count reaches
+ * the object as a number to send ({@link RecordMemberCountInput}), not to compare.
  * Neither entitlement reaches `ShopAgent`, so the object stores no plan state
  * to fall out of sync, and an upgrade or downgrade lands on the very next page
  * load with nothing to invalidate. The one plan-adjacent fact the
@@ -518,7 +568,7 @@ export type PlanStatus = typeof PlanStatus.Type;
  * the switch moment, with every meter at zero. Usage sent during a trial is
  * not reported and does not carry into the paid cycle. Accepted usage shows
  * on the meter within about 30 s. Measured on the dev store on 2026-09-22.
- * This is why the seat meter is sent the whole roster at each new cycle
+ * This is why the seat meter is sent the whole member count at each new cycle
  * (the "cycle pushed, new start" row on {@link ShopUsage}) rather than an
  * overage: the plan's tiers price it, so a switch needs no app-side
  * arithmetic.
@@ -751,7 +801,7 @@ export type TeamName = typeof TeamName.Type;
  * cross-store rows on {@link initializeSchema}.
  * A team with nobody on it is valid and shows **No members** on the teams
  * index (on a workflow or an order it is the `empty_team` {@link OrderIssue}):
- * its tasks can still start runs, nobody can work them until someone joins,
+ * its tasks can still create runs, nobody can work them until someone joins,
  * and adding one member fixes everything with no data change.
  */
 export const Team = Schema.Struct({
@@ -769,20 +819,20 @@ export const TeamSummary = Schema.Struct({
 export type TeamSummary = typeof TeamSummary.Type;
 
 /**
- * The live D1 roster as the Durable Object hands it to pages: what the team
+ * The shop's teams, read live from D1 as the Durable Object hands it to pages: what the team
  * pickers list and what `unassigned` and `emptyTeam` are computed against.
  * `memberCount` is here so "No members on <team>" needs no second read.
  */
-export const TeamRoster = Schema.Struct({
+export const TeamWithMemberCount = Schema.Struct({
   id: TeamId,
   name: TeamName,
   memberCount: Schema.Number,
 });
-export type TeamRoster = typeof TeamRoster.Type;
+export type TeamWithMemberCount = typeof TeamWithMemberCount.Type;
 
 /**
  * The team plus every member of its shop, each marked with whether they are on
- * it — the detail screen toggles membership against the whole roster, so the
+ * it — the detail screen toggles membership against every member of the shop, so the
  * non-members are as much a part of the screen as the members.
  */
 export const TeamDetail = Schema.Struct({
@@ -800,7 +850,7 @@ export type TeamDetail = typeof TeamDetail.Type;
 
 /**
  * What the member-area guard resolves in one query: proof of membership plus
- * the active teams that membership carries. Teams are what scope work, so every
+ * the teams that membership carries. Teams are what scope work, so every
  * `/shop/*` handler wants them and none of them should pay a second round trip;
  * an empty `teams` is the ordinary "member with nothing to do yet" state, not an
  * error.
@@ -860,11 +910,11 @@ export const WorkflowLimits = {
 export const ShopLimits = {
   /** `Team` rows per shop. */
   maxTeams: 25,
-  /** `Run` rows that are {@link runIsOpen} per shop; a safety valve, not a product limit. A `done` run still holds its item but frees this slot. */
+  /** `Run` rows that are {@link runIsOpen} per shop; a safety valve, not a product limit. A `done` run still holds its item but no longer counts here. */
   maxOpenRuns: 5000,
   /** {@link ShopUsage.ordersThisCycle} at which syncing of *new* orders stops for the rest of the cycle. Provisional; enterprise fencing, not a tier — see {@link cycleAtOrderCeiling}. */
   maxOrdersPerCycle: 100,
-  /** Members per shop on any plan; see {@link rosterAtCeiling}. Provisional; enterprise fencing, not a tier. */
+  /** Members per shop on any plan; see {@link membersAtCeiling}. Provisional; enterprise fencing, not a tier. */
   maxMembers: 12,
   /** Line items kept per order on the bulk path; the rest are dropped and the order flagged. */
   maxLineItemsPerOrder: 250,
@@ -888,8 +938,8 @@ export const ShopLimits = {
   orderRetentionDays: 365,
   /** `WebhookDelivery` rows older than this are deleted; Shopify retries for at most 4 hours. */
   webhookDeliveryRetentionDays: 7,
-  /** A dead usage event ({@link usageEventIsDead}) dated longer ago than this is deleted by the retention sweep; `OrderRepository.sweepExpiredOrders` says why 60. */
-  deadUsageEventRetentionDays: 60,
+  /** An expired usage event ({@link usageEventIsExpired}) dated longer ago than this is deleted by the retention sweep; `OrderRepository.sweepExpiredOrders` says why 60. */
+  expiredUsageEventRetentionDays: 60,
   /** `syncOrders` refuses to start a bulk import when the object's SQLite is past this. */
   storageSoftLimitBytes: 2_000_000_000,
   /** Rows deleted per sweep pass, so no carrier request pays for more than this. */
@@ -924,36 +974,36 @@ export const retentionCutoff = (now: number) =>
  * every path that creates a run sends the queue, and a cycle push is sent by
  * the reconcile push that follows it (the rule and its tests are on
  * `ShopAgent`'s `flushUsageEvents`). A row's mechanics are on the method that
- * carries it (`OrderRepository.countOrder`, `recordRoster`, `setBillingCycle`,
+ * carries it (`OrderRepository.countOrder`, `recordMemberCount`, `setBillingCycle`,
  * `flushUsageEvents`, `sweepExpiredOrders`). `pnpm spec check` parses the
  * table, refuses a count or mark cell outside these words, and refuses a pinned
  * title no test carries; a behaviour change starts at the row.
  *
- * | trigger                                      | order count | seat mark         | queue                                                          | pinned by                                                                                                                      |
- * | -------------------------------------------- | ----------- | ----------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
- * | first run on an order                        | +1          | —                 | +1 order event, then sent                                      | an order is counted once, when its first run is created                                                                        |
- * | another run on a counted order               | —           | —                 | —                                                              | a re-sync never queues a second count                                                                                          |
- * | run on a seeded order                        | —           | —                 | —                                                              | a seeded order is never counted                                                                                                |
- * | member added, roster above the mark          | —           | → roster          | +1 seat event (the rise), then sent                            | an add past the high-water mark queues one seat event and raises the mark                                                      |
- * | member added, roster at or below the mark    | —           | —                 | —                                                              | an add at or under the high-water mark queues nothing                                                                          |
- * | member removed                               | —           | —                 | —                                                              | a member removal queues nothing and leaves the mark                                                                            |
- * | first count, no cycle stored yet             | +1          | → 0               | +1 order event                                                 | opens a provisional cycle before a billing cycle is known                                                                      |
- * | first count past the cycle end               | recounted   | → 0               | —                                                              | rolls the cycle forward on the first order past its end                                                                        |
- * | cycle pushed, same start                     | —           | → roster if above | +1 seat event (the rise), then sent                            | an unchanged cycle raises the mark to a roster past it, so an add whose recordRoster failed is billed at the next revalidation |
- * | cycle pushed, new start                      | recounted   | → roster          | seat events in the cycle dropped; +1 seat event (whole roster), then sent | a new cycle resets the mark to the roster and queues it as the cycle's first seat event                                        |
- * | cycle pushed, shop never addressed           | recounted   | → roster          | every event before the start dropped, then sent                | the first billing cycle discards events queued before the shop could be addressed                                              |
- * | revalidation during a trial                  | —           | —                 | —                                                              | pushes no billing cycle during a trial, which has none                                                                         |
- * | Manage plan pressed                          | —           | —                 | sent                                                           | Manage plan sends the usage queue before the plan can change                                                                   |
- * | Shopify accepts an event                     | —           | —                 | row deleted                                                    | flush deletes accepted events and keeps refused ones with the error                                                            |
- * | Shopify refuses an event                     | —           | —                 | `attempts` +1, `lastError` set                                 | flush deletes accepted events and keeps refused ones with the error                                                            |
- * | an event's billing cycle ends unsent         | —           | —                 | row is dead; kept, never sent                                  | a queued event is dead once the cycle that dated it has ended: skipped by the flush and reported apart                         |
- * | retention sweep, dead event over 60 days old | —           | —                 | row deleted                                                    | the retention sweep deletes dead usage events older than 60 days and keeps younger ones                                        |
+ * | trigger                                         | order count | seat mark               | queue                                                                           | pinned by                                                                                                                                 |
+ * | ----------------------------------------------- | ----------- | ----------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+ * | first run on an order                           | +1          | —                       | +1 order event, then sent                                                       | an order is counted once, when its first run is created                                                                                   |
+ * | another run on a counted order                  | —           | —                       | —                                                                               | a re-sync never queues a second count                                                                                                     |
+ * | run on a seeded order                           | —           | —                       | —                                                                               | a seeded order is never counted                                                                                                           |
+ * | member added, member count above the mark       | —           | → member count          | +1 seat event (the rise), then sent                                             | an add past the high-water mark queues one seat event and raises the mark                                                                 |
+ * | member added, member count at or below the mark | —           | —                       | —                                                                               | an add at or under the high-water mark queues nothing                                                                                     |
+ * | member removed                                  | —           | —                       | —                                                                               | a member removal queues nothing and leaves the mark                                                                                       |
+ * | first count, no cycle stored yet                | +1          | → 0                     | +1 order event                                                                  | opens a provisional cycle before a billing cycle is known                                                                                 |
+ * | first count past the cycle end                  | recounted   | → 0                     | —                                                                               | rolls the cycle forward on the first order past its end                                                                                   |
+ * | cycle pushed, same start                        | —           | → member count if above | +1 seat event (the rise), then sent                                             | an unchanged cycle raises the mark to a member count past it, so an add whose recordMemberCount failed is billed at the next revalidation |
+ * | cycle pushed, new start                         | recounted   | → member count          | seat events in the cycle dropped; +1 seat event (whole member count), then sent | a new cycle resets the mark to the member count and queues it as the cycle's first seat event                                             |
+ * | cycle pushed, shop never addressed              | recounted   | → member count          | every event before the start dropped, then sent                                 | the first billing cycle discards events queued before the shop could be addressed                                                         |
+ * | revalidation during a trial                     | —           | —                       | —                                                                               | pushes no billing cycle during a trial, which has none                                                                                    |
+ * | Manage plan pressed                             | —           | —                       | sent                                                                            | Manage plan sends the usage queue before the plan can change                                                                              |
+ * | Shopify accepts an event                        | —           | —                       | row deleted                                                                     | flush deletes accepted events and keeps refused ones with the error                                                                       |
+ * | Shopify refuses an event                        | —           | —                       | `attempts` +1, `lastError` set                                                  | flush deletes accepted events and keeps refused ones with the error                                                                       |
+ * | an event's billing cycle ends unsent            | —           | —                       | row expired; kept, never sent                                                   | a queued event expires once the cycle that dated it has ended: skipped by the flush and reported apart                                    |
+ * | retention sweep, expired event over 60 days old | —           | —                       | row deleted                                                                     | the retention sweep deletes expired usage events older than 60 days and keeps younger ones                                                |
  *
  * The rows rely on three assumptions:
  *
  * 1. A billing cycle starts where the previous one ended. The seat mark's
  *    same-start check depends on it. A plan change starts a new app
- *    subscription with its meters at zero, where sending the roster again is
+ *    subscription with its meters at zero, where sending the member count again is
  *    correct billing.
  * 2. Billing cycles are a month or less. The recount is wrong for a longer
  *    cycle (`OrderRepository.countedSince`), and the Partner Dashboard offers
@@ -981,15 +1031,15 @@ export const ShopUsage = Schema.Struct({
   ordersThisCycle: Schema.Number,
   /** Set when a new order was refused because of {@link ShopLimits.maxOrdersPerCycle}; null once the cycle rolls. */
   ordersLimitedAt: Schema.NullOr(Schema.Number),
-  /** Set when reconcile declined to auto-start a run because of `ShopLimits.maxOpenRuns`; null once under the ceiling again. */
+  /** Set when reconcile declined to auto-create a run because of `ShopLimits.maxOpenRuns`; null once under the ceiling again. */
   openRunsLimitedAt: Schema.NullOr(Schema.Number),
   /** `ctx.storage.sql.databaseSize` at read time. */
   databaseSize: Schema.Number,
   lastSweepAt: Schema.NullOr(Schema.Number),
   /** Usage events queued for the current cycle and not yet accepted by Shopify. Non-zero for long is an operator signal, not a merchant-facing number. */
   pendingUsageEvents: Schema.Number,
-  /** Dead usage events ({@link usageEventIsDead}) from the last {@link ShopLimits.deadUsageEventRetentionDays} days; older ones are deleted. Each is a unit carried and never billed. */
-  deadUsageEvents: Schema.Number,
+  /** Expired usage events ({@link usageEventIsExpired}) from the last {@link ShopLimits.expiredUsageEventRetentionDays} days; older ones are deleted. Each is a unit carried and never billed. */
+  expiredUsageEvents: Schema.Number,
   /** The {@link USAGE_METER_ORDER} share of {@link pendingUsageEvents}, as units; the tolerance of the orders drift check. */
   pendingOrderUnits: Schema.Number,
   /** The {@link USAGE_METER_MEMBER} share of {@link pendingUsageEvents}, as units; the tolerance of the members drift check. */
@@ -1035,7 +1085,7 @@ export const BillingCycleInput = Schema.Struct({
   shopGid: ShopGid,
   cycleStartAt: Schema.Number,
   cycleEndAt: Schema.NullOr(Schema.Number),
-  /** The D1 roster size, read by the Worker just before the push; the seat mark a new cycle starts from. */
+  /** The D1 member count, read by the Worker just before the push; the seat mark a new cycle starts from. */
   memberCount: Schema.Number,
 });
 export type BillingCycleInput = typeof BillingCycleInput.Type;
@@ -1049,7 +1099,7 @@ export type BillingCycleInput = typeof BillingCycleInput.Type;
  * plan revalidation — a webhook arrives on the install's heels, and the
  * revalidation is a separate request that may be minutes behind — or during
  * a trial, which has no billing cycle. Opening a provisional cycle is what
- * lets a run started then count; the first billing cycle replaces it (the
+ * lets a run created then count; the first billing cycle replaces it (the
  * "cycle pushed, shop never addressed" row on {@link ShopUsage}).
  *
  * UTC, not the shop's timezone: the object has no locale, and a boundary that
@@ -1089,7 +1139,7 @@ export const UsageEvent = Schema.Struct({
   occurredAt: Schema.Number,
   idempotencyKey: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
   /**
-   * A positive integer: `1` for an order, and for seats the roster size at a
+   * A positive integer: `1` for an order, and for seats the member count at a
    * new cycle or the rise over the high-water mark ({@link seatEventValue}).
    * Positive because both meters only count up — an order is billed the first
    * time Baton creates a run for it (`OrderRepository.countOrder`), a seat
@@ -1101,21 +1151,21 @@ export const UsageEvent = Schema.Struct({
 export type UsageEvent = typeof UsageEvent.Type;
 
 /**
- * A queued usage event is dead once the billing cycle that dated it has
+ * A queued usage event expires once the billing cycle that dated it has
  * ended: Shopify refuses an event whose timestamp falls in a closed cycle, so
- * retrying it can only fail. Dead rows are skipped by the flush and reported
- * apart from the live queue ({@link ShopUsage.deadUsageEvents}) — a count of
+ * retrying it can only fail. Expired rows are skipped by the flush and reported
+ * apart from the live queue ({@link ShopUsage.expiredUsageEvents}) — a count of
  * orders the merchant carried and was never billed for is an operator
  * signal, not something to retry into or hide inside the reconcile
- * tolerance. They are kept for {@link ShopLimits.deadUsageEventRetentionDays}
+ * tolerance. They are kept for {@link ShopLimits.expiredUsageEventRetentionDays}
  * days after they were dated, then the retention sweep deletes them.
  */
-export const usageEventIsDead = (occurredAt: number, cycleStartAt: number) =>
+export const usageEventIsExpired = (occurredAt: number, cycleStartAt: number) =>
   occurredAt < cycleStartAt;
 
 /**
  * The cycle is at its ceiling when {@link ShopUsage.ordersThisCycle} — orders
- * Baton started work on, not orders stored — has reached
+ * Baton created a run on, not orders stored — has reached
  * {@link ShopLimits.maxOrdersPerCycle}, past which no *new* order is stored for
  * the rest of the cycle.
  *
@@ -1139,33 +1189,33 @@ export const cycleAtOrderCeiling = (ordersThisCycle: number) =>
   ordersThisCycle >= ShopLimits.maxOrdersPerCycle;
 
 /**
- * A shop's roster is at its ceiling when it holds
+ * A shop's members are at their ceiling when there are
  * {@link ShopLimits.maxMembers} members, on any plan. `Repository.addMember`
  * refuses a new email there, and the merchant is told to contact support. It
- * is the one refusal on the roster: {@link Entitlements.membersIncluded} bills,
+ * is the one refusal on the members: {@link Entitlements.membersIncluded} bills,
  * it does not block.
  */
-export const rosterAtCeiling = (count: number) =>
+export const membersAtCeiling = (count: number) =>
   count >= ShopLimits.maxMembers;
 
 /**
- * The seat units to queue when the roster reaches `rosterSize`: the rise over
+ * The seat units to queue when the member count reaches `memberCount`: the rise over
  * the cycle's high-water mark, or `0` when not past it.
  *
- * The billable seat quantity for a cycle is its high-water mark: the roster
- * size at cycle start, plus one for each add that raises the mark. A removal
+ * The billable seat quantity for a cycle is its high-water mark: the member
+ * count at cycle start, plus one for each add that raises the mark. A removal
  * never lowers it, so remove-then-add inside a cycle bills once, and nothing
  * sent is ever reversed. The arithmetic, not the constant `1`, is the rule: a
- * roster that grew by more than one between reports still sends exactly the
+ * count that grew by more than one between reports still sends exactly the
  * rise.
  */
-export const seatEventValue = (rosterSize: number, highWater: number) =>
-  Math.max(rosterSize - highWater, 0);
+export const seatEventValue = (memberCount: number, highWater: number) =>
+  Math.max(memberCount - highWater, 0);
 
 /**
  * A usage meter diverges when Shopify's reading and the local figure differ by
  * more than the units still queued for that meter. Pending units are a gap
- * the next flush closes; dead ones ({@link usageEventIsDead}) never close, so
+ * the next flush closes; expired ones ({@link usageEventIsExpired}) never close, so
  * they are not tolerated, and a tolerance that grew with every lost event
  * would hide the loss it exists to show. Each meter tolerates only its own
  * pending units ({@link ShopUsage.pendingOrderUnits},
@@ -1178,12 +1228,12 @@ export const meterDiverges = (input: {
 }) => Math.abs(input.local - input.shopify) > input.pending;
 
 /**
- * The roster size the members page's add reports (`ShopAgent.recordRoster`).
- * Plain RPC input: the roster is D1's, and the object cannot count it. What
+ * The member count the members page's add reports (`ShopAgent.recordMemberCount`).
+ * Plain RPC input: the members are D1's, and the object cannot count it. What
  * it does is the "member added" rows on {@link ShopUsage}.
  */
-export const RecordRosterInput = Schema.Struct({ size: Schema.Number });
-export type RecordRosterInput = typeof RecordRosterInput.Type;
+export const RecordMemberCountInput = Schema.Struct({ size: Schema.Number });
+export type RecordMemberCountInput = typeof RecordMemberCountInput.Type;
 
 /** The length of every trimmed name: the schema check, the field `maxLength`, and the rename dialog's counter all read this. */
 export const NAME_MAX_LENGTH = 64;
@@ -1289,11 +1339,11 @@ export const WorkflowTag = Schema.String.pipe(
 export type WorkflowTag = typeof WorkflowTag.Type;
 
 /**
- * Vocabulary. A workflow definition has two nouns and the merchant never
- * meets a third:
+ * A workflow definition has two nouns and the merchant never meets a
+ * third:
  *
- * - **Workflow**: name, type, tag, tasks, Active / Off. This is what
- *   starts runs. Runs copy it wholesale and never look back at it (the
+ * - **Workflow**: name, type, tag, tasks, On / Off. This is what
+ *   creates runs. Runs copy it wholesale and never look back at it (the
  *   data model on `initializeSchema`, `ShopAgentSchema.ts`).
  * - **Draft**: a private copy of the workflow's **tasks**, created by
  *   Edit and living until Apply or Discard. Every edit writes to the draft
@@ -1321,8 +1371,9 @@ export type WorkflowTag = typeof WorkflowTag.Type;
  * - a workflow **applies to orders placed since** it was turned on; the
  *   word for an order's date is **placed**, never a field name.
  *
- * In identifiers: `match` is the tag test, `start` / `canStart` is creating
- * a run. Not used, in code or copy: version, live, saved, published,
+ * In identifiers: `match` is the tag test, and a workflow **creates** a run
+ * (`workflowIsEligible` says whether it may); only a member **starts** a
+ * task. Not used, in code or copy: version, live, saved, published,
  * retired, applied (as a state), route, routing, routable, pause, and
  * "product tag" for the workflow's own field.
  *
@@ -1347,16 +1398,16 @@ export type WorkflowTag = typeof WorkflowTag.Type;
  * earlier date the merchant chose to include waiting orders; the merchant
  * can move it on the workflow page; Turn off clears it; Apply never touches
  * it, because an unpaid order placed while the workflow was on is still that
- * workflow's business when it pays. A workflow starts a run on an order only
+ * workflow's business when it pays. A workflow creates a run on an order only
  * if the order was placed (`ShopOrder.processedAt`) on or after
  * `activatedAt`, on every path — new-order webhook, edit webhook, sync,
  * resync — so an old order Baton meets late is never touched. A workflow can
- * start runs when `activatedAt is not null and it has tasks and every task
+ * create runs when `activatedAt is not null and it has tasks and every task
  * is assigned to a team that exists`; `activatedAt` not null implies at
  * least one task, every one assigned at the moment of Turn on.
  * A task whose team was deleted is **unassigned** (`teamId` null, or an id
  * no D1 row carries — read as null everywhere). A workflow with an
- * unassigned task carries the `team` {@link OrderIssue} (**Needs a team**)
+ * unassigned task carries the `unassigned` {@link OrderIssue} (**Needs a team**)
  * and one with a task on a team with no members the `empty_team` issue
  * (**Team has no members**), with the orders index's labels and tone
  * ({@link ORDER_ISSUE_LABEL}, {@link ORDER_ISSUE_TONE}), on the workflows
@@ -1380,8 +1431,9 @@ const WorkflowFields = {
 };
 
 /** On: `activatedAt` is set. The one read of the switch, so no caller compares the column to null on its own. */
-export const isActive = (workflow: { readonly activatedAt: number | null }) =>
-  workflow.activatedAt !== null;
+export const workflowIsOn = (workflow: {
+  readonly activatedAt: number | null;
+}) => workflow.activatedAt !== null;
 
 /** A workflow: chosen by its tag, running once per matching item. */
 export const Workflow = Schema.Struct({
@@ -1394,7 +1446,7 @@ export type Workflow = typeof Workflow.Type;
  * The draft side of {@link Workflow}, holding the tasks being edited as
  * `WorkflowDraftTask` rows. One per workflow at most; the data model on
  * `initializeSchema` (`ShopAgentSchema.ts`) says so and the draft holds
- * tasks only. Nothing that starts runs ever reads the draft.
+ * tasks only. Nothing that creates runs ever reads the draft.
  */
 export const WorkflowDraft = Schema.Struct({
   workflowId: WorkflowId,
@@ -1444,12 +1496,12 @@ export type WorkflowDraftTask = typeof WorkflowDraftTask.Type;
 /**
  * List row. `tag` and `stepCount` describe the workflow. `unassigned` and
  * `emptyTeam` are the derived badges from {@link Workflow}, computed against
- * the live roster on every list read.
+ * the shop's live teams on every list read.
  */
 const WorkflowSummaryRowFields = {
   stepCount: Schema.Number,
 };
-/** The stored half of {@link WorkflowSummary}: what one list query returns before the roster join. */
+/** The stored half of {@link WorkflowSummary}: what one list query returns before the team join. */
 export const WorkflowSummaryRow = Schema.Struct({
   ...Workflow.fields,
   ...WorkflowSummaryRowFields,
@@ -1489,7 +1541,7 @@ export type WorkflowWithDraft = typeof WorkflowWithDraft.Type;
  * A workflow task with its team's live name and headcount, as the merchant's
  * workflow page ({@link WorkflowPageData}) and the workflow editor
  * ({@link WorkflowDraftDetail}) render it. Both warning states are derived here against the live
- * roster and never stored: `teamName` is `null` when the task is unassigned
+ * teams and never stored: `teamName` is `null` when the task is unassigned
  * (`teamId` null, or an id no team carries) — a warning, not a block in the
  * editor; the task renders with an empty picker and everything else stays
  * editable. `memberCount` is the team's live headcount (`null` when
@@ -1516,7 +1568,7 @@ export type WorkflowDraftDetail = typeof WorkflowDraftDetail.Type;
 
 /**
  * Everything the merchant's workflow page renders, in one socket round trip:
- * the workflow (read-only, what starts runs) and the draft (what the editor
+ * the workflow (read-only, what creates runs) and the draft (what the editor
  * writes), each with its tasks. The suffix is `Data` for the reason on
  * {@link OrdersIndexData}.
  */
@@ -1524,12 +1576,13 @@ export const WorkflowPageData = Schema.Struct({
   workflow: Workflow,
   tasks: Schema.Array(TaskWithTeamName),
   draft: Schema.NullOr(WorkflowDraftDetail),
-  teams: Schema.Array(TeamRoster),
+  teams: Schema.Array(TeamWithMemberCount),
 });
 export type WorkflowPageData = typeof WorkflowPageData.Type;
 
-/** A task is unassigned when its team is null or resolves to no team; the name is the tell after the roster join. */
-export const isUnassigned = (task: TaskWithTeamName) => task.teamName === null;
+/** A task is unassigned when its team is null or resolves to no team; the name is the tell after the team join. */
+export const workflowTaskIsUnassigned = (task: TaskWithTeamName) =>
+  task.teamName === null;
 
 /** Assigned to a team nobody is on: an issue, but Apply and Turn on allow it ({@link OrderIssue} says why). */
 export const hasEmptyTeam = (task: TaskWithTeamName) =>
@@ -1589,29 +1642,29 @@ export const DiscardDraftInput = WorkflowIdInput;
 export type DiscardDraftInput = typeof DiscardDraftInput.Type;
 
 /**
- * `activatedAt` is honoured only with `active: true`: the Turn on dialog's
+ * `activatedAt` is honoured only with `on: true`: the Turn on dialog's
  * "Include them" sends the earliest waiting order's placed date so those
  * orders qualify; omitted, Turn on means now. Off always clears the date.
  */
-export const SetWorkflowActiveInput = Schema.Struct({
+export const SetWorkflowOnInput = Schema.Struct({
   workflowId: BoundedId,
-  active: Schema.Boolean,
+  on: Schema.Boolean,
   activatedAt: Schema.optionalKey(Schema.Number),
 });
-export type SetWorkflowActiveInput = typeof SetWorkflowActiveInput.Type;
+export type SetWorkflowOnInput = typeof SetWorkflowOnInput.Type;
 
 /**
  * The editor's Turn on for a workflow that has never been applied: one click
  * that promotes the draft and turns the switch on, so the merchant is not
  * asked to Apply tasks that have never run and then turn on the thing they
  * just applied. `activatedAt` means what it means on
- * {@link SetWorkflowActiveInput}.
+ * {@link SetWorkflowOnInput}.
  */
-export const ApplyAndActivateInput = Schema.Struct({
+export const ApplyAndTurnOnInput = Schema.Struct({
   workflowId: BoundedId,
   activatedAt: Schema.optionalKey(Schema.Number),
 });
-export type ApplyAndActivateInput = typeof ApplyAndActivateInput.Type;
+export type ApplyAndTurnOnInput = typeof ApplyAndTurnOnInput.Type;
 
 /** The workflow page's Change control: moves the coverage date of an on workflow. */
 export const SetWorkflowActivatedAtInput = Schema.Struct({
@@ -1661,7 +1714,7 @@ export type UpdateTaskInput = typeof UpdateTaskInput.Type;
  *
  * `tasks` become the workflow's tasks; a fixture with no tasks and no
  * `draft` has no draft, the state the ordinary path produces for a fresh
- * workflow. `active` is the fixture's word for the switch and defaults to
+ * workflow. `on` is the switch and defaults to
  * `true` when the entry has tasks and every task is assigned; the
  * repository stores it as `activatedAt = now`, so seeded orders qualify.
  * `draft` seeds a pending draft (tasks) for fixtures that show the draft UI.
@@ -1677,7 +1730,7 @@ export const SeedWorkflowsInput = Schema.Struct({
   workflows: Schema.Array(
     Schema.Struct({
       name: WorkflowName,
-      active: Schema.optionalKey(Schema.Boolean),
+      on: Schema.optionalKey(Schema.Boolean),
       tag: WorkflowTag,
       tasks: Schema.Array(SeedWorkflowTask),
       draft: Schema.optionalKey(
@@ -1768,16 +1821,16 @@ export const DraftResult = Schema.Union([
 export type DraftResult = typeof DraftResult.Type;
 
 /**
- * `started` is how many runs the reconcile-all after the switch created. Turn
- * on starts runs on waiting orders; Turn **off** can start them too, because
+ * `created` is how many runs the reconcile-all after the switch created. Turn
+ * on creates runs on waiting orders; Turn **off** can create them too, because
  * removing one of two matching workflows resolves an ambiguity and the
- * survivor's runs begin — so the toast must read for both directions.
+ * survivor's runs are created — so the toast must read for both directions.
  */
-export const ActivateResult = Schema.Union([
+export const SwitchResult = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal("Ok"),
     workflow: Workflow,
-    started: Schema.Number,
+    created: Schema.Number,
   }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("NoTasks") }),
@@ -1786,14 +1839,14 @@ export const ActivateResult = Schema.Union([
     taskNames: Schema.Array(TaskName),
   }),
 ]);
-export type ActivateResult = typeof ActivateResult.Type;
+export type SwitchResult = typeof SwitchResult.Type;
 
 /** `Off`: the workflow is not on, so there is no coverage date to move. */
 export const ChangeActivatedAtResult = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal("Ok"),
     workflow: Workflow,
-    started: Schema.Number,
+    created: Schema.Number,
   }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("Off") }),
@@ -1969,7 +2022,7 @@ export type LineItemProperty = typeof LineItemProperty.Type;
  * order-level field, and the merchant reads them in the admin one click away.
  *
  * Payment is stored as `fullyPaid` only, the one fact a rule reads
- * ({@link canStartRuns}). Shopify's display financial status and the order's
+ * ({@link orderCanCreateRuns}). Shopify's display financial status and the order's
  * archive time (`closedAt`) are not mirrored: no rule and no maker reads them,
  * and the admin is one click away.
  */
@@ -2011,13 +2064,13 @@ export type ShopOrder = typeof ShopOrder.Type;
  * ({@link unitsToMake}): Shopify lowers it on a merchant edit and on a refund,
  * and on nothing else. Fulfillment does not move it, which is why a line
  * fulfilled early still reads as work until the whole order is `FULFILLED`
- * ({@link isFulfilled}). `quantity` stays as "ordered" for display.
+ * ({@link orderIsFulfilled}). `quantity` stays as "ordered" for display.
  *
- * `matchedWorkflowIds` is the active, startable workflows whose tag matched
- * this item at the last reconcile, whether or not a run was started. Two or
+ * `matchedWorkflowIds` is the eligible workflows whose tag matched
+ * this item at the last reconcile, whether or not a run was created. Two or
  * more with no run is an **ambiguity** the merchant resolves from the
- * order page; the picker there offers these first, then every other active
- * workflow. Written by reconcile
+ * order page; the picker there offers these first, then every other
+ * workflow that is on. Written by reconcile
  * only — the order sync writes `[]`, because matching happens after the write,
  * inside `afterWrite`.
  *
@@ -2048,14 +2101,14 @@ export type OrderLineItem = typeof OrderLineItem.Type;
  * The creation gate, and only that: whether reconcile may *start* new runs on
  * the order. Deliberately not the stop gate — an edit that pushes a paid order
  * back to `fullyPaid = false` must leave work in progress alone, so only
- * {@link isCancelled} and {@link isFulfilled} close existing runs. `AUTHORIZED` is not
+ * {@link orderIsCancelled} and {@link orderIsFulfilled} close existing runs. `AUTHORIZED` is not
  * treated as paid; manual-capture shops would need a clause here.
  */
-export const canStartRuns = (order: ShopOrder) =>
+export const orderCanCreateRuns = (order: ShopOrder) =>
   order.fullyPaid && order.cancelledAt === null;
 
-/** A stop gate, with {@link isFulfilled}: reconcile closes every open run on the order, reason `order_cancelled` ({@link ClosedReason}). */
-export const isCancelled = (order: Pick<ShopOrder, "cancelledAt">) =>
+/** A stop gate, with {@link orderIsFulfilled}: reconcile closes every open run on the order, reason `order_cancelled` ({@link ClosedReason}). */
+export const orderIsCancelled = (order: Pick<ShopOrder, "cancelledAt">) =>
   order.cancelledAt !== null;
 
 /**
@@ -2065,7 +2118,7 @@ export const isCancelled = (order: Pick<ShopOrder, "cancelledAt">) =>
  * other `displayFulfillmentStatus` (partially fulfilled, on hold, in
  * progress, scheduled, ...) is displayed as Shopify sends it and read as open.
  */
-export const isFulfilled = (order: Pick<ShopOrder, "fulfillmentStatus">) =>
+export const orderIsFulfilled = (order: Pick<ShopOrder, "fulfillmentStatus">) =>
   order.fulfillmentStatus === "FULFILLED";
 
 /**
@@ -2096,14 +2149,14 @@ export type OrderState = typeof OrderState.Type;
  * overriding the tag, activation-date and payment gates on purpose; it is not
  * an override of the order being over. A closed order has no work left, so
  * attach is refused, and reconcile would only close the run on its next
- * pass. Unpaid is deliberately allowed: the merchant may start work on a
- * deposit, which is the same judgement {@link canStartRuns} withholds from
- * *automatic* starts. Attaching is starting work, so it bills the order like
+ * pass. Unpaid is deliberately allowed: the merchant may attach a workflow on a
+ * deposit, which is the same judgement {@link orderCanCreateRuns} withholds from
+ * reconcile. Attaching creates a run, so it bills the order like
  * any first run (`OrderRepository.countOrder`) — the one way an order Shopify
  * has not been paid for is metered, and the merchant chose it.
  */
 export const orderIsOpen = (order: OrderState) =>
-  !isCancelled(order) && !isFulfilled(order);
+  !orderIsCancelled(order) && !orderIsFulfilled(order);
 
 /**
  * Units a maker should see and a run should snapshot. `currentQuantity`, not
@@ -2111,7 +2164,7 @@ export const orderIsOpen = (order: OrderState) =>
  * should still do. Fulfillment is deliberately not in it — Shopify leaves
  * `currentQuantity` alone when a unit is fulfilled, so a line fulfilled ahead of the
  * rest of the order stays open work until the order reaches `FULFILLED`, which
- * is the one fulfillment state Baton acts on ({@link isFulfilled}). Partial
+ * is the one fulfillment state Baton acts on ({@link orderIsFulfilled}). Partial
  * fulfillment is deliberately ignored: a line fulfilled ahead of the order
  * stays work until the order is `FULFILLED`.
  */
@@ -2318,20 +2371,20 @@ export type OrdersSyncStatus = typeof OrdersSyncStatus.Type;
  * `fulfilled`, and the order leaves the Made list without anyone touching
  * Baton.
  *
- * The rule is a function, not a table: {@link productionState} is the one
+ * The rule is a function, not a table: {@link orderPosition} is the one
  * definition, and the SQL filters in `OrderRepository.listOrders` restate its
  * branches and must move with it. Readers (`app.orders.index.tsx`) switch on
  * the value for labels and filters only; no site decides anything by
- * comparing it inline. The labels are {@link PRODUCTION_STATE_LABEL}.
+ * comparing it inline. The labels are {@link ORDER_POSITION_LABEL}.
  */
-export const ProductionState = Schema.Literals([
+export const OrderPosition = Schema.Literals([
   "not_started",
   "making",
   "made",
   "fulfilled",
   "cancelled",
 ]);
-export type ProductionState = typeof ProductionState.Type;
+export type OrderPosition = typeof OrderPosition.Type;
 
 /**
  * The orders index's view row: one whole question about the list at a time,
@@ -2343,10 +2396,10 @@ export type ProductionState = typeof ProductionState.Type;
  *   opening Orders is looking at the bench, not at the year.
  * - `"issues"` is an open order with at least one {@link orderIssues}
  *   element: what needs the merchant.
- * - The five positions are {@link productionState}.
+ * - The five positions are {@link orderPosition}.
  * - `"all"` is the whole history, cancelled included. With `"fulfilled"` and
  *   `"cancelled"` it is a view that reads closed orders, and the only one
- *   that reads both open and closed. It is not a `ProductionState`: nothing
+ *   that reads both open and closed. It is not an `OrderPosition`: nothing
  *   derives it from an order.
  * - `"cancelled"` is a legal value with no button: a Shopify cancel is rare
  *   and final, and the order sits under All with its badge.
@@ -2365,7 +2418,7 @@ export type ProductionState = typeof ProductionState.Type;
  */
 export const OrdersIndexView = Schema.Union([
   Schema.Literal("issues"),
-  ProductionState,
+  OrderPosition,
   Schema.Literal("all"),
 ]);
 export type OrdersIndexView = typeof OrdersIndexView.Type;
@@ -2378,8 +2431,8 @@ export type OrdersIndexView = typeof OrdersIndexView.Type;
  *
  * | Issue             | Rule                                                                     | Remedy                              |
  * | ----------------- | ------------------------------------------------------------------------ | ----------------------------------- |
- * | `choose_workflow` | `ambiguousItems > 0` and the order can start runs ({@link canStartRuns}) | choose a workflow on the order page |
- * | `team`            | {@link OrderRow} `unassigned`                                            | Assign team on the order page       |
+ * | `choose_workflow` | `ambiguousItems > 0` and the order can create runs ({@link orderCanCreateRuns}) | choose a workflow on the order page |
+ * | `unassigned`      | {@link OrderRow} `unassigned`                                            | Assign team on the order page       |
  * | `empty_team`      | {@link OrderRow} `emptyTeam`                                             | add a member on the team page       |
  * | `blocked`         | `runs.blocked > 0`                                                       | the order page                      |
  *
@@ -2417,13 +2470,13 @@ export type OrdersIndexView = typeof OrdersIndexView.Type;
  * page offers the workflow picker on the item.
  *
  * An unpaid order with an ambiguous item is not choosing: reconcile would not
- * start a run on it whichever workflow was chosen, so there is no decision
+ * create a run on it whichever workflow was chosen, so there is no decision
  * waiting yet. Unpaid is not an issue either: it is a Shopify fact the
  * Payment column already shows, not something the merchant fixes in Baton.
  *
  * An issue is only ever on an open order ({@link orderIsOpen}): a closed
  * order has no work left. Issues are independent of each other and of the
- * {@link ProductionState}: one order can carry several, and an order being
+ * {@link OrderPosition}: one order can carry several, and an order being
  * made can be waiting on a choice for another item at the same time. No
  * Shopify change is an issue: a Shopify event closes or resizes a run and
  * waits on nobody ({@link RunStatus}). Blocked is the run-state word on
@@ -2437,7 +2490,7 @@ export type OrdersIndexView = typeof OrdersIndexView.Type;
  */
 export const OrderIssue = Schema.Literals([
   "choose_workflow",
-  "team",
+  "unassigned",
   "empty_team",
   "blocked",
 ]);
@@ -2516,7 +2569,7 @@ export const ListOrdersInput = Schema.Struct({
   /**
    * {@link OrdersIndexView}: `null` is Open, `"all"` is every order, and each
    * other view has a SQL form in `OrderRepository.listOrders` that restates
-   * `productionState` or the union of `orderIssues`. Always send the key, for
+   * `orderPosition` or the union of `orderIssues`. Always send the key, for
    * the same reason as `team`.
    */
   view: Schema.NullOr(OrdersIndexView),
@@ -2547,12 +2600,12 @@ export const ResyncOrderInput = Schema.Struct({
 export type ResyncOrderInput = typeof ResyncOrderInput.Type;
 
 /**
- * Per-order production state for the index table, aggregated from
+ * Per-order position for the index table, aggregated from
  * `Run` rows in the same read. `open` counts {@link runIsOpen} runs, `done`
  * the done ones. Closed runs are not counted: nothing derives from their
  * number. A closed run still holds its item ({@link RunStatus}), which
  * {@link ambiguousItems} reads off the run rows, and an order whose only
- * runs were closed reads as not started ({@link productionState}) with no
+ * runs were closed reads as not started ({@link orderPosition}) with no
  * issue ({@link orderIssues}).
  */
 export const RunCounts = Schema.Struct({
@@ -2575,16 +2628,16 @@ export const OrderRow = Schema.Struct({
   runs: RunCounts,
   /**
    * The `team` {@link OrderIssue}, derived at read time against the live D1
-   * roster and never stored: an open run has an open task, on any step, whose
-   * `teamId` is null or not on the roster. Any step, not only the current
+   * teams and never stored: an open run has an open task, on any step, whose
+   * `teamId` is null or names no team. Any step, not only the current
    * one, because an unassigned task cannot fix itself before it becomes
    * current. Remedy: Assign team on the order page.
    */
   unassigned: Schema.Boolean,
   /**
    * The `empty_team` {@link OrderIssue}, derived at read time against the
-   * live D1 roster and never stored: an open run has a current task
-   * ({@link currentTasks}) on a roster team with no members. Current tasks
+   * live D1 teams and never stored: an open run has a current task
+   * ({@link currentTasks}) on a team with no members. Current tasks
    * only, because a team on a later step may have members by the time that
    * step is reached. Remedy: add a member, which clears this with no further
    * write.
@@ -2602,17 +2655,17 @@ export const OrderRow = Schema.Struct({
    * This is the same line {@link OrderIssue} draws: issues are open-only too.
    *
    * An unassigned current task contributes nothing, and neither does a team
-   * that has left the roster: both are `unassigned`, and rendering one fault
+   * that no longer exists: both are `unassigned`, and rendering one fault
    * in two cells makes it look like two alarms. A blocked run contributes
    * nothing either: its team cannot move it, and `RunCounts.blocked` is its
-   * alarm. A team on the roster with no members does contribute: it is
+   * alarm. A team that exists with no members does contribute: it is
    * `emptyTeam`, and the Waiting on cell names the team the merchant has to
    * add a member to. So an order being made with an empty list is exactly an
    * order whose every current task is unassigned, which is when the Needs a
    * team badge is showing.
    *
    * Ids, not names: the Durable Object has no team names. The route resolves
-   * them through `OrdersIndexData.teams`, the roster the page was read against.
+   * them through `OrdersIndexData.teams`, the teams the page was read against.
    */
   waitingOn: Schema.Array(TeamId),
   /**
@@ -2627,7 +2680,7 @@ export const OrderRow = Schema.Struct({
 export type OrderRow = typeof OrderRow.Type;
 
 /**
- * The {@link ProductionState} of an order, one for every order.
+ * The {@link OrderPosition} of an order, one for every order.
  *
  * Cancelled wins over everything because Shopify's cancel is final;
  * `fulfilled` is checked next, before the run counts, so an order fulfilled
@@ -2647,17 +2700,17 @@ export type OrderRow = typeof OrderRow.Type;
  * page — which rebuilds the aggregate from its own runs — does not have
  * to invent a value for every row field the index adds later.
  */
-export const productionState = ({
+export const orderPosition = ({
   order,
   runs,
-}: Pick<OrderRow, "order" | "runs">): ProductionState =>
+}: Pick<OrderRow, "order" | "runs">): OrderPosition =>
   Match.value({
-    cancelled: isCancelled(order),
-    fulfilled: isFulfilled(order),
+    cancelled: orderIsCancelled(order),
+    fulfilled: orderIsFulfilled(order),
     none: runs.open === 0 && runs.done === 0,
     open: runs.open > 0,
   }).pipe(
-    Match.withReturnType<ProductionState>(),
+    Match.withReturnType<OrderPosition>(),
     Match.when({ cancelled: true }, () => "cancelled"),
     Match.when({ fulfilled: true }, () => "fulfilled"),
     Match.when({ none: true }, () => "not_started"),
@@ -2683,8 +2736,8 @@ export const orderIssues = ({
 >): readonly OrderIssue[] => {
   if (!orderIsOpen(order)) return [];
   const issue: Record<OrderIssue, boolean> = {
-    choose_workflow: canStartRuns(order) && ambiguousItems > 0,
-    team: unassigned,
+    choose_workflow: orderCanCreateRuns(order) && ambiguousItems > 0,
+    unassigned,
     empty_team: emptyTeam,
     blocked: runs.blocked > 0,
   };
@@ -2705,7 +2758,7 @@ export const ORDER_ISSUE_TONE = "critical";
  * `OrderRepository.listOrders` restates it and must move with it.
  *
  * Any run counts, `done` and `closed` included: a `done` run means the item
- * was routed and done, and a closed run still holds the item's slot
+ * was routed and done, and a closed run still holds its item
  * ({@link RunStatus}).
  */
 export const ambiguousItems = (
@@ -2855,12 +2908,12 @@ export const OrdersIndexData = Schema.Struct({
   page: OrdersPage,
   syncState: OrdersSyncStatus,
   /**
-   * The live D1 roster the page was read against — the same list
+   * The shop's teams, read live from D1 the page was read against — the same list
    * `unassigned`, `emptyTeam` and `OrderRow.waitingOn` were derived from,
    * carried so the route can name the waiting-on ids and fill the team
    * filter without a second read.
    */
-  teams: Schema.Array(TeamRoster),
+  teams: Schema.Array(TeamWithMemberCount),
 });
 export type OrdersIndexData = typeof OrdersIndexData.Type;
 
@@ -3016,7 +3069,7 @@ export type WorkflowLoaderData = WorkflowPageData | null;
  */
 export interface MembersLoaderData {
   readonly members: readonly Member[];
-  readonly teams: readonly TeamRoster[];
+  readonly teams: readonly TeamWithMemberCount[];
   readonly memberTeams: readonly MemberTeam[];
 }
 
@@ -3202,9 +3255,9 @@ export const actorLabel = (actor: ActorDisplay) =>
   actor.role === "merchant" ? "Merchant" : actor.email;
 
 /**
- * Whether an actor slot is this member, by email: the durable identity, since
+ * Whether a task's recorded actor is this member, by email: the durable identity, since
  * a removed and re-added member mints a new id but keeps the address (the
- * member row on {@link D1_TABLES}; the same reason {@link tierOf} matches
+ * member row on {@link D1_TABLES}; the same reason {@link viewOf} matches
  * a started task to its starter by email). The merchant has no email and is never "you" on a member
  * page.
  */
@@ -3323,7 +3376,7 @@ export type RunTaskId = typeof RunTaskId.Type;
  * did the last task, or `closed`, something else ended it and
  * `closedReason` says what.
  *
- * `active` and `done` are derived from the run's tasks and stored for
+ * `open` and `done` are derived from the run's tasks and stored for
  * querying; every task write on an open run recomputes them in the same
  * transaction. `closed` is written, never derived: reconcile or Cancel workflow
  * sets it with `closedAt` and `closedReason`, and nothing moves a run out of
@@ -3344,7 +3397,7 @@ export type RunTaskId = typeof RunTaskId.Type;
  * **Started by you, Started by others, Ready and Blocked hold open runs only.** Closed and done runs leave the
  * member's Started by you, Started by others, Ready and Blocked views, and stop counting on
  * the orders index, by this status and no other rule: the list reads select
- * `status = 'active'`. The fifth view, Done or closed, holds done tasks and closed
+ * `status = 'open'`. The fifth view, Done or closed, holds done tasks and closed
  * runs, a closed run with its reason ({@link RecentItem}).
  *
  * What each status allows. The gate column is the rule; the enforcing write
@@ -3354,32 +3407,31 @@ export type RunTaskId = typeof RunTaskId.Type;
  * the predicate per action, not a result per state, and the action matrices
  * pin each result it describes.
  *
- * | action                               | gate                                                                          |
- * | ------------------------------------ | ----------------------------------------------------------------------------- |
- * | Start                                | {@link runIsOpen}, task ready, not {@link runIsBlocked}                        |
- * | Done                                 | {@link runIsOpen}, task ready or started, not {@link runIsBlocked}             |
- * | note                                 | always (a note is a record)                                                    |
- * | Block, Unblock, edit reason          | {@link runIsOpen}; Unblock and edit reason only while {@link runIsBlocked}     |
- * | Put back                             | {@link runIsOpen}, task started, not blocked                                   |
- * | assign a task's team                 | {@link runIsOpen}, task open                                                   |
- * | Cancel (close, `merchant_cancelled`) | {@link runIsOpen}, order open ({@link orderIsOpen})                            |
- * | Reopen a done task               | {@link runIsOpen} or {@link runIsDone}, order open; see {@link reopenBlockedBy}  |
- * | reconcile resizes                    | {@link runIsOpen}; badge only if a task has started ({@link runIsUnstarted})   |
- * | reconcile closes                     | {@link runIsOpen}                                                              |
- * | holds the item's slot           | always, `done` and `closed` included                                           |
- * | replaced by a manual attach          | {@link runIsOpen} or {@link runIsClosed}; a `done` run is a record             |
- * | counts against the shop ceiling      | {@link runIsOpen}                                                              |
+ * | action                                                                  | gate                                                                            |
+ * | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+ * | Start                                                                   | {@link runIsOpen}, task ready, not {@link runIsBlocked}                         |
+ * | Done                                                                    | {@link runIsOpen}, task ready or started, not {@link runIsBlocked}              |
+ * | note                                                                    | always (a note is a record)                                                     |
+ * | Block, Unblock, edit reason                                             | {@link runIsOpen}; Unblock and edit reason only while {@link runIsBlocked}      |
+ * | Put back                                                                | {@link runIsOpen}, task started, not blocked                                    |
+ * | assign a task's team                                                    | {@link runIsOpen}, task open                                                    |
+ * | Cancel (close, `merchant_cancelled`)                                    | {@link runIsOpen}, order open ({@link orderIsOpen})                             |
+ * | Reopen a done task                                                      | {@link runIsOpen} or {@link runIsDone}, order open; see {@link reopenBlockedBy} |
+ * | reconcile resizes                                                       | {@link runIsOpen}; badge only if a task has started ({@link runIsUnstarted})    |
+ * | reconcile closes                                                        | {@link runIsOpen}                                                               |
+ * | holds its item: one run per item (the data model on `initializeSchema`) | always, `done` and `closed` included                                            |
+ * | replaced by a manual attach                                             | {@link runIsOpen} or {@link runIsClosed}; a `done` run is a record              |
+ * | counts against the shop ceiling                                         | {@link runIsOpen}                                                               |
  *
  * A `done` run holds its item — a done item is not rerouted — but
  * is not open: done work does not count against
  * `ShopLimits.maxOpenRuns`, is never resized or closed by reconcile (it is
  * the record of what was made), and what is left on it is Reopen and a note.
- * A closed run holds the slot too, so reconcile starts nothing on the item: a
+ * A closed run holds its item too, so reconcile creates nothing on it: a
  * tag match must not undo a merchant's cancel or restart work Shopify ended
- * on the next webhook. The slot is the one run per item of the data model
- * on `initializeSchema` (`ShopAgentSchema.ts`).
+ * on the next webhook.
  */
-export const RunStatus = Schema.Literals(["active", "done", "closed"]);
+export const RunStatus = Schema.Literals(["open", "done", "closed"]);
 export type RunStatus = typeof RunStatus.Type;
 
 /**
@@ -3389,8 +3441,8 @@ export type RunStatus = typeof RunStatus.Type;
  *
  * | reason               | set by                                                       | member's Done or closed line          | merchant's card line                 |
  * | -------------------- | ------------------------------------------------------------ | ------------------------------------- | ------------------------------------ |
- * | `fulfilled`          | reconcile, the order reached `FULFILLED` ({@link isFulfilled}) | Closed · Fulfilled in Shopify         | Fulfilled in Shopify                 |
- * | `order_cancelled`    | reconcile, the order was cancelled ({@link isCancelled})        | Closed · Order cancelled in Shopify   | Order cancelled in Shopify           |
+ * | `fulfilled`          | reconcile, the order reached `FULFILLED` ({@link orderIsFulfilled}) | Closed · Fulfilled in Shopify         | Fulfilled in Shopify                 |
+ * | `order_cancelled`    | reconcile, the order was cancelled ({@link orderIsCancelled})        | Closed · Order cancelled in Shopify   | Order cancelled in Shopify           |
  * | `item_removed`       | reconcile, the line's {@link unitsToMake} reached zero          | Closed · Item removed or refunded in Shopify | Item removed or refunded in Shopify |
  * | `merchant_cancelled` | the merchant's Cancel workflow                                | Closed · Cancelled by the merchant    | Cancelled by you                     |
  *
@@ -3414,7 +3466,7 @@ export const runIsClosed = (run: { readonly status: RunStatus }) =>
 
 /**
  * Nobody has touched it: no task of the run started or done. Read from the
- * tasks, not the status, because an open run is `active` from the moment it
+ * tasks, not the status, because an open run is `open` from the moment it
  * is created. Reconcile resizes such a run without the quantity badge
  * ({@link Run} `quantityChangedFrom`): nobody has cut anything to the old
  * number.
@@ -3428,7 +3480,7 @@ export const runIsUnstarted = (
 
 /** Work can still be recorded: Start, Done, Block, team assignment, cancel. */
 export const runIsOpen = (run: { readonly status: RunStatus }) =>
-  run.status === "active";
+  run.status === "open";
 
 /** The last task's Done: no work is recorded on it again unless Reopen reopens it. */
 export const runIsDone = (run: { readonly status: RunStatus }) =>
@@ -3452,7 +3504,7 @@ export const runIsDone = (run: { readonly status: RunStatus }) =>
  * | Unblock and edit reason are offered; Block is not                 | {@link runActions}                         |
  * | a blocked run holds no team ("waiting on") and shows no Now line  | `OrderRepository.listOrders`, the order page |
  * | counted as `blocked`, open runs only                              | {@link runCounts}                          |
- * | the run's row is on the Blocked view                              | {@link tierOf}                             |
+ * | the run's row is on the Blocked view                              | {@link viewOf}                             |
  *
  * Reopen is not stopped because it takes work back rather than doing more,
  * and a held run is the one somebody needs to write on.
@@ -3480,7 +3532,7 @@ export const Run = Schema.Struct({
   orderName: Schema.String,
   /**
    * `ShopOrder.processedAt` snapshotted at creation, like `orderName`: the
-   * workflows list sorts every tier oldest-order-first from the run rows alone,
+   * workflows list sorts every view oldest-order-first from the run rows alone,
    * before it joins `ShopOrder` for the order's open state.
    */
   orderProcessedAt: Schema.Number,
@@ -3550,26 +3602,27 @@ export type Run = typeof Run.Type;
  * the snapshots taken at the action that keep history readable after the
  * member is deleted.
  *
- * Each of the three actor slots carries a `*ByRole` column, and that column
- * is the discriminator: the merchant leaves the email null (they have no
- * `Member` row), a member fills both. No slot has an id column: an actor is
+ * Each of the three actors (`started*`, `done*`, `reopened*`) is a group of
+ * columns with a `*ByRole` column, and that column is the discriminator: the
+ * merchant leaves the email null (they have no `Member` row), a member fills
+ * both. No actor has an id column: an actor is
  * displayed and matched by email ({@link actorIsMember}), never joined to
  * `Member`. Read them through
  * {@link taskStartedBy} / {@link taskDoneBy} / {@link taskReopenedBy}
  * rather than by hand, and see {@link ActorDisplay} for why the role is stored
  * rather than inferred from a null email.
  *
- * `reopened*` is a *last-actor slot*, not a history: it records the most
+ * `reopened*` records the *last actor*, not a history: it records the most
  * recent reopen and the next `markTaskDone` clears it, so the line only shows
  * while the task is genuinely back open. A reopen also
- * clears the whole Start slot, so a reopened task reads Ready. Put back
- * clears the Start slot with no slot of its own: a put-back task is plain
+ * clears every `started*` column, so a reopened task reads Ready. Put back
+ * clears the `started*` columns and records no actor of its own: a put-back task is plain
  * Ready and the next Start writes a fresh record.
  *
  * A task is *current* by {@link currentTasks}; several tasks of one run can be
  * current at once. `startedAt` is set by Start (and backfilled by a Done without
  * Start); it and `doneAt` are what {@link runIsUnstarted} reads, since the
- * run's status is `active` from creation.
+ * run's status is `open` from creation.
  */
 export const RunTask = Schema.Struct({
   id: RunTaskId,
@@ -3593,7 +3646,7 @@ export const RunTask = Schema.Struct({
 export type RunTask = typeof RunTask.Type;
 
 /**
- * An actor slot, reassembled from its role column and its email. `null` when
+ * A recorded actor, reassembled from its role column and its email. `null` when
  * the action has not happened; a `member` role with a missing email cannot
  * occur (the writes set the two together) and reads as nobody rather than
  * throwing, because a display path is the wrong place to fail.
@@ -3608,9 +3661,9 @@ const actorFrom = (
 };
 
 /**
- * Each of these takes the slot it reads rather than a whole
+ * Each of these takes the columns it reads rather than a whole
  * {@link RunTask}, so a {@link RunListTask} — which carries no
- * `done*` slot at all — is as good an argument as a done one.
+ * `done*` columns at all — is as good an argument as a done one.
  */
 export const taskStartedBy = (
   task: Pick<RunTask, "startedByRole" | "startedByEmail">,
@@ -3624,8 +3677,8 @@ export const taskReopenedBy = (
   task: Pick<RunTask, "reopenedByRole" | "reopenedByEmail">,
 ) => actorFrom(task.reopenedByRole, task.reopenedByEmail);
 
-/** An open run task whose team is gone: `teamId` null, or an id the roster no longer carries. */
-export const isRunTaskUnassigned = (
+/** An open run task whose team is gone: `teamId` null, or an id no team carries any more. */
+export const runTaskIsUnassigned = (
   task: RunTask,
   teams: readonly { readonly id: TeamId }[],
 ) =>
@@ -3665,20 +3718,20 @@ export type RunDetail = typeof RunDetail.Type;
 /**
  * One current task the member may act on, cut to what a run's row renders.
  * `startedByEmail` is read off the row — the snapshot taken at Start, never a
- * live join — and it is load-bearing beyond display: {@link tierOf} decides
+ * live join — and it is load-bearing beyond display: {@link viewOf} decides
  * "Started by you" with it.
  *
  * Two groups of columns are omitted rather than carried as nulls. The three
  * `done*` ones can never say anything here: `currentWhere` requires `doneAt is
- * null` and a reopen clears the whole slot, so on a list task
+ * null` and a reopen clears all three, so on a list task
  * every one of them is null by construction. The rest — instructions and the
- * reopened slot — say something, but only on the workflow
+ * `reopened*` columns — say something, but only on the workflow
  * page: a row shows the task's name and one state clause, and everything
  * behind that is one tap away. Either way they are fields per task on every
  * SSR paint and every refetch.
  *
  * A done task is a {@link RecentItem}, which carries the whole
- * {@link RunTask} because there the slot is the point.
+ * {@link RunTask} because there who did it is the point.
  */
 export const RunListTask = Schema.Struct(
   Struct.omit(RunTask.fields, [
@@ -3696,7 +3749,7 @@ export type RunListTask = typeof RunListTask.Type;
 /**
  * The run behind a row, cut the same way. `orderProcessedAt` and
  * `lineItemId` stay although nothing prints them: they are two thirds of
- * {@link byAge}, which is the order every tier is in. `quantity` and
+ * {@link byAge}, which is the order every view is in. `quantity` and
  * `quantityChangedFrom` stay because the row wears the quantity badge
  * ("Quantity changed · 3 → 2"), and the block columns stay because a blocked
  * row prints its reason and who. `workflowName` stays because the row
@@ -3776,26 +3829,26 @@ export const runRowLine = (
 };
 
 /**
- * The four tiers a waiting row can fall in. Four of the five views of the
- * member's workflows list ({@link WorkflowsListView}) are these; `done`
- * (Done or closed) is not a tier because it is a window over what left the lists
+ * The four views an open run's row can fall in: four of the five views of
+ * the member's workflows list ({@link WorkflowsListView}). `done`
+ * (Done or closed) is not one of them because it is a window over what left the lists
  * rather than a grouping of them. The labels the member reads are the
  * route's (`workflowsListViews.ts`); the object only needs the keys, because
  * it is the side that groups, sorts, and caps.
  */
-export const RunTier = Schema.Literals([
+export const RunView = Schema.Literals([
   "blocked",
   "mine",
   "teammates",
   "upNext",
 ]);
-export type RunTier = typeof RunTier.Type;
+export type RunView = typeof RunView.Type;
 
 /**
  * The five views of the member's workflows list, in view-row order: what I
  * have started, what someone else has started, what I can start, what a
- * person has blocked, and what left my lists lately. Four are the tiers of
- * {@link tierOf}, and hold open runs only ({@link RunStatus}); the blocked
+ * person has blocked, and what left my lists lately. Four are the views of
+ * {@link viewOf}, and hold open runs only ({@link RunStatus}); the blocked
  * view (Blocked) holds blocks and nothing else, since a Shopify change is
  * never a to-do. `done` is the Done or closed window ({@link RecentItem}); the key
  * keeps its old name, the label is the route's (`workflowsListViews.ts`). The
@@ -3821,9 +3874,10 @@ export type WorkflowsListView = typeof WorkflowsListView.Type;
 export const DEFAULT_WORKFLOWS_LIST_VIEW: WorkflowsListView = "mine";
 
 /**
- * Which tier a row belongs in: a block wins ({@link runIsBlocked}); else a
+ * Which view a row belongs in: a block wins ({@link runIsBlocked}); else a
  * task the viewer started; else any started task; else up next. Every row
- * here is an open run already: closed and done runs never reach a tier.
+ * here is an open run already: closed and done runs never reach one of these
+ * views.
  *
  * "Started by you" is by `startedByEmail`; the row keeps no member id. Removing a
  * member and re-adding the same address mints a **new** `Member.id` (the
@@ -3837,14 +3891,14 @@ export const DEFAULT_WORKFLOWS_LIST_VIEW: WorkflowsListView = "mine";
  * Put back and reopen both clear `startedByEmail`, so they are the two ways a
  * run leaves Started by you without being done.
  *
- * Here rather than beside the route's labels because the object tiers the
- * rows now: one read counts every tier and returns one of them, so the
+ * Here rather than beside the route's labels because the object sorts the
+ * rows by view now: one read counts every view and returns one of them, so the
  * grouping has to happen on the side that decides what leaves.
  */
-export const tierOf = (
+export const viewOf = (
   { run, tasks }: RunListItem,
   memberEmail: Email,
-): RunTier => {
+): RunView => {
   if (runIsBlocked(run)) return "blocked";
   if (tasks.some((task) => task.startedByEmail === memberEmail)) return "mine";
   if (tasks.some((task) => task.startedAt !== null)) return "teammates";
@@ -3852,7 +3906,7 @@ export const tierOf = (
 };
 
 /**
- * Within a tier, oldest order first by `run.orderProcessedAt` (the snapshot
+ * Within a view, oldest order first by `run.orderProcessedAt` (the snapshot
  * on the run, so no join), then by item, then by run id. Two runs of one
  * order share the first key, and `createdAt` would not split them either (one
  * reconcile inserts them in the same millisecond), so the item id is the
@@ -3896,7 +3950,7 @@ export const lowestOpenStep = (tasks: readonly RunTask[]) =>
  * its run is {@link runIsOpen}, it is open, and its step is the lowest with an
  * open task. Several are current at once on a step of several tasks, so this
  * is a list and every caller copes with more than one. A current task is
- * ready or started (the glossary's narrow words); this is the flag under
+ * ready or started (the vocabulary's narrow words); this is the flag under
  * both. `currentWhere.ts` is the step half of the rule as SQL for the
  * workflows list and the task guards, and leaves the run's status to its callers; this
  * is the one TypeScript copy, for the merchant's order page (which holds every task of
@@ -4007,7 +4061,7 @@ export const RunLimit = Schema.Number.check(
 
 /**
  * How much of a `?team=` the URL's schema keeps. The id it carries is a UUID
- * and the roster is what decides whether it means anything, so this is only
+ * and the teams are what decide whether it means anything, so this is only
  * the bound that stops a pasted essay travelling to the object.
  */
 export const TEAM_SEARCH_MAX = 128;
@@ -4028,9 +4082,9 @@ export const clampRunLimit = (value: number) =>
  * to (`null` is every team on the connection), which view, and how many rows
  * of that view. `team` is validated against the connection's `teamIds` by the
  * object; a team the member is not on reads as an empty list, never as an
- * error. The screen resolves a URL's team against the roster before it gets
+ * error. The screen resolves a URL's team against the teams before it gets
  * here (`shop.$shop.workflows.index.tsx`), so that empty list is reserved for a caller
- * that ignored the roster. The counts of every view come back regardless of
+ * that ignored the teams. The counts of every view come back regardless of
  * `view`, so the view row is always current.
  */
 export const RunQuery = Schema.Struct({
@@ -4075,7 +4129,7 @@ export type RunListCounts = typeof RunListCounts.Type;
 /**
  * Everything the member's workflows list renders, in one socket round trip:
  * every view's count and one view's rows. Exactly one of `items` and `recent`
- * is populated: `items` when `query.view` is a tier, `recent` when it is
+ * is populated: `items` when `query.view` is a {@link RunView}, `recent` when it is
  * "done". The selected view's total is `counts[query.view]`. One value rather
  * than two reads so the loader and the socket paint the same snapshot and the
  * view row never disagrees with the list under it. The suffix is `Data` for
@@ -4324,12 +4378,12 @@ export const taskActions = (
  *   its tasks as the record, one line gives the reason and when, and the
  *   picker offers every workflow, the closed one included, as a fresh run.
  *   One kind for every reason: the reason is a line of copy
- *   ({@link ClosedReason}), not a layout. `startable` is false when the item
- *   has nothing left to make ({@link unitsToMake}): no workflow starts there,
+ *   ({@link ClosedReason}), not a layout. `attachable` is false when the item
+ *   has nothing left to make ({@link unitsToMake}): no workflow creates a run there,
  *   the same rule as `changeWorkflow` on {@link runActions}, and the line
  *   stands alone.
  * - `removed`: no run, and `currentQuantity` is zero. Nothing to do.
- * - `startable`: no run, and at least one active workflow with tasks can be
+ * - `attachable`: no run, and at least one workflow that is on, with tasks, can be
  *   attached. `options` lists the matched workflows first, then the rest;
  *   `ambiguous` is {@link ambiguousItems}' test for this one item, and the
  *   page says why it is asking.
@@ -4350,7 +4404,7 @@ export const LineItemState = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("removed") }),
   Schema.Struct({ kind: Schema.Literal("unmatched") }),
   Schema.Struct({
-    kind: Schema.Literal("startable"),
+    kind: Schema.Literal("attachable"),
     options: Schema.Array(Workflow),
     matched: Schema.Array(WorkflowId),
     ambiguous: Schema.Boolean,
@@ -4361,7 +4415,7 @@ export const LineItemState = Schema.Union([
     tasks: Schema.Array(RunTaskRow),
     options: Schema.Array(Workflow),
     matched: Schema.Array(WorkflowId),
-    startable: Schema.Boolean,
+    attachable: Schema.Boolean,
   }),
   Schema.Struct({
     kind: Schema.Literal("open"),
@@ -4412,7 +4466,7 @@ export const lineItemState = (
             tasks: runTaskRows(run, tasks),
             options,
             matched: matched.map((workflow) => workflow.id),
-            startable: unitsToMake(item) > 0,
+            attachable: unitsToMake(item) > 0,
           }
         : {
             kind: runIsOpen(run) ? "open" : "done",
@@ -4426,7 +4480,7 @@ export const lineItemState = (
       () => ({ kind: "unmatched" }),
     ),
     Match.orElse(() => ({
-      kind: "startable",
+      kind: "attachable",
       options,
       matched: matched.map((workflow) => workflow.id),
       ambiguous: item.matchedWorkflowIds.length >= 2 && unitsToMake(item) > 0,
@@ -4474,13 +4528,13 @@ export const OrderPageData = Schema.Struct({
   lineItems: Schema.Array(OrderLineItem),
   runs: Schema.Array(RunDetail),
   /**
-   * Active workflows with at least one task — the manual-attach picker's
+   * Workflows that are on, with at least one task — the manual-attach picker's
    * choices. Carried in the page's data rather than read by a second socket query so
    * the page has exactly one read, one key, and one push.
    */
   itemWorkflows: Schema.Array(Workflow),
-  /** The live roster: the "Assign team" picker's choices, and what decides which open tasks are unassigned or on an empty team. */
-  teams: Schema.Array(TeamRoster),
+  /** The shop's live teams: the "Assign team" picker's choices, and what decides which open tasks are unassigned or on an empty team. */
+  teams: Schema.Array(TeamWithMemberCount),
 });
 export type OrderPageData = typeof OrderPageData.Type;
 
@@ -4650,7 +4704,7 @@ export interface SetBlockReasonCommand {
   readonly reason: BlockReason | null;
 }
 
-/** The actor lands in the task's `reopened` slot: a reopen is a fact worth showing, and the next Done clears it. */
+/** The actor lands in the task's `reopened*` columns: a reopen is a fact worth showing, and the next Done clears it. */
 export interface ReopenTaskCommand {
   readonly runTaskId: string;
   readonly actor: Actor;
@@ -4658,7 +4712,7 @@ export interface ReopenTaskCommand {
 }
 
 /**
- * No slot records the actor: the task is plain Ready again
+ * No column records the actor: the task is plain Ready again
  * ({@link RunTask}). `actor` is taken for the log line and for
  * symmetry with the other task commands.
  */
@@ -4669,7 +4723,7 @@ export interface PutBackTaskCommand {
 }
 
 /**
- * `WorkflowCannotStart` = off, zero tasks, or an unassigned task (see
+ * `WorkflowNotEligible` = off, zero tasks, or an unassigned task (see
  * {@link Workflow}).
  *
  * `replaced` is the run that was deleted to make room, or null. An item
@@ -4685,8 +4739,8 @@ export const AttachResult = Schema.Union([
   }),
   Schema.Struct({ _tag: Schema.Literal("AlreadyExists") }),
   Schema.Struct({ _tag: Schema.Literal("LineItemNotFound") }),
-  Schema.Struct({ _tag: Schema.Literal("WorkflowCannotStart") }),
-  /** The shop is at `ShopLimits.maxOpenRuns`; the attach started nothing. */
+  Schema.Struct({ _tag: Schema.Literal("WorkflowNotEligible") }),
+  /** The shop is at `ShopLimits.maxOpenRuns`; the attach created nothing. */
   Schema.Struct({ _tag: Schema.Literal("RunLimit"), limit: Schema.Number }),
   /** The item's run is `done`; done work is not replaced. Names it. */
   Schema.Struct({

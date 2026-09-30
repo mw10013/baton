@@ -119,11 +119,11 @@ const renameTeamFn = createServerFn({ method: "POST" })
   );
 
 /**
- * A roster edit changes what the member may act on, and a member who is signed
+ * A change to a team's members changes what the member may act on, and a member who is signed
  * in is holding a socket whose `teamIds` were resolved when it connected
  * (`Domain.ConnectionState`). So every one of these writes ends by revoking
  * the affected members' connections: they reconnect through the Worker's gate
- * and come back with the roster this edit just wrote. Unbatched, one RPC per
+ * and come back with the teams this edit just wrote. Unbatched, one RPC per
  * edit — these are merchant actions on one team at a time, so the cost is a
  * round trip nobody is waiting on.
  */
@@ -194,11 +194,11 @@ export const Route = createFileRoute("/app/teams/$teamId")({
 /**
  * The team page is about people: its members are the one table, adding is the
  * primary action, and the workflows that use the team are a link list rather
- * than a task table above the roster (tasks are edited on the workflow pages).
+ * than a task table above the members (tasks are edited on the workflow pages).
  * Rename and delete live behind More actions, as on the workflow page.
  *
  * Laid out as Polaris' details template, like the order and workflow detail
- * pages: the roster owns the main column under its own heading, and the
+ * pages: the members own the main column under its own heading, and the
  * reference material a merchant checks before renaming or deleting — where the
  * team is used, when it was made — sits in aside cards. That keeps `s-page`'s
  * children sections, which is the only thing it lays out, so nothing floats on
@@ -352,7 +352,7 @@ function RouteComponent() {
     if (members.length === 0)
       return emptyState(
         "No members yet",
-        "This shop has no members yet. Add them on Members, then put them on teams.",
+        "This store has no members yet. Add them on Members, then put them on teams.",
         <s-button href="/app/members">Add members</s-button>,
       );
     if (current.length === 0)
@@ -423,7 +423,7 @@ function RouteComponent() {
           suspicion that prompts it — "is this team backed up?" — rather than
           from browsing a picker. `?team=` means waiting on: the orders whose
           current task is this team's right now (open orders only, see
-          `Domain.OrderRow.waitingOn`), not every order it ever touched. Production state stays on Orders; this page is the roster
+          `Domain.OrderRow.waitingOn`), not every order it ever touched. Order positions stay on Orders; this page is the team's members
           (`UsedByCard` below is configuration, not run state). */}
       <s-button
         slot="secondary-actions"
@@ -618,7 +618,7 @@ function RouteComponent() {
         {candidates.length === 0 ? (
           <s-paragraph>
             {members.length === 0
-              ? "This shop has no members yet. Add them on Members, then put them on teams."
+              ? "This store has no members yet. Add them on Members, then put them on teams."
               : "Everyone is already on this team."}
           </s-paragraph>
         ) : (

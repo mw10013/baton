@@ -14,7 +14,7 @@ import { Effect, Schema } from "effect";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { StepFlow, TeamIssueBanners } from "@/components/WorkflowSteps";
 import {
-  activateResultMessage,
+  switchResultMessage,
   AppliesSince,
   WorkflowSwitch,
 } from "@/components/WorkflowSwitch";
@@ -89,8 +89,8 @@ export const Route = createFileRoute("/app/workflows/$workflowId")({
  * The header reads left to right as look · change · commit: `Edit`, `More
  * actions`, then the on/off switch as the primary. The switch is absent while
  * the workflow has never been applied (there is nothing in force to turn on —
- * the editor's Turn on applies and activates in one step) and while an
- * inactive workflow has a draft (what would be turned on is not what the
+ * the editor's Turn on applies and turns on in one step) and while a
+ * workflow that is off has a draft (what would be turned on is not what the
  * editor is holding).
  */
 /**
@@ -257,9 +257,9 @@ function RouteComponent() {
   const fresh = neverApplied(detail);
   const hasDraft = draft !== null;
   const blocker = turnOnBlocker(tasks);
-  const active = Domain.isActive(workflow);
+  const on = Domain.workflowIsOn(workflow);
   /** Flow's asymmetry: Turn off is always offered, Turn on only when what would go on is what the editor is holding. */
-  const showSwitch = !fresh && (active || !hasDraft);
+  const showSwitch = !fresh && (on || !hasDraft);
 
   return (
     <s-page heading={workflow.name} inlineSize="base">
@@ -271,14 +271,14 @@ function RouteComponent() {
       </s-link>
       {/* A workflow that has never been applied has no state to report: it is
           a draft and nothing else, so the one badge says that instead of
-          calling it inactive. */}
+          calling it off. */}
       {fresh ? (
         <s-badge slot="accessory" tone="info">
           Draft
         </s-badge>
       ) : (
         <>
-          {active ? (
+          {on ? (
             <s-badge slot="accessory" tone="success">
               {Domain.WORKFLOW_STATE_LABEL.on}
             </s-badge>
@@ -346,12 +346,12 @@ function RouteComponent() {
       <s-section accessibilityLabel="Workflow">
         <s-stack gap="base">
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
-          {showSwitch && !active && blocker !== null && (
+          {showSwitch && !on && blocker !== null && (
             <s-banner tone="info" heading="Turn on is unavailable">
               {/* Wrapped, like `TeamIssueBanners`' lines: `s-banner` renders
                   its body from elements, and a bare string child never
                   reaches the page. */}
-              <s-paragraph>{activateResultMessage(blocker)}</s-paragraph>
+              <s-paragraph>{switchResultMessage(blocker)}</s-paragraph>
             </s-banner>
           )}
 

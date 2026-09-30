@@ -255,9 +255,9 @@ export const workflows: readonly SeedWorkflow[] = [
   },
   {
     // the photo frame: parallel first step, three wide; seeded off so the list has an "Off"
-    // row and it starts nothing until it is turned on
+    // row and it creates nothing until it is turned on
     name: "Frame and glaze",
-    active: false,
+    on: false,
     tag: TAG.frame,
     tasks: [
       task("Cut frame", WOODSHOP, { step: 1 }),
@@ -345,12 +345,12 @@ export const workflows: readonly SeedWorkflow[] = [
     },
   },
   {
-    // on, and it starts runs: an empty team does not block a start, so the
+    // on, and it creates runs: an empty team does not block a start, so the
     // second task lands on a team nobody is on — the order page's card names it
     // and no workflows list anywhere shows the card. Distinct from
     // Pet tag, which is off because a task has no team at all.
     name: "Ring and stamp (empty team task)",
-    active: true,
+    on: true,
     tag: TAG.keychain,
     tasks: [task("Cut", LEATHER), task("Attach ring", RETIRED_TEAM_EMPTY)],
   },
@@ -802,7 +802,7 @@ const floorOrders: readonly SeedOrder[] = [
   {
     // the merchant cancelled the run after a step was done: Closed, "Cancelled
     // by you", the done step still on record, and the picker to start one
-    // afresh; reconcile starts nothing on it
+    // afresh; reconcile creates nothing on it
     n: 1035,
     lineItems: [
       item(
@@ -817,9 +817,9 @@ const floorOrders: readonly SeedOrder[] = [
 ];
 
 /**
- * The startable products and their workflows' tags, cycled by the generated
+ * The products a workflow can be attached to, and their workflows' tags, cycled by the generated
  * rows below. Frame and glaze (off), Tag stamping (unassigned task) and
- * Sample pull (no steps) are left out because they start nothing, and `rush` because a second tag would
+ * Sample pull (no steps) are left out because they create nothing, and `rush` because a second tag would
  * make every generated row ambiguous.
  */
 const MAKER_PRODUCTS = [
@@ -850,7 +850,7 @@ const bigOrder = (n: number): SeedOrder => ({
   }),
 });
 
-/** Cycled over the generated orders so every tier of the workflows list is populated, not only Ready. */
+/** Cycled over the generated orders so every view of the workflows list is populated, not only Ready. */
 const SCALE_PROGRESS: readonly SeedProgress[] = [
   {},
   { advance: 1 },
@@ -860,7 +860,7 @@ const SCALE_PROGRESS: readonly SeedProgress[] = [
 ];
 
 /**
- * Volume, always seeded: the workflows list's tiers are uncapped apart from Ready and
+ * Volume, always seeded: the workflows list's views are uncapped apart from Ready and
  * the orders index pages at 25, so neither can be judged at ten orders. Kept
  * to a few hundred runs — every one is a real reconcile and every round a real
  * write, and the reseed has to stay quick enough that people still run it.

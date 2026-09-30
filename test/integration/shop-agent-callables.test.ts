@@ -48,8 +48,8 @@ const CALLABLE_ROLES = {
   createDraft: "merchant",
   applyDraft: "merchant",
   discardDraft: "merchant",
-  setWorkflowActive: "merchant",
-  applyAndActivate: "merchant",
+  setWorkflowOn: "merchant",
+  applyAndTurnOn: "merchant",
   setWorkflowActivatedAt: "merchant",
   countWaitingOrders: "merchant",
   removeWorkflow: "merchant",
@@ -129,7 +129,7 @@ describe("ShopAgent callable role gate", () => {
 
   /**
    * The Worker-only RPCs stay off the socket. Each carries an input a browser
-   * must never supply — a billing cycle, a roster size, Shopify's meter reading, a revoke —
+   * must never supply — a billing cycle, a member count, Shopify's meter reading, a revoke —
    * and the first test would catch a stray decorator by set equality, but
    * naming them here is what says the omission is deliberate.
    */
@@ -140,7 +140,7 @@ describe("ShopAgent callable role gate", () => {
     const callables = await decoratedCallables(shop);
     for (const name of [
       "setBillingCycle",
-      "recordRoster",
+      "recordMemberCount",
       "reconcileUsage",
       "flushUsageEvents",
       "revokeAllConnections",

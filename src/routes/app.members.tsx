@@ -40,7 +40,7 @@ const decodeTeamIds = Schema.decodeUnknownEffect(Schema.Array(Domain.TeamId));
 
 const MEMBER_GONE = "That member no longer exists.";
 const MEMBER_CEILING =
-  "This shop has reached the maximum number of members. Contact support to raise it.";
+  "This store has reached the maximum number of members. Contact support to raise it.";
 
 const getLoaderData = createServerFn({ method: "GET" })
   .middleware([shopifyServerFnMiddleware])
@@ -54,7 +54,7 @@ const getLoaderData = createServerFn({ method: "GET" })
           members: yield* repository.listMembers(shop),
           teams: teams.map(
             ({ id, name, memberCount }) =>
-              ({ id, name, memberCount }) satisfies Domain.TeamRoster,
+              ({ id, name, memberCount }) satisfies Domain.TeamWithMemberCount,
           ),
           memberTeams: yield* repository.listMemberTeams(shop),
         } satisfies Domain.MembersLoaderData;
@@ -71,7 +71,7 @@ const getLoaderData = createServerFn({ method: "GET" })
  * primary connection, so a miss cannot happen and is reported as the
  * repository's own invariant failure.
  *
- * The roster size after the insert goes to `ShopAgent.recordRoster` (the
+ * The member count after the insert goes to `ShopAgent.recordMemberCount` (the
  * "member added" rows on `Domain.ShopUsage`). Best-effort: a seat event that
  * failed to record is an operator signal, not a reason to fail the add, and
  * the next revalidation's "cycle pushed, same start" row sends it.
@@ -89,11 +89,11 @@ const addMemberFn = createServerFn({ method: "POST" })
         const shopAgentClient = yield* ShopAgentClient;
         yield* repository.countMembers(shop).pipe(
           Effect.flatMap((size) =>
-            shopAgentClient.recordRoster(shop, { size }),
+            shopAgentClient.recordMemberCount(shop, { size }),
           ),
           Effect.ignore({
             log: "Warn",
-            message: `addMember: shop=${shop}: recordRoster failed`,
+            message: `addMember: shop=${shop}: recordMemberCount failed`,
           }),
         );
         if (data.teamIds.length === 0) return;
@@ -124,7 +124,7 @@ const addMemberFn = createServerFn({ method: "POST" })
 
 /**
  * Replacing a member's team set changes what their open socket may act on, so
- * it revokes their connections for the same reason the team page's roster
+ * it revokes their connections for the same reason the team page's member
  * edits do: identity on a connection is a connect-time snapshot, and a
  * reconnect is what re-reads it.
  */

@@ -181,7 +181,7 @@ describe("ShopAgent usage flush", () => {
     await seedOrder(shop, Date.now() - DAY, "engrave");
     const workflowId = await offWorkflow(agent, "engrave", team.id);
     // On after the order was placed, so nothing starts it but the attach.
-    await agent.setWorkflowActive({ workflowId, active: true });
+    await agent.setWorkflowOn({ workflowId, on: true });
     strictEqual(appEvents.length, 0);
 
     const attached = await agent.merchantAttachWorkflow({
@@ -203,9 +203,9 @@ describe("ShopAgent usage flush", () => {
     // Placed after the Turn on below, so the reconcile it runs starts it.
     await seedOrder(shop, Date.now() + 60 * 60 * 1000, "engrave");
 
-    const on = await agent.setWorkflowActive({ workflowId, active: true });
+    const on = await agent.setWorkflowOn({ workflowId, on: true });
     if (on._tag !== "Ok") throw new Error(on._tag);
-    strictEqual(on.started, 1);
+    strictEqual(on.created, 1);
     deepStrictEqual(appEvents, [{ idempotencyKey: countKey, value: 1 }]);
     const usage = await agent.getUsage();
     strictEqual(usage.pendingUsageEvents, 0);

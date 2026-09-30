@@ -97,7 +97,7 @@ const DONE_OR_CLOSED = "Done or closed";
  * One workflow per team and one order for each, so every assertion about who
  * sees what is a fact about the seeded team rather than about ordering. Both
  * workflows are fully assigned, which turns them on, and both orders are
- * seeded fresh (`active`, nothing started), so each carries exactly one ready
+ * seeded fresh (`open`, nothing started), so each carries exactly one ready
  * task.
  */
 const seedRuns = (
@@ -549,7 +549,7 @@ test("a task one member marks done lands on another member's workflows list with
 /**
  * Taking a member off a team while they are standing on the workflows list. The seed
  * ends by revoking the connections of the members it replaced, which is what
- * `app.members` and `app.teams.$teamId` do after their own roster writes, so
+ * `app.members` and `app.teams.$teamId` do after their own membership writes, so
  * this is the same close a merchant edit produces: code 4401, `/shop/$shop`
  * invalidates the router, and the loader re-runs against the new membership.
  *
@@ -964,7 +964,7 @@ test("the bar's mark returns to the screen the member left", async ({
 
 /**
  * A `team` in the URL is a shape, not a membership: the schema cannot know the
- * roster, and a member taken off a team keeps the id in every link they had
+ * member's teams, and a member taken off a team keeps the id in every link they had
  * open. The screen resolves it against the teams `requireMember` returned and
  * reads an id that is not among them as All teams — the button already says
  * so, and the alternative is an empty list for a reason nothing on screen
@@ -1052,7 +1052,7 @@ test("undo puts a done task back to Ready", async ({ browser }) => {
   /* Unopened, the view is a count and nothing else: its rows are a different
      read, so the Undo below is only reachable once the view is chosen. The
      entry says "by you" rather than the reader's own address, which on this
-     tier is the longest and least informative text on the page. */
+     view is the longest and least informative text on the page. */
   await selectView(page, "done", DONE_OR_CLOSED);
   await expect(page.getByText("by you at")).toBeVisible();
 
@@ -1655,7 +1655,7 @@ test("a merchant's completion reads as Merchant on the workflows list and the wo
   await expect(page.getByText(`${CUT_TEAM} · Merchant`)).toBeVisible();
 
   /* The maker takes it back: the same line the merchant's reopen writes, with
-     the member in the slot, and Cut is ready again. Start is offered because
+     the member as the actor, and Cut is ready again. Start is offered because
      Undo returns the task to Ready (`RunRepository.reopenTask`),
      clearing the merchant's backfilled start along with everything else — the
      task is nobody's, not "Started · Merchant". */

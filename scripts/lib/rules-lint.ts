@@ -3,7 +3,7 @@
  * inline sources inside workerd (no `node:fs`), the way
  * `scripts/lib/spec.ts` is split from its command.
  *
- * The glossary's screen rule (`src/lib/Domain.ts`), for the copy its label
+ * The vocabulary's screen rule (`src/lib/Domain.ts`), for the copy its label
  * constants cannot reach (toasts, error sentences, empty states): the words
  * it retired stay off every merchant and member screen.
  *
@@ -149,4 +149,79 @@ export const textAreaPlaceholderHits = (
       line: source.slice(0, index).split("\n").length,
       text: source.slice(index).split("\n")[0]?.trim() ?? "",
     }),
+  );
+
+/** One exported name in a source file, with its 1-based line and what kind of declaration it is. */
+export interface ExportedName {
+  readonly name: string;
+  readonly line: number;
+  readonly kind: string;
+}
+
+const EXPORT =
+  /^export (?:declare )?(?:abstract )?(?<kind>const|let|async function\*?|function\*?|class|type|interface|enum) (?<name>[A-Za-z_$][A-Za-z0-9_$]*)/gmu;
+
+/** The names a module exports by declaration (`export const`, `export function`, `export type`, ...). Re-exports are not read. */
+export const exportedNames = (source: string): readonly ExportedName[] =>
+  [...source.matchAll(EXPORT)].map(({ index, groups }) => ({
+    name: groups?.name ?? "",
+    line: source.slice(0, index).split("\n").length,
+    kind: groups?.kind ?? "",
+  }));
+
+/**
+ * The word stems the vocabulary retired or reserved, refused in any exported
+ * identifier under `src/lib/`, case-insensitive, as a substring:
+ *
+ * | stem     | why                                                                                 |
+ * | -------- | ----------------------------------------------------------------------------------- |
+ * | active   | a workflow is on, a run is open; "active" is Shopify's word for an app subscription |
+ * | roster   | a synonym: the shop's members, the member count, or its teams                       |
+ * | slot     | a metaphor for the rule "one run per item"                                          |
+ * | tier     | a view of the member's workflows list; billing's tier is Shopify's and not exported |
+ * | glossary | the block is the vocabulary                                                         |
+ *
+ * {@link RESERVED_STEM_ALLOWED} names the exports that keep a stem on
+ * purpose.
+ */
+export const RESERVED_STEMS: readonly string[] = [
+  "active",
+  "roster",
+  "slot",
+  "tier",
+  "glossary",
+];
+
+/**
+ * Exact names exempt from {@link RESERVED_STEMS}. `CopySlot` is the screen
+ * spec's slot (`src/lib/Screen.ts`): a place in a screen's copy, a different
+ * context from the run's retired slot, and the word the copy table is built
+ * on.
+ */
+export const RESERVED_STEM_ALLOWED: ReadonlySet<string> = new Set(["CopySlot"]);
+
+/** **An exported identifier carries no reserved stem.** The exports in `source` that contain one of {@link RESERVED_STEMS}, less {@link RESERVED_STEM_ALLOWED}. */
+export const reservedStemHits = (source: string): readonly ExportedName[] =>
+  exportedNames(source).filter(
+    ({ name }) =>
+      !RESERVED_STEM_ALLOWED.has(name) &&
+      RESERVED_STEMS.some((stem) => name.toLowerCase().includes(stem)),
+  );
+
+/**
+ * **A state predicate names its noun before the state.** An exported
+ * function or const named `is<Word>` has no noun: `isOpen` could be an order
+ * or a run, and a word two contexts share is always spoken with its noun
+ * (`orderIsOpen`, `runIsOpen`, `workflowIsOn`). Returns the exports in
+ * `source` named `is` and a capital letter.
+ */
+export const bareStatePredicateHits = (
+  source: string,
+): readonly ExportedName[] =>
+  exportedNames(source).filter(
+    ({ name, kind }) =>
+      /^is[A-Z]/u.test(name) &&
+      kind !== "type" &&
+      kind !== "interface" &&
+      kind !== "class",
   );

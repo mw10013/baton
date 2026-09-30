@@ -158,8 +158,8 @@ describe("action table parser", () => {
       blocker: "b",
     });
     expect(fixtures.map((fixture) => fixture.run)).toEqual([
-      { status: "active", blockedAt: null },
-      { status: "active", blockedAt: 1 },
+      { status: "open", blockedAt: null },
+      { status: "open", blockedAt: 1 },
       { status: "done", blockedAt: null },
     ]);
   });
@@ -180,10 +180,10 @@ describe("action table parser", () => {
     ).toEqual([[14, 15]]);
   });
 
-  it("a glossary word absent from the rest of the file is reported", () => {
+  it("a vocabulary word absent from the rest of the file is reported", () => {
     const source = [
       "/**",
-      " * Glossary.",
+      " * Vocabulary.",
       " *",
       " * | word | symbol |",
       " * | run | `Run`, `RunTask` |",
@@ -193,15 +193,15 @@ describe("action table parser", () => {
       "export const Run = 1;",
       "export const RunTaskRow = 2;",
     ].join("\n");
-    expect(ActionTable.checkGlossary(source)).toEqual(["RunTask", "pending"]);
+    expect(ActionTable.checkVocabulary(source)).toEqual(["RunTask", "pending"]);
   });
 
-  describe("the glossary's screen column is the label constant", () => {
+  describe("the vocabulary's screen column is the label constant", () => {
     const labels: ActionTable.ScreenLabels = {
       taskStates: Domain.TASK_STATE_LABEL,
       runStates: Domain.RUN_STATE_LABEL,
       workflowStates: Domain.WORKFLOW_STATE_LABEL,
-      productionStates: Domain.PRODUCTION_STATE_LABEL,
+      orderPositions: Domain.ORDER_POSITION_LABEL,
       orderIssues: Domain.ORDER_ISSUE_LABEL,
       verbs: Domain.VERB_LABEL,
     };
@@ -212,12 +212,12 @@ describe("action table parser", () => {
 
     it("a doctored cell is reported", () => {
       const doctored = source.replace(
-        "| put back        | task | started → ready                     | Put back    | Put back        |",
-        "| put back        | task | started → ready                     | Put back    | Take back       |",
+        "| put back        | task     | started → ready                          | Put back    | Put back        |",
+        "| put back        | task     | started → ready                          | Put back    | Take back       |",
       );
       expect(doctored).not.toBe(source);
       expect(ActionTable.checkScreenColumns(doctored, labels)).toEqual([
-        'Glossary: Verbs put back: merchant says "Take back", constant says "Put back"',
+        'Vocabulary: Verbs put back: merchant says "Take back", constant says "Put back"',
       ]);
     });
 
@@ -228,7 +228,7 @@ describe("action table parser", () => {
       );
       expect(doctored).not.toBe(source);
       expect(ActionTable.checkScreenColumns(doctored, labels)).toEqual([
-        'Glossary: Order positions not started: screen says "To make", constant says "Not started"',
+        'Vocabulary: Order positions not started: screen says "To make", constant says "Not started"',
       ]);
     });
 
@@ -239,15 +239,32 @@ describe("action table parser", () => {
       );
       expect(doctored).not.toBe(source);
       expect(ActionTable.checkScreenColumns(doctored, labels)).toEqual([
-        "Glossary: Task states idle: no constant",
-        "Glossary: Task states: no row for waiting",
+        "Vocabulary: Task states idle: no constant",
+        "Vocabulary: Task states: no row for waiting",
+      ]);
+    });
+  });
+
+  describe("every vocabulary table names its context", () => {
+    it("Domain.ts passes", () => {
+      expect(ActionTable.checkContexts(source)).toEqual([]);
+    });
+
+    it("an intro with no context, and a context cell outside the Contexts table, are reported", () => {
+      const doctored = source
+        .replace(" * Run states, production:", " * Run states:")
+        .replace("| shop     | platform   |", "| shop     | tenancy    |");
+      expect(doctored).not.toBe(source);
+      expect(ActionTable.checkContexts(doctored)).toEqual([
+        'Vocabulary: Nouns shop: context "tenancy" is not in the Contexts table',
+        "Vocabulary: Run states: its intro names no context",
       ]);
     });
   });
 
   describe("the order issue table", () => {
     const TEAM_ROW =
-      "| `team`            | {@link OrderRow} `unassigned`                                            | Assign team on the order page       |";
+      "| `unassigned`      | {@link OrderRow} `unassigned`                                            | Assign team on the order page       |";
     const EMPTY_TEAM_ROW =
       "| `empty_team`      | {@link OrderRow} `emptyTeam`                                             | add a member on the team page       |";
 
@@ -275,7 +292,7 @@ describe("action table parser", () => {
       );
       expect(doctored).not.toBe(source);
       expect(checkOrderIssues(doctored)).toEqual([
-        "OrderIssue: the Issue column is choose_workflow, empty_team, team, blocked; the literals are choose_workflow, team, empty_team, blocked",
+        "OrderIssue: the Issue column is choose_workflow, empty_team, unassigned, blocked; the literals are choose_workflow, unassigned, empty_team, blocked",
       ]);
     });
   });
@@ -303,8 +320,8 @@ describe("action table parser", () => {
       );
       expect(doctored).not.toBe(source);
       expect(ActionTable.checkScreens(doctored, routeFiles)).toEqual([
-        "Glossary: Screens: no route file app.people.tsx",
-        "Glossary: Screens: app.members.tsx has no row",
+        "Vocabulary: Screens: no route file app.people.tsx",
+        "Vocabulary: Screens: app.members.tsx has no row",
       ]);
     });
   });
@@ -336,7 +353,7 @@ describe("action table parser", () => {
       ).toMatch(/header is about, rule, held by, pinned by/u);
     });
 
-    it("an about word that is neither a glossary noun nor a table is refused", () => {
+    it("an about word that is neither a vocabulary noun nor a table is refused", () => {
       expect(
         dataModelError(
           schemaSource.replace(
@@ -435,16 +452,16 @@ describe("triggers table parser", () => {
     expect(
       triggerError(
         source.replace(
-          "| first run on an order                        | +1          |",
-          "| first run on an order                        | plus one    |",
+          "| first run on an order                           | +1          |",
+          "| first run on an order                           | plus one    |",
         ),
       ),
     ).toMatch(/unknown order count "plus one"/u);
     expect(
       triggerError(
         source.replace(
-          "| first count past the cycle end               | recounted   | → 0               |",
-          "| first count past the cycle end               | recounted   | reset             |",
+          "| first count past the cycle end                  | recounted   | → 0                     |",
+          "| first count past the cycle end                  | recounted   | reset                   |",
         ),
       ),
     ).toMatch(/unknown seat mark "reset"/u);
@@ -454,8 +471,8 @@ describe("triggers table parser", () => {
     expect(
       triggerError(
         source.replace(
-          "| a seeded order is never counted                                                                                                |",
-          "|                                                                                                                                |",
+          "| a seeded order is never counted                                                                                                           |",
+          "|                                                                                                                                           |",
         ),
       ),
     ).toMatch(/empty pinned by/u);

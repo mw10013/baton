@@ -110,7 +110,7 @@ export function RunSteps<T extends RunStepTask>({
 }) {
   const renderTask = (task: T, first: boolean) => {
     const state = taskState(task);
-    /** Shown only while the slot is filled: the next Done clears it (`Domain.RunTask`). */
+    /** Shown only while the `reopened*` columns are set: the next Done clears it (`Domain.RunTask`). */
     const reopenedBy = Domain.taskReopenedBy(task);
     const actions = renderActions(task);
     const extra = renderExtra?.(task);

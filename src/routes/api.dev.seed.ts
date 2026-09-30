@@ -65,7 +65,7 @@ const DevSeedInput = Schema.Struct({
       Schema.Struct({
         name: Domain.WorkflowName,
         /** Defaults to on when the entry has tasks and every task is assigned; see `Domain.SeedWorkflowsInput`. */
-        active: Schema.optionalKey(Schema.Boolean),
+        on: Schema.optionalKey(Schema.Boolean),
         tag: Domain.WorkflowTag,
         tasks: Schema.Array(SeedTaskByTeamName),
         /** A pending draft beside the workflow's `tasks`; the tag is not drafted. */
@@ -102,7 +102,7 @@ const DevSeedInput = Schema.Struct({
  * `workflows`, and (unless `keepIdentities` is set) drops the better-auth
  * identity of every listed email, so each run signs in as a first-time user.
  * It ends by closing the sockets of the members it replaced, the way the
- * roster screens do. Enabled only for
+ * members page and the team page do. Enabled only for
  * `ENVIRONMENT === "local"`; deployed environments receive 404. Local state is
  * disposable, so the endpoint intentionally has no caller authorization.
  *
@@ -218,7 +218,7 @@ export const Route = createFileRoute("/api/dev/seed")({
                 (typeof Domain.SeedWorkflowsInput.Encoded)["workflows"][number]["tasks"][number];
               const seedWorkflows: {
                 name: string;
-                active?: boolean;
+                on?: boolean;
                 tag: string;
                 tasks: SeedTask[];
                 draft?: { tasks: SeedTask[] };
@@ -262,9 +262,7 @@ export const Route = createFileRoute("/api/dev/seed")({
                     : { tasks: draftTasks };
                 seedWorkflows.push({
                   name: workflow.name,
-                  ...(workflow.active === undefined
-                    ? {}
-                    : { active: workflow.active }),
+                  ...(workflow.on === undefined ? {} : { on: workflow.on }),
                   tag: workflow.tag,
                   tasks,
                   ...(draft === undefined ? {} : { draft }),
@@ -325,7 +323,7 @@ export const Route = createFileRoute("/api/dev/seed")({
               // Last, once every write has landed, and with the PRE-seed ids:
               // a seed rewrites `Member` wholesale, so a member holding an
               // open socket is carrying a `memberId` and `teamIds` that no
-              // longer exist. This is the same close the roster screens issue
+              // longer exist. This is the same close the members page and the team page issue
               // after their own D1 writes (`app.members`,
               // `app.teams.$teamId`) — the socket reconnects through the
               // Worker's gate and comes back with the membership this seed

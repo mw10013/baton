@@ -37,7 +37,7 @@ import { ShopAgentSocketProvider } from "@/lib/ShopAgentSocketHost";
  * something usable: an unreadable `view` becomes the default view, an
  * out-of-range `limit` clamps ({@link Domain.clampRunLimit}) and an unreadable
  * one becomes a page, and `team` is carried as plain text, because which ids
- * mean anything is the roster's answer and not this schema's — the screen
+ * mean anything is the teams' answer and not this schema's — the screen
  * resolves it and reads an id the member is not on as All teams
  * (`shop.$shop.workflows.index.tsx`). Failing any of them would put the router's error
  * boundary over the whole member area, workflow page included, for a typo.
@@ -120,9 +120,9 @@ function NotFoundComponent() {
       <s-section accessibilityLabel="No access">
         <s-stack gap="base">
           <s-paragraph color="subdued">
-            You no longer have access to this shop.
+            You no longer have access to this store.
           </s-paragraph>
-          <Link to="/shop">Your shops</Link>
+          <Link to="/shop">Your stores</Link>
         </s-stack>
       </s-section>
     </s-page>

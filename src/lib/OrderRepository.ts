@@ -54,7 +54,7 @@ export const ShopUsageRow = Schema.Struct({
   lastReconciledOrders: Schema.NullOr(Schema.Number),
   lastReconciledMembers: Schema.NullOr(Schema.Number),
   pendingUsageEvents: Schema.Number,
-  deadUsageEvents: Schema.Number,
+  expiredUsageEvents: Schema.Number,
   pendingOrderUnits: Schema.Number,
   pendingMemberUnits: Schema.Number,
 });
@@ -86,10 +86,10 @@ const countKey = (orderId: string) => `${orderId}#count`;
 
 /**
  * A seat event's idempotency key: unique per cycle and per high-water mark
- * ({@link Domain.seatEventValue}), so a replayed `recordRoster` with the same
+ * ({@link Domain.seatEventValue}), so a replayed `recordMemberCount` with the same
  * size is a no-op at the row level even if the mark comparison were raced.
  * `seat#` plus two integers stays far inside the 64-character cap. Built by
- * `recordRoster` and `setBillingCycle`.
+ * `recordMemberCount` and `setBillingCycle`.
  */
 const seatKey = (cycleStartAt: number, mark: number) =>
   `seat#${String(cycleStartAt)}#${String(mark)}`;
@@ -163,12 +163,12 @@ const OPEN = "fulfillmentStatus <> 'FULFILLED' and cancelledAt is null";
 const openAs = (alias: string) =>
   `${alias}.fulfillmentStatus <> 'FULFILLED' and ${alias}.cancelledAt is null`;
 const OPEN_RUN = `select 1 from Run r
-  where r.orderId = ShopOrder.id and r.status = 'active'`;
+  where r.orderId = ShopOrder.id and r.status = 'open'`;
 const DONE_RUN = `select 1 from Run r
   where r.orderId = ShopOrder.id and r.status = 'done'`;
 /** The `blocked` {@link Domain.OrderIssue}: an open run a worker or the merchant blocked. */
 const BLOCKED_RUN = `select 1 from Run r
-  where r.orderId = ShopOrder.id and r.status = 'active'
+  where r.orderId = ShopOrder.id and r.status = 'open'
     and r.blockedAt is not null`;
 /**
  * `Domain.ambiguousItems` in SQL: an item with units still to make, two or
@@ -187,7 +187,7 @@ const AMBIGUOUS_ITEM = `select 1 from OrderLineItem li
     and not exists (${RUN_FOR_ITEM})`;
 /**
  * The `choose_workflow` {@link Domain.OrderIssue} as one predicate: an order
- * is only choosing when it can start runs, so an unpaid order with an
+ * is only choosing when it can create runs, so an unpaid order with an
  * ambiguous item is *not* choosing. `OPEN` is the caller's, as for every
  * issue.
  */
@@ -287,7 +287,7 @@ export class OrderRepository extends Context.Service<
      * first time Baton creates a run for it, and nothing ever gives that back.
      *
      * Called by `RunRepository.insertRun` — the single door through
-     * which a run is created — so the predicate is "Baton started work on this
+     * which a run is created — so the predicate is "Baton created a run on this
      * order", not "the order looks billable". That is deliberately narrower
      * than paid: a paid order no workflow matches costs the merchant nothing,
      * and an order Baton only ever displayed was never work it carried.
@@ -307,7 +307,7 @@ export class OrderRepository extends Context.Service<
      * Shopify accepts only inside the merchant's open billing cycle.
      *
      * Resolves the cycle before it increments, exactly as `upsertOrder` does,
-     * so a run started by hand on a quiet shop past its cycle end counts into
+     * so a run created by hand on a quiet shop past its cycle end counts into
      * the new cycle rather than the outgoing one. On the reconcile path the
      * upsert has already rolled it and this is a re-read. A missing
      * `ShopUsage` row is a defect in the schema, not a billing condition, and
@@ -345,7 +345,7 @@ export class OrderRepository extends Context.Service<
     ) => Effect.Effect<Option.Option<number>, SqlError.SqlError>;
     /**
      * `view` filters by `Domain.OrdersIndexView`, each SQL fragment
-     * restating a branch of `productionState` or, for `issues`, the union of
+     * restating a branch of `orderPosition` or, for `issues`, the union of
      * `orderIssues`' elements; each must move with the function it restates.
      * Open, the open positions, Issues and the `counts` aggregate spell out
      * `fulfillmentStatus <> 'FULFILLED' and cancelledAt is null` verbatim so
@@ -368,8 +368,8 @@ export class OrderRepository extends Context.Service<
       readonly view: Domain.OrdersIndexView | null;
       /** `null` is any team; an id is `Domain.ListOrdersInput.team` — waiting on that team. */
       readonly team: Domain.TeamId | null;
-      /** The live D1 roster `unassigned`, `emptyTeam` and `waitingOn` are derived against (`Domain.OrderRow`). */
-      readonly teams: readonly Domain.TeamRoster[];
+      /** The shop's teams, read live from D1 `unassigned`, `emptyTeam` and `waitingOn` are derived against (`Domain.OrderRow`). */
+      readonly teams: readonly Domain.TeamWithMemberCount[];
     }) => Effect.Effect<
       Domain.OrdersPage,
       SqlError.SqlError | OrderRepositoryError
@@ -432,16 +432,16 @@ export class OrderRepository extends Context.Service<
      *
      * A changed `cycleStartAt` is a new cycle: the order count is recounted
      * from rows, seat events queued inside the new cycle are dropped, and the
-     * seat mark is reset to the roster (`input.memberCount`), queued as the
-     * cycle's first seat event dated `cycleStartAt`. The value is the roster,
+     * seat mark is reset to the member count (`input.memberCount`), queued as the
+     * cycle's first seat event dated `cycleStartAt`. The value is the member count,
      * not the overage, because the seat meter starts every cycle at zero and
      * the plan's tiers price it (`Domain.AppSubscription`). On a shop no push
      * had addressed yet, every event dated before the start is dropped too.
      *
      * An unchanged start writes the columns and leaves the count alone, which
      * is what makes it safe to call on every revalidation. It still raises the
-     * seat mark to a roster past it ({@link Domain.seatEventValue}): that
-     * covers an add whose `recordRoster` failed (it is best-effort), and a
+     * seat mark to a member count past it ({@link Domain.seatEventValue}): that
+     * covers an add whose `recordMemberCount` failed (it is best-effort), and a
      * cycle the counting path rolled forward on its own, which starts with no
      * mark.
      *
@@ -461,8 +461,8 @@ export class OrderRepository extends Context.Service<
      * opens the provisional one so the key has a cycle to name, and a cycle
      * past its end rolls forward and starts with no mark.
      */
-    readonly recordRoster: (
-      input: Domain.RecordRosterInput,
+    readonly recordMemberCount: (
+      input: Domain.RecordMemberCountInput,
       now: number,
     ) => Effect.Effect<number, SqlError.SqlError | OrderRepositoryError>;
     /** Stores Shopify's meter readings and returns the counters beside them, so the caller can log the divergence. */
@@ -477,7 +477,7 @@ export class OrderRepository extends Context.Service<
      * One pass over the usage-event outbox: at most `ShopLimits.sweepBatch`
      * live rows, oldest first, each sent and then deleted or marked. Rows dated
      * before the current cycle are skipped, not retried
-     * (`Domain.usageEventIsDead`).
+     * (`Domain.usageEventIsExpired`).
      *
      * Deliberately outside every upsert transaction — it does network I/O, and
      * Durable Object SQLite transactions must not await anything but storage.
@@ -532,8 +532,8 @@ export class OrderRepository extends Context.Service<
      * One retention pass: at most `ShopLimits.sweepBatch` orders older than
      * `ShopLimits.orderRetentionDays` — open or closed, with runs or without —
      * plus a batch of runs whose order is no longer stored, plus a batch of
-     * dead usage events older than
-     * `ShopLimits.deadUsageEventRetentionDays`. What goes with an
+     * expired usage events older than
+     * `ShopLimits.expiredUsageEventRetentionDays`. What goes with an
      * expired order is the data model on `initializeSchema`
      * (`ShopAgentSchema.ts`). Deliberately batched and deliberately carried
      * by a request that was already doing
@@ -739,7 +739,7 @@ export class OrderRepository extends Context.Service<
           // Recounted from the rows, as `setBillingCycle` does, so both ways a
           // cycle can start state one rule: the count is the orders counted
           // at or after the start. The seat mark starts at zero: the object
-          // cannot count the roster, so the next `recordRoster` or
+          // cannot count the members, so the next `recordMemberCount` or
           // `setBillingCycle` sends the whole of it into the new cycle.
           const count = yield* countedSince(stored.cycleEndAt);
           yield* sql`
@@ -851,7 +851,7 @@ export class OrderRepository extends Context.Service<
                    (select count(*) from UsageEvent
                     where cycleStartAt is null or occurredAt >= cycleStartAt) as pendingUsageEvents,
                    (select count(*) from UsageEvent
-                    where cycleStartAt is not null and occurredAt < cycleStartAt) as deadUsageEvents,
+                    where cycleStartAt is not null and occurredAt < cycleStartAt) as expiredUsageEvents,
                    (select coalesce(sum(value), 0) from UsageEvent
                     where eventHandle = ${Domain.USAGE_METER_ORDER}
                       and (cycleStartAt is null or occurredAt >= cycleStartAt)) as pendingOrderUnits,
@@ -993,10 +993,10 @@ export class OrderRepository extends Context.Service<
           readonly q: Domain.OrderSearch | null;
           readonly view: Domain.OrdersIndexView | null;
           readonly team: Domain.TeamId | null;
-          readonly teams: readonly Domain.TeamRoster[];
+          readonly teams: readonly Domain.TeamWithMemberCount[];
         }) {
           /**
-           * Bound to the roster the caller read from D1. `unassignedRun` is
+           * Bound to the teams the caller read from D1. `unassignedRun` is
            * `Domain.OrderRow.unassigned` in SQL. `emptyTeamRun` is
            * `Domain.OrderRow.emptyTeam` in SQL, through `currentWhere`, the
            * one definition the member's workflows list also runs on.
@@ -1015,7 +1015,7 @@ export class OrderRepository extends Context.Service<
               : sql`(${sql.in("s.teamId", emptyIds)} and ${sql.literal(CurrentWhere.currentWhere("s"))})`;
           const runWithTask = (task: typeof unassigned) => sql`exists (
             select 1 from Run r
-            where r.orderId = ShopOrder.id and r.status = 'active'
+            where r.orderId = ShopOrder.id and r.status = 'open'
               and exists (
                 select 1 from RunTask s
                 where s.runId = r.id and s.doneAt is null and ${task}
@@ -1038,7 +1038,7 @@ export class OrderRepository extends Context.Service<
                   select 1 from Run wr
                   join RunTask s on s.runId = wr.id
                   where wr.orderId = ShopOrder.id
-                    and wr.status = 'active'
+                    and wr.status = 'open'
                     and wr.blockedAt is null
                     and s.teamId = ${team}
                     and ${sql.literal(CurrentWhere.currentWhere("s"))}
@@ -1046,7 +1046,7 @@ export class OrderRepository extends Context.Service<
           /**
            * The open positions partition the open orders by run state alone:
            * no open and no done run is `not_started`, any open run is
-           * `making`, only done runs is `made`, as `Domain.productionState`
+           * `making`, only done runs is `made`, as `Domain.orderPosition`
            * says. `issues` is `OPEN` and the four `Domain.orderIssues`
            * elements or'd, each the fragment above that restates it.
            */
@@ -1161,9 +1161,9 @@ export class OrderRepository extends Context.Service<
               : yield* sql`
                   select
                     orderId,
-                    sum(status = 'active') as open,
+                    sum(status = 'open') as open,
                     sum(status = 'done') as done,
-                    sum(blockedAt is not null and status = 'active') as blocked
+                    sum(blockedAt is not null and status = 'open') as blocked
                   from Run
                   where ${sql.in("orderId", ids)}
                   group by orderId
@@ -1219,33 +1219,32 @@ export class OrderRepository extends Context.Service<
                   join ShopOrder o on o.id = wr.orderId
                   where ${sql.in("wr.orderId", ids)}
                     and ${sql.literal(openAs("o"))}
-                    and wr.status = 'active'
+                    and wr.status = 'open'
                     and wr.blockedAt is null
                     and ${sql.in("s.teamId", liveIds)}
                     and ${sql.literal(CurrentWhere.currentWhere("s"))}
                 `.values;
           /**
-           * Grouped through the roster rather than by re-branding the stored
+           * Grouped through the teams rather than by re-branding the stored
            * string, and sorted here by team name rather than in the route:
            * the cell collapses past three teams, so an unstable order would
            * move which ones hide behind the `+N` between refreshes of a
            * subscribed page.
            */
-          const roster = new Map<string, Domain.TeamRoster>(
+          const teamsById = new Map<string, Domain.TeamWithMemberCount>(
             teams.map((team) => [team.id, team]),
           );
-          const waiting = waitingRows.reduce<Map<string, Domain.TeamRoster[]>>(
-            (byOrder, row) => {
-              const team = roster.get(String(row[1]));
-              if (team === undefined) return byOrder;
-              const orderId = String(row[0]);
-              return byOrder.set(orderId, [
-                ...(byOrder.get(orderId) ?? []),
-                team,
-              ]);
-            },
-            new Map(),
-          );
+          const waiting = waitingRows.reduce<
+            Map<string, Domain.TeamWithMemberCount[]>
+          >((byOrder, row) => {
+            const team = teamsById.get(String(row[1]));
+            if (team === undefined) return byOrder;
+            const orderId = String(row[0]);
+            return byOrder.set(orderId, [
+              ...(byOrder.get(orderId) ?? []),
+              team,
+            ]);
+          }, new Map());
           const waitingOn = new Map(
             [...waiting].map(([orderId, teams]) => [
               orderId,
@@ -1304,9 +1303,9 @@ export class OrderRepository extends Context.Service<
           const [countRow] = yield* sql`
               with run_summary as (
                 select r.orderId,
-                  sum(r.status = 'active') as openRuns,
+                  sum(r.status = 'open') as openRuns,
                   sum(r.status = 'done') as doneRuns,
-                  sum(r.status = 'active' and r.blockedAt is not null) as blockedRuns
+                  sum(r.status = 'open' and r.blockedAt is not null) as blockedRuns
                 from ShopOrder o
                 cross join Run r on r.orderId = o.id
                 where ${sql.literal(openAs("o"))}
@@ -1484,12 +1483,12 @@ export class OrderRepository extends Context.Service<
                  * orders were just recounted out, and sending them into the
                  * first real cycle would bill work the cycle never carried. Only then: once a shop has been addressed, an event
                  * that misses its cycle is a real loss and is kept as one
-                 * (`Domain.usageEventIsDead`).
+                 * (`Domain.usageEventIsExpired`).
                  */
                 if (unaddressed)
                   yield* sql`delete from UsageEvent where occurredAt < ${input.cycleStartAt}`;
                 /**
-                 * The new cycle's seat mark is the roster, sent whole. Any
+                 * The new cycle's seat mark is the member count, sent whole. Any
                  * seat event still queued and dated inside the new cycle came
                  * from the outgoing mark (a provisional cycle, or one the
                  * counting path rolled forward) and is superseded by this one;
@@ -1512,22 +1511,21 @@ export class OrderRepository extends Context.Service<
           },
         ),
 
-        recordRoster: Effect.fn("OrderRepository.recordRoster")(function* (
-          input: Domain.RecordRosterInput,
-          now: number,
-        ) {
-          return yield* sql.withTransaction(
-            Effect.gen(function* () {
-              const cycle = yield* currentCycle(now);
-              return yield* raiseSeatMark({
-                cycleStartAt: cycle.cycleStartAt,
-                highWater: cycle.membersHighWater,
-                size: input.size,
-                occurredAt: now,
-              });
-            }),
-          );
-        }),
+        recordMemberCount: Effect.fn("OrderRepository.recordMemberCount")(
+          function* (input: Domain.RecordMemberCountInput, now: number) {
+            return yield* sql.withTransaction(
+              Effect.gen(function* () {
+                const cycle = yield* currentCycle(now);
+                return yield* raiseSeatMark({
+                  cycleStartAt: cycle.cycleStartAt,
+                  highWater: cycle.membersHighWater,
+                  size: input.size,
+                  occurredAt: now,
+                });
+              }),
+            );
+          },
+        ),
 
         reconcileUsage: Effect.fn("OrderRepository.reconcileUsage")(function* (
           input: Domain.ReconcileUsageInput,
@@ -1567,8 +1565,8 @@ export class OrderRepository extends Context.Service<
                 );
               return { sent: 0, remaining } satisfies UsageFlush;
             }
-            // Live rows only: a row dated before the cycle is dead
-            // (`Domain.usageEventIsDead`) and stays for the admin page.
+            // Live rows only: a row dated before the cycle has expired
+            // (`Domain.usageEventIsExpired`) and stays for the admin page.
             const [pending] = yield* sql`
               select count(*) from UsageEvent where occurredAt >= ${cycleStartAt}
             `.values;
@@ -1727,22 +1725,22 @@ export class OrderRepository extends Context.Service<
                   returning id
                 `;
                 /**
-                 * Dead usage events ({@link Domain.usageEventIsDead}) dated
+                 * Expired usage events ({@link Domain.usageEventIsExpired}) dated
                  * more than {@link
-                 * Domain.ShopLimits.deadUsageEventRetentionDays} ago. Sixty
+                 * Domain.ShopLimits.expiredUsageEventRetentionDays} ago. Sixty
                  * days covers the billing cycle the event died in and the next,
-                 * which is as long as the admin shop page's dead count is worth
+                 * which is as long as the admin shop page's expired count is worth
                  * reading; each failed send was also logged when it happened,
                  * so the row is not the only record. Without this nothing
-                 * bounds them: a dead event can never be sent, so the flush
+                 * bounds them: an expired event can never be sent, so the flush
                  * never deletes one.
                  */
                 const [cycle] = yield* readCycle();
                 const cycleStartAt = cycle?.cycleStartAt ?? null;
-                const deadBefore =
+                const expiredEventsBefore =
                   now -
-                  Domain.ShopLimits.deadUsageEventRetentionDays * 86_400_000;
-                const deadEvents =
+                  Domain.ShopLimits.expiredUsageEventRetentionDays * 86_400_000;
+                const expiredEvents =
                   cycleStartAt === null
                     ? []
                     : yield* sql`
@@ -1750,7 +1748,7 @@ export class OrderRepository extends Context.Service<
                         where idempotencyKey in (
                           select idempotencyKey from UsageEvent
                           where occurredAt < ${cycleStartAt}
-                            and occurredAt < ${deadBefore}
+                            and occurredAt < ${expiredEventsBefore}
                           order by occurredAt
                           limit ${Domain.ShopLimits.sweepBatch}
                         )
@@ -1760,7 +1758,7 @@ export class OrderRepository extends Context.Service<
                 return {
                   orders: ids.length,
                   runs: runs + orphaned.length,
-                  usageEvents: deadEvents.length,
+                  usageEvents: expiredEvents.length,
                 };
               }),
             );

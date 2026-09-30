@@ -1,11 +1,11 @@
 /**
  * The files whose strings are screen copy, shared by `scripts/rules-lint.ts`
  * (the retired-word check) and `scripts/copy-audit.ts` (the inventory), so
- * the two read the same screens. The glossary's screen rule
+ * the two read the same screens. The vocabulary's screen rule
  * (`src/lib/Domain.ts`) says which: the merchant's and the member's screens,
  * `src/components/`, and the modules that hold their copy. The operator
  * console (`admin.*`), the API routes (`api.*`), and the public home and
- * privacy pages (`index.tsx`, `privacy.tsx`) are not glossary screens, and
+ * privacy pages (`index.tsx`, `privacy.tsx`) are not vocabulary screens, and
  * neither is `PlanCache.tsx`, a component only the console renders.
  */
 import { readdirSync, statSync } from "node:fs";

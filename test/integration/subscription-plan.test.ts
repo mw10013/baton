@@ -554,7 +554,7 @@ describe("SubscriptionPlan", () => {
   );
 
   it.effect(
-    "revalidate pushes the roster size with the cycle and both meter readings",
+    "revalidate pushes the member count with the cycle and both meter readings",
     () =>
       Effect.gen(function* () {
         yield* TestClock.setTime(1000);

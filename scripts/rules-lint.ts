@@ -6,15 +6,25 @@
  * `runIsUnstarted`), and a site that needs `user.role === "admin"` needs
  * `userIsAdmin`. `Domain.ts` is the one file allowed to spell the literals.
  *
+ * It also holds the vocabulary's two identifier rules on the exports under
+ * `src/lib/`: no reserved stem ({@link reservedStemHits}) and no `is<State>`
+ * without its noun ({@link bareStatePredicateHits}).
+ *
  * A grep, not an oxlint rule: the pattern is three tokens and has stayed
  * quiet. Union narrowing on `actor.role` and the connection state's `role`
  * is not matched, because those are discriminants of a union, not rules.
  */
 import { readFileSync } from "node:fs";
-import { relative } from "node:path";
+import { join, relative } from "node:path";
 
 import { copyFiles, walk } from "./lib/copy-files.ts";
-import { retiredCopyHits, textAreaPlaceholderHits } from "./lib/rules-lint.ts";
+import {
+  bareStatePredicateHits,
+  RESERVED_STEMS,
+  reservedStemHits,
+  retiredCopyHits,
+  textAreaPlaceholderHits,
+} from "./lib/rules-lint.ts";
 
 const ROOT = new URL("../src/", import.meta.url).pathname;
 const ALLOWED = new Set(["lib/Domain.ts", "routeTree.gen.ts"]);
@@ -53,7 +63,7 @@ const copyHits = COPY_FILES.flatMap((path) => {
 
 if (copyHits.length > 0) {
   console.error(
-    "rules-lint: retired word in screen copy; use the glossary word:",
+    "rules-lint: retired word in screen copy; use the vocabulary word:",
   );
   for (const hit of copyHits) console.error(`  ${hit}`);
 }
@@ -72,5 +82,41 @@ if (placeholderHits.length > 0) {
   for (const hit of placeholderHits) console.error(`  ${hit}`);
 }
 
-if (hits.length > 0 || copyHits.length > 0 || placeholderHits.length > 0)
+const LIB_FILES = walk(join(ROOT, "lib"));
+
+const identifierHits = (
+  check: (source: string) => readonly { name: string; line: number }[],
+) =>
+  LIB_FILES.flatMap((path) =>
+    check(readFileSync(path, "utf8")).map(
+      ({ name, line }) =>
+        `src/${relative(ROOT, path)}:${String(line)}: ${name}`,
+    ),
+  );
+
+const stemHits = identifierHits(reservedStemHits);
+
+if (stemHits.length > 0) {
+  console.error(
+    `rules-lint: reserved stem (${RESERVED_STEMS.join(", ")}) in an exported identifier; use the vocabulary word:`,
+  );
+  for (const hit of stemHits) console.error(`  ${hit}`);
+}
+
+const predicateHits = identifierHits(bareStatePredicateHits);
+
+if (predicateHits.length > 0) {
+  console.error(
+    "rules-lint: exported predicate named is<State> with no noun; name it <noun>Is<State>:",
+  );
+  for (const hit of predicateHits) console.error(`  ${hit}`);
+}
+
+if (
+  hits.length > 0 ||
+  copyHits.length > 0 ||
+  placeholderHits.length > 0 ||
+  stemHits.length > 0 ||
+  predicateHits.length > 0
+)
   process.exit(1);

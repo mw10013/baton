@@ -127,10 +127,10 @@ function CapacityTile({
  * carry them, and a banner that is present on the ordinary day is a banner
  * nobody reads on the bad one.
  *
- * The Members tile shows today's roster, not the seats billed this cycle
+ * The Members tile shows today's member count, not the seats billed this cycle
  * (`Domain.ShopUsage.membersHighWater`). The two differ only after a member
- * is removed during the cycle: the roster drops and the seats do not. The
- * roster is what the merchant manages from the tile, so it stays the number.
+ * is removed during the cycle: the member count drops and the seats do not. The
+ * members are what the merchant manages from the tile, so it stays the number.
  */
 function RouteComponent() {
   const { entitlements, usage, memberCount } = Route.useLoaderData();

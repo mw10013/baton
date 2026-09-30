@@ -16,6 +16,6 @@ const requireUserFn = createServerFn({ method: "GET" })
  */
 export const Route = createFileRoute("/shop")({
   beforeLoad: () => requireUserFn(),
-  head: () => ({ meta: [{ title: "Your shops — Baton" }] }),
+  head: () => ({ meta: [{ title: "Your stores — Baton" }] }),
   component: () => <Outlet />,
 });

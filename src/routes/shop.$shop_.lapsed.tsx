@@ -25,11 +25,11 @@ function RouteComponent() {
       <s-section heading={heading} accessibilityLabel={heading}>
         <s-stack gap="base">
           <s-paragraph>
-            This shop’s Baton subscription is not active, so its workflows are
+            This store’s Baton subscription is not active, so its workflows are
             unavailable. Ask the merchant to renew the subscription from the
             Baton app in their Shopify admin.
           </s-paragraph>
-          <Link to="/shop">Your shops</Link>
+          <Link to="/shop">Your stores</Link>
         </s-stack>
       </s-section>
     </s-page>

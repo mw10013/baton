@@ -289,7 +289,7 @@ describe("OrderRepository.listOrders", () => {
 });
 
 /**
- * Every SQL fragment against `Domain.productionState` and `Domain.orderIssues`:
+ * Every SQL fragment against `Domain.orderPosition` and `Domain.orderIssues`:
  * the fixture covers each branch, and each view must return exactly the
  * names the TypeScript functions give it. Runs are written directly because
  * `RunRepository` is not in this test's layer and the views only read
@@ -318,8 +318,8 @@ const seedStates = Effect.gen(function* () {
   }[] = [
     { n: 1, statuses: ["done"] }, // made
     { n: 2, statuses: ["done", "closed"] }, // made
-    { n: 3, statuses: ["done", "active"] }, // making
-    { n: 4, statuses: ["done", "active"] }, // making
+    { n: 3, statuses: ["done", "open"] }, // making
+    { n: 4, statuses: ["done", "open"] }, // making
     { n: 5, statuses: [] }, // not started, no workflow
     { n: 6, order: { cancelledAt: 5 }, statuses: ["done"] }, // cancelled
     { n: 7, order: { fulfillmentStatus: "FULFILLED" }, statuses: ["done"] }, // fulfilled
@@ -328,12 +328,12 @@ const seedStates = Effect.gen(function* () {
     { n: 10, statuses: ["closed"] }, // not started, and decided: no issue
     { n: 11, order: { fulfillmentStatus: "FULFILLED" }, statuses: [] }, // fulfilled, never started
     { n: 12, statuses: [], matched: ["w1", "w2"] }, // not started, choose a workflow
-    { n: 13, statuses: ["active"], matched: ["w1", "w2"] }, // making, and choose a workflow
+    { n: 13, statuses: ["open"], matched: ["w1", "w2"] }, // making, and choose a workflow
     // Unpaid: the ambiguity is not a choice yet, so no issue.
     {
       n: 14,
       order: { fullyPaid: false },
-      statuses: ["active"],
+      statuses: ["open"],
       matched: ["w1", "w2"],
     }, // making
   ];
@@ -382,7 +382,7 @@ const seedStates = Effect.gen(function* () {
 /**
  * `seedStates` plus the issues it lacks, and a team to filter on: `#1003`'s
  * open run is blocked, `#1004`'s open run has a task on a team that has
- * left the roster (unassigned), and `#1015`, added here, is being made with
+ * was deleted (unassigned), and `#1015`, added here, is being made with
  * its current task on a team with no members (empty team). Ready tasks on
  * Cut hang off `#1013` and `#1014`, so the team filter keeps one order with
  * an issue and one without.
@@ -417,12 +417,14 @@ const seedIssues = Effect.gen(function* () {
       status, closedAt, closedReason, createdAt, updatedAt
     ) values (
       'run-15-0', 'wf', 'Workflow', ${orderId(15)}, '#1015', 0,
-      ${`${lineItemId(15)}-0`}, 'Item', null, null, 1, '[]', 'active', null,
+      ${`${lineItemId(15)}-0`}, 'Item', null, null, 1, '[]', 'open', null,
       null, 0, 0
     )
   `;
   yield* task("s15", "run-15-0", "team-empty");
-  const teams = Schema.decodeUnknownSync(Schema.Array(Domain.TeamRoster))([
+  const teams = Schema.decodeUnknownSync(
+    Schema.Array(Domain.TeamWithMemberCount),
+  )([
     { id: "team-cut", name: "Cut", memberCount: 1 },
     { id: "team-empty", name: "Polish", memberCount: 0 },
   ]);
@@ -443,7 +445,7 @@ const seedIssues = Effect.gen(function* () {
 });
 
 describe("OrderRepository.listOrders views", () => {
-  it("each position view returns exactly the orders productionState gives that position, and an order whose only run is closed is not started", async () => {
+  it("each position view returns exactly the orders orderPosition gives that position, and an order whose only run is closed is not started", async () => {
     const pages = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* seedStates;
@@ -482,8 +484,8 @@ describe("OrderRepository.listOrders views", () => {
     deepStrictEqual(names(pages.cancelled), ["#1006"]);
     // The SQL and the TypeScript agree row by row.
     for (const row of pages.all.orders) {
-      const state = Domain.productionState(row);
-      for (const position of Domain.ProductionState.literals)
+      const state = Domain.orderPosition(row);
+      for (const position of Domain.OrderPosition.literals)
         strictEqual(
           names(pages[position]).includes(row.order.name),
           state === position,
@@ -503,7 +505,7 @@ describe("OrderRepository.listOrders views", () => {
         const { list } = yield* seedIssues;
         const sql = yield* SqlClient.SqlClient;
         // A stale block on a fulfilled order's run is not an issue.
-        yield* sql`update Run set status = 'active', blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-7-0'`;
+        yield* sql`update Run set status = 'open', blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-7-0'`;
         return { all: yield* list("all"), issues: yield* list("issues") };
       }),
     );
@@ -618,7 +620,7 @@ describe("OrderRepository.listOrders views", () => {
         const { list } = yield* seedIssues;
         const sql = yield* SqlClient.SqlClient;
         // A leftover open run with a current task on Cut, on a fulfilled order.
-        yield* sql`update Run set status = 'active' where id = 'run-7-0'`;
+        yield* sql`update Run set status = 'open' where id = 'run-7-0'`;
         yield* sql`
           insert into RunTask
             (id, runId, position, step, name, teamId, teamName, doneAt)
@@ -771,7 +773,9 @@ describe("OrderRepository.listOrders q", () => {
 });
 
 describe("OrderRepository.listOrders team issues", () => {
-  const teams = Schema.decodeUnknownSync(Schema.Array(Domain.TeamRoster))([
+  const teams = Schema.decodeUnknownSync(
+    Schema.Array(Domain.TeamWithMemberCount),
+  )([
     { id: "team-cut", name: "Cut", memberCount: 1 },
     { id: "team-empty", name: "Polish", memberCount: 0 },
   ]);
@@ -824,7 +828,7 @@ describe("OrderRepository.listOrders team issues", () => {
     );
 
   /**
-   * `#1003`'s active run has an open task on a deleted team on its current
+   * `#1003`'s open run has an open task on a deleted team on its current
    * step; `#1014`'s has a current task on Cut and a later one on the deleted
    * team.
    */
@@ -846,7 +850,7 @@ describe("OrderRepository.listOrders team issues", () => {
   });
 
   /**
-   * `#1004`'s active run has finished step 1 on Cut, so its step-2 task on
+   * `#1004`'s open run has finished step 1 on Cut, so its step-2 task on
    * the empty team is current; `#1014`'s step 1 on Cut is still current, so
    * its step-2 task on the empty team is not.
    */
@@ -877,7 +881,9 @@ describe("OrderRepository.listOrders team issues", () => {
  */
 describe("OrderRepository.listOrders waitingOn", () => {
   /** Ids ascend cut → pack → polish while names ascend Anodize → Cut → Pack, so the two orders disagree. */
-  const teams = Schema.decodeUnknownSync(Schema.Array(Domain.TeamRoster))([
+  const teams = Schema.decodeUnknownSync(
+    Schema.Array(Domain.TeamWithMemberCount),
+  )([
     { id: "team-cut", name: "Cut", memberCount: 1 },
     { id: "team-polish", name: "Anodize", memberCount: 1 },
     { id: "team-pack", name: "Pack", memberCount: 1 },
@@ -913,7 +919,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
         status, createdAt, updatedAt
       ) values (
         'run-3-2', 'wf', 'Workflow', ${orderId(3)}, '#1003', 0,
-        ${`${lineItemId(3)}-2`}, 'Item', null, null, 1, '[]', 'active',
+        ${`${lineItemId(3)}-2`}, 'Item', null, null, 1, '[]', 'open',
         0, 0
       )
     `;
@@ -942,7 +948,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
   /**
    * `#1007` is fulfilled and `#1006` cancelled. Reconcile closes every open
    * run on a closed order, but the rule does not lean on that: each is given
-   * a leftover active run with an unassigned current task and a current task on
+   * a leftover open run with an unassigned current task and a current task on
    * Cut, and neither order has an issue or waits on anyone, in the cell or
    * under the filter, whichever view is pressed.
    */
@@ -950,8 +956,8 @@ describe("OrderRepository.listOrders waitingOn", () => {
     const { all, cut, issues } = await runInRepository(
       Effect.gen(function* () {
         const { sql, task, list } = yield* waitingFixture;
-        yield* sql`update Run set status = 'active', blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-7-0'`;
-        yield* sql`update Run set status = 'active' where id = 'run-6-0'`;
+        yield* sql`update Run set status = 'open', blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-7-0'`;
+        yield* sql`update Run set status = 'open' where id = 'run-6-0'`;
         yield* task("s7", "run-7-0", 1, "team-cut");
         yield* task("s6", "run-6-0", 1, "team-cut");
         yield* task("s6b", "run-6-0", 1, "team-gone");
@@ -1006,7 +1012,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
     strictEqual(rowOf(filtered, "#1003")?.order.name, "#1003");
   });
 
-  it("leaves out a team that has left the roster, which is unassigned instead", async () => {
+  it("leaves out a team that was deleted, which is unassigned instead", async () => {
     const page = await runInRepository(
       Effect.gen(function* () {
         const { sql, list } = yield* waitingFixture;
@@ -1333,7 +1339,7 @@ describe("OrderRepository usage", () => {
     strictEqual(events.length, 1);
   });
 
-  it("a queued event is dead once the cycle that dated it has ended: skipped by the flush and reported apart", async () => {
+  it("a queued event expires once the cycle that dated it has ended: skipped by the flush and reported apart", async () => {
     const { flush, usage, events } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
@@ -1370,7 +1376,7 @@ describe("OrderRepository usage", () => {
     );
     deepStrictEqual(flush, { sent: 1, remaining: 0 });
     strictEqual(usage.pendingUsageEvents, 0);
-    strictEqual(usage.deadUsageEvents, 1);
+    strictEqual(usage.expiredUsageEvents, 1);
     deepStrictEqual(events, [
       { idempotencyKey: `${orderId(1)}#count`, value: 1 },
     ]);
@@ -1402,7 +1408,7 @@ describe("OrderRepository usage", () => {
     );
     strictEqual(usage.ordersThisCycle, 0);
     strictEqual(usage.pendingUsageEvents, 0);
-    strictEqual(usage.deadUsageEvents, 0);
+    strictEqual(usage.expiredUsageEvents, 0);
     deepStrictEqual(events, []);
   });
 
@@ -1450,7 +1456,7 @@ describe("OrderRepository usage", () => {
     }
   });
 
-  it("the retention sweep deletes dead usage events older than 60 days and keeps younger ones", async () => {
+  it("the retention sweep deletes expired usage events older than 60 days and keeps younger ones", async () => {
     const DAY = 86_400_000;
     const now = CYCLE_START + DAY;
     const { swept, usage, keys } = await runInRepository(
@@ -1458,11 +1464,11 @@ describe("OrderRepository usage", () => {
         const repository = yield* OrderRepository;
         const sql = yield* SqlClient.SqlClient;
         yield* openCycle(repository);
-        // Written straight to the outbox: two dead events either side of the
+        // Written straight to the outbox: two expired events either side of the
         // window, and one live event in the current cycle.
         for (const [key, occurredAt] of [
-          ["dead-old", now - 61 * DAY],
-          ["dead-young", now - 59 * DAY],
+          ["expired-old", now - 61 * DAY],
+          ["expired-young", now - 59 * DAY],
           ["live", CYCLE_START + 1],
         ] as const)
           yield* sql`
@@ -1477,8 +1483,8 @@ describe("OrderRepository usage", () => {
       }),
     );
     strictEqual(swept.usageEvents, 1);
-    deepStrictEqual(keys, ["dead-young", "live"]);
-    strictEqual(usage.deadUsageEvents, 1);
+    deepStrictEqual(keys, ["expired-young", "live"]);
+    strictEqual(usage.expiredUsageEvents, 1);
     strictEqual(usage.pendingUsageEvents, 1);
   });
 
@@ -1551,7 +1557,7 @@ describe("OrderRepository usage", () => {
     deepStrictEqual(flush, { sent: 0, remaining: 1 });
   });
 
-  const openCycleWithRoster = (
+  const openCycleWithMemberCount = (
     repository: typeof OrderRepository.Service,
     memberCount: number,
   ) =>
@@ -1566,8 +1572,8 @@ describe("OrderRepository usage", () => {
     const { queued, usage, events } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
-        yield* openCycleWithRoster(repository, 3);
-        const queued = yield* repository.recordRoster(
+        yield* openCycleWithMemberCount(repository, 3);
+        const queued = yield* repository.recordMemberCount(
           { size: 4 },
           CYCLE_START + 1,
         );
@@ -1598,10 +1604,10 @@ describe("OrderRepository usage", () => {
     const { queued, usage, events } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
-        yield* openCycleWithRoster(repository, 3);
+        yield* openCycleWithMemberCount(repository, 3);
         const queued = [
-          yield* repository.recordRoster({ size: 3 }, CYCLE_START + 1),
-          yield* repository.recordRoster({ size: 2 }, CYCLE_START + 2),
+          yield* repository.recordMemberCount({ size: 3 }, CYCLE_START + 1),
+          yield* repository.recordMemberCount({ size: 2 }, CYCLE_START + 2),
         ];
         return {
           queued,
@@ -1618,18 +1624,18 @@ describe("OrderRepository usage", () => {
   /**
    * A removal is never reported to the object, so what this pins is the
    * consequence: removing and re-adding inside a cycle bills the seat once,
-   * and a revalidation that reads the smaller roster lowers nothing.
+   * and a revalidation that reads the smaller member count lowers nothing.
    */
   it("a member removal queues nothing and leaves the mark", async () => {
     const { usage, events } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
-        yield* openCycleWithRoster(repository, 3);
-        yield* repository.recordRoster({ size: 4 }, CYCLE_START + 1);
-        // Removed: the roster is 3 again, and a revalidation reads it.
-        yield* openCycleWithRoster(repository, 3);
+        yield* openCycleWithMemberCount(repository, 3);
+        yield* repository.recordMemberCount({ size: 4 }, CYCLE_START + 1);
+        // Removed: the member count is 3 again, and a revalidation reads it.
+        yield* openCycleWithMemberCount(repository, 3);
         // Re-added.
-        yield* repository.recordRoster({ size: 4 }, CYCLE_START + 2);
+        yield* repository.recordMemberCount({ size: 4 }, CYCLE_START + 2);
         return {
           usage: yield* repository.getUsage(),
           events: yield* seatEvents(),
@@ -1643,12 +1649,12 @@ describe("OrderRepository usage", () => {
     );
   });
 
-  it("a new cycle resets the mark to the roster and queues it as the cycle's first seat event", async () => {
+  it("a new cycle resets the mark to the member count and queues it as the cycle's first seat event", async () => {
     const { usage, events } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
-        yield* openCycleWithRoster(repository, 3);
-        yield* repository.recordRoster({ size: 5 }, CYCLE_START + 1);
+        yield* openCycleWithMemberCount(repository, 3);
+        yield* repository.recordMemberCount({ size: 5 }, CYCLE_START + 1);
         yield* repository.setBillingCycle({
           shopGid,
           cycleStartAt: CYCLE_END,
@@ -1673,8 +1679,8 @@ describe("OrderRepository usage", () => {
     const { usage, events } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
-        yield* openCycleWithRoster(repository, 3);
-        yield* openCycleWithRoster(repository, 3);
+        yield* openCycleWithMemberCount(repository, 3);
+        yield* openCycleWithMemberCount(repository, 3);
         return {
           usage: yield* repository.getUsage(),
           events: yield* seatEvents(),
@@ -1685,12 +1691,12 @@ describe("OrderRepository usage", () => {
     strictEqual(events.length, 1);
   });
 
-  it("an unchanged cycle raises the mark to a roster past it, so an add whose recordRoster failed is billed at the next revalidation", async () => {
+  it("an unchanged cycle raises the mark to a member count past it, so an add whose recordMemberCount failed is billed at the next revalidation", async () => {
     const { usage, events } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
-        yield* openCycleWithRoster(repository, 3);
-        yield* openCycleWithRoster(repository, 5);
+        yield* openCycleWithMemberCount(repository, 3);
+        yield* openCycleWithMemberCount(repository, 5);
         return {
           usage: yield* repository.getUsage(),
           events: yield* seatEvents(),
@@ -1710,14 +1716,14 @@ describe("OrderRepository usage", () => {
   /**
    * The counting path rolls a cycle past its end without the Worker, and the
    * revalidation that follows pushes that same start: an unchanged cycle to
-   * `setBillingCycle`. The rolled cycle must still get its whole roster sent.
+   * `setBillingCycle`. The rolled cycle must still get its whole member count sent.
    */
-  it("a cycle the counting path rolled forward starts with no seat mark, and the next roster report sends the whole roster", async () => {
+  it("a cycle the counting path rolled forward starts with no seat mark, and the next member-count report sends the whole count", async () => {
     const { queued, events } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
-        yield* openCycleWithRoster(repository, 3);
-        const queued = yield* repository.recordRoster(
+        yield* openCycleWithMemberCount(repository, 3);
+        const queued = yield* repository.recordMemberCount(
           { size: 3 },
           CYCLE_END + 1,
         );
@@ -1744,8 +1750,8 @@ describe("OrderRepository usage", () => {
     const events = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
-        yield* repository.recordRoster({ size: 3 }, CYCLE_START + 5);
-        yield* openCycleWithRoster(repository, 3);
+        yield* repository.recordMemberCount({ size: 3 }, CYCLE_START + 5);
+        yield* openCycleWithMemberCount(repository, 3);
         return yield* seatEvents();
       }),
     );
@@ -1762,7 +1768,7 @@ describe("OrderRepository usage", () => {
     const sent = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
-        yield* openCycleWithRoster(repository, 2);
+        yield* openCycleWithMemberCount(repository, 2);
         yield* upsert(repository, paid(1), []);
         yield* count(repository, 1);
         const sent: { eventHandle: string; value: number }[] = [];
@@ -1792,7 +1798,7 @@ describe("OrderRepository usage", () => {
     const { pending, drained } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
-        yield* openCycleWithRoster(repository, 3);
+        yield* openCycleWithMemberCount(repository, 3);
         yield* upsert(repository, paid(1), []);
         yield* count(repository, 1);
         // Shopify has seen nothing yet: both meters read zero.
@@ -1883,7 +1889,7 @@ describe("OrderRepository.sweepExpiredOrders", () => {
           anOrder({ id: orderId(1), name: "#1001", processedAt: EXPIRED }),
           [],
         );
-        yield* runWith(orderId(1), "active", EXPIRED)(sql);
+        yield* runWith(orderId(1), "open", EXPIRED)(sql);
         // Expired, closed, with an unstarted run: goes.
         yield* upsert(
           repository,
@@ -1895,7 +1901,7 @@ describe("OrderRepository.sweepExpiredOrders", () => {
           }),
           [],
         );
-        yield* runWith(orderId(2), "active", EXPIRED)(sql);
+        yield* runWith(orderId(2), "open", EXPIRED)(sql);
         // Closed, but inside the window: stays. Closing an order is not what
         // ages it out.
         yield* upsert(

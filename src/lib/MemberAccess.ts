@@ -8,7 +8,7 @@ import { SubscriptionPlan } from "@/lib/SubscriptionPlan";
 /**
  * Asserts the session user's membership in the URL shop and returns that
  * membership's {@link Domain.MemberAccess} — the branded shop, the `memberId`,
- * and the active teams the member belongs to. `notFound` rather than a redirect
+ * and the teams the member belongs to. `notFound` rather than a redirect
  * on a miss: a non-member must not be able to distinguish "shop exists, you
  * lack access" from "no such shop". Membership's FK to `ShopSession` makes a
  * hit proof of install too, so downstream Durable Object access cannot revive a

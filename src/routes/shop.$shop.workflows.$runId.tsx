@@ -196,7 +196,7 @@ function RouteComponent() {
   /** Block, the note, Edit reason and Unblock: {@link Domain.runActions}. */
   const can = Domain.runActions(actor, page.order, run, page.tasks);
   /**
-   * Unblock lifts the hold and nothing else: the run goes back to the tier
+   * Unblock lifts the hold and nothing else: the run goes back to the view
    * and the tasks it had, and whoever lifted it presses Done next if the work
    * is in fact done. It takes one tap and no confirmation: Block undoes it.
    *

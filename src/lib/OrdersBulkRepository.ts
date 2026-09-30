@@ -30,7 +30,7 @@ const BULK_ORDERS_FILTER = "__ORDER_SYNC_FILTER__";
  * `unshipped` is deliberately not used: Shopify defines it as
  * `fulfillment_status` *null*, which drops exactly those partials. No
  * `financial_status` term either: an unpaid order is work the maker will see
- * as soon as payment lands, and `Domain.canStartRuns` already keeps runs off
+ * as soon as payment lands, and `Domain.orderCanCreateRuns` already keeps runs off
  * it until then.
  */
 const OPEN_WORK_FILTER = "status:open -fulfillment_status:fulfilled";

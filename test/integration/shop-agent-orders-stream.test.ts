@@ -228,7 +228,7 @@ describe("runShopAgentOrdersStream", () => {
 /**
  * The bulk path routes with the same rules as a webhook: the reconcile hook
  * runs inside each order's upsert transaction, and the age rule — not the
- * source — is what keeps a thirty-day history file from starting work on
+ * source — is what keeps a thirty-day history file from creating runs on
  * orders placed before the workflow existed.
  */
 describe("runShopAgentOrdersStream with afterWrite", () => {
@@ -299,13 +299,13 @@ describe("runShopAgentOrdersStream with afterWrite", () => {
           workflowId: workflow.id,
           teams: [team],
         });
-        yield* workflows.setWorkflowActive({
+        yield* workflows.setWorkflowOn({
           workflowId: workflow.id,
-          active: true,
+          on: true,
           teams: [team],
         });
         const context = {
-          workflows: yield* workflows.listActiveWorkflowDetails(),
+          workflows: yield* workflows.listOnWorkflowDetails(),
           teams: [team],
         };
         const afterWrite = (order: Domain.ShopOrder) =>

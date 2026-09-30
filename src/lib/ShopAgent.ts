@@ -43,8 +43,8 @@ import {
 import { ORDERS_SYNC_WORKFLOW_NAME } from "@/lib/orderSyncConstants";
 import { Repository, type RepositoryError } from "@/lib/Repository";
 import {
-  canStart,
-  type StartContext,
+  workflowIsEligible,
+  type EligibleContext,
   RunNotAllowedError,
   type RunNotBlockedError,
   RunNotFoundError,
@@ -554,10 +554,10 @@ const draftResult = <R>(
     }),
   );
 
-/** `Ok` carries how many runs the reconcile-all after the switch started — in either direction, since Turn off can resolve an ambiguity — for the toast. */
-const activateResult = <R>(
+/** `Ok` carries how many runs the reconcile-all after the switch created — in either direction, since Turn off can resolve an ambiguity — for the toast. */
+const switchResult = <R>(
   effect: Effect.Effect<
-    { readonly workflow: Domain.Workflow; readonly started: number },
+    { readonly workflow: Domain.Workflow; readonly created: number },
     | WorkflowNotFoundError
     | NoTasksError
     | TaskUnassignedError
@@ -569,7 +569,7 @@ const activateResult = <R>(
     R
   >,
 ): Effect.Effect<
-  Domain.ActivateResult,
+  Domain.SwitchResult,
   | SqlError.SqlError
   | WorkflowRepositoryError
   | RunRepositoryError
@@ -578,18 +578,18 @@ const activateResult = <R>(
   R
 > =>
   effect.pipe(
-    Effect.map(({ workflow, started }): Domain.ActivateResult => ({
+    Effect.map(({ workflow, created }): Domain.SwitchResult => ({
       _tag: "Ok",
       workflow,
-      started,
+      created,
     })),
     Effect.catchTags({
       WorkflowNotFoundError: () =>
-        Effect.succeed<Domain.ActivateResult>({ _tag: "NotFound" }),
+        Effect.succeed<Domain.SwitchResult>({ _tag: "NotFound" }),
       NoTasksError: () =>
-        Effect.succeed<Domain.ActivateResult>({ _tag: "NoTasks" }),
+        Effect.succeed<Domain.SwitchResult>({ _tag: "NoTasks" }),
       TaskUnassignedError: ({ taskNames }) =>
-        Effect.succeed<Domain.ActivateResult>({
+        Effect.succeed<Domain.SwitchResult>({
           _tag: "TaskUnassigned",
           taskNames,
         }),
@@ -598,7 +598,7 @@ const activateResult = <R>(
 
 const changeActivatedAtResult = <R>(
   effect: Effect.Effect<
-    { readonly workflow: Domain.Workflow; readonly started: number },
+    { readonly workflow: Domain.Workflow; readonly created: number },
     | WorkflowNotFoundError
     | WorkflowOffError
     | SqlError.SqlError
@@ -618,10 +618,10 @@ const changeActivatedAtResult = <R>(
   R
 > =>
   effect.pipe(
-    Effect.map(({ workflow, started }): Domain.ChangeActivatedAtResult => ({
+    Effect.map(({ workflow, created }): Domain.ChangeActivatedAtResult => ({
       _tag: "Ok",
       workflow,
-      started,
+      created,
     })),
     Effect.catchTags({
       WorkflowNotFoundError: () =>
@@ -668,7 +668,7 @@ const taskResult = <R>(
 /**
  * Same shape as {@link workflowResult}: expected run failures become values.
  * `WorkflowRepositoryError` and `SchemaError` ride along because the actions
- * that can start a run load the start context (active definitions from this
+ * that can create a run load the start context (the workflows that are on, from this
  * object, teams from D1) first.
  */
 const runResult = <R>(
@@ -1186,7 +1186,7 @@ export class ShopAgent extends Agent {
    * (`orderId: null`) is published to either way; a detail subscription only
    * for its own order. Workflow configuration is loader data and does not
    * publish, with one exception: Apply and the on/off switch change what
-   * starts runs, which the order page's `itemWorkflows` shows, so those two
+   * creates runs, which the order page's `itemWorkflows` shows, so those two
    * publish `"all"`.
    *
    * `teams` is the same idea for the other population. A member's subscription
@@ -1812,23 +1812,27 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Reports the D1 roster size after a member add
-   * (`OrderRepository.recordRoster`), then sends the queue. Plain RPC for the
+   * Reports the D1 member count after a member add
+   * (`OrderRepository.recordMemberCount`), then sends the queue. Plain RPC for the
    * same reason as {@link setBillingCycle}: the caller is the members page's
-   * add, and the roster is D1's, so the object cannot count it. Answers the
+   * add, and the members are D1's, so the object cannot count it. Answers the
    * units queued.
    */
-  recordRoster(
-    input: typeof Domain.RecordRosterInput.Encoded,
+  recordMemberCount(
+    input: typeof Domain.RecordMemberCountInput.Encoded,
   ): Promise<number> {
     const shop = this.name;
     return this.runEffect(
-      callableEffect("ShopAgent.recordRoster", Domain.RecordRosterInput, {
-        role: "rpc",
-      })((roster) =>
+      callableEffect(
+        "ShopAgent.recordMemberCount",
+        Domain.RecordMemberCountInput,
+        {
+          role: "rpc",
+        },
+      )((count) =>
         Effect.gen(function* () {
-          const queued = yield* (yield* OrderRepository).recordRoster(
-            roster,
+          const queued = yield* (yield* OrderRepository).recordMemberCount(
+            count,
             yield* Clock.currentTimeMillis,
           );
           yield* flushUsageEvents(shop);
@@ -1962,7 +1966,7 @@ export class ShopAgent extends Agent {
       }).workflows.some((row) => importRowIsFresh(row, now));
     return Effect.gen(function* () {
       const repository = yield* OrderRepository;
-      /* One roster read for both consumers: the repository derives
+      /* One read of the teams for both consumers: the repository derives
          `unassigned`, `emptyTeam` and `waitingOn` from it, and
          `OrdersIndexData` carries it so the route can name the ids it gets
          back. */
@@ -2048,11 +2052,11 @@ export class ShopAgent extends Agent {
    *
    * Joins team names from D1 inside the object rather than in a server fn: the
    * runtime already holds `Repository`, and one round trip returns the tasks,
-   * their resolved team names and member counts, and the roster the picker
+   * their resolved team names and member counts, and the teams the picker
    * needs. Unassigned and empty team are derived here and never stored: a task
    * whose `teamId` is null or names no team resolves to `teamName: null`
    * (unassigned — warned, never blocked in the editor, since the risk is
-   * when a run starts); a task on a team with no members carries
+   * when a run is created); a task on a team with no members carries
    * `memberCount: 0`. Assigning a team or adding a member clears either with
    * no other write.
    *
@@ -2071,8 +2075,8 @@ export class ShopAgent extends Agent {
           const repository = yield* WorkflowRepository;
           const detail = yield* repository.getWorkflow({ workflowId });
           if (Option.isNone(detail)) return null;
-          const roster = yield* teams();
-          const teamOf = new Map(roster.map((team) => [team.id, team]));
+          const shopTeams = yield* teams();
+          const teamOf = new Map(shopTeams.map((team) => [team.id, team]));
           const withTeamNames = (
             tasks: readonly Domain.WorkflowTask[],
           ): Domain.TaskWithTeamName[] =>
@@ -2095,7 +2099,7 @@ export class ShopAgent extends Agent {
                     draft: detail.value.draft.draft,
                     tasks: withTeamNames(detail.value.draft.tasks),
                   },
-            teams: roster,
+            teams: shopTeams,
           } satisfies Domain.WorkflowPageData;
         }),
       )(input),
@@ -2186,7 +2190,7 @@ export class ShopAgent extends Agent {
     const shop = this.name;
     const publish = () => this.publish("all");
     const reconcileAll = (workflow: Domain.Workflow) =>
-      this.reconcileAllIfActive("updateWorkflowTag", workflow);
+      this.reconcileAllIfOn("updateWorkflowTag", workflow);
     return this.runEffect(
       callableEffect(
         "ShopAgent.updateWorkflowTag",
@@ -2238,7 +2242,7 @@ export class ShopAgent extends Agent {
 
   /**
    * Apply changes. On an on workflow, reconciles every stored order once
-   * afterwards: new tasks can make an item startable that was not, and those
+   * afterwards: new tasks can make a workflow eligible for an item it was not, and those
    * orders should start now rather than at whatever moment Shopify next edits
    * them. Publishes because the next order starts against the new tasks,
    * which the order page's workflow pickers reflect.
@@ -2251,7 +2255,7 @@ export class ShopAgent extends Agent {
     const publish = () => this.publish("all");
     const teams = () => this.teams();
     const reconcileAll = (workflow: Domain.Workflow) =>
-      this.reconcileAllIfActive("applyDraft", workflow);
+      this.reconcileAllIfOn("applyDraft", workflow);
     return this.runEffect(
       callableEffect("ShopAgent.applyDraft", Domain.ApplyDraftInput, {
         role: "merchant",
@@ -2302,47 +2306,45 @@ export class ShopAgent extends Agent {
   /**
    * The on/off switch. On writes `activatedAt` (now, or the earlier date the
    * dialog chose); off nulls it. Either way every stored order is reconciled
-   * once, so anything that now qualifies starts here rather than at whatever
+   * once, so a run for anything that now qualifies is created here rather than at whatever
    * moment Shopify next edits it — and off qualifies things too, because
    * removing one of two matching workflows resolves an ambiguity and starts
    * the survivor (see {@link reconcileAllNow}). Publishes for the reason on
    * {@link applyDraft}.
    */
   @callable()
-  setWorkflowActive(
-    input: typeof Domain.SetWorkflowActiveInput.Encoded,
-  ): Promise<Domain.ActivateResult> {
+  setWorkflowOn(
+    input: typeof Domain.SetWorkflowOnInput.Encoded,
+  ): Promise<Domain.SwitchResult> {
     const shop = this.name;
     const publish = () => this.publish("all");
     const teams = () => this.teams();
     const reconcileAll = (workflow: Domain.Workflow) =>
-      this.reconcileAllNow("setWorkflowActive", workflow.id);
+      this.reconcileAllNow("setWorkflowOn", workflow.id);
     return this.runEffect(
-      callableEffect(
-        "ShopAgent.setWorkflowActive",
-        Domain.SetWorkflowActiveInput,
-        { role: "merchant", parse: { onExcessProperty: "error" } },
-      )(({ workflowId, active, activatedAt }) =>
-        activateResult(
+      callableEffect("ShopAgent.setWorkflowOn", Domain.SetWorkflowOnInput, {
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
+      })(({ workflowId, on, activatedAt }) =>
+        switchResult(
           Effect.gen(function* () {
-            const workflow =
-              yield* (yield* WorkflowRepository).setWorkflowActive({
-                workflowId,
-                active,
-                ...(activatedAt === undefined ? {} : { activatedAt }),
-                teams: yield* teams(),
-              });
+            const workflow = yield* (yield* WorkflowRepository).setWorkflowOn({
+              workflowId,
+              on,
+              ...(activatedAt === undefined ? {} : { activatedAt }),
+              teams: yield* teams(),
+            });
             yield* Effect.logInfo(
-              `ShopAgent.setWorkflowActive: shop=${shop} workflowId=${workflowId} active=${String(active)} activatedAt=${String(workflow.activatedAt)}`,
+              `ShopAgent.setWorkflowOn: shop=${shop} workflowId=${workflowId} on=${String(on)} activatedAt=${String(workflow.activatedAt)}`,
             ).pipe(
               Effect.annotateLogs({
                 shop,
                 workflowId,
-                active,
+                on,
                 activatedAt: workflow.activatedAt,
               }),
             );
-            return { workflow, started: yield* reconcileAll(workflow) };
+            return { workflow, created: yield* reconcileAll(workflow) };
           }),
         ).pipe(Effect.tap(publish)),
       )(input),
@@ -2352,38 +2354,33 @@ export class ShopAgent extends Agent {
   /**
    * The editor's Turn on for a workflow that has never been applied: applies
    * the draft and turns the switch on in one transaction, then reconciles
-   * every stored order once, exactly as {@link setWorkflowActive} does — the
+   * every stored order once, exactly as {@link setWorkflowOn} does — the
    * merchant made one decision, so a failure must leave the workflow
    * untouched rather than applied and off.
    */
   @callable()
-  applyAndActivate(
-    input: typeof Domain.ApplyAndActivateInput.Encoded,
-  ): Promise<Domain.ActivateResult> {
+  applyAndTurnOn(
+    input: typeof Domain.ApplyAndTurnOnInput.Encoded,
+  ): Promise<Domain.SwitchResult> {
     const shop = this.name;
     const publish = () => this.publish("all");
     const teams = () => this.teams();
     const reconcileAll = (workflow: Domain.Workflow) =>
-      this.reconcileAllNow("applyAndActivate", workflow.id);
+      this.reconcileAllNow("applyAndTurnOn", workflow.id);
     return this.runEffect(
-      callableEffect(
-        "ShopAgent.applyAndActivate",
-        Domain.ApplyAndActivateInput,
-        {
-          role: "merchant",
-          parse: { onExcessProperty: "error" },
-        },
-      )(({ workflowId, activatedAt }) =>
-        activateResult(
+      callableEffect("ShopAgent.applyAndTurnOn", Domain.ApplyAndTurnOnInput, {
+        role: "merchant",
+        parse: { onExcessProperty: "error" },
+      })(({ workflowId, activatedAt }) =>
+        switchResult(
           Effect.gen(function* () {
-            const workflow =
-              yield* (yield* WorkflowRepository).applyAndActivate({
-                workflowId,
-                ...(activatedAt === undefined ? {} : { activatedAt }),
-                teams: yield* teams(),
-              });
+            const workflow = yield* (yield* WorkflowRepository).applyAndTurnOn({
+              workflowId,
+              ...(activatedAt === undefined ? {} : { activatedAt }),
+              teams: yield* teams(),
+            });
             yield* Effect.logInfo(
-              `ShopAgent.applyAndActivate: shop=${shop} workflowId=${workflowId} activatedAt=${String(workflow.activatedAt)}`,
+              `ShopAgent.applyAndTurnOn: shop=${shop} workflowId=${workflowId} activatedAt=${String(workflow.activatedAt)}`,
             ).pipe(
               Effect.annotateLogs({
                 shop,
@@ -2391,7 +2388,7 @@ export class ShopAgent extends Agent {
                 activatedAt: workflow.activatedAt,
               }),
             );
-            return { workflow, started: yield* reconcileAll(workflow) };
+            return { workflow, created: yield* reconcileAll(workflow) };
           }),
         ).pipe(Effect.tap(publish)),
       )(input),
@@ -2406,7 +2403,7 @@ export class ShopAgent extends Agent {
     const shop = this.name;
     const publish = () => this.publish("all");
     const reconcileAll = (workflow: Domain.Workflow) =>
-      this.reconcileAllIfActive("setWorkflowActivatedAt", workflow);
+      this.reconcileAllIfOn("setWorkflowActivatedAt", workflow);
     return this.runEffect(
       callableEffect(
         "ShopAgent.setWorkflowActivatedAt",
@@ -2423,7 +2420,7 @@ export class ShopAgent extends Agent {
             yield* Effect.logInfo(
               `ShopAgent.setWorkflowActivatedAt: shop=${shop} workflowId=${workflowId} activatedAt=${String(activatedAt)}`,
             ).pipe(Effect.annotateLogs({ shop, workflowId, activatedAt }));
-            return { workflow, started: yield* reconcileAll(workflow) };
+            return { workflow, created: yield* reconcileAll(workflow) };
           }),
         ).pipe(Effect.tap(publish)),
       )(input),
@@ -2432,14 +2429,14 @@ export class ShopAgent extends Agent {
 
   /**
    * The Turn on dialog's count: read-only, no publish. The workflow is
-   * usually off here, so it is read by id rather than from the active set.
+   * usually off here, so it is read by id rather than from the workflows that are on.
    * `NotFound` is a count of zero: the dialog has nothing to add.
    */
   @callable()
   countWaitingOrders(
     input: typeof Domain.CountWaitingOrdersInput.Encoded,
   ): Promise<Domain.WaitingOrders> {
-    const startContext = () => this.startContext();
+    const eligibleContext = () => this.eligibleContext();
     return this.runEffect(
       callableEffect(
         "ShopAgent.countWaitingOrders",
@@ -2453,7 +2450,7 @@ export class ShopAgent extends Agent {
           if (Option.isNone(found))
             return { count: 0, earliestProcessedAt: null };
           return yield* (yield* RunRepository).countWaitingOrders({
-            ...(yield* startContext()),
+            ...(yield* eligibleContext()),
             workflow: {
               workflow: found.value.workflow,
               tasks: found.value.tasks,
@@ -2475,8 +2472,8 @@ export class ShopAgent extends Agent {
    * workflows — must repaint.
    *
    * Reconciles afterwards for the same reason Turn off does: the deleted
-   * workflow leaves the active set, so an item it made ambiguous now has one
-   * match and the survivor's run starts.
+   * workflow turns off, so an item it made ambiguous now has one
+   * match and the survivor's run is created.
    */
   @callable()
   removeWorkflow(
@@ -2510,7 +2507,7 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * The live D1 roster with member counts, read fresh on every call: it is
+   * The shop's teams, read live from D1 with member counts, read fresh on every call: it is
    * what every task pointer is resolved against (an id not in it is
    * unassigned) and what the empty-team warnings are computed from.
    */
@@ -2520,17 +2517,19 @@ export class ShopAgent extends Agent {
       const teams = yield* (yield* Repository).listTeams({
         shop: yield* Schema.decodeUnknownEffect(Domain.Shop)(name),
       });
-      return teams.map(({ id, name, memberCount }): Domain.TeamRoster => ({
-        id,
-        name,
-        memberCount,
-      }));
+      return teams.map(
+        ({ id, name, memberCount }): Domain.TeamWithMemberCount => ({
+          id,
+          name,
+          memberCount,
+        }),
+      );
     });
   }
 
   /**
-   * Loads what starting runs needs — every active definition with its tasks, and
-   * the active team roster from D1 — *before* any transaction opens, and
+   * Loads what creating runs needs — every workflow that is on, with its tasks, and
+   * the shop's teams from D1 — *before* any transaction opens, and
    * returns a per-order effect the caller hands to `upsertOrder.afterWrite`.
    * The D1 read is the one await run creation needs that is not storage, and it
    * cannot happen inside the Durable Object transaction; loading once per
@@ -2538,19 +2537,18 @@ export class ShopAgent extends Agent {
    * at the accepted price of a snapshot that a mid-stream team delete would
    * not refresh.
    */
-  private startContext() {
+  private eligibleContext() {
     const teams = () => this.teams();
     return Effect.gen(function* () {
       return {
-        workflows:
-          yield* (yield* WorkflowRepository).listActiveWorkflowDetails(),
+        workflows: yield* (yield* WorkflowRepository).listOnWorkflowDetails(),
         teams: yield* teams(),
-      } satisfies StartContext;
+      } satisfies EligibleContext;
     });
   }
 
   /**
-   * Reconcile every stored open order once against the *current* active set,
+   * Reconcile every stored open order once against the workflows that are on *now*,
    * so anything that now qualifies starts at this moment rather than at
    * whatever moment Shopify next edits it. Reconcile is an idempotent state
    * check, so running it over every order is safe; orders placed before
@@ -2559,24 +2557,24 @@ export class ShopAgent extends Agent {
    * refuses to nest, but the Durable Object serialises callables so nothing
    * interleaves. Returns how many runs it created.
    *
-   * Unconditional, because the active set shrinking starts runs too: one item
-   * matched by two active workflows is ambiguous and carries no run, so
+   * Unconditional, because a workflow turning off creates runs too: one item
+   * matched by two workflows that are on is ambiguous and carries no run, so
    * turning one of them off — or deleting it — leaves a single match and the
-   * survivor's run begins. That is why {@link setWorkflowActive} and
+   * survivor's run begins. That is why {@link setWorkflowOn} and
    * {@link removeWorkflow} call this directly rather than through
-   * {@link reconcileAllIfActive}, and why `ActivateResult.Ok.started` is
+   * {@link reconcileAllIfOn}, and why `SwitchResult.Ok.created` is
    * meaningful on Turn off.
    *
    * Sends the usage queue after the pass ({@link flushUsageEvents}), whether
-   * or not it finished: every order a run started on was counted, and its
+   * or not it finished: every order a run was created on was counted, and its
    * event is owed now.
    */
   private reconcileAllNow(caller: string, workflowId: string) {
     const shop = this.name;
-    const startContext = () => this.startContext();
+    const eligibleContext = () => this.eligibleContext();
     return Effect.gen(function* () {
       const { orders, created, ambiguous } = yield* (yield* RunRepository)
-        .reconcileAll(yield* startContext())
+        .reconcileAll(yield* eligibleContext())
         .pipe(Effect.ensuring(flushUsageEvents(shop)));
       yield* Effect.logInfo(
         `ShopAgent.reconcileAll: shop=${shop} caller=${caller} workflowId=${workflowId} orders=${String(orders)} created=${String(created)} ambiguous=${String(ambiguous)}`,
@@ -2598,22 +2596,22 @@ export class ShopAgent extends Agent {
    * {@link reconcileAllNow}, skipped when the workflow is off: for the
    * definition writes (Apply, Edit tag, the coverage date) that change *how* a workflow
    * matches. An off workflow matches nothing either way, so nothing about the
-   * active set moved and the pass would be a full scan for no writes. Turn
+   * workflows that are on changed and the pass would be a full scan for no writes. Turn
    * off and delete do move it, and use {@link reconcileAllNow}.
    */
-  private reconcileAllIfActive(caller: string, workflow: Domain.Workflow) {
+  private reconcileAllIfOn(caller: string, workflow: Domain.Workflow) {
     const run = () => this.reconcileAllNow(caller, workflow.id);
     return Effect.gen(function* () {
-      if (!Domain.isActive(workflow)) return 0;
+      if (!Domain.workflowIsOn(workflow)) return 0;
       return yield* run();
     });
   }
 
   private reconciler(source: Domain.OrderSyncSource) {
     const shop = this.name;
-    const startContext = () => this.startContext();
+    const eligibleContext = () => this.eligibleContext();
     return Effect.gen(function* () {
-      const context = yield* startContext();
+      const context = yield* eligibleContext();
       const runs = yield* RunRepository;
       return (order: Domain.ShopOrder) =>
         runs.reconcileOrder({ ...context, orderId: order.id }).pipe(
@@ -2655,13 +2653,13 @@ export class ShopAgent extends Agent {
       if (Option.isNone(detail)) return null;
       const { order, lineItems } = detail.value;
       const repository = yield* WorkflowRepository;
-      const workflows = yield* repository.listActiveWorkflowDetails();
-      const roster = yield* teams();
+      const workflows = yield* repository.listOnWorkflowDetails();
+      const shopTeams = yield* teams();
       return {
         order,
         lineItems,
         runs: yield* runs.listRunsForOrder({ orderId: order.id }),
-        teams: roster,
+        teams: shopTeams,
         itemWorkflows: workflows
           .filter(({ tasks }) => tasks.length > 0)
           .map(({ workflow }) => workflow),
@@ -2743,7 +2741,7 @@ export class ShopAgent extends Agent {
 
   /**
    * Manual attach, read as **set this item's workflow**. It applies only the
-   * definition half of the start predicate (`canStart`): an admin choosing a
+   * definition half of the start predicate (`workflowIsEligible`): an admin choosing a
    * workflow for an item by hand is exactly the override for a missing
    * tag, a fulfilled line, or an order placed before the workflow was turned
    * on. What it is not is an override of the order itself being over, which
@@ -2787,15 +2785,15 @@ export class ShopAgent extends Agent {
             return { _tag: "LineItemNotFound" } satisfies Domain.AttachResult;
           const workflows = yield* WorkflowRepository;
           const found = yield* workflows.getWorkflow({ workflowId });
-          const roster = yield* teams();
-          // Only the workflow's own tasks can start a run; a draft is never
+          const shopTeams = yield* teams();
+          // Only the workflow's own tasks can create a run; a draft is never
           // attachable.
           const detail: Domain.WorkflowDetail | null = Option.isSome(found)
             ? { workflow: found.value.workflow, tasks: found.value.tasks }
             : null;
-          if (detail === null || !canStart(detail, roster))
+          if (detail === null || !workflowIsEligible(detail, shopTeams))
             return {
-              _tag: "WorkflowCannotStart",
+              _tag: "WorkflowNotEligible",
             } satisfies Domain.AttachResult;
           if (!Domain.orderIsOpen(target.value.order))
             return { _tag: "OrderClosed" } satisfies Domain.AttachResult;
@@ -2828,7 +2826,7 @@ export class ShopAgent extends Agent {
             } satisfies Domain.AttachResult;
           const set = yield* repository.setRun({
             workflow: detail,
-            teams: roster,
+            teams: shopTeams,
             order: target.value.order,
             lineItem: target.value.lineItem,
           });
@@ -3164,9 +3162,9 @@ export class ShopAgent extends Agent {
    * counts without reading rows) because the view row shows it whatever is
    * pressed; its rows are read only when `query.view` is "done".
    *
-   * `query.team` narrows Done or closed the same way it narrows the tiers, and a team
+   * `query.team` narrows Done or closed the same way it narrows the other views, and a team
    * the member is not on narrows it to nothing — the same answer the
-   * repository gives for the tiers, reached here because `listRecent` takes
+   * repository gives for the other views, reached here because `listRecent` takes
    * the team list already narrowed.
    */
   private readRuns(
@@ -3578,7 +3576,7 @@ export class ShopAgent extends Agent {
   /**
    * The team check lives here, not in the repository: `Team` is a D1 row the
    * Durable Object's SQLite cannot reference, so "team exists" is an
-   * application invariant. Checked against the live roster on every write.
+   * application invariant. Checked against the shop's live teams on every write.
    * `deleteTeam` reads D1 first and nulls pointers second precisely so a
    * write that passes this check can still be caught by the nulling — see
    * that method.
@@ -3831,7 +3829,7 @@ export class ShopAgent extends Agent {
           yield* (yield* WorkflowRepository).unassignTeam({ teamId });
           // The team was on every one of these members' connections; the
           // Worker cannot do this itself because `Repository.deleteTeam` runs
-          // here, and only here is the roster still readable.
+          // here, and only here are the team's members still readable.
           yield* closeMemberConnections(deleted.memberIds);
           yield* Effect.logInfo(
             `ShopAgent.deleteTeam: shop=${shop} teamId=${teamId} status=${deleted.result._tag}`,
@@ -3848,7 +3846,7 @@ export class ShopAgent extends Agent {
   /**
    * Points any open run task at a team, started or not: the remedy for an
    * unassigned task (see `deleteTeam`) and the merchant's way to move work
-   * between teams. The team is checked against the live D1 roster here, as
+   * between teams. The team is checked against the shop's teams, read live from D1 here, as
    * `addStep` does, and its name is snapshotted onto the task from that same
    * read. Only `teamId` / `teamName` change, so a started task keeps
    * `startedBy*`; a done task is refused (`TaskDone`).
@@ -3933,7 +3931,7 @@ export class ShopAgent extends Agent {
    * every run and every definition, so the orders that survive it are carrying
    * the previous fixture's `matchedWorkflowIds`. {@link seedOrders} is what
    * puts them right, at its end, once the fixture's own orders have been
-   * replaced — reconciling here would start runs on rows that call is about to
+   * replaced — reconciling here would create runs on rows that call is about to
    * delete, runs and all, so the work would be thrown away a moment later.
    * `api.dev.seed.ts` always calls both, in that order.
    *
@@ -4008,7 +4006,7 @@ export class ShopAgent extends Agent {
           const workflowRepository = yield* WorkflowRepository;
           const runs = yield* RunRepository;
           const reconcile = yield* reconciler();
-          const roster = yield* teams();
+          const shopTeams = yield* teams();
           const now = yield* Clock.currentTimeMillis;
           const listOpenRuns = (orderId: string) =>
             runs
@@ -4151,7 +4149,7 @@ export class ShopAgent extends Agent {
                 : null;
               yield* Option.isNone(target) ||
               detail === null ||
-              !canStart(detail, roster)
+              !workflowIsEligible(detail, shopTeams)
                 ? Effect.fail(
                     new WorkflowRepositoryError({
                       message: `ShopAgent.seedOrders: lineItemId=${lineItemId} workflowId=${workflowId}: no such line item, or a workflow that cannot start`,
@@ -4160,7 +4158,7 @@ export class ShopAgent extends Agent {
                   )
                 : runs.setRun({
                     workflow: detail,
-                    teams: roster,
+                    teams: shopTeams,
                     order: target.value.order,
                     lineItem: target.value.lineItem,
                   });

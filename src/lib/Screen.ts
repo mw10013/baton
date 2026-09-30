@@ -1,6 +1,6 @@
 /**
- * The screen tier's spec: what each kind of text slot is for and which
- * control does which job. The glossary in `Domain.ts` owns the words; this
+ * The screens' spec: what each kind of text slot is for and which
+ * control does which job. The vocabulary in `Domain.ts` owns the words; this
  * file owns the sentences and the controls around them. Two tables and a
  * tone list, in the shape of the action matrices on `Domain.runActions` and
  * the data-model rows on `D1_TABLES`: a copy change starts at the row, and a
@@ -9,7 +9,7 @@
  * says so and why in its own JSDoc (the Cancel workflow modal's dismiss on
  * the order page).
  *
- * "screen" is the tier a person reads: string literals, JSX text, headings
+ * A "screen" is what a person reads: string literals, JSX text, headings
  * and labels. A "page" is one route on it, a "modal" is a dialog over one,
  * and "copy" is its words.
  *
@@ -29,7 +29,7 @@ import { Schema } from "effect";
  *
  * Tone, every slot:
  *
- * - Plain words at the level of the shop's staff, and the glossary's nouns
+ * - Plain words at the level of the shop's staff, and the vocabulary's nouns
  *   and verbs. No code word reaches a screen: "work", "run", "stored",
  *   "sync window", "unassigned" are the implementer's.
  * - Contractions, as Shopify's grammar guide asks
@@ -65,8 +65,8 @@ import { Schema } from "effect";
  * | error       | says what was refused and what to do                                                            | what to do ("Enter a name"), or what happened then the fix; a failed write starts "Couldn't"                 | (never)                                                                | Enter a name                                | "invalid"; "required"; a code; "something went wrong" alone    |
  * | confirm     | the body of a modal that asks: the consequence of the verb                                      | one or two sentences saying what happens and what survives                                                   | the verb is reversible on the same screen (then there is no modal)    | Your unsaved changes will be lost.          | "Are you sure"; restating the heading                          |
  * | link        | takes the person to a named place                                                               | the target screen's heading, or "<Verb> in Shopify"                                                          | the act is on this screen                                              | Fulfill in Shopify                           | "here"; "click"; a sentence                                    |
- * | button      | names the act                                                                                   | the glossary's verb label, or verb + noun ("Add step")                                                       | (never)                                                                | Add step                                    | an article ("Add a step"); a sentence                          |
- * | badge       | one state word                                                                                  | the glossary's screen word for the state                                                                     | (never)                                                                | No members                                  | a sentence                                                     |
+ * | button      | names the act                                                                                   | the vocabulary's verb label, or verb + noun ("Add step")                                                       | (never)                                                                | Add step                                    | an article ("Add a step"); a sentence                          |
+ * | badge       | one state word                                                                                  | the vocabulary's screen word for the state                                                                     | (never)                                                                | No members                                  | a sentence                                                     |
  * | body        | a fact the screen has to say that no other slot carries                                         | one or two sentences                                                                                         | it restates a heading, badge, button or label                          | Each order synced from Shopify counts once. | idioms; "we"; a code word                                      |
  *
  */

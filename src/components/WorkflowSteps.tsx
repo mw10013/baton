@@ -25,7 +25,7 @@ import { emptyTeamLine, unassignedLine } from "@/lib/workflowShared";
 export function TeamLine({ task }: { readonly task: Domain.TaskWithTeamName }) {
   return (
     <s-text color="subdued">
-      {Domain.isUnassigned(task) ? "No team" : task.teamName}
+      {Domain.workflowTaskIsUnassigned(task) ? "No team" : task.teamName}
     </s-text>
   );
 }
@@ -95,7 +95,7 @@ export function StepFlow({
   footer,
 }: {
   readonly tasks: readonly Domain.TaskWithTeamName[];
-  /** The card above the first step: what starts a run. Omitted by the
+  /** The card above the first step: what creates a run. Omitted by the
       editor, which edits tasks and shows no read-only trigger. */
   readonly trigger?: React.ReactNode;
   readonly selectedTaskId?: string | null;
@@ -152,7 +152,7 @@ export function TeamIssueBanners({
   readonly tasks: readonly Domain.TaskWithTeamName[];
 }) {
   const banners = [
-    { issue: "team" as const, line: unassignedLine(tasks) },
+    { issue: "unassigned" as const, line: unassignedLine(tasks) },
     { issue: "empty_team" as const, line: emptyTeamLine(tasks) },
   ];
   return (

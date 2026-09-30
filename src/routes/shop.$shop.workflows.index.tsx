@@ -21,7 +21,7 @@ import { VIEW_EMPTY, VIEW_LABEL, VIEWS } from "@/lib/workflowsListViews";
 const LoaderInput = Schema.Struct({
   shop: Schema.String,
   view: Domain.WorkflowsListView,
-  /** Text, not a {@link Domain.TeamId}: the roster resolves it (`MemberSearch` in `shop.$shop.tsx`). */
+  /** Text, not a {@link Domain.TeamId}: the member's teams resolve it (`MemberSearch` in `shop.$shop.tsx`). */
   team: Schema.String.check(Schema.isMaxLength(Domain.TEAM_SEARCH_MAX)),
   limit: Domain.RunLimit,
 });
@@ -44,7 +44,7 @@ const LoaderInput = Schema.Struct({
  * query it read comes back beside the view, which is what lets these rows
  * serve as the socket query's `initialData` ({@link Domain.sameRunQuery}).
  *
- * `team` is resolved against the live roster here, not trusted: a member taken
+ * `team` is resolved against the shop's live teams here, not trusted: a member taken
  * off a team keeps the id in their URL, and this is where it becomes "All
  * teams" rather than a read that returns nothing.
  */
@@ -130,7 +130,7 @@ const insideRow = (event: {
  * Who did a Done or closed task entry, spelled as the waiting rows spell an actor:
  * `you` for the reader, the email for anybody else, `Merchant` for the
  * merchant. Your own address repeated down a page is the noisiest text on the
- * tier and the least informative line on it. Empty rather than "nobody" for a
+ * view and the least informative line on it. Empty rather than "nobody" for a
  * row written before the role column.
  */
 const doneActorLabel = (task: Domain.RunTask, memberEmail: Domain.Email) => {
@@ -164,7 +164,7 @@ function RouteComponent() {
    * different read of the object.
    *
    * A `team` the member is no longer on is read as All teams, the same
-   * resolution the loader makes: the roster is what says which ids mean
+   * resolution the loader makes: the teams are what say which ids mean
    * something, the button above already falls back to that label, and the
    * alternative is a list that is empty for a reason nothing on screen states.
    */
@@ -312,7 +312,7 @@ function RouteComponent() {
     const line = Domain.runRowLine(item, showTeam);
     /**
      * A row you started says where it is in the run, not "Started · you".
-     * Starting a task is what puts the row in Started by you ({@link Domain.tierOf}),
+     * Starting a task is what puts the row in Started by you ({@link Domain.viewOf}),
      * and Put back is the inverse that takes it out again, so those words are true of every row under that pressed view and so
      * distinguish none of them. A row a teammate started says who instead,
      * which is the whole of what the Started by others view is for. The test is the
@@ -436,8 +436,8 @@ function RouteComponent() {
       /* The separator above every row but the list's first, and nothing else.
          A blocked row used to draw a rule down its leading edge as well; it
          went the way of the subdued surface that marked a row in hand, and
-         for the same reason. A block puts the row in the Blocked tier
-         ({@link Domain.tierOf}) and nowhere else, so the mark fired on every
+         for the same reason. A block puts the row in the Blocked view
+         ({@link Domain.viewOf}) and nowhere else, so the mark fired on every
          row of the only view it could appear on and separated nothing. It also
          ran past the list container's rounded corner, which a radius does not
          clip without `overflow: hidden`. */

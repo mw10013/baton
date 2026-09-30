@@ -6,7 +6,7 @@ import type { OrderState, RunStatus } from "../../src/lib/Domain.ts";
  * table the test asserts. Pure: it takes the source text as a parameter,
  * because the test runs inside workerd (no `node:fs`) and gets the text
  * through Vite's `?raw` import, while `scripts/spec.ts` reads the
- * file from disk. The same module checks the glossary and reads the two
+ * file from disk. The same module checks the vocabulary and reads the two
  * data-model tables, on `initializeSchema` (`src/lib/ShopAgentSchema.ts`)
  * and on `D1_TABLES` (`src/lib/D1Schema.ts`).
  */
@@ -90,10 +90,10 @@ const ORDERS: Record<typeof OrderWord.Type, readonly OrderState[]> = {
   ],
 };
 const RUNS: Record<typeof RunWord.Type, readonly RunStatus[]> = {
-  open: ["active"],
+  open: ["open"],
   done: ["done"],
   closed: ["closed"],
-  "open or done": ["active", "done"],
+  "open or done": ["open", "done"],
 };
 const BLOCKED: Record<typeof BlockedWord.Type, readonly (number | null)[]> = {
   yes: [1],
@@ -141,10 +141,10 @@ export interface Fixture<TeamId, Blocker> {
  * | ---------- | ------------ | ------------------------------------------------------------------------------------ |
  * | order      | open         | `{ cancelledAt: null, fulfillmentStatus: "UNFULFILLED" }`                            |
  * | order      | closed       | cancelled `{ cancelledAt: 1, ... "UNFULFILLED" }`; fulfilled `{ null, "FULFILLED" }` |
- * | run        | open         | status `active`                                                                      |
+ * | run        | open         | status `open`                                                                        |
  * | run        | done         | status `done`                                                                        |
  * | run        | closed       | status `closed`                                                                      |
- * | run        | open or done | `active`; `done`                                                                     |
+ * | run        | open or done | `open`; `done`                                                                       |
  * | blocked    | yes / no     | `blockedAt` 1 / null                                                                 |
  * | blocked    | any          | both on an open run; null on a done run                                              |
  * | units      | some / none  | `currentQuantity` 1 / 0 (runActions only)                                            |
@@ -154,11 +154,11 @@ export interface Fixture<TeamId, Blocker> {
  * | task       | done         | `current: false, startedAt: 1, doneAt: 2`                                            |
  * | task       | any open     | ready; started; waiting                                                              |
  * | task       | any          | ready; started; waiting; done                                                        |
- * | downstream | none         | `reopenBlockedBy: null`                                                                |
- * | downstream | started      | `reopenBlockedBy: BLOCKER` (the caller's `blocker`)                                    |
+ * | downstream | none         | `reopenBlockedBy: null`                                                              |
+ * | downstream | started      | `reopenBlockedBy: BLOCKER` (the caller's `blocker`)                                  |
  * | downstream | -            | not applicable; fixture `null`                                                       |
  *
- * The `ready` and `started` words are the glossary's narrow task states. The
+ * The `ready` and `started` words are the vocabulary's narrow task states. The
  * `current` flag they set is the broad one (`Domain.currentTasks`: the
  * task's step is current, started or not), so both set it.
  *
@@ -177,7 +177,7 @@ export const expand = <TeamId, Blocker>(
   const states = ORDERS[word("order")].flatMap((order) =>
     RUNS[word("run")].flatMap((status) =>
       BLOCKED[word("blocked")]
-        .filter((blockedAt) => blockedAt === null || status === "active")
+        .filter((blockedAt) => blockedAt === null || status === "open")
         .map((blockedAt) => ({
           order,
           run: { status, blockedAt },
@@ -193,7 +193,7 @@ export const expand = <TeamId, Blocker>(
           teamId: context.teamId,
           // `Domain.runIsOpen`, spelled out: this module imports `Domain`
           // for types only, so the CLI runs without the app's runtime.
-          current: run.status === "active",
+          current: run.status === "open",
           startedAt: null,
           doneAt: null,
           reopenBlockedBy: null,
@@ -391,14 +391,14 @@ export const overlaps = (
 };
 
 /**
- * Every backticked identifier in the Glossary block occurs as a word
- * elsewhere in the source. A rename that skipped the glossary is the
+ * Every backticked identifier in the Vocabulary block occurs as a word
+ * elsewhere in the source. A rename that skipped the vocabulary is the
  * failure this catches; it does not prove the word is the right kind of
  * thing (a literal, an export). Reports the missing words.
  */
-export const checkGlossary = (source: string): readonly string[] => {
-  const start = source.indexOf("/**\n * Glossary.");
-  if (start === -1) return ["(no Glossary block)"];
+export const checkVocabulary = (source: string): readonly string[] => {
+  const start = source.indexOf("/**\n * Vocabulary.");
+  if (start === -1) return ["(no Vocabulary block)"];
   const end = source.indexOf("*/", start) + 2;
   const rest = source.slice(0, start) + source.slice(end);
   const words = new Set(
@@ -412,7 +412,7 @@ export const checkGlossary = (source: string): readonly string[] => {
 };
 
 /**
- * The label constants the glossary's screen columns are checked against,
+ * The label constants the vocabulary's screen columns are checked against,
  * passed in rather than imported so this module stays free of the app's
  * runtime: `scripts/spec.ts` and the test hand it `Domain`'s values.
  */
@@ -420,7 +420,7 @@ export interface ScreenLabels {
   readonly taskStates: Readonly<Record<string, string | null>>;
   readonly runStates: Readonly<Record<string, string>>;
   readonly workflowStates: Readonly<Record<string, string>>;
-  readonly productionStates: Readonly<Record<string, string>>;
+  readonly orderPositions: Readonly<Record<string, string>>;
   readonly orderIssues: Readonly<Record<string, string>>;
   readonly verbs: Readonly<
     Record<
@@ -430,20 +430,22 @@ export interface ScreenLabels {
   >;
 }
 
-/** A glossary table: the first line of the paragraph that introduces it, and its body rows as cells by header. */
-interface GlossaryTable {
+/** A vocabulary table: the first line of the paragraph that introduces it, and its body rows as cells by header. */
+export interface VocabularyTable {
   readonly intro: string;
   readonly rows: readonly Readonly<Record<string, string>>[];
 }
 
-const glossaryTables = (source: string): readonly GlossaryTable[] => {
-  const start = source.indexOf("/**\n * Glossary.");
+export const vocabularyTables = (
+  source: string,
+): readonly VocabularyTable[] => {
+  const start = source.indexOf("/**\n * Vocabulary.");
   if (start === -1) return [];
   const lines = source
     .slice(start, source.indexOf("*/", start))
     .split("\n")
     .map((text) => text.replace(/^\s*\/?\*+ ?/u, "").trim());
-  const tables: GlossaryTable[] = [];
+  const tables: VocabularyTable[] = [];
   // The first line of the paragraph before a table names it ("Task
   // states. `current` is the flag: ..."), so a paragraph's later lines do
   // not replace it.
@@ -478,7 +480,7 @@ const camel = (word: string) =>
   );
 
 /**
- * The constant key a glossary word names: `camel(word)` if the constants
+ * The constant key a vocabulary word names: `camel(word)` if the constants
  * have it, else the word snake-cased (`not started` → `not_started`). Verb
  * keys are camel case because they name action-struct fields
  * ({@link ScreenLabels} `verbs`); order-position and order-issue keys are the
@@ -488,7 +490,7 @@ const keyOf = (word: string, constants: Readonly<Record<string, unknown>>) =>
   camel(word) in constants ? camel(word) : word.replaceAll(" ", "_");
 
 /**
- * **The glossary's screen column is the label constant.** Each screen cell in
+ * **The vocabulary's screen column is the label constant.** Each screen cell in
  * the Task states, Run states, Workflow states, Order positions, Order issues
  * and Verbs tables equals the
  * constant's value for its word ("(none)" for `null`), every constant key
@@ -496,7 +498,7 @@ const keyOf = (word: string, constants: Readonly<Record<string, unknown>>) =>
  * first " (" or " ·", because the open row carries the merchant's second
  * word and the closed row its reason. Reports each mismatch.
  */
-/** A constant's value as the glossary prints it: `null` is "(none)". */
+/** A constant's value as the vocabulary prints it: `null` is "(none)". */
 const shown = (value: string | null) => value ?? "(none)";
 
 /** A word → label map as a one-column (`screen`) constant table for `compare`. */
@@ -509,7 +511,7 @@ export const checkScreenColumns = (
   source: string,
   labels: ScreenLabels,
 ): readonly string[] => {
-  const tables = glossaryTables(source);
+  const tables = vocabularyTables(source);
   const compare = (
     name: string,
     intro: string,
@@ -519,26 +521,26 @@ export const checkScreenColumns = (
     cellOf: (cell: string) => string = (cell) => cell,
   ): readonly string[] => {
     const table = tables.find((each) => each.intro.startsWith(intro));
-    if (table === undefined) return [`Glossary: no ${name} table`];
+    if (table === undefined) return [`Vocabulary: no ${name} table`];
     const words = table.rows.map((row) => keyOf(row.word ?? "", constants));
     return [
       ...table.rows.flatMap((row) => {
         const word = row.word ?? "";
         const constant = constants[keyOf(word, constants)];
         if (constant === undefined)
-          return [`Glossary: ${name} ${word}: no constant`];
+          return [`Vocabulary: ${name} ${word}: no constant`];
         return Object.entries(constant).flatMap(([column, value]) => {
           const cell = cellOf(row[column] ?? "");
           return cell === shown(value)
             ? []
             : [
-                `Glossary: ${name} ${word}: ${column} says "${cell}", constant says "${shown(value)}"`,
+                `Vocabulary: ${name} ${word}: ${column} says "${cell}", constant says "${shown(value)}"`,
               ];
         });
       }),
       ...Object.keys(constants)
         .filter((key) => !words.includes(key))
-        .map((key) => `Glossary: ${name}: no row for ${key}`),
+        .map((key) => `Vocabulary: ${name}: no row for ${key}`),
     ];
   };
   return [
@@ -557,7 +559,7 @@ export const checkScreenColumns = (
     ...compare(
       "Order positions",
       "Order positions",
-      screen(labels.productionStates),
+      screen(labels.orderPositions),
     ),
     ...compare("Order issues", "Order issues", screen(labels.orderIssues)),
     ...compare("Verbs", "Verbs", labels.verbs),
@@ -616,17 +618,17 @@ export const checkScreens = (
   source: string,
   routeFiles: Readonly<Record<string, string>>,
 ): readonly string[] => {
-  const table = glossaryTables(source).find((each) =>
+  const table = vocabularyTables(source).find((each) =>
     each.intro.startsWith("Screens."),
   );
-  if (table === undefined) return ["Glossary: no Screens table"];
+  if (table === undefined) return ["Vocabulary: no Screens table"];
   const named = table.rows.map(
     (row) => `${(row["route file"] ?? "").replaceAll("`", "")}.tsx`,
   );
   return [
     ...named
       .filter((file) => !(file in routeFiles))
-      .map((file) => `Glossary: Screens: no route file ${file}`),
+      .map((file) => `Vocabulary: Screens: no route file ${file}`),
     ...Object.entries(routeFiles)
       .filter(
         ([file, text]) =>
@@ -635,8 +637,53 @@ export const checkScreens = (
           !text.includes("<Outlet") &&
           !named.includes(file),
       )
-      .map(([file]) => `Glossary: Screens: ${file} has no row`),
+      .map(([file]) => `Vocabulary: Screens: ${file} has no row`),
   ];
+};
+
+/**
+ * **Every vocabulary table names its context.** The Contexts table (the one
+ * whose paragraph starts `Contexts.`) lists the contexts; every other table
+ * names one or more of them, either in a `context` column whose every cell is
+ * a context, or in its intro's first line up to the first `.` or `:`, as
+ * `<Name>, <context>` ("Run states, production:") or as the bare context
+ * ("Billing."). Several contexts, in a cell or an intro, are joined with
+ * " and " ("production and orders"). The Screens table is
+ * exempt: its rows name pages, and a page's spec name is spoken in every
+ * context. Reports each table that names none, and each unknown context.
+ */
+export const checkContexts = (source: string): readonly string[] => {
+  const tables = vocabularyTables(source);
+  const contextTable = tables.find((each) =>
+    each.intro.startsWith("Contexts."),
+  );
+  if (contextTable === undefined) return ["Vocabulary: no Contexts table"];
+  const contexts = new Set(contextTable.rows.map((row) => row.context ?? ""));
+  return tables
+    .filter(
+      (each) => each !== contextTable && !each.intro.startsWith("Screens."),
+    )
+    .flatMap(({ intro, rows }) => {
+      const name = intro.split(/[.,:]/u)[0] ?? intro;
+      if (rows.every((row) => "context" in row))
+        return rows
+          .filter(
+            (row) =>
+              !(row.context ?? "")
+                .split(" and ")
+                .every((each) => contexts.has(each)),
+          )
+          .map(
+            (row) =>
+              `Vocabulary: ${name} ${row.word ?? ""}: context "${row.context ?? ""}" is not in the Contexts table`,
+          );
+      const head = intro.split(/[.:]/u)[0] ?? "";
+      const parts = head.split(", ");
+      const named = (parts[1] ?? parts[0] ?? "").toLowerCase().split(" and ");
+      return named.every((each) => contexts.has(each))
+        ? []
+        : [`Vocabulary: ${name}: its intro names no context`];
+    });
 };
 
 /** One parsed row of a data-model table (`initializeSchema`, `D1_TABLES`). */
@@ -652,7 +699,7 @@ export interface DataModelRow {
 export const HoldsBy = Schema.Literals(["schema", "app", "schema+app"]);
 export type HoldsBy = typeof HoldsBy.Type;
 
-/** The glossary nouns a data-model row may be about; a table name is the other kind of `about`. */
+/** The vocabulary nouns a data-model row may be about; a table name is the other kind of `about`. */
 export const DATA_MODEL_NOUNS = [
   "order",
   "item",
@@ -714,7 +761,7 @@ export const tablesNamed = (
  * Read the data-model table out of the JSDoc on `options.symbol` in
  * `source`: `initializeSchema` in `src/lib/ShopAgentSchema.ts` for the
  * object, `D1_TABLES` in `src/lib/D1Schema.ts` for D1. The header is `about
- * | rule | holds by | pinned by`. `about` is a glossary noun ({@link
+ * | rule | holds by | pinned by`. `about` is a vocabulary noun ({@link
  * DATA_MODEL_NOUNS}) or a backticked name in `options.tables`; `rule` is
  * non-empty; `holds by` is a {@link HoldsBy}; `pinned by` is a test title or
  * {@link NONE_YET}. Fails with a message naming the symbol, the line and the
@@ -770,8 +817,8 @@ export const ORDER_COUNT_WORDS = ["—", "+1", "recounted"] as const;
 export const SEAT_MARK_WORDS = [
   "—",
   "→ 0",
-  "→ roster",
-  "→ roster if above",
+  "→ member count",
+  "→ member count if above",
 ] as const;
 
 /** One parsed row of the triggers table on `ShopUsage` in `src/lib/Domain.ts`. */

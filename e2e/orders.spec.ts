@@ -62,7 +62,7 @@ test("orders screen imports open orders and lists them", async ({ page }) => {
 
   /* The completion signal is the "Importing…" line appearing and then going,
      the only import status the screen shows. Seeing it appear first is what
-     proves a run started: the button alone is enabled both before the click
+     proves a run was created: the button alone is enabled both before the click
      and after the run. The run's 15-30s floor keeps the line on screen far
      longer than the assertion's retry interval, so it cannot come and go
      unseen. */
@@ -328,7 +328,7 @@ test("the merchant marks a task done, reopens it, and blocks the run", async ({
   await frame.getByRole("button", { name: "Manage" }).click();
 
   /* The drawer draws the member page's step cards (`RunSteps`). A task that
-     has a team shows it as a line, not an open picker: a filled slot is
+     has a team shows it as a line, not an open picker: a filled field is
      changed in the Assign team modal, which opens on the current team and
      offers to keep it. */
   await expect(frame.getByText("Step 1", { exact: true })).toBeVisible();
@@ -708,8 +708,8 @@ test("the order card puts the run's badges on the title line, Manage above its d
 /**
  * One workflow per item, at the two places a merchant meets it.
  *
- * Two active workflows with a tag each, both on the same product, is a state
- * the app refuses to *create* — Apply and Turn on hold one active workflow per
+ * Two workflows that are on, with a tag each, both on the same product, is a state
+ * the app refuses to *create* — Apply and Turn on hold one workflow that is on per
  * tag — and the local seed is what makes it reachable, because it writes
  * definitions straight into SQLite. That is deliberate: the rule is enforced at
  * the switch, but the runtime has to cope with the state anyway (two workflows
@@ -780,7 +780,7 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   await expect(frame.locator('s-page[heading="#9401"]')).toBeVisible();
 
   /* An item with no run carries the picker at rest, and on an ambiguous one it
-     offers every active workflow with the two that matched first. The
+     offers every workflow that is on, with the two that matched first. The
      sentence says why it asks and names nothing, so it cannot drift from the
      list. The shop may carry other tests' workflows, so the count is not
      pinned; the order is. */
