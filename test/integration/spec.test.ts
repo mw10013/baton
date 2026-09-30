@@ -10,6 +10,7 @@ import platformSource from "@/lib/domain/Platform.ts?raw";
 import productionSource from "@/lib/domain/Production.ts?raw";
 import * as Screen from "@/lib/Screen";
 import screenSource from "@/lib/Screen.ts?raw";
+import clientSource from "@/lib/ShopAgentClient.ts?raw";
 import schemaSource from "@/lib/ShopAgentSchema.ts?raw";
 
 import * as ActionTable from "../../scripts/lib/spec.ts";
@@ -396,6 +397,42 @@ describe("action table parser", () => {
       expect(ActionTable.checkScreens(doctored, routeFiles)).toEqual([
         "Vocabulary: Screens: no route file app.people.tsx",
         "Vocabulary: Screens: app.members.tsx has no row",
+      ]);
+    });
+  });
+
+  describe("the shape families table", () => {
+    const shapeSources = {
+      "src/lib/domain/Platform.ts": platformSource,
+      "src/lib/domain/Orders.ts": ordersSource,
+      "src/lib/domain/Billing.ts": billingSource,
+      "src/lib/domain/Production.ts": productionSource,
+      "src/lib/ShopAgentClient.ts": clientSource,
+    };
+
+    it("the real table parses and every rule symbol exists", () => {
+      expect(ActionTable.checkShapeFamilies(source, shapeSources)).toEqual([]);
+    });
+
+    it("a row whose rule symbol is doctored is reported", () => {
+      const doctored = source.replace(
+        "| `StartTaskCommand`                            |",
+        "| `BeginTaskCommand`                            |",
+      );
+      expect(doctored).not.toBe(source);
+      expect(ActionTable.checkShapeFamilies(doctored, shapeSources)).toEqual([
+        "Shape families command: rule symbol BeginTaskCommand not found",
+      ]);
+    });
+
+    it("a Command export placed in Orders.ts is reported", () => {
+      expect(
+        ActionTable.checkShapeFamilies(source, {
+          ...shapeSources,
+          "src/lib/domain/Orders.ts": `${ordersSource}\nexport interface ResyncOrderCommand {}\n`,
+        }),
+      ).toEqual([
+        "Shape families command: ResyncOrderCommand is in Orders.ts, the row says `Production.ts`",
       ]);
     });
   });

@@ -76,7 +76,7 @@ test("a seeded member signs in by magic link, lands on their workflows list, and
   await expect(page.getByText(TEAMLESS_STATE)).toBeVisible();
 
   await gotoMember(page, "/shop");
-  await expect(page.locator('s-page[heading="Your shops"]')).toBeVisible();
+  await expect(page.locator('s-page[heading="Your stores"]')).toBeVisible();
   await expect(
     page.locator(`s-section[heading="${MEMBER_EMAIL}"]`),
   ).toBeVisible();
@@ -113,7 +113,7 @@ test("removing a member closes the shop page on their live session", async ({
   await seedMembers(config, []);
   await gotoMember(page, `/shop/${config.shop}/workflows`);
   await expect(
-    page.getByText("You no longer have access to this shop."),
+    page.getByText("You no longer have access to this store."),
   ).toBeVisible();
   await gotoMember(page, "/shop");
   await expect(page.getByRole("link", { name: config.shop })).toBeHidden();

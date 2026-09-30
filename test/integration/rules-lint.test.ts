@@ -236,3 +236,96 @@ describe("an import follows the map's direction", () => {
     expect(importHits("lib/Domain.ts", barrel)).toEqual([]);
   });
 });
+
+const loaderDataNames = (file: string, source: string) =>
+  RulesLint.loaderDataExportHits(file, source).map(({ name }) => name);
+
+describe("loader data lives in its route", () => {
+  it("a LoaderData export under lib/ is refused", () => {
+    expect(
+      loaderDataNames(
+        "lib/domain/Production.ts",
+        "export interface TeamLoaderData {\n  readonly id: string;\n}",
+      ),
+    ).toEqual(["TeamLoaderData"]);
+  });
+
+  it("the same name under routes/ is allowed", () => {
+    expect(
+      loaderDataNames(
+        "routes/app.teams.$teamId.tsx",
+        "export interface TeamLoaderData {\n  readonly id: string;\n}",
+      ),
+    ).toEqual([]);
+  });
+
+  it("a local type is ignored", () => {
+    expect(
+      loaderDataNames(
+        "lib/domain/Production.ts",
+        "interface TeamLoaderData {\n  readonly id: string;\n}",
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("an import follows the object map's direction", () => {
+  it("Orders importing Production is refused", () => {
+    expect(
+      RulesLint.objectImportHits(
+        "lib/agent/Orders.ts",
+        'import { ShopAgentHost } from "./Host.ts";\nimport { ProductionAgent } from "./Production.ts";',
+      ),
+    ).toEqual([{ line: 2, specifier: "./Production.ts", allowed: ["Host"] }]);
+  });
+
+  it("Production importing Billing is allowed", () => {
+    expect(
+      RulesLint.objectImportHits(
+        "lib/agent/Production.ts",
+        'import { BillingAgent } from "./Billing.ts";\nimport { ShopAgentHost } from "./Host.ts";',
+      ),
+    ).toEqual([]);
+  });
+
+  it("Billing importing Production is refused", () => {
+    expect(
+      RulesLint.objectImportHits(
+        "lib/agent/Billing.ts",
+        'import { ProductionAgent } from "@/lib/agent/Production";',
+      ),
+    ).toEqual([
+      {
+        line: 1,
+        specifier: "@/lib/agent/Production",
+        allowed: ["Host"],
+      },
+    ]);
+  });
+
+  it("a route importing @/lib/agent/Production is refused", () => {
+    expect(
+      RulesLint.objectImportHits(
+        "routes/app.index.tsx",
+        'import * as Domain from "@/lib/Domain";\nimport { ProductionAgent } from "@/lib/agent/Production";\nimport { ShopAgentHost } from "../lib/agent/Host.ts";',
+      ),
+    ).toEqual([
+      { line: 2, specifier: "@/lib/agent/Production" },
+      { line: 3, specifier: "../lib/agent/Host.ts" },
+    ]);
+  });
+
+  it("ShopAgent.ts importing all four is allowed", () => {
+    expect(
+      RulesLint.objectImportHits(
+        "lib/ShopAgent.ts",
+        [
+          'import { BillingAgent } from "@/lib/agent/Billing";',
+          'import { ShopAgentHost } from "@/lib/agent/Host";',
+          'import { OrdersAgent } from "@/lib/agent/Orders";',
+          'import { ProductionAgent } from "@/lib/agent/Production";',
+        ].join("\n"),
+      ),
+    ).toEqual([]);
+  });
+});

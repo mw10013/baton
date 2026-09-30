@@ -34,6 +34,15 @@ const ParamsInput = Schema.Struct({
   runId: Schema.String,
 });
 
+/** `page` is null when the run is not the member's to see. */
+interface RunLoaderData {
+  readonly shop: Domain.Shop;
+  readonly memberId: Domain.MemberId;
+  readonly memberEmail: Domain.Email;
+  readonly teams: Domain.MemberAccess["teams"];
+  readonly page: Domain.RunPageData | null;
+}
+
 /**
  * The workflow page's first paint, SSR like the workflows list's. `memberGetRun`
  * answers `null` for a run that is not there *or* not on one of the member's
@@ -60,7 +69,7 @@ const getLoaderData = createServerFn({ method: "GET" })
           memberEmail: user.email,
           teams,
           page,
-        } satisfies Domain.RunLoaderData;
+        } satisfies RunLoaderData;
       }),
     ),
   );

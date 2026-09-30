@@ -310,3 +310,69 @@ export const contextImportHits = (
     return allowed.includes(stem) ? [] : [{ line, specifier, allowed }];
   });
 };
+
+/**
+ * **Loader data lives in its route.** `file` is the path under `src/`; for a
+ * file not under `routes/`, every export whose name ends in `LoaderData` is a
+ * hit (the loader-data rule on `ShopAgentClient`).
+ */
+export const loaderDataExportHits = (
+  file: string,
+  source: string,
+): readonly ExportedName[] =>
+  file.startsWith("routes/")
+    ? []
+    : exportedNames(source).filter(({ name }) => name.endsWith("LoaderData"));
+
+/**
+ * The object map: what each file under `src/lib/agent/` may import from that
+ * folder, by file stem. The table is on `ShopAgentHost` (`src/lib/agent/Host.ts`),
+ * which says why Production's one crossing into Billing exists; this constant is
+ * that table's `may import` column. Every other file may import none of them,
+ * except `lib/ShopAgent.ts`, the class, which imports all four.
+ */
+export const OBJECT_MAP: ReadonlyMap<string, readonly string[]> = new Map([
+  ["Host", []],
+  ["Billing", ["Host"]],
+  ["Orders", ["Host"]],
+  ["Production", ["Host", "Billing"]],
+]);
+
+/**
+ * **An import follows the object map's direction.** `file` is the path under
+ * `src/`. A file under `lib/agent/` may import under `agent/` only the stems its
+ * {@link OBJECT_MAP} row names; a stem the map has no row for may import none.
+ * `lib/ShopAgent.ts` may import any of them. Any other file imports none, by
+ * alias or by relative path: the class is the modules' only consumer. Returns
+ * each import that breaks the rule, with `allowed` set for a file under
+ * `lib/agent/`.
+ */
+export const objectImportHits = (
+  file: string,
+  source: string,
+): readonly ContextImportHit[] => {
+  if (file === "lib/ShopAgent.ts") return [];
+  const dir = file.split("/").slice(0, -1).join("/");
+  const imports = [...source.matchAll(FROM)].map(({ index, groups }) => ({
+    line: source.slice(0, index).split("\n").length,
+    specifier: groups?.specifier ?? "",
+  }));
+  const target = (specifier: string) => {
+    if (specifier.startsWith("@/lib/agent/"))
+      return `lib/agent/${specifier.slice("@/lib/agent/".length)}`;
+    return specifier.startsWith(".") ? resolve(dir, specifier) : "";
+  };
+  const intoAgent = (specifier: string) =>
+    target(specifier).startsWith("lib/agent/");
+  if (!file.startsWith("lib/agent/"))
+    return imports.filter(({ specifier }) => intoAgent(specifier));
+  const allowed =
+    OBJECT_MAP.get(file.slice("lib/agent/".length).replace(/\.ts$/u, "")) ?? [];
+  return imports.flatMap(({ line, specifier }) => {
+    if (!intoAgent(specifier)) return [];
+    const stem = target(specifier)
+      .slice("lib/agent/".length)
+      .replace(/\.ts$/u, "");
+    return allowed.includes(stem) ? [] : [{ line, specifier, allowed }];
+  });
+};

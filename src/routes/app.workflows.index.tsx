@@ -52,6 +52,10 @@ export const statusBadges = (workflow: Domain.WorkflowSummary) => (
   </s-stack>
 );
 
+interface WorkflowsIndexLoaderData {
+  readonly workflows: readonly Domain.WorkflowSummary[];
+}
+
 /**
  * Workflow definitions are configuration one person edits, so the read is a
  * loader (the loader-versus-socket rule on `ShopAgentClient`): SSR paint, and
@@ -65,7 +69,7 @@ const getLoaderData = createServerFn({ method: "GET" })
         const workflows = yield* (yield* ShopAgentClient).listWorkflows(
           session.shop,
         );
-        return { workflows } satisfies Domain.WorkflowsIndexLoaderData;
+        return { workflows } satisfies WorkflowsIndexLoaderData;
       }),
     ),
   );

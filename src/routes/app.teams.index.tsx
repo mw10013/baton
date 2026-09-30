@@ -26,6 +26,16 @@ const TeamNameInput = Schema.Struct({
 });
 type TeamNameInput = typeof TeamNameInput.Type;
 
+/**
+ * `teamWorkflows` is Durable Object data
+ * joined into a D1 page by the loader (the loader-versus-socket rule on
+ * `ShopAgentClient`), grouped per team into the "Used by" column.
+ */
+interface TeamsIndexLoaderData {
+  readonly teams: readonly Domain.TeamSummary[];
+  readonly teamWorkflows: readonly Domain.TeamWorkflowByTeam[];
+}
+
 /** Task ownership is Durable Object data joined into a D1 page (the loader-versus-socket rule on `ShopAgentClient`). */
 const getLoaderData = createServerFn({ method: "GET" })
   .middleware([shopifyServerFnMiddleware])
@@ -37,7 +47,7 @@ const getLoaderData = createServerFn({ method: "GET" })
         });
         const teamWorkflows =
           yield* (yield* ShopAgentClient).listAllTeamWorkflows(session.shop);
-        return { teams, teamWorkflows } satisfies Domain.TeamsIndexLoaderData;
+        return { teams, teamWorkflows } satisfies TeamsIndexLoaderData;
       }),
     ),
   );

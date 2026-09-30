@@ -156,7 +156,7 @@ function RouteComponent() {
    * router's search parser JSON-decodes values and would hand back a number.
    */
   const inWindow = chrome === "window";
-  const detail: Domain.WorkflowLoaderData = Route.useLoaderData();
+  const detail: Domain.WorkflowPageData | null = Route.useLoaderData();
   const router = useRouter();
   const navigate = useNavigate({ from: Route.fullPath });
   const shopify = useAppBridge();

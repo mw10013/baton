@@ -53,6 +53,9 @@ const decodeDeleteWorkflowResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.DeleteWorkflowResult),
 );
 
+/** `null` is not found. */
+type WorkflowLoaderData = Domain.WorkflowPageData | null;
+
 /** Loader read for the same reason as the index's: a definition is configuration one person edits. */
 const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(WorkflowParams))
@@ -97,14 +100,14 @@ export const Route = createFileRoute("/app/workflows/$workflowId")({
  * The copy dialog's starting values: the suggested name and, mirroring it
  * until the first keystroke in the tag field, its tag ({@link copyName}).
  */
-const suggestedCopy = (detail: Domain.WorkflowLoaderData) => {
+const suggestedCopy = (detail: Domain.WorkflowPageData | null) => {
   const suggested = copyName(detail?.workflow.name ?? "");
   return { name: suggested, tag: suggested.trim().toLowerCase(), dirty: false };
 };
 
 function RouteComponent() {
   const { workflowId } = Route.useParams();
-  const detail: Domain.WorkflowLoaderData = Route.useLoaderData();
+  const detail: WorkflowLoaderData = Route.useLoaderData();
   const router = useRouter();
   const navigate = useNavigate({ from: Route.fullPath });
   const shopify = useAppBridge();

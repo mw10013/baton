@@ -404,6 +404,10 @@ const occurs = (word: string, texts: readonly string[]) => {
   return texts.some((text) => pattern.test(text));
 };
 
+/** The Shape families paragraph and its table, as the map's JSDoc spells them. */
+const SHAPE_FAMILIES_BLOCK =
+  / \* Shape families\.[\s\S]*?\n \*\n(?: \* \|.*\n)+/u;
+
 const identifier = (word: string) => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(word);
 
 /**
@@ -425,7 +429,9 @@ export const checkVocabulary = (
   const start = vocabularyStart(source);
   if (start === -1) return ["(no Vocabulary block)"];
   const end = source.indexOf("*/", start) + 2;
-  const block = source.slice(start, end);
+  // The Shape families table names suffixes, not words;
+  // `checkShapeFamilies` checks its rule symbols.
+  const block = source.slice(start, end).replace(SHAPE_FAMILIES_BLOCK, "");
   const rest = [source.slice(0, start) + source.slice(end), ...others];
   const qualified = [
     ...block.matchAll(/`(?<word>[^`]+)` in (?<context>[A-Z][a-z]+)\b/gu),
@@ -695,7 +701,9 @@ export const checkScreens = (
  * are joined with " and " ("production and orders"). The Shared words table
  * (paragraph `Shared words.`) names its contexts per row, in a `contexts`
  * cell joined with ", ". The Screens table is exempt: its rows name pages,
- * and a page's spec name is spoken in every context. `source` holds the map
+ * and a page's spec name is spoken in every context. The Shape families
+ * table is exempt: its rows name the developer dialect's suffixes, which
+ * name no context. `source` holds the map
  * (`Domain.ts`); the tables of `others` (the context files) are checked
  * against it too. Reports a map with no `kind` column, each table that names
  * none, and each unknown context.
@@ -731,7 +739,8 @@ export const checkContexts = (
         (each) =>
           each !== contextTable &&
           each !== sharedWords &&
-          !each.intro.startsWith("Screens."),
+          !each.intro.startsWith("Screens.") &&
+          !each.intro.startsWith("Shape families."),
       )
       .flatMap(({ intro, rows }) => {
         const name = intro.split(/[.,:]/u)[0] ?? intro;
@@ -753,6 +762,90 @@ export const checkContexts = (
         return named.every((each) => contexts.has(each))
           ? []
           : [`Vocabulary: ${name}: its intro names no context`];
+      }),
+  ];
+};
+
+/** The backticked names in a table cell, in order. */
+const backticked = (cell: string) =>
+  [...cell.matchAll(/`(?<name>[^`]+)`/gu)].map(
+    ({ groups }) => groups?.name ?? "",
+  );
+
+/** Each context file under `src/lib/domain/`, the files a `lives in` cell of `its context file` allows. */
+const CONTEXT_FILES = [
+  "Platform.ts",
+  "Orders.ts",
+  "Billing.ts",
+  "Production.ts",
+] as const;
+
+/**
+ * **Every shape export lives where its family's row says, and every row's
+ * rule symbol exists.** Reads the table whose paragraph starts `Shape
+ * families.` in the map (`source`, `Domain.ts`). `sources` maps a path
+ * (`src/lib/domain/Orders.ts`, `src/lib/ShopAgentClient.ts`,
+ * `src/routes/app.index.tsx`) to its source. For each row, the `rule on`
+ * symbol (its first backticked name) is an export of one of `sources`, or a
+ * class in one. For each file under `src/lib/domain/` and each export whose
+ * name ends in a row's suffix (the longest suffix that matches, so
+ * `OrdersIndexData` is screen data), the file is what the row's `lives in`
+ * cell allows: `its context file` allows any of the four, a backticked file
+ * allows that one, and the route allows none under `domain/`. Reports each
+ * miss.
+ */
+export const checkShapeFamilies = (
+  source: string,
+  sources: Readonly<Record<string, string>>,
+): readonly string[] => {
+  const table = vocabularyTables(source).find((each) =>
+    each.intro.startsWith("Shape families."),
+  );
+  if (table === undefined) return ["Vocabulary: no Shape families table"];
+  const exports = Object.entries(sources).map(([path, text]) => ({
+    path,
+    names: new Set(
+      [
+        ...text.matchAll(
+          /^export (?:declare )?(?:abstract )?(?:const|let|async function\*?|function\*?|class|type|interface|enum) (?<name>[A-Za-z_$][A-Za-z0-9_$]*)/gmu,
+        ),
+      ].map(({ groups }) => groups?.name ?? ""),
+    ),
+  }));
+  const suffixes = table.rows
+    .flatMap((row) =>
+      backticked(row.suffix ?? "").map((suffix) => ({ suffix, row })),
+    )
+    .toSorted((a, b) => b.suffix.length - a.suffix.length);
+  const allows = (livesIn: string, file: string) => {
+    if (livesIn === "its context file")
+      return (CONTEXT_FILES as readonly string[]).includes(file);
+    const named = backticked(livesIn)[0] ?? "";
+    return named.endsWith(".ts") && named === file;
+  };
+  return [
+    ...table.rows.flatMap((row) => {
+      const symbol = backticked(row["rule on"] ?? "")[0] ?? "";
+      return exports.some(({ names }) => names.has(symbol))
+        ? []
+        : [
+            `Shape families ${row.family ?? ""}: rule symbol ${symbol} not found`,
+          ];
+    }),
+    ...exports
+      .filter(({ path }) => path.includes("src/lib/domain/"))
+      .flatMap(({ path, names }) => {
+        const file = path.slice(path.lastIndexOf("/") + 1);
+        return [...names].flatMap((name) => {
+          const family = suffixes.find(({ suffix }) => name.endsWith(suffix));
+          if (family === undefined) return [];
+          const livesIn = family.row["lives in"] ?? "";
+          return allows(livesIn, file)
+            ? []
+            : [
+                `Shape families ${family.row.family ?? ""}: ${name} is in ${file}, the row says ${livesIn}`,
+              ];
+        });
       }),
   ];
 };

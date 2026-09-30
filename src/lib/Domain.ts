@@ -1,7 +1,7 @@
 /**
  * The domain's map and its barrel: the four context files under
  * `src/lib/domain/`, where each behavioural rule is written down, re-exported
- * as one module, plus the one page shape that reads two contexts.
+ * as one module.
  *
  * - A rule is stated once, on the symbol that *is* the concept (a
  *   `Schema.Literals` such as `RunStatus` in Production) or the function that
@@ -31,9 +31,9 @@
  *
  * Contexts. The map: a word means one thing inside its context, and each
  * context is one file under `src/lib/domain/`, opening with its own
- * vocabulary. This file re-exports the four by `export *` and defines one
- * thing of its own, `OrdersIndexLoaderData`, the one page shape that reads
- * two contexts, until the loader-data types leave the domain; nothing outside
+ * vocabulary. This file re-exports the four by `export *` and defines nothing
+ * of its own: a page shape that reads two contexts is loader data, and loader
+ * data lives in its route. Nothing outside
  * `src/lib/domain/` imports a context file directly, and a context file
  * imports only what its `may import` cell names. `scripts/rules-lint.ts`
  * reads the cell and refuses both. Every vocabulary table
@@ -68,6 +68,18 @@
  * | closed | orders, production | "closed order" (the matrices' `order` column: cancelled or fulfilled), "closed run" (`runIsClosed`)                        |
  * | cancel | orders, production | "cancelled order" (`orderIsCancelled`, Shopify's), "Cancel workflow" (the run verb, `merchant_cancelled`)                  |
  * | start  | production         | two senses: a member starts a task (the verb, `StartTaskInput`); a workflow starts for an item, in merchant copy, and in identifiers a workflow creates a run (`workflowIsEligible`) |
+ *
+ * Shape families. These are the developer dialect's suffixes for what
+ * crosses a boundary, not vocabulary words: a word here gets no nouns row,
+ * and the rule for each family is on the symbol its row names.
+ *
+ * | family      | suffix                              | what it is                                                     | decoded by                                  | lives in                       | rule on                                       |
+ * | ----------- | ----------------------------------- | -------------------------------------------------------------- | ------------------------------------------- | ------------------------------ | --------------------------------------------- |
+ * | input       | `Input`                             | what the browser or the Worker sends, and nothing more         | the object's `@callable()` gate             | its context file               | `MarkTaskDoneInput`                           |
+ * | command     | `Command`                           | the whole write, input joined to the actor from the connection | nothing; assembled from decoded values      | `Production.ts`                | `StartTaskCommand`                            |
+ * | result      | `Result`                            | the outcomes of one write, a tagged union                      | `ShopAgentClient` on the way back           | its context file               | `ApplyResult`                                 |
+ * | screen data | `PageData`, `IndexData`, `ListData` | everything one screen reads, in one round trip                 | `ShopAgentClient`                           | `Production.ts`                | `OrdersIndexData`                             |
+ * | loader data | `LoaderData`                        | a route's loader contract, owned by the route                  | nothing; `satisfies` on the server function | the route, under `src/routes/` | `ShopAgentClient` (its loader-data paragraph) |
  *
  * What a word must pass to get a row:
  *
@@ -108,24 +120,7 @@
  * and All (`ORDERS_INDEX_VIEW_LABEL` in Production); the member's workflows list's
  * view row reads its labels from `workflowsListViews.ts`.
  */
-import type { ShopUsage } from "./domain/Billing.ts";
-import type { OrdersIndexData } from "./domain/Production.ts";
-
 export * from "./domain/Platform.ts";
 export * from "./domain/Orders.ts";
 export * from "./domain/Billing.ts";
 export * from "./domain/Production.ts";
-
-/**
- * `/app/orders` (`app.orders.index`): the first page, plus the usage the
- * page's limit banners need.
- *
- * `orders` is what the socket replaces on every order push; `usage` is
- * loader-only and deliberately does not move under the socket. It is a
- * billing-cycle fact, and refreshing it on every webhook would be a read per
- * push for a number that changes on a scale of days.
- */
-export interface OrdersIndexLoaderData {
-  readonly orders: OrdersIndexData;
-  readonly usage: ShopUsage;
-}

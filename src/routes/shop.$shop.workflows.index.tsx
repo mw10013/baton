@@ -27,6 +27,28 @@ const LoaderInput = Schema.Struct({
 });
 
 /**
+ * The member's
+ * workflows list, which is the member area's landing page (`/shop/$shop`
+ * redirects to it). `list` is the read of `query` — the view from the URL, every
+ * team, one page deep — which is why `memberEmail` is here to be *sent* on
+ * the socket's later reads rather than to group rows the page holds; it and
+ * `memberId` come out of the same `requireMember` that resolved `teams`.
+ * `query` travels with the list so the page can tell whether the socket is
+ * about to ask for the same read ({@link Domain.sameRunQuery}) and hand these rows
+ * over as `initialData`. `shop` is the `myshopify.com` domain — the Admin
+ * API's display name is not stored anywhere in Baton, and the domain is what
+ * the URL and every membership row key on.
+ */
+interface RunListLoaderData {
+  readonly shop: Domain.Shop;
+  readonly memberId: Domain.MemberId;
+  readonly memberEmail: Domain.Email;
+  readonly teams: Domain.MemberAccess["teams"];
+  readonly query: Domain.RunQuery;
+  readonly list: Domain.WorkflowsListData;
+}
+
+/**
  * The workflows list's first paint. SSR, so it cannot be a socket call: `requireMember`
  * resolves the shop and the member's teams from the cookie, and `listRuns`
  * reads the object through `ShopAgentClient`.
@@ -75,7 +97,7 @@ const getLoaderData = createServerFn({ method: "GET" })
           teams,
           query,
           list,
-        } satisfies Domain.RunListLoaderData;
+        } satisfies RunListLoaderData;
       }),
     ),
   );

@@ -1034,7 +1034,14 @@ export const WorkflowResult = Schema.Union([
 ]);
 export type WorkflowResult = typeof WorkflowResult.Type;
 
-/** `TaskUnassigned` names the offending tasks so the page can say which to assign. Apply is about tasks only; the tag never reaches it. */
+/**
+ * `TaskUnassigned` names the offending tasks so the page can say which to
+ * assign. Apply is about tasks only; the tag never reaches it.
+ *
+ * Every `…Result` is a union of tagged outcomes and each non-`Ok` tag names
+ * what the domain refuses; the tag, not a thrown error, is what the page
+ * branches on.
+ */
 export const ApplyResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok"), workflow: Workflow }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
@@ -1853,82 +1860,6 @@ export const OrdersIndexData = Schema.Struct({
   teams: Schema.Array(TeamWithMemberCount),
 });
 export type OrdersIndexData = typeof OrdersIndexData.Type;
-
-/** `/app/orders/$orderId` (`app.orders.$orderId`); `null` is not stored. */
-export type OrderLoaderData = OrderPageData | null;
-
-/** `/app/workflows` (`app.workflows.index`). */
-export interface WorkflowsIndexLoaderData {
-  readonly workflows: readonly WorkflowSummary[];
-}
-
-/** `/app/workflows/$workflowId` (`app.workflows.$workflowId`) and its `/edit`; `null` is not found. */
-export type WorkflowLoaderData = WorkflowPageData | null;
-
-/**
- * `/app/members` (`app.members`). `teams` feeds the team checklist in the add
- * and edit-teams modals; `memberTeams` paints the Teams column and carries the
- * sole-membership warning (`teamMemberCount === 1`) for the remove dialog.
- */
-export interface MembersLoaderData {
-  readonly members: readonly Member[];
-  readonly teams: readonly TeamWithMemberCount[];
-  readonly memberTeams: readonly MemberTeam[];
-}
-
-/**
- * `/app/teams` (`app.teams.index`). `teamWorkflows` is Durable Object data
- * joined into a D1 page by the loader (the loader-versus-socket rule on
- * `ShopAgentClient`), grouped per team into the "Used by" column.
- */
-export interface TeamsIndexLoaderData {
-  readonly teams: readonly TeamSummary[];
-  readonly teamWorkflows: readonly TeamWorkflowByTeam[];
-}
-
-/**
- * `/app/teams/$teamId` (`app.teams.$teamId`; a param tail contributes its
- * noun, `Team`). `teamWorkflows` and `taskCounts` are Durable Object data joined
- * into a D1 page by the loader — see the loader-versus-socket rule on
- * `ShopAgentClient`. `memberTeams` is the hint the Add members
- * dialog shows beside each candidate: where they already work.
- */
-export interface TeamLoaderData extends TeamDetail {
-  readonly memberTeams: readonly MemberTeam[];
-  readonly teamWorkflows: readonly TeamWorkflow[];
-  readonly taskCounts: TeamDeleteCounts;
-}
-
-/**
- * `/shop/$shop/workflows` (`shop.$shop.workflows.index`): the member's
- * workflows list, which is the member area's landing page (`/shop/$shop`
- * redirects to it). `list` is the read of `query` — the view from the URL, every
- * team, one page deep — which is why `memberEmail` is here to be *sent* on
- * the socket's later reads rather than to group rows the page holds; it and
- * `memberId` come out of the same `requireMember` that resolved `teams`.
- * `query` travels with the list so the page can tell whether the socket is
- * about to ask for the same read ({@link sameRunQuery}) and hand these rows
- * over as `initialData`. `shop` is the `myshopify.com` domain — the Admin
- * API's display name is not stored anywhere in Baton, and the domain is what
- * the URL and every membership row key on.
- */
-export interface RunListLoaderData {
-  readonly shop: Shop;
-  readonly memberId: MemberId;
-  readonly memberEmail: Email;
-  readonly teams: MemberAccess["teams"];
-  readonly query: RunQuery;
-  readonly list: WorkflowsListData;
-}
-
-/** `/shop/$shop/workflows/$runId` (`shop.$shop.workflows.$runId`). `page` is null when the run is not the member's to see. */
-export interface RunLoaderData {
-  readonly shop: Shop;
-  readonly memberId: MemberId;
-  readonly memberEmail: Email;
-  readonly teams: MemberAccess["teams"];
-  readonly page: RunPageData | null;
-}
 
 /**
  * The live caller of a run or task action: the identity the gates check

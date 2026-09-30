@@ -68,6 +68,18 @@ const decodeMemberIds = Schema.decodeUnknownEffect(
   Schema.Array(Domain.MemberId),
 );
 
+/**
+ * `teamWorkflows` and `taskCounts` are Durable Object data joined
+ * into a D1 page by the loader — see the loader-versus-socket rule on
+ * `ShopAgentClient`. `memberTeams` is the hint the Add members
+ * dialog shows beside each candidate: where they already work.
+ */
+interface TeamLoaderData extends Domain.TeamDetail {
+  readonly memberTeams: readonly Domain.MemberTeam[];
+  readonly teamWorkflows: readonly Domain.TeamWorkflow[];
+  readonly taskCounts: Domain.TeamDeleteCounts;
+}
+
 const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(TeamIdInput))
   .middleware([shopifyServerFnMiddleware])
@@ -95,7 +107,7 @@ const getLoaderData = createServerFn({ method: "GET" })
           memberTeams,
           teamWorkflows,
           taskCounts,
-        } satisfies Domain.TeamLoaderData;
+        } satisfies TeamLoaderData;
       }),
     ),
   );

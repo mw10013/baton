@@ -15,6 +15,21 @@ import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { entitlementsOfStatus, SubscriptionPlan } from "@/lib/SubscriptionPlan";
 
 /**
+ * The entitlements and the boundary come from the resolved {@link Domain.PlanStatus} rather
+ * than from route context for the reason `resolveEntitlements` documents: this
+ * loader is isomorphic, and taking the tier from context would mean the browser
+ * naming it on every in-app navigation.
+ */
+interface AppIndexLoaderData {
+  readonly entitlements: Domain.Entitlements;
+  readonly usage: Domain.ShopUsage;
+  /** `Member` rows in D1, against `Entitlements.membersIncluded`. */
+  readonly memberCount: number;
+  /** The next app subscription boundary. */
+  readonly planBoundaryAt: number | null;
+}
+
+/**
  * The merchant-facing plan page: what the tier grants, beside what the shop has
  * actually used, beside the date access ends if the merchant has cancelled.
  *
@@ -55,7 +70,7 @@ const getLoaderData = createServerFn({ method: "GET" })
           entitlements,
           usage: yield* (yield* ShopAgentClient).getUsage(session.shop),
           memberCount: yield* (yield* Repository).countMembers(shop),
-        } satisfies Domain.AppIndexLoaderData;
+        } satisfies AppIndexLoaderData;
       }),
     ),
   );

@@ -10,7 +10,9 @@
  * It also holds the vocabulary's two identifier rules on the exports under
  * `src/lib/`: no reserved stem ({@link reservedStemHits}) and no `is<State>`
  * without its noun ({@link bareStatePredicateHits}); and the map's import
- * direction ({@link contextImportHits}) on every file under `src/`.
+ * direction ({@link contextImportHits}), the object map's
+ * ({@link objectImportHits}), and the loader-data rule
+ * ({@link loaderDataExportHits}) on every file under `src/`.
  *
  * A grep, not an oxlint rule: the pattern is three tokens and has stayed
  * quiet. Union narrowing on `actor.role` and the connection state's `role`
@@ -24,6 +26,8 @@ import {
   bareStatePredicateHits,
   contextImportHits,
   contextImports,
+  loaderDataExportHits,
+  objectImportHits,
   RESERVED_STEMS,
   reservedStemHits,
   retiredCopyHits,
@@ -133,8 +137,32 @@ const importHits = walk(ROOT).flatMap((path) => {
 
 for (const hit of importHits) console.error(hit);
 
+const objectHits = walk(ROOT).flatMap((path) => {
+  const file = relative(ROOT, path);
+  return objectImportHits(file, readFileSync(path, "utf8")).map(
+    ({ line, specifier, allowed }) =>
+      allowed === undefined
+        ? `rules-lint: src/${file}:${String(line)} imports an object module (${specifier}); only src/lib/ShopAgent.ts may`
+        : `rules-lint: src/${file}:${String(line)} imports ${specifier}; the object map on ShopAgentHost allows ${allowed.length === 0 ? "nothing" : allowed.join(", ")}`,
+  );
+});
+
+for (const hit of objectHits) console.error(hit);
+
+const loaderDataHits = walk(ROOT).flatMap((path) => {
+  const file = relative(ROOT, path);
+  return loaderDataExportHits(file, readFileSync(path, "utf8")).map(
+    ({ name }) =>
+      `rules-lint: src/${file} exports ${name}; loader data lives in its route (the rule on ShopAgentClient)`,
+  );
+});
+
+for (const hit of loaderDataHits) console.error(hit);
+
 if (
   importHits.length > 0 ||
+  objectHits.length > 0 ||
+  loaderDataHits.length > 0 ||
   hits.length > 0 ||
   copyHits.length > 0 ||
   placeholderHits.length > 0 ||

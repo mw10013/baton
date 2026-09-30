@@ -42,6 +42,17 @@ const MEMBER_GONE = "That member no longer exists.";
 const MEMBER_CEILING =
   "This store has reached the maximum number of members. Contact support to raise it.";
 
+/**
+ * `teams` feeds the team checklist in the add
+ * and edit-teams modals; `memberTeams` paints the Teams column and carries the
+ * sole-membership warning (`teamMemberCount === 1`) for the remove dialog.
+ */
+interface MembersLoaderData {
+  readonly members: readonly Domain.Member[];
+  readonly teams: readonly Domain.TeamWithMemberCount[];
+  readonly memberTeams: readonly Domain.MemberTeam[];
+}
+
 const getLoaderData = createServerFn({ method: "GET" })
   .middleware([shopifyServerFnMiddleware])
   .handler(({ context: { runEffect, session } }) =>
@@ -57,7 +68,7 @@ const getLoaderData = createServerFn({ method: "GET" })
               ({ id, name, memberCount }) satisfies Domain.TeamWithMemberCount,
           ),
           memberTeams: yield* repository.listMemberTeams(shop),
-        } satisfies Domain.MembersLoaderData;
+        } satisfies MembersLoaderData;
       }),
     ),
   );

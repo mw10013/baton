@@ -61,8 +61,8 @@ export class ShopAgentClientError extends Schema.TaggedError<ShopAgentClientErro
  *   `Repository` for D1 rows, via this service for Durable Object rows. The
  *   page paints during SSR, and its own mutations refresh it with
  *   `router.invalidate()`. The route's server function is the module-private
- *   `getLoaderData` (see `Domain.AdminShopLoaderData` for the contract
- *   naming), so a route never invents a bespoke fetch name.
+ *   `getLoaderData` (the rule below), so a route never invents a bespoke
+ *   fetch name.
  * - **Operational state other actors change underneath the page** (orders,
  *   which webhooks, the bulk sync stream, and members' task actions all
  *   write) goes through the `/app` socket via `useSubscribedQuery` — the
@@ -70,6 +70,19 @@ export class ShopAgentClientError extends Schema.TaggedError<ShopAgentClientErro
  *   it, or none — a socket `useQuery` outside that cycle never refetches,
  *   which is the bug that moved `listTeamWorkflows` from the socket to this
  *   service.
+ *
+ * **Loader data.** `<RoutePrefix>LoaderData` names the data contract for a
+ * route's loader, owned by that route. The prefix derives mechanically from
+ * the route id — tail segment (`admin.shop.$shop` → `AdminShop`), parent +
+ * `Index` for index routes (`app.index` → `AppIndex`), extended leftward on
+ * collision — never from UX vocabulary. Ownership, not exclusivity: socket
+ * refetches, api routes, and tests may consume a contract as-is, but only the
+ * owning route drives its shape; the route's server fn binds to it as the
+ * module-private `getLoaderData`, one fixed name per route so nobody has to
+ * coin a fetch name per page. When another consumer needs the shape to
+ * change, promote the contract to a domain-named type instead of bending it.
+ * The type lives in its route, module-private, above its `getLoaderData`;
+ * `scripts/rules-lint.ts` refuses a `LoaderData` export anywhere else.
  *
  * The `@callable()` set on `ShopAgent` is exactly what the browser may reach
  * over the socket; a read that only loaders need is plain RPC and lives here.

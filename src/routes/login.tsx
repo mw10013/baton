@@ -13,12 +13,16 @@ import { fieldError, mutationErrorMessage } from "@/lib/form";
 import { KV } from "@/lib/KV";
 import { Repository } from "@/lib/Repository";
 
+interface LoginLoaderData {
+  readonly isDemoMode: boolean;
+}
+
 const getLoaderData = createServerFn({ method: "GET" }).handler(
   ({ context: { runEffect } }) =>
     runEffect(
       Effect.map(
         Config.boolean("DEMO_MODE").pipe(Config.withDefault(false)),
-        (isDemoMode) => ({ isDemoMode }) satisfies Domain.LoginLoaderData,
+        (isDemoMode) => ({ isDemoMode }) satisfies LoginLoaderData,
       ),
     ),
 );

@@ -91,6 +91,29 @@ const readScreen = Effect.sync(() => ({
   ),
 }));
 
+const CLIENT = new URL("../src/lib/ShopAgentClient.ts", import.meta.url)
+  .pathname;
+
+/** The sources the Shape families table is checked against: the context files, `ShopAgentClient.ts` and the routes, by path. */
+const shapeSources = (
+  contexts: Readonly<Record<string, string>>,
+  routeFiles: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> => ({
+  ...Object.fromEntries(
+    Object.entries(contexts).map(([name, source]) => [
+      `src/lib/domain/${name}.ts`,
+      source,
+    ]),
+  ),
+  "src/lib/ShopAgentClient.ts": readFileSync(CLIENT, "utf8"),
+  ...Object.fromEntries(
+    Object.entries(routeFiles).map(([file, source]) => [
+      `src/routes/${file}`,
+      source,
+    ]),
+  ),
+});
+
 const readRouteFiles = Effect.sync(() =>
   Object.fromEntries(
     readdirSync(ROUTES).map((file) => [
@@ -141,6 +164,10 @@ const checkCommand = Command.make(
         Domain.OrderIssue.literals,
       ),
       ...ActionTable.checkScreens(barrel, routeFiles),
+      ...ActionTable.checkShapeFamilies(
+        barrel,
+        shapeSources(contexts, routeFiles),
+      ),
       ...Result.match(ActionTable.parseTriggerTable(contexts.Billing), {
         onFailure: (error) => [error.message],
         onSuccess: (rows) =>
@@ -183,7 +210,16 @@ const printCommand = Command.make(
   "print",
   {},
   Effect.fn(function* () {
-    const { contexts } = yield* readSources;
+    const { barrel, contexts } = yield* readSources;
+    yield* Console.log("Shape families");
+    const families =
+      ActionTable.vocabularyTables(barrel).find((each) =>
+        each.intro.startsWith("Shape families."),
+      )?.rows ?? [];
+    for (const row of families)
+      yield* Console.log(
+        `  ${row.family ?? ""}: ${row.suffix ?? ""} in ${row["lives in"] ?? ""}, rule on ${row["rule on"] ?? ""}`,
+      );
     for (const name of NAMES) {
       yield* Console.log(name);
       const lines = Result.match(ActionTable.parse(contexts.Production, name), {

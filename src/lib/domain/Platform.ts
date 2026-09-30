@@ -275,11 +275,6 @@ export const EpochMillis = Schema.DateFromString.pipe(
   }),
 );
 
-/** `/login` (`login`). */
-export interface LoginLoaderData {
-  readonly isDemoMode: boolean;
-}
-
 /**
  * The subscribe pattern — the socket half of the loader-versus-socket rule on
  * `ShopAgentClient`, for a page whose data other actors change underneath it.

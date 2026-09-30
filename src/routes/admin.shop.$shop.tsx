@@ -17,6 +17,21 @@ import { SubscriptionPlan } from "@/lib/SubscriptionPlan";
 
 const shopInput = Schema.Struct({ shop: Domain.Shop });
 
+/** The shop's D1 row, plan and usage, or `NotFound` when the shop has no row. */
+type AdminShopLoaderData =
+  | { readonly _tag: "NotFound" }
+  | {
+      readonly _tag: "Found";
+      readonly shopSession: Domain.ShopSessionRedacted;
+      readonly plan: Domain.AdminShopPlanCache;
+      readonly entitlements: Domain.Entitlements | null;
+      /** Read from the shop's Durable Object; the counters the plan is compared against. */
+      readonly usage: Domain.ShopUsage;
+      /** `Member` rows in D1, so this page reads used-of-granted like `/app` does. */
+      readonly memberCount: number;
+      readonly derivedShopAgentId: string;
+    };
+
 /**
  * The whole page in one request: the shop's D1 `ShopSession` row and its Durable
  * Object id.
@@ -45,7 +60,7 @@ const getLoaderData = createServerFn({ method: "GET" })
           shop,
         );
         if (Option.isNone(shopSession))
-          return { _tag: "NotFound" } satisfies Domain.AdminShopLoaderData;
+          return { _tag: "NotFound" } satisfies AdminShopLoaderData;
         const plan = Domain.adminShopPlanCache(
           shopSession.value,
           yield* Clock.currentTimeMillis,
@@ -60,7 +75,7 @@ const getLoaderData = createServerFn({ method: "GET" })
           derivedShopAgentId: (yield* CloudflareEnv).SHOP_AGENT.idFromName(
             shop,
           ).toString(),
-        } satisfies Domain.AdminShopLoaderData;
+        } satisfies AdminShopLoaderData;
       }),
     ),
   );
@@ -198,7 +213,7 @@ const shopContent = ({
   data,
   ...rest
 }: {
-  readonly data: Domain.AdminShopLoaderData;
+  readonly data: AdminShopLoaderData;
   readonly refreshing: boolean;
   readonly refreshError: string | undefined;
   readonly onRefresh: () => void;
@@ -228,7 +243,7 @@ function FoundShop({
   refreshError,
   onRefresh,
 }: {
-  readonly data: Extract<Domain.AdminShopLoaderData, { _tag: "Found" }>;
+  readonly data: Extract<AdminShopLoaderData, { _tag: "Found" }>;
   readonly refreshing: boolean;
   readonly refreshError: string | undefined;
   readonly onRefresh: () => void;

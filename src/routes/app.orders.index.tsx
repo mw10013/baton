@@ -220,6 +220,20 @@ const OrdersLoaderInput = Schema.Struct({
   after: Schema.NullOr(Domain.OrdersCursor),
 });
 
+/**
+ * The first page, plus the usage the
+ * page's limit banners need.
+ *
+ * `orders` is what the socket replaces on every order push; `usage` is
+ * loader-only and deliberately does not move under the socket. It is a
+ * billing-cycle fact, and refreshing it on every webhook would be a read per
+ * push for a number that changes on a scale of days.
+ */
+interface OrdersIndexLoaderData {
+  readonly orders: Domain.OrdersIndexData;
+  readonly usage: Domain.ShopUsage;
+}
+
 const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(OrdersLoaderInput))
   .middleware([shopifyServerFnMiddleware])
@@ -237,7 +251,7 @@ const getLoaderData = createServerFn({ method: "GET" })
               team,
             }),
             usage: yield* client.getUsage(session.shop),
-          } satisfies Domain.OrdersIndexLoaderData;
+          } satisfies OrdersIndexLoaderData;
         }),
       ),
   );
