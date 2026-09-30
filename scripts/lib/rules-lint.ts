@@ -378,3 +378,80 @@ export const objectImportHits = (
     return allowed.includes(stem) ? [] : [{ line, specifier, allowed }];
   });
 };
+
+/** The Shape families table's suffixes (`Input`, `Command`, ..., `LoaderData`), read out of the barrel's source (`src/lib/Domain.ts`), longest first. */
+export const shapeSuffixes = (barrel: string): readonly string[] =>
+  (
+    vocabularyTables(barrel).find(({ intro }) =>
+      intro.startsWith("Shape families."),
+    )?.rows ?? []
+  )
+    .flatMap((row) => [...(row.suffix ?? "").matchAll(/`(?<suffix>[^`]+)`/gu)])
+    .map(({ groups }) => groups?.suffix ?? "")
+    .toSorted((a, b) => b.length - a.length);
+
+/** One model symbol that names a shape in its code: the symbol, its 1-based line, and the shape. */
+export interface ShapeReferenceHit {
+  readonly name: string;
+  readonly line: number;
+  readonly shape: string;
+}
+
+const DECLARATION =
+  /^(?:export (?:declare )?)?(?:abstract )?(?:const|let|async function\*?|function\*?|class|type|interface|enum) (?<name>[A-Za-z_$][A-Za-z0-9_$]*)/gmu;
+
+const COMMENT = /\/\*[\s\S]*?\*\/|\/\/[^\n]*/gu;
+
+/**
+ * **A model symbol never references a shape.** In a context file, a
+ * top-level declaration whose name has no family suffix ({@link shapeSuffixes})
+ * may not name, in its code, an export of that file whose name has one.
+ * Shapes read the model; the model never reads the shapes. The rule keeps a
+ * contracts file (the shapes in a sibling file, the barrel re-exporting both)
+ * a mechanical move for the day a consumer needs the shapes without the
+ * model, which no consumer does today; the Shape families paragraph on the
+ * map says so. A `{@link}` from a model symbol to a shape is JSDoc and is not
+ * read: comments are blanked before the scan. A declaration's code runs to
+ * the next top-level declaration.
+ */
+export const modelShapeReferenceHits = (
+  source: string,
+  suffixes: readonly string[],
+): readonly ShapeReferenceHit[] => {
+  const isShape = (name: string) =>
+    suffixes.some((suffix) => name.endsWith(suffix));
+  const shapes = new Set(
+    exportedNames(source)
+      .map(({ name }) => name)
+      .filter(isShape),
+  );
+  if (shapes.size === 0) return [];
+  const blanked = source.replaceAll(COMMENT, (text) =>
+    text.replaceAll(/[^\n]/gu, " "),
+  );
+  const declarations = [...blanked.matchAll(DECLARATION)].map(
+    ({ index, groups }) => ({
+      name: groups?.name ?? "",
+      start: index ?? 0,
+    }),
+  );
+  return declarations.flatMap(({ name, start }, i) => {
+    if (isShape(name)) return [];
+    const end = declarations[i + 1]?.start ?? blanked.length;
+    const body = blanked.slice(start, end);
+    const seen = new Set<string>();
+    return [...body.matchAll(/[A-Za-z_$][A-Za-z0-9_$]*/gu)].flatMap(
+      ({ index, 0: word }) => {
+        if (word === name || !shapes.has(word) || seen.has(word)) return [];
+        seen.add(word);
+        return [
+          {
+            name,
+            line: blanked.slice(0, start + (index ?? 0)).split("\n").length,
+            shape: word,
+          },
+        ];
+      },
+    );
+  });
+};

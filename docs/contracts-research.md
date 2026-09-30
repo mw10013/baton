@@ -79,16 +79,14 @@ As A, plus one lint rule in `scripts/rules-lint.ts`: inside a context file, an e
 
 If the length of `ShopWork.ts` is itself the pain, the cheaper cut is by feature, not by layer: the workflow-draft rules (`ApplyResult` and its neighbours) and the orders-index reading (positions, issues, `OrderRow`) are each a coherent block with its own vocabulary table, and either could be a sub-context file under the same map without any shape leaving its rule. That is a different research question and is not argued here.
 
-## 6. Questions
+## 6. Decisions
 
-Each with a recommendation, so the decision has colour.
+Reviewed 2026-09-30. Each recommendation in the earlier Questions section was accepted.
 
-1. **Which "contracts" did you defer?** The record says the file split (sense 1b). The DDD contracts (sense 1a) are already on the map and enforced. Recommendation: treat 1a as done and this doc as closing 1b.
-2. **Is there a foreseeable consumer of the shapes without the model?** A public API, a Flow action, an admin UI extension, a second Worker, an SDK for merchants. Recommendation: assume none within the next two quarters and record that assumption in the checkpoint paragraph. If a Flow action or an extension is on the roadmap, say so now, because that is the one fact that flips the answer to D.
-3. **Is `ShopWork.ts` at 3,384 lines a problem for you or for agents?** Recommendation: judge by how agents cope in the next few changes. If they mis-edit or need several reads to find a rule, the fix is the feature cut in section 5, not the layer cut.
-4. **Should the lint in B be added?** Recommendation: yes, in the same change as committing the rename, as one rule with one test. It costs an afternoon and holds the door open.
-5. **Should the checkpoint paragraph move?** It lives in a plan doc that AGENTS.md says gets deleted. Recommendation: put one sentence on the Shape families table's paragraph on the map: "The shapes stay in their context file; a contracts file is the move when a consumer needs the shapes without the model, and the lint keeps that move mechanical." That is the decision on the symbol, which is where AGENTS.md says a rule lives.
+1. The deferred item was the file split (sense 1b). The DDD contracts (sense 1a) are on the map and enforced; nothing to add. This doc closes 1b.
+2. No consumer of the shapes without the model is assumed for the next two quarters. If a Flow action, an admin UI extension, a second Worker or an SDK reaches the roadmap, re-ask, because that fact alone flips the answer to option D.
+3. The length of `ShopWork.ts` is judged by how agents cope over the next few changes. If it hurts, the cut is by feature (workflow-draft rules, the orders-index reading), not by layer.
+4. Add the lint from option B: inside a context file, an export without a family suffix may not reference an export with one. One rule, one test whose title is the rule, in the same change as committing the rename.
+5. The decision sentence goes on the Shape families table's paragraph on the map in `Domain.ts`: the shapes stay in their context file; a contracts file is the move when a consumer needs the shapes without the model, and the lint keeps that move mechanical. The checkpoint paragraph in `docs/api-shapes-and-object-plan.md` stays as history.
 
-## Decisions
-
-None yet. Answers replace this section.
+Next: a short plan for items 4 and 5, or fold them into the shop-work rename change.

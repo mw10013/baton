@@ -332,3 +332,45 @@ describe("an import follows the object map's direction", () => {
     ).toEqual([]);
   });
 });
+
+describe("a model symbol never references a shape", () => {
+  const suffixes = RulesLint.shapeSuffixes(barrel);
+
+  it("the suffixes are read from the Shape families table", () => {
+    expect(suffixes).toEqual([
+      "LoaderData",
+      "IndexData",
+      "PageData",
+      "ListData",
+      "Command",
+      "Result",
+      "Input",
+    ]);
+  });
+
+  it("a model function whose code names an input is refused; a shape naming the model, and a JSDoc link, are not", () => {
+    const source = [
+      "/** {@link SetRunNoteCommand} holds the rule. */",
+      "export const RunNote = Schema.String;",
+      "export const SetRunNoteCommand = Schema.Struct({ note: RunNote });",
+      "export type SetRunNoteCommand = typeof SetRunNoteCommand.Type;",
+      "// SetRunNoteCommand in a line comment",
+      "export const runNoteOf = (command: SetRunNoteCommand) => command.note;",
+      "const helper = (input: StartTaskInput) => input;",
+      "export const StartTaskInput = Schema.Struct({});",
+    ].join("\n");
+    expect(RulesLint.modelShapeReferenceHits(source, suffixes)).toEqual([
+      { name: "runNoteOf", line: 6, shape: "SetRunNoteCommand" },
+      { name: "helper", line: 7, shape: "StartTaskInput" },
+    ]);
+  });
+
+  it("a name that ends in a suffix but is not an export of the file is not a shape", () => {
+    expect(
+      RulesLint.modelShapeReferenceHits(
+        'import { LoginInput } from "./Platform.ts";\nexport const login = (input: LoginInput) => input;',
+        suffixes,
+      ),
+    ).toEqual([]);
+  });
+});

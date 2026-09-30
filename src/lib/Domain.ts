@@ -71,7 +71,12 @@
  *
  * Shape families. These are the developer dialect's suffixes for what
  * crosses a boundary, not vocabulary words: a word here gets no nouns row,
- * and the rule for each family is on the symbol its row names.
+ * and the rule for each family is on the symbol its row names. The shapes
+ * stay in their context file beside the rules they answer; a contracts file
+ * (the shapes in a sibling file, the barrel re-exporting both) is the move
+ * when a consumer needs the shapes without the model, and none does today.
+ * Shapes read the model and the model never reads a shape, so that move
+ * stays mechanical; `scripts/rules-lint.ts` refuses the reverse.
  *
  * | family      | suffix                              | what it is                                                     | decoded by                                  | lives in                       | rule on                                       |
  * | ----------- | ----------------------------------- | -------------------------------------------------------------- | ------------------------------------------- | ------------------------------ | --------------------------------------------- |

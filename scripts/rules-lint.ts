@@ -12,7 +12,9 @@
  * without its noun ({@link bareStatePredicateHits}); and the map's import
  * direction ({@link contextImportHits}), the object map's
  * ({@link objectImportHits}), and the loader-data rule
- * ({@link loaderDataExportHits}) on every file under `src/`.
+ * ({@link loaderDataExportHits}) on every file under `src/`; and, in the
+ * context files, the shapes' one-way dependency
+ * ({@link modelShapeReferenceHits}).
  *
  * A grep, not an oxlint rule: the pattern is three tokens and has stayed
  * quiet. Union narrowing on `actor.role` and the connection state's `role`
@@ -27,10 +29,12 @@ import {
   contextImportHits,
   contextImports,
   loaderDataExportHits,
+  modelShapeReferenceHits,
   objectImportHits,
   RESERVED_STEMS,
   reservedStemHits,
   retiredCopyHits,
+  shapeSuffixes,
   textAreaPlaceholderHits,
 } from "./lib/rules-lint.ts";
 
@@ -121,9 +125,8 @@ if (predicateHits.length > 0) {
   for (const hit of predicateHits) console.error(`  ${hit}`);
 }
 
-const CONTEXT_MAP = contextImports(
-  readFileSync(join(ROOT, "lib", "Domain.ts"), "utf8"),
-);
+const BARREL = readFileSync(join(ROOT, "lib", "Domain.ts"), "utf8");
+const CONTEXT_MAP = contextImports(BARREL);
 
 const importHits = walk(ROOT).flatMap((path) => {
   const file = relative(ROOT, path);
@@ -159,10 +162,23 @@ const loaderDataHits = walk(ROOT).flatMap((path) => {
 
 for (const hit of loaderDataHits) console.error(hit);
 
+const SUFFIXES = shapeSuffixes(BARREL);
+
+const shapeHits = walk(join(ROOT, "lib", "domain")).flatMap((path) => {
+  const file = relative(ROOT, path);
+  return modelShapeReferenceHits(readFileSync(path, "utf8"), SUFFIXES).map(
+    ({ name, line, shape }) =>
+      `rules-lint: src/${file}:${String(line)} ${name} references ${shape}; a model symbol never references a shape (the rule on modelShapeReferenceHits)`,
+  );
+});
+
+for (const hit of shapeHits) console.error(hit);
+
 if (
   importHits.length > 0 ||
   objectHits.length > 0 ||
   loaderDataHits.length > 0 ||
+  shapeHits.length > 0 ||
   hits.length > 0 ||
   copyHits.length > 0 ||
   placeholderHits.length > 0 ||
