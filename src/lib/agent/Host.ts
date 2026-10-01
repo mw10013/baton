@@ -66,7 +66,7 @@ export class ShopAgentHost extends Context.Service<
     ) => Effect.Effect<void>;
     /** The object's SQLite size in bytes. */
     readonly databaseSize: Effect.Effect<number>;
-    /** Whether a fresh tracking row says an import is running at `now`; read, never refreshed. */
-    readonly importInFlight: (now: number) => Effect.Effect<boolean>;
+    /** Whether a fresh tracking row says an open-orders sync is running at `now`; read, never refreshed. */
+    readonly syncInFlight: (now: number) => Effect.Effect<boolean>;
   }
 >()("ShopAgentHost") {}

@@ -39,6 +39,7 @@ import {
 } from "@/lib/LayerEx";
 import { OrderRepository } from "@/lib/OrderRepository";
 import { ORDERS_SYNC_WORKFLOW_NAME } from "@/lib/orderSyncConstants";
+import { ORDER_CEILING_SYNC_REFUSED } from "@/lib/quotaCopy";
 import { Repository } from "@/lib/Repository";
 import { RunRepository } from "@/lib/RunRepository";
 import {
@@ -333,21 +334,22 @@ const flushUsageEvents = BillingAgent.pipe(
   Effect.flatMap((billing) => billing.flushUsageEvents),
 );
 
-/** Shop work's per-order reconciler for `source`, loaded before the store's transaction opens. */
-const reconcilerFor = (source: Domain.OrderSyncSource) =>
-  ShopWorkAgent.pipe(Effect.flatMap((shopWork) => shopWork.reconciler(source)));
+/** Shop work's per-order reconciler, loaded before the store's transaction opens. */
+const reconciler = ShopWorkAgent.pipe(
+  Effect.flatMap((shopWork) => shopWork.reconciler()),
+);
 
 /**
  * Stores one order ({@link OrdersAgent}) and reconciles it
- * ({@link reconcilerFor}); when the reconcile's closes released the open-run
+ * ({@link reconciler}); when the reconcile's closes released the open-run
  * ceiling, runs shop work's `afterCeilingReleased` after the store's
  * transaction has committed.
  */
-const fetchAndUpsertOrder = (orderId: string, source: Domain.OrderSyncSource) =>
+const fetchAndUpsertOrder = (orderId: string) =>
   Effect.gen(function* () {
     const { ceilingReleased } = yield* (yield* OrdersAgent).fetchAndUpsertOrder(
-      { orderId, source },
-      reconcilerFor(source),
+      { orderId },
+      reconciler,
     );
     if (ceilingReleased)
       yield* (yield* ShopWorkAgent).afterCeilingReleased(orderId);
@@ -356,12 +358,12 @@ const fetchAndUpsertOrder = (orderId: string, source: Domain.OrderSyncSource) =>
 const SHOP_AGENT_BINDING = "SHOP_AGENT";
 
 /**
- * Statuses the Agents SDK's tracking row carries while an import is under
- * way. `waiting` is in the set because a refreshed row reads that way while
+ * Statuses the Agents SDK's tracking row carries while an open-orders sync is
+ * under way. `waiting` is in the set because a refreshed row reads that way while
  * the instance sleeps between polls (`OrdersSyncWorkflow`), and a sleeping
- * import is still an import.
+ * sync is still a sync.
  */
-const IMPORT_IN_FLIGHT = ["queued", "running", "waiting"] as const;
+const SYNC_IN_FLIGHT = ["queued", "running", "waiting"] as const;
 
 /** The Workflows binding's own wording for an id it has no instance for. */
 const isWorkflowInstanceNotFoundError = (cause: unknown) =>
@@ -374,19 +376,19 @@ const isWorkflowInstanceNotFoundError = (cause: unknown) =>
  * Ten minutes is comfortably past the workflow's own give-up bound plus its
  * stream.
  *
- * **A tracking row disables Import open orders only while it is fresh**
- * ({@link importRowIsFresh}). The orders index reads a stale row as no import,
+ * **A tracking row disables Sync open orders only while it is fresh**
+ * ({@link syncRowIsFresh}). The orders index reads a stale row as no sync,
  * so the button comes back, and the click asks Cloudflare
- * ({@link ShopAgent.syncOrders}): a live instance answers `InFlight`, a gone
- * one has its row cleared and a new import starts. Were a stale row to keep
+ * ({@link ShopAgent.syncOpenOrders}): a live instance answers `InFlight`, a gone
+ * one has its row cleared and a new sync starts. Were a stale row to keep
  * the button disabled, the click that clears it could never happen, and one
  * dead instance would disable the button for good.
  */
-const IMPORT_STALE_MS = 10 * 60 * 1000;
+const SYNC_STALE_MS = 10 * 60 * 1000;
 
-/** A tracking row younger than {@link IMPORT_STALE_MS} at `now`: trusted without asking Cloudflare. */
-const importRowIsFresh = (row: { readonly createdAt: Date }, now: number) =>
-  now - row.createdAt.getTime() < IMPORT_STALE_MS;
+/** A tracking row younger than {@link SYNC_STALE_MS} at `now`: trusted without asking Cloudflare. */
+const syncRowIsFresh = (row: { readonly createdAt: Date }, now: number) =>
+  now - row.createdAt.getTime() < SYNC_STALE_MS;
 
 /**
  * What `/webhooks/orders` resolved a delivery down to: the order it names, the
@@ -426,13 +428,13 @@ export class ShopAgent extends Agent {
   declare private readonly runEffect: ReturnType<typeof makeRunEffect>;
 
   /**
-   * Set for the width of the `await` inside {@link ShopAgent.syncOrders} that
+   * Set for the width of the `await` inside {@link ShopAgent.syncOpenOrders} that
    * creates the workflow instance, and read by the next click. The object
    * runs one JavaScript thread, so a plain field is complete mutual exclusion
    * over the one window no stored row can cover: the Agents SDK inserts its
    * tracking row only after that same await returns.
    */
-  private importStarting = false;
+  private syncStarting = false;
 
   constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
     super(ctx, env);
@@ -455,16 +457,16 @@ export class ShopAgent extends Agent {
       databaseSize: Effect.sync(() => this.ctx.storage.sql.databaseSize),
       /**
        * Read, never refreshed: this is the loader half of a page and must not
-       * reach the Workflows API. Fresh rows only ({@link IMPORT_STALE_MS} is the
+       * reach the Workflows API. Fresh rows only ({@link SYNC_STALE_MS} is the
        * rule), so a row wedged by a dead instance leaves the button enabled and
-       * the next click ({@link ShopAgent.syncOrders}) clears it.
+       * the next click ({@link ShopAgent.syncOpenOrders}) clears it.
        */
-      importInFlight: (now) =>
+      syncInFlight: (now) =>
         Effect.sync(() =>
           this.getWorkflows({
-            status: [...IMPORT_IN_FLIGHT],
+            status: [...SYNC_IN_FLIGHT],
             workflowName: ORDERS_SYNC_WORKFLOW_NAME,
-          }).workflows.some((row) => importRowIsFresh(row, now)),
+          }).workflows.some((row) => syncRowIsFresh(row, now)),
         ),
     });
     void ctx.blockConcurrencyWhile(() =>
@@ -769,7 +771,7 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Starts the open-order import, or reports the one already running.
+   * Starts the open-orders sync, or reports the one already running.
    *
    * `@callable()`: the socket this arrives on already passed the Worker's gate
    * (session-token signature, `exp`/`nbf`/`aud`, the URL's shop matching the
@@ -780,18 +782,18 @@ export class ShopAgent extends Agent {
    * new. `ShopAgentClient` is for calls that must carry a Worker-resolved input
    * such as a plan ceiling.
    *
-   * **One import at a time**, tracked by the Agents SDK and nowhere else. The
-   * SDK's `cf_agents_workflows` row is the only record that an import is
+   * **One open-orders sync at a time**, tracked by the Agents SDK and nowhere else. The
+   * SDK's `cf_agents_workflows` row is the only record that a sync is
    * running, so there is no reservation to reconcile against it and no way for
    * the two to disagree. Three cases, and the code above is all three:
    *
    * - *Two clicks in one tick.* `runWorkflow` awaits `workflow.create` before
    *   it inserts the tracking row, so a second call during that await would
-   *   read an empty {@link IMPORT_IN_FLIGHT} query. The object runs one
+   *   read an empty {@link SYNC_IN_FLIGHT} query. The object runs one
    *   JavaScript thread and `getWorkflows` is synchronous, so the plain
-   *   `importStarting` field set before the await closes the gap exactly.
+   *   `syncStarting` field set before the await closes the gap exactly.
    * - *A wedged row.* The SDK never reaps its own rows. A row older than
-   *   {@link IMPORT_STALE_MS} is refreshed from the Workflows API through
+   *   {@link SYNC_STALE_MS} is refreshed from the Workflows API through
    *   `getWorkflowStatus`, which rewrites it; if it still reads as in flight
    *   afterwards, the instance really is alive. A row whose instance the
    *   platform no longer has (`instance.not_found`) is deleted outright,
@@ -802,11 +804,11 @@ export class ShopAgent extends Agent {
    *   and the next click starts a fresh one.
    */
   @callable()
-  syncOrders(): Promise<Domain.OrdersSyncResult> {
+  syncOpenOrders(): Promise<Domain.OrdersSyncResult> {
     const shop = this.name;
-    const runningImports = () =>
+    const trackedSyncs = () =>
       this.getWorkflows({
-        status: [...IMPORT_IN_FLIGHT],
+        status: [...SYNC_IN_FLIGHT],
         workflowName: ORDERS_SYNC_WORKFLOW_NAME,
       }).workflows;
     const deleteWorkflow = (workflowId: string) =>
@@ -826,13 +828,13 @@ export class ShopAgent extends Agent {
            */
           isWorkflowInstanceNotFoundError(error.cause)
             ? Effect.logWarning(
-                `ShopAgent.syncOrders: shop=${shop} workflowId=${workflowId}: instance not found, untracking`,
+                `ShopAgent.syncOpenOrders: shop=${shop} workflowId=${workflowId}: instance not found, untracking`,
               ).pipe(
                 Effect.annotateLogs({ shop, workflowId }),
                 Effect.andThen(Effect.sync(() => deleteWorkflow(workflowId))),
               )
             : Effect.logWarning(
-                `ShopAgent.syncOrders: shop=${shop} workflowId=${workflowId}: status refresh failed: ${error.message}`,
+                `ShopAgent.syncOpenOrders: shop=${shop} workflowId=${workflowId}: status refresh failed: ${error.message}`,
               ).pipe(Effect.annotateLogs({ shop, workflowId })),
         ),
       );
@@ -845,12 +847,12 @@ export class ShopAgent extends Agent {
         ),
       );
     const beginStarting = () => {
-      this.importStarting = true;
+      this.syncStarting = true;
     };
     const endStarting = () => {
-      this.importStarting = false;
+      this.syncStarting = false;
     };
-    const starting = () => this.importStarting;
+    const starting = () => this.syncStarting;
     const publish = () => this.publish("all");
     return this.runEffect(
       Effect.gen(function* () {
@@ -859,37 +861,37 @@ export class ShopAgent extends Agent {
         yield* connectionRoleGuard("merchant");
         const repository = yield* OrderRepository;
         const now = yield* Clock.currentTimeMillis;
-        const inFlight = Effect.fn("ShopAgent.syncOrders.inFlight")(
+        const inFlight = Effect.fn("ShopAgent.syncOpenOrders.inFlight")(
           function* () {
-            const running = runningImports();
-            const stale = running.filter((row) => !importRowIsFresh(row, now));
+            const running = trackedSyncs();
+            const stale = running.filter((row) => !syncRowIsFresh(row, now));
             if (stale.length === 0) return running.length > 0;
             yield* Effect.forEach(
               stale,
               (row) => refreshWorkflow(row.workflowId),
               { discard: true },
             );
-            return runningImports().length > 0;
+            return trackedSyncs().length > 0;
           },
         );
         if (starting() || (yield* inFlight())) {
           yield* Effect.logInfo(
-            `ShopAgent.syncOrders: shop=${shop} status=in-flight`,
+            `ShopAgent.syncOpenOrders: shop=${shop} status=in-flight`,
           ).pipe(Effect.annotateLogs({ shop, status: "in-flight" }));
           return { _tag: "InFlight" } satisfies Domain.OrdersSyncResult;
         }
         /**
-         * The order ceiling: an import that would be refused order by order
+         * The order ceiling: a sync that would be refused order by order
          * should be refused once, visibly, before it starts. A stream that
          * crosses the ceiling mid-file is stopped per order by `upsertOrder`
          * instead, and the webhook path carries the same test for single
-         * orders. No storage guard beside it: the import's fixed open-work
+         * orders. No storage guard beside it: the sync's fixed open-work
          * query is what bounds how much this object can take on.
          */
         const usage = yield* repository.getUsage();
         if (Domain.cycleAtOrderCeiling(usage.ordersThisCycle)) {
           yield* Effect.logError(
-            `ShopAgent.syncOrders: shop=${shop} status=order-ceiling ordersThisCycle=${String(usage.ordersThisCycle)}`,
+            `ShopAgent.syncOpenOrders: shop=${shop} status=order-ceiling ordersThisCycle=${String(usage.ordersThisCycle)}`,
           ).pipe(
             Effect.annotateLogs({
               shop,
@@ -898,7 +900,7 @@ export class ShopAgent extends Agent {
             }),
           );
           yield* repository.setSyncError({
-            error: `Baton is built for shops under ${Domain.ShopLimits.maxOrdersPerCycle.toLocaleString("en-US")} orders a billing cycle; importing resumes when the billing cycle ends.`,
+            error: ORDER_CEILING_SYNC_REFUSED,
           });
           yield* repository.markOrdersLimited(now);
           yield* publish();
@@ -911,11 +913,11 @@ export class ShopAgent extends Agent {
           () => Effect.sync(endStarting),
         );
         yield* Effect.logInfo(
-          `ShopAgent.syncOrders: shop=${shop} status=started workflowId=${workflowId}`,
+          `ShopAgent.syncOpenOrders: shop=${shop} status=started workflowId=${workflowId}`,
         ).pipe(Effect.annotateLogs({ shop, status: "started", workflowId }));
         yield* publish();
         return { _tag: "Started" } satisfies Domain.OrdersSyncResult;
-      }).pipe(Effect.withLogSpan("ShopAgent.syncOrders")),
+      }).pipe(Effect.withLogSpan("ShopAgent.syncOpenOrders")),
     );
   }
 
@@ -933,7 +935,7 @@ export class ShopAgent extends Agent {
         role: "rpc",
       })(({ url }) =>
         Effect.gen(function* () {
-          // After the stream, never per order: a bulk import can queue
+          // After the stream, never per order: an open-orders sync can queue
           // thousands of events, and the API takes one request each at 500 a
           // second, so the drain is batched (`ShopLimits.sweepBatch`) and the
           // remainder rides the next webhook. `ensuring`, because a stream
@@ -941,7 +943,7 @@ export class ShopAgent extends Agent {
           // stored, and those events are owed whatever became of the rest.
           const counts = yield* runShopAgentOrdersStream({
             url,
-            afterWrite: yield* reconcilerFor("bulk"),
+            afterWrite: yield* reconciler,
           }).pipe(Effect.ensuring(flushUsageEvents));
           // After the stream, once: the orders the stream declined at the
           // ceiling are created by this pass, not by one pass per order.
@@ -959,7 +961,7 @@ export class ShopAgent extends Agent {
               }),
             );
           /**
-           * The retention pass rides the import: it is merchant-triggered,
+           * The retention pass rides the open-orders sync: it is merchant-triggered,
            * already the heaviest thing this object does, and the one moment
            * where paying for a batch of deletes is invisible next to what the
            * request is doing anyway.
@@ -1030,7 +1032,7 @@ export class ShopAgent extends Agent {
   /**
    * Completion is recorded here rather than at the end of the stream: a file
    * that streams halfway and then fails must not leave a timestamp claiming
-   * an import completed. The workflow reports no result — there is nothing
+   * a sync completed. The workflow reports no result — there is nothing
    * about the run the object does not already know — so nothing is decoded.
    */
   override async onWorkflowComplete(
@@ -1057,7 +1059,7 @@ export class ShopAgent extends Agent {
 
   /**
    * Deleting the tracking row is what re-enables the button: it is the only
-   * record that an import is running ({@link ShopAgent.syncOrders}), so a row
+   * record that a sync is running ({@link ShopAgent.syncOpenOrders}), so a row
    * left behind by a failed run would wedge it until the staleness refresh.
    */
   override async onWorkflowError(
@@ -1100,7 +1102,7 @@ export class ShopAgent extends Agent {
    * store as its `afterWrite`), flush ({@link BillingAgent}) and publish
    * (this object's `publish`).
    */
-  syncOrder(input: OrderWebhookInput): Promise<void> {
+  syncOrderWebhook(input: OrderWebhookInput): Promise<void> {
     const shop = this.name;
     /**
      * Scoped by team as well as by order: the union of the teams with an open
@@ -1114,124 +1116,123 @@ export class ShopAgent extends Agent {
     const publish = (orderId: string, teams: PublishTeams) =>
       this.publish([orderId], teams);
     return this.runEffect(
-      callableEffect("ShopAgent.syncOrder", OrderWebhookInput, { role: "rpc" })(
-        ({ orderId, topic, webhookId, updatedAt }) =>
-          Effect.gen(function* () {
-            const repository = yield* OrderRepository;
-            const isNew = yield* repository.recordWebhookDelivery({
-              webhookId,
-              receivedAt: yield* Clock.currentTimeMillis,
-            });
-            if (!isNew) {
-              yield* Effect.logInfo(
-                `ShopAgent.syncOrder: shop=${shop} topic=${topic} status=duplicate`,
-              ).pipe(
-                Effect.annotateLogs({
-                  shop,
-                  topic,
-                  webhookId,
-                  status: "duplicate",
-                }),
-              );
-              return;
-            }
-            const stored = yield* repository.getOrderUpdatedAt(orderId);
-            if (
-              updatedAt !== null &&
-              Option.isSome(stored) &&
-              updatedAt <= stored.value
-            ) {
-              yield* Effect.logInfo(
-                `ShopAgent.syncOrder: shop=${shop} topic=${topic} status=stale`,
-              ).pipe(
-                Effect.annotateLogs({ shop, topic, orderId, status: "stale" }),
-              );
-              return;
-            }
-            /**
-             * The enterprise ceiling, and the only hard stop on orders. It
-             * gates *new* orders only — `getOrderUpdatedAt` answering none is
-             * what makes it one — so every order Baton already carries
-             * keeps receiving its updates. The webhook still returns
-             * 2xx: a retry cannot change the answer, and making Shopify replay
-             * a delivery for four hours to reach the same refusal helps nobody.
-             *
-             * The publish is a nudge, not the banner: the merchant's open
-             * orders page refetches its list, and the critical banner itself
-             * arrives with that page's next loader read, since usage is
-             * deliberately loader-only (the orders index's loader data).
-             */
-            // One read serves both the ceiling and the sweep below: the row
-            // is the same one, and this is the webhook path, where every
-            // avoidable read is paid per delivery.
-            const usage = yield* repository.getUsage();
-            if (
-              Option.isNone(stored) &&
-              Domain.cycleAtOrderCeiling(usage.ordersThisCycle)
-            ) {
-              yield* repository.markOrdersLimited(
-                yield* Clock.currentTimeMillis,
-              );
-              yield* Effect.logError(
-                `ShopAgent.syncOrder: shop=${shop} topic=${topic} status=order-ceiling limit=${String(Domain.ShopLimits.maxOrdersPerCycle)}`,
-              ).pipe(
-                Effect.annotateLogs({
-                  shop,
-                  topic,
-                  orderId,
-                  status: "order-ceiling",
-                  limit: Domain.ShopLimits.maxOrdersPerCycle,
-                }),
-              );
-              yield* publish(orderId, []);
-              return;
-            }
-            const shopWork = yield* ShopWorkAgent;
-            const before = yield* shopWork.orderTeamIds({ orderId });
-            yield* fetchAndUpsertOrder(orderId, "webhook");
-            /**
-             * The second retention carrier, rate-limited by `lastSweepAt`
-             * rather than run on every delivery: a busy shop must not pay for
-             * a batch of deletes per webhook. The `ShopUsage` row it reads is
-             * the one the ceiling already read above, so the rate limit costs
-             * nothing extra per delivery.
-             *
-             * With the import, this is the whole of when orders age out.
-             * There is no alarm, so a shop that receives no webhooks and runs
-             * no import never sweeps — which is correct rather than a gap: it
-             * is also a shop that is not growing, and its rows sit inert
-             * until uninstall destroys the object
-             * ({@link Domain.ShopLimits.orderRetentionDays}).
-             */
-            const now = yield* Clock.currentTimeMillis;
-            if (
-              usage.lastSweepAt === null ||
-              now - usage.lastSweepAt >= Domain.ShopLimits.sweepIntervalMs
-            ) {
-              const swept = yield* repository.sweepExpiredOrders({ now });
-              if (swept.orders > 0 || swept.runs > 0 || swept.usageEvents > 0)
-                yield* Effect.logInfo(
-                  `ShopAgent.syncOrder: shop=${shop} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)} sweptUsageEvents=${String(swept.usageEvents)}`,
-                ).pipe(
-                  Effect.annotateLogs({
-                    shop,
-                    sweptOrders: swept.orders,
-                    sweptRuns: swept.runs,
-                    sweptUsageEvents: swept.usageEvents,
-                  }),
-                );
-            }
-            yield* publish(
-              orderId,
-              unionTeams(before, yield* shopWork.orderTeamIds({ orderId })),
+      callableEffect("ShopAgent.syncOrderWebhook", OrderWebhookInput, {
+        role: "rpc",
+      })(({ orderId, topic, webhookId, updatedAt }) =>
+        Effect.gen(function* () {
+          const repository = yield* OrderRepository;
+          const isNew = yield* repository.recordWebhookDelivery({
+            webhookId,
+            receivedAt: yield* Clock.currentTimeMillis,
+          });
+          if (!isNew) {
+            yield* Effect.logInfo(
+              `ShopAgent.syncOrderWebhook: shop=${shop} topic=${topic} status=duplicate`,
+            ).pipe(
+              Effect.annotateLogs({
+                shop,
+                topic,
+                webhookId,
+                status: "duplicate",
+              }),
             );
-            // Outside the upsert's transaction, because it does network I/O
-            // and Durable Object SQLite transactions must not await anything
-            // but storage. The webhook path is the outbox's ordinary carrier:
-            // an order that queued an event flushes it, and a shop still
-            // syncing drains whatever earlier events failed.
-            yield* flushUsageEvents;
-          }),
+            return;
+          }
+          const stored = yield* repository.getOrderUpdatedAt(orderId);
+          if (
+            updatedAt !== null &&
+            Option.isSome(stored) &&
+            updatedAt <= stored.value
+          ) {
+            yield* Effect.logInfo(
+              `ShopAgent.syncOrderWebhook: shop=${shop} topic=${topic} status=stale`,
+            ).pipe(
+              Effect.annotateLogs({ shop, topic, orderId, status: "stale" }),
+            );
+            return;
+          }
+          /**
+           * The enterprise ceiling, and the only hard stop on orders. It
+           * gates *new* orders only — `getOrderUpdatedAt` answering none is
+           * what makes it one — so every order Baton already carries
+           * keeps receiving its updates. The webhook still returns
+           * 2xx: a retry cannot change the answer, and making Shopify replay
+           * a delivery for four hours to reach the same refusal helps nobody.
+           *
+           * The publish is a nudge, not the banner: the merchant's open
+           * orders page refetches its list, and the critical banner itself
+           * arrives with that page's next loader read, since usage is
+           * deliberately loader-only (the orders index's loader data).
+           */
+          // One read serves both the ceiling and the sweep below: the row
+          // is the same one, and this is the webhook path, where every
+          // avoidable read is paid per delivery.
+          const usage = yield* repository.getUsage();
+          if (
+            Option.isNone(stored) &&
+            Domain.cycleAtOrderCeiling(usage.ordersThisCycle)
+          ) {
+            yield* repository.markOrdersLimited(yield* Clock.currentTimeMillis);
+            yield* Effect.logError(
+              `ShopAgent.syncOrderWebhook: shop=${shop} topic=${topic} status=order-ceiling limit=${String(Domain.ShopLimits.maxOrdersPerCycle)}`,
+            ).pipe(
+              Effect.annotateLogs({
+                shop,
+                topic,
+                orderId,
+                status: "order-ceiling",
+                limit: Domain.ShopLimits.maxOrdersPerCycle,
+              }),
+            );
+            yield* publish(orderId, []);
+            return;
+          }
+          const shopWork = yield* ShopWorkAgent;
+          const before = yield* shopWork.orderTeamIds({ orderId });
+          yield* fetchAndUpsertOrder(orderId);
+          /**
+           * The second retention carrier, rate-limited by `lastSweepAt`
+           * rather than run on every delivery: a busy shop must not pay for
+           * a batch of deletes per webhook. The `ShopUsage` row it reads is
+           * the one the ceiling already read above, so the rate limit costs
+           * nothing extra per delivery.
+           *
+           * With the open-orders sync, this is the whole of when orders age out.
+           * There is no alarm, so a shop that receives no webhooks and runs
+           * no sync never sweeps — which is correct rather than a gap: it
+           * is also a shop that is not growing, and its rows sit inert
+           * until uninstall destroys the object
+           * ({@link Domain.ShopLimits.orderRetentionDays}).
+           */
+          const now = yield* Clock.currentTimeMillis;
+          if (
+            usage.lastSweepAt === null ||
+            now - usage.lastSweepAt >= Domain.ShopLimits.sweepIntervalMs
+          ) {
+            const swept = yield* repository.sweepExpiredOrders({ now });
+            if (swept.orders > 0 || swept.runs > 0 || swept.usageEvents > 0)
+              yield* Effect.logInfo(
+                `ShopAgent.syncOrderWebhook: shop=${shop} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)} sweptUsageEvents=${String(swept.usageEvents)}`,
+              ).pipe(
+                Effect.annotateLogs({
+                  shop,
+                  sweptOrders: swept.orders,
+                  sweptRuns: swept.runs,
+                  sweptUsageEvents: swept.usageEvents,
+                }),
+              );
+          }
+          yield* publish(
+            orderId,
+            unionTeams(before, yield* shopWork.orderTeamIds({ orderId })),
+          );
+          // Outside the upsert's transaction, because it does network I/O
+          // and Durable Object SQLite transactions must not await anything
+          // but storage. The webhook path is the outbox's ordinary carrier:
+          // an order that queued an event flushes it, and a shop still
+          // syncing drains whatever earlier events failed.
+          yield* flushUsageEvents;
+        }),
       )(input),
     );
   }
@@ -1333,10 +1334,10 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * `@callable()` and it does take an argument, unlike {@link syncOrders} — but
+   * `@callable()` and it does take an argument, unlike {@link syncOpenOrders} — but
    * the id is only ever spent against this shop's own offline session, so a
    * foreign one fails at Shopify rather than reaching another shop's data. No
-   * dedupe and no staleness check: a merchant clicking Resync is asking for the
+   * dedupe and no staleness check: a merchant clicking Sync from Shopify is asking for the
    * fetch, and the upsert guard still protects the row.
    *
    * Sends the usage queue afterwards ({@link flushUsageEvents}), whether or
@@ -1344,15 +1345,15 @@ export class ShopAgent extends Agent {
    * run, which counts it.
    */
   @callable()
-  resyncOrder(input: Domain.ResyncOrderInput): Promise<void> {
+  syncOrder(input: Domain.SyncOrderInput): Promise<void> {
     const publish = (touched: PublishScope) => this.publish(touched);
     return this.runEffect(
-      callableEffect("ShopAgent.resyncOrder", Domain.ResyncOrderInput, {
+      callableEffect("ShopAgent.syncOrder", Domain.SyncOrderInput, {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })(({ orderId }) =>
         Effect.gen(function* () {
-          yield* fetchAndUpsertOrder(orderId, "manual");
+          yield* fetchAndUpsertOrder(orderId);
           yield* publish([orderId]);
         }).pipe(Effect.ensuring(flushUsageEvents)),
       )(input),

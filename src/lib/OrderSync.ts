@@ -88,8 +88,8 @@ export const toOrderLineItem = (
 });
 
 /**
- * The single-order fetch behind every webhook delivery and every manual
- * resync. Shopify's order webhooks are REST-shaped and carry no product tags
+ * The single-order fetch behind every webhook delivery and every
+ * one-order sync the merchant asks for. Shopify's order webhooks are REST-shaped and carry no product tags
  * or enriched line-item metadata — Shopify's own OMS guidance is to query the
  * full order after each webhook — and this app subscribes with
  * `include_fields` trimmed to ids anyway, so the payload is a signal and this

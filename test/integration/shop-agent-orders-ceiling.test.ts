@@ -17,7 +17,7 @@ import * as Domain from "@/lib/Domain";
  * The real ceiling is more orders than a test should sync, so these lower
  * the constant for the duration — the same seam the open-run
  * ceiling tests use, and for the same reason: threading a limit through
- * `syncOrder` for nobody but this file would put a test seam in the production
+ * `syncOrderWebhook` for nobody but this file would put a test seam in the production
  * signature.
  */
 const withMaxOrdersPerCycle = <A>(limit: number, body: () => Promise<A>) => {
@@ -75,7 +75,7 @@ describe("ShopAgent order ceiling", () => {
       await setCount(shop, 2);
       // No Shopify call is made: the refusal lands before the fetch, which is
       // what makes the webhook cheap to refuse and this case hermetic.
-      await agent.syncOrder(webhook("gid://shopify/Order/1", "wh-1"));
+      await agent.syncOrderWebhook(webhook("gid://shopify/Order/1", "wh-1"));
       strictEqual(await orderCount(shop), 0);
       const usage = await agent.getUsage();
       strictEqual(usage.ordersThisCycle, 2);
@@ -94,7 +94,7 @@ describe("ShopAgent order ceiling", () => {
         memberCount: 0,
       });
       await setCount(shop, 2);
-      await agent.syncOrder(webhook("gid://shopify/Order/2", "wh-2"));
+      await agent.syncOrderWebhook(webhook("gid://shopify/Order/2", "wh-2"));
       const limited = await agent.getUsage();
       strictEqual(limited.ordersLimitedAt !== null, true);
       await agent.setBillingCycle({

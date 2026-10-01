@@ -263,7 +263,7 @@ export class OrderRepository extends Context.Service<
      * A new order that has already expired
      * ({@link Domain.ShopLimits.orderRetentionDays}) is not written either,
      * and reports `written: false` like a stale one. Only a webhook can carry
-     * one, since the bulk import reaches back 30 days; it arrives when a
+     * one, since the open-orders sync reaches back 30 days; it arrives when a
      * merchant edits, refunds or fulfils a year-old order. Stored again, it
      * would have no `countedAt`, so its first run would count it a second
      * time, and the next sweep would delete it and the run. An expired order
@@ -295,7 +295,7 @@ export class OrderRepository extends Context.Service<
         readonly afterWrite: Option.Option<A>;
         /**
          * The order had no row before this write. What `ShopUsage` counts
-         * against the plan's billing cycle — a resync of a stored order is not
+         * against the plan's billing cycle — a second sync of a stored order is not
          * a second order — and what the bulk stream reports as `ordersInserted`.
          */
         readonly fresh: boolean;
@@ -414,17 +414,17 @@ export class OrderRepository extends Context.Service<
     /**
      * The one `SyncState` row, seeded by the schema so every read is a plain
      * `select` and every write an `update` that cannot race an insert. It
-     * holds what the last import left behind (its error, its completion) and
-     * nothing about an import in flight: that is the Agents SDK's
-     * `cf_agents_workflows` row, read by `ShopAgent.syncOrders`.
+     * holds what the last sync left behind (its error, its completion) and
+     * nothing about a sync in flight: that is the Agents SDK's
+     * `cf_agents_workflows` row, read by `ShopAgent.syncOpenOrders`.
      */
     readonly getSyncState: () => Effect.Effect<
       Domain.SyncState,
       SqlError.SqlError | OrderRepositoryError
     >;
     /**
-     * The import finished. Not written by the stream: a file that streams
-     * halfway and then fails must not leave a timestamp claiming an import
+     * The sync finished. Not written by the stream: a file that streams
+     * halfway and then fails must not leave a timestamp claiming a sync
      * completed.
      */
     readonly setLastCompletedAt: (input: {
@@ -434,9 +434,9 @@ export class OrderRepository extends Context.Service<
       SqlError.SqlError | OrderRepositoryError
     >;
     /**
-     * Records why the last import did not happen or did not finish — a
+     * Records why the last sync did not happen or did not finish — a
      * refusal before the workflow started, or the failure that ended it. The
-     * banner on the orders index carries it until the next import clears it.
+     * banner on the orders index carries it until the next sync clears it.
      */
     readonly setSyncError: (input: {
       readonly error: string;
@@ -444,7 +444,7 @@ export class OrderRepository extends Context.Service<
       Domain.SyncState,
       SqlError.SqlError | OrderRepositoryError
     >;
-    /** Clears the banner; the import about to start owns the state from here. */
+    /** Clears the banner; the sync about to start owns the state from here. */
     readonly clearSyncError: () => Effect.Effect<
       void,
       SqlError.SqlError | OrderRepositoryError
@@ -1641,7 +1641,7 @@ export class OrderRepository extends Context.Service<
                * Per row, never in bulk: one refused event must not hold back
                * the rest, and the API takes one event per request anyway. The
                * failure is recorded on the row rather than raised, because the
-               * caller is a webhook or a bulk import whose real work succeeded —
+               * caller is a webhook or an open-orders sync whose real work succeeded —
                * a billing event that has not gone out yet is an operator signal
                * (`ShopUsage.pendingUsageEvents`), not a reason to fail a sync.
                */

@@ -26,19 +26,19 @@ const make = Effect.gen(function* () {
    * One pass over the usage-event outbox, logged and never raised.
    *
    * Every caller is a request whose real work has already succeeded — a webhook
-   * that stored an order, a bulk import that finished its stream, a merchant's
-   * Attach, Resync or workflow edit that created runs, an uninstall that is
+   * that stored an order, an open-orders sync that finished its stream, a merchant's
+   * Attach, Sync from Shopify or workflow edit that created runs, an uninstall that is
    * about to delete everything — and none of them may fail because a billing
    * event could not go out.
    *
    * **Every path that creates a run sends the queue after its write commits**
    * (the "then sent" of the triggers table on `Domain.ShopUsage`), so an order
    * counted near a cycle's end goes out inside that cycle rather than waiting
-   * for the next webhook. The paths: the webhook and bulk import syncs, Attach
+   * for the next webhook. The paths: the webhook and open-orders syncs, Attach
    * ("attaching a workflow sends the usage event it queued"), every workflow
    * edit through `ShopWorkAgent`'s `reconcileAllNow` ("turning a workflow on
-   * sends the usage events for the orders it counted"), Resync ("resyncing an
-   * order sends the usage queue, even when the resync fails") and the seed. A
+   * sends the usage events for the orders it counted"), Sync from Shopify ("syncing
+   * one order sends the usage queue, even when the sync fails") and the seed. A
    * cycle push is sent by the reconcile push that follows it
    * ({@link reconcileUsage}). Never inside a transaction: it does
    * network I/O. The rows survive a failure, so the next

@@ -517,10 +517,10 @@ describe("action table parser", () => {
       expect(
         ActionTable.checkShapeFamilies(source, {
           ...shapeSources,
-          "src/lib/domain/Orders.ts": `${ordersSource}\nexport interface ResyncOrderCommand {}\n`,
+          "src/lib/domain/Orders.ts": `${ordersSource}\nexport interface SyncOrderCommand {}\n`,
         }),
       ).toEqual([
-        "Shape families command: ResyncOrderCommand is in Orders.ts, the row says `ShopWork.ts`",
+        "Shape families command: SyncOrderCommand is in Orders.ts, the row says `ShopWork.ts`",
       ]);
     });
   });

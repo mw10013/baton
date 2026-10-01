@@ -5,13 +5,12 @@
  * Nouns, orders. "(none)" means no screen says the word; the
  * cell says what a screen shows instead:
  *
- * | word             | meaning                                                                          | symbol                          | screen                   |
- * | ---------------- | -------------------------------------------------------------------------------- | ------------------------------- | ------------------------ |
- * | order            | a Shopify order                                                                  | `ShopOrder`                     | its name (#1001)         |
- * | item             | one line item of an order                                                        | `OrderLineItem`                 | item; never "line item"  |
- * | import           | the bulk fetch of the shop's open orders from Shopify                            | `OrdersSyncResult`, `SyncState` | Import open orders       |
- * | sync             | writing one Shopify order into the object, from a webhook, an import or a resync | `OrderSyncSource`               | Resync from Shopify      |
- * | current quantity | Shopify's count of units still on the item after edits and refunds               | `OrderLineItem.currentQuantity` | the quantity on the card |
+ * | word             | meaning                                                                                                                                                                                                           | symbol                                                                                  | screen                                                                  |
+ * | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+ * | order            | a Shopify order                                                                                                                                                                                                   | `ShopOrder`                                                                             | its name (#1001)                                                        |
+ * | item             | one line item of an order                                                                                                                                                                                         | `OrderLineItem`                                                                         | item; never "line item"                                                 |
+ * | sync             | making Baton's copy of an order agree with Shopify: a webhook (one order, as it happens), the open-orders sync (the button: open, unfulfilled, created in the last 30 days), or the merchant asking for one order | `ShopAgent.syncOpenOrders`, `OrdersSyncResult`, `OrdersSyncStatus`, `SyncState`, `SyncOrderInput` | Sync open orders (the orders index); Sync from Shopify (the order page) |
+ * | current quantity | Shopify's count of units still on the item after edits and refunds                                                                                                                                                | `OrderLineItem.currentQuantity`                                                         | the quantity on the card                                                |
  *
  * An item is always shown under its order on the merchant's order page,
  * and beside it in the member's row (`<item> · <workflow> · <order>`), so
@@ -87,8 +86,8 @@ export const ShopOrder = Schema.Struct({
 export type ShopOrder = typeof ShopOrder.Type;
 
 /**
- * `productTags` is a **snapshot** taken at sync time, not a live read: a
- * resync overwrites it. A run copies the definition it started from, so a
+ * `productTags` is a **snapshot** taken at sync time, not a live read: the
+ * next sync overwrites it. A run copies the definition it started from, so a
  * merchant retagging a product cannot silently rewrite history.
  *
  * `currentQuantity` is the number of units still to be made
@@ -197,10 +196,10 @@ export type OrderDetail = typeof OrderDetail.Type;
  */
 export const SEED_ORDER_ID_PREFIX = "gid://shopify/Order/seed-";
 
-export const ResyncOrderInput = Schema.Struct({
+export const SyncOrderInput = Schema.Struct({
   orderId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
 });
-export type ResyncOrderInput = typeof ResyncOrderInput.Type;
+export type SyncOrderInput = typeof SyncOrderInput.Type;
 
 /**
  * A Shopify bulk operation as the sync workflow observes it.
@@ -246,25 +245,17 @@ export const BulkOperation = Schema.Struct({
 export type BulkOperation = typeof BulkOperation.Type;
 
 /**
- * Which ingestion path is writing an order, for the sync logs. Diagnostic,
- * not control flow: every path runs the same `updatedAt`-guarded upsert. Not
- * stored on the row; a log line answers "how did this get here" as well.
- */
-export const OrderSyncSource = Schema.Literals(["webhook", "bulk", "manual"]);
-export type OrderSyncSource = typeof OrderSyncSource.Type;
-
-/**
- * The single `SyncState` row: what the last import left behind, and nothing
+ * The single `SyncState` row: what the last sync left behind, and nothing
  * else. Whether one is running now is not stored — the Agents SDK's own
  * `cf_agents_workflows` row is the only run tracker ({@link
  * OrdersSyncStatus.inFlight}) — because two records of the same fact drift
  * the moment a workflow dies without reporting.
  *
  * `lastError` is the banner on the orders index and survives until the next
- * import starts; `lastCompletedAt` is not on screen (a standing "Last
- * imported" time read as a chore to keep fresh) and is written by
+ * sync starts; `lastCompletedAt` is not on screen (a standing "Last
+ * synced" time read as a chore to keep fresh) and is written by
  * `onWorkflowComplete`, not by the stream, so a file that streams halfway and
- * then fails never claims a completed import.
+ * then fails never claims a completed sync.
  */
 export const SyncState = Schema.Struct({
   lastError: Schema.NullOr(Schema.String),
@@ -272,7 +263,7 @@ export const SyncState = Schema.Struct({
 });
 export type SyncState = typeof SyncState.Type;
 
-/** {@link SyncState} as `OrdersIndexData` in ShopWork carries it, plus whether an import is tracked as running right now; only a fresh tracking row counts (`IMPORT_STALE_MS` in `ShopAgent.ts` is the rule). */
+/** {@link SyncState} as `OrdersIndexData` in ShopWork carries it, plus whether a sync is tracked as running right now; only a fresh tracking row counts (`SYNC_STALE_MS` in `ShopAgent.ts` is the rule). */
 export const OrdersSyncStatus = Schema.Struct({
   inFlight: Schema.Boolean,
   ...SyncState.fields,
@@ -280,9 +271,9 @@ export const OrdersSyncStatus = Schema.Struct({
 export type OrdersSyncStatus = typeof OrdersSyncStatus.Type;
 
 /**
- * What the Import open orders button is told it did: a `Result` (the Shape
+ * What the Sync open orders button is told it did: a `Result` (the Shape
  * families table on the map in `Domain.ts`), a tagged union like every
- * other. `InFlight` is an import already tracked as running, `Refused` is a
+ * other. `InFlight` is a sync already tracked as running, `Refused` is a
  * refusal recorded on {@link SyncState.lastError} for the banner to carry;
  * neither is an error, and in all three cases the page re-reads
  * `OrdersIndexData` in ShopWork.

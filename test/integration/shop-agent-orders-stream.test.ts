@@ -127,7 +127,7 @@ describe("runShopAgentOrdersStream", () => {
     strictEqual(Option.getOrThrow(second).lineItems.length, 1);
   });
 
-  it("caps an order's line items and flags it rather than failing the import", async () => {
+  it("caps an order's line items and flags it rather than failing the sync", async () => {
     const over = Domain.ShopLimits.maxLineItemsPerOrder + 1;
     const { counts, detail } = await runInDo(
       ndjson(

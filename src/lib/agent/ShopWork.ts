@@ -473,7 +473,7 @@ const make = Effect.gen(function* () {
           teams,
         }),
         syncState: {
-          inFlight: yield* host.importInFlight(yield* Clock.currentTimeMillis),
+          inFlight: yield* host.syncInFlight(yield* Clock.currentTimeMillis),
           ...(yield* repository.getSyncState()),
         },
         teams,
@@ -896,7 +896,7 @@ const make = Effect.gen(function* () {
    * write's transaction, so the declined runs are created now rather than at
    * each order's next webhook, and publishes to everyone, since the runs
    * land on any order. The class's sync wiring calls it for the webhook, the
-   * resync and the import; the task and run callables call it themselves.
+   * one-order sync and the open-orders sync; the task and run callables call it themselves.
    */
   const afterCeilingReleased = (id: string) =>
     Effect.gen(function* () {
@@ -904,7 +904,7 @@ const make = Effect.gen(function* () {
       yield* host.publish("all");
     });
 
-  const reconciler = (source: Domain.OrderSyncSource) => {
+  const reconciler = () => {
     const shop = host.shop();
     return Effect.gen(function* () {
       const context = yield* eligibleContext();
@@ -913,12 +913,11 @@ const make = Effect.gen(function* () {
         runs.reconcileOrder({ ...context, orderId: order.id }).pipe(
           Effect.tap(({ created, resized, closed, ambiguous }) =>
             Effect.logInfo(
-              `ShopAgent.reconcileOrder: shop=${shop} orderId=${order.id} source=${source} created=${String(created)} resized=${String(resized)} closed=${String(closed)} ambiguous=${String(ambiguous)}`,
+              `ShopAgent.reconcileOrder: shop=${shop} orderId=${order.id} created=${String(created)} resized=${String(resized)} closed=${String(closed)} ambiguous=${String(ambiguous)}`,
             ).pipe(
               Effect.annotateLogs({
                 shop,
                 orderId: order.id,
-                source,
                 created,
                 resized,
                 closed,
@@ -1936,7 +1935,7 @@ const make = Effect.gen(function* () {
       const orderRepository = yield* OrderRepository;
       const workflowRepository = yield* WorkflowRepository;
       const runs = yield* RunRepository;
-      const reconcile = yield* reconciler("manual");
+      const reconcile = yield* reconciler();
       const shopTeams = yield* teams();
       const now = yield* Clock.currentTimeMillis;
       const listOpenRuns = (orderId: string) =>

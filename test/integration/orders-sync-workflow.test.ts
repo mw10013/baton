@@ -10,7 +10,7 @@ import { bulkOrdersQueryText } from "@/lib/OrdersBulkRepository";
 import {
   BULK_GIVE_UP_MS,
   BULK_POLL_INTERVAL_MS,
-  ORDER_IMPORT_WINDOW_DAYS,
+  ORDER_SYNC_WINDOW_DAYS,
   ORDERS_SYNC_WORKFLOW_NAME,
 } from "@/lib/orderSyncConstants";
 
@@ -57,7 +57,7 @@ const listOrdersInput = {
 
 const startSync = async (shop: string) => {
   const agent = await getAgentByName(env.SHOP_AGENT, shop);
-  await agent.syncOrders();
+  await agent.syncOpenOrders();
 };
 
 /**
@@ -227,11 +227,11 @@ describe("OrdersSyncWorkflow shape", () => {
   });
 
   /**
-   * One import per shop, and the Agents SDK's own tracking row is what says
+   * One open-orders sync per shop, and the Agents SDK's own tracking row is what says
    * so: a second click while a run is tracked must be refused by the object
    * rather than by an already-exists error from the platform.
    */
-  it("refuses a second import while one is tracked as running", async () => {
+  it("refuses a second sync while one is tracked as running", async () => {
     const shop = "orders-singleton.myshopify.com";
     await using introspector = await introspectWorkflow(
       env.ORDERS_SYNC_WORKFLOW,
@@ -246,8 +246,8 @@ describe("OrdersSyncWorkflow shape", () => {
     });
 
     const agent = await getAgentByName(env.SHOP_AGENT, shop);
-    const first = await agent.syncOrders();
-    const second = await agent.syncOrders();
+    const first = await agent.syncOpenOrders();
+    const second = await agent.syncOpenOrders();
 
     expect(first._tag).toBe("Started");
     expect(second._tag).toBe("InFlight");
@@ -255,7 +255,7 @@ describe("OrdersSyncWorkflow shape", () => {
     expect(instances.length).toBe(1);
   });
 
-  it("a tracking row disables Import open orders only while it is fresh", async () => {
+  it("a tracking row disables Sync open orders only while it is fresh", async () => {
     const shop = "orders-fresh-row.myshopify.com";
     const agent = await getAgentByName(env.SHOP_AGENT, shop);
     await agent.listOrders(listOrdersInput);
@@ -291,7 +291,7 @@ describe("OrdersSyncWorkflow shape", () => {
    * "code had hung" notice from workerd; both are the shim's, the test itself
    * completes.
    */
-  it("a tracked import whose instance is gone is cleared on the next click", async () => {
+  it("a tracked sync whose instance is gone is cleared on the next click", async () => {
     const shop = "orders-orphan-row.myshopify.com";
     const agent = await getAgentByName(env.SHOP_AGENT, shop);
     // Touch the object first so the SDK has created its tables.
@@ -317,7 +317,7 @@ describe("OrdersSyncWorkflow shape", () => {
         runningOperation,
       );
     });
-    const result = await agent.syncOrders();
+    const result = await agent.syncOpenOrders();
 
     expect(result._tag).toBe("Started");
     const instances = await introspector.get();
@@ -330,11 +330,11 @@ describe("OrdersSyncWorkflow shape", () => {
  * not the filter. This is the filter.
  */
 describe("bulkOrdersQueryText", () => {
-  it("the import query is fixed: open, unfulfilled, created in the last 30 days", () => {
+  it("the sync query is fixed: open, unfulfilled, created in the last 30 days", () => {
     const now = Date.UTC(2026, 8, 30);
     const text = bulkOrdersQueryText(now);
     expect(text).toContain(
-      `created_at:>='${new Date(now - ORDER_IMPORT_WINDOW_DAYS * 86_400_000).toISOString()}'`,
+      `created_at:>='${new Date(now - ORDER_SYNC_WINDOW_DAYS * 86_400_000).toISOString()}'`,
     );
     expect(text).toContain("status:open -fulfillment_status:fulfilled");
     expect(text).not.toContain("updated_at");

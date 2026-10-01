@@ -12,11 +12,11 @@ import { appNavLink, clickHoisted, gotoApp, hoistedEnabled } from "./app";
 import { seedConfig, seedMembers } from "./seed";
 
 /**
- * The import end to end, against the real sandbox: click, and real orders
+ * The open-orders sync end to end, against the real sandbox: click, and real orders
  * appear.
  *
  * This is the one test that exercises the whole chain nothing else can —
- * `@callable() syncOrders` over the authenticated socket, `runWorkflow`, a real
+ * `@callable() syncOpenOrders` over the authenticated socket, `runWorkflow`, a real
  * Shopify bulk operation, the poll loop, the NDJSON stream inside the Durable
  * Object, and the broadcast that makes the table refresh without a reload. Every
  * piece of that has an integration test with its neighbours stubbed; only this
@@ -28,7 +28,7 @@ import { seedConfig, seedMembers } from "./seed";
  * than a hundred orders. A two-minute budget is roughly 4x that floor, not a
  * hedge against an unknown.
  *
- * The import button is the gate on both ends: it disables while the Agents SDK
+ * The Sync open orders button is the gate on both ends: it disables while the Agents SDK
  * tracks a run and re-enables when the completion callback deletes that row,
  * so "enabled again" is the honest signal that the run finished — more honest
  * than waiting for rows, which start landing mid-stream.
@@ -47,30 +47,30 @@ import { seedConfig, seedMembers } from "./seed";
  *
  * The one e2e test that reads the store's own orders, not the seed: it
  * requires the dev store (`SHOPIFY_DEV_STORE`) to have at least one open order
- * in Shopify. A store with none imports nothing, and the wait for the first
+ * in Shopify. A store with none syncs nothing, and the wait for the first
  * row times out.
  */
-test("orders screen imports open orders and lists them", async ({ page }) => {
+test("orders screen syncs open orders and lists them", async ({ page }) => {
   test.setTimeout(180_000);
 
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Orders"));
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
 
-  const sync = page.getByRole("button", { name: "Import open orders" });
+  const sync = page.getByRole("button", { name: "Sync open orders" });
   await expect.poll(() => hoistedEnabled(sync)).toBe(true);
 
-  /* The completion signal is the "Importing…" line appearing and then going,
-     the only import status the screen shows. Seeing it appear first is what
+  /* The completion signal is the "Syncing…" line appearing and then going,
+     the only sync status the screen shows. Seeing it appear first is what
      proves a run was created: the button alone is enabled both before the click
      and after the run. The run's 15-30s floor keeps the line on screen far
      longer than the assertion's retry interval, so it cannot come and go
      unseen. */
   await clickHoisted(sync);
 
-  const importing = frame.getByText(/^Importing/u);
-  await expect(importing).toBeVisible({ timeout: 30_000 });
-  await expect(importing).toBeHidden({ timeout: 120_000 });
+  const syncing = frame.getByText(/^Syncing/u);
+  await expect(syncing).toBeVisible({ timeout: 30_000 });
+  await expect(syncing).toBeHidden({ timeout: 120_000 });
   await expect.poll(() => hoistedEnabled(sync)).toBe(true);
 
   const rows = frame.locator("s-table-row");
@@ -86,11 +86,11 @@ test("orders screen imports open orders and lists them", async ({ page }) => {
      are slotted, so the first unslotted one is the first item card. */
   await expect(frame.locator("s-section:not([slot])").first()).toBeVisible();
 
-  const resync = page.getByRole("button", { name: "Resync from Shopify" });
-  await expect.poll(() => hoistedEnabled(resync)).toBe(true);
-  await clickHoisted(resync);
+  const syncOne = page.getByRole("button", { name: "Sync from Shopify" });
+  await expect.poll(() => hoistedEnabled(syncOne)).toBe(true);
+  await clickHoisted(syncOne);
   await expect
-    .poll(() => hoistedEnabled(resync), { timeout: 30_000 })
+    .poll(() => hoistedEnabled(syncOne), { timeout: 30_000 })
     .toBe(true);
 });
 

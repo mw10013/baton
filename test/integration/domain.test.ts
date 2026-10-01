@@ -64,7 +64,7 @@ describe("Domain.orderPosition", () => {
       "fulfilled",
     ],
     [
-      "a fulfilled order with no runs is fulfilled (history the window sync pulls in)",
+      "a fulfilled order with no runs is fulfilled (history the open-orders sync pulls in)",
       row(NONE, { fulfillmentStatus: "FULFILLED" }),
       "fulfilled",
     ],

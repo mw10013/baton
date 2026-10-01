@@ -208,8 +208,8 @@ describe("ShopAgent usage flush", () => {
     strictEqual(usage.pendingUsageEvents, 0);
   });
 
-  it("resyncing an order sends the usage queue, even when the resync fails", async () => {
-    const shop = "flush-resync.myshopify.com";
+  it("syncing one order sends the usage queue, even when the sync fails", async () => {
+    const shop = "flush-sync-order.myshopify.com";
     await seedTeam(shop);
     const agent = await getAgentByName(env.SHOP_AGENT, shop);
     await openCycle(agent);
@@ -226,11 +226,11 @@ describe("ShopAgent usage flush", () => {
 
     // The shop has no offline session, so the fetch fails; the queue is
     // still sent.
-    const resynced = await agent.resyncOrder({ orderId: ORDER_ID }).then(
+    const synced = await agent.syncOrder({ orderId: ORDER_ID }).then(
       () => "ok",
       () => "failed",
     );
-    strictEqual(resynced, "failed");
+    strictEqual(synced, "failed");
     deepStrictEqual(appEvents, [{ idempotencyKey: countKey, value: 1 }]);
     const usage = await agent.getUsage();
     strictEqual(usage.pendingUsageEvents, 0);

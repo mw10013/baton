@@ -127,7 +127,7 @@ export const initializeSchema = Effect.gen(function* () {
     -- So the retention sweep walks the oldest rows instead of the table.
     create index if not exists WebhookDelivery_receivedAt_idx
       on WebhookDelivery (receivedAt);
-    -- What the last import left behind; owned by OrderRepository.getSyncState.
+    -- What the last sync left behind; owned by OrderRepository.getSyncState.
     -- Seeded here so every read is a select and every write an update.
     create table if not exists SyncState (
       id integer primary key check (id = 1),

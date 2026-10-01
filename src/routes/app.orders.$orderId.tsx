@@ -26,6 +26,7 @@ import {
 import * as Domain from "@/lib/Domain";
 import { formatNumber, formatStatus } from "@/lib/format";
 import { adminOrderUrl, useResourceLinkTarget } from "@/lib/orderLinks";
+import { ORDER_SYNC_WINDOW_DAYS } from "@/lib/orderSyncConstants";
 import { hideModal, showModal } from "@/lib/polarisModal";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { withSocketRecovery } from "@/lib/ShopAgentContext";
@@ -386,7 +387,7 @@ export const Route = createFileRoute("/app/orders/$orderId")({
  * One order: its note, every item with its properties and workflow
  * runs, and the order's facts. Subscribed like the index: the loader paints,
  * `useSubscribedQuery` reads through `ShopAgent.subscribeOrder` — which subscribes the
- * shared `/app` connection to this order's pushes — so a webhook, resync, or
+ * shared `/app` connection to this order's pushes — so a webhook, sync, or
  * member task action on this order repaints the page. Every write returns a
  * tagged result that is copy-mapped into the banner rather than thrown.
  *
@@ -631,9 +632,9 @@ function RouteComponent() {
     onError,
   });
 
-  const resyncMutation = useMutation({
+  const syncMutation = useMutation({
     mutationFn: (orderId: string) =>
-      call((stub) => stub.resyncOrder({ orderId })),
+      call((stub) => stub.syncOrder({ orderId })),
     onSuccess: async () => {
       await invalidate();
     },
@@ -662,8 +663,7 @@ function RouteComponent() {
           Orders
         </s-link>
         <s-paragraph color="subdued">
-          This order isn't in Baton. It may be older than the import window, or
-          deleted in Shopify.
+          {`This order isn't in Baton. It may be older than ${String(ORDER_SYNC_WINDOW_DAYS)} days, or deleted in Shopify.`}
         </s-paragraph>
       </s-page>
     );
@@ -1341,8 +1341,8 @@ function RouteComponent() {
       </s-link>
       {/* The primary action leaves for the Shopify order: payment,
           fulfilment and the customer live there, and fulfilling is the next
-          task once the work here is done. Resync is secondary because webhooks
-          keep the order current; a primary Resync tells the merchant syncing
+          task once the work here is done. Sync from Shopify is secondary because
+          webhooks keep the order current; a primary sync button tells the merchant syncing
           is their job. It stays for the rare order that looks stale. */}
       <s-button
         slot="primary-action"
@@ -1354,13 +1354,13 @@ function RouteComponent() {
       </s-button>
       <s-button
         slot="secondary-actions"
-        loading={resyncMutation.isPending}
-        disabled={!identified || resyncMutation.isPending}
+        loading={syncMutation.isPending}
+        disabled={!identified || syncMutation.isPending}
         onClick={() => {
-          resyncMutation.mutate(order.id);
+          syncMutation.mutate(order.id);
         }}
       >
-        Resync from Shopify
+        Sync from Shopify
       </s-button>
 
       <SocketBanner />

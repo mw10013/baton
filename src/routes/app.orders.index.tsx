@@ -15,7 +15,7 @@ import { QuotaBanners } from "@/components/QuotaBanners";
 import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
 import { adminOrderUrl, useResourceLinkTarget } from "@/lib/orderLinks";
-import { ORDER_IMPORT_WINDOW_DAYS } from "@/lib/orderSyncConstants";
+import { ORDER_SYNC_WINDOW_DAYS } from "@/lib/orderSyncConstants";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
@@ -153,9 +153,9 @@ const issueBadges = (row: Domain.OrderRow) =>
   ));
 
 /**
- * The import's whole status line: only while an import runs. At rest there is
- * no line, not even a "Last imported" time: order webhooks keep the list
- * current after the first import, so a standing timestamp would read as
+ * The sync's whole status line: only while a sync runs. At rest there is
+ * no line, not even a "Last synced" time: order webhooks keep the list
+ * current after the first sync, so a standing timestamp would read as
  * something the merchant has to keep fresh, and an old one would make a
  * current list look stale.
  */
@@ -163,10 +163,10 @@ const syncStatusText = (
   data: Domain.OrdersIndexData | undefined,
   isError: boolean,
 ) => {
-  if (isError) return "Couldn't read import status.";
+  if (isError) return "Couldn't read sync status.";
   if (data === undefined) return "Loading…";
   return data.syncState.inFlight
-    ? "Importing… this page updates as orders arrive."
+    ? "Syncing… this page updates as orders arrive."
     : null;
 };
 
@@ -269,7 +269,7 @@ export const Route = createFileRoute("/app/orders/")({
 
 /**
  * The orders index: one table of what the Durable Object has stored, with
- * the order position per order, and the window-sync button as a header action.
+ * the order position per order, and the Sync open orders button as a header action.
  * Everything per order — items, their properties, workflows — lives on
  * `/app/orders/$orderId`.
  *
@@ -428,12 +428,12 @@ function RouteComponent() {
   const startSync = () => {
     if (!agent) return;
     setSyncing(true);
-    withSocketRecovery(agent)(() => agent.stub.syncOrders())
+    withSocketRecovery(agent)(() => agent.stub.syncOpenOrders())
       .then(decodeSyncResult)
       .then(() => invalidate())
       .catch((error: unknown) => {
         shopify.toast.show(
-          error instanceof Error ? error.message : "Couldn't start the import.",
+          error instanceof Error ? error.message : "Couldn't start the sync.",
           { isError: true },
         );
       })
@@ -481,7 +481,7 @@ function RouteComponent() {
   /**
    * Rendered twice: once into the page's `secondary-actions` slot, and once
    * inside the empty state where it is the only thing to do and so primary.
-   * In the title bar it is secondary: importing is a first-day step and a
+   * In the title bar it is secondary: syncing is a first-day step and a
    * repair when the list looks out of sync, not the page's routine action,
    * and a primary button there reads as a chore to repeat. The slot has to
    * sit on the button itself — `s-page` hoists the slotted element into the
@@ -499,7 +499,7 @@ function RouteComponent() {
       disabled={!identified || syncing || syncInFlight}
       onClick={startSync}
     >
-      Import open orders
+      Sync open orders
     </s-button>
   );
 
@@ -520,7 +520,7 @@ function RouteComponent() {
           <s-stack alignItems="center" gap="small-300">
             <s-heading>No open orders</s-heading>
             <s-paragraph color="subdued">
-              {`Import open orders to pull in what is on the bench, or wait for the next order. The import takes the open, unfulfilled orders from the last ${String(ORDER_IMPORT_WINDOW_DAYS)} days; after that, order webhooks keep them current.`}
+              {`Sync open orders to pull in what is on the bench, or wait for the next order. The sync takes the open, unfulfilled orders from the last ${String(ORDER_SYNC_WINDOW_DAYS)} days; after that, order webhooks keep them current.`}
             </s-paragraph>
           </s-stack>
           {syncButton(false)}
@@ -743,7 +743,7 @@ function RouteComponent() {
         )}
       {/* Unconditional, empty list included: the resource-index template keeps
           the title-bar action and lets the empty state carry a second copy,
-          so "import is top right" holds on every visit.
+          so "sync is top right" holds on every visit.
           https://shopify.dev/docs/api/app-home/latest/patterns/templates/resource-index */}
       {syncButton(true)}
 

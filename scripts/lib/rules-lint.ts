@@ -19,6 +19,8 @@
  * | staff, staffed, unstaffed | a team's people are members; Shopify's staff are the merchant side |
  * | attention                 | an issue is named by its fault: unassigned, empty team, blocked    |
  * | billing period            | the screen word is billing cycle (`Domain.ShopUsage`)              |
+ * | import, imports, importing | the word is sync: Baton's copy agreeing with Shopify; import is Shopify's word for `orderCreate` |
+ * | resync                    | the word is sync at one-order scope; the button is Sync from Shopify |
  *
  * And the copy words that are wrong in every slot, whatever the noun: copy
  * states facts and names the act, so it never pleads, apologises, exclaims
@@ -75,6 +77,8 @@ export const RETIRED: readonly RegExp[] = [
   /\b(?:un)?staff(?:s|ed|ing)?\b/iu,
   /\battention\b/iu,
   /\bbilling periods?\b/iu,
+  /\bimport(?:s|ed|ing)?\b/iu,
+  /\bre-?sync(?:s|ed|ing)?\b/iu,
   /\bplease\b/iu,
   /\bsuccessfully\b/iu,
   /\boops\b/iu,
@@ -111,8 +115,10 @@ export const copyOf = (line: string, tsx: boolean): readonly string[] => {
       ({ groups }) => groups?.text ?? "",
     ),
     // A line of words and prose punctuation with no member access or key:
-    // the middle of a JSX text block.
-    ...(/^[A-Za-z][A-Za-z0-9 '’.,:;!?—–-]*$/u.test(text) &&
+    // the middle of a JSX text block. The ASCII double quote is not prose
+    // punctuation here: with its braces blanked, `import { X } from "y";`
+    // would read as copy. Literals are read by `literalsOf` anyway.
+    ...(/^[A-Za-z][A-Za-z0-9 '’“”.,:;!?—–…()&%-]*$/u.test(text) &&
     text.includes(" ") &&
     !/\w\.\w|^\w+:/u.test(text)
       ? [text]
@@ -195,6 +201,8 @@ export const exportedNames = (source: string): readonly ExportedName[] =>
  * | glossary   | the block is the vocabulary                                                         |
  * | production | the deploy environment; the core context is shop work                               |
  * | activated  | nothing; the switch is `state`, `on` / `off`                                        |
+ * | import     | retired; the word is sync                                                           |
+ * | resync     | retired; the word is sync                                                           |
  *
  * {@link RESERVED_STEM_ALLOWED} names the exports that keep a stem on
  * purpose.
@@ -207,6 +215,8 @@ export const RESERVED_STEMS: readonly string[] = [
   "glossary",
   "production",
   "activated",
+  "import",
+  "resync",
 ];
 
 /**

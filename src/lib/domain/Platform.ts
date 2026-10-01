@@ -221,7 +221,7 @@ export const ShopLimits = {
    * working set, not an archive — Shopify keeps every order — so one rule
    * replaces asking what "closed" or "untouched" means.
    *
-   * The sweep rides the import and, at most every {@link
+   * The sweep rides the open-orders sync and, at most every {@link
    * ShopLimits.sweepIntervalMs}, the webhook path. There is no alarm: a shop
    * receiving no webhooks is not growing, and an alarm would add a schedule,
    * a test surface and a failure mode for a shop that has stopped trading.
@@ -231,7 +231,7 @@ export const ShopLimits = {
   webhookDeliveryRetentionDays: 7,
   /** An expired usage event (`usageEventIsExpired` in Billing) dated longer ago than this is deleted by the retention sweep; `OrderRepository.sweepExpiredOrders` says why 60. */
   expiredUsageEventRetentionDays: 60,
-  /** `syncOrders` refuses to start a bulk import when the object's SQLite is past this. */
+  /** `syncOpenOrders` refuses to start a sync when the object's SQLite is past this. */
   storageSoftLimitBytes: 2_000_000_000,
   /** Rows deleted per sweep pass, so no carrier request pays for more than this. */
   sweepBatch: 200,

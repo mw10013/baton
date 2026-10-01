@@ -203,11 +203,11 @@ export class OrdersSyncWorkflow extends AgentWorkflow<
   }
 
   /**
-   * Submit the import, wait for Shopify, hand the file to the object. Four
+   * Submit the bulk operation, wait for Shopify, hand the file to the object. Four
    * steps and one loop; every concept the merchant could not predict — a
    * window, a first-run-versus-later rule, a reservation — lives nowhere,
    * because the query is fixed and the agent is the only run tracker
-   * ({@link ShopAgent.syncOrders}).
+   * ({@link ShopAgent.syncOpenOrders}).
    *
    * Two Cloudflare Workflows + Effect constraints dictate this shape, and both
    * are easy to get wrong:
@@ -341,7 +341,7 @@ export class OrdersSyncWorkflow extends AgentWorkflow<
            * Out of patience rather than out of luck: the operation is still
            * running at Shopify, so it is cancelled before this instance goes.
            * The cancel's own failure is swallowed — the merchant is already
-           * being told the import did not finish, and a failed cancel would
+           * being told the sync did not finish, and a failed cancel would
            * replace that message with one about a mutation they never made.
            */
           if (bulkIsActive(operation)) {

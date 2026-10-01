@@ -57,6 +57,18 @@ describe("a retired word stays off every merchant and member screen", () => {
     expect(hits(source)).toEqual([1, 2, 4, 5]);
   });
 
+  it("reads a JSX text line with an ellipsis, parentheses or a percent sign", () => {
+    const source = [
+      "<s-paragraph>",
+      "  Importing… this page updates as orders arrive.",
+      "  Finished (and run) today.",
+      "  Half of them, 50%, are run.",
+      "</s-paragraph>",
+      'import { Schema } from "effect";',
+    ].join("\n");
+    expect(hits(source)).toEqual([2, 3, 4]);
+  });
+
   it("skips comments, identifiers, paths and query keys", () => {
     const source = [
       "// Cancel run",
@@ -81,6 +93,19 @@ describe("a retired word stays off every merchant and member screen", () => {
       "// Shopify staff inside the embedded admin",
     ].join("\n");
     expect(hits(source)).toEqual([1, 3]);
+  });
+
+  it("import and resync are retired words in screen copy", () => {
+    const source = [
+      'const a = "Couldn\'t start the import.";',
+      "<s-button>Resync from Shopify</s-button>",
+      "<s-paragraph>",
+      "  Importing orders from Shopify.",
+      "</s-paragraph>",
+      'import { Schema } from "effect";',
+      "// a re-sync never queues a second count",
+    ].join("\n");
+    expect(hits(source)).toEqual([1, 2, 4]);
   });
 
   it("attention is a retired word in screen copy", () => {
@@ -160,6 +185,16 @@ describe("an exported identifier carries no reserved stem", () => {
     expect(
       RulesLint.reservedStemHits("export class ProductionAgent {}"),
     ).toEqual([{ name: "ProductionAgent", line: 1, kind: "class" }]);
+  });
+  it("an export named ORDER_IMPORT_WINDOW_DAYS is refused", () => {
+    expect(
+      RulesLint.reservedStemHits("export const ORDER_IMPORT_WINDOW_DAYS = 30;"),
+    ).toEqual([{ name: "ORDER_IMPORT_WINDOW_DAYS", line: 1, kind: "const" }]);
+  });
+  it("an export named ResyncOrderInput is refused", () => {
+    expect(
+      RulesLint.reservedStemHits("export const ResyncOrderInput = 1;"),
+    ).toEqual([{ name: "ResyncOrderInput", line: 1, kind: "const" }]);
   });
   it("an export named setWorkflowActivatedAt is refused", () => {
     expect(

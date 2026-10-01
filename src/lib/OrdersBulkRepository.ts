@@ -3,7 +3,7 @@ import type { ShopifyError } from "@/lib/Shopify";
 import { Context, Effect, Layer, Option, Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
-import { ORDER_IMPORT_WINDOW_DAYS } from "@/lib/orderSyncConstants";
+import { ORDER_SYNC_WINDOW_DAYS } from "@/lib/orderSyncConstants";
 import { ShopifyAdmin } from "@/lib/ShopifyAdmin";
 
 /**
@@ -71,17 +71,17 @@ query BulkOrdersQuery {
 }`;
 
 /**
- * The import query, which is the same on every click: the open, unfulfilled
- * orders created in the last {@link ORDER_IMPORT_WINDOW_DAYS} days. A maker's
+ * The open-orders sync query, which is the same on every click: the open, unfulfilled
+ * orders created in the last {@link ORDER_SYNC_WINDOW_DAYS} days. A maker's
  * working set is the orders still to be made, and everything already fulfilled,
  * closed, or cancelled would occupy the object's SQLite for nothing.
  *
- * Fixed on purpose, with no last-import marker and no delta window. A
+ * Fixed on purpose, with no last-sync marker and no delta window. A
  * parameterised query needs a rule for what the merchant's click means *this*
  * time, and the button then behaves differently on its second press than on
  * its first; ongoing intake is the webhooks' job, not this one's. Because it
  * is fixed, re-running it is always safe: the upsert arbitrates by Shopify's
- * `updatedAt`, so a repeat import is a few redundant writes and never a
+ * `updatedAt`, so a repeat sync is a few redundant writes and never a
  * regression.
  *
  * The window start is computed at call time, inclusive, and formatted as ISO
@@ -90,7 +90,7 @@ query BulkOrdersQuery {
 export const bulkOrdersQueryText = (now: number) =>
   BulkOrdersQuery.replace(
     BULK_ORDERS_FILTER,
-    `created_at:>='${new Date(now - ORDER_IMPORT_WINDOW_DAYS * 86_400_000).toISOString()}' ${OPEN_WORK_FILTER}`,
+    `created_at:>='${new Date(now - ORDER_SYNC_WINDOW_DAYS * 86_400_000).toISOString()}' ${OPEN_WORK_FILTER}`,
   );
 
 const UserError = Schema.Struct({

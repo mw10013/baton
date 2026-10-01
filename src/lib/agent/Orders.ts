@@ -38,8 +38,8 @@ const make = Effect.gen(function* () {
 
   /**
    * Fetches one order from the Admin API and merges it into SQLite. Shared by
-   * the webhook path and the manual resync; `source` is the only difference,
-   * and it is logged, not acted on.
+   * the webhook path and the merchant's one-order sync; the log span names
+   * the caller.
    *
    * A `null` order is not a failure: by the time a delivery is handled the
    * order may already be deleted, and Shopify answers with `null` rather than
@@ -54,13 +54,7 @@ const make = Effect.gen(function* () {
    * back for the caller to act on outside the transaction.
    */
   const fetchAndUpsertOrder = <E, E2, R2>(
-    {
-      orderId,
-      source,
-    }: {
-      readonly orderId: string;
-      readonly source: Domain.OrderSyncSource;
-    },
+    { orderId }: { readonly orderId: string },
     reconciler: Effect.Effect<
       (
         order: Domain.ShopOrder,
@@ -83,7 +77,7 @@ const make = Effect.gen(function* () {
       if (order === null) {
         yield* Effect.logWarning(
           `ShopAgent.fetchAndUpsertOrder: shop=${shop} orderId=${orderId}: order not found`,
-        ).pipe(Effect.annotateLogs({ shop, orderId, source }));
+        ).pipe(Effect.annotateLogs({ shop, orderId }));
         return { written: false, ceilingReleased: false };
       }
       const lineItemsTruncated = order.lineItems.pageInfo.hasNextPage;
@@ -94,7 +88,6 @@ const make = Effect.gen(function* () {
           Effect.annotateLogs({
             shop,
             orderId,
-            source,
             limit: Domain.ShopLimits.maxLineItemsPerOrder,
           }),
         );
@@ -113,8 +106,8 @@ const make = Effect.gen(function* () {
           afterWrite: reconcile(shopOrder),
         });
       yield* Effect.logInfo(
-        `ShopAgent.fetchAndUpsertOrder: shop=${shop} orderId=${orderId} source=${source} written=${String(written)}`,
-      ).pipe(Effect.annotateLogs({ shop, orderId, source, written }));
+        `ShopAgent.fetchAndUpsertOrder: shop=${shop} orderId=${orderId} written=${String(written)}`,
+      ).pipe(Effect.annotateLogs({ shop, orderId, written }));
       return {
         written,
         ceilingReleased: Option.exists(

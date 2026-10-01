@@ -209,7 +209,7 @@ export type AppSubscription = typeof AppSubscription.Type;
  * | trigger                                         | order count | seat mark               | queue                                                                           | pinned by                                                                                                                                 |
  * | ----------------------------------------------- | ----------- | ----------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
  * | first run on an order                           | +1          | —                       | +1 order event, then sent                                                       | an order is counted once, when its first run is created                                                                                   |
- * | another run on a counted order                  | —           | —                       | —                                                                               | a re-sync never queues a second count                                                                                                     |
+ * | another run on a counted order                  | —           | —                       | —                                                                               | a second sync never queues a second count                                                                                                 |
  * | run on a seeded order                           | —           | —                       | —                                                                               | a seeded order is never counted                                                                                                           |
  * | member added, member count above the mark       | —           | → member count          | +1 seat event (the rise), then sent                                             | an add past the high-water mark queues one seat event and raises the mark                                                                 |
  * | member added, member count at or below the mark | —           | —                       | —                                                                               | an add at or under the high-water mark queues nothing                                                                                     |
@@ -399,7 +399,7 @@ export const usageEventIsExpired = (occurredAt: number, cycleStartAt: number) =>
  * The one hard stop on orders, and it is positioning rather than protection:
  * storage is nowhere near its limit at this volume, but a shop above it is
  * outside what Baton is built for, and saying so with a number the merchant can
- * read beats letting an import fail late inside a stream. Updates to orders
+ * read beats letting a sync fail late inside a stream. Updates to orders
  * already stored keep flowing — the shop must not lose the work it
  * is already carrying.
  *
@@ -408,8 +408,8 @@ export const usageEventIsExpired = (occurredAt: number, cycleStartAt: number) =>
  * only have Shopify retry for four hours against a condition that four hours
  * cannot clear; Shopify does not redeliver afterwards, and nothing re-reads
  * the gap. What recovers it is the merchant: once the cycle rolls over,
- * Import open orders re-fetches whatever is still open
- * (`ShopAgent.syncOrders`). `ShopUsage.ordersLimitedAt` is what raises the
+ * Sync open orders re-fetches whatever is still open
+ * (`ShopAgent.syncOpenOrders`). `ShopUsage.ordersLimitedAt` is what raises the
  * banner saying so.
  */
 export const cycleAtOrderCeiling = (ordersThisCycle: number) =>

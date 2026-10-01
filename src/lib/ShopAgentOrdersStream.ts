@@ -98,7 +98,7 @@ const addLine = (
             /**
              * Past the cap the line is dropped and the order flagged rather
              * than the stream failed: one pathological order must not cost the
-             * merchant the whole import, and the buffer is what bounds this
+             * merchant the whole sync, and the buffer is what bounds this
              * reader's memory — without it a single order with a hundred
              * thousand items is held whole before its transaction opens.
              */

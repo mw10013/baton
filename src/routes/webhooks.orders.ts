@@ -61,8 +61,8 @@ const updatedAtMillis = (updatedAt: string | null | undefined) => {
 };
 
 /**
- * The real-time half of order intake; the other half is the manual import
- * (`ShopAgent.syncOrders`). All five subscribed topics point here.
+ * The real-time half of order intake; the other half is the open-orders sync
+ * (`ShopAgent.syncOpenOrders`). All five subscribed topics point here.
  *
  * The payload is a signal, not the data. It is REST-shaped, carries no product
  * tags or enriched line-item metadata, and is trimmed to ids by
@@ -92,7 +92,7 @@ export const Route = createFileRoute("/webhooks/orders")({
               );
               const stub = (yield* CloudflareEnv).SHOP_AGENT.getByName(shop);
               yield* Effect.tryPromise(() =>
-                stub.syncOrder({
+                stub.syncOrderWebhook({
                   orderId,
                   topic,
                   webhookId,

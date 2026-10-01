@@ -171,8 +171,8 @@ describe("OrderRepository.upsertOrder", () => {
   });
 
   /**
-   * The guard that lets a retried webhook, a mid-stream bulk line, and a manual
-   * resync all write the same row in any order.
+   * The guard that lets a retried webhook, a mid-stream bulk line, and a one-order
+   * sync all write the same row in any order.
    */
   it("leaves the row and its items alone for an older updatedAt", async () => {
     const detail = await runInRepository(
@@ -1398,7 +1398,7 @@ describe("OrderRepository usage", () => {
     strictEqual(countedAt, 0);
   });
 
-  it("a re-sync never queues a second count", async () => {
+  it("a second sync never queues a second count", async () => {
     const { usage, events } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
@@ -2091,7 +2091,7 @@ describe("OrderRepository retention", () => {
 });
 
 describe("OrderRepository sync state", () => {
-  it("records the last completed import and the last error", async () => {
+  it("records the last completed sync and the last error", async () => {
     const { idle, failed, completed } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
@@ -2111,11 +2111,11 @@ describe("OrderRepository sync state", () => {
     strictEqual(failed.lastError, "bulk submit failed");
     strictEqual(failed.lastCompletedAt, null);
     strictEqual(completed.lastCompletedAt, 5000);
-    // A completed import answers the banner the failed one raised.
+    // A completed sync answers the banner the failed one raised.
     strictEqual(completed.lastError, null);
   });
 
-  it("clears the error the next import is about to supersede", async () => {
+  it("clears the error the next sync is about to supersede", async () => {
     const state = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;

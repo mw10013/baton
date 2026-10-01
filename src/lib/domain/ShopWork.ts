@@ -668,7 +668,7 @@ export type WorkflowState = typeof WorkflowState.Type;
  *
  * `state` is the switch, stored and never derived, and it carries no date. A
  * workflow that is on creates a run on every stored open order whose item it
- * matches, on every path — webhook, import, resync, and every workflow
+ * matches, on every path — webhook, open-orders sync, one-order sync, and every workflow
  * change — however old the order is; the merchant who wants a workflow to
  * apply from a day turns it on that day. A workflow can create runs when it
  * is on and it has tasks and every task is assigned to a team that exists;
@@ -1651,7 +1651,7 @@ export type OrderRow = typeof OrderRow.Type;
  *
  * Cancelled wins over everything because Shopify's cancel is final;
  * `fulfilled` is checked next, before the run counts, so an order fulfilled
- * with no runs at all — every historical order the window sync pulls in —
+ * with no runs at all — every historical order the open-orders sync pulls in —
  * reads as fulfilled (and one fulfilled with runs open cannot exist past the
  * next reconcile, which closes them). The open positions then follow the run
  * counts alone: no open and no done run is `not_started`, any open run is
@@ -2293,7 +2293,7 @@ export const unitsToMake = (lineItem: Pick<OrderLineItem, "currentQuantity">) =>
  * What run creation reads about the definitions: every workflow that is on,
  * with its tasks, and the shop's teams. The teams live in D1, a network read
  * that cannot happen inside the object's transaction, so the context is
- * loaded once per webhook, import or reconcile all, before the transaction,
+ * loaded once per webhook, open-orders sync or reconcile all, before the transaction,
  * and every order in that pass works from the same snapshot.
  */
 export interface EligibleContext {
@@ -2418,9 +2418,9 @@ const NOTHING: ReconcileOutcome = { _tag: "nothing", declined: false };
  * what was made.
  *
  * The eligible context ({@link EligibleContext}) is a snapshot: it is read
- * once per webhook, import or reconcile all, before the transaction, because
+ * once per webhook, open-orders sync or reconcile all, before the transaction, because
  * the shop's teams are a D1 read the object's transaction cannot make. A team
- * deleted in the middle of an import is not seen by the rest of it; the
+ * deleted in the middle of a sync is not seen by the rest of it; the
  * price is a late run, not a wrong one.
  *
  * When it runs. `shape` is `reconcile` (one order, inside its upsert),
@@ -2430,8 +2430,8 @@ const NOTHING: ReconcileOutcome = { _tag: "nothing", declined: false };
  * | trigger                        | shape         | skipped when                                                                                 | pinned by                                                                                           |
  * | ------------------------------ | ------------- | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
  * | order webhook, any topic       | reconcile     | duplicate id, older payload, order ceiling, order gone                                       | waits for payment, then creates runs identically from any source                                    |
- * | Import open orders             | reconcile     | stored row fresher, past retention, order ceiling                                            | creates runs on every streamed open order that matches, however old; a re-stream creates none       |
- * | Resync from Shopify            | reconcile     | order gone                                                                                   | (none yet)                                                                                          |
+ * | Sync open orders               | reconcile     | stored row fresher, past retention, order ceiling                                            | creates runs on every streamed open order that matches, however old; a re-stream creates none       |
+ * | Sync from Shopify              | reconcile     | order gone                                                                                   | (none yet)                                                                                          |
  * | Turn on                        | reconcile all | never                                                                                        | a workflow that is on creates runs on every stored open order, however old it is                    |
  * | Turn off                       | reconcile all | never                                                                                        | turning one of two matching workflows off creates the survivor's run                                |
  * | Delete workflow                | reconcile all | never                                                                                        | (none yet)                                                                                          |
