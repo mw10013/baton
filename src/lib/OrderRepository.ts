@@ -24,11 +24,12 @@ export interface OrderUpsert<A = void, E = never> {
   readonly lineItems: readonly Domain.OrderLineItem[];
   /**
    * Runs inside the upsert's transaction, after the items are written and
-   * only when the write actually happened. The seam for run
-   * reconciliation: runs must be created and adjusted against exactly the
-   * item set this write produced, and Durable Object SQLite refuses
-   * nested transactions, so the caller composes plain statements here rather
-   * than opening its own. Must not await anything but storage. Its value
+   * only when the write actually happened. The seam for reconcile (pass
+   * rule 2 on {@link Domain.reconcileItem}): runs must be created and
+   * adjusted against exactly the item set this write produced, and Durable
+   * Object SQLite refuses nested transactions, so the caller composes plain
+   * statements here rather than opening its own. Must not await anything but
+   * storage. Its value
    * comes back as `upsertOrder`'s `afterWrite`, so the caller can act on
    * what the reconcile found once the transaction has committed.
    */
@@ -42,8 +43,8 @@ export interface OrderUpsert<A = void, E = never> {
  * The row holds everything the Worker needs to compare this shop against its
  * plan without the object knowing what the plan is: the billing cycle's
  * counted orders, when the order and open-run ceilings last refused
- * something, when retention last swept, and Shopify's own meter reading at
- * the last revalidation.
+ * something, when retention last swept, and Shopify's own quantity per meter at
+ * the last meter check.
  */
 export const ShopUsageRow = Schema.Struct({
   cycleStartAt: Schema.NullOr(Schema.Number),
@@ -53,8 +54,8 @@ export const ShopUsageRow = Schema.Struct({
   openRunsLimitedAt: Schema.NullOr(Schema.Number),
   lastSweepAt: Schema.NullOr(Schema.Number),
   seatsThisCycle: Schema.Number,
-  lastReconciledOrders: Schema.NullOr(Schema.Number),
-  lastReconciledMembers: Schema.NullOr(Schema.Number),
+  meterQuantityOrders: Schema.NullOr(Schema.Number),
+  meterQuantityMembers: Schema.NullOr(Schema.Number),
   pendingUsageEvents: Schema.Number,
   expiredUsageEvents: Schema.Number,
   pendingOrderUnits: Schema.Number,
@@ -494,9 +495,9 @@ export class OrderRepository extends Context.Service<
       input: Domain.RecordMemberCountInput,
       now: number,
     ) => Effect.Effect<number, SqlError.SqlError | OrderRepositoryError>;
-    /** Stores Shopify's meter readings and returns the counters beside them, so the caller can log the divergence. */
-    readonly reconcileUsage: (
-      input: Domain.ReconcileUsageInput,
+    /** Stores Shopify's quantity per meter and returns the counters beside them, so the caller can log the divergence. */
+    readonly checkMeters: (
+      input: Domain.MeterQuantitiesInput,
     ) => Effect.Effect<ShopUsageRow, SqlError.SqlError | OrderRepositoryError>;
     /** Flags that a new order was refused at `Domain.ShopLimits.maxOrdersPerCycle`; `coalesce` keeps the first refusal's instant. */
     readonly markOrdersLimited: (
@@ -868,7 +869,7 @@ export class OrderRepository extends Context.Service<
           yield* sql`
             select cycleStartAt, cycleEndAt, ordersThisCycle, ordersLimitedAt,
                    openRunsLimitedAt, lastSweepAt, seatsThisCycle,
-                   lastReconciledOrders, lastReconciledMembers,
+                   meterQuantityOrders, meterQuantityMembers,
                    (select count(*) from UsageEvent
                     where cycleStartAt is null or occurredAt >= cycleStartAt) as pendingUsageEvents,
                    (select count(*) from UsageEvent
@@ -1575,13 +1576,13 @@ export class OrderRepository extends Context.Service<
           },
         ),
 
-        reconcileUsage: Effect.fn("OrderRepository.reconcileUsage")(function* (
-          input: Domain.ReconcileUsageInput,
+        checkMeters: Effect.fn("OrderRepository.checkMeters")(function* (
+          input: Domain.MeterQuantitiesInput,
         ) {
           yield* sql`
             update ShopUsage
-            set lastReconciledOrders = ${input.orders},
-                lastReconciledMembers = ${input.members}
+            set meterQuantityOrders = ${input.orders},
+                meterQuantityMembers = ${input.members}
             where id = 1
           `;
           return yield* readUsage();

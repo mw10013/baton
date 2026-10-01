@@ -5,16 +5,23 @@ import { deepStrictEqual, strictEqual } from "@effect/vitest/utils";
 import { getAgentByName } from "agents";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { Effect, Layer, Option, Schema } from "effect";
+import { Effect, Layer, Option, Ref, Schema } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { BillingAgent } from "@/lib/agent/Billing";
+import { ShopAgentHost } from "@/lib/agent/Host";
+import { ShopWorkAgent } from "@/lib/agent/ShopWork";
 import { D1Primary } from "@/lib/D1Primary";
 import { D1Session } from "@/lib/D1Session";
 import * as Domain from "@/lib/Domain";
 import { makeEnvLayer } from "@/lib/LayerEx";
 import { OrderRepository } from "@/lib/OrderRepository";
 import { Repository } from "@/lib/Repository";
+import { RunRepository } from "@/lib/RunRepository";
 import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
+import { ShopifyAppEvents } from "@/lib/ShopifyAppEvents";
+import { WorkflowRepository } from "@/lib/WorkflowRepository";
 
 import { openMemberSocket, openMerchantSocket } from "./agent-socket";
 
@@ -889,6 +896,169 @@ describe("ShopAgent workflow run callables", () => {
       orderId: "gid://shopify/Order/1",
     });
     expect(runs.map((d) => d.run.workflowId)).toEqual([keeper.id]);
+  });
+
+  it("deleting one of two matching workflows creates the survivor's run", async () => {
+    const shop = "wf-delete-multi-match.myshopify.com";
+    const team = await seedTeam(shop, "Engraving");
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const build = async (workflowName: string, tag: string) => {
+      const created = await agent.createWorkflow({ name: workflowName, tag });
+      if (created._tag !== "Ok") throw new Error(created._tag);
+      await agent.addStep({
+        workflowId: created.workflow.id,
+        name: "Do it",
+        teamId: team.id,
+      });
+      await goLive(agent, created.workflow.id);
+      return created.workflow;
+    };
+    const keeper = await build("Engraving", "engraved");
+    const rival = await build("Rush", "rush");
+    await seedOrder(shop, Date.now(), ["engraved", "rush"]);
+    await agent.setWorkflowOn({ workflowId: keeper.id, on: true });
+    expect(
+      await agent.merchantListRunsForOrder({
+        orderId: "gid://shopify/Order/1",
+      }),
+    ).toHaveLength(0);
+
+    expect(await agent.removeWorkflow({ workflowId: rival.id })).toEqual({
+      _tag: "Deleted",
+    });
+    const runs = await agent.merchantListRunsForOrder({
+      orderId: "gid://shopify/Order/1",
+    });
+    expect(runs.map((d) => d.run.workflowId)).toEqual([keeper.id]);
+  });
+
+  it("every order in a pass sees the same eligible snapshot", async () => {
+    const shop = "wf-snapshot.myshopify.com";
+    const team = await seedTeam(shop, "Engraving");
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const created = await agent.createWorkflow({
+      name: "Engraving",
+      tag: "engraved",
+    });
+    if (created._tag !== "Ok") throw new Error(created._tag);
+    await agent.addStep({
+      workflowId: created.workflow.id,
+      name: "Do it",
+      teamId: team.id,
+    });
+    await goLive(agent, created.workflow.id);
+    // Stored without a pass, so the reconcile all below is the first to see
+    // them.
+    await seedOrder(shop, Date.now(), ["engraved"], {}, {}, 1);
+    await seedOrder(shop, Date.now(), ["engraved"], {}, {}, 2);
+
+    // Shop work over the object's storage, with the D1 team read wrapped:
+    // the team is deleted the moment it has been read, so a pass that read
+    // the teams again for its second order would find the workflow no
+    // longer eligible there and create one run, not two.
+    const reads = await runInDurableObject(
+      env.SHOP_AGENT.get(env.SHOP_AGENT.idFromName(shop)),
+      (_instance, state) =>
+        Effect.runPromise(
+          Effect.gen(function* () {
+            const reads = yield* Ref.make(0);
+            const repository = Layer.effect(
+              Repository,
+              Effect.gen(function* () {
+                const real = yield* Repository;
+                return {
+                  ...real,
+                  listTeams: (params: { readonly shop: Domain.Shop }) =>
+                    real.listTeams(params).pipe(
+                      Effect.tap(() =>
+                        Ref.update(reads, (n) => n + 1).pipe(
+                          Effect.andThen(
+                            real
+                              .deleteTeam({
+                                shop: params.shop,
+                                id: team.id,
+                              })
+                              .pipe(Effect.ignore),
+                          ),
+                        ),
+                      ),
+                    ),
+                };
+              }),
+            ).pipe(Layer.provide(layer));
+            const host = Layer.succeed(ShopAgentHost, {
+              shop: () => shop,
+              publish: () => Effect.void,
+              setSubscription: () => Effect.void,
+              closeMemberConnections: () => Effect.void,
+              databaseSize: Effect.succeed(0),
+              syncInFlight: () => Effect.succeed(false),
+            });
+            yield* ShopWorkAgent.pipe(
+              Effect.flatMap((shopWork) =>
+                shopWork.afterCeilingReleased("snapshot"),
+              ),
+              Effect.provide(
+                ShopWorkAgent.layer.pipe(
+                  Layer.provideMerge(BillingAgent.layer),
+                  Layer.provideMerge(
+                    Layer.mergeAll(
+                      host,
+                      repository,
+                      makeEnvLayer(env),
+                      Layer.provide(
+                        ShopifyAppEvents.layerNoDeps,
+                        FetchHttpClient.layer,
+                      ),
+                      Layer.mergeAll(
+                        WorkflowRepository.layer,
+                        RunRepository.layer,
+                      ).pipe(
+                        Layer.provideMerge(OrderRepository.layer),
+                        Layer.provideMerge(
+                          SqliteClient.layer({ storage: state.storage }),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+            return yield* Ref.get(reads);
+          }),
+        ),
+    );
+    strictEqual(reads, 1);
+    strictEqual(await teamExists(shop, team.id), false);
+    for (const orderId of ["gid://shopify/Order/1", "gid://shopify/Order/2"])
+      expect(await agent.merchantListRunsForOrder({ orderId })).toHaveLength(1);
+  });
+
+  it("no reconcile count reaches a screen", async () => {
+    const shop = "wf-no-count.myshopify.com";
+    const team = await seedTeam(shop, "Engraving");
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const created = await agent.createWorkflow({
+      name: "Engraving",
+      tag: "engraved",
+    });
+    if (created._tag !== "Ok") throw new Error(created._tag);
+    const workflowId = created.workflow.id;
+    await agent.addStep({ workflowId, name: "Do it", teamId: team.id });
+    await seedOrder(shop, Date.now(), ["engraved"]);
+    // Both writes reconcile all and create a run; what they hand the screen
+    // is the workflow and nothing a pass counted.
+    const applied = await agent.applyDraft({ workflowId });
+    if (applied._tag !== "Ok") throw new Error(applied._tag);
+    expect(Object.keys(applied).toSorted()).toEqual(["_tag", "workflow"]);
+    const on = await agent.setWorkflowOn({ workflowId, on: true });
+    if (on._tag !== "Ok") throw new Error(on._tag);
+    expect(Object.keys(on).toSorted()).toEqual(["_tag", "workflow"]);
+    expect(
+      await agent.merchantListRunsForOrder({
+        orderId: "gid://shopify/Order/1",
+      }),
+    ).toHaveLength(1);
   });
 
   it("deleting a team creates the survivor's run on an item two workflows had matched", async () => {

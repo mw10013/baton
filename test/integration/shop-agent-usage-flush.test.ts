@@ -162,6 +162,40 @@ const openCycle = (
 
 const countKey = `${ORDER_ID}#count`;
 
+/** Queues one order event directly, as a count whose flush failed leaves one. */
+const queueEvent = (shop: string, idempotencyKey: string) =>
+  runInDurableObject(env.SHOP_AGENT.getByName(shop), (instance) => {
+    (instance as unknown as { ctx: DurableObjectState }).ctx.storage.sql.exec(
+      "insert into UsageEvent (idempotencyKey, eventHandle, orderId, value, occurredAt) values (?, ?, ?, 1, ?)",
+      idempotencyKey,
+      Domain.USAGE_METER_ORDER,
+      ORDER_ID,
+      Date.now(),
+    );
+  });
+
+/** Runs `body` with every console line written while it runs collected, the object's log lines among them: it shares this isolate. */
+const capturingConsole = async (body: () => Promise<void>) => {
+  const lines: string[] = [];
+  const methods = ["log", "info", "warn", "error", "debug"] as const;
+  const originals = methods.map((method) => console[method]);
+  for (const method of methods)
+    console[method] = (...args: unknown[]) => {
+      lines.push(
+        args
+          .map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg)))
+          .join(" "),
+      );
+    };
+  try {
+    await body();
+  } finally {
+    for (const [index, method] of methods.entries())
+      console[method] = originals[index] ?? console[method];
+  }
+  return lines;
+};
+
 beforeEach(() => {
   appEvents.length = 0;
 });
@@ -205,6 +239,59 @@ describe("ShopAgent usage flush", () => {
     if (on._tag !== "Ok") throw new Error(on._tag);
     deepStrictEqual(appEvents, [{ idempotencyKey: countKey, value: 1 }]);
     const usage = await agent.getUsage();
+    strictEqual(usage.pendingUsageEvents, 0);
+  });
+
+  it("a reconcile all sends the usage queue even when it fails", async () => {
+    const shop = "flush-reconcile-all-fails.myshopify.com";
+    const team = await seedTeam(shop);
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    await openCycle(agent);
+    const workflowId = await offWorkflow(agent, "engrave", team.id);
+    await seedOrder(shop, Date.now(), "engrave");
+    await queueEvent(shop, countKey);
+    // A stored order the pass cannot decode: its reconcile fails, and so
+    // does the reconcile all that walks it.
+    await runInDurableObject(env.SHOP_AGENT.getByName(shop), (instance) => {
+      (instance as unknown as { ctx: DurableObjectState }).ctx.storage.sql.exec(
+        "update ShopOrder set processedAt = 'not a time' where id = ?",
+        ORDER_ID,
+      );
+    });
+
+    const turnedOn = await agent.setWorkflowOn({ workflowId, on: true }).then(
+      () => "ok",
+      () => "failed",
+    );
+    strictEqual(turnedOn, "failed");
+    deepStrictEqual(appEvents, [{ idempotencyKey: countKey, value: 1 }]);
+    const usage = await agent.getUsage();
+    strictEqual(usage.pendingUsageEvents, 0);
+  });
+
+  it("a meter check stores Shopify's quantities, logs a divergence and sends the queue", async () => {
+    const shop = "flush-check-meters.myshopify.com";
+    await seedTeam(shop);
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    await openCycle(agent);
+    await queueEvent(shop, countKey);
+
+    // Baton counted no order and holds one unit queued; Shopify reports
+    // five, more than the queue explains.
+    const lines = await capturingConsole(() =>
+      agent.checkMeters({ orders: 5, members: 0 }),
+    );
+    const usage = await agent.getUsage();
+    strictEqual(usage.meterQuantityOrders, 5);
+    strictEqual(usage.meterQuantityMembers, 0);
+    // One warning, for the orders meter; the members meter agrees.
+    const diverged = lines.filter((line) => line.includes("meter diverges"));
+    strictEqual(diverged.length, 1);
+    strictEqual(
+      diverged[0]?.includes(`meter=${Domain.USAGE_METER_ORDER}`),
+      true,
+    );
+    deepStrictEqual(appEvents, [{ idempotencyKey: countKey, value: 1 }]);
     strictEqual(usage.pendingUsageEvents, 0);
   });
 

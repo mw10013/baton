@@ -253,21 +253,21 @@ const kindOf = (
 ) => stateOf(item, runs, offered).kind;
 
 /**
- * The outcomes table on `Domain.reconcileItem`, read out of its JSDoc: one
+ * The actions table on `Domain.reconcileItem`, read out of its JSDoc: one
  * test per row, titled with the row, each fixture the row stands for
- * (`expandReconcileOutcome`) asserted against the outcome cell.
+ * (`expandReconcileAction`) asserted against the action cell.
  */
-describe("Domain.reconcileItem outcomes", () => {
-  const OUTCOME_ROWS = Result.getOrThrow(
-    ActionTable.parseReconcileOutcomes(source),
+describe("Domain.reconcileItem actions", () => {
+  const ACTION_ROWS = Result.getOrThrow(
+    ActionTable.parseReconcileActions(source),
   );
   const MATCHED = ["w1", "w2"].map((id) =>
     Schema.decodeUnknownSync(Domain.WorkflowId)(id),
   );
-  for (const row of OUTCOME_ROWS)
+  for (const row of ACTION_ROWS)
     it(row.text, () => {
-      for (const fixture of ActionTable.expandReconcileOutcome(row)) {
-        const outcome = Domain.reconcileItem({
+      for (const fixture of ActionTable.expandReconcileAction(row)) {
+        const action = Domain.reconcileItem({
           order: fixture.order,
           item: { currentQuantity: fixture.units },
           run:
@@ -289,18 +289,18 @@ describe("Domain.reconcileItem outcomes", () => {
           atCeiling: fixture.atCeiling,
         });
         const where = JSON.stringify(fixture);
-        strictEqual(outcome._tag, row.outcome.tag, where);
-        if (outcome._tag === "close" && row.outcome.tag === "close")
-          strictEqual(outcome.reason, row.outcome.reason, where);
-        if (outcome._tag === "resize") {
-          strictEqual(outcome.units, fixture.units, where);
-          strictEqual(outcome.badge, fixture.run?.started, where);
+        strictEqual(action._tag, row.action.tag, where);
+        if (action._tag === "close" && row.action.tag === "close")
+          strictEqual(action.reason, row.action.reason, where);
+        if (action._tag === "resize") {
+          strictEqual(action.units, fixture.units, where);
+          strictEqual(action.badge, fixture.run?.started, where);
         }
-        if (outcome._tag === "create")
-          strictEqual(outcome.workflowId, MATCHED[0], where);
-        if (outcome._tag === "nothing")
+        if (action._tag === "create")
+          strictEqual(action.workflowId, MATCHED[0], where);
+        if (action._tag === "nothing")
           strictEqual(
-            outcome.declined,
+            action.declined,
             row.matches === "1, at the ceiling",
             where,
           );

@@ -220,10 +220,14 @@ const jsdocBefore = (
   { readonly start: number; readonly end: number },
   ParseError
 > => {
-  const at = source.indexOf(`\nexport const ${name} =`);
-  if (at === -1)
+  const at = [`\nexport const ${name} =`, `\nexport class ${name} `]
+    .map((declaration) => source.indexOf(declaration))
+    .find((index) => index !== -1);
+  if (at === undefined)
     return Result.fail(
-      new ParseError({ message: `${name}: no \`export const ${name} =\`` }),
+      new ParseError({
+        message: `${name}: no \`export const ${name} =\` or \`export class ${name}\``,
+      }),
     );
   const end = source.slice(0, at).trimEnd().length;
   const start = source.lastIndexOf("/**", end);
@@ -1268,8 +1272,8 @@ export const parseReconcileTriggers = (
       ),
   );
 
-/** The word lists of the outcomes table on `reconcileItem`, one per input column. */
-export const RECONCILE_OUTCOME_WORDS = {
+/** The word lists of the actions table on `reconcileItem`, one per input column. */
+export const RECONCILE_ACTION_WORDS = {
   order: ["cancelled", "fulfilled", "closed", "open"],
   paid: ["yes", "no", "any"],
   units: ["0", "changed", "same", "some", "any"],
@@ -1277,53 +1281,53 @@ export const RECONCILE_OUTCOME_WORDS = {
   matches: ["0", "1", "2+", "1, at the ceiling", "any"],
 } as const;
 
-/** The outcome a row names: its tag, the close reason for `close`, and the free text after the colon. */
-export type ReconcileOutcomeCell =
+/** The action a row names: its tag, the close reason for `close`, and the free text after the colon. */
+export type ReconcileActionCell =
   | { readonly tag: "create" | "resize" | "nothing"; readonly note: string }
   | { readonly tag: "close"; readonly reason: string; readonly note: string };
 
-/** One parsed row of the outcomes table on `reconcileItem`. */
-export interface ReconcileOutcomeRow {
+/** One parsed row of the actions table on `reconcileItem`. */
+export interface ReconcileActionRow {
   readonly line: number;
-  readonly order: (typeof RECONCILE_OUTCOME_WORDS.order)[number];
-  readonly paid: (typeof RECONCILE_OUTCOME_WORDS.paid)[number];
-  readonly units: (typeof RECONCILE_OUTCOME_WORDS.units)[number];
-  readonly run: (typeof RECONCILE_OUTCOME_WORDS.run)[number];
-  readonly matches: (typeof RECONCILE_OUTCOME_WORDS.matches)[number];
-  readonly outcome: ReconcileOutcomeCell;
+  readonly order: (typeof RECONCILE_ACTION_WORDS.order)[number];
+  readonly paid: (typeof RECONCILE_ACTION_WORDS.paid)[number];
+  readonly units: (typeof RECONCILE_ACTION_WORDS.units)[number];
+  readonly run: (typeof RECONCILE_ACTION_WORDS.run)[number];
+  readonly matches: (typeof RECONCILE_ACTION_WORDS.matches)[number];
+  readonly action: ReconcileActionCell;
   /** The row as written, for a test title. */
   readonly text: string;
 }
 
-const OUTCOME =
+const ACTION =
   /^(?<tag>create|resize|nothing|close `(?<reason>[a-z_]+)`)(?:: (?<note>.+))?$/u;
 
 /**
- * Read the outcomes table, the second table in the JSDoc on `reconcileItem`
+ * Read the actions table, the second table in the JSDoc on `reconcileItem`
  * in `source`. The header is `order | paid | units | run on item | matches |
- * outcome`; each input cell is one of its list in
- * {@link RECONCILE_OUTCOME_WORDS}; `outcome` is `create`, `resize`,
+ * action`; each input cell is one of its list in
+ * {@link RECONCILE_ACTION_WORDS}; `action` is `create`, `resize`,
  * `nothing` or ``close `<reason>` ``, optionally followed by a colon and free
  * text. Fails with a message naming the line and the offending cell.
  */
-export const parseReconcileOutcomes = (
+export const parseReconcileActions = (
   source: string,
-): Result.Result<readonly ReconcileOutcomeRow[], ParseError> =>
+): Result.Result<readonly ReconcileActionRow[], ParseError> =>
   Result.flatMap(
     nthTable(
       source,
       "reconcileItem",
-      ["order", "paid", "units", "run on item", "matches", "outcome"],
+      ["order", "paid", "units", "run on item", "matches", "action"],
       1,
     ),
     ({ body }) =>
       Result.all(
         body.map(
-          ({ line, text }): Result.Result<ReconcileOutcomeRow, ParseError> => {
+          ({ line, text }): Result.Result<ReconcileActionRow, ParseError> => {
             const fail = (message: string) =>
               Result.fail(
                 new ParseError({
-                  message: `reconcileItem outcomes, line ${String(line)}: ${message}`,
+                  message: `reconcileItem actions, line ${String(line)}: ${message}`,
                 }),
               );
             const values = cellsOf(text);
@@ -1331,7 +1335,7 @@ export const parseReconcileOutcomes = (
               return fail(
                 `${String(values.length)} cells, expected 6: ${text}`,
               );
-            const [order, paid, units, run, matches, outcomeCell = ""] = values;
+            const [order, paid, units, run, matches, actionCell = ""] = values;
             const pick = <W extends string>(
               column: string,
               words: readonly W[],
@@ -1344,35 +1348,35 @@ export const parseReconcileOutcomes = (
                   )
                 : Result.succeed(word);
             };
-            const groups = OUTCOME.exec(outcomeCell)?.groups;
+            const groups = ACTION.exec(actionCell)?.groups;
             if (groups === undefined)
               return fail(
-                `outcome "${outcomeCell}" is not create, resize, nothing or close \`<reason>\`, with optional text after a colon`,
+                `action "${actionCell}" is not create, resize, nothing or close \`<reason>\`, with optional text after a colon`,
               );
             const note = groups.note ?? "";
             const tag = (["create", "resize", "nothing"] as const).find(
               (word) => word === groups.tag,
             );
-            const outcome: ReconcileOutcomeCell =
+            const action: ReconcileActionCell =
               groups.reason === undefined
                 ? { tag: tag ?? "nothing", note }
                 : { tag: "close", reason: groups.reason, note };
             return Result.map(
               Result.all({
-                order: pick("order", RECONCILE_OUTCOME_WORDS.order, order),
-                paid: pick("paid", RECONCILE_OUTCOME_WORDS.paid, paid),
-                units: pick("units", RECONCILE_OUTCOME_WORDS.units, units),
-                run: pick("run on item", RECONCILE_OUTCOME_WORDS.run, run),
+                order: pick("order", RECONCILE_ACTION_WORDS.order, order),
+                paid: pick("paid", RECONCILE_ACTION_WORDS.paid, paid),
+                units: pick("units", RECONCILE_ACTION_WORDS.units, units),
+                run: pick("run on item", RECONCILE_ACTION_WORDS.run, run),
                 matches: pick(
                   "matches",
-                  RECONCILE_OUTCOME_WORDS.matches,
+                  RECONCILE_ACTION_WORDS.matches,
                   matches,
                 ),
               }),
               (words) => ({
                 line,
                 ...words,
-                outcome,
+                action,
                 text: values.join(" | "),
               }),
             );
@@ -1388,7 +1392,7 @@ export interface ReconcileFixtureRun {
   readonly quantity: number;
 }
 
-/** One input to `reconcileItem`, in plain values: what a row of the outcomes table expands to. */
+/** One input to `reconcileItem`, in plain values: what a row of the actions table expands to. */
 export interface ReconcileFixture {
   readonly order: {
     readonly cancelledAt: number | null;
@@ -1405,14 +1409,14 @@ export interface ReconcileFixture {
 const RUN_QUANTITY = 2;
 
 /**
- * Every fixture a row of the outcomes table stands for: the cross product of
+ * Every fixture a row of the actions table stands for: the cross product of
  * its cells, each word read as the values it covers. `any` covers every
  * value of its column; `closed` under `order` is cancelled or fulfilled;
  * `open` under `run on item` is unstarted or started; `done or closed` is
  * either state.
  */
-export const expandReconcileOutcome = (
-  row: ReconcileOutcomeRow,
+export const expandReconcileAction = (
+  row: ReconcileActionRow,
 ): readonly ReconcileFixture[] => {
   const OPEN = { cancelledAt: null, fulfillmentStatus: "UNFULFILLED" };
   const CANCELLED = { cancelledAt: 1, fulfillmentStatus: "UNFULFILLED" };
@@ -1465,6 +1469,286 @@ export const expandReconcileOutcome = (
     ),
   );
 };
+
+/** The rows and the fixed words of each effect column of the effects table on `reconcileItem`. */
+export const RECONCILE_EFFECT_WORDS = {
+  action: [
+    "create",
+    "close (any reason)",
+    "resize",
+    "nothing: declined",
+    "nothing (every other reason)",
+  ],
+  runRow: [
+    "inserted with its tasks",
+    "closed",
+    "quantity rewritten",
+    "untouched",
+  ],
+  countedOrder: ["counted if not yet", "—"],
+  queue: ["+1 order event", "—"],
+  ceilingFlag: ["raised", "may release", "—"],
+} as const;
+
+/** One parsed row of the effects table on `reconcileItem`. */
+export interface ReconcileEffectRow {
+  readonly line: number;
+  readonly action: (typeof RECONCILE_EFFECT_WORDS.action)[number];
+  readonly runRow: (typeof RECONCILE_EFFECT_WORDS.runRow)[number];
+  readonly countedOrder: (typeof RECONCILE_EFFECT_WORDS.countedOrder)[number];
+  readonly queue: (typeof RECONCILE_EFFECT_WORDS.queue)[number];
+  readonly ceilingFlag: (typeof RECONCILE_EFFECT_WORDS.ceilingFlag)[number];
+  readonly pinnedBy: string;
+}
+
+/**
+ * Read the effects table, the third table in the JSDoc on `reconcileItem`
+ * in `source`. The header is `action | run row | counted order | queue |
+ * ceiling flag | pinned by`; every cell but `pinned by` is one of its list in
+ * {@link RECONCILE_EFFECT_WORDS}, and each action is a row exactly once;
+ * `pinned by` is a test title or {@link NONE_YET}. Fails with a message
+ * naming the line and the offending cell.
+ */
+export const parseReconcileEffects = (
+  source: string,
+): Result.Result<readonly ReconcileEffectRow[], ParseError> =>
+  Result.flatMap(
+    nthTable(
+      source,
+      "reconcileItem",
+      [
+        "action",
+        "run row",
+        "counted order",
+        "queue",
+        "ceiling flag",
+        "pinned by",
+      ],
+      2,
+    ),
+    ({ body }) =>
+      Result.flatMap(
+        Result.all(
+          body.map(
+            ({ line, text }): Result.Result<ReconcileEffectRow, ParseError> => {
+              const fail = (message: string) =>
+                Result.fail(
+                  new ParseError({
+                    message: `reconcileItem effects, line ${String(line)}: ${message}`,
+                  }),
+                );
+              const values = cellsOf(text);
+              if (values.length !== 6)
+                return fail(
+                  `${String(values.length)} cells, expected 6: ${text}`,
+                );
+              const [
+                action,
+                runRow,
+                countedOrder,
+                queue,
+                ceilingFlag,
+                pinnedBy = "",
+              ] = values;
+              const pick = <W extends string>(
+                column: string,
+                words: readonly W[],
+                value: string | undefined,
+              ): Result.Result<W, ParseError> => {
+                const word = words.find((candidate) => candidate === value);
+                return word === undefined
+                  ? fail(
+                      `unknown word "${value ?? ""}" under ${column}; expected one of: ${words.join(", ")}`,
+                    )
+                  : Result.succeed(word);
+              };
+              if (pinnedBy === "") return fail("empty pinned by");
+              return Result.map(
+                Result.all({
+                  action: pick("action", RECONCILE_EFFECT_WORDS.action, action),
+                  runRow: pick(
+                    "run row",
+                    RECONCILE_EFFECT_WORDS.runRow,
+                    runRow,
+                  ),
+                  countedOrder: pick(
+                    "counted order",
+                    RECONCILE_EFFECT_WORDS.countedOrder,
+                    countedOrder,
+                  ),
+                  queue: pick("queue", RECONCILE_EFFECT_WORDS.queue, queue),
+                  ceilingFlag: pick(
+                    "ceiling flag",
+                    RECONCILE_EFFECT_WORDS.ceilingFlag,
+                    ceilingFlag,
+                  ),
+                }),
+                (words) => ({ line, ...words, pinnedBy }),
+              );
+            },
+          ),
+        ),
+        (rows) => {
+          const missing = RECONCILE_EFFECT_WORDS.action.filter(
+            (action) =>
+              rows.filter((row) => row.action === action).length !== 1,
+          );
+          return missing.length === 0
+            ? Result.succeed(rows)
+            : Result.fail(
+                new ParseError({
+                  message: `reconcileItem effects: each action is one row; not once: ${missing.join(", ")}`,
+                }),
+              );
+        },
+      ),
+  );
+
+/** One parsed row of the pass rules table on `reconcileItem`. */
+export interface ReconcilePassRuleRow {
+  readonly line: number;
+  readonly rule: string;
+  /** The symbols the `where` cell names, without their backticks. */
+  readonly where: readonly string[];
+  readonly pinnedBy: string;
+}
+
+const SYMBOLS = /^`[\w.]+`(?:, `[\w.]+`)*$/u;
+
+/**
+ * Read the pass rules table, the fourth table in the JSDoc on
+ * `reconcileItem` in `source`. The header is `rule | where | pinned by`;
+ * `rule` is non-empty; `where` is one or more backticked symbols, comma
+ * separated; `pinned by` is a test title or {@link NONE_YET}. Fails with a
+ * message naming the line and the offending cell.
+ */
+export const parseReconcilePassRules = (
+  source: string,
+): Result.Result<readonly ReconcilePassRuleRow[], ParseError> =>
+  Result.flatMap(
+    nthTable(source, "reconcileItem", ["rule", "where", "pinned by"], 3),
+    ({ body }) =>
+      Result.all(
+        body.map(
+          ({ line, text }): Result.Result<ReconcilePassRuleRow, ParseError> => {
+            const fail = (message: string) =>
+              Result.fail(
+                new ParseError({
+                  message: `reconcileItem pass rules, line ${String(line)}: ${message}`,
+                }),
+              );
+            const values = cellsOf(text);
+            if (values.length !== 3)
+              return fail(
+                `${String(values.length)} cells, expected 3: ${text}`,
+              );
+            const [rule = "", where = "", pinnedBy = ""] = values;
+            if (rule === "") return fail("empty rule");
+            if (!SYMBOLS.test(where))
+              return fail(
+                `where "${where}" is not one or more backticked symbols`,
+              );
+            if (pinnedBy === "") return fail("empty pinned by");
+            return Result.succeed({
+              line,
+              rule,
+              where: where.split(", ").map((symbol) => symbol.slice(1, -1)),
+              pinnedBy,
+            });
+          },
+        ),
+      ),
+  );
+
+/** One parsed row of the sync pipeline table on `ShopAgentHost` in `src/lib/agent/Host.ts`. */
+export interface SyncPipelineRow {
+  readonly line: number;
+  readonly source: string;
+  readonly store: string;
+  readonly reconcile: string;
+  readonly flush: string;
+  readonly release: string;
+  readonly publish: string;
+}
+
+/**
+ * Read the sync pipeline table, the second table in the JSDoc on
+ * `ShopAgentHost` in `source` (the services table is the first). The header
+ * is `source | store | reconcile | flush | release | publish`; every cell is
+ * non-empty, and `reconcile` is `—` or begins with `reconcile` or
+ * `reconcile all` ({@link RECONCILE_SHAPE_WORDS}), so the shape is the
+ * triggers table's word. No `pinned by`: the rows are wiring. Fails with a
+ * message naming the line and the offending cell.
+ */
+export const parseSyncPipeline = (
+  source: string,
+): Result.Result<readonly SyncPipelineRow[], ParseError> =>
+  Result.flatMap(
+    nthTable(
+      source,
+      "ShopAgentHost",
+      ["source", "store", "reconcile", "flush", "release", "publish"],
+      1,
+    ),
+    ({ body }) =>
+      Result.all(
+        body.map(
+          ({ line, text }): Result.Result<SyncPipelineRow, ParseError> => {
+            const fail = (message: string) =>
+              Result.fail(
+                new ParseError({
+                  message: `ShopAgentHost sync pipeline, line ${String(line)}: ${message}`,
+                }),
+              );
+            const values = cellsOf(text);
+            if (values.length !== 6)
+              return fail(
+                `${String(values.length)} cells, expected 6: ${text}`,
+              );
+            const [
+              rowSource = "",
+              store = "",
+              reconcile = "",
+              flush = "",
+              release = "",
+              publish = "",
+            ] = values;
+            const empty = Object.entries({
+              source: rowSource,
+              store,
+              flush,
+              release,
+              publish,
+            }).find(([, cell]) => cell === "");
+            if (empty !== undefined) return fail(`empty ${empty[0]}`);
+            const shapes = RECONCILE_SHAPE_WORDS.filter(
+              (word) => word !== "none",
+            );
+            if (
+              reconcile !== "—" &&
+              !shapes.some(
+                (word) =>
+                  reconcile === word ||
+                  reconcile.startsWith(`${word} `) ||
+                  reconcile.startsWith(`${word},`),
+              )
+            )
+              return fail(
+                `reconcile "${reconcile}" is not — and does not begin with ${shapes.join(" or ")}`,
+              );
+            return Result.succeed({
+              line,
+              source: rowSource,
+              store,
+              reconcile,
+              flush,
+              release,
+              publish,
+            });
+          },
+        ),
+      ),
+  );
 
 /**
  * **Every `pinned by` title is carried by a test.** A row whose cell is not

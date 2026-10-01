@@ -935,7 +935,8 @@ export class ShopAgent extends Agent {
         role: "rpc",
       })(({ url }) =>
         Effect.gen(function* () {
-          // After the stream, never per order: an open-orders sync can queue
+          // After the stream, never per order (pass rule 8 on
+          // `Domain.reconcileItem`): an open-orders sync can queue
           // thousands of events, and the API takes one request each at 500 a
           // second, so the drain is batched (`ShopLimits.sweepBatch`) and the
           // remainder rides the next webhook. `ensuring`, because a stream
@@ -1100,7 +1101,7 @@ export class ShopAgent extends Agent {
    * Each order goes through four steps, each owned by one module: store
    * ({@link OrdersAgent}), reconcile (shop work's reconciler, passed to the
    * store as its `afterWrite`), flush ({@link BillingAgent}) and publish
-   * (this object's `publish`).
+   * (this object's `publish`): the sync pipeline table on {@link ShopAgentHost}.
    */
   syncOrderWebhook(input: OrderWebhookInput): Promise<void> {
     const shop = this.name;
@@ -1297,19 +1298,19 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Stores Shopify's meter readings; the rule is on {@link BillingAgent}'s
-   * `reconcileUsage`. Plain RPC for the same reason as
+   * Stores Shopify's quantity per meter; the rule is on {@link BillingAgent}'s
+   * `checkMeters`. Plain RPC for the same reason as
    * {@link ShopAgent.setBillingCycle}.
    */
-  reconcileUsage(
-    input: typeof Domain.ReconcileUsageInput.Encoded,
+  checkMeters(
+    input: typeof Domain.MeterQuantitiesInput.Encoded,
   ): Promise<void> {
     return this.runEffect(
-      callableEffect("ShopAgent.reconcileUsage", Domain.ReconcileUsageInput, {
+      callableEffect("ShopAgent.checkMeters", Domain.MeterQuantitiesInput, {
         role: "rpc",
-      })((readings) =>
+      })((quantities) =>
         BillingAgent.pipe(
-          Effect.flatMap((billing) => billing.reconcileUsage(readings)),
+          Effect.flatMap((billing) => billing.checkMeters(quantities)),
         ),
       )(input),
     );

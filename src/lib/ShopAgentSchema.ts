@@ -147,8 +147,8 @@ export const initializeSchema = Effect.gen(function* () {
       openRunsLimitedAt integer,
       lastSweepAt integer,
       seatsThisCycle integer not null default 0,
-      lastReconciledOrders integer,
-      lastReconciledMembers integer
+      meterQuantityOrders integer,
+      meterQuantityMembers integer
     );
     insert or ignore into ShopUsage (id) values (1);
     -- The App Events outbox; protocol on OrderRepository.flushUsageEvents.

@@ -818,7 +818,7 @@ const make = Effect.gen(function* () {
    * cannot happen inside the Durable Object transaction; loading once per
    * webhook or per bulk stream also bounds the cost for a thousand-order file,
    * at the accepted price of a snapshot that a mid-stream team delete would
-   * not refresh.
+   * not refresh: pass rule 3 on {@link Domain.reconcileItem}.
    */
   const eligibleContext = () => {
     return Effect.gen(function* () {
@@ -836,8 +836,8 @@ const make = Effect.gen(function* () {
    * check, so running it over every order is safe. Not the write's
    * transaction: the repository owns that one and Durable Object SQLite
    * refuses to nest, but the Durable Object serialises callables so nothing
-   * interleaves. Returns nothing: the pass logs its sums, and no count
-   * reaches a screen.
+   * interleaves. Returns nothing: the pass logs its counts, and no count
+   * reaches a screen (pass rule 10 on {@link Domain.reconcileItem}).
    *
    * Unconditional, because a workflow turning off creates runs too: one item
    * matched by two workflows that are on is a multi-match and carries no run, so
@@ -847,26 +847,23 @@ const make = Effect.gen(function* () {
    * {@link reconcileAllIfOn}.
    *
    * Runs a second time, once, when the pass's own closes released the
-   * open-run ceiling (`ReconcileCounts.ceilingReleased`): the orders it had
-   * already walked were declined at the ceiling, and the pass is the write
-   * that made room for them. Once, because the second pass starts under the
-   * ceiling with the flag clear, so it cannot release again.
+   * open-run ceiling (`ReconcileCounts.ceilingReleased`): pass rule 7 on
+   * {@link Domain.reconcileItem}, which says why once.
    *
    * Sends the usage queue after the pass ({@link flushUsageEvents}), whether
-   * or not it finished: every order a run was created on was counted, and its
-   * event is owed now.
+   * or not it finished: pass rule 8 on {@link Domain.reconcileItem}.
    */
   const reconcileAllNow = (caller: string, id: string) => {
     const shop = host.shop();
     const pass = (again: boolean) =>
       Effect.gen(function* () {
-        const sums = yield* (yield* RunRepository).reconcileAll(
+        const counts = yield* (yield* RunRepository).reconcileAll(
           yield* eligibleContext(),
         );
         yield* Effect.logInfo(
-          `ShopAgent.reconcileAll: shop=${shop} caller=${caller} id=${id} again=${String(again)} orders=${String(sums.orders)} created=${String(sums.created)} multiMatch=${String(sums.multiMatch)} ceilingReleased=${String(sums.ceilingReleased)}`,
-        ).pipe(Effect.annotateLogs({ shop, caller, id, again, ...sums }));
-        return sums.ceilingReleased;
+          `ShopAgent.reconcileAll: shop=${shop} caller=${caller} id=${id} again=${String(again)} orders=${String(counts.orders)} created=${String(counts.created)} multiMatch=${String(counts.multiMatch)} ceilingReleased=${String(counts.ceilingReleased)}`,
+        ).pipe(Effect.annotateLogs({ shop, caller, id, again, ...counts }));
+        return counts.ceilingReleased;
       });
     return Effect.gen(function* () {
       if (yield* pass(false)) yield* pass(true);
@@ -897,6 +894,7 @@ const make = Effect.gen(function* () {
    * each order's next webhook, and publishes to everyone, since the runs
    * land on any order. The class's sync wiring calls it for the webhook, the
    * one-order sync and the open-orders sync; the task and run callables call it themselves.
+   * The rule is pass rule 7 on {@link Domain.reconcileItem}.
    */
   const afterCeilingReleased = (id: string) =>
     Effect.gen(function* () {

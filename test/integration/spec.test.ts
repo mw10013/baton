@@ -1,6 +1,7 @@
 import { Result } from "effect";
 import { describe, expect, it } from "vitest";
 
+import hostSource from "@/lib/agent/Host.ts?raw";
 import d1Source from "@/lib/D1Schema.ts?raw";
 import * as Domain from "@/lib/Domain";
 import source from "@/lib/Domain.ts?raw";
@@ -691,23 +692,23 @@ describe("triggers table parser", () => {
   });
 });
 
-/** A `reconcileItem` JSDoc holding one triggers row and one outcomes row. */
-const reconcileTablesOf = (trigger: string, outcome: string) =>
+/** A `reconcileItem` JSDoc holding one triggers row and one actions row. */
+const reconcileTablesOf = (trigger: string, action: string) =>
   [
     "/**",
     " * | trigger | shape | skipped when | pinned by |",
     " * | - | - | - | - |",
     ` * ${trigger}`,
     " *",
-    " * | order | paid | units | run on item | matches | outcome |",
+    " * | order | paid | units | run on item | matches | action |",
     " * | - | - | - | - | - | - |",
-    ` * ${outcome}`,
+    ` * ${action}`,
     " */",
     "export const reconcileItem = 0;",
   ].join("\n");
 
 const TRIGGER_ROW = "| Turn on | reconcile all | never | (none yet) |";
-const OUTCOME_ROW = "| open | yes | some | none | 1 | create |";
+const ACTION_ROW = "| open | yes | some | none | 1 | create |";
 
 const reconcileError = (
   parse: (source: string) => Result.Result<unknown, { message: string }>,
@@ -739,7 +740,7 @@ describe("reconcile triggers table parser", () => {
         ActionTable.parseReconcileTriggers,
         reconcileTablesOf(
           "| Turn on | every order | never | (none yet) |",
-          OUTCOME_ROW,
+          ACTION_ROW,
         ),
       ),
     ).toMatch(/unknown shape "every order"/u);
@@ -749,37 +750,37 @@ describe("reconcile triggers table parser", () => {
     expect(
       reconcileError(
         ActionTable.parseReconcileTriggers,
-        reconcileTablesOf("| Turn on | reconcile all | never | |", OUTCOME_ROW),
+        reconcileTablesOf("| Turn on | reconcile all | never | |", ACTION_ROW),
       ),
     ).toMatch(/empty pinned by/u);
   });
 });
 
-describe("reconcile outcomes table parser", () => {
+describe("reconcile actions table parser", () => {
   it("the real table parses, after the triggers table", () => {
     const rows = Result.getOrThrow(
-      ActionTable.parseReconcileOutcomes(shopWorkSource),
+      ActionTable.parseReconcileActions(shopWorkSource),
     );
-    expect(rows.map((row) => row.outcome.tag)).toEqual(
+    expect(rows.map((row) => row.action.tag)).toEqual(
       expect.arrayContaining(["create", "close", "resize", "nothing"]),
     );
   });
 
   it("reads the close reason and the text after the colon", () => {
     const [row] = Result.getOrThrow(
-      ActionTable.parseReconcileOutcomes(
+      ActionTable.parseReconcileActions(
         reconcileTablesOf(
           TRIGGER_ROW,
           "| cancelled | any | any | open | any | close `order_cancelled`: Shopify ended it |",
         ),
       ),
     );
-    expect(row?.outcome).toEqual({
+    expect(row?.action).toEqual({
       tag: "close",
       reason: "order_cancelled",
       note: "Shopify ended it",
     });
-    expect(row && ActionTable.expandReconcileOutcome(row)).toHaveLength(
+    expect(row && ActionTable.expandReconcileAction(row)).toHaveLength(
       2 * 3 * 2 * 3,
     );
   });
@@ -787,7 +788,7 @@ describe("reconcile outcomes table parser", () => {
   it("a word outside its list is refused", () => {
     expect(
       reconcileError(
-        ActionTable.parseReconcileOutcomes,
+        ActionTable.parseReconcileActions,
         reconcileTablesOf(
           TRIGGER_ROW,
           "| open | maybe | some | none | 1 | create |",
@@ -796,13 +797,145 @@ describe("reconcile outcomes table parser", () => {
     ).toMatch(/unknown word "maybe" under paid/u);
     expect(
       reconcileError(
-        ActionTable.parseReconcileOutcomes,
+        ActionTable.parseReconcileActions,
         reconcileTablesOf(
           TRIGGER_ROW,
           "| open | yes | some | none | 1 | start |",
         ),
       ),
-    ).toMatch(/outcome "start"/u);
+    ).toMatch(/action "start"/u);
+  });
+});
+
+/** `shopWorkSource` with its first line matching `pattern` passed through `edit`. */
+const shopWorkWith = (pattern: RegExp, edit: (line: string) => string) =>
+  shopWorkSource.replace(pattern, edit);
+
+const pinnedTestSources = () =>
+  import.meta.glob<string>("/test/integration/*.test.ts", {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  });
+
+describe("reconcile effects table parser", () => {
+  it("the real table parses, one row per action, and every pinned title is carried by a test", () => {
+    const rows = Result.getOrThrow(
+      ActionTable.parseReconcileEffects(shopWorkSource),
+    );
+    expect(rows.map((row) => row.action)).toEqual(
+      ActionTable.RECONCILE_EFFECT_WORDS.action,
+    );
+    expect(
+      ActionTable.checkPinned(rows, pinnedTestSources(), "reconcileItem"),
+    ).toEqual([]);
+  });
+
+  it("a word outside its list is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseReconcileEffects,
+        shopWorkWith(/^ \* \| resize +\|.*$/mu, (line) =>
+          line.replace("quantity rewritten", "rewritten"),
+        ),
+      ),
+    ).toMatch(/unknown word "rewritten" under run row/u);
+  });
+
+  it("a header other than the effects header is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseReconcileEffects,
+        shopWorkWith(/^ \* \| action +\| run row .*$/mu, (line) =>
+          line.replace("ceiling flag", "flag        "),
+        ),
+      ),
+    ).toMatch(/header is action, run row, counted order, queue, flag/u);
+  });
+
+  it("an action that is not a row exactly once is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseReconcileEffects,
+        shopWorkWith(/^ \* \| resize +\|.*$/mu, (line) =>
+          line.replace("resize", "create"),
+        ),
+      ),
+    ).toMatch(/not once: create, resize/u);
+  });
+});
+
+describe("reconcile pass rules table parser", () => {
+  it("the real table parses and every pinned title is carried by a test", () => {
+    const rows = Result.getOrThrow(
+      ActionTable.parseReconcilePassRules(shopWorkSource),
+    );
+    expect(rows[0]?.where).toEqual(["RunRepository.reconcileOrder"]);
+    expect(
+      ActionTable.checkPinned(rows, pinnedTestSources(), "reconcileItem"),
+    ).toEqual([]);
+  });
+
+  it("an empty rule is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseReconcilePassRules,
+        shopWorkWith(/^ \* \| 9\. a pass is idempotent: [^|]*/mu, (cell) =>
+          " * | ".padEnd(cell.length),
+        ),
+      ),
+    ).toMatch(/empty rule/u);
+  });
+
+  it("a where that is not backticked symbols is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseReconcilePassRules,
+        shopWorkWith(/^ \* \| 9\. a pass is idempotent: .*$/mu, (line) =>
+          line.replace("`reconcileItem`", "the planner  "),
+        ),
+      ),
+    ).toMatch(/where "the planner" is not one or more backticked symbols/u);
+  });
+
+  it("a header other than the pass rules header is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseReconcilePassRules,
+        shopWorkWith(/^ \* \| rule +\| where +\|.*$/mu, (line) =>
+          line.replace("where", "who  "),
+        ),
+      ),
+    ).toMatch(/header is rule, who, pinned by/u);
+  });
+});
+
+describe("sync pipeline table parser", () => {
+  it("the real table parses, after the services table", () => {
+    const rows = Result.getOrThrow(ActionTable.parseSyncPipeline(hostSource));
+    expect(rows.map((row) => row.reconcile)).toContain("reconcile all");
+  });
+
+  it("a reconcile cell that names no shape is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseSyncPipeline,
+        hostSource.replace(/^ \* \| seed \(dev\) .*$/mu, (line) =>
+          line.replace("reconcile each, then reconcile all", "every order"),
+        ),
+      ),
+    ).toMatch(/reconcile "every order" is not —/u);
+  });
+
+  it("an empty cell is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseSyncPipeline,
+        hostSource.replace(/^ \* \| seed \(dev\) +\|[^|]*\|/mu, (cells) =>
+          cells.replace("upsert each", "           "),
+        ),
+      ),
+    ).toMatch(/empty store/u);
   });
 });
 

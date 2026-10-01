@@ -309,17 +309,17 @@ export class SubscriptionPlan extends Context.Service<
               message: `SubscriptionPlan.revalidate: shop=${shopSession.shop}: billing cycle push failed`,
             }),
           );
-        // Pushed even when both readings are null: an app subscription that
+        // Pushed even when both quantities are null: an app subscription that
         // cannot report (a trial, a pre-meter app subscription) then clears the
-        // readings the last reporting app subscription left, rather than
+        // quantities the last reporting app subscription left, rather than
         // showing them as current. Null already means "cannot report" on
         // `Domain.ShopUsage`.
         yield* shopAgentClient
-          .reconcileUsage(shopSession.shop, appSubscription.usage)
+          .checkMeters(shopSession.shop, appSubscription.usage)
           .pipe(
             Effect.ignore({
               log: "Warn",
-              message: `SubscriptionPlan.revalidate: shop=${shopSession.shop}: usage reconciliation failed`,
+              message: `SubscriptionPlan.revalidate: shop=${shopSession.shop}: meter check failed`,
             }),
           );
         return subscribed({
@@ -398,8 +398,8 @@ export class SubscriptionPlan extends Context.Service<
  * is, and nothing else does: without it a shop whose orders arrive by webhook
  * alone rolls its cycle forward once on its own and never again, so its
  * order count grows across months and its members meter is never sent a new
- * cycle's member count. The refresh pushes the cycle and the meter readings
- * (`ShopAgent.setBillingCycle`, `ShopAgent.reconcileUsage`), and the second
+ * cycle's member count. The refresh pushes the cycle and the meter quantities
+ * (`ShopAgent.setBillingCycle`, `ShopAgent.checkMeters`), and the second
  * sends the usage queue.
  *
  * Only stale shops: a fresh entry was read within

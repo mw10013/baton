@@ -134,6 +134,7 @@ export class TaskDoneError extends Schema.TaggedError<TaskDoneError>()(
   { runTaskId: Schema.String },
 ) {}
 
+/** What one pass over one order did, for the caller's log line and the release decision. No count reaches a screen: pass rule 10 on {@link Domain.reconcileItem}. */
 export interface ReconcileCounts {
   /** Runs created by this pass. */
   readonly created: number;
@@ -157,8 +158,8 @@ export interface ReconcileCounts {
   readonly ceilingReleased: boolean;
 }
 
-/** What `reconcileAll` hands back for the caller's log line: the pass's sums, and whether any order's closes released the open-run ceiling. */
-export interface ReconcileAllSums {
+/** What `reconcileAll` hands back: the pass's counts, added over its orders, for the caller's one log line and the release decision (whether any order's closes released the open-run ceiling). No count reaches a screen: pass rule 10 on {@link Domain.reconcileItem}. */
+export interface ReconcileAllCounts {
   readonly orders: number;
   readonly created: number;
   readonly multiMatch: number;
@@ -204,12 +205,10 @@ export class RunRepository extends Context.Service<
       input: Domain.EligibleContext & { readonly orderId: string },
     ) => Effect.Effect<ReconcileCounts, SqlError.SqlError | RunRepositoryError>;
     /**
-     * `reconcileOrder` over every open, paid order, one transaction each:
-     * what runs after a definition changes on an on workflow (Turn on,
-     * Apply). Returns its sums for the caller's one log line, and whether
-     * any order's closes released the open-run ceiling
-     * ({@link ReconcileCounts} `ceilingReleased`); no count reaches a
-     * screen. Fulfilled orders are excluded on purpose —
+     * `reconcileOrder` over every open, paid order, one transaction each
+     * (pass rule 2 on {@link Domain.reconcileItem}): what runs after a
+     * definition changes on an on workflow (Turn on, Apply). Returns its
+     * counts ({@link ReconcileAllCounts}). Fulfilled orders are excluded on purpose —
      * reconcile treats fulfilled as terminal and there is nothing left to
      * make or pack — and unpaid ones because they reconcile when they pay.
      *
@@ -223,7 +222,7 @@ export class RunRepository extends Context.Service<
     readonly reconcileAll: (
       input: Domain.EligibleContext,
     ) => Effect.Effect<
-      ReconcileAllSums,
+      ReconcileAllCounts,
       SqlError.SqlError | RunRepositoryError
     >;
     /**
@@ -1081,21 +1080,16 @@ export class RunRepository extends Context.Service<
 
       /**
        * Reads the order, its items and its runs, calls
-       * {@link Domain.reconcileItem} per item, and executes the outcomes;
-       * the rule is there. A run whose item is no longer stored is planned as
-       * an item at zero units, so it closes as `item_removed`.
+       * {@link Domain.reconcileItem} per item, and executes the actions;
+       * the rule is there. The rules of a pass are the pass rules table on
+       * {@link Domain.reconcileItem}; this is where rules 1, 4, 5 and 6 are
+       * enforced.
        *
-       * The open-run ceiling is counted once, before the items, and each
-       * create spends one place. At the ceiling the planner declines rather
-       * than failing: this runs inside the order's upsert transaction, so
-       * failing would fail the webhook, Shopify would retry it for four hours,
-       * and no retry can fix a condition that only marking work done clears.
-       * The order is stored, shows on the index with no workflow, and
-       * `ShopUsage.openRunsLimitedAt` raises a persistent banner naming the
-       * cause. The write that brings the shop back under the ceiling, a Done,
-       * a Cancel workflow or a close by this pass, releases it
-       * ({@link releaseOpenRunLimit}) and its caller runs a reconcile all,
-       * so the declined runs are created then.
+       * At the ceiling the planner declines rather than failing; why is with
+       * the ceiling rules on {@link Domain.reconcileItem}. The decline sets
+       * `ShopUsage.openRunsLimitedAt`, which raises a persistent banner naming
+       * the cause, and a close by this pass releases it
+       * ({@link releaseOpenRunLimit}).
        *
        * `ReconcileCounts.multiMatch` counts a multi-match item only when the
        * order can create runs ({@link Domain.orderCanCreateRuns}), the same
@@ -1168,11 +1162,11 @@ export class RunRepository extends Context.Service<
             readonly room: number;
             readonly plans: readonly {
               readonly entry: (typeof entries)[number];
-              readonly outcome: Domain.ReconcileOutcome;
+              readonly action: Domain.ReconcileAction;
             }[];
           }>(
             (acc, entry) => {
-              const outcome = Domain.reconcileItem({
+              const action = Domain.reconcileItem({
                 order,
                 item: entry.item,
                 run: entry.run,
@@ -1180,17 +1174,17 @@ export class RunRepository extends Context.Service<
                 atCeiling: acc.room <= 0,
               });
               return {
-                room: acc.room - (outcome._tag === "create" ? 1 : 0),
-                plans: [...acc.plans, { entry, outcome }],
+                room: acc.room - (action._tag === "create" ? 1 : 0),
+                plans: [...acc.plans, { entry, action }],
               };
             },
             { room, plans: [] },
           ).plans;
           const execute = ({
             entry: { lineItem, run, matched },
-            outcome,
+            action,
           }: (typeof planned)[number]) =>
-            Match.value(outcome).pipe(
+            Match.value(action).pipe(
               Match.tagsExhaustive({
                 create: ({ workflowId }) => {
                   const workflow = matched.find(
@@ -1228,12 +1222,12 @@ export class RunRepository extends Context.Service<
                 },
                 nothing: () => Effect.succeed(0),
               }),
-              Effect.map((count) => ({ tag: outcome._tag, count })),
+              Effect.map((count) => ({ tag: action._tag, count })),
             );
           const done = yield* Effect.forEach(planned, execute, {
             concurrency: 1,
           });
-          const sum = (tag: Domain.ReconcileOutcome["_tag"]) =>
+          const sum = (tag: Domain.ReconcileAction["_tag"]) =>
             done.reduce(
               (total, result) =>
                 total + (result.tag === tag ? result.count : 0),
@@ -1245,7 +1239,7 @@ export class RunRepository extends Context.Service<
           const ceilingReleased =
             sum("close") > 0 ? yield* releaseOpenRunLimit() : false;
           const declined = planned.filter(
-            ({ outcome }) => outcome._tag === "nothing" && outcome.declined,
+            ({ action }) => action._tag === "nothing" && action.declined,
           ).length;
           if (declined > 0) {
             yield* sql`
@@ -1326,7 +1320,7 @@ export class RunRepository extends Context.Service<
             created: counts.reduce((sum, c) => sum + c.created, 0),
             multiMatch: counts.reduce((sum, c) => sum + c.multiMatch, 0),
             ceilingReleased: counts.some((c) => c.ceilingReleased),
-          } satisfies ReconcileAllSums;
+          } satisfies ReconcileAllCounts;
         }),
 
         setRun: Effect.fn("RunRepository.setRun")(

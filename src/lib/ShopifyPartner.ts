@@ -135,7 +135,7 @@ const matchPlanHandle = Effect.fn("ShopifyPartner.matchPlanHandle")(function* (
 /**
  * Shopify's own count for the meter `handle` this cycle, read off the meter's
  * item. `null` when the app subscription carries no such item, which is not
- * an error: a plan with no meter configured yet reads as "nothing to reconcile
+ * an error: a plan with no meter configured yet reads as "nothing to check
  * against" rather than as zero usage, and zero would look like a divergence
  * from every local count.
  */

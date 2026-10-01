@@ -3,14 +3,16 @@
 // spec, the vocabulary (the map in src/lib/Domain.ts and each context file's
 // block under src/lib/domain/), the triggers table on `ShopUsage` in
 // src/lib/domain/Billing.ts (what each trigger
-// does to the usage counts and the usage-event queue), the triggers and
-// outcomes tables on `reconcileItem` in src/lib/domain/ShopWork.ts (when
-// reconcile runs and what it does to one item), and the data-model
+// does to the usage counts and the usage-event queue), the triggers, actions,
+// effects and pass rules tables on `reconcileItem` in
+// src/lib/domain/ShopWork.ts (when reconcile runs, what it does to one item,
+// what each action does beyond the run, and the rules of a pass), the sync
+// pipeline table on `ShopAgentHost` in src/lib/agent/Host.ts, and the data-model
 // tables on `initializeSchema` in src/lib/ShopAgentSchema.ts (the object) and
 // on `D1_TABLES` in src/lib/D1Schema.ts (D1).
 //
-//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the vocabulary, its contexts, its screen columns, its stored cells against the DDL and its Screens table, parse the triggers table, both reconcile tables and both data-model tables and refuse a pinned title no test carries, parse the copy and controls tables in src/lib/Screen.ts and refuse an example no screen shows (exit 1 on any failure)
-//   node scripts/spec.ts print   render the parsed rows and how many fixtures each expands to, then the triggers rows, then the reconcile rows, then the data-model rows
+//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the vocabulary, its contexts, its screen columns, its stored cells against the DDL and its Screens table, parse the triggers table, the four reconcile tables, the sync pipeline table and both data-model tables and refuse a pinned title no test carries, parse the copy and controls tables in src/lib/Screen.ts and refuse an example no screen shows (exit 1 on any failure)
+//   node scripts/spec.ts print   render the parsed rows and how many fixtures each expands to, then the triggers rows, then the reconcile rows and how many are pinned by (none yet), then the sync pipeline rows, then the data-model rows
 
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import { Console, Effect, Result } from "effect";
@@ -32,6 +34,8 @@ const SCHEMA = new URL("../src/lib/ShopAgentSchema.ts", import.meta.url)
   .pathname;
 const D1_SCHEMA = new URL("../src/lib/D1Schema.ts", import.meta.url).pathname;
 const SCREEN = new URL("../src/lib/Screen.ts", import.meta.url).pathname;
+const HOST = new URL("../src/lib/agent/Host.ts", import.meta.url).pathname;
+const readHost = Effect.sync(() => readFileSync(HOST, "utf8"));
 const ROOT = new URL("../", import.meta.url).pathname;
 const NAMES: readonly ActionTable.TableName[] = ["runActions", "taskActions"];
 
@@ -134,6 +138,7 @@ const checkCommand = Command.make(
     const dataModels = yield* readDataModels;
     const testSources = yield* readTestSources;
     const screen = yield* readScreen;
+    const host = yield* readHost;
     const contextSources = Object.values(contexts);
     const failures = [
       ...NAMES.flatMap((name) =>
@@ -181,7 +186,21 @@ const checkCommand = Command.make(
         onSuccess: (rows) =>
           ActionTable.checkPinned(rows, testSources, "reconcileItem"),
       }),
-      ...Result.match(ActionTable.parseReconcileOutcomes(contexts.ShopWork), {
+      ...Result.match(ActionTable.parseReconcileActions(contexts.ShopWork), {
+        onFailure: (error) => [error.message],
+        onSuccess: () => [],
+      }),
+      ...Result.match(ActionTable.parseReconcileEffects(contexts.ShopWork), {
+        onFailure: (error) => [error.message],
+        onSuccess: (rows) =>
+          ActionTable.checkPinned(rows, testSources, "reconcileItem"),
+      }),
+      ...Result.match(ActionTable.parseReconcilePassRules(contexts.ShopWork), {
+        onFailure: (error) => [error.message],
+        onSuccess: (rows) =>
+          ActionTable.checkPinned(rows, testSources, "reconcileItem"),
+      }),
+      ...Result.match(ActionTable.parseSyncPipeline(host), {
         onFailure: (error) => [error.message],
         onSuccess: () => [],
       }),
@@ -214,7 +233,7 @@ const checkCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Parse the action tables and the reconcile tables in domain/ShopWork.ts, check the vocabulary in Domain.ts and domain/ and its stored cells against the DDL in ShopAgentSchema.ts, check the triggers table on ShopUsage in domain/Billing.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts, and check the copy and controls tables in Screen.ts; exit 1 on any failure",
+    "Parse the action tables and the four reconcile tables (triggers, actions, effects, pass rules) in domain/ShopWork.ts and the sync pipeline table in agent/Host.ts, check the vocabulary in Domain.ts and domain/ and its stored cells against the DDL in ShopAgentSchema.ts, check the triggers table on ShopUsage in domain/Billing.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts, and check the copy and controls tables in Screen.ts; exit 1 on any failure",
   ),
 );
 
@@ -270,19 +289,74 @@ const printCommand = Command.make(
       },
     );
     for (const line of reconcileTriggers) yield* Console.log(`  ${line}`);
-    yield* Console.log("reconcileItem outcomes");
-    const outcomes = Result.match(
-      ActionTable.parseReconcileOutcomes(contexts.ShopWork),
+    yield* Console.log("reconcileItem actions");
+    const actions = Result.match(
+      ActionTable.parseReconcileActions(contexts.ShopWork),
       {
         onFailure: (error) => [error.message],
         onSuccess: (rows) =>
           rows.map(
             (row) =>
-              `[${String(ActionTable.expandReconcileOutcome(row).length)}] ${row.text}`,
+              `[${String(ActionTable.expandReconcileAction(row).length)}] ${row.text}`,
           ),
       },
     );
-    for (const line of outcomes) yield* Console.log(`  ${line}`);
+    for (const line of actions) yield* Console.log(`  ${line}`);
+    yield* Console.log("reconcileItem effects");
+    const effects = Result.match(
+      ActionTable.parseReconcileEffects(contexts.ShopWork),
+      {
+        onFailure: (error) => [error.message],
+        onSuccess: (rows) =>
+          rows.map(
+            (row) =>
+              `${row.action}: run row ${row.runRow}, counted order ${row.countedOrder}, queue ${row.queue}, ceiling flag ${row.ceilingFlag} — ${row.pinnedBy}`,
+          ),
+      },
+    );
+    for (const line of effects) yield* Console.log(`  ${line}`);
+    yield* Console.log("reconcileItem pass rules");
+    const passRules = Result.match(
+      ActionTable.parseReconcilePassRules(contexts.ShopWork),
+      {
+        onFailure: (error) => [error.message],
+        onSuccess: (rows) =>
+          rows.map(
+            (row) => `${row.rule} [${row.where.join(", ")}] — ${row.pinnedBy}`,
+          ),
+      },
+    );
+    for (const line of passRules) yield* Console.log(`  ${line}`);
+    const unpinned = [
+      ActionTable.parseReconcileTriggers(contexts.ShopWork),
+      ActionTable.parseReconcileEffects(contexts.ShopWork),
+      ActionTable.parseReconcilePassRules(contexts.ShopWork),
+    ].reduce(
+      (total, parsed) =>
+        total +
+        Result.match(parsed, {
+          onFailure: () => 0,
+          onSuccess: (rows: readonly { readonly pinnedBy: string }[]) =>
+            rows.filter((row) => row.pinnedBy === ActionTable.NONE_YET).length,
+        }),
+      0,
+    );
+    yield* Console.log(
+      `reconcileItem: ${String(unpinned)} rows pinned by ${ActionTable.NONE_YET}`,
+    );
+    yield* Console.log("ShopAgentHost sync pipeline");
+    const pipeline = Result.match(
+      ActionTable.parseSyncPipeline(yield* readHost),
+      {
+        onFailure: (error) => [error.message],
+        onSuccess: (rows) =>
+          rows.map(
+            (row) =>
+              `${row.source}: store ${row.store}; reconcile ${row.reconcile}; flush ${row.flush}; release ${row.release}; publish ${row.publish}`,
+          ),
+      },
+    );
+    for (const line of pipeline) yield* Console.log(`  ${line}`);
     for (const { source: dataModel, options } of yield* readDataModels) {
       yield* Console.log(options.symbol);
       const rows = Result.match(
@@ -301,7 +375,7 @@ const printCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Render the parsed action tables and their fixture counts, then the triggers rows, then the reconcile rows and their fixture counts, then the data-model rows",
+    "Render the parsed action tables and their fixture counts, then the triggers rows, then the reconcile rows, the actions' fixture counts and the count of rows pinned by (none yet), then the sync pipeline rows, then the data-model rows",
   ),
 );
 

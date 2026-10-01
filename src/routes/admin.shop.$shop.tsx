@@ -318,17 +318,17 @@ function FoundShop({
             <Field
               label="Shopify metered orders"
               value={
-                usage.lastReconciledOrders === null
+                usage.meterQuantityOrders === null
                   ? null
-                  : formatNumber(usage.lastReconciledOrders)
+                  : formatNumber(usage.meterQuantityOrders)
               }
             />
             <Field
               label="Shopify metered members"
               value={
-                usage.lastReconciledMembers === null
+                usage.meterQuantityMembers === null
                   ? null
-                  : formatNumber(usage.lastReconciledMembers)
+                  : formatNumber(usage.meterQuantityMembers)
               }
             />
             <Field

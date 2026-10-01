@@ -139,7 +139,7 @@ describe("ShopAgent callable role gate", () => {
     for (const name of [
       "setBillingCycle",
       "recordMemberCount",
-      "reconcileUsage",
+      "checkMeters",
       "flushUsageEvents",
       "revokeAllConnections",
       "onOrdersStream",

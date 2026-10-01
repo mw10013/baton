@@ -182,13 +182,13 @@ export class ShopAgentClient extends Context.Service<
       input: Domain.RecordMemberCountInput,
     ) => Effect.Effect<number, ShopAgentClientError>;
     /**
-     * Hands the object Shopify's own meter readings so the divergence from the
-     * local count is observable (`ShopAgent.reconcileUsage`, which says why
+     * Hands the object Shopify's own meter quantities so the divergence from the
+     * local count is observable (`ShopAgent.checkMeters`, which says why
      * nothing is corrected from it).
      */
-    readonly reconcileUsage: (
+    readonly checkMeters: (
       shop: string,
-      input: Domain.ReconcileUsageInput,
+      input: Domain.MeterQuantitiesInput,
     ) => Effect.Effect<void, ShopAgentClientError>;
     /**
      * Drains the object's usage-event outbox now rather than on the next order
@@ -345,10 +345,10 @@ export class ShopAgentClient extends Context.Service<
               stub.recordMemberCount(input),
             ),
         ),
-        reconcileUsage: Effect.fn("ShopAgentClient.reconcileUsage")(
-          (shop: string, input: Domain.ReconcileUsageInput) =>
-            call("reconcileUsage", Schema.Void, shop, (stub) =>
-              stub.reconcileUsage(input),
+        checkMeters: Effect.fn("ShopAgentClient.checkMeters")(
+          (shop: string, input: Domain.MeterQuantitiesInput) =>
+            call("checkMeters", Schema.Void, shop, (stub) =>
+              stub.checkMeters(input),
             ),
         ),
         flushUsageEvents: Effect.fn("ShopAgentClient.flushUsageEvents")(

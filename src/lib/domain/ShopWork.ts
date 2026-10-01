@@ -11,25 +11,25 @@
  * Nouns, shop work. "(none)" means no screen says the word; the
  * cell says what a screen shows instead:
  *
- * | word          | meaning                                                                                                    | symbol                                                       | screen                                                      |
- * | ------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------- |
- * | merchant      | the shop's owner, acting from the Shopify admin                                                            | `Actor` role `merchant`                                      | "you" to the merchant, "the merchant" to a member           |
- * | member        | a person at the bench, on one or more teams                                                                | `Actor` role `member`, `Member`                              | member (merchant screens); "you" or a name (member screens) |
- * | team          | the group a task is assigned to                                                                            | `Team`                                                       | team, or its name                                           |
- * | workflow      | the definition: steps of tasks                                                                             | `Workflow`, `WorkflowTask`                                   | workflow, or its name                                       |
- * | step          | a position in a workflow; its tasks are done in parallel                                                   | `WorkflowTask`, `RunTask` field                              | Step k of n                                                 |
- * | run           | one item going through one workflow                                                                        | `Run`                                                        | the item's workflow, on both sides; never bare, never "run" |
- * | task          | one unit of work on a run, on one team                                                                     | `RunTask`                                                    | task, or its name                                           |
- * | block         | a person's hold on a run                                                                                   | `runIsBlocked`                                               | Blocked                                                     |
- * | note          | free text on a run                                                                                         | `RunNote`                                                    | Note                                                        |
- * | draft         | the workflow's edited copy of its tasks, from Edit until Apply or Discard; one or none                     | `WorkflowDraft`                                              | Draft                                                       |
- * | view          | a preset of a list, one at a time, chosen by its button; the row's first is the default                    | `WorkflowsListView`, `OrdersIndexView`, `WorkflowsIndexView` | its label (Started by you, Issues, ...)                     |
- * | reconcile     | make an order's runs agree with the order and the eligible workflows; idempotent                           | `reconcileItem`, `RunRepository.reconcileOrder`              | (none)                                                      |
- * | reconcile all | reconcile every stored open, paid order once, after a workflow changes                                     | `ShopWorkAgent.reconcileAllNow`                              | (none)                                                      |
- * | eligible      | a workflow that is on, has a task, and has every task on a team; only an eligible workflow creates runs    | `workflowIsEligible`, `EligibleContext`                      | (none): Needs a team names the fault                        |
- * | match         | an item and an eligible workflow: a product tag equals the workflow's tag and units to make are above zero | `itemMatches`                                                | the order page's picker lists them first                    |
- * | multi-match   | an item two or more eligible workflows match, with no run                                                  | `multiMatchItems`, `OrderIssue` `multi_match`                | Multiple workflows match                                    |
- * | units to make | what is left to make on an item: Shopify's current quantity                                                | `unitsToMake`                                                | the quantity on the card                                    |
+ * | word          | meaning                                                                                                                                | symbol                                                        | screen                                                      |
+ * | ------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------- |
+ * | merchant      | the shop's owner, acting from the Shopify admin                                                                                        | `Actor` role `merchant`                                       | "you" to the merchant, "the merchant" to a member           |
+ * | member        | a person at the bench, on one or more teams                                                                                            | `Actor` role `member`, `Member`                               | member (merchant screens); "you" or a name (member screens) |
+ * | team          | the group a task is assigned to                                                                                                        | `Team`                                                        | team, or its name                                           |
+ * | workflow      | the definition: steps of tasks                                                                                                         | `Workflow`, `WorkflowTask`                                    | workflow, or its name                                       |
+ * | step          | a position in a workflow; its tasks are done in parallel                                                                               | `WorkflowTask`, `RunTask` field                               | Step k of n                                                 |
+ * | run           | one item going through one workflow                                                                                                    | `Run`                                                         | the item's workflow, on both sides; never bare, never "run" |
+ * | task          | one unit of work on a run, on one team                                                                                                 | `RunTask`                                                     | task, or its name                                           |
+ * | block         | a person's hold on a run                                                                                                               | `runIsBlocked`                                                | Blocked                                                     |
+ * | note          | free text on a run                                                                                                                     | `RunNote`                                                     | Note                                                        |
+ * | draft         | the workflow's edited copy of its tasks, from Edit until Apply or Discard; one or none                                                 | `WorkflowDraft`                                               | Draft                                                       |
+ * | view          | a preset of a list, one at a time, chosen by its button; the row's first is the default                                                | `WorkflowsListView`, `OrdersIndexView`, `WorkflowsIndexView`  | its label (Started by you, Issues, ...)                     |
+ * | reconcile     | make an order's runs agree with the order and the eligible workflows; idempotent                                                       | `reconcileItem`, `RunRepository.reconcileOrder`               | (none)                                                      |
+ * | reconcile all | reconcile every stored open, paid order once, after anything that changes which workflows are eligible or whether a run may be created | `ShopWorkAgent.reconcileAllNow`, `RunRepository.reconcileAll` | (none)                                                      |
+ * | eligible      | a workflow that is on, has a task, and has every task on a team; only an eligible workflow creates runs                                | `workflowIsEligible`, `EligibleContext`                       | (none): Needs a team names the fault                        |
+ * | match         | an item and an eligible workflow: a product tag equals the workflow's tag and units to make are above zero                             | `itemMatches`                                                 | the order page's picker lists them first                    |
+ * | multi-match   | an item two or more eligible workflows match, with no run                                                                              | `multiMatchItems`, `OrderIssue` `multi_match`                 | Multiple workflows match                                    |
+ * | units to make | what is left to make on an item: Shopify's current quantity                                                                            | `unitsToMake`                                                 | the quantity on the card                                    |
  *
  * The merchant's two indexes read the view row too: the orders index's views
  * are `OrdersIndexView`, the workflows index's are `WorkflowsIndexView`. A
@@ -2294,7 +2294,8 @@ export const unitsToMake = (lineItem: Pick<OrderLineItem, "currentQuantity">) =>
  * with its tasks, and the shop's teams. The teams live in D1, a network read
  * that cannot happen inside the object's transaction, so the context is
  * loaded once per webhook, open-orders sync or reconcile all, before the transaction,
- * and every order in that pass works from the same snapshot.
+ * and every order in that pass works from the same snapshot: pass rule 3 on
+ * {@link reconcileItem}.
  */
 export interface EligibleContext {
   readonly workflows: readonly WorkflowDetail[];
@@ -2375,7 +2376,7 @@ export const matchedWorkflows = (
  * the open-run ceiling (`ShopLimits.maxOpenRuns`), so the caller raises the
  * banner.
  */
-export const ReconcileOutcome = Schema.Union([
+export const ReconcileAction = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("create"), workflowId: WorkflowId }),
   Schema.Struct({ _tag: Schema.Literal("close"), reason: ClosedReason }),
   Schema.Struct({
@@ -2385,16 +2386,16 @@ export const ReconcileOutcome = Schema.Union([
   }),
   Schema.Struct({ _tag: Schema.Literal("nothing"), declined: Schema.Boolean }),
 ]);
-export type ReconcileOutcome = typeof ReconcileOutcome.Type;
+export type ReconcileAction = typeof ReconcileAction.Type;
 
-const NOTHING: ReconcileOutcome = { _tag: "nothing", declined: false };
+const NOTHING: ReconcileAction = { _tag: "nothing", declined: false };
 
 /**
  * **Reconcile** makes an order's runs agree with the order and the eligible
- * workflows. It is idempotent: a second pass over the same stored order
- * changes nothing. It reads the stored order and its items, never the
- * caller's copy, so a pass is against what is actually stored, and it ignores
- * the webhook topic: the newest state wins, whatever knocked, which is what
+ * workflows. Storing the order is sync, the orders word; reconcile begins
+ * once the order is stored. A pass reads what is stored, not the caller's
+ * copy (pass rule 1), and ignores the webhook topic: the newest state wins,
+ * whatever knocked, which with a pass being idempotent (pass rule 9) is what
  * makes retries and out-of-order delivery safe. `RunRepository.reconcileOrder`
  * reads, calls this per item, and executes; the rule is here.
  *
@@ -2417,39 +2418,49 @@ const NOTHING: ReconcileOutcome = { _tag: "nothing", declined: false };
  * a merchant's cancel. A `done` run is never touched: it is the record of
  * what was made.
  *
- * The eligible context ({@link EligibleContext}) is a snapshot: it is read
- * once per webhook, open-orders sync or reconcile all, before the transaction, because
- * the shop's teams are a D1 read the object's transaction cannot make. A team
- * deleted in the middle of a sync is not seen by the rest of it; the
- * price is a late run, not a wrong one.
+ * The eligible context ({@link EligibleContext}) is a snapshot (pass rule
+ * 3) because the shop's teams are a D1 read the object's transaction cannot
+ * make. A team deleted in the middle of a sync is not seen by the rest of it;
+ * the price is a late run, not a wrong one.
+ *
+ * Why the ceiling rules (pass rules 4 to 7) read as they do. A pass
+ * declines rather than failing because it runs inside the order's write:
+ * failing would fail the webhook, and no retry can fix a condition only
+ * marking work done clears. A close refunds nothing mid-pass because the
+ * orders the pass had already walked were declined too; the reconcile all
+ * after the release reaches all of them, and the pass is the write that made
+ * room. The second pass happens once because it starts under the ceiling with
+ * the flag clear, so it cannot release again. The queue is sent even after a
+ * reconcile all that failed (pass rule 8) because every order a run was
+ * created on was counted, and its event is owed now.
  *
  * When it runs. `shape` is `reconcile` (one order, inside its upsert),
  * `reconcile all` (every stored open, paid order, one transaction each, by
  * `ShopWorkAgent.reconcileAllNow`) or `none`:
  *
- * | trigger                        | shape         | skipped when                                                                                 | pinned by                                                                                           |
- * | ------------------------------ | ------------- | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
- * | order webhook, any topic       | reconcile     | duplicate id, older payload, order ceiling, order gone                                       | waits for payment, then creates runs identically from any source                                    |
- * | Sync open orders               | reconcile     | stored row fresher, past retention, order ceiling                                            | creates runs on every streamed open order that matches, however old; a re-stream creates none       |
- * | Sync from Shopify              | reconcile     | order gone                                                                                   | (none yet)                                                                                          |
- * | Turn on                        | reconcile all | never                                                                                        | a workflow that is on creates runs on every stored open order, however old it is                    |
- * | Turn off                       | reconcile all | never                                                                                        | turning one of two matching workflows off creates the survivor's run                                |
- * | Delete workflow                | reconcile all | never                                                                                        | (none yet)                                                                                          |
- * | Apply changes                  | reconcile all | workflow off                                                                                 | applyAndTurnOn promotes the draft and turns the switch on in one call; an empty workflow is refused |
- * | the tag edit                   | reconcile all | workflow off                                                                                 | retagging an on workflow reconciles stored orders against the new tag                               |
- * | Delete team                    | reconcile all | never                                                                                        | deleting a team creates the survivor's run on an item two workflows had matched                     |
- * | the open-run ceiling releasing | reconcile all | still at the ceiling                                                                         | the write that releases the ceiling creates the runs that were declined                             |
- * | Attach, Change workflow        | none          | always: the merchant's choice                                                                | manual attach is refused on a cancelled or fulfilled order and allowed on an unpaid one             |
+ * | trigger                        | shape         | skipped when                                           | pinned by                                                                                           |
+ * | ------------------------------ | ------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+ * | order webhook, any topic       | reconcile     | duplicate id, older payload, order ceiling, order gone | waits for payment, then creates runs identically from any source                                    |
+ * | Sync open orders               | reconcile     | stored row fresher, past retention, order ceiling      | creates runs on every streamed open order that matches, however old; a re-stream creates none       |
+ * | Sync from Shopify              | reconcile     | order gone                                             | the one-order sync stores the order and creates its run                                             |
+ * | Turn on                        | reconcile all | never                                                  | a workflow that is on creates runs on every stored open order, however old it is                    |
+ * | Turn off                       | reconcile all | never                                                  | turning one of two matching workflows off creates the survivor's run                                |
+ * | Delete workflow                | reconcile all | never                                                  | deleting one of two matching workflows creates the survivor's run                                   |
+ * | Apply changes                  | reconcile all | workflow off                                           | applyAndTurnOn promotes the draft and turns the switch on in one call; an empty workflow is refused |
+ * | the tag edit                   | reconcile all | workflow off                                           | retagging an on workflow reconciles stored orders against the new tag                               |
+ * | Delete team                    | reconcile all | never                                                  | deleting a team creates the survivor's run on an item two workflows had matched                     |
+ * | the open-run ceiling releasing | reconcile all | still at the ceiling                                   | the write that releases the ceiling creates the runs that were declined                             |
+ * | Attach, Change workflow        | none          | always: the merchant's choice                          | manual attach is refused on a cancelled or fulfilled order and allowed on an unpaid one             |
  *
  * What it does to one item. Each row is a fixture set, each cell one input;
  * `any` covers every value of its column, `closed` under `order` is
  * cancelled or fulfilled, `open` under `run on item` is unstarted or started.
  * `matches` counts eligible workflows whose tag the item carries
- * ({@link itemMatches}). `outcome` is `create`, `close` with its reason,
+ * ({@link itemMatches}). `action` is `create`, `close` with its reason,
  * `resize` or `nothing`, with free text after a colon. The test reads this
  * table out of the source:
  *
- * | order     | paid | units   | run on item     | matches           | outcome                                         |
+ * | order     | paid | units   | run on item     | matches           | action                                          |
  * | --------- | ---- | ------- | --------------- | ----------------- | ----------------------------------------------- |
  * | cancelled | any  | any     | open            | any               | close `order_cancelled`                         |
  * | fulfilled | any  | any     | open            | any               | close `fulfilled`                               |
@@ -2464,6 +2475,38 @@ const NOTHING: ReconcileOutcome = { _tag: "nothing", declined: false };
  * | open      | any  | some    | none            | 0                 | nothing                                         |
  * | open      | no   | some    | none            | 1                 | nothing: created when it pays                   |
  * | open      | yes  | some    | none            | 1, at the ceiling | nothing: declined at the ceiling, banner raised |
+ *
+ * What each action does beyond the item's run. `run row` is `inserted with
+ * its tasks`, `closed`, `quantity rewritten` or `untouched`; `counted order`
+ * is `counted if not yet` or `—`; `queue` is `+1 order event` or `—`;
+ * `ceiling flag` is `raised`, `may release` or `—`. A seeded order is never
+ * counted and a second run on a counted order counts nothing: those are rows
+ * of the triggers table on `ShopUsage`, not restated here.
+ *
+ * | action                       | run row                 | counted order      | queue          | ceiling flag | pinned by                                                                           |
+ * | ---------------------------- | ----------------------- | ------------------ | -------------- | ------------ | ----------------------------------------------------------------------------------- |
+ * | create                       | inserted with its tasks | counted if not yet | +1 order event | —            | an order is counted once, when its first run is created                             |
+ * | close (any reason)           | closed                  | —                  | —              | may release  | a close by reconcile releases the ceiling and says so                               |
+ * | resize                       | quantity rewritten      | —                  | —              | —            | a resize rewrites the quantity and counts nothing                                   |
+ * | nothing: declined            | untouched               | —                  | —              | raised       | reconcile yields to the ceiling and records it; the run's last Done clears the flag |
+ * | nothing (every other reason) | untouched               | —                  | —              | —            | is idempotent, and a closed item creates nothing on reconcile                       |
+ *
+ * The rules of a pass, in the order a pass meets them. `where` names the
+ * symbol that enforces the rule; the rule is stated here and that symbol
+ * links it.
+ *
+ * | rule                                                                                                                                                               | where                                                       | pinned by                                                                           |
+ * | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+ * | 1. a pass reads the stored order, items and runs, never the caller's copy; a stored run whose item is not stored is read as an item at zero units                  | `RunRepository.reconcileOrder`                              | a pass reads the stored order, and a run whose item is gone closes as item removed  |
+ * | 2. a pass runs inside its order's write: the store and its runs commit together or not at all; reconcile all opens one transaction per order                       | `OrderRepository.upsertOrder`, `RunRepository.reconcileAll` | a pass that fails leaves neither the order nor its runs                             |
+ * | 3. the eligible workflows and the teams are read once before the transaction and every order in the pass sees the same snapshot                                    | `ShopWorkAgent.eligibleContext`                             | every order in a pass sees the same eligible snapshot                               |
+ * | 4. the open-run ceiling is counted once per pass; each create spends one; a close in the same pass refunds nothing                                                 | `RunRepository.reconcileOrder`                              | reconcile yields to the ceiling and records it; the run's last Done clears the flag |
+ * | 5. at the ceiling a pass declines and returns; it never fails, so the webhook returns 2xx and the order is stored without its run                                  | `RunRepository.reconcileOrder`                              | reconcile yields to the ceiling and records it; the run's last Done clears the flag |
+ * | 6. release is decided before the decline flag: a pass that closes and declines reports released and raises the flag again                                          | `RunRepository.reconcileOrder`                              | a pass that closes and declines reports released and raises the flag again          |
+ * | 7. a release runs one reconcile all after the transaction, over every stored open paid order; a reconcile all whose own closes release runs once more, never twice | `ShopWorkAgent.afterCeilingReleased`, `reconcileAllNow`     | a reconcile all whose own closes release the ceiling runs once more                 |
+ * | 8. the usage queue is sent after a reconcile all whether or not it finished, and once after a stream, not per streamed order                                       | `reconcileAllNow`, `ShopAgent.onOrdersStream`               | a reconcile all sends the usage queue even when it fails                            |
+ * | 9. a pass is idempotent: a second pass over the same stored order and the same snapshot writes nothing                                                             | `reconcileItem`                                             | is idempotent, and a closed item creates nothing on reconcile                       |
+ * | 10. no count a pass makes reaches a screen; the counts are the log line's                                                                                          | `ReconcileCounts`, `ReconcileAllCounts`                     | no reconcile count reaches a screen                                                 |
  */
 export const reconcileItem = ({
   order,
@@ -2483,7 +2526,7 @@ export const reconcileItem = ({
   readonly matched: readonly WorkflowId[];
   /** The shop holds `ShopLimits.maxOpenRuns` open runs. */
   readonly atCeiling: boolean;
-}): ReconcileOutcome => {
+}): ReconcileAction => {
   const open = run !== null && runIsOpen(run.run);
   if (orderIsCancelled(order))
     return open ? { _tag: "close", reason: "order_cancelled" } : NOTHING;

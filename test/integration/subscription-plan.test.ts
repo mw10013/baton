@@ -95,7 +95,7 @@ const subscribedTo = (
 interface Pushes {
   readonly revoked: Ref.Ref<readonly string[]>;
   readonly cycles: Ref.Ref<readonly Domain.BillingCycleInput[]>;
-  readonly reconciled: Ref.Ref<readonly Domain.ReconcileUsageInput[]>;
+  readonly checked: Ref.Ref<readonly Domain.MeterQuantitiesInput[]>;
   readonly flushed: Ref.Ref<readonly string[]>;
 }
 
@@ -103,7 +103,7 @@ const makePushes = Effect.gen(function* () {
   return {
     revoked: yield* Ref.make<readonly string[]>([]),
     cycles: yield* Ref.make<readonly Domain.BillingCycleInput[]>([]),
-    reconciled: yield* Ref.make<readonly Domain.ReconcileUsageInput[]>([]),
+    checked: yield* Ref.make<readonly Domain.MeterQuantitiesInput[]>([]),
     flushed: yield* Ref.make<readonly string[]>([]),
   } satisfies Pushes;
 });
@@ -111,7 +111,7 @@ const makePushes = Effect.gen(function* () {
 /**
  * The object-facing hooks are observed through a recording stub rather than a
  * socket or a real Durable Object: what this file owns is *when*
- * `SubscriptionPlan` decides to revoke, push a cycle, or reconcile, and
+ * `SubscriptionPlan` decides to revoke, push a cycle, or check the meters, and
  * `shop-agent-connections.test.ts` owns what `revokeAllConnections` does to a
  * live connection.
  */
@@ -163,11 +163,11 @@ const run = <A, E>(
                 pushes === undefined
                   ? Effect.void
                   : Ref.update(pushes.cycles, (cycles) => [...cycles, input]);
-            if (name === "reconcileUsage")
-              return (_shop: string, input: Domain.ReconcileUsageInput) =>
+            if (name === "checkMeters")
+              return (_shop: string, input: Domain.MeterQuantitiesInput) =>
                 pushes === undefined
                   ? Effect.void
-                  : Ref.update(pushes.reconciled, (seen) => [...seen, input]);
+                  : Ref.update(pushes.checked, (seen) => [...seen, input]);
             if (name === "flushUsageEvents")
               return (flushedShop: string) =>
                 pushes === undefined
@@ -554,7 +554,7 @@ describe("SubscriptionPlan", () => {
   );
 
   it.effect(
-    "revalidate pushes the member count with the cycle and both meter readings",
+    "revalidate pushes the member count with the cycle and both meter quantities",
     () =>
       Effect.gen(function* () {
         yield* TestClock.setTime(1000);
@@ -586,14 +586,14 @@ describe("SubscriptionPlan", () => {
           (yield* Ref.get(pushes.cycles)).map((cycle) => cycle.memberCount),
           [2],
         );
-        assert.deepStrictEqual(yield* Ref.get(pushes.reconciled), [
+        assert.deepStrictEqual(yield* Ref.get(pushes.checked), [
           { orders: 42, members: 5 },
         ]);
       }),
   );
 
   it.effect(
-    "pushes null readings when the app subscription carries no meter, so stale readings clear",
+    "pushes null quantities when the app subscription carries no meter, so stale quantities clear",
     () =>
       Effect.gen(function* () {
         yield* TestClock.setTime(1000);
@@ -611,7 +611,7 @@ describe("SubscriptionPlan", () => {
           }),
           { pushes },
         );
-        assert.deepStrictEqual(yield* Ref.get(pushes.reconciled), [
+        assert.deepStrictEqual(yield* Ref.get(pushes.checked), [
           { orders: null, members: null },
         ]);
       }),

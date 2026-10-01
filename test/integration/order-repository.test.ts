@@ -1897,12 +1897,12 @@ describe("OrderRepository usage", () => {
         yield* upsert(repository, paid(1), []);
         yield* count(repository, 1);
         // Shopify has seen nothing yet: both meters read zero.
-        const pending = yield* repository.reconcileUsage({
+        const pending = yield* repository.checkMeters({
           orders: 0,
           members: 0,
         });
         yield* flushed();
-        const drained = yield* repository.reconcileUsage({
+        const drained = yield* repository.checkMeters({
           orders: 0,
           members: 0,
         });
@@ -1928,7 +1928,7 @@ describe("OrderRepository usage", () => {
       }),
       true,
     );
-    strictEqual(drained.lastReconciledMembers, 0);
+    strictEqual(drained.meterQuantityMembers, 0);
   });
 
   it("reports whether the upsert created the row", async () => {

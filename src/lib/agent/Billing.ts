@@ -10,9 +10,9 @@ import { ShopAgentHost } from "./Host.ts";
  * Records the shop's billing cycle (`OrderRepository.setBillingCycle`).
  *
  * Does not flush, though a new cycle queues its first seat event: the
- * revalidation reconciles next, against meter readings taken before this
+ * revalidation checks the meters next, against quantities taken before this
  * push, and a flush here would drain the pending units that explain the
- * gap. {@link reconcileUsage} flushes after its check.
+ * gap. {@link checkMeters} flushes after its check.
  */
 const setBillingCycle = (cycle: Domain.BillingCycleInput) =>
   Effect.gen(function* () {
@@ -36,11 +36,11 @@ const make = Effect.gen(function* () {
    * counted near a cycle's end goes out inside that cycle rather than waiting
    * for the next webhook. The paths: the webhook and open-orders syncs, Attach
    * ("attaching a workflow sends the usage event it queued"), every workflow
-   * edit through `ShopWorkAgent`'s `reconcileAllNow` ("turning a workflow on
+   * edit through `ShopWorkAgent` ("turning a workflow on
    * sends the usage events for the orders it counted"), Sync from Shopify ("syncing
    * one order sends the usage queue, even when the sync fails") and the seed. A
-   * cycle push is sent by the reconcile push that follows it
-   * ({@link reconcileUsage}). Never inside a transaction: it does
+   * cycle push is sent by the meter check that follows it
+   * ({@link checkMeters}). Never inside a transaction: it does
    * network I/O. The rows survive a failure, so the next
    * order's flush retries them, and `ShopUsage.pendingUsageEvents` is what makes
    * a queue that never drains visible on the admin page.
@@ -119,37 +119,38 @@ const make = Effect.gen(function* () {
     });
 
   /**
-   * Stores Shopify's meter readings beside the local counts and logs each
-   * meter whose two disagree by more than the outbox can explain. Orders compare
-   * `ordersThisCycle`, members compare `seatsThisCycle`, each by
-   * {@link Domain.meterDiverges}.
+   * Stores Shopify's quantity per meter beside the local counts and compares
+   * each with the local counter plus the pending units: a meter whose two
+   * disagree by more than the outbox can explain diverges and is logged.
+   * Orders compare `ordersThisCycle`, members compare `seatsThisCycle`, each
+   * by {@link Domain.meterDiverges}.
    *
    * Nothing is corrected. The App Events API answers `202` to an event it will
    * later refuse, so a divergence is the *only* evidence that a shop's usage
    * is not being billed, and quietly moving the local number to match would
    * erase it.
    *
-   * Flushes after the check, not before: the readings predate anything sent
+   * Flushes after the check, not before: the quantities predate anything sent
    * now, so the check needs the pending units still queued. This is what
    * sends a new cycle's first seat event without waiting for the next order
    * or member add, and what first sends events queued before the shop had a
    * `shopGid`.
    */
-  const reconcileUsage = (readings: Domain.ReconcileUsageInput) =>
+  const checkMeters = (quantities: Domain.MeterQuantitiesInput) =>
     Effect.gen(function* () {
       const shop = host.shop();
-      const usage = yield* (yield* OrderRepository).reconcileUsage(readings);
+      const usage = yield* (yield* OrderRepository).checkMeters(quantities);
       const meters = [
         {
           meter: Domain.USAGE_METER_ORDER,
           local: usage.ordersThisCycle,
-          shopify: readings.orders,
+          shopify: quantities.orders,
           pending: usage.pendingOrderUnits,
         },
         {
           meter: Domain.USAGE_METER_MEMBER,
           local: usage.seatsThisCycle,
-          shopify: readings.members,
+          shopify: quantities.members,
           pending: usage.pendingMemberUnits,
         },
       ];
@@ -159,7 +160,7 @@ const make = Effect.gen(function* () {
           Domain.meterDiverges({ local, shopify, pending })
         )
           yield* Effect.logWarning(
-            `ShopAgent.reconcileUsage: shop=${shop} meter=${meter} local=${String(local)} shopify=${String(shopify)} pending=${String(pending)}: metered usage diverges`,
+            `ShopAgent.checkMeters: shop=${shop} meter=${meter} local=${String(local)} shopify=${String(shopify)} pending=${String(pending)}: meter diverges`,
           ).pipe(Effect.annotateLogs({ shop, meter, local, shopify, pending }));
       yield* flushUsageEvents();
     });
@@ -169,7 +170,7 @@ const make = Effect.gen(function* () {
     getUsage,
     setBillingCycle,
     recordMemberCount,
-    reconcileUsage,
+    checkMeters,
   };
 });
 

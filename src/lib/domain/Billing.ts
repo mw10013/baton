@@ -5,18 +5,20 @@
  * app defines in the Partner Dashboard, and an app subscription is one
  * shop's purchase of it. "(none)" means no screen says the word:
  *
- * | word             | meaning                                                                      | symbol                                          | screen                         |
- * | ---------------- | ---------------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------ |
- * | plan             | the App Pricing tier a shop buys                                             | `Plan`, `PlanHandle`                            | (none): the Manage plan button |
- * | app subscription | one shop's purchase of a plan, as the Partner API reports it; one or none    | `AppSubscription`                               | (none)                         |
- * | billing cycle    | one month of an app subscription; both meters start at zero                  | `ShopUsage` fields `cycleStartAt`, `cycleEndAt` | billing cycle                  |
- * | trial            | the days before an app subscription's first billing cycle; nothing is billed | `AppSubscription` field `cycleStartAt` null     | (none)                         |
- * | meter            | a counter Shopify keeps per app subscription                                 | `USAGE_METER_ORDER`, `USAGE_METER_MEMBER`       | (none)                         |
- * | counted order    | an order Baton created a run for; one unit, once                             | `ShopOrder` field `countedAt`                   | "Orders this billing cycle"    |
- * | seat             | one unit of the members meter; a cycle's seats are its highest member count  | `ShopUsage` field `seatsThisCycle`              | (none): members                |
- * | included         | a plan's $0.00 first tier on a meter: a paid allowance, not a "free tier"    | `Entitlements`                                  | included                       |
- * | usage event      | one report of units to Shopify, queued until Shopify accepts it              | `UsageEvent`                                    | (none)                         |
- * | expired event    | a usage event dated before the current billing cycle; never sent             | `usageEventIsExpired`                              | (none)                         |
+ * | word             | meaning                                                                                                                                | symbol                                                                                   | screen                                            |
+ * | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------- |
+ * | plan             | the App Pricing tier a shop buys                                                                                                       | `Plan`, `PlanHandle`                                                                     | (none): the Manage plan button                    |
+ * | app subscription | one shop's purchase of a plan, as the Partner API reports it; one or none                                                              | `AppSubscription`                                                                        | (none)                                            |
+ * | billing cycle    | one month of an app subscription; both meters start at zero                                                                            | `ShopUsage` fields `cycleStartAt`, `cycleEndAt`                                          | billing cycle                                     |
+ * | trial            | the days before an app subscription's first billing cycle; nothing is billed                                                           | `AppSubscription` field `cycleStartAt` null                                              | (none)                                            |
+ * | meter            | a counter Shopify keeps per app subscription                                                                                           | `USAGE_METER_ORDER`, `USAGE_METER_MEMBER`                                                | (none)                                            |
+ * | counted order    | an order Baton created a run for; one unit, once                                                                                       | `ShopOrder` field `countedAt`                                                            | "Orders this billing cycle"                       |
+ * | seat             | one unit of the members meter; a cycle's seats are its highest member count                                                            | `ShopUsage` field `seatsThisCycle`                                                       | (none): members                                   |
+ * | included         | a plan's $0.00 first tier on a meter: a paid allowance, not a "free tier"                                                              | `Entitlements`                                                                           | included                                          |
+ * | usage event      | one report of units to Shopify, queued until Shopify accepts it                                                                        | `UsageEvent`                                                                             | (none)                                            |
+ * | expired event    | a usage event dated before the current billing cycle; never sent                                                                       | `usageEventIsExpired`                                                                    | (none)                                            |
+ * | meter quantity   | Shopify's count on a meter this billing cycle, as the Partner API reports it; null when the app subscription has no item for the meter | `MeterQuantitiesInput`, `ShopUsage` fields `meterQuantityOrders`, `meterQuantityMembers` | (none): the admin page's "Shopify metered orders" |
+ * | diverge          | a meter's quantity and Baton's count differ by more than the units still queued; logged, never corrected                               | `meterDiverges`                                                                          | (none)                                            |
  *
  * "Billing cycle" is the word on screens and in code, and
  * `scripts/rules-lint.ts` refuses its retired synonym in screen copy.
@@ -175,7 +177,7 @@ export const AppSubscription = Schema.Struct({
   boundaryAt: Schema.NullOr(Schema.Number),
   /** `currentBillingCycle.startTime`; null during a trial, which has no cycle. */
   cycleStartAt: Schema.NullOr(Schema.Number),
-  /** Shopify's own quantity per meter this cycle, null when the app subscription lacks that meter's item; the figures local counting is reconciled against. */
+  /** Shopify's own quantity per meter this cycle, null when the app subscription lacks that meter's item; the figures local counting is checked against (`meterDiverges`). */
   usage: Schema.Struct({
     orders: Schema.NullOr(Schema.Number),
     members: Schema.NullOr(Schema.Number),
@@ -199,7 +201,7 @@ export type AppSubscription = typeof AppSubscription.Type;
  * `—` is unchanged; `recounted` is the orders whose `countedAt` is at or after
  * the new cycle's start; "then sent" is a flush after the write commits:
  * every path that creates a run sends the queue, and a cycle push is sent by
- * the reconcile push that follows it (the rule and its tests are on
+ * the meter check that follows it (the rule and its tests are on
  * `ShopAgent`'s `flushUsageEvents`). A row's mechanics are on the method that
  * carries it (`OrderRepository.countOrder`, `recordMemberCount`, `setBillingCycle`,
  * `flushUsageEvents`, `sweepExpiredOrders`). `pnpm spec check` parses the
@@ -220,6 +222,7 @@ export type AppSubscription = typeof AppSubscription.Type;
  * | cycle pushed, new start                         | recounted   | → member count          | seat events in the cycle dropped; +1 seat event (whole member count), then sent | a new cycle resets the mark to the member count and queues it as the cycle's first seat event                                             |
  * | cycle pushed, shop never addressed              | recounted   | → member count          | every event before the start dropped, then sent                                 | the first billing cycle discards events queued before the shop could be addressed                                                         |
  * | revalidation during a trial                     | —           | —                       | —                                                                               | pushes no billing cycle during a trial, which has none                                                                                    |
+ * | meters checked                                  | —           | —                       | sent                                                                            | a meter check stores Shopify's quantities, logs a divergence and sends the queue                                                          |
  * | Manage plan pressed                             | —           | —                       | sent                                                                            | Manage plan sends the usage queue before the plan can change                                                                              |
  * | Shopify accepts an event                        | —           | —                       | row deleted                                                                     | flush deletes accepted events and keeps refused ones with the error                                                                       |
  * | Shopify refuses an event                        | —           | —                       | `attempts` +1, `lastError` set                                                  | flush deletes accepted events and keeps refused ones with the error                                                                       |
@@ -258,7 +261,7 @@ export const ShopUsage = Schema.Struct({
   ordersThisCycle: Schema.Number,
   /** Set when a new order was refused because of {@link ShopLimits.maxOrdersPerCycle}; null once the cycle rolls. */
   ordersLimitedAt: Schema.NullOr(Schema.Number),
-  /** Set when reconcile declined to auto-create a run because of `ShopLimits.maxOpenRuns`; null once under the ceiling again. */
+  /** Set when a run was declined, not created, because of `ShopLimits.maxOpenRuns`; null once under the ceiling again. */
   openRunsLimitedAt: Schema.NullOr(Schema.Number),
   /** `ctx.storage.sql.databaseSize` at read time. */
   databaseSize: Schema.Number,
@@ -267,9 +270,9 @@ export const ShopUsage = Schema.Struct({
   pendingUsageEvents: Schema.Number,
   /** Expired usage events ({@link usageEventIsExpired}) from the last {@link ShopLimits.expiredUsageEventRetentionDays} days; older ones are deleted. Each is a unit carried and never billed. */
   expiredUsageEvents: Schema.Number,
-  /** The {@link USAGE_METER_ORDER} share of {@link pendingUsageEvents}, as units; the tolerance of the orders drift check. */
+  /** The {@link USAGE_METER_ORDER} share of {@link pendingUsageEvents}, as units; the tolerance of the orders divergence check ({@link meterDiverges}). */
   pendingOrderUnits: Schema.Number,
-  /** The {@link USAGE_METER_MEMBER} share of {@link pendingUsageEvents}, as units; the tolerance of the members drift check. */
+  /** The {@link USAGE_METER_MEMBER} share of {@link pendingUsageEvents}, as units; the tolerance of the members divergence check ({@link meterDiverges}). */
   pendingMemberUnits: Schema.Number,
   /**
    * The cycle's seats: its high-water mark, as {@link seatEventValue}
@@ -278,8 +281,9 @@ export const ShopUsage = Schema.Struct({
    */
   seatsThisCycle: Schema.Number,
   /**
-   * Shopify's own {@link USAGE_METER_ORDER} reading at the last revalidation;
-   * null until one has reported it. Diagnostic only — nothing is corrected
+   * Shopify's own {@link USAGE_METER_ORDER} quantity at the last check;
+   * null when the app subscription has no item for the meter, and until a
+   * check has reported it. Diagnostic only — nothing is corrected
    * from it.
    *
    * Null can also mean the app subscription cannot report at all. Shopify
@@ -292,9 +296,9 @@ export const ShopUsage = Schema.Struct({
    * `FlatRatePrice` item after seven accepted events; the replacement listed
    * the meter at `quantity: 0` before any.
    */
-  lastReconciledOrders: Schema.NullOr(Schema.Number),
-  /** Shopify's own {@link USAGE_METER_MEMBER} reading at the last revalidation; null under the same conditions as {@link lastReconciledOrders}. */
-  lastReconciledMembers: Schema.NullOr(Schema.Number),
+  meterQuantityOrders: Schema.NullOr(Schema.Number),
+  /** Shopify's own {@link USAGE_METER_MEMBER} quantity at the last check; null under the same conditions as {@link meterQuantityOrders}. */
+  meterQuantityMembers: Schema.NullOr(Schema.Number),
 });
 export type ShopUsage = typeof ShopUsage.Type;
 
@@ -338,18 +342,18 @@ export const provisionalCycleStart = (now: number) => {
 };
 
 /**
- * Shopify's meter readings for the current cycle, which `SubscriptionPlan`
- * pushes after every revalidation for the divergence checks on
- * {@link ShopUsage.lastReconciledOrders} and
- * {@link ShopUsage.lastReconciledMembers}; null where the app subscription
+ * Shopify's quantity per meter for the current billing cycle, which
+ * `SubscriptionPlan` pushes after every revalidation for the divergence check
+ * ({@link meterDiverges}), stored as {@link ShopUsage.meterQuantityOrders}
+ * and {@link ShopUsage.meterQuantityMembers}; null where the app subscription
  * lacks the meter. Plain RPC input for the same reason as
  * {@link BillingCycleInput}. The push also sends the queue.
  */
-export const ReconcileUsageInput = Schema.Struct({
+export const MeterQuantitiesInput = Schema.Struct({
   orders: Schema.NullOr(Schema.Number),
   members: Schema.NullOr(Schema.Number),
 });
-export type ReconcileUsageInput = typeof ReconcileUsageInput.Type;
+export type MeterQuantitiesInput = typeof MeterQuantitiesInput.Type;
 
 /**
  * One App Events billing event: one counted order, or seats past the cycle's
@@ -383,7 +387,7 @@ export type UsageEvent = typeof UsageEvent.Type;
  * retrying it can only fail. Expired rows are skipped by the flush and reported
  * apart from the live queue ({@link ShopUsage.expiredUsageEvents}) — a count of
  * orders the merchant carried and was never billed for is an operator
- * signal, not something to retry into or hide inside the reconcile
+ * signal, not something to retry into or hide inside the divergence
  * tolerance. They are kept for {@link ShopLimits.expiredUsageEventRetentionDays}
  * days after they were dated, then the retention sweep deletes them.
  */
@@ -440,7 +444,7 @@ export const seatEventValue = (memberCount: number, highWater: number) =>
   Math.max(memberCount - highWater, 0);
 
 /**
- * A usage meter diverges when Shopify's reading and the local figure differ by
+ * A usage meter diverges when Shopify's quantity and the local figure differ by
  * more than the units still queued for that meter. Pending units are a gap
  * the next flush closes; expired ones ({@link usageEventIsExpired}) never close, so
  * they are not tolerated, and a tolerance that grew with every lost event
