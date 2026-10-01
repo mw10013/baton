@@ -74,12 +74,6 @@ export class WorkflowLimitError extends Schema.TaggedError<WorkflowLimitError>()
   { limit: Schema.Number },
 ) {}
 
-/** `setWorkflowActivatedAt` on a workflow that is off: there is no coverage date to move. */
-export class WorkflowOffError extends Schema.TaggedError<WorkflowOffError>()(
-  "WorkflowOffError",
-  { workflowId: Schema.String },
-) {}
-
 /**
  * Apply or Discard without a draft: there is nothing to promote or throw
  * away. Task and tag writes never raise this — they create the draft they
@@ -271,20 +265,17 @@ export class WorkflowRepository extends Context.Service<
     >;
     /**
      * The on/off switch. On requires: at least one task, every task assigned
-     * to a team in `teams`; it writes `activatedAt = activatedAt ?? now`, the
-     * coverage date every later reconcile compares orders against (the
-     * caller passes an earlier date when the merchant chose to include
-     * waiting orders). A team with no members does not refuse. Tags are not
+     * to a team in `teams`; it writes `state = 'on'`. A team with no members
+     * does not refuse. Tags are not
      * its business: every workflow's tag is unique from birth, so the switch
      * can never collide with one. Off writes
-     * `activatedAt = null` and touches nothing else: open runs are days of
+     * `state = 'off'` and touches nothing else: open runs are days of
      * physical work and keep going; only new runs stop. Neither direction
      * creates, applies, or discards a draft, or looks at whether one exists.
      */
     readonly setWorkflowOn: (input: {
       readonly workflowId: string;
       readonly on: boolean;
-      readonly activatedAt?: number;
       readonly teams: Teams;
     }) => Effect.Effect<
       Domain.Workflow,
@@ -293,22 +284,6 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowNotFoundError
       | NoTasksError
       | TaskUnassignedError
-    >;
-    /**
-     * Moves the coverage date of an on workflow: the merchant's escape hatch
-     * for a cut-off chosen too late, or a workflow turned off by mistake and
-     * back on. Refused while off (`WorkflowOffError`): there is no date to
-     * move. The caller reconciles every stored order afterwards.
-     */
-    readonly setWorkflowActivatedAt: (input: {
-      readonly workflowId: string;
-      readonly activatedAt: number;
-    }) => Effect.Effect<
-      Domain.Workflow,
-      | SqlError.SqlError
-      | WorkflowRepositoryError
-      | WorkflowNotFoundError
-      | WorkflowOffError
     >;
     /**
      * The draft, made explicitly. Returns the existing one when there is one;
@@ -328,8 +303,8 @@ export class WorkflowRepository extends Context.Service<
      * one transaction: an order sees the old definition or the new one, never
      * a half-edit. Refused with no draft, an empty draft, or an unassigned
      * task, on and off alike. The tag is not drafted, so Apply never reads or
-     * writes it. Does not touch `activatedAt`: the workflow stays responsible
-     * for the orders it was responsible for, and the caller reconciles them
+     * writes it. Does not touch `state`: the workflow stays on or off, and
+     * the caller reconciles the orders
      * against the new definition. Draft task ids carry over to the workflow.
      */
     readonly applyDraft: (input: {
@@ -352,11 +327,10 @@ export class WorkflowRepository extends Context.Service<
      * did not. An absent draft is not a refusal here — there is simply nothing
      * to promote, and the eligibility check on the workflow's own tasks then
      * decides. Otherwise the same rules as {@link applyDraft} and
-     * {@link setWorkflowOn}, including `activatedAt`.
+     * {@link setWorkflowOn}.
      */
     readonly applyAndTurnOn: (input: {
       readonly workflowId: string;
-      readonly activatedAt?: number;
       readonly teams: Teams;
     }) => Effect.Effect<
       Domain.Workflow,
@@ -1028,7 +1002,7 @@ export class WorkflowRepository extends Context.Service<
           const workflows = yield* decodeWorkflows(
             yield* sql`
               select * from Workflow
-              where activatedAt is not null
+              where state = 'on'
               order by name
             `,
           );
@@ -1036,7 +1010,7 @@ export class WorkflowRepository extends Context.Service<
             yield* sql`
               select s.* from WorkflowTask s
               join Workflow w on w.id = s.workflowId
-              where w.activatedAt is not null
+              where w.state = 'on'
               order by s.workflowId, s.position
             `,
           );
@@ -1048,7 +1022,7 @@ export class WorkflowRepository extends Context.Service<
 
         /**
          * A fixture's `tasks` become the workflow's tasks, switched on
-         * (`activatedAt = now`, so orders seeded afterwards qualify) unless
+         * (`state = 'on'`) unless
          * `on: false` or a task is unassigned. A fixture with no tasks and
          * no `draft` has no draft either, the state `createWorkflow` leaves a
          * fresh workflow in. `draft` seeds a pending draft beside the
@@ -1194,9 +1168,9 @@ export class WorkflowRepository extends Context.Service<
                   seeded.push({ name: workflow.name, id: workflowId });
                   yield* sql`
                     insert into Workflow
-                      (id, name, tag, activatedAt, updatedAt)
+                      (id, name, tag, state, updatedAt)
                     values
-                      (${workflowId}, ${workflow.name}, ${workflow.tag}, ${workflow.on ? now : null}, ${now})
+                      (${workflowId}, ${workflow.name}, ${workflow.tag}, ${workflow.on ? "on" : "off"}, ${now})
                   `;
                   yield* writeTasks(
                     sql.literal("WorkflowTask"),
@@ -1240,9 +1214,9 @@ export class WorkflowRepository extends Context.Service<
                 const [workflow] = yield* decodeWorkflows(
                   yield* sql`
                     insert into Workflow
-                      (id, name, tag, activatedAt, updatedAt)
+                      (id, name, tag, state, updatedAt)
                     values
-                      (${crypto.randomUUID()}, ${name}, ${tag}, null, ${now})
+                      (${crypto.randomUUID()}, ${name}, ${tag}, 'off', ${now})
                     returning *
                   `,
                 );
@@ -1284,9 +1258,9 @@ export class WorkflowRepository extends Context.Service<
                 const [workflow] = yield* decodeWorkflows(
                   yield* sql`
                     insert into Workflow
-                      (id, name, tag, activatedAt, updatedAt)
+                      (id, name, tag, state, updatedAt)
                     values
-                      (${copyId}, ${name}, ${tag}, null, ${now})
+                      (${copyId}, ${name}, ${tag}, 'off', ${now})
                     returning *
                   `,
                 );
@@ -1385,12 +1359,10 @@ export class WorkflowRepository extends Context.Service<
           function* ({
             workflowId,
             on,
-            activatedAt,
             teams,
           }: {
             readonly workflowId: string;
             readonly on: boolean;
-            readonly activatedAt?: number;
             readonly teams: Teams;
           }) {
             yield* requireWorkflow(workflowId);
@@ -1404,7 +1376,7 @@ export class WorkflowRepository extends Context.Service<
             const [workflow] = yield* decodeWorkflows(
               yield* sql`
                 update Workflow
-                set activatedAt = ${on ? (activatedAt ?? now) : null}, updatedAt = ${now}
+                set state = ${on ? "on" : "off"}, updatedAt = ${now}
                 where id = ${workflowId}
                 returning *
               `,
@@ -1414,34 +1386,6 @@ export class WorkflowRepository extends Context.Service<
             );
           },
         ),
-
-        /**
-         * `where activatedAt is not null` makes the update itself the on
-         * check; an empty result is then told apart by one more read, so an
-         * off workflow and a missing one get different names.
-         */
-        setWorkflowActivatedAt: Effect.fn(
-          "WorkflowRepository.setWorkflowActivatedAt",
-        )(function* ({
-          workflowId,
-          activatedAt,
-        }: {
-          readonly workflowId: string;
-          readonly activatedAt: number;
-        }) {
-          const now = yield* Clock.currentTimeMillis;
-          const [workflow] = yield* decodeWorkflows(
-            yield* sql`
-              update Workflow
-              set activatedAt = ${activatedAt}, updatedAt = ${now}
-              where id = ${workflowId} and activatedAt is not null
-              returning *
-            `,
-          );
-          if (workflow !== undefined) return workflow;
-          yield* requireWorkflow(workflowId);
-          return yield* new WorkflowOffError({ workflowId });
-        }),
 
         createDraft: Effect.fn("WorkflowRepository.createDraft")(function* ({
           workflowId,
@@ -1470,11 +1414,9 @@ export class WorkflowRepository extends Context.Service<
         applyAndTurnOn: Effect.fn("WorkflowRepository.applyAndTurnOn")(
           function* ({
             workflowId,
-            activatedAt,
             teams,
           }: {
             readonly workflowId: string;
-            readonly activatedAt?: number;
             readonly teams: Teams;
           }) {
             return yield* sql.withTransaction(
@@ -1492,7 +1434,7 @@ export class WorkflowRepository extends Context.Service<
                 const [workflow] = yield* decodeWorkflows(
                   yield* sql`
                     update Workflow
-                    set activatedAt = ${activatedAt ?? now}, updatedAt = ${now}
+                    set state = 'on', updatedAt = ${now}
                     where id = ${workflowId}
                     returning *
                   `,

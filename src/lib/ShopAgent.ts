@@ -337,13 +337,21 @@ const flushUsageEvents = BillingAgent.pipe(
 const reconcilerFor = (source: Domain.OrderSyncSource) =>
   ShopWorkAgent.pipe(Effect.flatMap((shopWork) => shopWork.reconciler(source)));
 
-/** Stores one order ({@link OrdersAgent}) and reconciles it ({@link reconcilerFor}). */
+/**
+ * Stores one order ({@link OrdersAgent}) and reconciles it
+ * ({@link reconcilerFor}); when the reconcile's closes released the open-run
+ * ceiling, runs shop work's `afterCeilingReleased` after the store's
+ * transaction has committed.
+ */
 const fetchAndUpsertOrder = (orderId: string, source: Domain.OrderSyncSource) =>
-  OrdersAgent.pipe(
-    Effect.flatMap((orders) =>
-      orders.fetchAndUpsertOrder({ orderId, source }, reconcilerFor(source)),
-    ),
-  );
+  Effect.gen(function* () {
+    const { ceilingReleased } = yield* (yield* OrdersAgent).fetchAndUpsertOrder(
+      { orderId, source },
+      reconcilerFor(source),
+    );
+    if (ceilingReleased)
+      yield* (yield* ShopWorkAgent).afterCeilingReleased(orderId);
+  });
 
 const SHOP_AGENT_BINDING = "SHOP_AGENT";
 
@@ -935,6 +943,10 @@ export class ShopAgent extends Agent {
             url,
             afterWrite: yield* reconcilerFor("bulk"),
           }).pipe(Effect.ensuring(flushUsageEvents));
+          // After the stream, once: the orders the stream declined at the
+          // ceiling are created by this pass, not by one pass per order.
+          if (counts.ceilingReleased)
+            yield* (yield* ShopWorkAgent).afterCeilingReleased(url);
           if (counts.ordersRefused > 0)
             yield* Effect.logError(
               `ShopAgent.onOrdersStream: shop=${shop} status=order-ceiling ordersRefused=${String(counts.ordersRefused)} limit=${String(Domain.ShopLimits.maxOrdersPerCycle)}`,
@@ -1565,44 +1577,6 @@ export class ShopAgent extends Agent {
       })((decoded) =>
         ShopWorkAgent.pipe(
           Effect.flatMap((shopWork) => shopWork.applyAndTurnOn(decoded)),
-        ),
-      )(input),
-    );
-  }
-
-  /** The workflow page's Change control; the rule is on {@link ShopWorkAgent}'s `setWorkflowActivatedAt`. */
-  @callable()
-  setWorkflowActivatedAt(
-    input: typeof Domain.SetWorkflowActivatedAtInput.Encoded,
-  ): Promise<Domain.ChangeActivatedAtResult> {
-    return this.runEffect(
-      callableEffect(
-        "ShopAgent.setWorkflowActivatedAt",
-        Domain.SetWorkflowActivatedAtInput,
-        { role: "merchant", parse: { onExcessProperty: "error" } },
-      )((decoded) =>
-        ShopWorkAgent.pipe(
-          Effect.flatMap((shopWork) =>
-            shopWork.setWorkflowActivatedAt(decoded),
-          ),
-        ),
-      )(input),
-    );
-  }
-
-  /** The Turn on dialog's count; the rule is on {@link ShopWorkAgent}'s `countWaitingOrders`. */
-  @callable()
-  countWaitingOrders(
-    input: typeof Domain.CountWaitingOrdersInput.Encoded,
-  ): Promise<Domain.WaitingOrders> {
-    return this.runEffect(
-      callableEffect(
-        "ShopAgent.countWaitingOrders",
-        Domain.CountWaitingOrdersInput,
-        { role: "merchant", parse: { onExcessProperty: "error" } },
-      )((decoded) =>
-        ShopWorkAgent.pipe(
-          Effect.flatMap((shopWork) => shopWork.countWaitingOrders(decoded)),
         ),
       )(input),
     );

@@ -227,9 +227,9 @@ describe("runShopAgentOrdersStream", () => {
 
 /**
  * The bulk path routes with the same rules as a webhook: the reconcile hook
- * runs inside each order's upsert transaction, and the age rule — not the
- * source — is what keeps a thirty-day history file from creating runs on
- * orders placed before the workflow existed.
+ * runs inside each order's upsert transaction, and the source changes
+ * nothing: an on workflow applies to every open order the file carries,
+ * however old.
  */
 describe("runShopAgentOrdersStream with afterWrite", () => {
   const runWithRuns = <A, E>(
@@ -269,7 +269,7 @@ describe("runShopAgentOrdersStream with afterWrite", () => {
         ),
     );
 
-  it("creates runs only for orders processed after the workflow was created; a re-stream creates none", async () => {
+  it("creates runs on every streamed open order that matches, however old; a re-stream creates none", async () => {
     const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     const body = ndjson(
       orderLine(1, "2026-08-01T10:00:00Z"),
@@ -309,9 +309,7 @@ describe("runShopAgentOrdersStream with afterWrite", () => {
           teams: [team],
         };
         const afterWrite = (order: Domain.ShopOrder) =>
-          runs
-            .reconcileOrder({ ...context, orderId: order.id })
-            .pipe(Effect.asVoid);
+          runs.reconcileOrder({ ...context, orderId: order.id });
         yield* runShopAgentOrdersStream({ url: BULK_URL, afterWrite });
         const first = yield* runs.listRunsForOrder({ orderId: orderGid(1) });
         const second = yield* runs.listRunsForOrder({ orderId: orderGid(2) });
@@ -322,7 +320,7 @@ describe("runShopAgentOrdersStream with afterWrite", () => {
         return { first, second, secondPass };
       }),
     );
-    strictEqual(first.length, 0);
+    strictEqual(first.length, 1);
     strictEqual(second.length, 1);
     strictEqual(second[0]?.tasks[0]?.teamName, "Engravers");
     strictEqual(secondPass.length, 1);

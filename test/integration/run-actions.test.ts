@@ -172,7 +172,7 @@ const workflowOf = (id: string, name: string): Domain.Workflow => ({
   id: Schema.decodeUnknownSync(Domain.WorkflowId)(id),
   name: Schema.decodeUnknownSync(Domain.WorkflowName)(name),
   tag: Schema.decodeUnknownSync(Domain.WorkflowTag)(name.toLowerCase()),
-  activatedAt: 0,
+  state: "on",
   updatedAt: 0,
 });
 
@@ -187,7 +187,6 @@ const lineItemOf = (
   quantity: 1,
   currentQuantity: 1,
   productTags: [],
-  matchedWorkflowIds: [],
   properties: [],
   ...overrides,
 });
@@ -223,11 +222,91 @@ const detailOf = (
   tasks: [],
 });
 
+const TEAMS = [{ id: Schema.decodeUnknownSync(Domain.TeamId)("t") }];
+
+/** `workflow` with one task on team `t`: eligible when on. */
+const withTask = (workflow: Domain.Workflow): Domain.WorkflowDetail => ({
+  workflow,
+  tasks: [
+    {
+      id: Schema.decodeUnknownSync(Domain.WorkflowTaskId)(`${workflow.id}-t`),
+      workflowId: workflow.id,
+      position: 1,
+      step: 1,
+      name: Schema.decodeUnknownSync(Domain.TaskName)("Task"),
+      teamId: TEAMS[0]?.id ?? null,
+      instructions: null,
+    },
+  ],
+});
+
+const stateOf = (
+  item: Domain.OrderLineItem,
+  runs: readonly Domain.RunDetail[],
+  offered: readonly Domain.Workflow[],
+) => Domain.lineItemState(item, runs, offered.map(withTask), TEAMS);
+
 const kindOf = (
   item: Domain.OrderLineItem,
   runs: readonly Domain.RunDetail[],
   offered: readonly Domain.Workflow[],
-) => Domain.lineItemState(item, runs, offered).kind;
+) => stateOf(item, runs, offered).kind;
+
+/**
+ * The outcomes table on `Domain.reconcileItem`, read out of its JSDoc: one
+ * test per row, titled with the row, each fixture the row stands for
+ * (`expandReconcileOutcome`) asserted against the outcome cell.
+ */
+describe("Domain.reconcileItem outcomes", () => {
+  const OUTCOME_ROWS = Result.getOrThrow(
+    ActionTable.parseReconcileOutcomes(source),
+  );
+  const MATCHED = ["w1", "w2"].map((id) =>
+    Schema.decodeUnknownSync(Domain.WorkflowId)(id),
+  );
+  for (const row of OUTCOME_ROWS)
+    it(row.text, () => {
+      for (const fixture of ActionTable.expandReconcileOutcome(row)) {
+        const outcome = Domain.reconcileItem({
+          order: fixture.order,
+          item: { currentQuantity: fixture.units },
+          run:
+            fixture.run === null
+              ? null
+              : {
+                  run: {
+                    state: fixture.run.state,
+                    quantity: fixture.run.quantity,
+                  },
+                  tasks: [
+                    {
+                      startedAt: fixture.run.started ? 1 : null,
+                      doneAt: null,
+                    },
+                  ],
+                },
+          matched: MATCHED.slice(0, fixture.matched),
+          atCeiling: fixture.atCeiling,
+        });
+        const where = JSON.stringify(fixture);
+        strictEqual(outcome._tag, row.outcome.tag, where);
+        if (outcome._tag === "close" && row.outcome.tag === "close")
+          strictEqual(outcome.reason, row.outcome.reason, where);
+        if (outcome._tag === "resize") {
+          strictEqual(outcome.units, fixture.units, where);
+          strictEqual(outcome.badge, fixture.run?.started, where);
+        }
+        if (outcome._tag === "create")
+          strictEqual(outcome.workflowId, MATCHED[0], where);
+        if (outcome._tag === "nothing")
+          strictEqual(
+            outcome.declined,
+            row.matches === "1, at the ceiling",
+            where,
+          );
+      }
+    });
+});
 
 describe("Domain.lineItemState", () => {
   it("lineItemState has one kind per layout", () => {
@@ -251,8 +330,8 @@ describe("Domain.lineItemState", () => {
     strictEqual(kind(lineItemOf(), [], []), "unmatched");
     strictEqual(kind(lineItemOf(), [detailOf("open", "other")]), "attachable");
 
-    const attachable = Domain.lineItemState(
-      lineItemOf({ matchedWorkflowIds: [engrave.id, polish.id] }),
+    const attachable = stateOf(
+      lineItemOf({ productTags: ["engrave", "polish"] }),
       [],
       [polish, engrave, workflowOf("w3", "Rush")],
     );
@@ -267,11 +346,7 @@ describe("Domain.lineItemState", () => {
     // A closed item keeps its run's tasks as the record and offers every
     // workflow, the closed one included.
     const closedDetail = detailOf("closed");
-    const closed = Domain.lineItemState(
-      lineItemOf(),
-      [closedDetail],
-      workflows,
-    );
+    const closed = stateOf(lineItemOf(), [closedDetail], workflows);
     if (closed.kind !== "closed") throw new Error(closed.kind);
     strictEqual(closed.run.id, closedDetail.run.id);
     deepStrictEqual(closed.tasks, []);
@@ -281,7 +356,7 @@ describe("Domain.lineItemState", () => {
     );
     strictEqual(closed.attachable, true);
     // Nothing left to make: the closed run stands, and no workflow starts.
-    const emptied = Domain.lineItemState(
+    const emptied = stateOf(
       lineItemOf({ currentQuantity: 0 }),
       [detailOf("closed")],
       workflows,

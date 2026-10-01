@@ -99,13 +99,11 @@ describe("Domain.orderIssues", () => {
     deepStrictEqual(Domain.orderIssues(row(NONE, { fullyPaid: false })), []);
     deepStrictEqual(Domain.orderIssues(row({ open: 1 })), []);
     deepStrictEqual(Domain.orderIssues(row({ done: 1 })), []);
-    deepStrictEqual(Domain.orderIssues(row(NONE, {}, 1)), ["choose_workflow"]);
+    deepStrictEqual(Domain.orderIssues(row(NONE, {}, 1)), ["ambiguous"]);
   });
 
-  it("choose_workflow: an ambiguous item on an order that can create runs", () => {
-    deepStrictEqual(Domain.orderIssues(row({ open: 1 }, {}, 1)), [
-      "choose_workflow",
-    ]);
+  it("ambiguous: an item two workflows match, on an order that can create runs", () => {
+    deepStrictEqual(Domain.orderIssues(row({ open: 1 }, {}, 1)), ["ambiguous"]);
     deepStrictEqual(Domain.orderIssues(row(NONE, { fullyPaid: false }, 1)), []);
   });
 
@@ -146,7 +144,7 @@ describe("Domain.orderIssues", () => {
         ...row({ open: 2, blocked: 1 }, {}, 1),
         unassigned: true,
       }),
-      ["choose_workflow", "unassigned", "blocked"],
+      ["ambiguous", "unassigned", "blocked"],
     );
   });
 
@@ -211,7 +209,7 @@ describe("Domain.runCounts", () => {
 
 const lineItem = (
   id: string,
-  matchedWorkflowIds: readonly string[],
+  productTags: readonly string[],
   currentQuantity = 1,
 ): Domain.OrderLineItem => ({
   id,
@@ -221,12 +219,45 @@ const lineItem = (
   sku: null,
   quantity: 1,
   currentQuantity,
-  productTags: [],
-  matchedWorkflowIds: matchedWorkflowIds.map((id) =>
-    Schema.decodeUnknownSync(Domain.WorkflowId)(id),
-  ),
+  productTags,
   properties: [],
 });
+
+const TEAMS = [{ id: Schema.decodeUnknownSync(Domain.TeamId)("t") }];
+
+/** A workflow tagged `tag`, one task on team `t` unless `teamId` says otherwise. */
+const detailOf = (
+  tag: string,
+  state: Domain.WorkflowState = "on",
+  teamId: string | null = "t",
+): Domain.WorkflowDetail => {
+  const id = Schema.decodeUnknownSync(Domain.WorkflowId)(tag);
+  return {
+    workflow: {
+      id,
+      name: Schema.decodeUnknownSync(Domain.WorkflowName)(tag),
+      tag: Schema.decodeUnknownSync(Domain.WorkflowTag)(tag),
+      state,
+      updatedAt: 0,
+    },
+    tasks: [
+      {
+        id: Schema.decodeUnknownSync(Domain.WorkflowTaskId)(`${tag}-task`),
+        workflowId: id,
+        position: 1,
+        step: 1,
+        name: Schema.decodeUnknownSync(Domain.TaskName)("Task"),
+        teamId:
+          teamId === null
+            ? null
+            : Schema.decodeUnknownSync(Domain.TeamId)(teamId),
+        instructions: null,
+      },
+    ],
+  };
+};
+
+const DETAILS = [detailOf("w1"), detailOf("w2")];
 
 const runOn = (lineItemId: string, state: Domain.RunState): Domain.Run => ({
   ...run(state),
@@ -243,44 +274,65 @@ describe("Domain.ambiguousItems", () => {
    * case below.
    */
   it("counts items with two matches, units to make, and no run", () => {
+    const ambiguousItems = (
+      lineItems: readonly Domain.OrderLineItem[],
+      runs: readonly Domain.Run[],
+    ) => Domain.ambiguousItems(lineItems, runs, DETAILS, TEAMS);
     strictEqual(
-      Domain.ambiguousItems([lineItem("a", ["w1", "w2"])], []),
+      ambiguousItems([lineItem("a", ["w1", "w2"])], []),
       1,
       "two matches and no run",
     );
     strictEqual(
-      Domain.ambiguousItems([lineItem("a", ["w1"])], []),
+      ambiguousItems([lineItem("a", ["w1"])], []),
       0,
       "one match is not a decision",
     );
     strictEqual(
-      Domain.ambiguousItems([lineItem("a", ["w1", "w2"], 0)], []),
+      ambiguousItems([lineItem("a", ["w1", "w2"], 0)], []),
       0,
       "nothing left to make",
     );
     strictEqual(
-      Domain.ambiguousItems(
-        [lineItem("a", ["w1", "w2"])],
-        [runOn("a", "open")],
-      ),
+      ambiguousItems([lineItem("a", ["w1", "w2"])], [runOn("a", "open")]),
       0,
       "a run owns the item",
     );
     strictEqual(
-      Domain.ambiguousItems(
-        [lineItem("a", ["w1", "w2"])],
-        [runOn("a", "done")],
-      ),
+      ambiguousItems([lineItem("a", ["w1", "w2"])], [runOn("a", "done")]),
       0,
       "a done run owns the item: a done item gets no second route",
     );
     strictEqual(
-      Domain.ambiguousItems(
+      ambiguousItems(
         [lineItem("a", ["w1", "w2"]), lineItem("b", ["w1", "w2"])],
         [runOn("b", "open")],
       ),
       1,
       "per item, not per order",
+    );
+  });
+
+  it("a match needs an eligible workflow: an off workflow or one with an unassigned task is not a match", () => {
+    const details = [
+      detailOf("w1"),
+      detailOf("w2", "off"),
+      detailOf("w3", "on", null),
+    ];
+    strictEqual(
+      Domain.ambiguousItems(
+        [lineItem("a", ["w1", "w2", "w3"])],
+        [],
+        details,
+        TEAMS,
+      ),
+      0,
+    );
+    deepStrictEqual(
+      Domain.matchedWorkflows(lineItem("a", ["W1 "]), details, TEAMS).map(
+        ({ workflow }) => workflow.tag,
+      ),
+      ["w1"],
     );
   });
 });

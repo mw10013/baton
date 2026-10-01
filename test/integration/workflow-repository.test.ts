@@ -1028,10 +1028,9 @@ describe("WorkflowRepository applyAndTurnOn", () => {
         // No draft left: the second call is a plain re-activation.
         const again = yield* repo.applyAndTurnOn({
           workflowId: w.id,
-          activatedAt: 1000,
           teams: ALL_TEAMS,
         });
-        strictEqual(again.activatedAt, 1000);
+        strictEqual(again.state, "on");
       }),
     ));
 });
@@ -1457,7 +1456,7 @@ describe("WorkflowRepository workflow and draft", () => {
       }),
     ));
 
-  it("turn on writes activatedAt (now, or the date given); off clears it; setWorkflowActivatedAt moves it only while on", () =>
+  it("turn on writes state on; off writes off; Apply never touches it", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -1467,19 +1466,12 @@ describe("WorkflowRepository workflow and draft", () => {
         })).id;
         yield* twoTasks(pack);
         yield* repo.applyDraft({ workflowId: pack, teams: ALL_TEAMS });
-        const before = Date.now();
         const on = yield* repo.setWorkflowOn({
           workflowId: pack,
           on: true,
           teams: ALL_TEAMS,
         });
-        strictEqual(on.activatedAt !== null && on.activatedAt >= before, true);
-        const moved = yield* repo.setWorkflowActivatedAt({
-          workflowId: pack,
-          activatedAt: 1000,
-        });
-        strictEqual(moved.activatedAt, 1000);
-        // Apply never touches it.
+        strictEqual(on.state, "on");
         yield* repo.addStep({
           workflowId: pack,
           name: taskName("Ship"),
@@ -1489,33 +1481,13 @@ describe("WorkflowRepository workflow and draft", () => {
           workflowId: pack,
           teams: ALL_TEAMS,
         });
-        strictEqual(applied.activatedAt, 1000);
+        strictEqual(applied.state, "on");
         const off = yield* repo.setWorkflowOn({
           workflowId: pack,
           on: false,
           teams: ALL_TEAMS,
         });
-        strictEqual(off.activatedAt, null);
-        strictEqual(
-          (yield* repo
-            .setWorkflowActivatedAt({ workflowId: pack, activatedAt: 5 })
-            .pipe(Effect.flip))._tag,
-          "WorkflowOffError",
-        );
-        strictEqual(
-          (yield* repo
-            .setWorkflowActivatedAt({ workflowId: "nope", activatedAt: 5 })
-            .pipe(Effect.flip))._tag,
-          "WorkflowNotFoundError",
-        );
-        // Include them: an earlier date on the way on.
-        const included = yield* repo.setWorkflowOn({
-          workflowId: pack,
-          on: true,
-          activatedAt: 42,
-          teams: ALL_TEAMS,
-        });
-        strictEqual(included.activatedAt, 42);
+        strictEqual(off.state, "off");
       }),
     ));
 

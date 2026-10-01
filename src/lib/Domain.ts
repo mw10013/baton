@@ -47,8 +47,8 @@
  * | platform  | dialect    | dialect, not a context: the technical words; no model of the business                      | Cloudflare's and Baton's                 | `Platform.ts` | (nothing)        |
  *
  * Shop work is downstream of orders: conformist on words, a translation on
- * model. It crosses at `OrderState`, `orderIsOpen`, `unitsToMake`,
- * `ShopOrder` and `OrderLineItem`, and what it makes of an order (positions,
+ * model. It crosses at `OrderState`, `orderIsOpen`,
+ * `OrderLineItem.currentQuantity`, `ShopOrder` and `OrderLineItem`, and what it makes of an order (positions,
  * issues, an item's card) is shop work's, not orders'. Billing is
  * downstream of orders through one shared field, `ShopOrder` field
  * `countedAt`, the counted order. Every context uses the platform dialect:

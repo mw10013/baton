@@ -1,6 +1,6 @@
 import type * as ShopifyApi from "@shopify/shopify-api";
 
-import { Clock, Context, Effect, Layer, Schema } from "effect";
+import { Clock, Context, Effect, Layer, Option, Schema } from "effect";
 
 import { CurrentShopifySession } from "@/lib/CurrentShopifySession";
 import * as Domain from "@/lib/Domain";
@@ -49,7 +49,9 @@ const make = Effect.gen(function* () {
    * `reconciler` loads what the per-order reconcile needs and returns it; it
    * runs after the fetch and before the upsert's transaction opens, and the
    * function it returns is the upsert's `afterWrite`. The caller supplies
-   * it, so this module never reads shop work.
+   * it, so this module never reads shop work. `ceilingReleased` is the
+   * reconcile's word that its closes released the open-run ceiling, handed
+   * back for the caller to act on outside the transaction.
    */
   const fetchAndUpsertOrder = <E, E2, R2>(
     {
@@ -60,7 +62,9 @@ const make = Effect.gen(function* () {
       readonly source: Domain.OrderSyncSource;
     },
     reconciler: Effect.Effect<
-      (order: Domain.ShopOrder) => Effect.Effect<void, E>,
+      (
+        order: Domain.ShopOrder,
+      ) => Effect.Effect<{ readonly ceilingReleased: boolean }, E>,
       E2,
       R2
     >,
@@ -80,7 +84,7 @@ const make = Effect.gen(function* () {
         yield* Effect.logWarning(
           `ShopAgent.fetchAndUpsertOrder: shop=${shop} orderId=${orderId}: order not found`,
         ).pipe(Effect.annotateLogs({ shop, orderId, source }));
-        return false;
+        return { written: false, ceilingReleased: false };
       }
       const lineItemsTruncated = order.lineItems.pageInfo.hasNextPage;
       if (lineItemsTruncated)
@@ -100,17 +104,24 @@ const make = Effect.gen(function* () {
         syncedAt: yield* Clock.currentTimeMillis,
         lineItemsTruncated,
       });
-      const { written } = yield* (yield* OrderRepository).upsertOrder({
-        order: shopOrder,
-        lineItems: order.lineItems.nodes.map((node) =>
-          toOrderLineItem(order.id, node),
-        ),
-        afterWrite: reconcile(shopOrder),
-      });
+      const { written, afterWrite } =
+        yield* (yield* OrderRepository).upsertOrder({
+          order: shopOrder,
+          lineItems: order.lineItems.nodes.map((node) =>
+            toOrderLineItem(order.id, node),
+          ),
+          afterWrite: reconcile(shopOrder),
+        });
       yield* Effect.logInfo(
         `ShopAgent.fetchAndUpsertOrder: shop=${shop} orderId=${orderId} source=${source} written=${String(written)}`,
       ).pipe(Effect.annotateLogs({ shop, orderId, source, written }));
-      return written;
+      return {
+        written,
+        ceilingReleased: Option.exists(
+          afterWrite,
+          (after) => after.ceilingReleased,
+        ),
+      };
     });
 
   return { fetchAndUpsertOrder };

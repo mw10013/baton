@@ -7,8 +7,6 @@ import * as Domain from "@/lib/Domain";
 import { OrderRepository } from "@/lib/OrderRepository";
 import { Repository, type RepositoryError } from "@/lib/Repository";
 import {
-  workflowIsEligible,
-  type EligibleContext,
   RunNotAllowedError,
   type RunNotBlockedError,
   RunNotFoundError,
@@ -28,7 +26,6 @@ import {
   type TaskUnassignedError,
   type WorkflowLimitError,
   type WorkflowNotFoundError,
-  type WorkflowOffError,
   type WorkflowNameTakenError,
   type WorkflowTagTakenError,
   WorkflowRepository,
@@ -174,10 +171,9 @@ const draftResult = <R>(
     }),
   );
 
-/** `Ok` carries how many runs the reconcile-all after the switch created — in either direction, since Turn off can resolve an ambiguity — for the toast. */
 const switchResult = <R>(
   effect: Effect.Effect<
-    { readonly workflow: Domain.Workflow; readonly created: number },
+    Domain.Workflow,
     | WorkflowNotFoundError
     | NoTasksError
     | TaskUnassignedError
@@ -198,11 +194,7 @@ const switchResult = <R>(
   R
 > =>
   effect.pipe(
-    Effect.map(({ workflow, created }): Domain.SwitchResult => ({
-      _tag: "Ok",
-      workflow,
-      created,
-    })),
+    Effect.map((workflow): Domain.SwitchResult => ({ _tag: "Ok", workflow })),
     Effect.catchTags({
       WorkflowNotFoundError: () =>
         Effect.succeed<Domain.SwitchResult>({ _tag: "NotFound" }),
@@ -213,41 +205,6 @@ const switchResult = <R>(
           _tag: "TaskUnassigned",
           taskNames,
         }),
-    }),
-  );
-
-const changeActivatedAtResult = <R>(
-  effect: Effect.Effect<
-    { readonly workflow: Domain.Workflow; readonly created: number },
-    | WorkflowNotFoundError
-    | WorkflowOffError
-    | SqlError.SqlError
-    | WorkflowRepositoryError
-    | RunRepositoryError
-    | RepositoryError
-    | Schema.SchemaError,
-    R
-  >,
-): Effect.Effect<
-  Domain.ChangeActivatedAtResult,
-  | SqlError.SqlError
-  | WorkflowRepositoryError
-  | RunRepositoryError
-  | RepositoryError
-  | Schema.SchemaError,
-  R
-> =>
-  effect.pipe(
-    Effect.map(({ workflow, created }): Domain.ChangeActivatedAtResult => ({
-      _tag: "Ok",
-      workflow,
-      created,
-    })),
-    Effect.catchTags({
-      WorkflowNotFoundError: () =>
-        Effect.succeed<Domain.ChangeActivatedAtResult>({ _tag: "NotFound" }),
-      WorkflowOffError: () =>
-        Effect.succeed<Domain.ChangeActivatedAtResult>({ _tag: "Off" }),
     }),
   );
 
@@ -735,8 +692,7 @@ const make = Effect.gen(function* () {
   };
 
   /**
-   * The on/off switch. On writes `activatedAt` (now, or the earlier date the
-   * dialog chose); off nulls it. Either way every stored order is reconciled
+   * The on/off switch: writes `state`. Either way every stored order is reconciled
    * once, so a run for anything that now qualifies is created here rather than at whatever
    * moment Shopify next edits it — and off qualifies things too, because
    * removing one of two matching workflows resolves an ambiguity and starts
@@ -746,7 +702,6 @@ const make = Effect.gen(function* () {
   const setWorkflowOn = ({
     workflowId,
     on,
-    activatedAt,
   }: typeof Domain.SetWorkflowOnInput.Type) => {
     const shop = host.shop();
     const publish = () => host.publish("all");
@@ -757,20 +712,13 @@ const make = Effect.gen(function* () {
         const workflow = yield* (yield* WorkflowRepository).setWorkflowOn({
           workflowId,
           on,
-          ...(activatedAt === undefined ? {} : { activatedAt }),
           teams: yield* teams(),
         });
         yield* Effect.logInfo(
-          `ShopAgent.setWorkflowOn: shop=${shop} workflowId=${workflowId} on=${String(on)} activatedAt=${String(workflow.activatedAt)}`,
-        ).pipe(
-          Effect.annotateLogs({
-            shop,
-            workflowId,
-            on,
-            activatedAt: workflow.activatedAt,
-          }),
-        );
-        return { workflow, created: yield* reconcileAll(workflow) };
+          `ShopAgent.setWorkflowOn: shop=${shop} workflowId=${workflowId} on=${String(on)}`,
+        ).pipe(Effect.annotateLogs({ shop, workflowId, on }));
+        yield* reconcileAll(workflow);
+        return workflow;
       }),
     ).pipe(Effect.tap(publish));
   };
@@ -784,7 +732,6 @@ const make = Effect.gen(function* () {
    */
   const applyAndTurnOn = ({
     workflowId,
-    activatedAt,
   }: typeof Domain.ApplyAndTurnOnInput.Type) => {
     const shop = host.shop();
     const publish = () => host.publish("all");
@@ -794,68 +741,15 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const workflow = yield* (yield* WorkflowRepository).applyAndTurnOn({
           workflowId,
-          ...(activatedAt === undefined ? {} : { activatedAt }),
           teams: yield* teams(),
         });
         yield* Effect.logInfo(
-          `ShopAgent.applyAndTurnOn: shop=${shop} workflowId=${workflowId} activatedAt=${String(workflow.activatedAt)}`,
-        ).pipe(
-          Effect.annotateLogs({
-            shop,
-            workflowId,
-            activatedAt: workflow.activatedAt,
-          }),
-        );
-        return { workflow, created: yield* reconcileAll(workflow) };
+          `ShopAgent.applyAndTurnOn: shop=${shop} workflowId=${workflowId}`,
+        ).pipe(Effect.annotateLogs({ shop, workflowId }));
+        yield* reconcileAll(workflow);
+        return workflow;
       }),
     ).pipe(Effect.tap(publish));
-  };
-
-  /** The workflow page's Change control: moves the coverage date, then reconciles every stored order once. */
-  const setWorkflowActivatedAt = ({
-    workflowId,
-    activatedAt,
-  }: typeof Domain.SetWorkflowActivatedAtInput.Type) => {
-    const shop = host.shop();
-    const publish = () => host.publish("all");
-    const reconcileAll = (workflow: Domain.Workflow) =>
-      reconcileAllIfOn("setWorkflowActivatedAt", workflow);
-    return changeActivatedAtResult(
-      Effect.gen(function* () {
-        const workflow =
-          yield* (yield* WorkflowRepository).setWorkflowActivatedAt({
-            workflowId,
-            activatedAt,
-          });
-        yield* Effect.logInfo(
-          `ShopAgent.setWorkflowActivatedAt: shop=${shop} workflowId=${workflowId} activatedAt=${String(activatedAt)}`,
-        ).pipe(Effect.annotateLogs({ shop, workflowId, activatedAt }));
-        return { workflow, created: yield* reconcileAll(workflow) };
-      }),
-    ).pipe(Effect.tap(publish));
-  };
-
-  /**
-   * The Turn on dialog's count: read-only, no publish. The workflow is
-   * usually off here, so it is read by id rather than from the workflows that are on.
-   * `NotFound` is a count of zero: the dialog has nothing to add.
-   */
-  const countWaitingOrders = ({
-    workflowId,
-  }: typeof Domain.CountWaitingOrdersInput.Type) => {
-    return Effect.gen(function* () {
-      const found = yield* (yield* WorkflowRepository).getWorkflow({
-        workflowId,
-      });
-      if (Option.isNone(found)) return { count: 0, earliestProcessedAt: null };
-      return yield* (yield* RunRepository).countWaitingOrders({
-        ...(yield* eligibleContext()),
-        workflow: {
-          workflow: found.value.workflow,
-          tasks: found.value.tasks,
-        },
-      });
-    });
   };
 
   /**
@@ -931,7 +825,7 @@ const make = Effect.gen(function* () {
       return {
         workflows: yield* (yield* WorkflowRepository).listOnWorkflowDetails(),
         teams: yield* teams(),
-      } satisfies EligibleContext;
+      } satisfies Domain.EligibleContext;
     });
   };
 
@@ -939,49 +833,49 @@ const make = Effect.gen(function* () {
    * Reconcile every stored open order once against the workflows that are on *now*,
    * so anything that now qualifies starts at this moment rather than at
    * whatever moment Shopify next edits it. Reconcile is an idempotent state
-   * check, so running it over every order is safe; orders placed before
-   * `activatedAt` are still excluded by the date rule. Not the write's
+   * check, so running it over every order is safe. Not the write's
    * transaction: the repository owns that one and Durable Object SQLite
    * refuses to nest, but the Durable Object serialises callables so nothing
-   * interleaves. Returns how many runs it created.
+   * interleaves. Returns nothing: the pass logs its sums, and no count
+   * reaches a screen.
    *
    * Unconditional, because a workflow turning off creates runs too: one item
    * matched by two workflows that are on is ambiguous and carries no run, so
    * turning one of them off — or deleting it — leaves a single match and the
    * survivor's run begins. That is why {@link setWorkflowOn} and
    * {@link removeWorkflow} call this directly rather than through
-   * {@link reconcileAllIfOn}, and why `SwitchResult.Ok.created` is
-   * meaningful on Turn off.
+   * {@link reconcileAllIfOn}.
+   *
+   * Runs a second time, once, when the pass's own closes released the
+   * open-run ceiling (`ReconcileCounts.ceilingReleased`): the orders it had
+   * already walked were declined at the ceiling, and the pass is the write
+   * that made room for them. Once, because the second pass starts under the
+   * ceiling with the flag clear, so it cannot release again.
    *
    * Sends the usage queue after the pass ({@link flushUsageEvents}), whether
    * or not it finished: every order a run was created on was counted, and its
    * event is owed now.
    */
-  const reconcileAllNow = (caller: string, workflowId: string) => {
+  const reconcileAllNow = (caller: string, id: string) => {
     const shop = host.shop();
+    const pass = (again: boolean) =>
+      Effect.gen(function* () {
+        const sums = yield* (yield* RunRepository).reconcileAll(
+          yield* eligibleContext(),
+        );
+        yield* Effect.logInfo(
+          `ShopAgent.reconcileAll: shop=${shop} caller=${caller} id=${id} again=${String(again)} orders=${String(sums.orders)} created=${String(sums.created)} ambiguous=${String(sums.ambiguous)} ceilingReleased=${String(sums.ceilingReleased)}`,
+        ).pipe(Effect.annotateLogs({ shop, caller, id, again, ...sums }));
+        return sums.ceilingReleased;
+      });
     return Effect.gen(function* () {
-      const { orders, created, ambiguous } = yield* (yield* RunRepository)
-        .reconcileAll(yield* eligibleContext())
-        .pipe(Effect.ensuring(flushUsageEvents));
-      yield* Effect.logInfo(
-        `ShopAgent.reconcileAll: shop=${shop} caller=${caller} workflowId=${workflowId} orders=${String(orders)} created=${String(created)} ambiguous=${String(ambiguous)}`,
-      ).pipe(
-        Effect.annotateLogs({
-          shop,
-          caller,
-          workflowId,
-          orders,
-          created,
-          ambiguous,
-        }),
-      );
-      return created;
-    });
+      if (yield* pass(false)) yield* pass(true);
+    }).pipe(Effect.ensuring(flushUsageEvents));
   };
 
   /**
    * {@link reconcileAllNow}, skipped when the workflow is off: for the
-   * definition writes (Apply, Edit tag, the coverage date) that change *how* a workflow
+   * definition writes (Apply, Edit tag) that change *how* a workflow
    * matches. An off workflow matches nothing either way, so nothing about the
    * workflows that are on changed and the pass would be a full scan for no writes. Turn
    * off and delete do move it, and use {@link reconcileAllNow}.
@@ -989,10 +883,26 @@ const make = Effect.gen(function* () {
   const reconcileAllIfOn = (caller: string, workflow: Domain.Workflow) => {
     const run = () => reconcileAllNow(caller, workflow.id);
     return Effect.gen(function* () {
-      if (!Domain.workflowIsOn(workflow)) return 0;
-      return yield* run();
+      if (!Domain.workflowIsOn(workflow)) return;
+      yield* run();
     });
   };
+
+  /**
+   * The open-run ceiling released: a Done, a Cancel workflow or a close by
+   * reconcile brought the shop back under `ShopLimits.maxOpenRuns` while
+   * reconcile had declined runs ({@link RunRepository}'s
+   * `releaseOpenRunLimit`). Reconciles every stored order once, outside the
+   * write's transaction, so the declined runs are created now rather than at
+   * each order's next webhook, and publishes to everyone, since the runs
+   * land on any order. The class's sync wiring calls it for the webhook, the
+   * resync and the import; the task and run callables call it themselves.
+   */
+  const afterCeilingReleased = (id: string) =>
+    Effect.gen(function* () {
+      yield* reconcileAllNow("ceilingReleased", id);
+      yield* host.publish("all");
+    });
 
   const reconciler = (source: Domain.OrderSyncSource) => {
     const shop = host.shop();
@@ -1016,7 +926,7 @@ const make = Effect.gen(function* () {
               }),
             ),
           ),
-          Effect.asVoid,
+          Effect.map(({ ceilingReleased }) => ({ ceilingReleased })),
         );
     });
   };
@@ -1045,9 +955,7 @@ const make = Effect.gen(function* () {
         lineItems,
         runs: yield* runs.listRunsForOrder({ orderId: order.id }),
         teams: shopTeams,
-        itemWorkflows: workflows
-          .filter(({ tasks }) => tasks.length > 0)
-          .map(({ workflow }) => workflow),
+        itemWorkflows: workflows.filter(({ tasks }) => tasks.length > 0),
       } satisfies Domain.OrderPageData;
     });
   };
@@ -1080,8 +988,7 @@ const make = Effect.gen(function* () {
    * Manual attach, read as **set this item's workflow**. It applies only the
    * definition half of the start predicate (`workflowIsEligible`): an admin choosing a
    * workflow for an item by hand is exactly the override for a missing
-   * tag, a fulfilled line, or an order placed before the workflow was turned
-   * on. What it is not is an override of the order itself being over, which
+   * tag or a fulfilled line. What it is not is an override of the order itself being over, which
    * is `Domain.orderIsOpen`.
    *
    * An item holds at most one run, so attaching over one is a replace: the
@@ -1115,7 +1022,7 @@ const make = Effect.gen(function* () {
       const detail: Domain.WorkflowDetail | null = Option.isSome(found)
         ? { workflow: found.value.workflow, tasks: found.value.tasks }
         : null;
-      if (detail === null || !workflowIsEligible(detail, shopTeams))
+      if (detail === null || !Domain.workflowIsEligible(detail, shopTeams))
         return {
           _tag: "WorkflowNotEligible",
         } satisfies Domain.AttachResult;
@@ -1191,10 +1098,13 @@ const make = Effect.gen(function* () {
       const result = yield* runResult(
         Effect.gen(function* () {
           yield* requireRunAction(runId, MERCHANT, "cancel");
-          yield* (yield* RunRepository).cancelRun({ runId });
+          const { ceilingReleased } = yield* (yield* RunRepository).cancelRun({
+            runId,
+          });
           yield* Effect.logInfo(
             `ShopAgent.merchantCancelRun: shop=${shop} runId=${runId}`,
           ).pipe(Effect.annotateLogs({ shop, runId }));
+          if (ceilingReleased) yield* afterCeilingReleased(runId);
         }),
       );
       if (result._tag === "Ok") yield* publish(teams);
@@ -1233,13 +1143,14 @@ const make = Effect.gen(function* () {
     return runResult(
       Effect.gen(function* () {
         yield* requireTaskAction(runTaskId, MERCHANT, ({ done }) => done);
-        yield* (yield* RunRepository).markTaskDone({
+        const { ceilingReleased } = yield* (yield* RunRepository).markTaskDone({
           runTaskId,
           actor: { role: "merchant" },
         } satisfies Domain.MarkTaskDoneCommand);
         yield* Effect.logInfo(
           `ShopAgent.merchantMarkTaskDone: shop=${shop} task=${runTaskId}`,
         ).pipe(Effect.annotateLogs({ shop, task: runTaskId }));
+        if (ceilingReleased) yield* afterCeilingReleased(runTaskId);
       }),
     ).pipe(Effect.tap(() => publish(runTaskId)));
   };
@@ -1603,11 +1514,12 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const actor = memberActor({ memberId, memberEmail, teamIds });
         yield* requireTaskAction(runTaskId, actor, ({ done }) => done);
-        yield* (yield* RunRepository).markTaskDone({
+        const { ceilingReleased } = yield* (yield* RunRepository).markTaskDone({
           runTaskId,
           actor: { role: "member", memberId, email: memberEmail },
           teamIds,
         } satisfies Domain.MarkTaskDoneCommand);
+        if (ceilingReleased) yield* afterCeilingReleased(runTaskId);
         yield* Effect.logInfo(
           `ShopAgent.memberMarkTaskDone: shop=${shop} task=${runTaskId} memberId=${memberId}`,
         ).pipe(Effect.annotateLogs({ shop, task: runTaskId, memberId }));
@@ -1845,6 +1757,11 @@ const make = Effect.gen(function* () {
    * of this call (which reports `NotFound` for the row but still runs the
    * nulling) repairs it. Nothing is refused for being in use: the confirm
    * dialog states the counts and the merchant decides.
+   *
+   * Reconciles every stored order afterwards ({@link reconcileAllNow}): a
+   * workflow whose task lost its team stops being eligible, and an item it
+   * had made ambiguous now has one match, whose run is created here rather
+   * than at the order's next webhook.
    */
   const deleteTeam = ({ teamId }: typeof Domain.DeleteTeamInput.Type) => {
     const name = host.shop();
@@ -1869,6 +1786,7 @@ const make = Effect.gen(function* () {
         ),
       );
       yield* (yield* WorkflowRepository).unassignTeam({ teamId });
+      yield* reconcileAllNow("deleteTeam", teamId);
       // The team was on every one of these members' connections; the
       // Worker cannot do this itself because `Repository.deleteTeam` runs
       // here, and only here are the team's members still readable.
@@ -1955,11 +1873,10 @@ const make = Effect.gen(function* () {
    * and defects into the same thrown `Error` at the RPC seam, so a defect buys
    * nothing here.
    *
-   * Leaves every stored order un-matched on purpose: `replaceWorkflows` drops
-   * every run and every definition, so the orders that survive it are carrying
-   * the previous fixture's `matchedWorkflowIds`. {@link seedOrders} is what
-   * puts them right, at its end, once the fixture's own orders have been
-   * replaced — reconciling here would create runs on rows that call is about to
+   * Does not reconcile on purpose: `replaceWorkflows` drops every run and
+   * every definition, and {@link seedOrders} reconciles the surviving orders
+   * at its end, once the fixture's own orders have been replaced —
+   * reconciling here would create runs on rows that call is about to
    * delete, runs and all, so the work would be thrown away a moment later.
    * `api.dev.seed.ts` always calls both, in that order.
    *
@@ -2156,7 +2073,7 @@ const make = Effect.gen(function* () {
             : null;
           yield* Option.isNone(target) ||
           detail === null ||
-          !workflowIsEligible(detail, shopTeams)
+          !Domain.workflowIsEligible(detail, shopTeams)
             ? Effect.fail(
                 new WorkflowRepositoryError({
                   message: `ShopAgent.seedOrders: lineItemId=${lineItemId} workflowId=${workflowId}: no such line item, or a workflow that cannot start`,
@@ -2177,15 +2094,10 @@ const make = Effect.gen(function* () {
       let runCount = 0;
       for (const [index, seed] of orders.entries()) {
         const id = `${Domain.SEED_ORDER_ID_PREFIX}${String(seed.n)}`;
-        // At or after `now`, never before: the workflows this fixture
-        // starts were turned on moments ago and the date rule skips an
-        // order placed before its workflow. Spaced a millisecond apart
-        // so the index's keyset order matches `orders` order, newest
-        // last, while the tail of the fixture stays within a blink of
-        // `now`: a wider gap dates the last rows into the future, and
-        // anything that compares `processedAt` against `now` — a
-        // reconcile after a workflow is activated, for one — would then
-        // read a shop that cannot exist.
+        // Spaced a millisecond apart so the index's keyset order matches
+        // `orders` order, newest last, while the tail of the fixture stays
+        // within a blink of `now`: a wider gap dates the last rows into the
+        // future, a shop that cannot exist.
         const processedAt = now + index;
         const order: Domain.ShopOrder = {
           id,
@@ -2221,7 +2133,6 @@ const make = Effect.gen(function* () {
               quantity: item.quantity,
               currentQuantity,
               productTags: item.tags,
-              matchedWorkflowIds: [],
               properties: item.properties ?? [],
             } satisfies Domain.OrderLineItem;
           });
@@ -2293,8 +2204,6 @@ const make = Effect.gen(function* () {
     discardDraft,
     setWorkflowOn,
     applyAndTurnOn,
-    setWorkflowActivatedAt,
-    countWaitingOrders,
     removeWorkflow,
     getOrderDetail,
     subscribeOrder,
@@ -2341,6 +2250,8 @@ const make = Effect.gen(function* () {
      * store's `afterWrite`.
      */
     reconciler,
+    /** For the class's sync wiring, when the store's `afterWrite` says the reconcile released the open-run ceiling. */
+    afterCeilingReleased,
     /** The teams with an open task on the target, for the class's webhook publish. */
     orderTeamIds,
   };

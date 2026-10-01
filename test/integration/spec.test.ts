@@ -427,9 +427,9 @@ describe("action table parser", () => {
 
   describe("the order issue table", () => {
     const TEAM_ROW =
-      "| `unassigned`      | {@link OrderRow} `unassigned`                                            | Assign team on the order page       |";
+      "| `unassigned` | {@link OrderRow} `unassigned`                                                   | Assign team on the order page       |";
     const EMPTY_TEAM_ROW =
-      "| `empty_team`      | {@link OrderRow} `emptyTeam`                                             | add a member on the team page       |";
+      "| `empty_team` | {@link OrderRow} `emptyTeam`                                                    | add a member on the team page       |";
 
     it("ShopWork.ts passes", () => {
       expect(shopWorkSource).toContain(TEAM_ROW);
@@ -440,7 +440,7 @@ describe("action table parser", () => {
     it("each order issue has one remedy", () => {
       const doctored = shopWorkSource.replace(
         EMPTY_TEAM_ROW,
-        "| `empty_team`      | {@link OrderRow} `emptyTeam`                                             | assign a team, or add a member      |",
+        "| `empty_team` | {@link OrderRow} `emptyTeam`                                                    | assign a team, or add a member      |",
       );
       expect(doctored).not.toBe(shopWorkSource);
       expect(checkOrderIssues(doctored)).toEqual([
@@ -455,7 +455,7 @@ describe("action table parser", () => {
       );
       expect(doctored).not.toBe(shopWorkSource);
       expect(checkOrderIssues(doctored)).toEqual([
-        "OrderIssue: the Issue column is choose_workflow, empty_team, unassigned, blocked; the literals are choose_workflow, unassigned, empty_team, blocked",
+        "OrderIssue: the Issue column is ambiguous, empty_team, unassigned, blocked; the literals are ambiguous, unassigned, empty_team, blocked",
       ]);
     });
   });
@@ -677,6 +677,121 @@ describe("triggers table parser", () => {
         ),
       ),
     ).toMatch(/empty pinned by/u);
+  });
+});
+
+/** A `reconcileItem` JSDoc holding one triggers row and one outcomes row. */
+const reconcileTablesOf = (trigger: string, outcome: string) =>
+  [
+    "/**",
+    " * | trigger | shape | skipped when | pinned by |",
+    " * | - | - | - | - |",
+    ` * ${trigger}`,
+    " *",
+    " * | order | paid | units | run on item | matches | outcome |",
+    " * | - | - | - | - | - | - |",
+    ` * ${outcome}`,
+    " */",
+    "export const reconcileItem = 0;",
+  ].join("\n");
+
+const TRIGGER_ROW = "| Turn on | reconcile all | never | (none yet) |";
+const OUTCOME_ROW = "| open | yes | some | none | 1 | create |";
+
+const reconcileError = (
+  parse: (source: string) => Result.Result<unknown, { message: string }>,
+  doctored: string,
+) => {
+  const parsed = parse(doctored);
+  if (Result.isSuccess(parsed)) throw new Error("parsed");
+  return parsed.failure.message;
+};
+
+describe("reconcile triggers table parser", () => {
+  it("the real table parses and every pinned title is carried by a test", () => {
+    const testSources = import.meta.glob<string>(
+      "/test/integration/*.test.ts",
+      { query: "?raw", import: "default", eager: true },
+    );
+    const rows = Result.getOrThrow(
+      ActionTable.parseReconcileTriggers(shopWorkSource),
+    );
+    expect(rows.map((row) => row.trigger)).toContain("Turn on");
+    expect(ActionTable.checkPinned(rows, testSources, "reconcileItem")).toEqual(
+      [],
+    );
+  });
+
+  it("a shape outside the list is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseReconcileTriggers,
+        reconcileTablesOf(
+          "| Turn on | every order | never | (none yet) |",
+          OUTCOME_ROW,
+        ),
+      ),
+    ).toMatch(/unknown shape "every order"/u);
+  });
+
+  it("an empty pinned by is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseReconcileTriggers,
+        reconcileTablesOf("| Turn on | reconcile all | never | |", OUTCOME_ROW),
+      ),
+    ).toMatch(/empty pinned by/u);
+  });
+});
+
+describe("reconcile outcomes table parser", () => {
+  it("the real table parses, after the triggers table", () => {
+    const rows = Result.getOrThrow(
+      ActionTable.parseReconcileOutcomes(shopWorkSource),
+    );
+    expect(rows.map((row) => row.outcome.tag)).toEqual(
+      expect.arrayContaining(["create", "close", "resize", "nothing"]),
+    );
+  });
+
+  it("reads the close reason and the text after the colon", () => {
+    const [row] = Result.getOrThrow(
+      ActionTable.parseReconcileOutcomes(
+        reconcileTablesOf(
+          TRIGGER_ROW,
+          "| cancelled | any | any | open | any | close `order_cancelled`: Shopify ended it |",
+        ),
+      ),
+    );
+    expect(row?.outcome).toEqual({
+      tag: "close",
+      reason: "order_cancelled",
+      note: "Shopify ended it",
+    });
+    expect(row && ActionTable.expandReconcileOutcome(row)).toHaveLength(
+      2 * 3 * 2 * 3,
+    );
+  });
+
+  it("a word outside its list is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseReconcileOutcomes,
+        reconcileTablesOf(
+          TRIGGER_ROW,
+          "| open | maybe | some | none | 1 | create |",
+        ),
+      ),
+    ).toMatch(/unknown word "maybe" under paid/u);
+    expect(
+      reconcileError(
+        ActionTable.parseReconcileOutcomes,
+        reconcileTablesOf(
+          TRIGGER_ROW,
+          "| open | yes | some | none | 1 | start |",
+        ),
+      ),
+    ).toMatch(/outcome "start"/u);
   });
 });
 

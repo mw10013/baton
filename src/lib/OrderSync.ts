@@ -83,8 +83,6 @@ export const toOrderLineItem = (
   quantity: node.quantity,
   currentQuantity: node.currentQuantity,
   productTags: node.product?.tags ?? [],
-  /** Reconcile owns this column; the sync writes the empty set and `afterWrite` fills it. */
-  matchedWorkflowIds: [],
   /** Shopify's name for the list; the domain calls it properties (see {@link Domain.LineItemProperty}). */
   properties: node.customAttributes,
 });

@@ -19,7 +19,7 @@ export class OrderRepositoryError extends Schema.TaggedError<OrderRepositoryErro
   },
 ) {}
 
-export interface OrderUpsert<E = never> {
+export interface OrderUpsert<A = void, E = never> {
   readonly order: Domain.ShopOrder;
   readonly lineItems: readonly Domain.OrderLineItem[];
   /**
@@ -28,9 +28,11 @@ export interface OrderUpsert<E = never> {
    * reconciliation: runs must be created and adjusted against exactly the
    * item set this write produced, and Durable Object SQLite refuses
    * nested transactions, so the caller composes plain statements here rather
-   * than opening its own. Must not await anything but storage.
+   * than opening its own. Must not await anything but storage. Its value
+   * comes back as `upsertOrder`'s `afterWrite`, so the caller can act on
+   * what the reconcile found once the transaction has committed.
    */
-  readonly afterWrite?: Effect.Effect<void, E>;
+  readonly afterWrite?: Effect.Effect<A, E>;
 }
 
 /**
@@ -170,28 +172,53 @@ const DONE_RUN = `select 1 from Run r
 const BLOCKED_RUN = `select 1 from Run r
   where r.orderId = ShopOrder.id and r.state = 'open'
     and r.blockedAt is not null`;
-/**
- * `Domain.ambiguousItems` in SQL: an item with units still to make, two or
- * more workflows matched at the last reconcile, and no run in any state.
- * Change workflow away and back reads correctly with no further reconcile —
- * which is the point of deriving the issue rather than storing it.
- *
- * `json_array_length` is SQLite's JSON1, compiled into Durable Object SQLite;
- * `order-repository.test.ts` is the proof.
- */
 const RUN_FOR_ITEM = `select 1 from Run r
   where r.lineItemId = li.id`;
+/**
+ * The SQL twin of `Domain.itemMatches`, counted: how many eligible workflows
+ * carry a tag of the item `li`. On, with a task, every task's `teamId` set,
+ * and a product tag, trimmed and lowercased, equal to the workflow's tag.
+ * The item half's other clause, units to make above zero, is on the readers
+ * ({@link AMBIGUOUS_ITEM}), where it is one comparison on the row. It
+ * restates the rule and must move with it.
+ *
+ * Two stated gaps against the TypeScript side. A `teamId` no D1 team
+ * carries is the window stated on `itemMatches`. And SQLite's `lower` and
+ * `trim` fold ASCII and strip U+0020 only, where `toLowerCase` and `trim`
+ * are Unicode-aware: a product tag with non-ASCII case ("GRAVÜR") or a
+ * no-break space matches in TypeScript and not here. Workflow tags are
+ * lowercased on input (`Domain.WorkflowTag`), so only the product tag's
+ * spelling can differ.
+ *
+ * `json_each` is SQLite's JSON1, compiled into Durable Object SQLite;
+ * `order-repository.test.ts` is the proof.
+ */
+const ITEM_MATCHES = `(select count(*) from Workflow w
+  where w.state = 'on'
+    and exists (select 1 from WorkflowTask t where t.workflowId = w.id)
+    and not exists (
+      select 1 from WorkflowTask t where t.workflowId = w.id and t.teamId is null
+    )
+    and exists (
+      select 1 from json_each(li.productTags) tag
+      where lower(trim(tag.value)) = w.tag
+    ))`;
+/**
+ * `Domain.ambiguousItems` in SQL: an item with units still to make, two or
+ * more matches ({@link ITEM_MATCHES}), and no run in any state. Derived from
+ * the workflows as they are now, so a Turn off, a tag edit or Change workflow
+ * away and back reads correctly with no reconcile in between.
+ */
 const AMBIGUOUS_ITEM = `select 1 from OrderLineItem li
   where li.orderId = ShopOrder.id and li.currentQuantity > 0
-    and json_array_length(li.matchedWorkflowIds) >= 2
+    and ${ITEM_MATCHES} >= 2
     and not exists (${RUN_FOR_ITEM})`;
 /**
- * The `choose_workflow` {@link Domain.OrderIssue} as one predicate: an order
- * is only choosing when it can create runs, so an unpaid order with an
- * ambiguous item is *not* choosing. `OPEN` is the caller's, as for every
- * issue.
+ * The `ambiguous` {@link Domain.OrderIssue} as one predicate: an order
+ * carries it only when it can create runs, so an unpaid order with an
+ * ambiguous item does *not*. `OPEN` is the caller's, as for every issue.
  */
-const CHOOSING = `fullyPaid = 1 and exists (${AMBIGUOUS_ITEM})`;
+const AMBIGUOUS = `fullyPaid = 1 and exists (${AMBIGUOUS_ITEM})`;
 
 /**
  * Each counted view's predicate over the `facts` rows of the count
@@ -202,7 +229,7 @@ const CHOOSING = `fullyPaid = 1 and exists (${AMBIGUOUS_ITEM})`;
  */
 const COUNT_FACT = {
   open: "1",
-  issues: "choosing or unassigned or emptyTeam or blockedRuns > 0",
+  issues: "ambiguous or unassigned or emptyTeam or blockedRuns > 0",
   not_started: "openRuns = 0 and doneRuns = 0",
   making: "openRuns > 0",
   made: "doneRuns > 0 and openRuns = 0",
@@ -259,11 +286,13 @@ export class OrderRepository extends Context.Service<
      * and will interleave between orders. Per-order atomicity is what keeps
      * either writer from observing half an order.
      */
-    readonly upsertOrder: <E = never>(
-      input: OrderUpsert<E>,
+    readonly upsertOrder: <A = void, E = never>(
+      input: OrderUpsert<A, E>,
     ) => Effect.Effect<
       {
         readonly written: boolean;
+        /** What `afterWrite` returned, when the write happened and it ran. */
+        readonly afterWrite: Option.Option<A>;
         /**
          * The order had no row before this write. What `ShopUsage` counts
          * against the plan's billing cycle — a resync of a stored order is not
@@ -628,26 +657,18 @@ export class OrderRepository extends Context.Service<
           );
         });
 
-      /**
-       * `matchedWorkflowIds` is written on insert only and deliberately absent
-       * from the `do update set` list: reconcile owns the column, runs after
-       * this write in `afterWrite`, and a resync must not blank an item's
-       * matches in the window between the two.
-       */
       const insertLineItems = (lineItems: readonly Domain.OrderLineItem[]) =>
         Effect.forEach(
           lineItems,
           (item) => sql`
             insert into OrderLineItem (
               id, orderId, title, variantTitle, sku,
-              quantity, currentQuantity, productTags, matchedWorkflowIds,
-              properties
+              quantity, currentQuantity, productTags, properties
             ) values (
               ${item.id}, ${item.orderId},
               ${item.title}, ${item.variantTitle}, ${item.sku},
               ${item.quantity}, ${item.currentQuantity},
-              ${json(item.productTags)}, ${json(item.matchedWorkflowIds)},
-              ${json(item.properties)}
+              ${json(item.productTags)}, ${json(item.properties)}
             )
             on conflict(id) do update set
               orderId = excluded.orderId,
@@ -872,7 +893,11 @@ export class OrderRepository extends Context.Service<
       });
 
       return OrderRepository.of({
-        upsertOrder: <E>({ order, lineItems, afterWrite }: OrderUpsert<E>) =>
+        upsertOrder: <A, E>({
+          order,
+          lineItems,
+          afterWrite,
+        }: OrderUpsert<A, E>) =>
           sql
             .withTransaction(
               Effect.gen(function* () {
@@ -887,7 +912,12 @@ export class OrderRepository extends Context.Service<
                   fresh &&
                   order.processedAt < Domain.retentionCutoff(order.syncedAt)
                 )
-                  return { written: false, fresh: false, refused: false };
+                  return {
+                    written: false,
+                    fresh: false,
+                    refused: false,
+                    afterWrite: Option.none<A>(),
+                  };
                 // Resolved before the insert because the ceiling is a fact
                 // about the cycle this write lands in, after any roll-forward.
                 const cycle = yield* currentCycle(order.syncedAt);
@@ -896,7 +926,12 @@ export class OrderRepository extends Context.Service<
                   Domain.cycleAtOrderCeiling(cycle.ordersThisCycle)
                 ) {
                   yield* markOrdersLimited(order.syncedAt);
-                  return { written: false, fresh: false, refused: true };
+                  return {
+                    written: false,
+                    fresh: false,
+                    refused: true,
+                    afterWrite: Option.none<A>(),
+                  };
                 }
                 const written = yield* sql`
                 insert into ShopOrder (
@@ -926,11 +961,24 @@ export class OrderRepository extends Context.Service<
                 returning id
               `;
                 if (written.length === 0)
-                  return { written: false, fresh: false, refused: false };
+                  return {
+                    written: false,
+                    fresh: false,
+                    refused: false,
+                    afterWrite: Option.none<A>(),
+                  };
                 yield* sql`delete from OrderLineItem where orderId = ${order.id}`;
                 yield* insertLineItems(lineItems);
-                if (afterWrite !== undefined) yield* afterWrite;
-                return { written: true, fresh, refused: false };
+                const after =
+                  afterWrite === undefined
+                    ? Option.none<A>()
+                    : Option.some(yield* afterWrite);
+                return {
+                  written: true,
+                  fresh,
+                  refused: false,
+                  afterWrite: after,
+                };
               }),
             )
             .pipe(Effect.withSpan("OrderRepository.upsertOrder")),
@@ -1055,7 +1103,7 @@ export class OrderRepository extends Context.Service<
               sql.and([
                 OPEN,
                 sql.or([
-                  `(${CHOOSING})`,
+                  `(${AMBIGUOUS})`,
                   unassignedRun,
                   emptyTeamRun,
                   `exists (${BLOCKED_RUN})`,
@@ -1194,7 +1242,7 @@ export class OrderRepository extends Context.Service<
                   from OrderLineItem li
                   where ${sql.in("li.orderId", ids)}
                     and li.currentQuantity > 0
-                    and json_array_length(li.matchedWorkflowIds) >= 2
+                    and ${sql.literal(ITEM_MATCHES)} >= 2
                     and not exists (${sql.literal(RUN_FOR_ITEM)})
                   group by li.orderId
                 `.values;
@@ -1285,7 +1333,7 @@ export class OrderRepository extends Context.Service<
            * search, which ignores the views. `run_summary` is the per-page
            * `runRows` aggregate hoisted over every open order, one grouped
            * read of `Run` in place of a correlated `exists` per fragment;
-           * `CHOOSING`, `unassignedRun` and `emptyTeamRun` stay correlated, walking items and
+           * `AMBIGUOUS`, `unassignedRun` and `emptyTeamRun` stay correlated, walking items and
            * tasks. `facts` is materialised so each correlated term runs once
            * per order however many sums read it. The sums restate
            * `viewFilter` over those facts ({@link COUNT_FACT}) and must move
@@ -1316,7 +1364,7 @@ export class OrderRepository extends Context.Service<
                   coalesce(rs.openRuns, 0) as openRuns,
                   coalesce(rs.doneRuns, 0) as doneRuns,
                   coalesce(rs.blockedRuns, 0) as blockedRuns,
-                  (${sql.literal(CHOOSING)}) as choosing,
+                  (${sql.literal(AMBIGUOUS)}) as ambiguous,
                   ${unassignedRun} as unassigned,
                   ${emptyTeamRun} as emptyTeam
                 from ShopOrder

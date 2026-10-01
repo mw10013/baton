@@ -184,7 +184,7 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
      both halves. */
   await clickHoisted(page.getByRole("button", { name: "Turn on" }));
   await expect(
-    editor.getByText("will start this workflow on that item", { exact: false }),
+    editor.getByText("starts this workflow on that item", { exact: false }),
   ).toBeVisible();
   await expect(
     editor.getByText("Your tasks are applied at the same time.", {
@@ -309,11 +309,10 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
 });
 
 /**
- * Turn on by count: a workflow turned on after an order was placed does not
- * start on it — unless the merchant includes the waiting orders from the
- * Turn on dialog, which moves the coverage date back to the earliest one.
+ * Turn on applies to every stored open order: an order placed while the
+ * workflow was off gets its run the moment the workflow is turned on.
  */
-test("turning on a workflow offers to include earlier unfulfilled orders, and including them starts their runs", async ({
+test("turning on a workflow creates runs on the open orders already stored", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -344,16 +343,10 @@ test("turning on a workflow offers to include earlier unfulfilled orders, and in
   await expect(frame.locator(`s-page[heading="${EXISTING}"]`)).toBeVisible();
 
   await clickHoisted(page.getByRole("button", { name: "Turn on" }));
-  await expect(
-    frame.getByText("1 earlier order is unfulfilled and would match.", {
-      exact: false,
-    }),
-  ).toBeVisible();
-  await frame.getByRole("checkbox", { name: "Include them" }).check();
   await frame.getByRole("button", { name: "Turn on", exact: true }).click();
   await expect(page.getByRole("button", { name: "Turn off" })).toBeVisible();
 
-  /* The order page shows the run that Include them started: the item's
+  /* The order page shows the run that Turn on created: the item's
      section carries Manage, whose drawer names the workflow, and with a run on
      it the card carries no workflow picker at rest. Scoped to the section
      because another item's picker on the same page lists every workflow by

@@ -161,6 +161,11 @@ describe("an exported identifier carries no reserved stem", () => {
       RulesLint.reservedStemHits("export class ProductionAgent {}"),
     ).toEqual([{ name: "ProductionAgent", line: 1, kind: "class" }]);
   });
+  it("an export named setWorkflowActivatedAt is refused", () => {
+    expect(
+      RulesLint.reservedStemHits("export const setWorkflowActivatedAt = 1;"),
+    ).toEqual([{ name: "setWorkflowActivatedAt", line: 1, kind: "const" }]);
+  });
 });
 
 describe("a state predicate names its noun before the state", () => {

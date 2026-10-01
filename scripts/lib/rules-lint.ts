@@ -194,6 +194,7 @@ export const exportedNames = (source: string): readonly ExportedName[] =>
  * | tier       | a view of the member's workflows list; billing's tier is Shopify's and not exported |
  * | glossary   | the block is the vocabulary                                                         |
  * | production | the deploy environment; the core context is shop work                               |
+ * | activated  | nothing; the switch is `state`, `on` / `off`                                        |
  *
  * {@link RESERVED_STEM_ALLOWED} names the exports that keep a stem on
  * purpose.
@@ -205,6 +206,7 @@ export const RESERVED_STEMS: readonly string[] = [
   "tier",
   "glossary",
   "production",
+  "activated",
 ];
 
 /**

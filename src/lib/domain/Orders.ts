@@ -5,19 +5,20 @@
  * Nouns, orders. "(none)" means no screen says the word; the
  * cell says what a screen shows instead:
  *
- * | word   | meaning                                                                          | symbol                          | screen                  |
- * | ------ | -------------------------------------------------------------------------------- | ------------------------------- | ----------------------- |
- * | order  | a Shopify order                                                                  | `ShopOrder`                     | its name (#1001)        |
- * | item   | one line item of an order                                                        | `OrderLineItem`                 | item; never "line item" |
- * | import | the bulk fetch of the shop's open orders from Shopify                            | `OrdersSyncResult`, `SyncState` | Import open orders      |
- * | sync   | writing one Shopify order into the object, from a webhook, an import or a resync | `OrderSyncSource`               | Resync from Shopify     |
+ * | word             | meaning                                                                          | symbol                          | screen                   |
+ * | ---------------- | -------------------------------------------------------------------------------- | ------------------------------- | ------------------------ |
+ * | order            | a Shopify order                                                                  | `ShopOrder`                     | its name (#1001)         |
+ * | item             | one line item of an order                                                        | `OrderLineItem`                 | item; never "line item"  |
+ * | import           | the bulk fetch of the shop's open orders from Shopify                            | `OrdersSyncResult`, `SyncState` | Import open orders       |
+ * | sync             | writing one Shopify order into the object, from a webhook, an import or a resync | `OrderSyncSource`               | Resync from Shopify      |
+ * | current quantity | Shopify's count of units still on the item after edits and refunds               | `OrderLineItem.currentQuantity` | the quantity on the card |
  *
  * An item is always shown under its order on the merchant's order page,
  * and beside it in the member's row (`<item> · <workflow> · <order>`), so
  * the order carries the disambiguation and the word stays short. Copy with
  * no order beside it qualifies the word ("items on open orders", "N items
  * in production") rather than saying "items" bare. The identifiers and
- * columns say `lineItem` (`OrderLineItem`, `lineItemId` in ShopWork) because that is
+ * columns say lineItem (`OrderLineItem`, `lineItemId` in ShopWork) because that is
  * Shopify's `LineItem`, and "item" is the screen's short form beside its
  * order; neither is renamed to match the other.
  */
@@ -62,10 +63,10 @@ export const ShopOrder = Schema.Struct({
   name: Schema.String,
   /**
    * Shopify's `processedAt`: the date shown under the order number in the
-   * admin, the one importers back-date, and the only date Baton compares
-   * (against `Workflow.activatedAt`). Shopify's `createdAt` (the row
-   * timestamp) is deliberately not persisted so nobody has to ask which one
-   * matters.
+   * admin and the one importers back-date. It is the date the orders index
+   * sorts by and the retention sweep reads; Baton compares it with nothing
+   * else. Shopify's `createdAt` (the row timestamp) is deliberately not
+   * persisted so nobody has to ask which one matters.
    */
   processedAt: Schema.Number,
   updatedAt: Schema.Number,
@@ -91,20 +92,13 @@ export type ShopOrder = typeof ShopOrder.Type;
  * merchant retagging a product cannot silently rewrite history.
  *
  * `currentQuantity` is the number of units still to be made
- * ({@link unitsToMake}): Shopify lowers it on a merchant edit and on a refund,
+ * (`unitsToMake` in ShopWork): Shopify lowers it on a merchant edit and on a refund,
  * and on nothing else. Fulfillment does not move it, which is why a line
  * fulfilled early still reads as work until the whole order is `FULFILLED`
  * ({@link orderIsFulfilled}). `quantity` stays as "ordered" for display.
  *
- * `matchedWorkflowIds` holds `WorkflowId`s in ShopWork as plain strings, the
- * way `ShopSession` holds `planHandle`: it is shop work's writing on the
- * orders row, and orders reads nothing from shop work. It is the eligible workflows whose tag matched
- * this item at the last reconcile, whether or not a run was created. Two or
- * more with no run is an **ambiguity** the merchant resolves from the
- * order page; the picker there offers these first, then every other
- * workflow that is on. Written by reconcile
- * only — the order sync writes `[]`, because matching happens after the write,
- * inside `afterWrite`.
+ * Which workflows match an item is shop work's reading (`itemMatches` in
+ * ShopWork) and is never stored.
  *
  * `properties` is the item's own list, every key stored and shown as
  * Shopify sends it, underscore-prefixed app keys included; Baton is a
@@ -124,7 +118,6 @@ export const OrderLineItem = Schema.Struct({
   quantity: Schema.Number,
   currentQuantity: Schema.Number,
   productTags: Schema.fromJsonString(Schema.Array(Schema.String)),
-  matchedWorkflowIds: Schema.fromJsonString(Schema.Array(Schema.String)),
   properties: Schema.fromJsonString(Schema.Array(LineItemProperty)),
 });
 export type OrderLineItem = typeof OrderLineItem.Type;
@@ -136,8 +129,9 @@ export type OrderLineItem = typeof OrderLineItem.Type;
  * {@link orderIsCancelled} and {@link orderIsFulfilled} close existing runs. `AUTHORIZED` is not
  * treated as paid; manual-capture shops would need a clause here.
  */
-export const orderCanCreateRuns = (order: ShopOrder) =>
-  order.fullyPaid && order.cancelledAt === null;
+export const orderCanCreateRuns = (
+  order: Pick<ShopOrder, "fullyPaid" | "cancelledAt">,
+) => order.fullyPaid && order.cancelledAt === null;
 
 /** A stop gate, with {@link orderIsFulfilled}: reconcile closes every open run on the order, reason `order_cancelled` (`ClosedReason` in ShopWork). */
 export const orderIsCancelled = (order: Pick<ShopOrder, "cancelledAt">) =>
@@ -189,19 +183,6 @@ export type OrderState = typeof OrderState.Type;
  */
 export const orderIsOpen = (order: OrderState) =>
   !orderIsCancelled(order) && !orderIsFulfilled(order);
-
-/**
- * Units a maker should see and a run should snapshot. `currentQuantity`, not
- * `quantity`: an edit or a refund lowers it, and neither leaves work a maker
- * should still do. Fulfillment is deliberately not in it — Shopify leaves
- * `currentQuantity` alone when a unit is fulfilled, so a line fulfilled ahead of the
- * rest of the order stays open work until the order reaches `FULFILLED`, which
- * is the one fulfillment state Baton acts on ({@link orderIsFulfilled}). Partial
- * fulfillment is deliberately ignored: a line fulfilled ahead of the order
- * stays work until the order is `FULFILLED`.
- */
-export const unitsToMake = (lineItem: Pick<OrderLineItem, "currentQuantity">) =>
-  lineItem.currentQuantity;
 
 export const OrderDetail = Schema.Struct({
   order: ShopOrder,

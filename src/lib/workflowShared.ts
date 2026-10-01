@@ -102,52 +102,14 @@ export const DELETE_WORKFLOW_WARNING =
  * begins, so the copy keeps the plain verb.
  */
 export const itemTriggerLine = (tag: string) =>
-  `Starts when an order contains a product tagged \u201C${tag}\u201D. Orders placed before this workflow was turned on are skipped.`;
+  `Starts when an order contains a product tagged \u201C${tag}\u201D.`;
 
 /** The Turn on dialog's first line, both surfaces: the rule that will create runs once the switch is on. */
 export const turnOnBody = (tag: string) =>
-  `Every order placed from now with an item tagged \u201C${tag}\u201D will start this workflow on that item.`;
+  `Every open order with an item tagged \u201C${tag}\u201D starts this workflow on that item.`;
 
-export const changeActivatedAtResultMessage = Match.typeTags<
-  Domain.ChangeActivatedAtResult,
-  string | null
->()({
-  Ok: () => null,
-  NotFound: () => "That workflow no longer exists.",
-  Off: () => "This workflow is off, so there is no date to change.",
-});
-
-/**
- * The Turn on dialog's second line, present only when there is something to
- * decide: earlier open orders that would match. The count, not the date, is
- * what the merchant decides on.
- */
-export const waitingOrdersLine = ({ count }: Domain.WaitingOrders) =>
-  count === 0
-    ? null
-    : `${String(count)} earlier ${count === 1 ? "order is" : "orders are"} unfulfilled and would match.`;
-
-/** The `createdToast` verb for Turn off, shared so the fork below stays in step with the caller. */
+/** The toast verb after Turn off. */
 export const TURNED_OFF = "Turned off";
-
-/**
- * The toast after Turn on, Turn off or Change: counts the runs the
- * reconcile-all created, when it created any. The screen has no word for a
- * run, so the count is of items, qualified by their orders as the vocabulary
- * asks ("items on waiting orders").
- *
- * Turn **off** can create runs too, which is why the sentence does not say
- * "waiting orders": an item matched by two workflows that are on carries no run, so
- * taking one of them away leaves a single match and the survivor begins. That
- * is the same number in a different story, so the copy forks on the verb.
- */
-export const createdToast = (verb: string, created: number) => {
-  if (created === 0) return `${verb}.`;
-  const orders = `${String(created)} ${created === 1 ? "order" : "orders"}`;
-  return verb === TURNED_OFF
-    ? `${verb}. ${orders} moved to the workflow that still matches.`
-    : `${verb}. Attached to ${String(created)} ${created === 1 ? "item" : "items"} on waiting orders.`;
-};
 
 const taskList = (tasks: readonly Domain.TaskWithTeamName[]) =>
   tasks.map((task) => task.name).join(", ");

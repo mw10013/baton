@@ -8,11 +8,7 @@ import { describe, it } from "vitest";
 
 import * as Domain from "@/lib/Domain";
 import { OrderRepository } from "@/lib/OrderRepository";
-import {
-  type ReconcileCounts,
-  type EligibleContext,
-  RunRepository,
-} from "@/lib/RunRepository";
+import { type ReconcileCounts, RunRepository } from "@/lib/RunRepository";
 import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
 import { WorkflowRepository } from "@/lib/WorkflowRepository";
 
@@ -115,7 +111,7 @@ const runListRows = Effect.fn("runListRows")(function* ({
 });
 
 const ORDER_ID = "gid://shopify/Order/1";
-/** Ahead of the wall clock so the age rule sees an order placed after the workflows the tests create. */
+/** The fixtures' placed date; no rule compares it with a workflow. */
 const PROCESSED_AT = Date.now() + 60 * 60 * 1000;
 
 const order = (
@@ -148,7 +144,6 @@ const lineItem = (
   quantity: 2,
   currentQuantity: 2,
   productTags,
-  matchedWorkflowIds: [],
   properties: [{ key: "Engraving", value: `Hello ${String(n)}` }],
   ...overrides,
 });
@@ -253,7 +248,7 @@ const seedStepped = Effect.gen(function* () {
   });
 });
 
-/** Starts the stepped workflow on one item and returns its run; `PROCESSED_AT` is ahead of the clock so the age rule passes. */
+/** Starts the stepped workflow on one item and returns its run. */
 const steppedRun = () =>
   Effect.gen(function* () {
     yield* upsertAndReconcile(order(), [lineItem(1, ["s"])]);
@@ -264,13 +259,13 @@ const steppedRun = () =>
 
 const loadEligibleContext = Effect.gen(function* () {
   const workflows = yield* (yield* WorkflowRepository).listOnWorkflowDetails();
-  return { workflows, teams: TEAMS } satisfies EligibleContext;
+  return { workflows, teams: TEAMS } satisfies Domain.EligibleContext;
 });
 
 const upsertAndReconcile = (
   shopOrder: Domain.ShopOrder,
   lineItems: readonly Domain.OrderLineItem[],
-  teams: EligibleContext["teams"] = TEAMS,
+  teams: Domain.EligibleContext["teams"] = TEAMS,
 ) =>
   Effect.gen(function* () {
     const runs = yield* RunRepository;
@@ -281,6 +276,7 @@ const upsertAndReconcile = (
       resized: 0,
       closed: 0,
       ambiguous: 0,
+      ceilingReleased: false,
     });
     yield* orders.upsertOrder({
       order: shopOrder,
@@ -324,84 +320,13 @@ const shape = (items: readonly Domain.RecentItem[]) =>
       : `closed ${item.run.closedReason ?? ""}`,
   );
 
-describe("RunRepository.countWaitingOrders", () => {
-  it("counts open orders that would match if the date allowed, paid or not, with the earliest placed date; Include them starts the paid ones", () =>
-    runInRepository(
-      Effect.gen(function* () {
-        const { a } = yield* seed;
-        const runs = yield* RunRepository;
-        const workflows = yield* WorkflowRepository;
-        const orders = yield* OrderRepository;
-        const detail = yield* savedDetail(a.id);
-        const old = Date.now() - 60 * 60 * 1000;
-        const older = old - 1000;
-        // Two old orders (one unpaid), one fulfilled, one stock-only.
-        const seedOrder = (
-          id: string,
-          overrides: Partial<Domain.ShopOrder>,
-          items: readonly Domain.OrderLineItem[],
-        ) =>
-          orders.upsertOrder({
-            order: order({ id, legacyId: id, name: id, ...overrides }),
-            lineItems: items.map((item) => ({
-              ...item,
-              id: `${id}/${item.id}`,
-              orderId: id,
-            })),
-            afterWrite: Effect.void,
-          });
-        yield* seedOrder("o1", { processedAt: old }, [lineItem(1, ["a"])]);
-        yield* seedOrder("o2", { processedAt: older, fullyPaid: false }, [
-          lineItem(1, ["a"]),
-        ]);
-        yield* seedOrder(
-          "o3",
-          { processedAt: older - 1, fulfillmentStatus: "FULFILLED" },
-          [lineItem(1, ["a"])],
-        );
-        yield* seedOrder("o4", { processedAt: older - 2 }, [lineItem(1, [])]);
-        deepStrictEqual(
-          yield* runs.countWaitingOrders({
-            ...(yield* loadEligibleContext),
-            workflow: detail,
-          }),
-          { count: 2, earliestProcessedAt: older },
-        );
-        // Include them: the date moves back to the earliest and reconcile-all
-        // starts the paid, unfulfilled one; the unpaid one waits to pay.
-        yield* workflows.setWorkflowOn({
-          workflowId: a.id,
-          on: true,
-          activatedAt: older,
-          teams: TEAMS,
-        });
-        deepStrictEqual(yield* runs.reconcileAll(yield* loadEligibleContext), {
-          orders: 2,
-          created: 1,
-          ambiguous: 0,
-        });
-        deepStrictEqual(
-          yield* runs.countWaitingOrders({
-            ...(yield* loadEligibleContext),
-            workflow: detail,
-          }),
-          { count: 1, earliestProcessedAt: older },
-        );
-      }),
-    ));
-});
-
-/** What reconcile wrote on the item, sorted, read straight out of the column. */
-const matchedIds = (lineItemId: string) =>
-  SqlClient.SqlClient.pipe(
-    Effect.flatMap(
-      (sql) =>
-        sql`select matchedWorkflowIds from OrderLineItem where id = ${lineItemId}`,
-    ),
-    Effect.map(([row]) =>
-      Schema.decodeUnknownSync(
-        Schema.fromJsonString(Schema.Array(Schema.String)),
-      )(row?.matchedWorkflowIds).toSorted(),
+/** The workflows that match the item now ({@link Domain.matchedWorkflows}), their ids sorted. */
+const matchedIds = (item: Domain.OrderLineItem) =>
+  loadEligibleContext.pipe(
+    Effect.map(({ workflows, teams }) =>
+      Domain.matchedWorkflows(item, workflows, teams)
+        .map(({ workflow }) => workflow.id)
+        .toSorted(),
     ),
   );
 
@@ -427,9 +352,9 @@ describe("RunRepository one row per item", () => {
       return yield* goLive(created.id);
     });
 
-  const ITEM_1 = lineItem(1, ["a", "rush"]).id;
+  const ITEM_1 = lineItem(1, ["a", "rush"]);
 
-  it("creates nothing when two workflows match, and records both", () =>
+  it("creates nothing when two workflows match", () =>
     runInRepository(
       Effect.gen(function* () {
         const { a } = yield* seed;
@@ -442,6 +367,7 @@ describe("RunRepository one row per item", () => {
           resized: 0,
           closed: 0,
           ambiguous: 1,
+          ceilingReleased: false,
         });
         strictEqual((yield* runsForOrder()).length, 0);
         deepStrictEqual(yield* matchedIds(ITEM_1), [a.id, rival.id].toSorted());
@@ -465,6 +391,7 @@ describe("RunRepository one row per item", () => {
           resized: 0,
           closed: 0,
           ambiguous: 0,
+          ceilingReleased: false,
         });
         const runs = yield* runsForOrder();
         strictEqual(runs.length, 1);
@@ -473,7 +400,7 @@ describe("RunRepository one row per item", () => {
       }),
     ));
 
-  it("a live run wins: a second workflow turned on later is recorded but creates nothing", () =>
+  it("a live run wins: a second workflow turned on later creates nothing", () =>
     runInRepository(
       Effect.gen(function* () {
         const { a } = yield* seed;
@@ -490,12 +417,13 @@ describe("RunRepository one row per item", () => {
           resized: 0,
           closed: 0,
           ambiguous: 0,
+          ceilingReleased: false,
         });
         const runs = yield* runsForOrder();
         strictEqual(runs.length, 1);
         strictEqual(runs[0]?.run.workflowId, a.id);
-        // Both are recorded even though only one ever started: the column is
-        // the match, not the outcome.
+        // Both match even though only one ever created a run: the match is
+        // not the outcome.
         deepStrictEqual(yield* matchedIds(ITEM_1), [a.id, rival.id].toSorted());
       }),
     ));
@@ -647,54 +575,6 @@ describe("RunRepository one row per item", () => {
         strictEqual((yield* runsForOrder()).length, 1);
       }),
     ));
-
-  it("countWaitingOrders counts only what Include them would actually start", () =>
-    runInRepository(
-      Effect.gen(function* () {
-        const { a } = yield* seed;
-        const runs = yield* RunRepository;
-        const orders = yield* OrderRepository;
-        const sql = yield* SqlClient.SqlClient;
-        yield* rivalOn("rush");
-        // Placed before every workflow was turned on, which is exactly what
-        // the dialog is about: they match by tag, the date is what stops them.
-        const old = Date.now() - 60 * 60 * 1000;
-        const seedOrder = (id: string, itemTags: readonly string[]) =>
-          orders.upsertOrder({
-            order: order({ id, legacyId: id, name: id, processedAt: old }),
-            lineItems: [
-              { ...lineItem(1, itemTags), id: `${id}/li`, orderId: id },
-            ],
-            afterWrite: Effect.void,
-          });
-        yield* seedOrder("o1", ["a"]);
-        yield* seedOrder("o2", ["a"]);
-        yield* seedOrder("o3", ["a", "rush"]);
-        // o2's item is already routed — by whom does not matter, one run per
-        // item means Include them would not start a second.
-        yield* sql`
-          insert into Run (
-            id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
-            lineItemId, lineItemTitle, variantTitle, sku, quantity,
-            lineItemProperties, state,
-            createdAt, updatedAt
-          ) values (
-            'busy', 'other', 'Other', 'o2', 'o2', 0,
-            'o2/li', 'Item', null, null, 1,
-            '[]', 'open', 0, 0
-          )
-        `;
-        // o3 would come out ambiguous — the rival's tag is on it too — and
-        // ambiguity creates nothing. Only o1 is left.
-        deepStrictEqual(
-          yield* runs.countWaitingOrders({
-            ...(yield* loadEligibleContext),
-            workflow: yield* savedDetail(a.id),
-          }),
-          { count: 1, earliestProcessedAt: old },
-        );
-      }),
-    ));
 });
 
 describe("RunRepository.reconcileOrder", () => {
@@ -711,6 +591,7 @@ describe("RunRepository.reconcileOrder", () => {
           resized: 0,
           closed: 0,
           ambiguous: 0,
+          ceilingReleased: false,
         });
         const runs = yield* runsForOrder();
         strictEqual(runs.length, 2);
@@ -761,6 +642,7 @@ describe("RunRepository.reconcileOrder", () => {
           resized: 0,
           closed: 0,
           ambiguous: 0,
+          ceilingReleased: false,
         });
         strictEqual((yield* runsForOrder()).length, 2);
 
@@ -811,31 +693,23 @@ describe("RunRepository.reconcileOrder", () => {
       }),
     ));
 
-  it("skips orders placed before the workflow was turned on; manual attach still works", () =>
+  it("a workflow that is on creates runs on every stored open order, however old it is", () =>
     runInRepository(
       Effect.gen(function* () {
         const { a } = yield* seed;
         const runs = yield* RunRepository;
-        const old = order({ processedAt: (a.activatedAt ?? 0) - 1 });
-        const items = [lineItem(1, ["a"])];
-        const counts = yield* upsertAndReconcile(old, items);
+        yield* turnOff(a.id);
+        const day = 24 * 60 * 60 * 1000;
+        const old = order({
+          processedAt:
+            Date.now() - (Domain.ShopLimits.orderRetentionDays - 30) * day,
+        });
+        const counts = yield* upsertAndReconcile(old, [lineItem(1, ["a"])]);
         strictEqual(counts.created, 0);
-        const detail = yield* savedDetail(a.id);
-        const attached = yield* runs.setRun({
-          workflow: detail,
-          teams: TEAMS,
-          order: old,
-          lineItem: items[0] ?? lineItem(1, ["a"]),
-        });
-        strictEqual(Option.isSome(attached), true);
-        strictEqual(Option.getOrThrow(attached).replaced, null);
-        const duplicate = yield* runs.setRun({
-          workflow: detail,
-          teams: TEAMS,
-          order: old,
-          lineItem: items[0] ?? lineItem(1, ["a"]),
-        });
-        strictEqual(Option.isNone(duplicate), true);
+        yield* turnOn(a.id);
+        yield* runs.reconcileAll(yield* loadEligibleContext);
+        const [run] = yield* runsForOrder();
+        strictEqual(run?.run.workflowId, a.id);
       }),
     ));
 
@@ -873,6 +747,7 @@ describe("RunRepository.reconcileOrder", () => {
           resized: 0,
           closed: 2,
           ambiguous: 0,
+          ceilingReleased: false,
         });
         const after = yield* runsForOrder();
         const p = after.find((d) => d.run.id === unstartedRun.run.id);
@@ -897,6 +772,7 @@ describe("RunRepository.reconcileOrder", () => {
           resized: 0,
           closed: 0,
           ambiguous: 0,
+          ceilingReleased: false,
         });
         const gone = yield* runsForOrder();
         strictEqual(gone.length, 2);
@@ -937,6 +813,7 @@ describe("RunRepository.reconcileOrder", () => {
           resized: 1,
           closed: 0,
           ambiguous: 0,
+          ceilingReleased: false,
         });
         const [p] = yield* runsForOrder();
         strictEqual(p?.run.state, "open");
@@ -1025,6 +902,7 @@ describe("RunRepository.reconcileOrder", () => {
           resized: 0,
           closed: 0,
           ambiguous: 0,
+          ceilingReleased: false,
         });
         const unchanged = (yield* runsForOrder())[0];
         strictEqual(unchanged?.run.state, "done");
@@ -1043,6 +921,7 @@ describe("RunRepository.reconcileOrder", () => {
           resized: 0,
           closed: 0,
           ambiguous: 0,
+          ceilingReleased: false,
         });
         const after = (yield* runsForOrder())[0];
         strictEqual(after?.run.state, "done");
@@ -1064,6 +943,7 @@ describe("RunRepository.reconcileOrder", () => {
           resized: 0,
           closed: 0,
           ambiguous: 0,
+          ceilingReleased: false,
         });
         strictEqual((yield* runsForOrder()).length, 2);
       }),
@@ -1099,6 +979,7 @@ describe("RunRepository.reconcileOrder", () => {
             resized: 0,
             closed: 0,
             ambiguous: 0,
+            ceilingReleased: false,
           });
           const during = yield* runsForOrder();
           strictEqual(during.length, 2);
@@ -1145,6 +1026,7 @@ describe("RunRepository.reconcileOrder", () => {
             resized: 0,
             closed: 2,
             ambiguous: 0,
+            ceilingReleased: false,
           });
           const after = yield* runsForOrder();
           deepStrictEqual(
@@ -1181,6 +1063,7 @@ describe("RunRepository.reconcileOrder", () => {
             resized: 2,
             closed: 0,
             ambiguous: 0,
+            ceilingReleased: false,
           });
           const after = yield* runsForOrder();
           const p = after.find((d) => d.run.id === unstartedRun.run.id);
@@ -1215,6 +1098,7 @@ describe("RunRepository.reconcileOrder", () => {
             resized: 0,
             closed: 2,
             ambiguous: 0,
+            ceilingReleased: false,
           });
           deepStrictEqual(
             (yield* runsForOrder()).map((d) => [
@@ -1283,6 +1167,7 @@ describe("RunRepository.reconcileOrder", () => {
             resized: 0,
             closed: 2,
             ambiguous: 0,
+            ceilingReleased: false,
           });
           const after = yield* runsForOrder();
           strictEqual(after.length, 3);
@@ -1327,6 +1212,7 @@ describe("RunRepository.reconcileOrder", () => {
             resized: 0,
             closed: 0,
             ambiguous: 0,
+            ceilingReleased: false,
           });
           const after = yield* runsForOrder();
           const shipped = after.find((d) => d.run.id === shippedRun.run.id);
@@ -1368,6 +1254,7 @@ describe("RunRepository.reconcileOrder", () => {
           resized: 0,
           closed: 2,
           ambiguous: 0,
+          ceilingReleased: false,
         });
         const after = yield* runsForOrder();
         for (const open of [unstartedRun, startedRun]) {
@@ -2647,6 +2534,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           resized: 0,
           closed: 1,
           ambiguous: 0,
+          ceilingReleased: false,
         });
         const after = Option.getOrThrow(
           yield* runs.getRun({ runId: detail.run.id }),
@@ -3386,7 +3274,7 @@ const usageRow = () =>
   );
 
 describe("RunRepository open-run ceiling", () => {
-  it("reconcile yields to the ceiling and records it; finishing the run clears the flag", () =>
+  it("reconcile yields to the ceiling and records it; the run's last Done clears the flag", () =>
     withMaxOpenRuns(1, () =>
       runInRepository(
         Effect.gen(function* () {
@@ -3410,6 +3298,94 @@ describe("RunRepository open-run ceiling", () => {
           yield* complete(detail, 1, [TEAM_A.id]);
           yield* complete(detail, 2, [TEAM_B.id]);
           strictEqual(yield* usageRow(), null);
+        }),
+      ),
+    ));
+
+  it("the write that releases the ceiling creates the runs that were declined", () =>
+    withMaxOpenRuns(1, () =>
+      runInRepository(
+        Effect.gen(function* () {
+          const { b } = yield* seed;
+          const runs = yield* RunRepository;
+          const counts = yield* upsertAndReconcile(order(), [
+            lineItem(1, ["a"]),
+            lineItem(2, ["b"]),
+          ]);
+          strictEqual(counts.created, 1);
+          const [detail] = yield* runsForOrder();
+          if (detail === undefined) throw new Error("no run");
+          const first = yield* complete(detail, 1, [TEAM_A.id]);
+          strictEqual(first.ceilingReleased, false);
+          // The run's last Done takes it out of `open`: the write says the
+          // ceiling released, and the reconcile all its caller runs creates
+          // the run reconcile declined.
+          const last = yield* complete(detail, 2, [TEAM_B.id]);
+          strictEqual(last.ceilingReleased, true);
+          yield* runs.reconcileAll(yield* loadEligibleContext);
+          const after = yield* runsForOrder();
+          deepStrictEqual(
+            after.map(({ run }) => [run.workflowId, run.state]),
+            [
+              [detail.run.workflowId, "done"],
+              [b.id, "open"],
+            ],
+          );
+        }),
+      ),
+    ));
+
+  it("Cancel workflow releases the ceiling", () =>
+    withMaxOpenRuns(1, () =>
+      runInRepository(
+        Effect.gen(function* () {
+          yield* seed;
+          const runs = yield* RunRepository;
+          yield* upsertAndReconcile(order(), [
+            lineItem(1, ["a"]),
+            lineItem(2, ["b"]),
+          ]);
+          strictEqual(typeof (yield* usageRow()), "number");
+          const [detail] = yield* runsForOrder();
+          if (detail === undefined) throw new Error("no run");
+          const cancelled = yield* runs.cancelRun({ runId: detail.run.id });
+          strictEqual(cancelled.ceilingReleased, true);
+          strictEqual(yield* usageRow(), null);
+        }),
+      ),
+    ));
+
+  it("a close by reconcile releases the ceiling and says so", () =>
+    withMaxOpenRuns(1, () =>
+      runInRepository(
+        Effect.gen(function* () {
+          yield* seed;
+          yield* upsertAndReconcile(order(), [
+            lineItem(1, ["a"]),
+            lineItem(2, ["b"]),
+          ]);
+          strictEqual(typeof (yield* usageRow()), "number");
+          // The order is cancelled: the pass closes its one run, which is
+          // the write that brings the shop under the ceiling.
+          const counts = yield* upsertAndReconcile(
+            order({
+              cancelledAt: PROCESSED_AT + 1,
+              updatedAt: PROCESSED_AT + 1,
+            }),
+            [lineItem(1, ["a"]), lineItem(2, ["b"])],
+          );
+          strictEqual(counts.closed, 1);
+          strictEqual(counts.ceilingReleased, true);
+          strictEqual(yield* usageRow(), null);
+          // A pass with nothing to close never says it released.
+          const again = yield* upsertAndReconcile(
+            order({
+              cancelledAt: PROCESSED_AT + 1,
+              updatedAt: PROCESSED_AT + 2,
+            }),
+            [lineItem(1, ["a"]), lineItem(2, ["b"])],
+          );
+          strictEqual(again.ceilingReleased, false);
         }),
       ),
     ));
@@ -3508,7 +3484,7 @@ describe("RunRepository metering", () => {
       }),
     ));
 
-  it("a manual run start counts the order if nothing has yet", () =>
+  it("a manual attach counts the order if nothing has yet", () =>
     runInRepository(
       Effect.gen(function* () {
         const { a } = yield* seed;

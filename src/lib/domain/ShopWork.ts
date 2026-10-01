@@ -11,19 +11,25 @@
  * Nouns, shop work. "(none)" means no screen says the word; the
  * cell says what a screen shows instead:
  *
- * | word     | meaning                                                                                 | symbol                                 | screen                                                      |
- * | -------- | --------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------- |
- * | merchant | the shop's owner, acting from the Shopify admin                                         | `Actor` role `merchant`                | "you" to the merchant, "the merchant" to a member           |
- * | member   | a person at the bench, on one or more teams                                             | `Actor` role `member`, `Member`        | member (merchant screens); "you" or a name (member screens) |
- * | team     | the group a task is assigned to                                                         | `Team`                                 | team, or its name                                           |
- * | workflow | the definition: steps of tasks                                                          | `Workflow`, `WorkflowTask`             | workflow, or its name                                       |
- * | step     | a position in a workflow; its tasks are done in parallel                                | `WorkflowTask`, `RunTask` field        | Step k of n                                                 |
- * | run      | one item going through one workflow                                                     | `Run`                                  | the item's workflow, on both sides; never bare, never "run" |
- * | task     | one unit of work on a run, on one team                                                  | `RunTask`                              | task, or its name                                           |
- * | block    | a person's hold on a run                                                                | `runIsBlocked`                         | Blocked                                                     |
- * | note     | free text on a run                                                                      | `RunNote`                              | Note                                                        |
- * | draft    | the workflow's edited copy of its tasks, from Edit until Apply or Discard; one or none  | `WorkflowDraft`                        | Draft                                                       |
- * | view     | a preset of a list, one at a time, chosen by its button; the row's first is the default | `WorkflowsListView`, `OrdersIndexView`, `WorkflowsIndexView` | its label (Started by you, Issues, ...)                     |
+ * | word          | meaning                                                                                                    | symbol                                                       | screen                                                      |
+ * | ------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------- |
+ * | merchant      | the shop's owner, acting from the Shopify admin                                                            | `Actor` role `merchant`                                      | "you" to the merchant, "the merchant" to a member           |
+ * | member        | a person at the bench, on one or more teams                                                                | `Actor` role `member`, `Member`                              | member (merchant screens); "you" or a name (member screens) |
+ * | team          | the group a task is assigned to                                                                            | `Team`                                                       | team, or its name                                           |
+ * | workflow      | the definition: steps of tasks                                                                             | `Workflow`, `WorkflowTask`                                   | workflow, or its name                                       |
+ * | step          | a position in a workflow; its tasks are done in parallel                                                   | `WorkflowTask`, `RunTask` field                              | Step k of n                                                 |
+ * | run           | one item going through one workflow                                                                        | `Run`                                                        | the item's workflow, on both sides; never bare, never "run" |
+ * | task          | one unit of work on a run, on one team                                                                     | `RunTask`                                                    | task, or its name                                           |
+ * | block         | a person's hold on a run                                                                                   | `runIsBlocked`                                               | Blocked                                                     |
+ * | note          | free text on a run                                                                                         | `RunNote`                                                    | Note                                                        |
+ * | draft         | the workflow's edited copy of its tasks, from Edit until Apply or Discard; one or none                     | `WorkflowDraft`                                              | Draft                                                       |
+ * | view          | a preset of a list, one at a time, chosen by its button; the row's first is the default                    | `WorkflowsListView`, `OrdersIndexView`, `WorkflowsIndexView` | its label (Started by you, Issues, ...)                     |
+ * | reconcile     | make an order's runs agree with the order and the eligible workflows; idempotent                           | `reconcileItem`, `RunRepository.reconcileOrder`              | (none)                                                      |
+ * | reconcile all | reconcile every stored open, paid order once, after a workflow changes                                     | `ShopWorkAgent.reconcileAllNow`                              | (none)                                                      |
+ * | eligible      | a workflow that is on, has a task, and has every task on a team; only an eligible workflow creates runs    | `workflowIsEligible`, `EligibleContext`                      | (none): Needs a team names the fault                        |
+ * | match         | an item and an eligible workflow: a product tag equals the workflow's tag and units to make are above zero | `itemMatches`                                                | the order page's picker lists them first                    |
+ * | ambiguous     | an item two or more eligible workflows match, with no run                                                  | `ambiguousItems`, `OrderIssue` `ambiguous`                   | Needs a workflow                                            |
+ * | units to make | what is left to make on an item: Shopify's current quantity                                                | `unitsToMake`                                                | the quantity on the card                                    |
  *
  * The merchant's two indexes read the view row too: the orders index's views
  * are `OrdersIndexView`, the workflows index's are `WorkflowsIndexView`. A
@@ -73,10 +79,10 @@
  *
  * Workflow states, shop work:
  *
- * | word | meaning                               | stored             | screen |
- * | ---- | ------------------------------------- | ------------------ | ------ |
- * | on   | new items get runs from it            | `activatedAt` set  | On     |
- * | off  | it creates nothing; open runs carry on | `activatedAt` null | Off    |
+ * | word | meaning                               | stored | screen |
+ * | ---- | ------------------------------------- | ------ | ------ |
+ * | on   | new items get runs from it            | `on`   | On     |
+ * | off  | it creates nothing; open runs carry on | `off`  | Off    |
  *
  * The switch's screen words are Shopify Flow's (Turn on, Turn off;
  * `refs/flow-manual/manage/manual.md`); the badge says On and Off where Flow
@@ -98,12 +104,12 @@
  * Order issues, shop work: zero or more per open order, derived, never
  * stored, by {@link orderIssues}:
  *
- * | word            | meaning                                           | screen              |
- * | --------------- | ------------------------------------------------- | ------------------- |
- * | choose workflow | an item matched two or more workflows             | Needs a workflow    |
- * | unassigned      | an open task on no team                           | Needs a team        |
- * | empty team      | a current task on a team with no members          | Team has no members |
- * | blocked         | a run on the order is blocked, the run-state word | Blocked             |
+ * | word       | meaning                                                                                     | screen              |
+ * | ---------- | ------------------------------------------------------------------------------------------- | ------------------- |
+ * | ambiguous  | an item two or more eligible workflows match, with no run, on an order that can create runs | Needs a workflow    |
+ * | unassigned | an open task on no team                                                                     | Needs a team        |
+ * | empty team | a current task on a team with no members                                                    | Team has no members |
+ * | blocked    | a run on the order is blocked, the run-state word                                           | Blocked             |
  *
  * The workflows index and the workflow page show the `unassigned` and `empty team`
  * rows' screen words for a workflow with the same fault, so one fault has one
@@ -163,7 +169,6 @@ import {
   OrdersSyncStatus,
   OrderState,
   ShopOrder,
-  unitsToMake,
 } from "./Orders.ts";
 import {
   BoundedId,
@@ -271,7 +276,7 @@ export const ORDER_POSITION_LABEL = {
  * one label and one tone on every screen.
  */
 export const ORDER_ISSUE_LABEL = {
-  choose_workflow: "Needs a workflow",
+  ambiguous: "Needs a workflow",
   unassigned: "Needs a team",
   empty_team: "Team has no members",
   blocked: "Blocked",
@@ -604,6 +609,10 @@ export const WorkflowTag = Schema.String.pipe(
 );
 export type WorkflowTag = typeof WorkflowTag.Type;
 
+/** The vocabulary's workflow-state words, stored as written. */
+export const WorkflowState = Schema.Literals(["on", "off"]);
+export type WorkflowState = typeof WorkflowState.Type;
+
 /**
  * A workflow definition has two nouns and the merchant never meets a
  * third:
@@ -617,8 +626,8 @@ export type WorkflowTag = typeof WorkflowTag.Type;
  *
  * Verbs: **Edit** creates the draft. **Apply changes** replaces the
  * workflow's tasks with the draft's and deletes the draft.
- * **Discard changes** deletes the draft. **Turn on** / **Turn off** set and
- * clear `activatedAt`; the switch and the draft are unrelated.
+ * **Discard changes** deletes the draft. **Turn on** / **Turn off** set
+ * `state` to `on` and `off`; the switch and the draft are unrelated.
  *
  * How a workflow is chosen for work, in merchant copy. Every workflow **has
  * exactly one tag**, no two workflows share one, and the tag is edited like
@@ -633,9 +642,7 @@ export type WorkflowTag = typeof WorkflowTag.Type;
  * - on an item that no workflow's tag **matches**, the order page says no
  *   workflow can start and offers the picker; the orders index shows the
  *   order under Not started with nothing in Issues;
- * - the order page says a workflow **started for** N items;
- * - a workflow **applies to orders placed since** it was turned on; the
- *   word for an order's date is **placed**, never a field name.
+ * - the order page says a workflow **started for** N items.
  *
  * In identifiers: `match` is the tag test, and a workflow **creates** a run
  * (`workflowIsEligible` says whether it may); only a member **starts** a
@@ -659,18 +666,13 @@ export type WorkflowTag = typeof WorkflowTag.Type;
  * apart. A rename is immediate and cosmetic because runs snapshot
  * `workflowName`.
  *
- * `activatedAt` is the on/off switch and the coverage date in one column,
- * stored and never derived: null is off; Turn on sets it to now, or to an
- * earlier date the merchant chose to include waiting orders; the merchant
- * can move it on the workflow page; Turn off clears it; Apply never touches
- * it, because an unpaid order placed while the workflow was on is still that
- * workflow's business when it pays. A workflow creates a run on an order only
- * if the order was placed (`ShopOrder.processedAt`) on or after
- * `activatedAt`, on every path — new-order webhook, edit webhook, sync,
- * resync — so an old order Baton meets late is never touched. A workflow can
- * create runs when `activatedAt is not null and it has tasks and every task
- * is assigned to a team that exists`; `activatedAt` not null implies at
- * least one task, every one assigned at the moment of Turn on.
+ * `state` is the switch, stored and never derived, and it carries no date. A
+ * workflow that is on creates a run on every stored open order whose item it
+ * matches, on every path — webhook, import, resync, and every workflow
+ * change — however old the order is; the merchant who wants a workflow to
+ * apply from a day turns it on that day. A workflow can create runs when it
+ * is on and it has tasks and every task is assigned to a team that exists;
+ * on implies at least one task, every one assigned at the moment of Turn on.
  * A task whose team was deleted is **unassigned** (`teamId` null, or an id
  * no D1 row carries — read as null everywhere). A workflow with an
  * unassigned task carries the `unassigned` {@link OrderIssue} (**Needs a team**)
@@ -692,14 +694,13 @@ export type WorkflowTag = typeof WorkflowTag.Type;
 const WorkflowFields = {
   id: WorkflowId,
   name: WorkflowName,
-  activatedAt: Schema.NullOr(Schema.Number),
+  state: WorkflowState,
   updatedAt: Schema.Number,
 };
 
-/** On: `activatedAt` is set. The one read of the switch, so no caller compares the column to null on its own. */
-export const workflowIsOn = (workflow: {
-  readonly activatedAt: number | null;
-}) => workflow.activatedAt !== null;
+/** On: `state` is `on`. The one read of the switch, so no caller compares the column on its own. */
+export const workflowIsOn = (workflow: { readonly state: WorkflowState }) =>
+  workflow.state === "on";
 
 /** A workflow: chosen by its tag, running once per matching item. */
 export const Workflow = Schema.Struct({
@@ -905,15 +906,9 @@ export type ApplyDraftInput = typeof ApplyDraftInput.Type;
 export const DiscardDraftInput = WorkflowIdInput;
 export type DiscardDraftInput = typeof DiscardDraftInput.Type;
 
-/**
- * `activatedAt` is honoured only with `on: true`: the Turn on dialog's
- * "Include them" sends the earliest waiting order's placed date so those
- * orders qualify; omitted, Turn on means now. Off always clears the date.
- */
 export const SetWorkflowOnInput = Schema.Struct({
   workflowId: BoundedId,
   on: Schema.Boolean,
-  activatedAt: Schema.optionalKey(Schema.Number),
 });
 export type SetWorkflowOnInput = typeof SetWorkflowOnInput.Type;
 
@@ -921,22 +916,12 @@ export type SetWorkflowOnInput = typeof SetWorkflowOnInput.Type;
  * The editor's Turn on for a workflow that has never been applied: one click
  * that promotes the draft and turns the switch on, so the merchant is not
  * asked to Apply tasks that have never run and then turn on the thing they
- * just applied. `activatedAt` means what it means on
- * {@link SetWorkflowOnInput}.
+ * just applied.
  */
 export const ApplyAndTurnOnInput = Schema.Struct({
   workflowId: BoundedId,
-  activatedAt: Schema.optionalKey(Schema.Number),
 });
 export type ApplyAndTurnOnInput = typeof ApplyAndTurnOnInput.Type;
-
-/** The workflow page's Change control: moves the coverage date of an on workflow. */
-export const SetWorkflowActivatedAtInput = Schema.Struct({
-  workflowId: BoundedId,
-  activatedAt: Schema.Number,
-});
-export type SetWorkflowActivatedAtInput =
-  typeof SetWorkflowActivatedAtInput.Type;
 
 export const AddStepInput = Schema.Struct({
   workflowId: BoundedId,
@@ -979,8 +964,8 @@ export type UpdateTaskInput = typeof UpdateTaskInput.Type;
  * `tasks` become the workflow's tasks; a fixture with no tasks and no
  * `draft` has no draft, the state the ordinary path produces for a fresh
  * workflow. `on` is the switch and defaults to
- * `true` when the entry has tasks and every task is assigned; the
- * repository stores it as `activatedAt = now`, so seeded orders qualify.
+ * `true` when the entry has tasks and every task is assigned; every seeded
+ * order qualifies.
  * `draft` seeds a pending draft (tasks) for fixtures that show the draft UI.
  */
 const SeedWorkflowTask = Schema.Struct({
@@ -1091,18 +1076,8 @@ export const DraftResult = Schema.Union([
 ]);
 export type DraftResult = typeof DraftResult.Type;
 
-/**
- * `created` is how many runs the reconcile-all after the switch created. Turn
- * on creates runs on waiting orders; Turn **off** can create them too, because
- * removing one of two matching workflows resolves an ambiguity and the
- * survivor's runs are created — so the toast must read for both directions.
- */
 export const SwitchResult = Schema.Union([
-  Schema.Struct({
-    _tag: Schema.Literal("Ok"),
-    workflow: Workflow,
-    created: Schema.Number,
-  }),
+  Schema.Struct({ _tag: Schema.Literal("Ok"), workflow: Workflow }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("NoTasks") }),
   Schema.Struct({
@@ -1111,33 +1086,6 @@ export const SwitchResult = Schema.Union([
   }),
 ]);
 export type SwitchResult = typeof SwitchResult.Type;
-
-/** `Off`: the workflow is not on, so there is no coverage date to move. */
-export const ChangeActivatedAtResult = Schema.Union([
-  Schema.Struct({
-    _tag: Schema.Literal("Ok"),
-    workflow: Workflow,
-    created: Schema.Number,
-  }),
-  Schema.Struct({ _tag: Schema.Literal("NotFound") }),
-  Schema.Struct({ _tag: Schema.Literal("Off") }),
-]);
-export type ChangeActivatedAtResult = typeof ChangeActivatedAtResult.Type;
-
-/**
- * What the Turn on dialog asks about: orders already stored, unfulfilled and
- * not cancelled, that would match the workflow if its date allowed them —
- * paid or not, because an unpaid one qualifies the day it pays.
- * `earliestProcessedAt` is what "Include them" sends as `activatedAt`.
- */
-export const WaitingOrders = Schema.Struct({
-  count: Schema.Number,
-  earliestProcessedAt: Schema.NullOr(Schema.Number),
-});
-export type WaitingOrders = typeof WaitingOrders.Type;
-
-export const CountWaitingOrdersInput = WorkflowIdInput;
-export type CountWaitingOrdersInput = typeof CountWaitingOrdersInput.Type;
 
 export const TaskResult = Schema.Union([
   Schema.Struct({
@@ -1451,12 +1399,12 @@ export type OrdersIndexView = typeof OrdersIndexView.Type;
  * {@link orderIssues}; the SQL predicates in `OrderRepository.listOrders`
  * restate each element and must move with it.
  *
- * | Issue             | Rule                                                                     | Remedy                              |
- * | ----------------- | ------------------------------------------------------------------------ | ----------------------------------- |
- * | `choose_workflow` | `ambiguousItems > 0` and the order can create runs ({@link orderCanCreateRuns}) | choose a workflow on the order page |
- * | `unassigned`      | {@link OrderRow} `unassigned`                                            | Assign team on the order page       |
- * | `empty_team`      | {@link OrderRow} `emptyTeam`                                             | add a member on the team page       |
- * | `blocked`         | `runs.blocked > 0`                                                       | the order page                      |
+ * | Issue        | Rule                                                                            | Remedy                              |
+ * | ------------ | ------------------------------------------------------------------------------- | ----------------------------------- |
+ * | `ambiguous`  | `ambiguousItems > 0` and the order can create runs ({@link orderCanCreateRuns}) | choose a workflow on the order page |
+ * | `unassigned` | {@link OrderRow} `unassigned`                                                   | Assign team on the order page       |
+ * | `empty_team` | {@link OrderRow} `emptyTeam`                                                    | add a member on the team page       |
+ * | `blocked`    | `runs.blocked > 0`                                                              | the order page                      |
  *
  * **Each issue has one remedy: the action that fixes the fault the issue
  * names.** A Remedy cell never names two actions. An action that only routes
@@ -1511,7 +1459,7 @@ export type OrdersIndexView = typeof OrdersIndexView.Type;
  * not the problem. The labels are {@link ORDER_ISSUE_LABEL}.
  */
 export const OrderIssue = Schema.Literals([
-  "choose_workflow",
+  "ambiguous",
   "unassigned",
   "empty_team",
   "blocked",
@@ -1686,8 +1634,8 @@ export const OrderRow = Schema.Struct({
    */
   waitingOn: Schema.Array(TeamId),
   /**
-   * How many of the order's items are **ambiguous**: two or more
-   * `matchedWorkflowIds`, units still to make, and no run in any state.
+   * How many of the order's items are **ambiguous**: two or more matches
+   * ({@link itemMatches}), units still to make, and no run in any state.
    * Derived per read like {@link RunCounts}, never stored, so a Change
    * workflow that leaves an item with two matches and nothing on it reads as
    * ambiguous again without another reconcile. See {@link ambiguousItems} for the shared definition.
@@ -1756,7 +1704,7 @@ export const orderIssues = ({
 >): readonly OrderIssue[] => {
   if (!orderIsOpen(order)) return [];
   const issue: Record<OrderIssue, boolean> = {
-    choose_workflow: orderCanCreateRuns(order) && ambiguousItems > 0,
+    ambiguous: orderCanCreateRuns(order) && ambiguousItems > 0,
     unassigned,
     empty_team: emptyTeam,
     blocked: runs.blocked > 0,
@@ -1774,8 +1722,10 @@ export const ORDER_ISSUE_TONE = "critical";
 
 /**
  * The index's per-order ambiguity count, recomputed from a detail page's line
- * items and runs so both pages share one definition — the SQL in
- * `OrderRepository.listOrders` restates it and must move with it.
+ * items, runs and on workflows so both pages share one definition: items two
+ * or more workflows match ({@link itemMatches}), with units to make and no
+ * run. The SQL in `OrderRepository.listOrders` restates it and must move with
+ * it.
  *
  * Any run counts, `done` and `closed` included: a `done` run means the item
  * was routed and done, and a closed run still holds its item
@@ -1784,11 +1734,13 @@ export const ORDER_ISSUE_TONE = "critical";
 export const ambiguousItems = (
   lineItems: readonly OrderLineItem[],
   runs: readonly Run[],
+  details: readonly WorkflowDetail[],
+  teams: readonly { readonly id: TeamId }[],
 ): number =>
   lineItems.filter(
     (lineItem) =>
-      lineItem.matchedWorkflowIds.length >= 2 &&
       unitsToMake(lineItem) > 0 &&
+      matchedWorkflows(lineItem, details, teams).length >= 2 &&
       !runs.some((run) => run.lineItemId === lineItem.id),
   ).length;
 
@@ -2324,6 +2276,238 @@ export const RunDetail = Schema.Struct({
   tasks: Schema.Array(RunTask),
 });
 export type RunDetail = typeof RunDetail.Type;
+
+/**
+ * **Units to make**: shop work's reading of an item, what is left to make on
+ * it. Shopify's `currentQuantity`, not `quantity`: an edit or a refund lowers
+ * it, and neither leaves work a maker should still do. Fulfillment is
+ * deliberately not in it — Shopify leaves `currentQuantity` alone when a unit
+ * is fulfilled, so a line fulfilled ahead of the rest of the order stays open
+ * work until the order reaches `FULFILLED`, the one fulfillment state Baton
+ * acts on ({@link orderIsFulfilled}).
+ */
+export const unitsToMake = (lineItem: Pick<OrderLineItem, "currentQuantity">) =>
+  lineItem.currentQuantity;
+
+/**
+ * What run creation reads about the definitions: every workflow that is on,
+ * with its tasks, and the shop's teams. The teams live in D1, a network read
+ * that cannot happen inside the object's transaction, so the context is
+ * loaded once per webhook, import or reconcile all, before the transaction,
+ * and every order in that pass works from the same snapshot.
+ */
+export interface EligibleContext {
+  readonly workflows: readonly WorkflowDetail[];
+  /** The shop's teams, read live from D1: what a task's `teamId` must resolve against, and where `teamName` is snapshotted from. */
+  readonly teams: readonly {
+    readonly id: TeamId;
+    readonly name: TeamName;
+  }[];
+}
+
+/**
+ * The definition-side half of whether a workflow creates a run (vocabulary on
+ * {@link Workflow}): switched off, empty, or with an unassigned task
+ * (`teamId` null, or an id no team carries) all mean "creates
+ * nothing". A team with no members does *not* block: the run is created and
+ * its task waits on nobody's list until someone joins. Shared by the match
+ * ({@link itemMatches}) and by manual attach — the latter skips the item half
+ * (tags, quantity) but never this half, and answers separately to
+ * {@link orderIsOpen} for the state of the order as a whole. Drafts never
+ * reach here: `WorkflowDetail` carries workflow tasks only.
+ */
+export const workflowIsEligible = (
+  { workflow, tasks }: WorkflowDetail,
+  teams: readonly { readonly id: TeamId }[],
+) =>
+  workflowIsOn(workflow) &&
+  tasks.length > 0 &&
+  tasks.every(
+    (task) =>
+      task.teamId !== null && teams.some((team) => team.id === task.teamId),
+  );
+
+/**
+ * The item half of a match: units still to make, and one of the item's
+ * product tags, trimmed and lowercased, equal to the workflow's tag. It
+ * carries no date: an on workflow applies to every stored open order.
+ */
+export const matchesTag = (
+  { workflow }: WorkflowDetail,
+  item: Pick<OrderLineItem, "productTags" | "currentQuantity">,
+) =>
+  unitsToMake(item) > 0 &&
+  item.productTags.some((tag) => workflow.tag === tag.trim().toLowerCase());
+
+/**
+ * **A match is an item and an eligible workflow whose tag it carries.** The
+ * item has units to make and a product tag equal to the workflow's tag
+ * ({@link matchesTag}), and the workflow is on, has a task, and has every
+ * task on a team the shop has ({@link workflowIsEligible}). Derived on every
+ * read and never stored, so a tag edit, a team delete or a Turn off shows on
+ * the next read with no reconcile in between.
+ *
+ * The SQL twin is `AMBIGUOUS_ITEM` in `OrderRepository.ts`, which the orders
+ * index reads; it restates this rule and must move with it. SQL cannot ask D1
+ * whether a team exists, so the twin reads "every task's `teamId` set", which
+ * is what the object holds once `deleteTeam` has nulled the pointers; the
+ * window before that null is the one stated on `deleteTeam`.
+ */
+export const itemMatches = (
+  item: Pick<OrderLineItem, "productTags" | "currentQuantity">,
+  detail: WorkflowDetail,
+  teams: readonly { readonly id: TeamId }[],
+) => matchesTag(detail, item) && workflowIsEligible(detail, teams);
+
+/** The workflows in `details` that match `item` ({@link itemMatches}), in `details` order. */
+export const matchedWorkflows = (
+  item: Pick<OrderLineItem, "productTags" | "currentQuantity">,
+  details: readonly WorkflowDetail[],
+  teams: readonly { readonly id: TeamId }[],
+): readonly WorkflowDetail[] =>
+  details.filter((detail) => itemMatches(item, detail, teams));
+
+/**
+ * What {@link reconcileItem} decides for one item: create a run from the one
+ * matching workflow, close the item's open run for a reason, resize it to
+ * the item's units (with the Quantity changed badge only when a task has
+ * started), or nothing. `declined` on `nothing` says the run was declined at
+ * the open-run ceiling (`ShopLimits.maxOpenRuns`), so the caller raises the
+ * banner.
+ */
+export const ReconcileOutcome = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("create"), workflowId: WorkflowId }),
+  Schema.Struct({ _tag: Schema.Literal("close"), reason: ClosedReason }),
+  Schema.Struct({
+    _tag: Schema.Literal("resize"),
+    units: Schema.Number,
+    badge: Schema.Boolean,
+  }),
+  Schema.Struct({ _tag: Schema.Literal("nothing"), declined: Schema.Boolean }),
+]);
+export type ReconcileOutcome = typeof ReconcileOutcome.Type;
+
+const NOTHING: ReconcileOutcome = { _tag: "nothing", declined: false };
+
+/**
+ * **Reconcile** makes an order's runs agree with the order and the eligible
+ * workflows. It is idempotent: a second pass over the same stored order
+ * changes nothing. It reads the stored order and its items, never the
+ * caller's copy, so a pass is against what is actually stored, and it ignores
+ * the webhook topic: the newest state wins, whatever knocked, which is what
+ * makes retries and out-of-order delivery safe. `RunRepository.reconcileOrder`
+ * reads, calls this per item, and executes; the rule is here.
+ *
+ * Two gates, split on purpose. Cancelled and fulfilled are the **stop gate**
+ * ({@link orderIsCancelled}, {@link orderIsFulfilled}): every open run
+ * closes, started or not, because the work is over. Partial fulfillment
+ * changes nothing: fulfilling a line leaves its `currentQuantity` alone
+ * ({@link unitsToMake}). Paid and not cancelled is the **creation gate**
+ * ({@link orderCanCreateRuns}): it decides only whether a run is created. So
+ * an edit that pushes a paid order back to unpaid keeps its runs, still
+ * resizes and closes them, and creates nothing new until the balance lands;
+ * a payment wobble never cancels work.
+ *
+ * One run per item, not the cross product. Only a single match
+ * ({@link itemMatches}) with no run creates anything: two or more is
+ * **ambiguous**, and picking for the merchant would route work to the wrong
+ * team silently, so nothing is created and the order page asks. A run in any
+ * state, `done` and `closed` included, holds its item ({@link RunState}), so
+ * a workflow turned on later never displaces it and a tag match never undoes
+ * a merchant's cancel. A `done` run is never touched: it is the record of
+ * what was made.
+ *
+ * The eligible context ({@link EligibleContext}) is a snapshot: it is read
+ * once per webhook, import or reconcile all, before the transaction, because
+ * the shop's teams are a D1 read the object's transaction cannot make. A team
+ * deleted in the middle of an import is not seen by the rest of it; the
+ * price is a late run, not a wrong one.
+ *
+ * When it runs. `shape` is `reconcile` (one order, inside its upsert),
+ * `reconcile all` (every stored open, paid order, one transaction each, by
+ * `ShopWorkAgent.reconcileAllNow`) or `none`:
+ *
+ * | trigger                        | shape         | skipped when                                                                                 | pinned by                                                                                           |
+ * | ------------------------------ | ------------- | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+ * | order webhook, any topic       | reconcile     | duplicate id, older payload, order ceiling, order gone                                       | waits for payment, then creates runs identically from any source                                    |
+ * | Import open orders             | reconcile     | stored row fresher, past retention, order ceiling                                            | creates runs on every streamed open order that matches, however old; a re-stream creates none       |
+ * | Resync from Shopify            | reconcile     | order gone                                                                                   | (none yet)                                                                                          |
+ * | Turn on                        | reconcile all | never                                                                                        | a workflow that is on creates runs on every stored open order, however old it is                    |
+ * | Turn off                       | reconcile all | never                                                                                        | turning one of two matching workflows off creates the survivor's run                                |
+ * | Delete workflow                | reconcile all | never                                                                                        | (none yet)                                                                                          |
+ * | Apply changes                  | reconcile all | workflow off                                                                                 | applyAndTurnOn promotes the draft and turns the switch on in one call; an empty workflow is refused |
+ * | the tag edit                   | reconcile all | workflow off                                                                                 | retagging an on workflow reconciles stored orders against the new tag                               |
+ * | Delete team                    | reconcile all | never                                                                                        | deleting a team creates the survivor's run on an item two workflows had matched                     |
+ * | the open-run ceiling releasing | reconcile all | still at the ceiling                                                                         | the write that releases the ceiling creates the runs that were declined                             |
+ * | Attach, Change workflow        | none          | always: the merchant's choice                                                                | manual attach is refused on a cancelled or fulfilled order and allowed on an unpaid one             |
+ *
+ * What it does to one item. Each row is a fixture set, each cell one input;
+ * `any` covers every value of its column, `closed` under `order` is
+ * cancelled or fulfilled, `open` under `run on item` is unstarted or started.
+ * `matches` counts eligible workflows whose tag the item carries
+ * ({@link itemMatches}). `outcome` is `create`, `close` with its reason,
+ * `resize` or `nothing`, with free text after a colon. The test reads this
+ * table out of the source:
+ *
+ * | order     | paid | units   | run on item     | matches           | outcome                                         |
+ * | --------- | ---- | ------- | --------------- | ----------------- | ----------------------------------------------- |
+ * | cancelled | any  | any     | open            | any               | close `order_cancelled`                         |
+ * | fulfilled | any  | any     | open            | any               | close `fulfilled`                               |
+ * | closed    | any  | any     | done or closed  | any               | nothing                                         |
+ * | open      | any  | 0       | open            | any               | close `item_removed`                            |
+ * | open      | any  | changed | open, unstarted | any               | resize: no badge                                |
+ * | open      | any  | changed | open, started   | any               | resize: badge from the original                 |
+ * | open      | any  | same    | open            | any               | nothing                                         |
+ * | open      | any  | any     | done or closed  | any               | nothing: the run holds its item                 |
+ * | open      | yes  | some    | none            | 1                 | create                                          |
+ * | open      | yes  | some    | none            | 2+                | nothing: ambiguous                              |
+ * | open      | any  | some    | none            | 0                 | nothing                                         |
+ * | open      | no   | some    | none            | 1                 | nothing: created when it pays                   |
+ * | open      | yes  | some    | none            | 1, at the ceiling | nothing: declined at the ceiling, banner raised |
+ */
+export const reconcileItem = ({
+  order,
+  item,
+  run,
+  matched,
+  atCeiling,
+}: {
+  readonly order: OrderState & { readonly fullyPaid: boolean };
+  readonly item: Pick<OrderLineItem, "currentQuantity">;
+  /** The item's run, in any state, with its tasks, or null. */
+  readonly run: {
+    readonly run: Pick<Run, "state" | "quantity">;
+    readonly tasks: readonly Pick<RunTask, "startedAt" | "doneAt">[];
+  } | null;
+  /** The eligible workflows that match the item ({@link matchedWorkflows}). */
+  readonly matched: readonly WorkflowId[];
+  /** The shop holds `ShopLimits.maxOpenRuns` open runs. */
+  readonly atCeiling: boolean;
+}): ReconcileOutcome => {
+  const open = run !== null && runIsOpen(run.run);
+  if (orderIsCancelled(order))
+    return open ? { _tag: "close", reason: "order_cancelled" } : NOTHING;
+  if (orderIsFulfilled(order))
+    return open ? { _tag: "close", reason: "fulfilled" } : NOTHING;
+  const units = unitsToMake(item);
+  if (run !== null) {
+    if (!open) return NOTHING;
+    if (units === 0) return { _tag: "close", reason: "item_removed" };
+    if (units === run.run.quantity) return NOTHING;
+    return { _tag: "resize", units, badge: !runIsUnstarted(run.tasks) };
+  }
+  const [only, ...rest] = matched;
+  if (
+    !orderCanCreateRuns(order) ||
+    units === 0 ||
+    only === undefined ||
+    rest.length > 0
+  )
+    return NOTHING;
+  return atCeiling
+    ? { _tag: "nothing", declined: true }
+    : { _tag: "create", workflowId: only };
+};
 
 /**
  * One current task the member may act on, cut to what a run's row renders.
@@ -3055,17 +3239,19 @@ export const runTaskRows = (
 
 /**
  * Shop work's reading of an order's item, from {@link OrderLineItem} and
- * {@link unitsToMake} in Orders: its card on the order page, one of the
+ * {@link unitsToMake}: its card on the order page, one of the
  * {@link LineItemState} kinds.
  */
 export const lineItemState = (
   item: OrderLineItem,
   runs: readonly RunDetail[],
-  workflows: readonly Workflow[],
+  details: readonly WorkflowDetail[],
+  teams: readonly { readonly id: TeamId }[],
 ): LineItemState => {
   const detail = runs.find(({ run }) => run.lineItemId === item.id);
-  const matched = workflows.filter((workflow) =>
-    item.matchedWorkflowIds.includes(workflow.id),
+  const workflows = details.map(({ workflow }) => workflow);
+  const matched = matchedWorkflows(item, details, teams).map(
+    ({ workflow }) => workflow,
   );
   const options = [
     ...matched,
@@ -3098,7 +3284,7 @@ export const lineItemState = (
       kind: "attachable",
       options,
       matched: matched.map((workflow) => workflow.id),
-      ambiguous: item.matchedWorkflowIds.length >= 2 && unitsToMake(item) > 0,
+      ambiguous: matched.length >= 2 && unitsToMake(item) > 0,
     })),
   );
 };
@@ -3143,11 +3329,13 @@ export const OrderPageData = Schema.Struct({
   lineItems: Schema.Array(OrderLineItem),
   runs: Schema.Array(RunDetail),
   /**
-   * Workflows that are on, with at least one task — the manual-attach picker's
-   * choices. Carried in the page's data rather than read by a second socket query so
+   * Workflows that are on, with at least one task, and their tasks — the
+   * manual-attach picker's choices, and what {@link lineItemState} reads the
+   * matches from ({@link itemMatches} needs the tasks for eligibility).
+   * Carried in the page's data rather than read by a second socket query so
    * the page has exactly one read, one key, and one push.
    */
-  itemWorkflows: Schema.Array(Workflow),
+  itemWorkflows: Schema.Array(WorkflowDetail),
   /** The shop's live teams: the "Assign team" picker's choices, and what decides which open tasks are unassigned or on an empty team. */
   teams: Schema.Array(TeamWithMemberCount),
 });

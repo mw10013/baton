@@ -38,7 +38,7 @@ import { causeToErrorMessage } from "@/lib/LayerEx";
  *
  * | about             | rule                                                                                                                                                         | holds by   | pinned by                                                                                                        |
  * | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- | ---------------------------------------------------------------------------------------------------------------- |
- * | order             | an order is Shopify's record, mirrored; each sync overwrites it whole except `countedAt` and its items' `matchedWorkflowIds`                                 | app        | (none yet)                                                                                                       |
+ * | order             | an order is Shopify's record, mirrored; each sync overwrites it whole except `countedAt`                                 | app        | (none yet)                                                                                                       |
  * | order             | an order's counted mark is set at most once, by its first run or, for a seed order, by the seed, and survives every sync; only deleting the order removes it | app        | an order is counted once, when its first run is created                                                          |
  * | order             | an order older than retention is deleted, its items and its runs go with it, and it is never stored again                                                    | schema+app | an order older than retention is never stored again                                                              |
  * | item              | an item has exactly one order and goes with it                                                                                                               | schema     | an item has exactly one order and goes with it                                                                   |
@@ -48,7 +48,7 @@ import { causeToErrorMessage } from "@/lib/LayerEx";
  * | workflow          | a workflow has at most one draft; the draft holds tasks only                                                                                                 | schema     | a workflow has at most one draft; the draft holds tasks only                                                     |
  * | workflow          | definition tasks change only by Apply, whole, in one transaction; a run starting between two edits sees one definition                                       | app        | (none yet)                                                                                                       |
  * | workflow          | no history: a delete removes the workflow, its tasks and its draft, and nothing else                                                                         | schema+app | deleteWorkflow cascades its draft and tasks                                                                      |
- * | workflow          | `activatedAt` is stored, never derived, and is both the switch and the coverage date                                                                         | app        | skips orders placed before the workflow was turned on; manual attach still works                                 |
+ * | workflow          | `state` is stored, never derived: `on` or `off`                                                                                                              | schema     | a workflow that is on creates runs on every stored open order, however old it is                                 |
  * | task              | a task's team points to a D1 row; dangling reads as null, which means unassigned; a team delete nulls it on every task, definition, draft and run            | app        | a team delete nulls the team on every task; history keeps the name                                               |
  * | run               | a run snapshots its workflow, order and item and references none of them; it survives a workflow delete and every edit to the three                          | schema+app | a run snapshots its workflow, order and item and references none of them                                         |
  * | run               | a run's tasks go with it; only deleting the run deletes tasks                                                                                                | schema     | a run's tasks go with it; only deleting the run deletes tasks                                                    |
@@ -115,9 +115,6 @@ export const initializeSchema = Effect.gen(function* () {
       quantity integer not null,
       currentQuantity integer not null,
       productTags text not null,
-      -- The workflows whose tags matched at the last reconcile; "ambiguous"
-      -- (two or more, no run) is derived from it at read time.
-      matchedWorkflowIds text not null default '[]',
       properties text not null
     );
     create index if not exists OrderLineItem_orderId on OrderLineItem (orderId);
@@ -173,7 +170,8 @@ export const initializeSchema = Effect.gen(function* () {
       id text primary key,
       name text not null unique check (name = trim(name) and length(name) > 0),
       tag text not null unique check (tag = trim(tag) and length(tag) > 0),
-      activatedAt integer,
+      -- state is the switch, the vocabulary's word, stored and never derived.
+      state text not null check (state in ('on', 'off')),
       updatedAt integer not null
     );
     -- step is the layout, kept dense from 1 by the pure WorkflowLayout

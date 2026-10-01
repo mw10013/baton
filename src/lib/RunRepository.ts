@@ -1,6 +1,15 @@
 import type { SqlError } from "effect/unstable/sql";
 
-import { Clock, Context, Effect, Layer, Option, Schema, Struct } from "effect";
+import {
+  Clock,
+  Context,
+  Effect,
+  Layer,
+  Match,
+  Option,
+  Schema,
+  Struct,
+} from "effect";
 import { SqlClient, type Statement } from "effect/unstable/sql";
 
 import * as CurrentWhere from "@/lib/currentWhere";
@@ -139,94 +148,24 @@ export interface ReconcileCounts {
    * orders index turns into a step.
    */
   readonly ambiguous: number;
+  /**
+   * This pass's closes brought the shop back under the open-run ceiling
+   * while runs stood declined (`releaseOpenRunLimit`): the caller runs a
+   * reconcile all, outside this pass's transaction, so the declined runs
+   * are created now ({@link Domain.reconcileItem}'s triggers table).
+   */
+  readonly ceilingReleased: boolean;
 }
 
-export interface ReconcileAllCounts {
-  /** Open, paid orders the pass visited. */
+/** What `reconcileAll` hands back for the caller's log line: the pass's sums, and whether any order's closes released the open-run ceiling. */
+export interface ReconcileAllSums {
   readonly orders: number;
-  /** Runs created. */
   readonly created: number;
-  /** Items left ambiguous; see {@link ReconcileCounts.ambiguous}. */
   readonly ambiguous: number;
+  readonly ceilingReleased: boolean;
 }
-
-export interface EligibleContext {
-  readonly workflows: readonly Domain.WorkflowDetail[];
-  /** The shop's teams, read live from D1: what a task's `teamId` must resolve against, and where `teamName` is snapshotted from. */
-  readonly teams: readonly {
-    readonly id: Domain.TeamId;
-    readonly name: Domain.TeamName;
-  }[];
-}
-
-/**
- * The definition-side half of whether a workflow creates a run (vocabulary on
- * `Domain.Workflow`): switched off, empty, or with an unassigned task
- * (`teamId` null, or an id no team carries) all mean "starts
- * nothing". A team with no members does *not* block: the run is created and
- * its task waits on nobody's list until someone joins. Shared by the tag
- * match on upsert and by manual attach — the latter skips the item half
- * (tags, quantity, fulfilment, age) but never this half, and answers
- * separately to {@link Domain.orderIsOpen} for the state of the order as a
- * whole. Drafts never reach here: `WorkflowDetail` carries workflow tasks
- * only.
- */
-export const workflowIsEligible = (
-  { workflow, tasks }: Domain.WorkflowDetail,
-  teams: EligibleContext["teams"],
-) =>
-  Domain.workflowIsOn(workflow) &&
-  tasks.length > 0 &&
-  tasks.every(
-    (task) =>
-      task.teamId !== null && teams.some((team) => team.id === task.teamId),
-  );
-
-/**
- * The item half: the tag test and the date rule. An order qualifies
- * only when it was placed (`processedAt`) on or after the workflow's
- * `activatedAt`: a bulk stream of thirty days of history, or an edit
- * webhook on an order fulfilled a month ago, must not create runs on orders
- * placed before the workflow was turned on, whichever path delivers them.
- * It is Turn on, not the last Apply: a re-apply must not disown an unpaid
- * order placed while the workflow was on. An off workflow never reaches
- * this (`workflowIsEligible` first), so `activatedAt` null reads as "never".
- */
-export const matchesLineItem = (
-  detail: Domain.WorkflowDetail,
-  order: Domain.ShopOrder,
-  lineItem: Domain.OrderLineItem,
-) => placedSince(detail.workflow, order) && matchesTag(detail, lineItem);
-
-/** The date rule alone: placed on or after Turn on. Off never qualifies. */
-export const placedSince = (
-  workflow: Domain.Workflow,
-  order: Pick<Domain.ShopOrder, "processedAt">,
-) => workflow.activatedAt !== null && order.processedAt >= workflow.activatedAt;
-
-/** The tag test alone, with units still to make; what the Turn on dialog's count uses, since it asks "would match if the date allowed". */
-export const matchesTag = (
-  { workflow }: Domain.WorkflowDetail,
-  lineItem: Pick<Domain.OrderLineItem, "productTags" | "currentQuantity">,
-) =>
-  lineItem.currentQuantity > 0 &&
-  lineItem.productTags.some((tag) => workflow.tag === tag.trim().toLowerCase());
 
 const json = (value: unknown) => JSON.stringify(value);
-
-/** One row per waiting order: the count, and the placed date "Include them" would move `activatedAt` to. */
-const summarise = (
-  rows: readonly { readonly processedAt: number }[],
-): Domain.WaitingOrders => ({
-  count: rows.length,
-  earliestProcessedAt: rows.reduce<number | null>(
-    (earliest, row) =>
-      earliest === null || row.processedAt < earliest
-        ? row.processedAt
-        : earliest,
-    null,
-  ),
-});
 
 /**
  * An {@link Domain.Actor} flattened into the two columns a task's recorded actor
@@ -247,6 +186,7 @@ const NO_COUNTS: ReconcileCounts = {
   resized: 0,
   closed: 0,
   ambiguous: 0,
+  ceilingReleased: false,
 };
 
 export class RunRepository extends Context.Service<
@@ -261,12 +201,15 @@ export class RunRepository extends Context.Service<
      * stored short (`Domain.ShopOrder.lineItemsTruncated`).
      */
     readonly reconcileOrder: (
-      input: EligibleContext & { readonly orderId: string },
+      input: Domain.EligibleContext & { readonly orderId: string },
     ) => Effect.Effect<ReconcileCounts, SqlError.SqlError | RunRepositoryError>;
     /**
      * `reconcileOrder` over every open, paid order, one transaction each:
-     * what runs after a definition changes on an on workflow (Turn on, its
-     * date moved, Apply). Fulfilled orders are excluded on purpose —
+     * what runs after a definition changes on an on workflow (Turn on,
+     * Apply). Returns its sums for the caller's one log line, and whether
+     * any order's closes released the open-run ceiling
+     * ({@link ReconcileCounts} `ceilingReleased`); no count reaches a
+     * screen. Fulfilled orders are excluded on purpose —
      * reconcile treats fulfilled as terminal and there is nothing left to
      * make or pack — and unpaid ones because they reconcile when they pay.
      *
@@ -278,33 +221,9 @@ export class RunRepository extends Context.Service<
      * request that changed the definition.
      */
     readonly reconcileAll: (
-      input: EligibleContext,
+      input: Domain.EligibleContext,
     ) => Effect.Effect<
-      ReconcileAllCounts,
-      SqlError.SqlError | RunRepositoryError
-    >;
-    /**
-     * What the Turn on dialog asks: how many stored, open (unfulfilled, not
-     * cancelled) orders **Include them would actually start** — not merely
-     * match — and the placed date of the earliest. Paid or not, since an
-     * unpaid one qualifies the day it pays.
-     *
-     * Three exclusions, all of them the one-run-per-item rule read
-     * forward: an item whose tags do not match; an item already carrying a
-     * run, whoever started it, because a workflow turned on later never
-     * displaces one; and an item that another workflow's tag also
-     * matches, because that item would come out ambiguous and reconcile would
-     * create nothing on it. The last is why the whole {@link EligibleContext} is
-     * taken rather than the one workflow: ambiguity is a property of the set.
-     *
-     * Row cost: the open orders' items, once per dialog open.
-     */
-    readonly countWaitingOrders: (
-      input: EligibleContext & {
-        readonly workflow: Domain.WorkflowDetail;
-      },
-    ) => Effect.Effect<
-      Domain.WaitingOrders,
+      ReconcileAllSums,
       SqlError.SqlError | RunRepositoryError
     >;
     /**
@@ -325,12 +244,10 @@ export class RunRepository extends Context.Service<
      * final ({@link Domain.RunState}). The merchant confirmed the loss in
      * the Change workflow modal, or chose a new workflow for an item whose
      * run had already ended.
-     *
-     * Attach is the merchant's opt-in, so the date rule does not apply to it.
      */
     readonly setRun: (input: {
       readonly workflow: Domain.WorkflowDetail;
-      readonly teams: EligibleContext["teams"];
+      readonly teams: Domain.EligibleContext["teams"];
       readonly order: Domain.ShopOrder;
       readonly lineItem: Domain.OrderLineItem;
     }) => Effect.Effect<
@@ -389,7 +306,7 @@ export class RunRepository extends Context.Service<
     readonly cancelRun: (input: {
       readonly runId: string;
     }) => Effect.Effect<
-      void,
+      { readonly ceilingReleased: boolean },
       | SqlError.SqlError
       | RunRepositoryError
       | RunNotFoundError
@@ -552,7 +469,7 @@ export class RunRepository extends Context.Service<
     readonly markTaskDone: (
       input: Domain.MarkTaskDoneCommand,
     ) => Effect.Effect<
-      void,
+      { readonly ceilingReleased: boolean },
       | SqlError.SqlError
       | RunRepositoryError
       | RunNotFoundError
@@ -1014,8 +931,7 @@ export class RunRepository extends Context.Service<
        * is never recomputed away.
        */
       const recomputeState = (runId: string, now: number) =>
-        Effect.andThen(
-          sql`
+        sql`
           update Run set
             state = (
               select case
@@ -1026,11 +942,7 @@ export class RunRepository extends Context.Service<
             ),
             updatedAt = ${now}
           where id = ${runId}
-        `,
-          // The one transition that can lower the open-run count is a run going
-          // `done`, and it goes `done` here or nowhere.
-          releaseOpenRunLimit(),
-        );
+        `.pipe(Effect.asVoid);
 
       /**
        * `Run_state_idx` serves this; the scan it costs is bounded by
@@ -1048,8 +960,14 @@ export class RunRepository extends Context.Service<
       );
 
       /**
-       * Clears the banner once the shop is back under the ceiling. The column
-       * is read first so the common case — never limited — is one row read and no
+       * Clears the banner once the shop is back under the ceiling, and says
+       * whether it did: `true` means reconcile declined runs while the shop
+       * was at the ceiling and there is now room, so the caller runs a
+       * reconcile all to create them. Called after each write that can lower
+       * the open-run count, and only those: a run's last Done
+       * ({@link markTaskDone}), Cancel workflow ({@link cancelRun}) and a
+       * close by reconcile ({@link reconcileOrder}). The column is read
+       * first so the common case — never limited — is one row read and no
        * count, which matters because this runs on transitions as ordinary as
        * marking a task done.
        */
@@ -1059,9 +977,11 @@ export class RunRepository extends Context.Service<
         const rows =
           yield* sql`select openRunsLimitedAt from ShopUsage where id = 1`
             .values;
-        if (rows[0]?.[0] === null || rows[0]?.[0] === undefined) return;
-        if ((yield* openRunCount()) < Domain.ShopLimits.maxOpenRuns)
-          yield* sql`update ShopUsage set openRunsLimitedAt = null where id = 1`;
+        if (rows[0]?.[0] === null || rows[0]?.[0] === undefined) return false;
+        if ((yield* openRunCount()) >= Domain.ShopLimits.maxOpenRuns)
+          return false;
+        yield* sql`update ShopUsage set openRunsLimitedAt = null where id = 1`;
+        return true;
       });
 
       /**
@@ -1069,8 +989,11 @@ export class RunRepository extends Context.Service<
        * ({@link Domain.ClosedReason}), and returns how many. The one close
        * write, for reconcile and Cancel workflow alike. The tasks and the note
        * stay as the record; the block and the quantity badge go, because they
-       * are about work that has stopped ({@link Domain.RunState}). Closing
-       * lowers the open-run count, so the ceiling banner is re-checked.
+       * are about work that has stopped ({@link Domain.RunState}).
+       *
+       * It does not release the ceiling itself: the caller does, once, after
+       * all of its closes ({@link releaseOpenRunLimit}), so a pass that
+       * closes several runs reads the count once.
        */
       const closeOpenRuns = (
         where: Statement.Fragment,
@@ -1084,10 +1007,7 @@ export class RunRepository extends Context.Service<
               quantityChangedFrom = null, updatedAt = ${now}
           where ${where} and state = 'open'
           returning id
-        `.pipe(
-          Effect.tap(() => releaseOpenRunLimit()),
-          Effect.map((rows) => rows.length),
-        );
+        `.pipe(Effect.map((rows) => rows.length));
 
       /**
        * `workflowIsEligible` has already required every task's team to be in `teams`,
@@ -1106,7 +1026,7 @@ export class RunRepository extends Context.Service<
         lineItem,
       }: {
         readonly workflow: Domain.WorkflowDetail;
-        readonly teams: EligibleContext["teams"];
+        readonly teams: Domain.EligibleContext["teams"];
         readonly order: Domain.ShopOrder;
         readonly lineItem: Domain.OrderLineItem;
       }) {
@@ -1160,162 +1080,173 @@ export class RunRepository extends Context.Service<
       `;
 
       /**
-       * `OrderLineItem.matchedWorkflowIds` is written on the way through, so
-       * it is current only for the orders this function walks all of: an
-       * order that is cancelled or fulfilled returns before the column is
-       * touched, and `reconcileAll` skips unpaid orders entirely. The badges
-       * derived from it (`Domain.ambiguousItems`, the index's "Choose a
-       * workflow") are therefore current for **open, paid** orders and may be
-       * stale for any other — which is the right trade: a closed order's
-       * matches are of no interest, and an unpaid one is reconciled the
-       * moment it pays.
+       * Reads the order, its items and its runs, calls
+       * {@link Domain.reconcileItem} per item, and executes the outcomes;
+       * the rule is there. A run whose item is no longer stored is planned as
+       * an item at zero units, so it closes as `item_removed`.
        *
-       * **Close, never flag.** A Shopify change is applied to the runs and
-       * waits on nobody ({@link Domain.RunState}): the order cancelled or
-       * fulfilled closes every open run, a line at zero units closes its
-       * open run, and a quantity change resizes an open run. A `done` run is
-       * never touched, whatever the order does, because it is the record of
-       * what was made; a closed run is already over.
+       * The open-run ceiling is counted once, before the items, and each
+       * create spends one place. At the ceiling the planner declines rather
+       * than failing: this runs inside the order's upsert transaction, so
+       * failing would fail the webhook, Shopify would retry it for four hours,
+       * and no retry can fix a condition that only marking work done clears.
+       * The order is stored, shows on the index with no workflow, and
+       * `ShopUsage.openRunsLimitedAt` raises a persistent banner naming the
+       * cause. The write that brings the shop back under the ceiling, a Done,
+       * a Cancel workflow or a close by this pass, releases it
+       * ({@link releaseOpenRunLimit}) and its caller runs a reconcile all,
+       * so the declined runs are created then.
        *
-       * Two gates, deliberately split. `Domain.orderIsCancelled` and
-       * `Domain.orderIsFulfilled` are the stop gates and return early;
-       * `Domain.orderCanCreateRuns` (paid) gates only run *creation*. Adjusting
-       * open runs against their items happens whether or not the order
-       * is currently paid, so an edit that pushes a paid order back to
-       * unpaid keeps its runs, still tracks removals and quantity changes,
-       * and simply creates nothing new until the balance lands — a payment
-       * wobble must never cancel work in progress.
+       * `ReconcileCounts.ambiguous` counts an ambiguous item only when the
+       * order can create runs ({@link Domain.orderCanCreateRuns}), the same
+       * rule as the `ambiguous` issue.
        */
       const reconcileOrder = Effect.fn("RunRepository.reconcileOrder")(
         function* ({
           orderId,
           workflows,
           teams,
-        }: EligibleContext & { readonly orderId: string }) {
+        }: Domain.EligibleContext & { readonly orderId: string }) {
           const now = yield* Clock.currentTimeMillis;
           const [order] = yield* decodeOrders(
             yield* sql`select ${orderColumns} from ShopOrder where id = ${orderId}`,
           );
           if (order === undefined) return NO_COUNTS;
-          const earlyExit = (status: "cancelled" | "fulfilled") =>
-            Effect.logInfo(
+          if (
+            Domain.orderIsCancelled(order) ||
+            Domain.orderIsFulfilled(order)
+          ) {
+            const status = Domain.orderIsCancelled(order)
+              ? "cancelled"
+              : "fulfilled";
+            yield* Effect.logInfo(
               `RunRepository.reconcileOrder: orderId=${orderId} status=${status}`,
             ).pipe(Effect.annotateLogs({ orderId, status }));
-          if (Domain.orderIsCancelled(order)) {
-            yield* earlyExit("cancelled");
-            return {
-              ...NO_COUNTS,
-              closed: yield* closeOpenRuns(
-                sql`orderId = ${orderId}`,
-                "order_cancelled",
-                now,
-              ),
-            };
           }
-          /**
-           * Nothing left to make: every open run closes, started or not,
-           * because the work is over whether or not anyone started it. Partial fulfillment changes nothing anywhere:
-           * fulfilling a line leaves its `currentQuantity` alone, so neither
-           * this branch nor `adjust` below sees a difference
-           * ({@link Domain.unitsToMake}).
-           */
-          if (Domain.orderIsFulfilled(order)) {
-            yield* earlyExit("fulfilled");
-            return {
-              ...NO_COUNTS,
-              closed: yield* closeOpenRuns(
-                sql`orderId = ${orderId}`,
-                "fulfilled",
-                now,
-              ),
-            };
-          }
-          const orderCanCreate = Domain.orderCanCreateRuns(order);
           const lineItems = yield* decodeLineItems(
             yield* sql`select * from OrderLineItem where orderId = ${orderId}`,
           );
-          // Every run on the order, adjusted below against its item.
           const runs = yield* decodeRuns(
             yield* sql`select * from Run where orderId = ${orderId}`,
           );
-          const eligible = workflows.filter((workflow) =>
-            workflowIsEligible(workflow, teams),
+          const open = yield* withTasks(runs.filter(Domain.runIsOpen));
+          const details = runs.map(
+            (run): Domain.RunDetail =>
+              open.find((detail) => detail.run.id === run.id) ?? {
+                run,
+                tasks: [],
+              },
           );
-          /**
-           * One run per item, not the cross product. Each item records
-           * every eligible workflow that matched it, and only a *single*
-           * match with no run creates anything:
-           *
-           * - two or more matches is an ambiguity, and picking for the
-           *   merchant would route work to the wrong team silently, so
-           *   nothing starts and the order page asks;
-           * - a run in any state, `done` and `closed` included, already owns
-           *   the item, so a workflow turned on later never displaces it —
-           *   which is the whole of the "existing runs win" rule, no extra
-           *   code.
-           *
-           * `matchedWorkflowIds` is written on every pass, including when the
-           * order cannot create runs yet, so an unpaid order already carries
-           * its matches the moment payment lands, and so the column can never
-           * go stale behind a definition change.
-           */
-          const matches = lineItems.map((lineItem) => ({
-            lineItem,
-            matched: eligible.filter((workflow) =>
-              matchesLineItem(workflow, order, lineItem),
-            ),
-            hasRun: runs.some((run) => run.lineItemId === lineItem.id),
-          }));
-          yield* Effect.forEach(
-            matches,
-            ({ lineItem, matched }) => sql`
-              update OrderLineItem
-              set matchedWorkflowIds = ${json(matched.map(({ workflow }) => workflow.id))}
-              where id = ${lineItem.id}
-            `,
-            { discard: true },
-          );
-          const ambiguous = matches.filter(
-            ({ matched, hasRun }) => !hasRun && matched.length >= 2,
-          );
-          yield* Effect.forEach(
-            ambiguous,
-            ({ lineItem, matched }) =>
-              Effect.logInfo(
-                `RunRepository.reconcileOrder: orderId=${orderId} lineItemId=${lineItem.id} matched=${String(matched.length)}: ambiguous, no run created`,
-              ).pipe(
-                Effect.annotateLogs({
-                  orderId,
-                  lineItemId: lineItem.id,
-                  matched: matched.length,
-                }),
-              ),
-            { discard: true },
-          );
-          const toStart = orderCanCreate
-            ? matches.flatMap(({ lineItem, matched, hasRun }) =>
-                hasRun || matched.length !== 1 || matched[0] === undefined
-                  ? []
-                  : [{ lineItem, workflow: matched[0] }],
-              )
-            : [];
-          /**
-           * Auto-start yields to the ceiling rather than failing: this runs
-           * inside the order's upsert transaction, so failing would fail the
-           * webhook, Shopify would retry it for four hours, and no retry can
-           * fix a condition that only marking work done clears — the order write
-           * would be lost for nothing. The order is stored, shows on the index
-           * with no workflow, `ShopUsage.openRunsLimitedAt` raises a persistent
-           * banner naming the cause, and the next `reconcileAll` starts it once
-           * there is room, because that pass walks every open order.
-           */
-          const capacity = Math.max(
-            0,
-            toStart.length === 0
-              ? 0
-              : Domain.ShopLimits.maxOpenRuns - (yield* openRunCount()),
-          );
-          const declined = toStart.length - Math.min(capacity, toStart.length);
+          const stored = new Set(lineItems.map((lineItem) => lineItem.id));
+          const entries = [
+            ...lineItems.map((lineItem) => ({
+              lineItem: Option.some(lineItem),
+              item: lineItem,
+              run:
+                details.find(({ run }) => run.lineItemId === lineItem.id) ??
+                null,
+              matched: Domain.matchedWorkflows(lineItem, workflows, teams),
+            })),
+            ...details
+              .filter(({ run }) => !stored.has(run.lineItemId))
+              .map((detail) => ({
+                lineItem: Option.none<Domain.OrderLineItem>(),
+                item: { currentQuantity: 0 },
+                run: detail,
+                matched: [],
+              })),
+          ];
+          const mayCreate =
+            Domain.orderCanCreateRuns(order) &&
+            entries.some(
+              ({ run, matched }) => run === null && matched.length === 1,
+            );
+          const room = mayCreate
+            ? Domain.ShopLimits.maxOpenRuns - (yield* openRunCount())
+            : 0;
+          const planned = entries.reduce<{
+            readonly room: number;
+            readonly plans: readonly {
+              readonly entry: (typeof entries)[number];
+              readonly outcome: Domain.ReconcileOutcome;
+            }[];
+          }>(
+            (acc, entry) => {
+              const outcome = Domain.reconcileItem({
+                order,
+                item: entry.item,
+                run: entry.run,
+                matched: entry.matched.map(({ workflow }) => workflow.id),
+                atCeiling: acc.room <= 0,
+              });
+              return {
+                room: acc.room - (outcome._tag === "create" ? 1 : 0),
+                plans: [...acc.plans, { entry, outcome }],
+              };
+            },
+            { room, plans: [] },
+          ).plans;
+          const execute = ({
+            entry: { lineItem, run, matched },
+            outcome,
+          }: (typeof planned)[number]) =>
+            Match.value(outcome).pipe(
+              Match.tagsExhaustive({
+                create: ({ workflowId }) => {
+                  const workflow = matched.find(
+                    (detail) => detail.workflow.id === workflowId,
+                  );
+                  return workflow === undefined || Option.isNone(lineItem)
+                    ? Effect.succeed(0)
+                    : insertRun({
+                        workflow,
+                        teams,
+                        order,
+                        lineItem: lineItem.value,
+                      }).pipe(
+                        Effect.map((inserted) =>
+                          Option.isSome(inserted) ? 1 : 0,
+                        ),
+                      );
+                },
+                close: ({ reason }) =>
+                  run === null
+                    ? Effect.succeed(0)
+                    : closeOpenRuns(sql`id = ${run.run.id}`, reason, now),
+                resize: ({ units, badge }) => {
+                  if (run === null) return Effect.succeed(0);
+                  const original = badge
+                    ? (run.run.quantityChangedFrom ?? run.run.quantity)
+                    : run.run.quantityChangedFrom;
+                  const from = original === units ? null : original;
+                  return sql`
+                    update Run
+                    set quantity = ${units}, quantityChangedFrom = ${from},
+                        updatedAt = ${now}
+                    where id = ${run.run.id}
+                  `.pipe(Effect.as(1));
+                },
+                nothing: () => Effect.succeed(0),
+              }),
+              Effect.map((count) => ({ tag: outcome._tag, count })),
+            );
+          const done = yield* Effect.forEach(planned, execute, {
+            concurrency: 1,
+          });
+          const sum = (tag: Domain.ReconcileOutcome["_tag"]) =>
+            done.reduce(
+              (total, result) =>
+                total + (result.tag === tag ? result.count : 0),
+              0,
+            );
+          // Release before the declined flag below: a pass that both closes
+          // and declines says it released (so its caller runs the reconcile
+          // all) and raises the banner again for what it declined.
+          const ceilingReleased =
+            sum("close") > 0 ? yield* releaseOpenRunLimit() : false;
+          const declined = planned.filter(
+            ({ outcome }) => outcome._tag === "nothing" && outcome.declined,
+          ).length;
           if (declined > 0) {
             yield* sql`
               update ShopUsage
@@ -1323,7 +1254,7 @@ export class RunRepository extends Context.Service<
               where id = 1
             `;
             yield* Effect.logError(
-              `RunRepository.reconcileOrder: orderId=${orderId} declined=${String(declined)} limit=${String(Domain.ShopLimits.maxOpenRuns)}: open-run ceiling reached, runs not started`,
+              `RunRepository.reconcileOrder: orderId=${orderId} declined=${String(declined)} limit=${String(Domain.ShopLimits.maxOpenRuns)}: open-run ceiling reached, runs not created`,
             ).pipe(
               Effect.annotateLogs({
                 orderId,
@@ -1332,76 +1263,31 @@ export class RunRepository extends Context.Service<
               }),
             );
           }
-          const inserted = yield* Effect.forEach(
-            toStart.slice(0, capacity),
-            ({ lineItem, workflow }) =>
-              insertRun({
-                workflow,
-                teams,
-                order,
-                lineItem,
-              }).pipe(
-                Effect.map(
-                  Option.map((run) => ({ run, item: lineItem.title })),
-                ),
-              ),
-          ).pipe(Effect.map((results) => results.filter(Option.isSome)));
-          const created = inserted.length;
-          /**
-           * Tracks `Domain.unitsToMake`, so a refund that lowers
-           * `currentQuantity` reads exactly like a merchant edit. Open runs
-           * only: a `done` run is the record of what was made and is never
-           * resized or closed, so a line whose units reach zero under it is
-           * the ordinary end of that work; a closed run is over.
-           *
-           * Zero units closes the run as `item_removed`. Any other change
-           * writes the new units onto the run; unless the run is
-           * {@link Domain.runIsUnstarted} it also keeps the original
-           * quantity in `quantityChangedFrom` for the
-           * badge, and a change back to that quantity clears the badge, since
-           * there is nothing left to tell. The rule is on
-           * {@link Domain.Run}.
-           */
-          const adjust = ({ run, tasks }: Domain.RunDetail) => {
-            const unchanged = Effect.succeed({ resized: 0, closed: 0 });
-            const lineItem = lineItems.find(
-              (item) => item.id === run.lineItemId,
-            );
-            const units =
-              lineItem === undefined ? 0 : Domain.unitsToMake(lineItem);
-            if (units === 0)
-              return closeOpenRuns(
-                sql`id = ${run.id}`,
-                "item_removed",
-                now,
-              ).pipe(Effect.map((closed) => ({ resized: 0, closed })));
-            if (units === run.quantity) return unchanged;
-            const original = Domain.runIsUnstarted(tasks)
-              ? run.quantityChangedFrom
-              : (run.quantityChangedFrom ?? run.quantity);
-            const from = original === units ? null : original;
-            return sql`
-                update Run
-                set quantity = ${units}, quantityChangedFrom = ${from},
-                    updatedAt = ${now}
-                where id = ${run.id}
-              `.pipe(Effect.as({ resized: 1, closed: 0 }));
-          };
-          const open = yield* withTasks(runs.filter(Domain.runIsOpen));
-          const adjusted = yield* Effect.all(open.map(adjust));
-          return adjusted.reduce<ReconcileCounts>(
-            (counts, delta) => ({
-              ...counts,
-              resized: counts.resized + delta.resized,
-              closed: counts.closed + delta.closed,
-            }),
-            {
-              created,
-              resized: 0,
-              closed: 0,
-              ambiguous: ambiguous.length,
-            },
+          const ambiguous = Domain.orderCanCreateRuns(order)
+            ? entries.flatMap(({ lineItem, run, matched }) =>
+                Option.isSome(lineItem) &&
+                run === null &&
+                Domain.unitsToMake(lineItem.value) > 0 &&
+                matched.length >= 2
+                  ? [{ lineItemId: lineItem.value.id, matched: matched.length }]
+                  : [],
+              )
+            : [];
+          yield* Effect.forEach(
+            ambiguous,
+            ({ lineItemId, matched }) =>
+              Effect.logInfo(
+                `RunRepository.reconcileOrder: orderId=${orderId} lineItemId=${lineItemId} matched=${String(matched)}: ambiguous, no run created`,
+              ).pipe(Effect.annotateLogs({ orderId, lineItemId, matched })),
+            { discard: true },
           );
+          return {
+            created: sum("create"),
+            resized: sum("resize"),
+            closed: sum("close"),
+            ambiguous: ambiguous.length,
+            ceilingReleased,
+          } satisfies ReconcileCounts;
         },
       );
 
@@ -1424,7 +1310,7 @@ export class RunRepository extends Context.Service<
         reconcileOrder,
 
         reconcileAll: Effect.fn("RunRepository.reconcileAll")(function* (
-          context: EligibleContext,
+          context: Domain.EligibleContext,
         ) {
           const ids = yield* openOrders.pipe(
             Effect.map((rows) => rows.map((row) => String(row.id))),
@@ -1437,67 +1323,11 @@ export class RunRepository extends Context.Service<
           );
           return {
             orders: ids.length,
-            created: counts.reduce((sum, { created }) => sum + created, 0),
-            ambiguous: counts.reduce(
-              (sum, { ambiguous }) => sum + ambiguous,
-              0,
-            ),
-          } satisfies ReconcileAllCounts;
+            created: counts.reduce((sum, c) => sum + c.created, 0),
+            ambiguous: counts.reduce((sum, c) => sum + c.ambiguous, 0),
+            ceilingReleased: counts.some((c) => c.ceilingReleased),
+          } satisfies ReconcileAllSums;
         }),
-
-        countWaitingOrders: Effect.fn("RunRepository.countWaitingOrders")(
-          function* ({
-            workflow,
-            workflows,
-            teams,
-          }: EligibleContext & { readonly workflow: Domain.WorkflowDetail }) {
-            // The open orders' items with no run on them. The tag
-            // test stays in TypeScript so this count and reconcile share one
-            // predicate, even though `Workflow.tag` is a plain column.
-            const rows = yield* decode(
-              Schema.Array(
-                Schema.Struct({
-                  orderId: Schema.String,
-                  processedAt: Schema.Number,
-                  currentQuantity: Schema.Number,
-                  productTags: Schema.fromJsonString(
-                    Schema.Array(Schema.String),
-                  ),
-                }),
-              ),
-              "Invalid waiting line item row",
-            )(
-              yield* sql`
-              select li.orderId, o.processedAt, li.currentQuantity, li.productTags
-              from OrderLineItem li
-              join ShopOrder o on o.id = li.orderId
-              where o.cancelledAt is null and o.fulfillmentStatus <> 'FULFILLED'
-                and li.currentQuantity > 0
-                and not exists (
-                  select 1 from Run r
-                  where r.lineItemId = li.id
-                )
-            `,
-            );
-            // Rivals: the other eligible workflows. An item any of them also
-            // matches is ambiguous the moment this one goes on, and ambiguity
-            // creates nothing, so it is not a waiting order.
-            const rivals = workflows.filter(
-              (candidate) =>
-                candidate.workflow.id !== workflow.workflow.id &&
-                workflowIsEligible(candidate, teams),
-            );
-            const matching = rows.filter(
-              (row) =>
-                matchesTag(workflow, row) &&
-                !rivals.some((rival) => matchesTag(rival, row)),
-            );
-            const byOrder = [
-              ...new Map(matching.map((row) => [row.orderId, row])).values(),
-            ];
-            return summarise(byOrder);
-          },
-        ),
 
         setRun: Effect.fn("RunRepository.setRun")(
           (input: Parameters<typeof insertRun>[0]) =>
@@ -1588,7 +1418,7 @@ export class RunRepository extends Context.Service<
         }: {
           readonly runId: string;
         }) {
-          yield* sql.withTransaction(
+          return yield* sql.withTransaction(
             Effect.gen(function* () {
               const run = yield* requireRun(runId);
               if (!Domain.runIsOpen(run))
@@ -1604,6 +1434,7 @@ export class RunRepository extends Context.Service<
                 "merchant_cancelled",
                 now,
               );
+              return { ceilingReleased: yield* releaseOpenRunLimit() };
             }),
           );
         }),
@@ -1937,7 +1768,7 @@ export class RunRepository extends Context.Service<
           actor,
           teamIds,
         }: Domain.MarkTaskDoneCommand) {
-          yield* sql.withTransaction(
+          return yield* sql.withTransaction(
             Effect.gen(function* () {
               const { run } = yield* requireActionable({
                 runTaskId,
@@ -1962,6 +1793,9 @@ export class RunRepository extends Context.Service<
                 `;
               yield* sql`update Run set quantityChangedFrom = null where id = ${run.id}`;
               yield* recomputeState(run.id, now);
+              // The one member write that can lower the open-run count: the
+              // run's last Done takes it out of `open`.
+              return { ceilingReleased: yield* releaseOpenRunLimit() };
             }),
           );
         }),

@@ -57,7 +57,7 @@ const TEAM = {
 };
 const ORDER_ID = "gid://shopify/Order/1";
 const LINE_ITEM_ID = "gid://shopify/LineItem/1";
-/** Ahead of the wall clock so the order is placed after the workflow is turned on. */
+/** The fixture's placed date; no rule compares it with a workflow. */
 const PROCESSED_AT = Date.now() + 60 * 60 * 1000;
 
 const order: Domain.ShopOrder = {
@@ -83,7 +83,6 @@ const lineItem: Domain.OrderLineItem = {
   quantity: 1,
   currentQuantity: 1,
   productTags: ["mug"],
-  matchedWorkflowIds: [],
   properties: [],
 };
 
@@ -176,8 +175,8 @@ describe("data model", () => {
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         const insert = (id: string, name: string, tag: string) => sql`
-          insert into Workflow (id, name, tag, updatedAt)
-          values (${id}, ${name}, ${tag}, 0)
+          insert into Workflow (id, name, tag, state, updatedAt)
+          values (${id}, ${name}, ${tag}, 'off', 0)
         `;
         yield* insert("w1", "Mugs", "mug");
         const sameTag = yield* Effect.flip(insert("w2", "Cups", "mug"));
@@ -194,8 +193,8 @@ describe("data model", () => {
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         yield* sql`
-          insert into Workflow (id, name, tag, updatedAt)
-          values ('w1', 'Mugs', 'mug', 0)
+          insert into Workflow (id, name, tag, state, updatedAt)
+          values ('w1', 'Mugs', 'mug', 'off', 0)
         `;
         const draft = sql`
           insert into WorkflowDraft (workflowId, updatedAt)

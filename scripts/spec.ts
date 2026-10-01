@@ -3,12 +3,14 @@
 // spec, the vocabulary (the map in src/lib/Domain.ts and each context file's
 // block under src/lib/domain/), the triggers table on `ShopUsage` in
 // src/lib/domain/Billing.ts (what each trigger
-// does to the usage counts and the usage-event queue), and the data-model
+// does to the usage counts and the usage-event queue), the triggers and
+// outcomes tables on `reconcileItem` in src/lib/domain/ShopWork.ts (when
+// reconcile runs and what it does to one item), and the data-model
 // tables on `initializeSchema` in src/lib/ShopAgentSchema.ts (the object) and
 // on `D1_TABLES` in src/lib/D1Schema.ts (D1).
 //
-//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the vocabulary, its contexts, its screen columns, its stored cells against the DDL and its Screens table, parse the triggers table and both data-model tables and refuse a pinned title no test carries, parse the copy and controls tables in src/lib/Screen.ts and refuse an example no screen shows (exit 1 on any failure)
-//   node scripts/spec.ts print   render the parsed rows and how many fixtures each expands to, then the triggers rows, then the data-model rows
+//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the vocabulary, its contexts, its screen columns, its stored cells against the DDL and its Screens table, parse the triggers table, both reconcile tables and both data-model tables and refuse a pinned title no test carries, parse the copy and controls tables in src/lib/Screen.ts and refuse an example no screen shows (exit 1 on any failure)
+//   node scripts/spec.ts print   render the parsed rows and how many fixtures each expands to, then the triggers rows, then the reconcile rows, then the data-model rows
 
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import { Console, Effect, Result } from "effect";
@@ -174,6 +176,15 @@ const checkCommand = Command.make(
         onSuccess: (rows) =>
           ActionTable.checkPinned(rows, testSources, "ShopUsage"),
       }),
+      ...Result.match(ActionTable.parseReconcileTriggers(contexts.ShopWork), {
+        onFailure: (error) => [error.message],
+        onSuccess: (rows) =>
+          ActionTable.checkPinned(rows, testSources, "reconcileItem"),
+      }),
+      ...Result.match(ActionTable.parseReconcileOutcomes(contexts.ShopWork), {
+        onFailure: (error) => [error.message],
+        onSuccess: () => [],
+      }),
       ...dataModels.flatMap(({ source, options }) =>
         Result.match(ActionTable.parseDataModel(source, options), {
           onFailure: (error) => [error.message],
@@ -203,7 +214,7 @@ const checkCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Parse the action tables in domain/ShopWork.ts, check the vocabulary in Domain.ts and domain/ and its stored cells against the DDL in ShopAgentSchema.ts, check the triggers table on ShopUsage in domain/Billing.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts, and check the copy and controls tables in Screen.ts; exit 1 on any failure",
+    "Parse the action tables and the reconcile tables in domain/ShopWork.ts, check the vocabulary in Domain.ts and domain/ and its stored cells against the DDL in ShopAgentSchema.ts, check the triggers table on ShopUsage in domain/Billing.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts, and check the copy and controls tables in Screen.ts; exit 1 on any failure",
   ),
 );
 
@@ -246,6 +257,32 @@ const printCommand = Command.make(
       },
     );
     for (const line of triggers) yield* Console.log(`  ${line}`);
+    yield* Console.log("reconcileItem triggers");
+    const reconcileTriggers = Result.match(
+      ActionTable.parseReconcileTriggers(contexts.ShopWork),
+      {
+        onFailure: (error) => [error.message],
+        onSuccess: (rows) =>
+          rows.map(
+            (row) =>
+              `${row.trigger}: ${row.shape}, skipped when ${row.skippedWhen} — ${row.pinnedBy}`,
+          ),
+      },
+    );
+    for (const line of reconcileTriggers) yield* Console.log(`  ${line}`);
+    yield* Console.log("reconcileItem outcomes");
+    const outcomes = Result.match(
+      ActionTable.parseReconcileOutcomes(contexts.ShopWork),
+      {
+        onFailure: (error) => [error.message],
+        onSuccess: (rows) =>
+          rows.map(
+            (row) =>
+              `[${String(ActionTable.expandReconcileOutcome(row).length)}] ${row.text}`,
+          ),
+      },
+    );
+    for (const line of outcomes) yield* Console.log(`  ${line}`);
     for (const { source: dataModel, options } of yield* readDataModels) {
       yield* Console.log(options.symbol);
       const rows = Result.match(
@@ -264,7 +301,7 @@ const printCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Render the parsed action tables and their fixture counts, then the triggers rows, then the data-model rows",
+    "Render the parsed action tables and their fixture counts, then the triggers rows, then the reconcile rows and their fixture counts, then the data-model rows",
   ),
 );
 

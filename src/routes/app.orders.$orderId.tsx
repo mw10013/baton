@@ -1033,9 +1033,9 @@ function RouteComponent() {
     const actions = Domain.runActions(MERCHANT, order, run, tasks, item);
     const now = nowLine({ run, tasks });
     const teamIssues = teamIssueRows(tasks, teams, assignTeam);
-    const options = itemWorkflows.filter(
-      (workflow) => workflow.id !== run.workflowId,
-    );
+    const options = itemWorkflows
+      .map(({ workflow }) => workflow)
+      .filter((workflow) => workflow.id !== run.workflowId);
     /**
      * `Change workflow`, handed to `manageRows`. Absent when the field is
      * false or when the shop's only workflow that is on is the one the item
@@ -1216,7 +1216,7 @@ function RouteComponent() {
    */
   const renderLineItem = (item: Domain.OrderLineItem) => {
     const toMake = Domain.unitsToMake(item);
-    const itemState = Domain.lineItemState(item, runs, itemWorkflows);
+    const itemState = Domain.lineItemState(item, runs, itemWorkflows, teams);
     /**
      * Quantity and SKU, as one subdued line under the title. No product tags:
      * they were "why a workflow matched", and on an ambiguous item the

@@ -15,7 +15,6 @@ import { LocalDateTime } from "@/components/LocalDateTime";
 import { StepFlow, TeamIssueBanners } from "@/components/WorkflowSteps";
 import {
   switchResultMessage,
-  AppliesSince,
   WorkflowSwitch,
 } from "@/components/WorkflowSwitch";
 import * as WorkflowTag from "@/components/WorkflowTag";
@@ -356,13 +355,6 @@ function RouteComponent() {
                   reaches the page. */}
               <s-paragraph>{switchResultMessage(blocker)}</s-paragraph>
             </s-banner>
-          )}
-
-          {workflow.activatedAt !== null && (
-            <AppliesSince
-              activatedAt={workflow.activatedAt}
-              disabled={!identified}
-            />
           )}
 
           <TeamIssueBanners tasks={tasks} />

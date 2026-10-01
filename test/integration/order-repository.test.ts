@@ -77,7 +77,6 @@ const aLineItem = (
   quantity: 1,
   currentQuantity: 1,
   productTags: ["engraved"],
-  matchedWorkflowIds: [],
   properties: [{ key: "text", value: "Hello" }],
   ...overrides,
 });
@@ -298,13 +297,12 @@ describe("OrderRepository.listOrders", () => {
  * with no issue. `#1010`'s only run is closed, which still reads not started
  * but decides the item, so it is no issue.
  *
- * `#1012` and `#1013` are the ambiguity cases, written with
- * `matchedWorkflowIds` directly because reconcile is the only writer of that
- * column and this test has no `RunRepository`. `#1013` has an open
- * run *and* an item still waiting on a choice: `making` with the issue
- * `choose_workflow`. Between them they are also the proof that
- * `json_array_length` exists in Durable Object SQLite — every
- * `AMBIGUOUS_ITEM` fragment would throw without it.
+ * `#1012` and `#1013` are the ambiguity cases: their items carry the tags
+ * of two on workflows, `w1` and `w2`, which the fixture writes directly.
+ * `#1013` has an open run *and* an item still waiting on a choice: `making`
+ * with the issue `ambiguous`. Between them they are also the proof
+ * that `json_each` exists in Durable Object SQLite — every `AMBIGUOUS_ITEM`
+ * fragment would throw without it.
  */
 const seedStates = Effect.gen(function* () {
   const repository = yield* OrderRepository;
@@ -313,7 +311,7 @@ const seedStates = Effect.gen(function* () {
     readonly n: number;
     readonly order?: Partial<Domain.ShopOrder>;
     readonly states: readonly Domain.RunState[];
-    /** Written onto the order's own item; two or more with no run on it is ambiguous. */
+    /** The product tags of the order's own item; two on workflows' tags and no run on it is ambiguous. */
     readonly matched?: readonly string[];
   }[] = [
     { n: 1, states: ["done"] }, // made
@@ -337,6 +335,16 @@ const seedStates = Effect.gen(function* () {
       matched: ["w1", "w2"],
     }, // making
   ];
+  for (const id of ["w1", "w2"]) {
+    yield* sql`
+      insert into Workflow (id, name, tag, state, updatedAt)
+      values (${id}, ${id}, ${id}, 'on', 0)
+    `;
+    yield* sql`
+      insert into WorkflowTask (id, workflowId, position, step, name, teamId)
+      values (${`${id}-task`}, ${id}, 1, 1, 'Task', 'team-cut')
+    `;
+  }
   for (const { n, order, states, matched } of cases) {
     yield* upsert(
       repository,
@@ -351,13 +359,7 @@ const seedStates = Effect.gen(function* () {
       [
         aLineItem(n, {
           orderId: orderId(n),
-          ...(matched === undefined
-            ? {}
-            : {
-                matchedWorkflowIds: matched.map((id) =>
-                  Schema.decodeUnknownSync(Domain.WorkflowId)(id),
-                ),
-              }),
+          ...(matched === undefined ? {} : { productTags: matched }),
         }),
       ],
     );
@@ -442,6 +444,82 @@ const seedIssues = Effect.gen(function* () {
       teams,
     });
   return { list };
+});
+
+describe("OrderRepository.listOrders ambiguity", () => {
+  /**
+   * `AMBIGUOUS_ITEM` is the SQL twin of `Domain.itemMatches`. Of four
+   * workflows tagged for the first item, two are on with every task on a
+   * team, one is off and one has an unassigned task, so the item is
+   * ambiguous; the second item carries one eligible workflow's tag and the
+   * two ineligible ones', so it is not. SQL and TypeScript count the same.
+   */
+  it("the index's ambiguity predicate agrees with ambiguousItems", async () => {
+    const { sqlCount, tsCount } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        const sql = yield* SqlClient.SqlClient;
+        const cases: readonly (readonly [
+          string,
+          Domain.WorkflowState,
+          string | null,
+        ])[] = [
+          ["w1", "on", "team-cut"],
+          ["w2", "on", "team-cut"],
+          ["w3", "off", "team-cut"],
+          ["w4", "on", null],
+        ];
+        for (const [id, state, teamId] of cases) {
+          yield* sql`
+            insert into Workflow (id, name, tag, state, updatedAt)
+            values (${id}, ${id}, ${id}, ${state}, 0)
+          `;
+          yield* sql`
+            insert into WorkflowTask (id, workflowId, position, step, name, teamId)
+            values (${`${id}-task`}, ${id}, 1, 1, 'Task', ${teamId})
+          `;
+        }
+        const details = cases.map(([id, state, teamId]) =>
+          Schema.decodeUnknownSync(Domain.WorkflowDetail)({
+            workflow: { id, name: id, tag: id, state, updatedAt: 0 },
+            tasks: [
+              {
+                id: `${id}-task`,
+                workflowId: id,
+                position: 1,
+                step: 1,
+                name: "Task",
+                teamId,
+                instructions: null,
+              },
+            ],
+          }),
+        );
+        const teams = Schema.decodeUnknownSync(
+          Schema.Array(Domain.TeamWithMemberCount),
+        )([{ id: "team-cut", name: "Cut", memberCount: 1 }]);
+        const lineItems = [
+          aLineItem(1, { productTags: ["w1", "w2", "w3", "w4"] }),
+          aLineItem(2, { productTags: ["w1", "w3", "w4"] }),
+        ];
+        yield* upsert(repository, anOrder({ fullyPaid: true }), lineItems);
+        const page = yield* repository.listOrders({
+          limit: 20,
+          cursor: null,
+          q: null,
+          view: null,
+          team: null,
+          teams,
+        });
+        return {
+          sqlCount: page.orders[0]?.ambiguousItems,
+          tsCount: Domain.ambiguousItems(lineItems, [], details, teams),
+        };
+      }),
+    );
+    strictEqual(tsCount, 1);
+    strictEqual(sqlCount, tsCount);
+  });
 });
 
 describe("OrderRepository.listOrders views", () => {
@@ -1224,7 +1302,7 @@ describe("OrderRepository usage", () => {
     strictEqual(after.cycleEndAt, null);
   });
 
-  it("a manual run start past the cycle end counts into the new cycle", async () => {
+  it("a manual attach past the cycle end counts into the new cycle", async () => {
     const usage = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
@@ -1441,14 +1519,31 @@ describe("OrderRepository usage", () => {
           };
         }),
       );
-      deepStrictEqual(first, { written: true, fresh: true, refused: false });
+      const none = Option.none();
+      deepStrictEqual(first, {
+        written: true,
+        fresh: true,
+        refused: false,
+        afterWrite: none,
+      });
       deepStrictEqual(uncounted, {
         written: true,
         fresh: true,
         refused: false,
+        afterWrite: none,
       });
-      deepStrictEqual(second, { written: false, fresh: false, refused: true });
-      deepStrictEqual(third, { written: true, fresh: false, refused: false });
+      deepStrictEqual(second, {
+        written: false,
+        fresh: false,
+        refused: true,
+        afterWrite: none,
+      });
+      deepStrictEqual(third, {
+        written: true,
+        fresh: false,
+        refused: false,
+        afterWrite: none,
+      });
       strictEqual(usage.ordersThisCycle, 1);
       strictEqual(usage.ordersLimitedAt !== null, true);
     } finally {
@@ -1983,7 +2078,12 @@ describe("OrderRepository retention", () => {
         return { expired, kept, aged, orders };
       }),
     );
-    deepStrictEqual(expired, { written: false, fresh: false, refused: false });
+    deepStrictEqual(expired, {
+      written: false,
+      fresh: false,
+      refused: false,
+      afterWrite: Option.none(),
+    });
     strictEqual(kept.written, true);
     strictEqual(aged.written, true);
     deepStrictEqual(orders, [orderId(2), orderId(3)]);

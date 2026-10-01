@@ -75,7 +75,6 @@ const seedOrder = (shop: string) =>
                 quantity: 1,
                 currentQuantity: 1,
                 productTags: [],
-                matchedWorkflowIds: [],
                 properties: [],
               },
             ],

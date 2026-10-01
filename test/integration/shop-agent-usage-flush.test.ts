@@ -119,7 +119,6 @@ const seedOrder = (shop: string, processedAt: number, tag: string) =>
                 quantity: 1,
                 currentQuantity: 1,
                 productTags: [tag],
-                matchedWorkflowIds: [],
                 properties: [],
               },
             ],
@@ -178,9 +177,9 @@ describe("ShopAgent usage flush", () => {
     const team = await seedTeam(shop);
     const agent = await getAgentByName(env.SHOP_AGENT, shop);
     await openCycle(agent);
-    await seedOrder(shop, Date.now() - DAY, "engrave");
+    // Tagged for no workflow, so nothing creates its run but the attach.
+    await seedOrder(shop, Date.now() - DAY, "untagged");
     const workflowId = await offWorkflow(agent, "engrave", team.id);
-    // On after the order was placed, so nothing starts it but the attach.
     await agent.setWorkflowOn({ workflowId, on: true });
     strictEqual(appEvents.length, 0);
 
@@ -200,12 +199,10 @@ describe("ShopAgent usage flush", () => {
     const agent = await getAgentByName(env.SHOP_AGENT, shop);
     await openCycle(agent);
     const workflowId = await offWorkflow(agent, "engrave", team.id);
-    // Placed after the Turn on below, so the reconcile it runs starts it.
-    await seedOrder(shop, Date.now() + 60 * 60 * 1000, "engrave");
+    await seedOrder(shop, Date.now(), "engrave");
 
     const on = await agent.setWorkflowOn({ workflowId, on: true });
     if (on._tag !== "Ok") throw new Error(on._tag);
-    strictEqual(on.created, 1);
     deepStrictEqual(appEvents, [{ idempotencyKey: countKey, value: 1 }]);
     const usage = await agent.getUsage();
     strictEqual(usage.pendingUsageEvents, 0);
