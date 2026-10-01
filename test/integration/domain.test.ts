@@ -26,7 +26,7 @@ const order = (
 const row = (
   runs: Partial<Domain.RunCounts>,
   overrides: Partial<Domain.ShopOrder> = {},
-  ambiguousItems = 0,
+  multiMatchItems = 0,
 ): Domain.OrderRow => ({
   order: order(overrides),
   itemUnits: 1,
@@ -34,7 +34,7 @@ const row = (
   unassigned: false,
   emptyTeam: false,
   waitingOn: [],
-  ambiguousItems,
+  multiMatchItems,
 });
 
 const NONE = {
@@ -48,7 +48,7 @@ describe("Domain.orderPosition", () => {
     ["no open and no done run is not started", row(NONE), "not_started"],
     ["any open run is making", row({ open: 1, done: 1 }), "making"],
     [
-      "an ambiguous item does not move the position: one item chosen, another waiting",
+      "a multi-match item does not move the position: one item chosen, another waiting",
       row({ open: 1 }, {}, 1),
       "making",
     ],
@@ -94,16 +94,18 @@ describe("Domain.orderPosition", () => {
 });
 
 describe("Domain.orderIssues", () => {
-  it("an order with no run and no ambiguous item has no issue", () => {
+  it("an order with no run and no multi-match item has no issue", () => {
     deepStrictEqual(Domain.orderIssues(row(NONE)), []);
     deepStrictEqual(Domain.orderIssues(row(NONE, { fullyPaid: false })), []);
     deepStrictEqual(Domain.orderIssues(row({ open: 1 })), []);
     deepStrictEqual(Domain.orderIssues(row({ done: 1 })), []);
-    deepStrictEqual(Domain.orderIssues(row(NONE, {}, 1)), ["ambiguous"]);
+    deepStrictEqual(Domain.orderIssues(row(NONE, {}, 1)), ["multi_match"]);
   });
 
-  it("ambiguous: an item two workflows match, on an order that can create runs", () => {
-    deepStrictEqual(Domain.orderIssues(row({ open: 1 }, {}, 1)), ["ambiguous"]);
+  it("multi-match: an item two workflows match, on an order that can create runs", () => {
+    deepStrictEqual(Domain.orderIssues(row({ open: 1 }, {}, 1)), [
+      "multi_match",
+    ]);
     deepStrictEqual(Domain.orderIssues(row(NONE, { fullyPaid: false }, 1)), []);
   });
 
@@ -144,7 +146,7 @@ describe("Domain.orderIssues", () => {
         ...row({ open: 2, blocked: 1 }, {}, 1),
         unassigned: true,
       }),
-      ["ambiguous", "unassigned", "blocked"],
+      ["multi_match", "unassigned", "blocked"],
     );
   });
 
@@ -264,9 +266,9 @@ const runOn = (lineItemId: string, state: Domain.RunState): Domain.Run => ({
   lineItemId,
 });
 
-describe("Domain.ambiguousItems", () => {
+describe("Domain.multiMatchItems", () => {
   /**
-   * The same three conditions `OrderRepository`'s `AMBIGUOUS_ITEM` spells out
+   * The same three conditions `OrderRepository`'s `MULTI_MATCH_ITEM` spells out
    * in SQL. A `done` run counts on purpose: a done item does not get a
    * second route, so it is not a decision anyone is waiting on. A cancelled
    * run is deleted (`Domain.RunState`), so a cancel makes the item a
@@ -274,37 +276,37 @@ describe("Domain.ambiguousItems", () => {
    * case below.
    */
   it("counts items with two matches, units to make, and no run", () => {
-    const ambiguousItems = (
+    const multiMatchItems = (
       lineItems: readonly Domain.OrderLineItem[],
       runs: readonly Domain.Run[],
-    ) => Domain.ambiguousItems(lineItems, runs, DETAILS, TEAMS);
+    ) => Domain.multiMatchItems(lineItems, runs, DETAILS, TEAMS);
     strictEqual(
-      ambiguousItems([lineItem("a", ["w1", "w2"])], []),
+      multiMatchItems([lineItem("a", ["w1", "w2"])], []),
       1,
       "two matches and no run",
     );
     strictEqual(
-      ambiguousItems([lineItem("a", ["w1"])], []),
+      multiMatchItems([lineItem("a", ["w1"])], []),
       0,
       "one match is not a decision",
     );
     strictEqual(
-      ambiguousItems([lineItem("a", ["w1", "w2"], 0)], []),
+      multiMatchItems([lineItem("a", ["w1", "w2"], 0)], []),
       0,
       "nothing left to make",
     );
     strictEqual(
-      ambiguousItems([lineItem("a", ["w1", "w2"])], [runOn("a", "open")]),
+      multiMatchItems([lineItem("a", ["w1", "w2"])], [runOn("a", "open")]),
       0,
       "a run owns the item",
     );
     strictEqual(
-      ambiguousItems([lineItem("a", ["w1", "w2"])], [runOn("a", "done")]),
+      multiMatchItems([lineItem("a", ["w1", "w2"])], [runOn("a", "done")]),
       0,
       "a done run owns the item: a done item gets no second route",
     );
     strictEqual(
-      ambiguousItems(
+      multiMatchItems(
         [lineItem("a", ["w1", "w2"]), lineItem("b", ["w1", "w2"])],
         [runOn("b", "open")],
       ),
@@ -320,7 +322,7 @@ describe("Domain.ambiguousItems", () => {
       detailOf("w3", "on", null),
     ];
     strictEqual(
-      Domain.ambiguousItems(
+      Domain.multiMatchItems(
         [lineItem("a", ["w1", "w2", "w3"])],
         [],
         details,

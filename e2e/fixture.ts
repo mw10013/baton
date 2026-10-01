@@ -70,7 +70,7 @@ import type {
  *
  * `Rush order` is the fixture's one cross-cutting workflow: a product carrying
  * `rush` beside its own tag is claimed by two workflows, nothing starts, and
- * the row reads **Needs a workflow**. It is deliberately the kind of mistake
+ * the row reads **Multiple workflows match**. It is deliberately the kind of mistake
  * a merchant makes — "rush" was meant as an order label, not a workflow.
  *
  * The rows from `#2001` are generated rather than hand-written, and are always
@@ -134,7 +134,7 @@ const TAG = {
   keychain: "keychain",
   heirloom: "heirloom-journal",
   // Not a product: the label a merchant puts on an order, which is exactly
-  // why a product carrying it as well as its own tag is ambiguous.
+  // why a product carrying it as well as its own tag is a multi-match.
   rush: "rush",
 } as const;
 
@@ -370,7 +370,7 @@ export const workflows: readonly SeedWorkflow[] = [
   },
 ];
 
-/** One tag, several (the ambiguous case: `rush` beside the product's own), or none at all. */
+/** One tag, several (the multi-match case: `rush` beside the product's own), or none at all. */
 const tagsOf = (tag: string | readonly string[] | null): readonly string[] => {
   if (tag === null) return [];
   return typeof tag === "string" ? [tag] : tag;
@@ -528,7 +528,7 @@ const floorOrders: readonly SeedOrder[] = [
   },
   {
     // two workflows claim the one item (its own tag plus `rush`), so nothing
-    // starts: a "Needs a workflow" issue badge on the index, and the order page's picker
+    // starts: a "Multiple workflows match" issue badge on the index, and the order page's picker
     // offers exactly those two
     n: 1011,
     lineItems: [
@@ -539,8 +539,8 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // one ambiguous item beside one that started fine: Making in the Status
-    // column, "Needs a workflow" in the Issues column
+    // one multi-match item beside one that started fine: Making in the Status
+    // column, "Multiple workflows match" in the Issues column
     n: 1012,
     lineItems: [
       item("Engraved cutting board", [TAG.board, TAG.rush], 1, {
@@ -550,7 +550,7 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // the same ambiguity with the choice already made by hand: one run the
+    // the same multi-match with the choice already made by hand: one run the
     // merchant chose, no warning on the index, and Change offers the other
     // claimant
     n: 1013,
@@ -746,7 +746,7 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // the order page at its longest: an ambiguous item, a run at the caps in
+    // the order page at its longest: a multi-match item, a run at the caps in
     // step 2 with step 1 done, and an item nothing matches. Manage on the
     // journal opens 20 tasks with 64-character task, team and workflow names.
     n: 1030,
@@ -820,7 +820,7 @@ const floorOrders: readonly SeedOrder[] = [
  * The products a workflow can be attached to, and their workflows' tags, cycled by the generated
  * rows below. Frame and glaze (off), Tag stamping (unassigned task) and
  * Sample pull (no steps) are left out because they create nothing, and `rush` because a second tag would
- * make every generated row ambiguous.
+ * make every generated row a multi-match.
  */
 const MAKER_PRODUCTS = [
   ["Engraved cutting board", TAG.board],

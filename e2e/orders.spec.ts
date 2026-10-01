@@ -717,7 +717,7 @@ test("the order card puts the run's badges on the title line, Manage above its d
  * and this is the fixture for it.
  *
  * So: the item matches two, nothing starts, the index shows the order under
- * Issues with the _Needs a workflow_ badge, and the order page asks. Then the same item is
+ * Issues with the _Multiple workflows match_ badge, and the order page asks. Then the same item is
  * moved to the other workflow through the Change workflow modal, which holds
  * the select and, on a run with work on it, the warning.
  */
@@ -768,7 +768,7 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   await expect(
     frame
       .locator("s-table-row", { hasText: "#9401" })
-      .getByText("Needs a workflow", { exact: true }),
+      .getByText("Multiple workflows match", { exact: true }),
   ).toBeVisible();
   await viewButton(frame, "Issues").click();
   await expect
@@ -779,7 +779,7 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   await frame.getByRole("link", { name: "#9401" }).click();
   await expect(frame.locator('s-page[heading="#9401"]')).toBeVisible();
 
-  /* An item with no run carries the picker at rest, and on an ambiguous one it
+  /* An item with no run carries the picker at rest, and on a multi-match one it
      offers every workflow that is on, with the two that matched first. The
      sentence says why it asks and names nothing, so it cannot drift from the
      list. The shop may carry other tests' workflows, so the count is not
@@ -897,7 +897,7 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   await expect(
     frame
       .locator("s-table-row", { hasText: "#9401" })
-      .getByText("Needs a workflow", { exact: true }),
+      .getByText("Multiple workflows match", { exact: true }),
   ).toHaveCount(0);
 });
 
@@ -1376,7 +1376,7 @@ test("a bad filter value reads as no filter", async ({ page }) => {
 /**
  * The Issues banner on the orders index. The sandbox holds real orders, so
  * the team select keeps this test to its own: `#9601` waits on a team with a
- * member and has an item matching two workflows, a Needs a workflow issue;
+ * member and has an item matching two workflows, a Multiple workflows match issue;
  * `#9602`'s only task is on a team with no members, a Team has no members
  * issue; `#9603` has an unassigned task on a later step, a Needs a team
  * issue. The banner's count honours the team (`Domain.OrderCounts`), so each

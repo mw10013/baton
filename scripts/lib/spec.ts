@@ -547,13 +547,14 @@ const camel = (word: string) =>
 
 /**
  * The constant key a vocabulary word names: `camel(word)` if the constants
- * have it, else the word snake-cased (`not started` → `not_started`). Verb
+ * have it, else the word snake-cased, a space or a hyphen becoming `_`
+ * (`not started` → `not_started`, `multi-match` → `multi_match`). Verb
  * keys are camel case because they name action-struct fields
  * ({@link ScreenLabels} `verbs`); order-position and order-issue keys are the
  * stored literals, which are snake case.
  */
 const keyOf = (word: string, constants: Readonly<Record<string, unknown>>) =>
-  camel(word) in constants ? camel(word) : word.replaceAll(" ", "_");
+  camel(word) in constants ? camel(word) : word.replaceAll(/[ -]/gu, "_");
 
 /**
  * **The vocabulary's screen column is the label constant.** Each screen cell in

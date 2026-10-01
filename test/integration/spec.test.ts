@@ -311,6 +311,17 @@ describe("action table parser", () => {
       ]);
     });
 
+    it("a hyphenated word finds its snake-case literal key", () => {
+      const doctored = shopWorkSource.replace(
+        "on an order that can create runs | Multiple workflows match |",
+        "on an order that can create runs | Two workflows match      |",
+      );
+      expect(doctored).not.toBe(shopWorkSource);
+      expect(ActionTable.checkScreenColumns(doctored, labels)).toEqual([
+        'Vocabulary: Order issues multi-match: screen says "Two workflows match", constant says "Multiple workflows match"',
+      ]);
+    });
+
     it("a constant with no row, and a row with no constant, are reported", () => {
       const doctored = shopWorkSource.replace(
         "| waiting | its step is not current            |",
@@ -427,9 +438,9 @@ describe("action table parser", () => {
 
   describe("the order issue table", () => {
     const TEAM_ROW =
-      "| `unassigned` | {@link OrderRow} `unassigned`                                                   | Assign team on the order page       |";
+      "| `unassigned`  | {@link OrderRow} `unassigned`                                                    | Assign team on the order page       |";
     const EMPTY_TEAM_ROW =
-      "| `empty_team` | {@link OrderRow} `emptyTeam`                                                    | add a member on the team page       |";
+      "| `empty_team`  | {@link OrderRow} `emptyTeam`                                                     | add a member on the team page       |";
 
     it("ShopWork.ts passes", () => {
       expect(shopWorkSource).toContain(TEAM_ROW);
@@ -440,7 +451,7 @@ describe("action table parser", () => {
     it("each order issue has one remedy", () => {
       const doctored = shopWorkSource.replace(
         EMPTY_TEAM_ROW,
-        "| `empty_team` | {@link OrderRow} `emptyTeam`                                                    | assign a team, or add a member      |",
+        "| `empty_team`  | {@link OrderRow} `emptyTeam`                                                     | assign a team, or add a member      |",
       );
       expect(doctored).not.toBe(shopWorkSource);
       expect(checkOrderIssues(doctored)).toEqual([
@@ -455,7 +466,7 @@ describe("action table parser", () => {
       );
       expect(doctored).not.toBe(shopWorkSource);
       expect(checkOrderIssues(doctored)).toEqual([
-        "OrderIssue: the Issue column is ambiguous, empty_team, unassigned, blocked; the literals are ambiguous, unassigned, empty_team, blocked",
+        "OrderIssue: the Issue column is multi_match, empty_team, unassigned, blocked; the literals are multi_match, unassigned, empty_team, blocked",
       ]);
     });
   });

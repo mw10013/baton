@@ -275,7 +275,7 @@ const upsertAndReconcile = (
       created: 0,
       resized: 0,
       closed: 0,
-      ambiguous: 0,
+      multiMatch: 0,
       ceilingReleased: false,
     });
     yield* orders.upsertOrder({
@@ -366,7 +366,7 @@ describe("RunRepository one row per item", () => {
           created: 0,
           resized: 0,
           closed: 0,
-          ambiguous: 1,
+          multiMatch: 1,
           ceilingReleased: false,
         });
         strictEqual((yield* runsForOrder()).length, 0);
@@ -374,7 +374,7 @@ describe("RunRepository one row per item", () => {
       }),
     ));
 
-  it("turning one of the two off resolves the ambiguity and starts the survivor", () =>
+  it("turning one of the two off resolves the multi-match and starts the survivor", () =>
     runInRepository(
       Effect.gen(function* () {
         const { a } = yield* seed;
@@ -390,7 +390,7 @@ describe("RunRepository one row per item", () => {
           created: 1,
           resized: 0,
           closed: 0,
-          ambiguous: 0,
+          multiMatch: 0,
           ceilingReleased: false,
         });
         const runs = yield* runsForOrder();
@@ -416,7 +416,7 @@ describe("RunRepository one row per item", () => {
           created: 0,
           resized: 0,
           closed: 0,
-          ambiguous: 0,
+          multiMatch: 0,
           ceilingReleased: false,
         });
         const runs = yield* runsForOrder();
@@ -590,7 +590,7 @@ describe("RunRepository.reconcileOrder", () => {
           created: 2,
           resized: 0,
           closed: 0,
-          ambiguous: 0,
+          multiMatch: 0,
           ceilingReleased: false,
         });
         const runs = yield* runsForOrder();
@@ -641,7 +641,7 @@ describe("RunRepository.reconcileOrder", () => {
           created: 0,
           resized: 0,
           closed: 0,
-          ambiguous: 0,
+          multiMatch: 0,
           ceilingReleased: false,
         });
         strictEqual((yield* runsForOrder()).length, 2);
@@ -746,7 +746,7 @@ describe("RunRepository.reconcileOrder", () => {
           created: 0,
           resized: 0,
           closed: 2,
-          ambiguous: 0,
+          multiMatch: 0,
           ceilingReleased: false,
         });
         const after = yield* runsForOrder();
@@ -771,7 +771,7 @@ describe("RunRepository.reconcileOrder", () => {
           created: 0,
           resized: 0,
           closed: 0,
-          ambiguous: 0,
+          multiMatch: 0,
           ceilingReleased: false,
         });
         const gone = yield* runsForOrder();
@@ -812,7 +812,7 @@ describe("RunRepository.reconcileOrder", () => {
           created: 0,
           resized: 1,
           closed: 0,
-          ambiguous: 0,
+          multiMatch: 0,
           ceilingReleased: false,
         });
         const [p] = yield* runsForOrder();
@@ -901,7 +901,7 @@ describe("RunRepository.reconcileOrder", () => {
           created: 0,
           resized: 0,
           closed: 0,
-          ambiguous: 0,
+          multiMatch: 0,
           ceilingReleased: false,
         });
         const unchanged = (yield* runsForOrder())[0];
@@ -920,7 +920,7 @@ describe("RunRepository.reconcileOrder", () => {
           created: 0,
           resized: 0,
           closed: 0,
-          ambiguous: 0,
+          multiMatch: 0,
           ceilingReleased: false,
         });
         const after = (yield* runsForOrder())[0];
@@ -942,7 +942,7 @@ describe("RunRepository.reconcileOrder", () => {
           created: 1,
           resized: 0,
           closed: 0,
-          ambiguous: 0,
+          multiMatch: 0,
           ceilingReleased: false,
         });
         strictEqual((yield* runsForOrder()).length, 2);
@@ -978,7 +978,7 @@ describe("RunRepository.reconcileOrder", () => {
             created: 0,
             resized: 0,
             closed: 0,
-            ambiguous: 0,
+            multiMatch: 0,
             ceilingReleased: false,
           });
           const during = yield* runsForOrder();
@@ -1025,7 +1025,7 @@ describe("RunRepository.reconcileOrder", () => {
             created: 0,
             resized: 0,
             closed: 2,
-            ambiguous: 0,
+            multiMatch: 0,
             ceilingReleased: false,
           });
           const after = yield* runsForOrder();
@@ -1062,7 +1062,7 @@ describe("RunRepository.reconcileOrder", () => {
             created: 0,
             resized: 2,
             closed: 0,
-            ambiguous: 0,
+            multiMatch: 0,
             ceilingReleased: false,
           });
           const after = yield* runsForOrder();
@@ -1097,7 +1097,7 @@ describe("RunRepository.reconcileOrder", () => {
             created: 0,
             resized: 0,
             closed: 2,
-            ambiguous: 0,
+            multiMatch: 0,
             ceilingReleased: false,
           });
           deepStrictEqual(
@@ -1166,7 +1166,7 @@ describe("RunRepository.reconcileOrder", () => {
             created: 0,
             resized: 0,
             closed: 2,
-            ambiguous: 0,
+            multiMatch: 0,
             ceilingReleased: false,
           });
           const after = yield* runsForOrder();
@@ -1211,7 +1211,7 @@ describe("RunRepository.reconcileOrder", () => {
             created: 0,
             resized: 0,
             closed: 0,
-            ambiguous: 0,
+            multiMatch: 0,
             ceilingReleased: false,
           });
           const after = yield* runsForOrder();
@@ -1253,7 +1253,7 @@ describe("RunRepository.reconcileOrder", () => {
           created: 0,
           resized: 0,
           closed: 2,
-          ambiguous: 0,
+          multiMatch: 0,
           ceilingReleased: false,
         });
         const after = yield* runsForOrder();
@@ -2533,7 +2533,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           created: 0,
           resized: 0,
           closed: 1,
-          ambiguous: 0,
+          multiMatch: 0,
           ceilingReleased: false,
         });
         const after = Option.getOrThrow(

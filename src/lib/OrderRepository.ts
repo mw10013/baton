@@ -152,7 +152,7 @@ const json = (value: unknown) => JSON.stringify(value);
  * fragments are correlated to the outer `ShopOrder` row and served by
  * `Run_orderId_idx`. A closed run still holds its item
  * (`Domain.RunState`): it is in `RUN_FOR_ITEM`, so an item whose run closed
- * is not "Needs a workflow" (a closed run is a decided item), and it is in
+ * is not "Multiple workflows match" (a closed run is a decided item), and it is in
  * no position fragment
  * but `not_started`'s, which asks for no open and no done run.
  */
@@ -179,7 +179,7 @@ const RUN_FOR_ITEM = `select 1 from Run r
  * carry a tag of the item `li`. On, with a task, every task's `teamId` set,
  * and a product tag, trimmed and lowercased, equal to the workflow's tag.
  * The item half's other clause, units to make above zero, is on the readers
- * ({@link AMBIGUOUS_ITEM}), where it is one comparison on the row. It
+ * ({@link MULTI_MATCH_ITEM}), where it is one comparison on the row. It
  * restates the rule and must move with it.
  *
  * Two stated gaps against the TypeScript side. A `teamId` no D1 team
@@ -204,21 +204,21 @@ const ITEM_MATCHES = `(select count(*) from Workflow w
       where lower(trim(tag.value)) = w.tag
     ))`;
 /**
- * `Domain.ambiguousItems` in SQL: an item with units still to make, two or
+ * `Domain.multiMatchItems` in SQL: an item with units still to make, two or
  * more matches ({@link ITEM_MATCHES}), and no run in any state. Derived from
  * the workflows as they are now, so a Turn off, a tag edit or Change workflow
  * away and back reads correctly with no reconcile in between.
  */
-const AMBIGUOUS_ITEM = `select 1 from OrderLineItem li
+const MULTI_MATCH_ITEM = `select 1 from OrderLineItem li
   where li.orderId = ShopOrder.id and li.currentQuantity > 0
     and ${ITEM_MATCHES} >= 2
     and not exists (${RUN_FOR_ITEM})`;
 /**
- * The `ambiguous` {@link Domain.OrderIssue} as one predicate: an order
- * carries it only when it can create runs, so an unpaid order with an
- * ambiguous item does *not*. `OPEN` is the caller's, as for every issue.
+ * The `multi_match` {@link Domain.OrderIssue} as one predicate: an order
+ * carries it only when it can create runs, so an unpaid order with a
+ * multi-match item does *not*. `OPEN` is the caller's, as for every issue.
  */
-const AMBIGUOUS = `fullyPaid = 1 and exists (${AMBIGUOUS_ITEM})`;
+const MULTI_MATCH = `fullyPaid = 1 and exists (${MULTI_MATCH_ITEM})`;
 
 /**
  * Each counted view's predicate over the `facts` rows of the count
@@ -229,7 +229,7 @@ const AMBIGUOUS = `fullyPaid = 1 and exists (${AMBIGUOUS_ITEM})`;
  */
 const COUNT_FACT = {
   open: "1",
-  issues: "ambiguous or unassigned or emptyTeam or blockedRuns > 0",
+  issues: "multiMatch or unassigned or emptyTeam or blockedRuns > 0",
   not_started: "openRuns = 0 and doneRuns = 0",
   making: "openRuns > 0",
   made: "doneRuns > 0 and openRuns = 0",
@@ -1103,7 +1103,7 @@ export class OrderRepository extends Context.Service<
               sql.and([
                 OPEN,
                 sql.or([
-                  `(${AMBIGUOUS})`,
+                  `(${MULTI_MATCH})`,
                   unassignedRun,
                   emptyTeamRun,
                   `exists (${BLOCKED_RUN})`,
@@ -1230,11 +1230,11 @@ export class OrderRepository extends Context.Service<
                   where unassigned or emptyTeam
                 `.values;
           /**
-           * `Domain.OrderRow.ambiguousItems`, restating `AMBIGUOUS_ITEM` per
+           * `Domain.OrderRow.multiMatchItems`, restating `MULTI_MATCH_ITEM` per
            * item rather than as an `exists`: the badge says how many items are
            * waiting on a choice, not merely that one is.
            */
-          const ambiguousRows =
+          const multiMatchRows =
             ids.length === 0
               ? []
               : yield* sql`
@@ -1311,8 +1311,8 @@ export class OrderRepository extends Context.Service<
               .filter((row) => Boolean(row[2]))
               .map((row) => String(row[0])),
           );
-          const ambiguous = new Map(
-            ambiguousRows.map((row) => [String(row[0]), Number(row[1] ?? 0)]),
+          const multiMatch = new Map(
+            multiMatchRows.map((row) => [String(row[0]), Number(row[1] ?? 0)]),
           );
           const units = new Map(
             unitRows.map((row) => [String(row[0]), Number(row[1] ?? 0)]),
@@ -1333,7 +1333,7 @@ export class OrderRepository extends Context.Service<
            * search, which ignores the views. `run_summary` is the per-page
            * `runRows` aggregate hoisted over every open order, one grouped
            * read of `Run` in place of a correlated `exists` per fragment;
-           * `AMBIGUOUS`, `unassignedRun` and `emptyTeamRun` stay correlated, walking items and
+           * `MULTI_MATCH`, `unassignedRun` and `emptyTeamRun` stay correlated, walking items and
            * tasks. `facts` is materialised so each correlated term runs once
            * per order however many sums read it. The sums restate
            * `viewFilter` over those facts ({@link COUNT_FACT}) and must move
@@ -1364,7 +1364,7 @@ export class OrderRepository extends Context.Service<
                   coalesce(rs.openRuns, 0) as openRuns,
                   coalesce(rs.doneRuns, 0) as doneRuns,
                   coalesce(rs.blockedRuns, 0) as blockedRuns,
-                  (${sql.literal(AMBIGUOUS)}) as ambiguous,
+                  (${sql.literal(MULTI_MATCH)}) as multiMatch,
                   ${unassignedRun} as unassigned,
                   ${emptyTeamRun} as emptyTeam
                 from ShopOrder
@@ -1400,7 +1400,7 @@ export class OrderRepository extends Context.Service<
               unassigned: unassignedIds.has(order.id),
               emptyTeam: emptyTeamIds.has(order.id),
               waitingOn: waitingOn.get(order.id) ?? [],
-              ambiguousItems: ambiguous.get(order.id) ?? 0,
+              multiMatchItems: multiMatch.get(order.id) ?? 0,
             })),
             limit,
             nextCursor:

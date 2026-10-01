@@ -32,13 +32,13 @@ const ORDERS_PAGE_SIZE = 25;
  */
 const decodeOrderSearch = Schema.decodeUnknownOption(Domain.OrderSearch);
 /**
- * Caps the Waiting on cell at two team badges and a `+n`. With
- * `Domain.TEAM_NAME_MAX_LENGTH` this bounds the cell's width: two names at the
- * cap are about 500px, where three pushed the table past the admin's content
- * width. Three or more current teams on one order is a parallel step across
- * three teams, rare enough that a count serves it.
+ * Caps the Waiting on cell at two team names and a `+n`. The names sit one
+ * per line, so the cap bounds the row's height, not its width (the width is
+ * bounded by the names wrapping; see {@link waitingOnNames}). Three or more
+ * current teams on one order is a parallel step across three teams, rare
+ * enough that a count serves it.
  */
-const TAG_BADGE_LIMIT = 2;
+const WAITING_ON_LIMIT = 2;
 
 /**
  * Keyed by the view, every filter and the page as well as the shop: each
@@ -462,18 +462,24 @@ function RouteComponent() {
 
   /**
    * Who is holding the order: the teams with a current task on one of its open
-   * runs, collapsed and capped like `tagBadges`. `"Unknown team"` should
+   * runs, one name per line, capped by {@link WAITING_ON_LIMIT}. Text, not
+   * badges: a badge is one state word (`CopySlot`'s controls table), and a
+   * team name is a name. Text also wraps, so the column's floor is a name's
+   * longest word, where a badge never wraps or truncates and a 32-character
+   * name made the column 200px wide, which at a 1024px viewport (an 800px
+   * iframe, 752px for the card) pushed the last columns past the card's edge
+   * into a scroll the admin gives no scrollbar for. `"Deleted team"` should
    * never render — the repository only emits ids that were among the teams it
-   * read — but the lookup is nullable and a blank badge is worse than a
-   * named gap.
+   * read — but the lookup is nullable and a blank line is worse than a named
+   * gap.
    */
-  const waitingOnBadges = (ids: readonly Domain.TeamId[]) => (
-    <s-stack direction="inline" gap="small-300">
-      {ids.slice(0, TAG_BADGE_LIMIT).map((id) => (
-        <s-badge key={id}>{teamName.get(id) ?? "Deleted team"}</s-badge>
+  const waitingOnNames = (ids: readonly Domain.TeamId[]) => (
+    <s-stack direction="block" gap="small-300">
+      {ids.slice(0, WAITING_ON_LIMIT).map((id) => (
+        <s-text key={id}>{teamName.get(id) ?? "Deleted team"}</s-text>
       ))}
-      {ids.length > TAG_BADGE_LIMIT && (
-        <s-text color="subdued">{`+${String(ids.length - TAG_BADGE_LIMIT)}`}</s-text>
+      {ids.length > WAITING_ON_LIMIT && (
+        <s-text color="subdued">{`+${String(ids.length - WAITING_ON_LIMIT)}`}</s-text>
       )}
     </s-stack>
   );
@@ -613,7 +619,7 @@ function RouteComponent() {
                 </s-link>
               </s-table-cell>
               <s-table-cell>
-                <LocalDateTime value={row.order.processedAt} />
+                <LocalDateTime value={row.order.processedAt} format="date" />
               </s-table-cell>
               <s-table-cell>
                 <s-badge tone={row.order.fullyPaid ? "success" : "warning"}>
@@ -636,7 +642,7 @@ function RouteComponent() {
                   beside it already says so. A dash would flatten that into
                   "nothing to see". A fulfilled or cancelled order is always
                   empty (`Domain.OrderRow.waitingOn`). */}
-              <s-table-cell>{waitingOnBadges(row.waitingOn)}</s-table-cell>
+              <s-table-cell>{waitingOnNames(row.waitingOn)}</s-table-cell>
               <s-table-cell>{formatNumber(row.itemUnits)}</s-table-cell>
               {/* The packer's handoff: a made order is fulfilled in the
                   Shopify admin, never here, so the Made row links

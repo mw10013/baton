@@ -695,7 +695,7 @@ const make = Effect.gen(function* () {
    * The on/off switch: writes `state`. Either way every stored order is reconciled
    * once, so a run for anything that now qualifies is created here rather than at whatever
    * moment Shopify next edits it — and off qualifies things too, because
-   * removing one of two matching workflows resolves an ambiguity and starts
+   * removing one of two matching workflows resolves a multi-match and starts
    * the survivor (see {@link reconcileAllNow}). Publishes for the reason on
    * {@link applyDraft}.
    */
@@ -763,7 +763,7 @@ const make = Effect.gen(function* () {
    * workflows — must repaint.
    *
    * Reconciles afterwards for the same reason Turn off does: the deleted
-   * workflow turns off, so an item it made ambiguous now has one
+   * workflow turns off, so an item it made a multi-match now has one
    * match and the survivor's run is created.
    */
   const removeWorkflow = ({
@@ -840,7 +840,7 @@ const make = Effect.gen(function* () {
    * reaches a screen.
    *
    * Unconditional, because a workflow turning off creates runs too: one item
-   * matched by two workflows that are on is ambiguous and carries no run, so
+   * matched by two workflows that are on is a multi-match and carries no run, so
    * turning one of them off — or deleting it — leaves a single match and the
    * survivor's run begins. That is why {@link setWorkflowOn} and
    * {@link removeWorkflow} call this directly rather than through
@@ -864,7 +864,7 @@ const make = Effect.gen(function* () {
           yield* eligibleContext(),
         );
         yield* Effect.logInfo(
-          `ShopAgent.reconcileAll: shop=${shop} caller=${caller} id=${id} again=${String(again)} orders=${String(sums.orders)} created=${String(sums.created)} ambiguous=${String(sums.ambiguous)} ceilingReleased=${String(sums.ceilingReleased)}`,
+          `ShopAgent.reconcileAll: shop=${shop} caller=${caller} id=${id} again=${String(again)} orders=${String(sums.orders)} created=${String(sums.created)} multiMatch=${String(sums.multiMatch)} ceilingReleased=${String(sums.ceilingReleased)}`,
         ).pipe(Effect.annotateLogs({ shop, caller, id, again, ...sums }));
         return sums.ceilingReleased;
       });
@@ -911,9 +911,9 @@ const make = Effect.gen(function* () {
       const runs = yield* RunRepository;
       return (order: Domain.ShopOrder) =>
         runs.reconcileOrder({ ...context, orderId: order.id }).pipe(
-          Effect.tap(({ created, resized, closed, ambiguous }) =>
+          Effect.tap(({ created, resized, closed, multiMatch }) =>
             Effect.logInfo(
-              `ShopAgent.reconcileOrder: shop=${shop} orderId=${order.id} created=${String(created)} resized=${String(resized)} closed=${String(closed)} ambiguous=${String(ambiguous)}`,
+              `ShopAgent.reconcileOrder: shop=${shop} orderId=${order.id} created=${String(created)} resized=${String(resized)} closed=${String(closed)} multiMatch=${String(multiMatch)}`,
             ).pipe(
               Effect.annotateLogs({
                 shop,
@@ -921,7 +921,7 @@ const make = Effect.gen(function* () {
                 created,
                 resized,
                 closed,
-                ambiguous,
+                multiMatch,
               }),
             ),
           ),
@@ -1759,7 +1759,7 @@ const make = Effect.gen(function* () {
    *
    * Reconciles every stored order afterwards ({@link reconcileAllNow}): a
    * workflow whose task lost its team stops being eligible, and an item it
-   * had made ambiguous now has one match, whose run is created here rather
+   * had made a multi-match now has one match, whose run is created here rather
    * than at the order's next webhook.
    */
   const deleteTeam = ({ teamId }: typeof Domain.DeleteTeamInput.Type) => {

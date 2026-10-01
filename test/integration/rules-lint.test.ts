@@ -128,6 +128,15 @@ describe("a retired word stays off every merchant and member screen", () => {
     expect(hits(source)).toEqual([1]);
   });
 
+  it("needs a workflow is retired in screen copy", () => {
+    const source = [
+      '<s-badge tone="critical">Needs a workflow</s-badge>',
+      'const a = "Multiple workflows match";',
+      "// the old Needs a workflow badge",
+    ].join("\n");
+    expect(hits(source)).toEqual([1]);
+  });
+
   it("please, successfully, oops, sorry, click here and are you sure are retired in every slot", () => {
     const source = [
       'const a = "Please choose a team.";',
@@ -195,6 +204,11 @@ describe("an exported identifier carries no reserved stem", () => {
     expect(
       RulesLint.reservedStemHits("export const ResyncOrderInput = 1;"),
     ).toEqual([{ name: "ResyncOrderInput", line: 1, kind: "const" }]);
+  });
+  it("an export named ambiguousItems is refused", () => {
+    expect(
+      RulesLint.reservedStemHits("export const ambiguousItems = 1;"),
+    ).toEqual([{ name: "ambiguousItems", line: 1, kind: "const" }]);
   });
   it("an export named setWorkflowActivatedAt is refused", () => {
     expect(

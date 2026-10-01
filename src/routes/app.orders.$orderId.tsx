@@ -150,13 +150,13 @@ const NOTE_MODAL = "run-note";
 const BLOCK_MODAL = "run-block";
 
 /**
- * The ambiguous item's sentence: why the merchant is being asked, and nothing
+ * The multi-match item's sentence: why the merchant is being asked, and nothing
  * that can drift from the select under it. It does not count the matches,
  * because a count that must agree with a list is a second source of truth; it
  * does not name the tags, because the merchant changes the workflow here, not
  * the product.
  */
-const AMBIGUITY_SENTENCE =
+const MULTI_MATCH_SENTENCE =
   "More than one workflow matches this item, so none was started.";
 
 interface TaskWrite {
@@ -1137,7 +1137,7 @@ function RouteComponent() {
    * modal instead, which deletes what is there.
    *
    * The options are the matched workflows first, then every other
-   * workflow ({@link Domain.lineItemState}): on an ambiguous item the item
+   * workflow ({@link Domain.lineItemState}): on a multi-match item the item
    * has no Manage, so the select is the only way to a workflow the tags did
    * not pull in. On a closed item the closed workflow is among them; picking
    * it starts a fresh run.
@@ -1219,7 +1219,7 @@ function RouteComponent() {
     const itemState = Domain.lineItemState(item, runs, itemWorkflows, teams);
     /**
      * Quantity and SKU, as one subdued line under the title. No product tags:
-     * they were "why a workflow matched", and on an ambiguous item the
+     * they were "why a workflow matched", and on a multi-match item the
      * picker's option list, matches first, is that answer now.
      */
     const facts = [
@@ -1250,8 +1250,8 @@ function RouteComponent() {
         case "attachable": {
           return orderOpen ? (
             <>
-              {itemState.ambiguous && (
-                <s-paragraph>{AMBIGUITY_SENTENCE}</s-paragraph>
+              {itemState.multiMatch && (
+                <s-paragraph>{MULTI_MATCH_SENTENCE}</s-paragraph>
               )}
               {workflowPicker(item, itemState.options, itemState.matched)}
             </>

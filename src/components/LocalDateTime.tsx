@@ -1,6 +1,11 @@
 import { useHydrated } from "@tanstack/react-router";
 
-import { formatDateTime, formatRelative, formatTime } from "@/lib/format";
+import {
+  formatDate,
+  formatDateTime,
+  formatRelative,
+  formatTime,
+} from "@/lib/format";
 
 /**
  * A timestamp in the viewer's timezone that is safe to server-render.
@@ -30,11 +35,12 @@ export function LocalDateTime({
   format = "dateTime",
 }: {
   readonly value: number;
-  /** `time` is the clock-only form ("… at 3:12 PM", "… · since 3:12 PM"); `relative` the workflows list's "ordered 3d ago". */
-  readonly format?: "dateTime" | "time" | "relative";
+  /** `date` is the day alone (the orders index's Placed column); `time` the clock-only form ("… at 3:12 PM", "… · since 3:12 PM"); `relative` the workflows list's "ordered 3d ago". */
+  readonly format?: "dateTime" | "date" | "time" | "relative";
 }) {
   const hydrated = useHydrated();
   if (!hydrated) return null;
+  if (format === "date") return formatDate(value);
   if (format === "time") return formatTime(value);
   if (format === "relative") return formatRelative(value);
   return formatDateTime(value);

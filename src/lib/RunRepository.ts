@@ -142,12 +142,12 @@ export interface ReconcileCounts {
   /** Open runs this pass closed: the order cancelled or fulfilled, or the line at zero units ({@link Domain.ClosedReason}). */
   readonly closed: number;
   /**
-   * Items this pass left **ambiguous**: two or more eligible workflows
+   * Items this pass left **multi-match**: two or more eligible workflows
    * matched and no run exists, so nothing was started and the merchant
    * has to choose. Not a fault — a count worth logging, and the number the
    * orders index turns into a step.
    */
-  readonly ambiguous: number;
+  readonly multiMatch: number;
   /**
    * This pass's closes brought the shop back under the open-run ceiling
    * while runs stood declined (`releaseOpenRunLimit`): the caller runs a
@@ -161,7 +161,7 @@ export interface ReconcileCounts {
 export interface ReconcileAllSums {
   readonly orders: number;
   readonly created: number;
-  readonly ambiguous: number;
+  readonly multiMatch: number;
   readonly ceilingReleased: boolean;
 }
 
@@ -185,7 +185,7 @@ const NO_COUNTS: ReconcileCounts = {
   created: 0,
   resized: 0,
   closed: 0,
-  ambiguous: 0,
+  multiMatch: 0,
   ceilingReleased: false,
 };
 
@@ -1097,9 +1097,9 @@ export class RunRepository extends Context.Service<
        * ({@link releaseOpenRunLimit}) and its caller runs a reconcile all,
        * so the declined runs are created then.
        *
-       * `ReconcileCounts.ambiguous` counts an ambiguous item only when the
+       * `ReconcileCounts.multiMatch` counts a multi-match item only when the
        * order can create runs ({@link Domain.orderCanCreateRuns}), the same
-       * rule as the `ambiguous` issue.
+       * rule as the `multi_match` issue.
        */
       const reconcileOrder = Effect.fn("RunRepository.reconcileOrder")(
         function* ({
@@ -1263,7 +1263,7 @@ export class RunRepository extends Context.Service<
               }),
             );
           }
-          const ambiguous = Domain.orderCanCreateRuns(order)
+          const multiMatch = Domain.orderCanCreateRuns(order)
             ? entries.flatMap(({ lineItem, run, matched }) =>
                 Option.isSome(lineItem) &&
                 run === null &&
@@ -1274,10 +1274,10 @@ export class RunRepository extends Context.Service<
               )
             : [];
           yield* Effect.forEach(
-            ambiguous,
+            multiMatch,
             ({ lineItemId, matched }) =>
               Effect.logInfo(
-                `RunRepository.reconcileOrder: orderId=${orderId} lineItemId=${lineItemId} matched=${String(matched)}: ambiguous, no run created`,
+                `RunRepository.reconcileOrder: orderId=${orderId} lineItemId=${lineItemId} matched=${String(matched)}: multi-match, no run created`,
               ).pipe(Effect.annotateLogs({ orderId, lineItemId, matched })),
             { discard: true },
           );
@@ -1285,7 +1285,7 @@ export class RunRepository extends Context.Service<
             created: sum("create"),
             resized: sum("resize"),
             closed: sum("close"),
-            ambiguous: ambiguous.length,
+            multiMatch: multiMatch.length,
             ceilingReleased,
           } satisfies ReconcileCounts;
         },
@@ -1324,7 +1324,7 @@ export class RunRepository extends Context.Service<
           return {
             orders: ids.length,
             created: counts.reduce((sum, c) => sum + c.created, 0),
-            ambiguous: counts.reduce((sum, c) => sum + c.ambiguous, 0),
+            multiMatch: counts.reduce((sum, c) => sum + c.multiMatch, 0),
             ceilingReleased: counts.some((c) => c.ceilingReleased),
           } satisfies ReconcileAllSums;
         }),

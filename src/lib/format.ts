@@ -25,6 +25,25 @@ export const formatDateTime = (value: number | null | undefined) =>
         .replaceAll(/\s/gu, "\u00A0")
     : "";
 
+/**
+ * The day alone in the browser's timezone, e.g. `Jul 12`, the year appended
+ * only when it differs from the current year. The orders index's Placed
+ * column: the index is sorted by the time, so the date is all the column
+ * has to say, and a time added 40px to the narrowest column of a table that
+ * must fit the admin's content width at a 1024px viewport. Same SSR caveat as
+ * `formatDateTime`: render through `LocalDateTime`.
+ */
+export const formatDate = (value: number) =>
+  new Date(value)
+    .toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      ...(new Date(value).getFullYear() === new Date().getFullYear()
+        ? {}
+        : { year: "numeric" }),
+    })
+    .replaceAll(/\s/gu, " ");
+
 /** Time of day in the browser's timezone, e.g. `3:12 PM`. Same SSR caveat as `formatDateTime`: render through `LocalDateTime`. */
 export const formatTime = (value: number) =>
   new Date(value).toLocaleTimeString(undefined, {

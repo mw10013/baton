@@ -336,7 +336,7 @@ describe("Domain.lineItemState", () => {
       [polish, engrave, workflowOf("w3", "Rush")],
     );
     if (attachable.kind !== "attachable") throw new Error(attachable.kind);
-    strictEqual(attachable.ambiguous, true);
+    strictEqual(attachable.multiMatch, true);
     // Matched first, in the teams' order, then the rest.
     deepStrictEqual(
       attachable.options.map((workflow) => workflow.name),

@@ -297,11 +297,11 @@ describe("OrderRepository.listOrders", () => {
  * with no issue. `#1010`'s only run is closed, which still reads not started
  * but decides the item, so it is no issue.
  *
- * `#1012` and `#1013` are the ambiguity cases: their items carry the tags
+ * `#1012` and `#1013` are the multi-match cases: their items carry the tags
  * of two on workflows, `w1` and `w2`, which the fixture writes directly.
  * `#1013` has an open run *and* an item still waiting on a choice: `making`
- * with the issue `ambiguous`. Between them they are also the proof
- * that `json_each` exists in Durable Object SQLite — every `AMBIGUOUS_ITEM`
+ * with the issue `multi_match`. Between them they are also the proof
+ * that `json_each` exists in Durable Object SQLite — every `MULTI_MATCH_ITEM`
  * fragment would throw without it.
  */
 const seedStates = Effect.gen(function* () {
@@ -311,7 +311,7 @@ const seedStates = Effect.gen(function* () {
     readonly n: number;
     readonly order?: Partial<Domain.ShopOrder>;
     readonly states: readonly Domain.RunState[];
-    /** The product tags of the order's own item; two on workflows' tags and no run on it is ambiguous. */
+    /** The product tags of the order's own item; two on workflows' tags and no run on it is a multi-match. */
     readonly matched?: readonly string[];
   }[] = [
     { n: 1, states: ["done"] }, // made
@@ -327,7 +327,7 @@ const seedStates = Effect.gen(function* () {
     { n: 11, order: { fulfillmentStatus: "FULFILLED" }, states: [] }, // fulfilled, never started
     { n: 12, states: [], matched: ["w1", "w2"] }, // not started, choose a workflow
     { n: 13, states: ["open"], matched: ["w1", "w2"] }, // making, and choose a workflow
-    // Unpaid: the ambiguity is not a choice yet, so no issue.
+    // Unpaid: the multi-match is not a choice yet, so no issue.
     {
       n: 14,
       order: { fullyPaid: false },
@@ -446,15 +446,15 @@ const seedIssues = Effect.gen(function* () {
   return { list };
 });
 
-describe("OrderRepository.listOrders ambiguity", () => {
+describe("OrderRepository.listOrders multi-match", () => {
   /**
-   * `AMBIGUOUS_ITEM` is the SQL twin of `Domain.itemMatches`. Of four
+   * `MULTI_MATCH_ITEM` is the SQL twin of `Domain.itemMatches`. Of four
    * workflows tagged for the first item, two are on with every task on a
    * team, one is off and one has an unassigned task, so the item is
-   * ambiguous; the second item carries one eligible workflow's tag and the
+   * a multi-match; the second item carries one eligible workflow's tag and the
    * two ineligible ones', so it is not. SQL and TypeScript count the same.
    */
-  it("the index's ambiguity predicate agrees with ambiguousItems", async () => {
+  it("the index's multi-match predicate agrees with multiMatchItems", async () => {
     const { sqlCount, tsCount } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
@@ -512,8 +512,8 @@ describe("OrderRepository.listOrders ambiguity", () => {
           teams,
         });
         return {
-          sqlCount: page.orders[0]?.ambiguousItems,
-          tsCount: Domain.ambiguousItems(lineItems, [], details, teams),
+          sqlCount: page.orders[0]?.multiMatchItems,
+          tsCount: Domain.multiMatchItems(lineItems, [], details, teams),
         };
       }),
     );

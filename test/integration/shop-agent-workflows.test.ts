@@ -848,7 +848,7 @@ describe("ShopAgent workflow run callables", () => {
   });
 
   it("turning one of two matching workflows off creates the survivor's run", async () => {
-    const shop = "wf-ambiguous.myshopify.com";
+    const shop = "wf-multi-match.myshopify.com";
     const team = await seedTeam(shop, "Engraving");
     const agent = await getAgentByName(env.SHOP_AGENT, shop);
     const build = async (workflowName: string, tag: string) => {
@@ -868,7 +868,7 @@ describe("ShopAgent workflow run callables", () => {
     const rival = await build("Rush", "rush");
     await seedOrder(shop, Date.now() + 60 * 60 * 1000, ["engraved", "rush"]);
 
-    // Turn on again reconciles every stored order; the ambiguity holds.
+    // Turn on again reconciles every stored order; the multi-match holds.
     const nudged = await agent.setWorkflowOn({
       workflowId: keeper.id,
       on: true,
@@ -1480,14 +1480,14 @@ describe("ShopAgent seed callables", () => {
     const boardId = seeded.find(({ name }) => name === "Board")?.id;
     if (boardId === undefined) throw new Error("seedWorkflows returned no id");
 
-    const ambiguousItem = {
+    const multiMatchItem = {
       title: "Board",
       quantity: 1,
       tags: ["board", "rush"],
     };
     await agent.seedOrders({
       ...seedMember,
-      orders: [{ n: 1, lineItems: [ambiguousItem] }],
+      orders: [{ n: 1, lineItems: [multiMatchItem] }],
     });
     const unrouted = await agent.merchantListRunsForOrder({
       orderId: seedOrderId(1),
@@ -1495,13 +1495,13 @@ describe("ShopAgent seed callables", () => {
     strictEqual(unrouted.length, 0);
     const [asking] = await ordersPage(agent);
     deepStrictEqual(asking === undefined ? null : Domain.orderIssues(asking), [
-      "ambiguous",
+      "multi_match",
     ]);
 
     await agent.seedOrders({
       ...seedMember,
       orders: [
-        { n: 1, lineItems: [{ ...ambiguousItem, workflowId: boardId }] },
+        { n: 1, lineItems: [{ ...multiMatchItem, workflowId: boardId }] },
       ],
     });
     const runs = await agent.merchantListRunsForOrder({
@@ -1516,7 +1516,7 @@ describe("ShopAgent seed callables", () => {
     strictEqual(
       chosen === undefined
         ? null
-        : Domain.orderIssues(chosen).includes("ambiguous"),
+        : Domain.orderIssues(chosen).includes("multi_match"),
       false,
     );
   });
@@ -1564,7 +1564,7 @@ describe("ShopAgent seed callables", () => {
     const team = await seedTeam(shop, "Bench");
     const agent = await getAgentByName(env.SHOP_AGENT, shop);
     // The meter counts an order when its first run is created, so the seed
-    // needs a workflow for its orders to match; the runs start and nothing
+    // includes a workflow its orders match; the runs start and nothing
     // is counted.
     await agent.seedWorkflows({
       workflows: [twoTask("Board", "board", team.id)],

@@ -21,6 +21,7 @@
  * | billing period            | the screen word is billing cycle (`Domain.ShopUsage`)              |
  * | import, imports, importing | the word is sync: Baton's copy agreeing with Shopify; import is Shopify's word for `orderCreate` |
  * | resync                    | the word is sync at one-order scope; the button is Sync from Shopify |
+ * | needs a workflow          | the fault is that more than one workflow matches; the label is Multiple workflows match |
  *
  * And the copy words that are wrong in every slot, whatever the noun: copy
  * states facts and names the act, so it never pleads, apologises, exclaims
@@ -79,6 +80,7 @@ export const RETIRED: readonly RegExp[] = [
   /\bbilling periods?\b/iu,
   /\bimport(?:s|ed|ing)?\b/iu,
   /\bre-?sync(?:s|ed|ing)?\b/iu,
+  /\bneeds a workflow\b/iu,
   /\bplease\b/iu,
   /\bsuccessfully\b/iu,
   /\boops\b/iu,
@@ -203,6 +205,7 @@ export const exportedNames = (source: string): readonly ExportedName[] =>
  * | activated  | nothing; the switch is `state`, `on` / `off`                                        |
  * | import     | retired; the word is sync                                                           |
  * | resync     | retired; the word is sync                                                           |
+ * | ambigu     | retired; the word is multi-match                                                    |
  *
  * {@link RESERVED_STEM_ALLOWED} names the exports that keep a stem on
  * purpose.
@@ -217,6 +220,7 @@ export const RESERVED_STEMS: readonly string[] = [
   "activated",
   "import",
   "resync",
+  "ambigu",
 ];
 
 /**

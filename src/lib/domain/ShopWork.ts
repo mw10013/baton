@@ -28,7 +28,7 @@
  * | reconcile all | reconcile every stored open, paid order once, after a workflow changes                                     | `ShopWorkAgent.reconcileAllNow`                              | (none)                                                      |
  * | eligible      | a workflow that is on, has a task, and has every task on a team; only an eligible workflow creates runs    | `workflowIsEligible`, `EligibleContext`                      | (none): Needs a team names the fault                        |
  * | match         | an item and an eligible workflow: a product tag equals the workflow's tag and units to make are above zero | `itemMatches`                                                | the order page's picker lists them first                    |
- * | ambiguous     | an item two or more eligible workflows match, with no run                                                  | `ambiguousItems`, `OrderIssue` `ambiguous`                   | Needs a workflow                                            |
+ * | multi-match   | an item two or more eligible workflows match, with no run                                                  | `multiMatchItems`, `OrderIssue` `multi_match`                | Multiple workflows match                                    |
  * | units to make | what is left to make on an item: Shopify's current quantity                                                | `unitsToMake`                                                | the quantity on the card                                    |
  *
  * The merchant's two indexes read the view row too: the orders index's views
@@ -104,12 +104,12 @@
  * Order issues, shop work: zero or more per open order, derived, never
  * stored, by {@link orderIssues}:
  *
- * | word       | meaning                                                                                     | screen              |
- * | ---------- | ------------------------------------------------------------------------------------------- | ------------------- |
- * | ambiguous  | an item two or more eligible workflows match, with no run, on an order that can create runs | Needs a workflow    |
- * | unassigned | an open task on no team                                                                     | Needs a team        |
- * | empty team | a current task on a team with no members                                                    | Team has no members |
- * | blocked    | a run on the order is blocked, the run-state word                                           | Blocked             |
+ * | word        | meaning                                                                                     | screen                   |
+ * | ----------- | ------------------------------------------------------------------------------------------- | ------------------------ |
+ * | multi-match | an item two or more eligible workflows match, with no run, on an order that can create runs | Multiple workflows match |
+ * | unassigned  | an open task on no team                                                                     | Needs a team             |
+ * | empty team  | a current task on a team with no members                                                    | Team has no members      |
+ * | blocked     | a run on the order is blocked, the run-state word                                           | Blocked                  |
  *
  * The workflows index and the workflow page show the `unassigned` and `empty team`
  * rows' screen words for a workflow with the same fault, so one fault has one
@@ -276,7 +276,7 @@ export const ORDER_POSITION_LABEL = {
  * one label and one tone on every screen.
  */
 export const ORDER_ISSUE_LABEL = {
-  ambiguous: "Needs a workflow",
+  multi_match: "Multiple workflows match",
   unassigned: "Needs a team",
   empty_team: "Team has no members",
   blocked: "Blocked",
@@ -381,12 +381,12 @@ export type TeamId = typeof TeamId.Type;
 /**
  * The length of a trimmed team name: half of {@link NAME_MAX_LENGTH}. The
  * schema check and the Create and Rename fields read this. A team name is a
- * label printed in a badge, and the Orders screen's Waiting on column puts up
- * to two of them side by side in one table cell; `s-badge` never wraps or
- * truncates, so the cap is what bounds the column's width. 32 still admits
- * the names a shop gives a bench or a crew ("Leather finishing, bench 3");
- * 24 would refuse some of them. Task and workflow names keep 64 because they
- * sit on their own line of a card, where they can wrap.
+ * label: the Orders screen's Waiting on column puts up to two of them in one
+ * table cell, one per line, and the member screens print one beside a task.
+ * 32 still admits the names a shop gives a bench or a crew ("Leather
+ * finishing, bench 3"); 24 would refuse some of them. Task and workflow
+ * names keep 64 because they sit on their own line of a card, where they
+ * can wrap.
  */
 export const TEAM_NAME_MAX_LENGTH = 32;
 
@@ -1290,7 +1290,7 @@ export const SeedOrdersInput = Schema.Struct({
           /**
            * A workflow to set on this item after reconcile, exactly as the
            * merchant's Choose / Change does (`setRun`):
-           * resolves an ambiguous item, or attaches where no tag matched.
+           * resolves a multi-match item, or attaches where no tag matched.
            * Applied before progress so the run it creates is one the rounds
            * below then advance. Callers above this schema name the workflow
            * instead — ids are minted by the seed moments earlier — and
@@ -1399,12 +1399,12 @@ export type OrdersIndexView = typeof OrdersIndexView.Type;
  * {@link orderIssues}; the SQL predicates in `OrderRepository.listOrders`
  * restate each element and must move with it.
  *
- * | Issue        | Rule                                                                            | Remedy                              |
- * | ------------ | ------------------------------------------------------------------------------- | ----------------------------------- |
- * | `ambiguous`  | `ambiguousItems > 0` and the order can create runs ({@link orderCanCreateRuns}) | choose a workflow on the order page |
- * | `unassigned` | {@link OrderRow} `unassigned`                                                   | Assign team on the order page       |
- * | `empty_team` | {@link OrderRow} `emptyTeam`                                                    | add a member on the team page       |
- * | `blocked`    | `runs.blocked > 0`                                                              | the order page                      |
+ * | Issue         | Rule                                                                             | Remedy                              |
+ * | ------------- | -------------------------------------------------------------------------------- | ----------------------------------- |
+ * | `multi_match` | `multiMatchItems > 0` and the order can create runs ({@link orderCanCreateRuns}) | choose a workflow on the order page |
+ * | `unassigned`  | {@link OrderRow} `unassigned`                                                    | Assign team on the order page       |
+ * | `empty_team`  | {@link OrderRow} `emptyTeam`                                                     | add a member on the team page       |
+ * | `blocked`     | `runs.blocked > 0`                                                               | the order page                      |
  *
  * **Each issue has one remedy: the action that fixes the fault the issue
  * names.** A Remedy cell never names two actions. An action that only routes
@@ -1416,7 +1416,7 @@ export type OrdersIndexView = typeof OrdersIndexView.Type;
  * **Every issue is critical, on every screen that shows it**
  * ({@link ORDER_ISSUE_TONE}). An issue is an order that will not move until
  * the merchant acts, which is what the critical tone says, so a warning among
- * issues would say "stuck, but not very", and no issue is that: an ambiguous
+ * issues would say "stuck, but not very", and no issue is that: a multi-match
  * item has no run at all, and a task on a team with no members reaches
  * nobody, exactly as a task with no team does. The definition, not the tone,
  * keeps critical rare: it leaves out every order that is not stuck (an
@@ -1439,7 +1439,7 @@ export type OrdersIndexView = typeof OrdersIndexView.Type;
  * tagged sits in Not started, where the merchant sees it, and its order
  * page offers the workflow picker on the item.
  *
- * An unpaid order with an ambiguous item is not choosing: reconcile would not
+ * An unpaid order with a multi-match item is not choosing: reconcile would not
  * create a run on it whichever workflow was chosen, so there is no decision
  * waiting yet. Unpaid is not an issue either: it is a Shopify fact the
  * Payment column already shows, not something the merchant fixes in Baton.
@@ -1459,7 +1459,7 @@ export type OrdersIndexView = typeof OrdersIndexView.Type;
  * not the problem. The labels are {@link ORDER_ISSUE_LABEL}.
  */
 export const OrderIssue = Schema.Literals([
-  "ambiguous",
+  "multi_match",
   "unassigned",
   "empty_team",
   "blocked",
@@ -1569,7 +1569,7 @@ export type SubscribeOrdersInput = typeof SubscribeOrdersInput.Type;
  * `Run` rows in the same read. `open` counts {@link runIsOpen} runs, `done`
  * the done ones. Closed runs are not counted: nothing derives from their
  * number. A closed run still holds its item ({@link RunState}), which
- * {@link ambiguousItems} reads off the run rows, and an order whose only
+ * {@link multiMatchItems} reads off the run rows, and an order whose only
  * runs were closed reads as not started ({@link orderPosition}) with no
  * issue ({@link orderIssues}).
  */
@@ -1634,13 +1634,13 @@ export const OrderRow = Schema.Struct({
    */
   waitingOn: Schema.Array(TeamId),
   /**
-   * How many of the order's items are **ambiguous**: two or more matches
+   * How many of the order's items are **multi-match**: two or more matches
    * ({@link itemMatches}), units still to make, and no run in any state.
    * Derived per read like {@link RunCounts}, never stored, so a Change
    * workflow that leaves an item with two matches and nothing on it reads as
-   * ambiguous again without another reconcile. See {@link ambiguousItems} for the shared definition.
+   * multi-match again without another reconcile. See {@link multiMatchItems} for the shared definition.
    */
-  ambiguousItems: Schema.Number,
+  multiMatchItems: Schema.Number,
 });
 export type OrderRow = typeof OrderRow.Type;
 
@@ -1697,14 +1697,14 @@ export const orderIssues = ({
   runs,
   unassigned,
   emptyTeam,
-  ambiguousItems,
+  multiMatchItems,
 }: Pick<
   OrderRow,
-  "order" | "runs" | "unassigned" | "emptyTeam" | "ambiguousItems"
+  "order" | "runs" | "unassigned" | "emptyTeam" | "multiMatchItems"
 >): readonly OrderIssue[] => {
   if (!orderIsOpen(order)) return [];
   const issue: Record<OrderIssue, boolean> = {
-    ambiguous: orderCanCreateRuns(order) && ambiguousItems > 0,
+    multi_match: orderCanCreateRuns(order) && multiMatchItems > 0,
     unassigned,
     empty_team: emptyTeam,
     blocked: runs.blocked > 0,
@@ -1721,7 +1721,7 @@ export const orderIssues = ({
 export const ORDER_ISSUE_TONE = "critical";
 
 /**
- * The index's per-order ambiguity count, recomputed from a detail page's line
+ * The index's per-order multi-match count, recomputed from a detail page's line
  * items, runs and on workflows so both pages share one definition: items two
  * or more workflows match ({@link itemMatches}), with units to make and no
  * run. The SQL in `OrderRepository.listOrders` restates it and must move with
@@ -1731,7 +1731,7 @@ export const ORDER_ISSUE_TONE = "critical";
  * was routed and done, and a closed run still holds its item
  * ({@link RunState}).
  */
-export const ambiguousItems = (
+export const multiMatchItems = (
   lineItems: readonly OrderLineItem[],
   runs: readonly Run[],
   details: readonly WorkflowDetail[],
@@ -2347,7 +2347,7 @@ export const matchesTag = (
  * read and never stored, so a tag edit, a team delete or a Turn off shows on
  * the next read with no reconcile in between.
  *
- * The SQL twin is `AMBIGUOUS_ITEM` in `OrderRepository.ts`, which the orders
+ * The SQL twin is `MULTI_MATCH_ITEM` in `OrderRepository.ts`, which the orders
  * index reads; it restates this rule and must move with it. SQL cannot ask D1
  * whether a team exists, so the twin reads "every task's `teamId` set", which
  * is what the object holds once `deleteTeam` has nulled the pointers; the
@@ -2410,7 +2410,7 @@ const NOTHING: ReconcileOutcome = { _tag: "nothing", declined: false };
  *
  * One run per item, not the cross product. Only a single match
  * ({@link itemMatches}) with no run creates anything: two or more is
- * **ambiguous**, and picking for the merchant would route work to the wrong
+ * **multi-match**, and picking for the merchant would route work to the wrong
  * team silently, so nothing is created and the order page asks. A run in any
  * state, `done` and `closed` included, holds its item ({@link RunState}), so
  * a workflow turned on later never displaces it and a tag match never undoes
@@ -2460,7 +2460,7 @@ const NOTHING: ReconcileOutcome = { _tag: "nothing", declined: false };
  * | open      | any  | same    | open            | any               | nothing                                         |
  * | open      | any  | any     | done or closed  | any               | nothing: the run holds its item                 |
  * | open      | yes  | some    | none            | 1                 | create                                          |
- * | open      | yes  | some    | none            | 2+                | nothing: ambiguous                              |
+ * | open      | yes  | some    | none            | 2+                | nothing: multi-match                            |
  * | open      | any  | some    | none            | 0                 | nothing                                         |
  * | open      | no   | some    | none            | 1                 | nothing: created when it pays                   |
  * | open      | yes  | some    | none            | 1, at the ceiling | nothing: declined at the ceiling, banner raised |
@@ -3179,7 +3179,7 @@ export const taskActions = (
  * - `removed`: no run, and `currentQuantity` is zero. Nothing to do.
  * - `attachable`: no run, and at least one workflow that is on, with tasks, can be
  *   attached. `options` lists the matched workflows first, then the rest;
- *   `ambiguous` is {@link ambiguousItems}' test for this one item, and the
+ *   `multiMatch` is {@link multiMatchItems}' test for this one item, and the
  *   page says why it is asking.
  * - `unmatched`: no run and no workflow to offer.
  *
@@ -3201,7 +3201,7 @@ export const LineItemState = Schema.Union([
     kind: Schema.Literal("attachable"),
     options: Schema.Array(Workflow),
     matched: Schema.Array(WorkflowId),
-    ambiguous: Schema.Boolean,
+    multiMatch: Schema.Boolean,
   }),
   Schema.Struct({
     kind: Schema.Literal("closed"),
@@ -3284,7 +3284,7 @@ export const lineItemState = (
       kind: "attachable",
       options,
       matched: matched.map((workflow) => workflow.id),
-      ambiguous: matched.length >= 2 && unitsToMake(item) > 0,
+      multiMatch: matched.length >= 2 && unitsToMake(item) > 0,
     })),
   );
 };
