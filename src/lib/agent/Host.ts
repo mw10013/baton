@@ -42,20 +42,21 @@ export const unionTeams = (a: PublishTeams, b: PublishTeams): PublishTeams =>
  * is the other place the contexts meet: store (orders), reconcile
  * (shop work), flush (billing), publish (host).
  *
- * One row per source of orders. `store` is the orders write; `reconcile` is
+ * One row per source of orders. `store` is the orders write, whose rules are
+ * the sync tables on `Domain.syncOrder`; `reconcile` is
  * the shape from the triggers table on `Domain.reconcileItem`, `reconcile` or
  * `reconcile all`; `flush` is when the usage queue is sent; `release` is when
  * a released open-run ceiling runs its reconcile all; `publish` is who is
  * told. No `pinned by`: the rows are wiring, covered by the webhook, stream
  * and ceiling suites by scenario.
  *
- * | source                        | store                                               | reconcile                          | flush                 | release                       | publish                                  |
- * | ----------------------------- | --------------------------------------------------- | ---------------------------------- | --------------------- | ----------------------------- | ---------------------------------------- |
- * | order webhook                 | fetch one, upsert; dedupe, staleness, order ceiling | reconcile, inside the upsert       | after the order       | after the order               | the order, to the teams before and after |
- * | open-orders sync (the stream) | upsert each streamed order                          | reconcile each, inside its upsert  | once after the stream | once after the stream         | all                                      |
- * | one-order sync (the button)   | fetch one, upsert; no dedupe                        | reconcile, inside the upsert       | after the order       | after the order               | the order                                |
- * | workflow and team verbs       | —                                                   | reconcile all                      | after the pass        | inside the pass (second pass) | all                                      |
- * | seed (dev)                    | upsert each                                         | reconcile each, then reconcile all | after                 | —                             | all                                      |
+ * | source                        | store                                                        | reconcile                          | flush                 | release                       | publish                                  |
+ * | ----------------------------- | ------------------------------------------------------------ | ---------------------------------- | --------------------- | ----------------------------- | ---------------------------------------- |
+ * | order webhook                 | `Domain.syncOrder`: fetch one; dedupe and version skip first | reconcile, inside the upsert       | after the order       | after the order               | the order, to the teams before and after |
+ * | open-orders sync (the stream) | `Domain.syncOrder`: each streamed order                      | reconcile each, inside its upsert  | once after the stream | once after the stream         | all                                      |
+ * | one-order sync (the button)   | `Domain.syncOrder`: fetch one; no skip                       | reconcile, inside the upsert       | after the order       | after the order               | the order                                |
+ * | workflow and team verbs       | —                                                            | reconcile all                      | after the pass        | inside the pass (second pass) | all                                      |
+ * | seed (dev)                    | upsert each                                                  | reconcile each, then reconcile all | after                 | —                             | all                                      |
  */
 export class ShopAgentHost extends Context.Service<
   ShopAgentHost,

@@ -6,6 +6,7 @@ import * as ShopifyApi from "@shopify/shopify-api";
 import { AgentWorkflow } from "agents/workflows";
 import { NonRetryableError } from "cloudflare:workflows";
 import {
+  Cause,
   Clock,
   Duration,
   Effect,
@@ -52,6 +53,22 @@ class OrdersSyncWorkflowError extends Schema.TaggedError<OrdersSyncWorkflowError
  * ({@link bulkOrdersQueryText}).
  */
 const GAVE_UP_MESSAGE = "Shopify did not finish the export in time. Try again.";
+
+/**
+ * The banner's text for a failed sync (rule 14 on `Domain.syncOrder`): an
+ * {@link OrdersSyncWorkflowError}'s own message is already the merchant
+ * sentence, so it goes bare, with no tag prefix and no `[cause]:` line; any
+ * other failure (a defect) is rendered whole, since there is no sentence to
+ * prefer.
+ */
+const sinkMessage = (cause: Cause.Cause<unknown>) =>
+  Option.match(Cause.findErrorOption(cause), {
+    onNone: () => causeToErrorMessage(cause),
+    onSome: (error) =>
+      error instanceof OrdersSyncWorkflowError
+        ? error.message
+        : causeToErrorMessage(cause),
+  });
 
 /**
  * A permanent failure: retrying an expired refresh token or a rejected bulk
@@ -206,8 +223,9 @@ export class OrdersSyncWorkflow extends AgentWorkflow<
    * Submit the bulk operation, wait for Shopify, hand the file to the object. Four
    * steps and one loop; every concept the merchant could not predict — a
    * window, a first-run-versus-later rule, a reservation — lives nowhere,
-   * because the query is fixed and the agent is the only run tracker
-   * ({@link ShopAgent.syncOpenOrders}).
+   * because the query is fixed (rule 4 on `Domain.syncOrder`) and the agent
+   * is the only run tracker ({@link ShopAgent.syncOpenOrders}). What each
+   * way this can end leaves is the endings table there.
    *
    * Two Cloudflare Workflows + Effect constraints dictate this shape, and both
    * are easy to get wrong:
@@ -434,9 +452,7 @@ export class OrdersSyncWorkflow extends AgentWorkflow<
               "on-orders-sync-error",
               Effect.promise(() =>
                 step.do("on-orders-sync-error", () =>
-                  agent.onOrdersSyncError({
-                    message: causeToErrorMessage(cause),
-                  }),
+                  agent.onOrdersSyncError({ message: sinkMessage(cause) }),
                 ),
               ),
             ),

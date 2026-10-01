@@ -9,25 +9,14 @@ import { describe, it } from "vitest";
 
 import * as Domain from "@/lib/Domain";
 
+import { withMaxOrdersPerCycle } from "./order-ceiling.ts";
+
 /**
  * The enterprise ceiling on the webhook path: at
  * `Domain.ShopLimits.maxOrdersPerCycle`, a *new* order is refused for the rest
- * of the billing cycle and the refusal is flagged for the merchant.
- *
- * The real ceiling is more orders than a test should sync, so these lower
- * the constant for the duration — the same seam the open-run
- * ceiling tests use, and for the same reason: threading a limit through
- * `syncOrderWebhook` for nobody but this file would put a test seam in the production
- * signature.
+ * of the billing cycle and the refusal is flagged for the merchant. The
+ * ceiling is lowered for each test by `withMaxOrdersPerCycle`.
  */
-const withMaxOrdersPerCycle = <A>(limit: number, body: () => Promise<A>) => {
-  const limits = Domain.ShopLimits as { maxOrdersPerCycle: number };
-  const original = limits.maxOrdersPerCycle;
-  limits.maxOrdersPerCycle = limit;
-  return body().finally(() => {
-    limits.maxOrdersPerCycle = original;
-  });
-};
 
 const shopGid = Schema.decodeUnknownSync(Domain.ShopGid)(
   "gid://shopify/Shop/1",
@@ -54,6 +43,13 @@ const orderCount = (shop: string) =>
     ),
   );
 
+/**
+ * A cycle that ends after the test does: the ceiling is read at the cycle the
+ * sync lands in, after any roll-forward (rule 5 on `Domain.syncOrder`), so a
+ * cycle already over would be rolled forward and recounted before the read.
+ */
+const CYCLE_END = Date.now() + 86_400_000;
+
 const webhook = (orderId: string, webhookId: string) => ({
   orderId,
   topic: "orders/paid",
@@ -69,7 +65,7 @@ describe("ShopAgent order ceiling", () => {
       await agent.setBillingCycle({
         shopGid,
         cycleStartAt: 0,
-        cycleEndAt: 10_000,
+        cycleEndAt: CYCLE_END,
         memberCount: 0,
       });
       await setCount(shop, 2);
@@ -90,7 +86,7 @@ describe("ShopAgent order ceiling", () => {
       await agent.setBillingCycle({
         shopGid,
         cycleStartAt: 0,
-        cycleEndAt: 10_000,
+        cycleEndAt: CYCLE_END,
         memberCount: 0,
       });
       await setCount(shop, 2);
@@ -99,8 +95,8 @@ describe("ShopAgent order ceiling", () => {
       strictEqual(limited.ordersLimitedAt !== null, true);
       await agent.setBillingCycle({
         shopGid,
-        cycleStartAt: 10_000,
-        cycleEndAt: 20_000,
+        cycleStartAt: CYCLE_END,
+        cycleEndAt: CYCLE_END + 86_400_000,
         memberCount: 0,
       });
       const usage = await agent.getUsage();

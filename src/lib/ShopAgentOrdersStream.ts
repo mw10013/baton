@@ -51,6 +51,7 @@ interface OrderBuffer {
   readonly truncated: boolean;
 }
 
+/** Logged by the caller and never shown: no count a sync makes reaches a screen (rule 17 on `Domain.syncOrder`). */
 export interface OrdersStreamCounts {
   readonly ordersSeen: number;
   readonly ordersUpserted: number;
@@ -75,6 +76,7 @@ export interface OrdersStreamCounts {
  * documents children as always following their parent, so a mismatch means the
  * file is not what this reader assumes and silently discarding line item
  * properties would be worse than a failed sync the merchant can retry.
+ * Rule 10 on `Domain.syncOrder` is the cap and the parent check.
  */
 const addLine = (
   active: OrderBuffer | null,
@@ -137,6 +139,9 @@ const addLine = (
  * writing while this runs, and `upsertOrder`'s `updatedAt` guard is what lets a
  * fresher webhook row survive a staler line in the file. Nothing is cleared
  * first for the same reason.
+ *
+ * Rules 10 and 11 on `Domain.syncOrder`: at most 250 items an order, and one
+ * `syncedAt` for the whole stream, read before the file is fetched.
  *
  * The Durable Object's input gate opens on every `await` inside this fetch, so
  * webhook deliveries genuinely interleave between orders — that is expected,

@@ -818,6 +818,221 @@ const pinnedTestSources = () =>
     eager: true,
   });
 
+const syncActionsOf = (...rows: readonly string[]) =>
+  [
+    "/**",
+    " * | stored | version | age | ceiling | action |",
+    " * | - | - | - | - | - |",
+    ...rows.map((row) => ` * ${row}`),
+    " */",
+    "export const syncOrder = 0;",
+  ].join("\n");
+
+describe("sync actions table parser", () => {
+  it("the real table parses with five rows and no overlap", () => {
+    const rows = Result.getOrThrow(ActionTable.parseSyncActions(ordersSource));
+    expect(rows).toHaveLength(5);
+    expect(ActionTable.syncActionOverlaps(rows)).toEqual([]);
+  });
+
+  it("a word outside its list is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseSyncActions,
+        syncActionsOf("| none | any | ancient | any | refuse: retention |"),
+      ),
+    ).toMatch(/unknown word "ancient" under age/u);
+    expect(
+      reconcileError(
+        ActionTable.parseSyncActions,
+        syncActionsOf("| none | any | kept | any | delete |"),
+      ),
+    ).toMatch(/action "delete"/u);
+  });
+
+  it("two rows that share a fixture are reported", () => {
+    const rows = Result.getOrThrow(
+      ActionTable.parseSyncActions(
+        syncActionsOf(
+          "| stored | older | any | any | skip |",
+          "| stored | any | kept | any | write |",
+        ),
+      ),
+    );
+    expect(ActionTable.syncActionOverlaps(rows)).toHaveLength(1);
+  });
+
+  it("the stored, older row expands to the product of its any columns", () => {
+    const row = Result.getOrThrow(
+      ActionTable.parseSyncActions(ordersSource),
+    ).find((each) => each.stored === "stored" && each.version === "older");
+    expect(row && ActionTable.expandSyncAction(row)).toHaveLength(
+      (ActionTable.SYNC_ACTION_WORDS.age.length - 1) *
+        (ActionTable.SYNC_ACTION_WORDS.ceiling.length - 1),
+    );
+  });
+});
+
+/** `ordersSource` with its first line matching `pattern` passed through `edit`. */
+const ordersWith = (pattern: RegExp, edit: (line: string) => string) =>
+  ordersSource.replace(pattern, edit);
+
+describe("sync sources table parser", () => {
+  it("the real table parses, one row per title, and every pinned title is carried by a test", () => {
+    const rows = Result.getOrThrow(ActionTable.parseSyncSources(ordersSource));
+    expect(new Set(rows.map((row) => row.source))).toEqual(
+      new Set([
+        "order webhook, any topic",
+        "Sync open orders",
+        "Sync from Shopify",
+      ]),
+    );
+    expect(
+      ActionTable.checkPinned(rows, pinnedTestSources(), "syncOrder"),
+    ).toEqual([]);
+  });
+
+  it("an empty cell is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseSyncSources,
+        ordersWith(/^ \* \| Sync from Shopify .*$/mu, (line) =>
+          line.replace(
+            "the merchant, on the order page",
+            "                               ",
+          ),
+        ),
+      ),
+    ).toMatch(/empty who/u);
+  });
+
+  it("a header other than the sources header is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseSyncSources,
+        ordersWith(/^ \* \| source +\| who .*$/mu, (line) =>
+          line.replace("who", "by "),
+        ),
+      ),
+    ).toMatch(/header is source, by, asks Shopify for/u);
+  });
+
+  it("a cell with two titles yields two rows, and checkPinned reports the doctored one", () => {
+    const rows = Result.getOrThrow(
+      ActionTable.parseSyncSources(
+        ordersWith(/^ \* \| Sync from Shopify .*$/mu, (line) =>
+          line.replace(/ +\|$/u, "; no such title |"),
+        ),
+      ),
+    );
+    const own = rows.filter((row) => row.source === "Sync from Shopify");
+    expect(own.map((row) => row.pinnedBy)).toEqual([
+      "the one-order sync stores the order and creates its run",
+      "the one-order sync answers Gone for an order Shopify no longer has and leaves the stored row",
+      "no such title",
+    ]);
+    expect(
+      ActionTable.checkPinned(own, pinnedTestSources(), "syncOrder"),
+    ).toEqual([
+      `syncOrder, line ${String(own[0]?.line)}: no test titled "no such title"`,
+    ]);
+  });
+});
+
+describe("sync endings table parser", () => {
+  it("the real table parses and every pinned title is carried by a test", () => {
+    const rows = Result.getOrThrow(ActionTable.parseSyncEndings(ordersSource));
+    expect(rows[0]).toMatchObject({
+      ending: "started",
+      trackingRow: "inserted",
+      lastError: "cleared",
+    });
+    expect(
+      ActionTable.checkPinned(rows, pinnedTestSources(), "syncOrder"),
+    ).toEqual([]);
+  });
+
+  it("a word outside its list is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseSyncEndings,
+        ordersWith(/^ \* \| started +\|.*$/mu, (line) =>
+          line.replace("inserted", "written "),
+        ),
+      ),
+    ).toMatch(/unknown word "written" under tracking row/u);
+  });
+
+  it("a header other than the endings header is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseSyncEndings,
+        ordersWith(/^ \* \| ending +\| tracking row .*$/mu, (line) =>
+          line.replace("lastError", "error    "),
+        ),
+      ),
+    ).toMatch(/header is ending, tracking row, error, pinned by/u);
+  });
+
+  it("an ending that is not a row exactly once is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseSyncEndings,
+        ordersWith(/^ \* \| the start failed +\|.*$/mu, (line) =>
+          line.replace("the start failed", "started         "),
+        ),
+      ),
+    ).toMatch(/not once: started/u);
+  });
+});
+
+describe("sync rules table parser", () => {
+  it("the real table parses, numbered from 1, and every pinned title is carried by a test", () => {
+    const rows = Result.getOrThrow(ActionTable.parseSyncRules(ordersSource));
+    expect(rows[0]?.number).toBe(1);
+    expect(rows[0]?.where).toEqual([
+      "webhooks.orders",
+      "ShopAgent.syncOrderWebhook",
+    ]);
+    expect(
+      ActionTable.checkPinned(rows, pinnedTestSources(), "syncOrder"),
+    ).toEqual([]);
+  });
+
+  it("a rule number out of sequence is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseSyncRules,
+        ordersWith(/^ \* \| 4\. the open-orders query/mu, (cell) =>
+          cell.replace("4.", "5."),
+        ),
+      ),
+    ).toMatch(/rule 5 is out of sequence; expected 4/u);
+  });
+
+  it("a where that is not backticked symbols is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseSyncRules,
+        ordersWith(/^ \* \| 4\. the open-orders query.*$/mu, (line) =>
+          line.replace("`bulkOrdersQueryText`", "the query            "),
+        ),
+      ),
+    ).toMatch(/where "the query" is not one or more backticked symbols/u);
+  });
+
+  it("a header other than the rules header is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseSyncRules,
+        ordersWith(/^ \* \| rule +\| where +\|.*$/mu, (line) =>
+          line.replace("where", "who  "),
+        ),
+      ),
+    ).toMatch(/header is rule, who, pinned by/u);
+  });
+});
+
 describe("reconcile effects table parser", () => {
   it("the real table parses, one row per action, and every pinned title is carried by a test", () => {
     const rows = Result.getOrThrow(

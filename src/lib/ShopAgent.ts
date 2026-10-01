@@ -39,7 +39,6 @@ import {
 } from "@/lib/LayerEx";
 import { OrderRepository } from "@/lib/OrderRepository";
 import { ORDERS_SYNC_WORKFLOW_NAME } from "@/lib/orderSyncConstants";
-import { ORDER_CEILING_SYNC_REFUSED } from "@/lib/quotaCopy";
 import { Repository } from "@/lib/Repository";
 import { RunRepository } from "@/lib/RunRepository";
 import {
@@ -347,12 +346,11 @@ const reconciler = ShopWorkAgent.pipe(
  */
 const fetchAndUpsertOrder = (orderId: string) =>
   Effect.gen(function* () {
-    const { ceilingReleased } = yield* (yield* OrdersAgent).fetchAndUpsertOrder(
-      { orderId },
-      reconciler,
-    );
+    const { ceilingReleased, gone } =
+      yield* (yield* OrdersAgent).fetchAndUpsertOrder({ orderId }, reconciler);
     if (ceilingReleased)
       yield* (yield* ShopWorkAgent).afterCeilingReleased(orderId);
+    return { gone };
   });
 
 const SHOP_AGENT_BINDING = "SHOP_AGENT";
@@ -382,7 +380,8 @@ const isWorkflowInstanceNotFoundError = (cause: unknown) =>
  * ({@link ShopAgent.syncOpenOrders}): a live instance answers `InFlight`, a gone
  * one has its row cleared and a new sync starts. Were a stale row to keep
  * the button disabled, the click that clears it could never happen, and one
- * dead instance would disable the button for good.
+ * dead instance would disable the button for good. Rule 3 on
+ * `Domain.syncOrder`.
  */
 const SYNC_STALE_MS = 10 * 60 * 1000;
 
@@ -782,10 +781,11 @@ export class ShopAgent extends Agent {
    * new. `ShopAgentClient` is for calls that must carry a Worker-resolved input
    * such as a plan ceiling.
    *
-   * **One open-orders sync at a time**, tracked by the Agents SDK and nowhere else. The
-   * SDK's `cf_agents_workflows` row is the only record that a sync is
-   * running, so there is no reservation to reconcile against it and no way for
-   * the two to disagree. Three cases, and the code above is all three:
+   * Rule 3 on `Domain.syncOrder`: one open-orders sync at a time, and the
+   * SDK's `cf_agents_workflows` row is its only record, so there is no
+   * reservation to reconcile against it and no way for the two to disagree.
+   * Rule 5 there: the order ceiling is read before the start. Three cases,
+   * and the code below is all three:
    *
    * - *Two clicks in one tick.* `runWorkflow` awaits `workflow.create` before
    *   it inserts the tracking row, so a second call during that await would
@@ -881,14 +881,11 @@ export class ShopAgent extends Agent {
           return { _tag: "InFlight" } satisfies Domain.OrdersSyncResult;
         }
         /**
-         * The order ceiling: a sync that would be refused order by order
-         * should be refused once, visibly, before it starts. A stream that
-         * crosses the ceiling mid-file is stopped per order by `upsertOrder`
-         * instead, and the webhook path carries the same test for single
-         * orders. No storage guard beside it: the sync's fixed open-work
-         * query is what bounds how much this object can take on.
+         * The order ceiling, read at the cycle the sync lands in (rule 5 on
+         * `Domain.syncOrder`). No storage guard beside it: the sync's fixed
+         * open-work query is what bounds how much this object can take on.
          */
-        const usage = yield* repository.getUsage();
+        const usage = yield* repository.usageAtCycle(now);
         if (Domain.cycleAtOrderCeiling(usage.ordersThisCycle)) {
           yield* Effect.logError(
             `ShopAgent.syncOpenOrders: shop=${shop} status=order-ceiling ordersThisCycle=${String(usage.ordersThisCycle)}`,
@@ -899,9 +896,6 @@ export class ShopAgent extends Agent {
               ordersThisCycle: usage.ordersThisCycle,
             }),
           );
-          yield* repository.setSyncError({
-            error: ORDER_CEILING_SYNC_REFUSED,
-          });
           yield* repository.markOrdersLimited(now);
           yield* publish();
           return { _tag: "Refused" } satisfies Domain.OrdersSyncResult;
@@ -924,7 +918,14 @@ export class ShopAgent extends Agent {
   /**
    * RPC target for the workflow, not `@callable()`: nothing browser-side calls
    * it, and it takes a URL that must only ever come from a bulk operation this
-   * shop started.
+   * shop started (rule 15 on `Domain.syncOrder`). The stream merges and the
+   * retention pass rides it (rule 9); every order carries the stream's one
+   * `syncedAt` (rule 11); the usage queue is sent once after it, whatever
+   * became of it (rule 12).
+   *
+   * A step retry re-streams the whole file when the sweep or the flush
+   * throws after the writes: correct under rule 7, a full second pass, and
+   * rare.
    */
   onOrdersStream(input: { readonly url: string }): Promise<OrdersStreamCounts> {
     const shop = this.name;
@@ -991,9 +992,9 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * The window held no orders. Deliberately does not touch stored rows: unlike
-   * a catalog scan, an empty window means "nothing changed", never "the shop
-   * has no orders".
+   * The last 30 days held no orders. Deliberately does not touch stored rows:
+   * unlike a catalog scan, an empty result means "nothing changed", never
+   * "the shop has no orders" (rule 9 on `Domain.syncOrder`).
    */
   onOrdersSyncEmpty(): Promise<void> {
     const shop = this.name;
@@ -1007,10 +1008,9 @@ export class ShopAgent extends Agent {
 
   /**
    * The workflow's durable error sink, reached before the failure propagates,
-   * so the merchant-facing message survives even if the callback that follows
-   * never arrives. {@link ShopAgent.onWorkflowError} writes the same column
-   * from the platform's own account of the failure; whichever lands last
-   * wins, and they say the same thing.
+   * so the merchant sentence survives even if the callback that follows never
+   * arrives. Rule 14 on `Domain.syncOrder`: this write is the banner, and
+   * {@link ShopAgent.onWorkflowError} writes only when this never ran.
    */
   onOrdersSyncError(input: { readonly message: string }): Promise<void> {
     const shop = this.name;
@@ -1031,10 +1031,10 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Completion is recorded here rather than at the end of the stream: a file
-   * that streams halfway and then fails must not leave a timestamp claiming
-   * a sync completed. The workflow reports no result — there is nothing
-   * about the run the object does not already know — so nothing is decoded.
+   * A completed sync leaves nothing behind but its rows (rule 13 on
+   * `Domain.syncOrder`): the tracking row goes, which is what re-enables the
+   * button. The workflow reports no result — there is nothing about the run
+   * the object does not already know — so nothing is decoded.
    */
   override async onWorkflowComplete(
     workflowName: string,
@@ -1046,9 +1046,6 @@ export class ShopAgent extends Agent {
     const publish = () => this.publish("all");
     await this.runEffect(
       Effect.gen(function* () {
-        yield* (yield* OrderRepository).setLastCompletedAt({
-          now: yield* Clock.currentTimeMillis,
-        });
         yield* Effect.logInfo(
           `ShopAgent.onWorkflowComplete: shop=${shop} workflowId=${workflowId}`,
         ).pipe(Effect.annotateLogs({ shop, workflowId }));
@@ -1059,9 +1056,12 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Deleting the tracking row is what re-enables the button: it is the only
-   * record that a sync is running ({@link ShopAgent.syncOpenOrders}), so a row
-   * left behind by a failed run would wedge it until the staleness refresh.
+   * Rule 14 on `Domain.syncOrder`: the sink wrote the sentence; this callback
+   * deletes the tracking row and writes a message only when the sink never
+   * ran. Deleting the tracking row is what re-enables the button: it is the
+   * only record that a sync is running ({@link ShopAgent.syncOpenOrders}),
+   * so a row left behind by a failed run would wedge it until the staleness
+   * refresh.
    */
   override async onWorkflowError(
     workflowName: string,
@@ -1077,7 +1077,7 @@ export class ShopAgent extends Agent {
         yield* Effect.logError(
           `ShopAgent.onWorkflowError: shop=${shop} workflowId=${workflowId}: ${error}`,
         ).pipe(Effect.annotateLogs({ shop, workflowId, error }));
-        yield* (yield* OrderRepository).setSyncError({ error });
+        yield* (yield* OrderRepository).setSyncErrorIfEmpty({ error });
         yield* Effect.sync(deleteWorkflow);
         yield* publish();
       }).pipe(Effect.withLogSpan("ShopAgent.onWorkflowError")),
@@ -1088,15 +1088,13 @@ export class ShopAgent extends Agent {
    * The webhook path. Not `@callable()` — it is reached only from
    * `/webhooks/orders`, after HMAC validation.
    *
-   * Two guards make an unordered, retried, at-least-once delivery channel
-   * idempotent: the `X-Shopify-Webhook-Id` log rejects a redelivery outright,
-   * and the payload's `updated_at` skips a fetch that could only produce an
-   * older version than the one already stored. The upsert's own guard is the
-   * third, and the only one that survives two paths writing at once.
-   *
-   * The topic is a log field and nothing else: `reconcileOrder` works from the
-   * fetched order, not from what knocked, which is why every subscribed topic
-   * arrives here and why an out-of-order delivery is still correct.
+   * Rules 1, 2, 5, 9 and 12 on `Domain.syncOrder`: the order is fetched
+   * whole and the topic decides nothing; a delivery is handled once; the
+   * ceiling is read before the fetch; the retention pass rides it,
+   * rate-limited; the usage queue is sent after the write. The two webhook
+   * guards make an unordered, retried, at-least-once channel idempotent; the
+   * upsert's own version check is the third, and the only one that survives
+   * two paths writing at once.
    *
    * Each order goes through four steps, each owned by one module: store
    * ({@link OrdersAgent}), reconcile (shop work's reconciler, passed to the
@@ -1168,7 +1166,9 @@ export class ShopAgent extends Agent {
           // One read serves both the ceiling and the sweep below: the row
           // is the same one, and this is the webhook path, where every
           // avoidable read is paid per delivery.
-          const usage = yield* repository.getUsage();
+          const usage = yield* repository.usageAtCycle(
+            yield* Clock.currentTimeMillis,
+          );
           if (
             Option.isNone(stored) &&
             Domain.cycleAtOrderCeiling(usage.ordersThisCycle)
@@ -1337,16 +1337,18 @@ export class ShopAgent extends Agent {
   /**
    * `@callable()` and it does take an argument, unlike {@link syncOpenOrders} — but
    * the id is only ever spent against this shop's own offline session, so a
-   * foreign one fails at Shopify rather than reaching another shop's data. No
-   * dedupe and no staleness check: a merchant clicking Sync from Shopify is asking for the
-   * fetch, and the upsert guard still protects the row.
+   * foreign one fails at Shopify rather than reaching another shop's data
+   * (rule 15 on `Domain.syncOrder`). No dedupe and no staleness check: a
+   * merchant clicking Sync from Shopify is asking for the fetch, and the
+   * upsert guard still protects the row.
    *
    * Sends the usage queue afterwards ({@link flushUsageEvents}), whether or
-   * not the fetch succeeded: the reconcile may have started the order's first
-   * run, which counts it.
+   * not the fetch succeeded (rule 12): the reconcile may have started the
+   * order's first run, which counts it. Answers `Domain.SyncOrderResult`, so
+   * the order page can say when Shopify no longer has the order.
    */
   @callable()
-  syncOrder(input: Domain.SyncOrderInput): Promise<void> {
+  syncOrder(input: Domain.SyncOrderInput): Promise<Domain.SyncOrderResult> {
     const publish = (touched: PublishScope) => this.publish(touched);
     return this.runEffect(
       callableEffect("ShopAgent.syncOrder", Domain.SyncOrderInput, {
@@ -1354,8 +1356,11 @@ export class ShopAgent extends Agent {
         parse: { onExcessProperty: "error" },
       })(({ orderId }) =>
         Effect.gen(function* () {
-          yield* fetchAndUpsertOrder(orderId);
+          const { gone } = yield* fetchAndUpsertOrder(orderId);
           yield* publish([orderId]);
+          return (
+            gone ? { _tag: "Gone" } : { _tag: "Stored" }
+          ) satisfies Domain.SyncOrderResult;
         }).pipe(Effect.ensuring(flushUsageEvents)),
       )(input),
     );

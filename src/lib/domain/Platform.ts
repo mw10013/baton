@@ -231,8 +231,6 @@ export const ShopLimits = {
   webhookDeliveryRetentionDays: 7,
   /** An expired usage event (`usageEventIsExpired` in Billing) dated longer ago than this is deleted by the retention sweep; `OrderRepository.sweepExpiredOrders` says why 60. */
   expiredUsageEventRetentionDays: 60,
-  /** `syncOpenOrders` refuses to start a sync when the object's SQLite is past this. */
-  storageSoftLimitBytes: 2_000_000_000,
   /** Rows deleted per sweep pass, so no carrier request pays for more than this. */
   sweepBatch: 200,
   /** Minimum gap between retention passes triggered from the webhook path. */

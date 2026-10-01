@@ -6,13 +6,15 @@
 // does to the usage counts and the usage-event queue), the triggers, actions,
 // effects and pass rules tables on `reconcileItem` in
 // src/lib/domain/ShopWork.ts (when reconcile runs, what it does to one item,
-// what each action does beyond the run, and the rules of a pass), the sync
-// pipeline table on `ShopAgentHost` in src/lib/agent/Host.ts, and the data-model
+// what each action does beyond the run, and the rules of a pass), the
+// four sync tables on `syncOrder` in src/lib/domain/Orders.ts (what one sync
+// does to one order, its sources, the open-orders sync's endings, and its
+// rules), the sync pipeline table on `ShopAgentHost` in src/lib/agent/Host.ts, and the data-model
 // tables on `initializeSchema` in src/lib/ShopAgentSchema.ts (the object) and
 // on `D1_TABLES` in src/lib/D1Schema.ts (D1).
 //
-//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the vocabulary, its contexts, its screen columns, its stored cells against the DDL and its Screens table, parse the triggers table, the four reconcile tables, the sync pipeline table and both data-model tables and refuse a pinned title no test carries, parse the copy and controls tables in src/lib/Screen.ts and refuse an example no screen shows (exit 1 on any failure)
-//   node scripts/spec.ts print   render the parsed rows and how many fixtures each expands to, then the triggers rows, then the reconcile rows and how many are pinned by (none yet), then the sync pipeline rows, then the data-model rows
+//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the vocabulary, its contexts, its screen columns, its stored cells against the DDL and its Screens table, parse the triggers table, the four reconcile tables, the four sync tables on syncOrder (refusing overlapping actions rows), the sync pipeline table and both data-model tables and refuse a pinned title no test carries, parse the copy and controls tables in src/lib/Screen.ts and refuse an example no screen shows (exit 1 on any failure)
+//   node scripts/spec.ts print   render the parsed rows and how many fixtures each expands to, then the triggers rows, then the reconcile rows and how many are pinned by (none yet), then the four sync tables, the actions' fixture counts and the count of rows pinned by (none yet), then the sync pipeline rows, then the data-model rows
 
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import { Console, Effect, Result } from "effect";
@@ -190,6 +192,25 @@ const checkCommand = Command.make(
         onFailure: (error) => [error.message],
         onSuccess: () => [],
       }),
+      ...Result.match(ActionTable.parseSyncActions(contexts.Orders), {
+        onFailure: (error) => [error.message],
+        onSuccess: (rows) =>
+          ActionTable.syncActionOverlaps(rows).map(
+            ([a, b]) =>
+              `syncOrder actions, lines ${String(a.line)} and ${String(b.line)}: rows share a fixture`,
+          ),
+      }),
+      ...[
+        ActionTable.parseSyncSources(contexts.Orders),
+        ActionTable.parseSyncEndings(contexts.Orders),
+        ActionTable.parseSyncRules(contexts.Orders),
+      ].flatMap((parsed) =>
+        Result.match(parsed, {
+          onFailure: (error) => [error.message],
+          onSuccess: (rows: readonly { line: number; pinnedBy: string }[]) =>
+            ActionTable.checkPinned(rows, testSources, "syncOrder"),
+        }),
+      ),
       ...Result.match(ActionTable.parseReconcileEffects(contexts.ShopWork), {
         onFailure: (error) => [error.message],
         onSuccess: (rows) =>
@@ -233,7 +254,7 @@ const checkCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Parse the action tables and the four reconcile tables (triggers, actions, effects, pass rules) in domain/ShopWork.ts and the sync pipeline table in agent/Host.ts, check the vocabulary in Domain.ts and domain/ and its stored cells against the DDL in ShopAgentSchema.ts, check the triggers table on ShopUsage in domain/Billing.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts, and check the copy and controls tables in Screen.ts; exit 1 on any failure",
+    "Parse the action tables and the four reconcile tables (triggers, actions, effects, pass rules) in domain/ShopWork.ts, the four sync tables on syncOrder in domain/Orders.ts and the sync pipeline table in agent/Host.ts, check the vocabulary in Domain.ts and domain/ and its stored cells against the DDL in ShopAgentSchema.ts, check the triggers table on ShopUsage in domain/Billing.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts, and check the copy and controls tables in Screen.ts; exit 1 on any failure",
   ),
 );
 
@@ -344,6 +365,74 @@ const printCommand = Command.make(
     yield* Console.log(
       `reconcileItem: ${String(unpinned)} rows pinned by ${ActionTable.NONE_YET}`,
     );
+    yield* Console.log("syncOrder actions");
+    const syncActions = Result.match(
+      ActionTable.parseSyncActions(contexts.Orders),
+      {
+        onFailure: (error) => [error.message],
+        onSuccess: (rows) =>
+          rows.map(
+            (row) =>
+              `[${String(ActionTable.expandSyncAction(row).length)}] ${row.text}`,
+          ),
+      },
+    );
+    for (const line of syncActions) yield* Console.log(`  ${line}`);
+    yield* Console.log("syncOrder sources");
+    const syncSources = Result.match(
+      ActionTable.parseSyncSources(contexts.Orders),
+      {
+        onFailure: (error) => [error.message],
+        onSuccess: (rows) =>
+          rows.map(
+            (row) =>
+              `${row.source}: ${row.who}; skipped when ${row.skippedWhen} — ${row.pinnedBy}`,
+          ),
+      },
+    );
+    for (const line of syncSources) yield* Console.log(`  ${line}`);
+    yield* Console.log("syncOrder endings");
+    const syncEndings = Result.match(
+      ActionTable.parseSyncEndings(contexts.Orders),
+      {
+        onFailure: (error) => [error.message],
+        onSuccess: (rows) =>
+          rows.map(
+            (row) =>
+              `${row.ending}: tracking row ${row.trackingRow}, lastError ${row.lastError} — ${row.pinnedBy}`,
+          ),
+      },
+    );
+    for (const line of syncEndings) yield* Console.log(`  ${line}`);
+    yield* Console.log("syncOrder rules");
+    const syncRules = Result.match(
+      ActionTable.parseSyncRules(contexts.Orders),
+      {
+        onFailure: (error) => [error.message],
+        onSuccess: (rows) =>
+          rows.map(
+            (row) => `${row.rule} [${row.where.join(", ")}] — ${row.pinnedBy}`,
+          ),
+      },
+    );
+    for (const line of syncRules) yield* Console.log(`  ${line}`);
+    const syncUnpinned = [
+      ActionTable.parseSyncSources(contexts.Orders),
+      ActionTable.parseSyncEndings(contexts.Orders),
+      ActionTable.parseSyncRules(contexts.Orders),
+    ].reduce(
+      (total, parsed) =>
+        total +
+        Result.match(parsed, {
+          onFailure: () => 0,
+          onSuccess: (rows: readonly { readonly pinnedBy: string }[]) =>
+            rows.filter((row) => row.pinnedBy === ActionTable.NONE_YET).length,
+        }),
+      0,
+    );
+    yield* Console.log(
+      `syncOrder: ${String(syncUnpinned)} rows pinned by ${ActionTable.NONE_YET}`,
+    );
     yield* Console.log("ShopAgentHost sync pipeline");
     const pipeline = Result.match(
       ActionTable.parseSyncPipeline(yield* readHost),
@@ -375,7 +464,7 @@ const printCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Render the parsed action tables and their fixture counts, then the triggers rows, then the reconcile rows, the actions' fixture counts and the count of rows pinned by (none yet), then the sync pipeline rows, then the data-model rows",
+    "Render the parsed action tables and their fixture counts, then the triggers rows, then the reconcile rows, the actions' fixture counts and the count of rows pinned by (none yet), then the four sync tables, the actions' fixture counts and the count of rows pinned by (none yet), then the sync pipeline rows, then the data-model rows",
   ),
 );
 

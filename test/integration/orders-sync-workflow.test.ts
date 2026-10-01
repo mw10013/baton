@@ -1,11 +1,11 @@
-import type * as Domain from "@/lib/Domain";
-
 import * as ShopifyApi from "@shopify/shopify-api";
 import { getAgentByName } from "agents";
 import { introspectWorkflow, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { Schema } from "effect";
+import { describe, expect, it, vi } from "vitest";
 
+import * as Domain from "@/lib/Domain";
 import { bulkOrdersQueryText } from "@/lib/OrdersBulkRepository";
 import {
   BULK_GIVE_UP_MS,
@@ -13,6 +13,8 @@ import {
   ORDER_SYNC_WINDOW_DAYS,
   ORDERS_SYNC_WORKFLOW_NAME,
 } from "@/lib/orderSyncConstants";
+
+import { withMaxOrdersPerCycle } from "./order-ceiling.ts";
 
 const sessionProps = (shop: string) =>
   new ShopifyApi.Session({
@@ -55,9 +57,63 @@ const listOrdersInput = {
   team: null,
 } as const;
 
+/** The sync state the orders index reads. */
+const syncStateOf = async (shop: string) => {
+  const agent = await getAgentByName(env.SHOP_AGENT, shop);
+  const { syncState } = await agent.listOrders(listOrdersInput);
+  return syncState;
+};
+
+/** The banner the orders index shows, or null. */
+const lastErrorOf = (shop: string) =>
+  syncStateOf(shop).then((state) => state.lastError);
+
+/** `GAVE_UP_MESSAGE` in `OrdersSyncWorkflow.ts`, the banner a give-up leaves, verbatim. */
+const GAVE_UP_MESSAGE = "Shopify did not finish the export in time. Try again.";
+
 const startSync = async (shop: string) => {
   const agent = await getAgentByName(env.SHOP_AGENT, shop);
   await agent.syncOpenOrders();
+};
+
+const sqlOf = (instance: unknown) =>
+  (instance as { ctx: DurableObjectState }).ctx.storage.sql;
+
+/** The one `SyncState` row, every column, straight from the object's SQLite. */
+const syncStateRow = (shop: string) =>
+  runInDurableObject(env.SHOP_AGENT.getByName(shop), (instance) =>
+    sqlOf(instance).exec("select * from SyncState where id = 1").toArray(),
+  );
+
+/** The Agents SDK's tracking rows for the open-orders sync. */
+const trackedSyncs = (shop: string) =>
+  runInDurableObject(env.SHOP_AGENT.getByName(shop), (instance) =>
+    Number(
+      sqlOf(instance)
+        .exec(
+          "select count(*) as n from cf_agents_workflows where workflow_name = ?",
+          ORDERS_SYNC_WORKFLOW_NAME,
+        )
+        .one().n,
+    ),
+  );
+
+/** Mocks a sync that polls until the give-up bound, then cancels. */
+const mockGiveUp = async (
+  shop: string,
+  introspector: Awaited<ReturnType<typeof introspectWorkflow>>,
+) => {
+  await introspector.modifyAll(async (m) => {
+    await m.disableSleeps();
+    await m.mockStepResult({ name: "ensure-session" }, sessionProps(shop));
+    await m.mockStepResult({ name: "run-bulk-orders-query" }, runningOperation);
+    for (let attempt = 0; attempt < POLL_COUNT; attempt += 1)
+      await m.mockStepResult(
+        { name: `poll-bulk-orders-${String(attempt)}` },
+        runningOperation,
+      );
+    await m.mockStepResult({ name: "cancel-bulk-orders" }, { ok: true });
+  });
 };
 
 /**
@@ -92,7 +148,7 @@ describe("OrdersSyncWorkflow shape", () => {
     await expect(instance.waitForStatus("complete")).resolves.not.toThrow();
   });
 
-  it("completes: a window with no orders reaches on-orders-sync-empty", async () => {
+  it("completes: 30 days with no orders reaches on-orders-sync-empty", async () => {
     const shop = "orders-empty.myshopify.com";
     await using introspector = await introspectWorkflow(
       env.ORDERS_SYNC_WORKFLOW,
@@ -163,20 +219,7 @@ describe("OrdersSyncWorkflow shape", () => {
     await using introspector = await introspectWorkflow(
       env.ORDERS_SYNC_WORKFLOW,
     );
-    await introspector.modifyAll(async (m) => {
-      await m.disableSleeps();
-      await m.mockStepResult({ name: "ensure-session" }, sessionProps(shop));
-      await m.mockStepResult(
-        { name: "run-bulk-orders-query" },
-        runningOperation,
-      );
-      for (let attempt = 0; attempt < POLL_COUNT; attempt += 1)
-        await m.mockStepResult(
-          { name: `poll-bulk-orders-${String(attempt)}` },
-          runningOperation,
-        );
-      await m.mockStepResult({ name: "cancel-bulk-orders" }, { ok: true });
-    });
+    await mockGiveUp(shop, introspector);
 
     await startSync(shop);
 
@@ -188,7 +231,7 @@ describe("OrdersSyncWorkflow shape", () => {
     await expect(instance.waitForStatus("errored")).resolves.not.toThrow();
     const agent = await getAgentByName(env.SHOP_AGENT, shop);
     const { syncState } = await agent.listOrders(listOrdersInput);
-    expect(syncState.lastError).toContain("did not finish the export in time");
+    expect(syncState.lastError).toBe(GAVE_UP_MESSAGE);
   });
 
   /**
@@ -253,6 +296,144 @@ describe("OrdersSyncWorkflow shape", () => {
     expect(second._tag).toBe("InFlight");
     const instances = await introspector.get();
     expect(instances.length).toBe(1);
+  });
+
+  it("a completed sync deletes the tracking row and writes nothing else", async () => {
+    const shop = "orders-complete-state.myshopify.com";
+    await using introspector = await introspectWorkflow(
+      env.ORDERS_SYNC_WORKFLOW,
+    );
+    await introspector.modifyAll(async (m) => {
+      await m.disableSleeps();
+      await m.mockStepResult({ name: "ensure-session" }, sessionProps(shop));
+      await m.mockStepResult(
+        { name: "run-bulk-orders-query" },
+        completedOperation,
+      );
+      await m.mockStepResult({ name: "on-orders-stream" }, { ok: true });
+    });
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+
+    await agent.syncOpenOrders();
+    // The whole SyncState row as the start left it: completion must leave
+    // every column as it is, whatever columns the row has.
+    const started = await syncStateRow(shop);
+    const [instance] = await introspector.get();
+    if (!instance) throw new Error("no workflow instance captured");
+    await expect(instance.waitForStatus("complete")).resolves.not.toThrow();
+
+    await vi.waitFor(async () => {
+      expect(await trackedSyncs(shop)).toBe(0);
+    });
+    expect(await syncStateRow(shop)).toEqual(started);
+    expect(await syncStateOf(shop)).toEqual({
+      inFlight: false,
+      lastError: null,
+    });
+  });
+
+  it("a partial file is streamed and the sync completes", async () => {
+    const shop = "orders-partial.myshopify.com";
+    await using introspector = await introspectWorkflow(
+      env.ORDERS_SYNC_WORKFLOW,
+    );
+    await introspector.modifyAll(async (m) => {
+      await m.disableSleeps();
+      await m.mockStepResult({ name: "ensure-session" }, sessionProps(shop));
+      await m.mockStepResult(
+        { name: "run-bulk-orders-query" },
+        {
+          ...completedOperation,
+          url: null,
+          partialDataUrl: "https://storage.googleapis.test/partial.jsonl",
+        },
+      );
+      await m.mockStepResult({ name: "on-orders-stream" }, { ok: true });
+    });
+
+    await startSync(shop);
+
+    const [instance] = await introspector.get();
+    if (!instance) throw new Error("no workflow instance captured");
+    await expect(
+      instance.waitForStepResult({ name: "on-orders-stream" }),
+    ).resolves.not.toThrow();
+    await expect(instance.waitForStatus("complete")).resolves.not.toThrow();
+  });
+
+  it("a failed sync's banner is the merchant sentence, and the callback never overwrites it", async () => {
+    const shop = "orders-banner.myshopify.com";
+    await using introspector = await introspectWorkflow(
+      env.ORDERS_SYNC_WORKFLOW,
+    );
+    await mockGiveUp(shop, introspector);
+
+    await startSync(shop);
+
+    const [instance] = await introspector.get();
+    if (!instance) throw new Error("no workflow instance captured");
+    await expect(instance.waitForStatus("errored")).resolves.not.toThrow();
+    await vi.waitFor(async () => {
+      expect(await trackedSyncs(shop)).toBe(0);
+    });
+    expect(await lastErrorOf(shop)).toBe(GAVE_UP_MESSAGE);
+
+    // A late callback, as the SDK sends after the sink: it must not replace
+    // the sentence with the platform's own account of the failure.
+    await runInDurableObject(env.SHOP_AGENT.getByName(shop), (object) =>
+      object.onWorkflowError(
+        ORDERS_SYNC_WORKFLOW_NAME,
+        "wf_late",
+        "Error: OrdersSyncWorkflowError: something else",
+      ),
+    );
+    expect(await lastErrorOf(shop)).toBe(GAVE_UP_MESSAGE);
+  });
+
+  it("a start that fails leaves no tracking row and no banner", async () => {
+    const shop = "orders-start-fails.myshopify.com";
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    await agent.listOrders(listOrdersInput);
+    await runInDurableObject(env.SHOP_AGENT.getByName(shop), async (object) => {
+      sqlOf(object).exec(
+        "update SyncState set lastError = 'the last sync failed' where id = 1",
+      );
+      object.runWorkflow = () =>
+        Promise.reject(new Error("workflow.create failed"));
+      await expect(object.syncOpenOrders()).rejects.toThrow();
+    });
+
+    expect(await trackedSyncs(shop)).toBe(0);
+    expect(await lastErrorOf(shop)).toBe(null);
+  });
+
+  it("a sync refused at the order ceiling flags the refusal, writes no error and tracks nothing", async () => {
+    const shop = "orders-ceiling-refused.myshopify.com";
+    await withMaxOrdersPerCycle(2, async () => {
+      const agent = await getAgentByName(env.SHOP_AGENT, shop);
+      await agent.setBillingCycle({
+        shopGid: Schema.decodeUnknownSync(Domain.ShopGid)(
+          "gid://shopify/Shop/1",
+        ),
+        cycleStartAt: 0,
+        cycleEndAt: Date.now() + 86_400_000,
+        memberCount: 0,
+      });
+      await runInDurableObject(env.SHOP_AGENT.getByName(shop), (object) => {
+        sqlOf(object).exec(
+          "update ShopUsage set ordersThisCycle = 2 where id = 1",
+        );
+      });
+
+      const result = await agent.syncOpenOrders();
+
+      expect(result._tag).toBe("Refused");
+      const usage = await agent.getUsage();
+      expect(usage.ordersLimitedAt).not.toBeNull();
+      const syncState = await syncStateOf(shop);
+      expect(syncState.lastError).toBeNull();
+      expect(await trackedSyncs(shop)).toBe(0);
+    });
   });
 
   it("a tracking row disables Sync open orders only while it is fresh", async () => {

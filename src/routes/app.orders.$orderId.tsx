@@ -51,6 +51,9 @@ const decodeRunResult = Schema.decodeUnknownPromise(
 const decodeAssignResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.AssignRunTaskTeamResult),
 );
+const decodeSyncOrderResult = Schema.decodeUnknownPromise(
+  Schema.toType(Domain.SyncOrderResult),
+);
 
 const connecting = () =>
   Promise.reject(new Error("Still connecting. Try again in a moment."));
@@ -634,8 +637,15 @@ function RouteComponent() {
 
   const syncMutation = useMutation({
     mutationFn: (orderId: string) =>
-      call((stub) => stub.syncOrder({ orderId })),
-    onSuccess: async () => {
+      call((stub) => stub.syncOrder({ orderId })).then(decodeSyncOrderResult),
+    /**
+     * A toast (`CopySlot`): `Gone` is Sync from Shopify doing nothing, and
+     * the page would otherwise refetch the same stored order and say
+     * nothing about why (`Domain.SyncOrderResult`).
+     */
+    onSuccess: async (result) => {
+      if (result._tag === "Gone")
+        shopify.toast.show("Shopify no longer has this order");
       await invalidate();
     },
     onError: (error) => {

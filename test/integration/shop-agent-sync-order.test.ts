@@ -1,6 +1,9 @@
-import { strictEqual } from "@effect/vitest/utils";
+import type { ShopAgent } from "@/lib/ShopAgent";
+
+import { deepStrictEqual, strictEqual } from "@effect/vitest/utils";
 import { setAbstractFetchFunc } from "@shopify/shopify-api/runtime";
 import { getAgentByName } from "agents";
+import { introspectWorkflow, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { Effect, Layer, Schema } from "effect";
 import { afterEach, describe, it } from "vitest";
@@ -11,6 +14,8 @@ import * as Domain from "@/lib/Domain";
 import { makeEnvLayer } from "@/lib/LayerEx";
 import { Repository } from "@/lib/Repository";
 
+import { withMaxOrdersPerCycle } from "./order-ceiling.ts";
+
 /**
  * Sync from Shopify through the object: the offline session is a row in D1
  * and the Admin API is answered here rather than by Shopify.
@@ -20,16 +25,19 @@ import { Repository } from "@/lib/Repository";
  * `globalThis.fetch`, so the stand-in replaces that registration. It answers
  * the one-order query for every `/admin/api/` request and delegates
  * everything else to the real `fetch`; vitest-pool-workers runs each file in
- * its own isolate, so no other file sees it.
+ * its own isolate, so no other file sees it. `shopifyHasOrder` false makes
+ * it answer `null`, as Shopify does for a deleted order.
  */
 const ORDER_ID = "gid://shopify/Order/1";
 const adminRequests: string[] = [];
+let shopifyHasOrder = true;
 const realFetch = globalThis.fetch;
 setAbstractFetchFunc(async (input, init) => {
   const request = new Request(input, init);
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/admin/api/")) return realFetch(input, init);
   adminRequests.push(url.hostname);
+  if (!shopifyHasOrder) return Response.json({ data: { order: null } });
   const now = new Date().toISOString();
   return Response.json({
     data: {
@@ -101,9 +109,40 @@ const seedShop = (shop: string) =>
   );
 
 afterEach(async () => {
+  shopifyHasOrder = true;
   await env.D1.exec("delete from Team");
   await env.D1.exec("delete from ShopSession");
 });
+
+/** A workflow that is on, tagged `engraved`, with one step for `teamId`. */
+const turnOnEngraving = async (
+  agent: Awaited<ReturnType<typeof getAgentByName<Cloudflare.Env, ShopAgent>>>,
+  teamId: Domain.TeamId,
+) => {
+  const created = await agent.createWorkflow({
+    name: "Engraving",
+    tag: "engraved",
+  });
+  if (created._tag !== "Ok") throw new Error(created._tag);
+  const workflowId = created.workflow.id;
+  await agent.addStep({ workflowId, name: "Engrave", teamId });
+  const applied = await agent.applyDraft({ workflowId });
+  if (applied._tag !== "Ok") throw new Error(applied._tag);
+  const on = await agent.setWorkflowOn({ workflowId, on: true });
+  if (on._tag !== "Ok") throw new Error(on._tag);
+  return workflowId;
+};
+
+/** The stored order row, read straight from the object's SQLite. */
+const storedOrder = (shop: string) =>
+  runInDurableObject(env.SHOP_AGENT.getByName(shop), (instance) =>
+    (instance as unknown as { ctx: DurableObjectState }).ctx.storage.sql
+      .exec(
+        "select cancelledAt, updatedAt, syncedAt from ShopOrder where id = ?",
+        ORDER_ID,
+      )
+      .toArray(),
+  );
 
 describe("ShopAgent one-order sync", () => {
   it("the one-order sync stores the order and creates its run", async () => {
@@ -134,5 +173,107 @@ describe("ShopAgent one-order sync", () => {
     const second = await agent.merchantListRunsForOrder({ orderId: ORDER_ID });
     strictEqual(second.length, 1);
     strictEqual(second[0]?.run.id, first[0]?.run.id);
+  });
+  it("the one-order sync answers Gone for an order Shopify no longer has and leaves the stored row", async () => {
+    const shop = "sync-order-gone.myshopify.com";
+    await seedShop(shop);
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const stored = await agent.syncOrder({ orderId: ORDER_ID });
+    strictEqual(stored._tag, "Stored");
+    const before = await storedOrder(shop);
+    strictEqual(before.length, 1);
+
+    shopifyHasOrder = false;
+    const gone = await agent.syncOrder({ orderId: ORDER_ID });
+    strictEqual(gone._tag, "Gone");
+    deepStrictEqual(await storedOrder(shop), before);
+  });
+
+  it("a webhook's topic decides nothing: a cancelled topic on an open order stores it open", async () => {
+    const shop = "sync-order-topic.myshopify.com";
+    const team = await seedShop(shop);
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const workflowId = await turnOnEngraving(agent, team.id);
+
+    await agent.syncOrderWebhook({
+      orderId: ORDER_ID,
+      topic: "orders/cancelled",
+      webhookId: "wh-cancelled",
+      updatedAt: null,
+    });
+    const [row] = await storedOrder(shop);
+    strictEqual(row?.cancelledAt, null);
+    const runs = await agent.merchantListRunsForOrder({ orderId: ORDER_ID });
+    strictEqual(runs.length, 1);
+    strictEqual(runs[0]?.run.workflowId, workflowId);
+    strictEqual(runs[0]?.run.state, "open");
+  });
+  it("the order ceiling is read at the cycle the sync lands in: a sync after the cycle end is not refused at the old count", async () => {
+    /** A shop whose stored cycle ended at 10s past the epoch, counted at the ceiling. */
+    const atOldCeiling = async (shop: string) => {
+      await seedShop(shop);
+      const agent = await getAgentByName(env.SHOP_AGENT, shop);
+      await agent.setBillingCycle({
+        shopGid: Schema.decodeUnknownSync(Domain.ShopGid)(
+          "gid://shopify/Shop/1",
+        ),
+        cycleStartAt: 0,
+        cycleEndAt: 10_000,
+        memberCount: 0,
+      });
+      await runInDurableObject(env.SHOP_AGENT.getByName(shop), (object) => {
+        (object as unknown as { ctx: DurableObjectState }).ctx.storage.sql.exec(
+          "update ShopUsage set ordersThisCycle = 2 where id = 1",
+        );
+      });
+      return agent;
+    };
+    await withMaxOrdersPerCycle(2, async () => {
+      const webhookShop = "sync-order-cycle-webhook.myshopify.com";
+      const webhookAgent = await atOldCeiling(webhookShop);
+      await webhookAgent.syncOrderWebhook({
+        orderId: ORDER_ID,
+        topic: "orders/create",
+        webhookId: "wh-cycle",
+        updatedAt: null,
+      });
+      const stored = await storedOrder(webhookShop);
+      strictEqual(stored.length, 1);
+      const usage = await webhookAgent.getUsage();
+      strictEqual(usage.ordersLimitedAt, null);
+      strictEqual(usage.cycleStartAt, 10_000);
+      strictEqual(usage.ordersThisCycle, 0);
+
+      const syncShop = "sync-order-cycle-sync.myshopify.com";
+      const syncAgent = await atOldCeiling(syncShop);
+      await using introspector = await introspectWorkflow(
+        env.ORDERS_SYNC_WORKFLOW,
+      );
+      await introspector.modifyAll(async (m) => {
+        await m.disableSleeps();
+        await m.mockStepResult({ name: "ensure-session" }, []);
+        await m.mockStepResult(
+          { name: "run-bulk-orders-query" },
+          {
+            id: "gid://shopify/BulkOperation/1",
+            status: "COMPLETED",
+            errorCode: null,
+            createdAt: "2026-09-01T00:00:00.000Z",
+            completedAt: "2026-09-01T00:01:00.000Z",
+            objectCount: 0,
+            fileSize: null,
+            url: null,
+            partialDataUrl: null,
+          },
+        );
+        await m.mockStepResult({ name: "on-orders-sync-empty" }, { ok: true });
+      });
+      const started = await syncAgent.syncOpenOrders();
+      strictEqual(started._tag, "Started");
+      const [instance] = await introspector.get();
+      await instance?.waitForStatus("complete");
+      const after = await syncAgent.getUsage();
+      strictEqual(after.ordersThisCycle, 0);
+    });
   });
 });

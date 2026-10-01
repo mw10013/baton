@@ -430,7 +430,13 @@ function RouteComponent() {
     setSyncing(true);
     withSocketRecovery(agent)(() => agent.stub.syncOpenOrders())
       .then(decodeSyncResult)
-      .then(() => invalidate())
+      .then((result) => {
+        // A toast (`CopySlot`): the press did nothing, and the page would
+        // otherwise only re-read the state it already shows.
+        if (result._tag === "InFlight")
+          shopify.toast.show("A sync is already running");
+        return invalidate();
+      })
       .catch((error: unknown) => {
         shopify.toast.show(
           error instanceof Error ? error.message : "Couldn't start the sync.",

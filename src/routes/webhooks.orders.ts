@@ -68,9 +68,10 @@ const updatedAtMillis = (updatedAt: string | null | undefined) => {
  * tags or enriched line-item metadata, and is trimmed to ids by
  * `include_fields` anyway — so the Durable Object fetches the order it names.
  * Shopify's own OMS guidance is exactly this: query the full order after each
- * webhook, and reconcile periodically for the ones that never arrived. The
- * topic is a log field and nothing else; `reconcileOrder` works from the
- * fetched state, which is what makes retries and out-of-order delivery safe.
+ * webhook, and reconcile periodically for the ones that never arrived.
+ * Rules 1 and 2 on `Domain.syncOrder`: the topic decides nothing, and a
+ * delivery is handled once; working from the fetched state is what makes
+ * retries and out-of-order delivery safe.
  *
  * The Durable Object call is awaited inside Shopify's five-second budget; one
  * `OrderSync` query is comfortably under it.

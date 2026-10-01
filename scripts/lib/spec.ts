@@ -1470,6 +1470,153 @@ export const expandReconcileAction = (
   );
 };
 
+/** The word lists of the actions table on `syncOrder`, one per input column. */
+export const SYNC_ACTION_WORDS = {
+  stored: ["none", "stored"],
+  version: ["older", "same or newer", "any"],
+  age: ["expired", "kept", "any"],
+  ceiling: ["at", "under", "any"],
+} as const;
+
+/** One parsed row of the actions table on `syncOrder`. */
+export interface SyncActionRow {
+  readonly line: number;
+  readonly stored: (typeof SYNC_ACTION_WORDS.stored)[number];
+  readonly version: (typeof SYNC_ACTION_WORDS.version)[number];
+  readonly age: (typeof SYNC_ACTION_WORDS.age)[number];
+  readonly ceiling: (typeof SYNC_ACTION_WORDS.ceiling)[number];
+  readonly action: {
+    readonly tag: "write" | "skip" | "refuse";
+    readonly note: string;
+  };
+  /** The row as written, for a test title. */
+  readonly text: string;
+}
+
+const SYNC_ACTION = /^(?<tag>write|skip|refuse)(?:: (?<note>.+))?$/u;
+
+/**
+ * Read the actions table, the first table in the JSDoc on `syncOrder` in
+ * `source`. The header is `stored | version | age | ceiling | action`; each
+ * input cell is one of its list in {@link SYNC_ACTION_WORDS}; `action` is
+ * `write`, `skip` or `refuse`, optionally followed by a colon and free text.
+ * Fails with a message naming the line and the offending cell.
+ */
+export const parseSyncActions = (
+  source: string,
+): Result.Result<readonly SyncActionRow[], ParseError> =>
+  Result.flatMap(
+    nthTable(
+      source,
+      "syncOrder",
+      ["stored", "version", "age", "ceiling", "action"],
+      0,
+    ),
+    ({ body }) =>
+      Result.all(
+        body.map(({ line, text }): Result.Result<SyncActionRow, ParseError> => {
+          const fail = (message: string) =>
+            Result.fail(
+              new ParseError({
+                message: `syncOrder actions, line ${String(line)}: ${message}`,
+              }),
+            );
+          const values = cellsOf(text);
+          if (values.length !== 5)
+            return fail(`${String(values.length)} cells, expected 5: ${text}`);
+          const [stored, version, age, ceiling, actionCell = ""] = values;
+          const pick = <W extends string>(
+            column: string,
+            words: readonly W[],
+            value: string | undefined,
+          ): Result.Result<W, ParseError> => {
+            const word = words.find((candidate) => candidate === value);
+            return word === undefined
+              ? fail(
+                  `unknown word "${value ?? ""}" under ${column}; expected one of: ${words.join(", ")}`,
+                )
+              : Result.succeed(word);
+          };
+          const groups = SYNC_ACTION.exec(actionCell)?.groups;
+          const tag = (["write", "skip", "refuse"] as const).find(
+            (word) => word === groups?.tag,
+          );
+          if (groups === undefined || tag === undefined)
+            return fail(
+              `action "${actionCell}" is not write, skip or refuse, with optional text after a colon`,
+            );
+          return Result.map(
+            Result.all({
+              stored: pick("stored", SYNC_ACTION_WORDS.stored, stored),
+              version: pick("version", SYNC_ACTION_WORDS.version, version),
+              age: pick("age", SYNC_ACTION_WORDS.age, age),
+              ceiling: pick("ceiling", SYNC_ACTION_WORDS.ceiling, ceiling),
+            }),
+            (words) => ({
+              line,
+              ...words,
+              action: { tag, note: groups.note ?? "" },
+              text: values.join(" | "),
+            }),
+          );
+        }),
+      ),
+  );
+
+/** One input to `syncOrder`, in the table's words: what a row of the actions table expands to. */
+export interface SyncFixture {
+  readonly stored: (typeof SYNC_ACTION_WORDS.stored)[number];
+  readonly version: "older" | "same or newer";
+  readonly age: "expired" | "kept";
+  readonly ceiling: "at" | "under";
+}
+
+/**
+ * Every fixture a row of the actions table on `syncOrder` stands for: the
+ * cross product of its cells, each `any` read as every other word of its
+ * column. `version` on a `none` row still expands, and the function must
+ * ignore it.
+ */
+export const expandSyncAction = (
+  row: SyncActionRow,
+): readonly SyncFixture[] => {
+  const versions =
+    row.version === "any"
+      ? (["older", "same or newer"] as const)
+      : [row.version];
+  const ages = row.age === "any" ? (["expired", "kept"] as const) : [row.age];
+  const ceilings =
+    row.ceiling === "any" ? (["at", "under"] as const) : [row.ceiling];
+  return versions.flatMap((version) =>
+    ages.flatMap((age) =>
+      ceilings.map((ceiling) => ({
+        stored: row.stored,
+        version,
+        age,
+        ceiling,
+      })),
+    ),
+  );
+};
+
+/** {@link overlaps} for the actions table on `syncOrder`: no two rows expand to a common fixture. */
+export const syncActionOverlaps = (
+  rows: readonly SyncActionRow[],
+): readonly (readonly [SyncActionRow, SyncActionRow])[] => {
+  const keys = rows.map(
+    (row) =>
+      new Set(expandSyncAction(row).map((fixture) => JSON.stringify(fixture))),
+  );
+  return rows.flatMap((row, i) =>
+    rows
+      .slice(i + 1)
+      .filter((_, offset) =>
+        [...(keys[i] ?? [])].some((key) => keys[i + 1 + offset]?.has(key)),
+      )
+      .map((other) => [row, other] as const),
+  );
+};
+
 /** The rows and the fixed words of each effect column of the effects table on `reconcileItem`. */
 export const RECONCILE_EFFECT_WORDS = {
   action: [
@@ -1657,6 +1804,262 @@ export const parseReconcilePassRules = (
             });
           },
         ),
+      ),
+  );
+
+/**
+ * A `pinned by` cell of a sync table: one or more test titles separated by
+ * `; `, or {@link NONE_YET}. No sync title may itself contain `; `.
+ */
+const pinnedTitles = (cell: string): readonly string[] =>
+  cell === NONE_YET ? [NONE_YET] : cell.split("; ");
+
+/** One parsed row of the sources table on `syncOrder`, per title of its `pinned by`. */
+export interface SyncSourceRow {
+  readonly line: number;
+  readonly source: string;
+  readonly who: string;
+  readonly asks: string;
+  readonly skippedWhen: string;
+  readonly pinnedBy: string;
+}
+
+/**
+ * Read the sources table, the second table in the JSDoc on `syncOrder` in
+ * `source`. The header is `source | who | asks Shopify for | skipped when |
+ * pinned by`; every cell is non-empty; `pinned by` is one or more titles
+ * split on `; `, or {@link NONE_YET}. One row per title, each with the
+ * table line, for {@link checkPinned}. Fails with a message naming the line
+ * and the offending cell.
+ */
+export const parseSyncSources = (
+  source: string,
+): Result.Result<readonly SyncSourceRow[], ParseError> =>
+  Result.flatMap(
+    nthTable(
+      source,
+      "syncOrder",
+      ["source", "who", "asks Shopify for", "skipped when", "pinned by"],
+      1,
+    ),
+    ({ body }) =>
+      Result.map(
+        Result.all(
+          body.map(
+            ({
+              line,
+              text,
+            }): Result.Result<readonly SyncSourceRow[], ParseError> => {
+              const fail = (message: string) =>
+                Result.fail(
+                  new ParseError({
+                    message: `syncOrder sources, line ${String(line)}: ${message}`,
+                  }),
+                );
+              const values = cellsOf(text);
+              if (values.length !== 5)
+                return fail(
+                  `${String(values.length)} cells, expected 5: ${text}`,
+                );
+              const [
+                rowSource = "",
+                who = "",
+                asks = "",
+                skippedWhen = "",
+                pinnedBy = "",
+              ] = values;
+              const empty = Object.entries({
+                source: rowSource,
+                who,
+                "asks Shopify for": asks,
+                "skipped when": skippedWhen,
+                "pinned by": pinnedBy,
+              }).find(([, cell]) => cell === "");
+              if (empty !== undefined) return fail(`empty ${empty[0]}`);
+              return Result.succeed(
+                pinnedTitles(pinnedBy).map((title) => ({
+                  line,
+                  source: rowSource,
+                  who,
+                  asks,
+                  skippedWhen,
+                  pinnedBy: title,
+                })),
+              );
+            },
+          ),
+        ),
+        (rows) => rows.flat(),
+      ),
+  );
+
+/** The fixed words of the endings table on `syncOrder`, one list per effect column. */
+export const SYNC_ENDING_WORDS = {
+  trackingRow: ["inserted", "deleted", "none", "—"],
+  lastError: ["set", "cleared", "—"],
+} as const;
+
+/** One parsed row of the endings table on `syncOrder`, per title of its `pinned by`. */
+export interface SyncEndingRow {
+  readonly line: number;
+  readonly ending: string;
+  readonly trackingRow: (typeof SYNC_ENDING_WORDS.trackingRow)[number];
+  readonly lastError: (typeof SYNC_ENDING_WORDS.lastError)[number];
+  readonly pinnedBy: string;
+}
+
+/**
+ * Read the endings table, the third table in the JSDoc on `syncOrder` in
+ * `source`. The header is `ending | tracking row | lastError | pinned by`;
+ * `ending` is non-empty and names each ending exactly once; the effect cells
+ * are words of {@link SYNC_ENDING_WORDS}; `pinned by` as on
+ * {@link parseSyncSources}. Fails with a message naming the line and the
+ * offending cell.
+ */
+export const parseSyncEndings = (
+  source: string,
+): Result.Result<readonly SyncEndingRow[], ParseError> =>
+  Result.flatMap(
+    nthTable(
+      source,
+      "syncOrder",
+      ["ending", "tracking row", "lastError", "pinned by"],
+      2,
+    ),
+    ({ body }) =>
+      Result.flatMap(
+        Result.all(
+          body.map(
+            ({
+              line,
+              text,
+            }): Result.Result<readonly SyncEndingRow[], ParseError> => {
+              const fail = (message: string) =>
+                Result.fail(
+                  new ParseError({
+                    message: `syncOrder endings, line ${String(line)}: ${message}`,
+                  }),
+                );
+              const values = cellsOf(text);
+              if (values.length !== 4)
+                return fail(
+                  `${String(values.length)} cells, expected 4: ${text}`,
+                );
+              const [ending = "", trackingRow, lastError, pinnedBy = ""] =
+                values;
+              if (ending === "") return fail("empty ending");
+              if (pinnedBy === "") return fail("empty pinned by");
+              const tracking = SYNC_ENDING_WORDS.trackingRow.find(
+                (word) => word === trackingRow,
+              );
+              if (tracking === undefined)
+                return fail(
+                  `unknown word "${trackingRow ?? ""}" under tracking row; expected one of: ${SYNC_ENDING_WORDS.trackingRow.join(", ")}`,
+                );
+              const error = SYNC_ENDING_WORDS.lastError.find(
+                (word) => word === lastError,
+              );
+              if (error === undefined)
+                return fail(
+                  `unknown word "${lastError ?? ""}" under lastError; expected one of: ${SYNC_ENDING_WORDS.lastError.join(", ")}`,
+                );
+              return Result.succeed(
+                pinnedTitles(pinnedBy).map((title) => ({
+                  line,
+                  ending,
+                  trackingRow: tracking,
+                  lastError: error,
+                  pinnedBy: title,
+                })),
+              );
+            },
+          ),
+        ),
+        (perRow): Result.Result<readonly SyncEndingRow[], ParseError> => {
+          const endings = perRow.map((rows) => rows[0]?.ending ?? "");
+          const repeated = endings.filter(
+            (ending, index) => endings.indexOf(ending) !== index,
+          );
+          return repeated.length === 0
+            ? Result.succeed(perRow.flat())
+            : Result.fail(
+                new ParseError({
+                  message: `syncOrder endings: each ending is one row; not once: ${[...new Set(repeated)].join(", ")}`,
+                }),
+              );
+        },
+      ),
+  );
+
+/** One parsed row of the rules table on `syncOrder`, per title of its `pinned by`. */
+export interface SyncRuleRow {
+  readonly line: number;
+  /** The rule's number, from its `<n>. ` prefix. */
+  readonly number: number;
+  readonly rule: string;
+  /** The symbols the `where` cell names, without their backticks. */
+  readonly where: readonly string[];
+  readonly pinnedBy: string;
+}
+
+/**
+ * Read the rules table, the fourth table in the JSDoc on `syncOrder` in
+ * `source`. The header is `rule | where | pinned by`; `rule` starts with
+ * `<n>. `, and the numbers run from 1 upward with no gap; `where` is one or
+ * more backticked symbols, comma separated; `pinned by` as on
+ * {@link parseSyncSources}. Fails with a message naming the line and the
+ * offending cell.
+ */
+export const parseSyncRules = (
+  source: string,
+): Result.Result<readonly SyncRuleRow[], ParseError> =>
+  Result.flatMap(
+    nthTable(source, "syncOrder", ["rule", "where", "pinned by"], 3),
+    ({ body }) =>
+      Result.map(
+        Result.all(
+          body.map(
+            (
+              { line, text },
+              index,
+            ): Result.Result<readonly SyncRuleRow[], ParseError> => {
+              const fail = (message: string) =>
+                Result.fail(
+                  new ParseError({
+                    message: `syncOrder rules, line ${String(line)}: ${message}`,
+                  }),
+                );
+              const values = cellsOf(text);
+              if (values.length !== 3)
+                return fail(
+                  `${String(values.length)} cells, expected 3: ${text}`,
+                );
+              const [rule = "", where = "", pinnedBy = ""] = values;
+              const number = /^(?<n>\d+)\. ./u.exec(rule)?.groups?.n;
+              if (number === undefined)
+                return fail(`rule "${rule}" does not start with "<n>. "`);
+              if (Number(number) !== index + 1)
+                return fail(
+                  `rule ${number} is out of sequence; expected ${String(index + 1)}`,
+                );
+              if (!SYMBOLS.test(where))
+                return fail(
+                  `where "${where}" is not one or more backticked symbols`,
+                );
+              if (pinnedBy === "") return fail("empty pinned by");
+              return Result.succeed(
+                pinnedTitles(pinnedBy).map((title) => ({
+                  line,
+                  number: Number(number),
+                  rule,
+                  where: where.split(", ").map((symbol) => symbol.slice(1, -1)),
+                  pinnedBy: title,
+                })),
+              );
+            },
+          ),
+        ),
+        (rows) => rows.flat(),
       ),
   );
 

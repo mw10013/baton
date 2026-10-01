@@ -77,7 +77,7 @@ pnpm dev:reset          # Stop, wipe local D1 and object state, start, install, 
 pnpm dev:logs           # Print recent Shopify CLI output and the tail of the Worker log
 pnpm typecheck          # TypeScript type checking (includes wrangler types generation)
 pnpm lint               # Run oxlint
-pnpm spec check         # Parse the action tables in domain/ShopWork.ts, check the vocabulary in Domain.ts and domain/, its contexts, its screen columns and its stored cells against the DDL in ShopAgentSchema.ts, the data-model tables in ShopAgentSchema.ts and D1Schema.ts, and the copy and controls tables in Screen.ts (also run by pnpm lint)
+pnpm spec check         # Parse the action tables in domain/ShopWork.ts and the four sync tables on syncOrder in domain/Orders.ts, check the vocabulary in Domain.ts and domain/, its contexts, its screen columns and its stored cells against the DDL in ShopAgentSchema.ts, the data-model tables in ShopAgentSchema.ts and D1Schema.ts, and the copy and controls tables in Screen.ts (also run by pnpm lint)
 pnpm spec print         # Render the parsed action tables, their fixture counts, and the data-model rows
 pnpm vocab:audit        # List words in exported identifiers under src/lib/ that the vocabulary does not have (an audit, not a check)
 node scripts/copy-audit.ts > docs/<name>.md   # Inventory every screen string by slot, as a markdown table to annotate (an audit, not a check)

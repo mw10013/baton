@@ -38,7 +38,7 @@ import { causeToErrorMessage } from "@/lib/LayerEx";
  *
  * | about             | rule                                                                                                                                                         | holds by   | pinned by                                                                                                        |
  * | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- | ---------------------------------------------------------------------------------------------------------------- |
- * | order             | an order is Shopify's record, mirrored; each sync overwrites it whole except `countedAt`                                 | app        | (none yet)                                                                                                       |
+ * | order             | an order is Shopify's record, mirrored; each sync overwrites it whole except `countedAt`                                                                     | app        | a sync rewrites every column but countedAt                                                                       |
  * | order             | an order's counted mark is set at most once, by its first run or, for a seed order, by the seed, and survives every sync; only deleting the order removes it | app        | an order is counted once, when its first run is created                                                          |
  * | order             | an order older than retention is deleted, its items and its runs go with it, and it is never stored again                                                    | schema+app | an order older than retention is never stored again                                                              |
  * | item              | an item has exactly one order and goes with it                                                                                                               | schema     | an item has exactly one order and goes with it                                                                   |
@@ -127,12 +127,11 @@ export const initializeSchema = Effect.gen(function* () {
     -- So the retention sweep walks the oldest rows instead of the table.
     create index if not exists WebhookDelivery_receivedAt_idx
       on WebhookDelivery (receivedAt);
-    -- What the last sync left behind; owned by OrderRepository.getSyncState.
+    -- The last sync's error, if any; owned by OrderRepository.getSyncState.
     -- Seeded here so every read is a select and every write an update.
     create table if not exists SyncState (
       id integer primary key check (id = 1),
-      lastError text,
-      lastCompletedAt integer
+      lastError text
     );
     insert or ignore into SyncState (id) values (1);
     -- The plan-free usage counters; described on OrderRepository's

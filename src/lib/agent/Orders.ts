@@ -45,6 +45,8 @@ const make = Effect.gen(function* () {
    * order may already be deleted, and Shopify answers with `null` rather than
    * an error. Logged and skipped so the webhook still returns 2xx instead of
    * being retried for four hours against an order that no longer exists.
+   * `gone` reports it, for Sync from Shopify to say so
+   * (`Domain.SyncOrderResult`).
    *
    * `reconciler` loads what the per-order reconcile needs and returns it; it
    * runs after the fetch and before the upsert's transaction opens, and the
@@ -52,6 +54,9 @@ const make = Effect.gen(function* () {
    * it, so this module never reads shop work. `ceilingReleased` is the
    * reconcile's word that its closes released the open-run ceiling, handed
    * back for the caller to act on outside the transaction.
+   *
+   * The query asks for one page of 250 items and flags `hasNextPage` as
+   * `lineItemsTruncated` (rule 10 on `Domain.syncOrder`).
    */
   const fetchAndUpsertOrder = <E, E2, R2>(
     { orderId }: { readonly orderId: string },
@@ -78,7 +83,7 @@ const make = Effect.gen(function* () {
         yield* Effect.logWarning(
           `ShopAgent.fetchAndUpsertOrder: shop=${shop} orderId=${orderId}: order not found`,
         ).pipe(Effect.annotateLogs({ shop, orderId }));
-        return { written: false, ceilingReleased: false };
+        return { written: false, ceilingReleased: false, gone: true };
       }
       const lineItemsTruncated = order.lineItems.pageInfo.hasNextPage;
       if (lineItemsTruncated)
@@ -114,6 +119,7 @@ const make = Effect.gen(function* () {
           afterWrite,
           (after) => after.ceilingReleased,
         ),
+        gone: false,
       };
     });
 

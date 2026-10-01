@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { D1Primary } from "@/lib/D1Primary";
 import { D1Session } from "@/lib/D1Session";
 import * as Domain from "@/lib/Domain";
+import ordersSource from "@/lib/domain/Orders.ts?raw";
 import source from "@/lib/domain/ShopWork.ts?raw";
 import { makeEnvLayer } from "@/lib/LayerEx";
 import { OrderRepository } from "@/lib/OrderRepository";
@@ -305,6 +306,46 @@ describe("Domain.reconcileItem actions", () => {
             where,
           );
       }
+    });
+});
+
+describe("Domain.syncOrder actions", () => {
+  const SYNC_ROWS = Result.getOrThrow(
+    ActionTable.parseSyncActions(ordersSource),
+  );
+  const SYNCED_AT = Date.UTC(2026, 9, 1);
+  const DAY = 86_400_000;
+  const STORED_VERSION = 100;
+  const versions = { older: [50], "same or newer": [100, 150] } as const;
+  const ages = {
+    expired: Domain.retentionCutoff(SYNCED_AT) - DAY,
+    kept: Domain.retentionCutoff(SYNCED_AT) + DAY,
+  } as const;
+  for (const row of SYNC_ROWS)
+    it(row.text, () => {
+      for (const fixture of ActionTable.expandSyncAction(row))
+        for (const updatedAt of versions[fixture.version]) {
+          const action = Domain.syncOrder({
+            stored:
+              fixture.stored === "none" ? null : { updatedAt: STORED_VERSION },
+            incoming: {
+              updatedAt,
+              processedAt: ages[fixture.age],
+              syncedAt: SYNCED_AT,
+            },
+            atCeiling: fixture.ceiling === "at",
+          });
+          const where = JSON.stringify({ ...fixture, updatedAt });
+          strictEqual(action._tag, row.action.tag, where);
+          if (action._tag === "write")
+            strictEqual(
+              action.fresh,
+              row.action.note.startsWith("fresh"),
+              where,
+            );
+          if (action._tag === "refuse")
+            strictEqual(action.reason, row.action.note.split(";")[0], where);
+        }
     });
 });
 

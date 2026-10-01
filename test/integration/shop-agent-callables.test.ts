@@ -148,6 +148,36 @@ describe("ShopAgent callable role gate", () => {
     socket.close();
   });
 
+  it("the stream's callbacks are not callable from a socket, and the two sync buttons refuse a member", async () => {
+    const shop = "callables-sync.myshopify.com";
+    const merchant = await openAgentSocket(shop, merchantHeaders());
+    await merchant.waitForMessage((data) => data.includes("cf_agent_identity"));
+    const callables = await decoratedCallables(shop);
+    expect(callables).toEqual(
+      expect.arrayContaining(["syncOpenOrders", "syncOrder"]),
+    );
+    for (const name of [
+      "onOrdersStream",
+      "onOrdersSyncEmpty",
+      "onOrdersSyncError",
+    ]) {
+      expect(callables, `${name} must not be @callable()`).not.toContain(name);
+      await expect(
+        merchant.call(name, { url: "https://example.test/orders.jsonl" }),
+        `${name} must not answer a socket`,
+      ).rejects.toThrow();
+    }
+    merchant.close();
+
+    const member = await memberSocket(shop);
+    for (const name of ["syncOpenOrders", "syncOrder"])
+      await expect(
+        member.call(name, {}),
+        `${name} must refuse a member connection`,
+      ).rejects.toThrow(/forbidden/iu);
+    member.close();
+  });
+
   it("refuses every merchant callable on a member connection", async () => {
     const shop = "callables-member.myshopify.com";
     const socket = await memberSocket(shop);

@@ -243,33 +243,19 @@ export class OrderRepository extends Context.Service<
   {
     /**
      * The one write every ingestion path funnels through, and the only reason
-     * webhooks and a bulk stream can interleave freely.
+     * webhooks and a bulk stream can interleave freely. What one sync does to
+     * one order is {@link Domain.syncOrder}'s actions table; this is where it
+     * is executed, in one transaction, with the items and the reconcile
+     * (rule 6 on `Domain.syncOrder`), keeping `countedAt` on every write
+     * (rule 7).
      *
-     * The upsert applies `where excluded.updatedAt >= ShopOrder.updatedAt`, so
-     * an older observation of an order — a retried webhook replaying its
-     * original payload, or a bulk file whose snapshot predates a webhook that
-     * landed mid-stream — leaves the stored row alone. Both values are
-     * Shopify's `Order.updatedAt`, never a clock of Baton's: this is a
-     * **version check**, not an ordering of when the two writers ran, which is
-     * what makes it correct across a Worker, a Durable Object and a Workflow
-     * that share no clock. Ties are accepted on purpose (`>=`, not `>`) —
-     * equal timestamps are the same version of the order, so rewriting it is
-     * free and a redelivery of a write that failed halfway through its line
-     * items still completes. `returning id` is what
-     * reports that: SQLite emits a row only for an insert or an update that
-     * actually ran, so an empty result means the write lost the race, and the
-     * items are then left alone too. Writing them anyway would replace a
-     * fresh set with a stale one under a row that correctly refused to move.
-     *
-     * A new order that has already expired
-     * ({@link Domain.ShopLimits.orderRetentionDays}) is not written either,
-     * and reports `written: false` like a stale one. Only a webhook can carry
-     * one, since the open-orders sync reaches back 30 days; it arrives when a
-     * merchant edits, refunds or fulfils a year-old order. Stored again, it
-     * would have no `countedAt`, so its first run would count it a second
-     * time, and the next sweep would delete it and the run. An expired order
-     * still stored because the sweep has not reached it yet keeps taking
-     * updates: its mark is intact.
+     * The upsert keeps `where excluded.updatedAt >= ShopOrder.updatedAt`
+     * beside the function's decision: the function decided, and the clause is
+     * the belt. `returning id` reports it: SQLite emits a row only for an
+     * insert or an update that actually ran, so an empty result means the
+     * write lost, and the items are then left alone too. Writing them anyway
+     * would replace a fresh set with a stale one under a row that correctly
+     * refused to move.
      *
      * Line items are replaced wholesale on every accepted write, so a removed
      * line disappears. Every fetch path asks Shopify for the first
@@ -407,7 +393,8 @@ export class OrderRepository extends Context.Service<
     /**
      * Idempotence for a delivery channel that retries 8 times over 4 hours and
      * warns the same webhook may arrive more than once. `false` means this
-     * `X-Shopify-Webhook-Id` was already handled and the caller should stop.
+     * `X-Shopify-Webhook-Id` was already handled and the caller should stop
+     * (rule 2 on `Domain.syncOrder`).
      */
     readonly recordWebhookDelivery: (
       delivery: WebhookDelivery,
@@ -415,8 +402,7 @@ export class OrderRepository extends Context.Service<
     /**
      * The one `SyncState` row, seeded by the schema so every read is a plain
      * `select` and every write an `update` that cannot race an insert. It
-     * holds what the last sync left behind (its error, its completion) and
-     * nothing about a sync in flight: that is the Agents SDK's
+     * holds the last sync's error and nothing about a sync in flight: that is the Agents SDK's
      * `cf_agents_workflows` row, read by `ShopAgent.syncOpenOrders`.
      */
     readonly getSyncState: () => Effect.Effect<
@@ -424,20 +410,8 @@ export class OrderRepository extends Context.Service<
       SqlError.SqlError | OrderRepositoryError
     >;
     /**
-     * The sync finished. Not written by the stream: a file that streams
-     * halfway and then fails must not leave a timestamp claiming a sync
-     * completed.
-     */
-    readonly setLastCompletedAt: (input: {
-      readonly now: number;
-    }) => Effect.Effect<
-      Domain.SyncState,
-      SqlError.SqlError | OrderRepositoryError
-    >;
-    /**
-     * Records why the last sync did not happen or did not finish — a
-     * refusal before the workflow started, or the failure that ended it. The
-     * banner on the orders index carries it until the next sync clears it.
+     * Records the failure that ended the last sync. The banner on the
+     * orders index carries it until the next sync clears it.
      */
     readonly setSyncError: (input: {
       readonly error: string;
@@ -445,6 +419,15 @@ export class OrderRepository extends Context.Service<
       Domain.SyncState,
       SqlError.SqlError | OrderRepositoryError
     >;
+    /**
+     * `setSyncError`, but only when no error is
+     * recorded: the Workflow's sink writes the merchant sentence first, and
+     * the SDK's error callback that follows must not overwrite it (rule 14 on
+     * `Domain.syncOrder`).
+     */
+    readonly setSyncErrorIfEmpty: (input: {
+      readonly error: string;
+    }) => Effect.Effect<void, SqlError.SqlError>;
     /** Clears the banner; the sync about to start owns the state from here. */
     readonly clearSyncError: () => Effect.Effect<
       void,
@@ -455,6 +438,16 @@ export class OrderRepository extends Context.Service<
       ShopUsageRow,
       SqlError.SqlError | OrderRepositoryError
     >;
+    /**
+     * Rule 5 on `Domain.syncOrder`: the ceiling is read at the cycle the sync
+     * lands in, after any roll-forward, wherever it is read. Resolves the
+     * cycle at `now` exactly as the write does, then reads the counters, so
+     * a cycle whose end has passed is rolled forward before the count is
+     * read.
+     */
+    readonly usageAtCycle: (
+      now: number,
+    ) => Effect.Effect<ShopUsageRow, SqlError.SqlError | OrderRepositoryError>;
     /**
      * Records the shop's billing cycle (`Domain.BillingCycleInput`). What it
      * does to the counts and the queue is the three "cycle pushed" rows on
@@ -569,7 +562,8 @@ export class OrderRepository extends Context.Service<
      * by a request that was already doing
      * heavy work — there is no alarm and no cron — so a shop with years of
      * history drains over several passes instead of one request paying for
-     * all of it.
+     * all of it. The only path that deletes a synced order (rule 9 on
+     * `Domain.syncOrder`).
      */
     readonly sweepExpiredOrders: (input: {
       readonly now: number;
@@ -654,7 +648,7 @@ export class OrderRepository extends Context.Service<
       const readSyncState = () =>
         Effect.gen(function* () {
           return yield* syncState(
-            yield* sql`select lastError, lastCompletedAt from SyncState where id = 1`,
+            yield* sql`select lastError from SyncState where id = 1`,
           );
         });
 
@@ -905,35 +899,32 @@ export class OrderRepository extends Context.Service<
                 // One primary-key probe, before the upsert makes the answer
                 // unknowable: `returning id` cannot distinguish an insert from
                 // an update, and `fresh` is what the bulk stream reports and
-                // what the ceiling below gates on.
-                const existing =
-                  yield* sql`select 1 from ShopOrder where id = ${order.id} limit 1`;
-                const fresh = existing.length === 0;
-                if (
-                  fresh &&
-                  order.processedAt < Domain.retentionCutoff(order.syncedAt)
-                )
-                  return {
-                    written: false,
-                    fresh: false,
-                    refused: false,
-                    afterWrite: Option.none<A>(),
-                  };
-                // Resolved before the insert because the ceiling is a fact
-                // about the cycle this write lands in, after any roll-forward.
+                // what the ceiling gates on.
+                const existing = yield* sql<{
+                  readonly updatedAt: number;
+                }>`select updatedAt from ShopOrder where id = ${order.id} limit 1`;
+                const stored = existing[0];
+                // Resolved on every path, before the insert, because the
+                // ceiling is a fact about the cycle this write lands in, after
+                // any roll-forward; `syncOrder` ignores `atCeiling` for a
+                // stored order (rule 8).
                 const cycle = yield* currentCycle(order.syncedAt);
-                if (
-                  fresh &&
-                  Domain.cycleAtOrderCeiling(cycle.ordersThisCycle)
-                ) {
+                const action = Domain.syncOrder({
+                  stored: stored ?? null,
+                  incoming: order,
+                  atCeiling: Domain.cycleAtOrderCeiling(cycle.ordersThisCycle),
+                });
+                if (action._tag === "refuse" && action.reason === "ceiling")
                   yield* markOrdersLimited(order.syncedAt);
+                if (action._tag !== "write")
                   return {
                     written: false,
                     fresh: false,
-                    refused: true,
+                    refused:
+                      action._tag === "refuse" && action.reason === "ceiling",
                     afterWrite: Option.none<A>(),
                   };
-                }
+                const fresh = action.fresh;
                 const written = yield* sql`
                 insert into ShopOrder (
                   id, legacyId, name, processedAt, updatedAt,
@@ -1452,18 +1443,6 @@ export class OrderRepository extends Context.Service<
 
         getSyncState: Effect.fn("OrderRepository.getSyncState")(readSyncState),
 
-        setLastCompletedAt: Effect.fn("OrderRepository.setLastCompletedAt")(
-          function* ({ now }: { readonly now: number }) {
-            return yield* syncState(
-              yield* sql`
-                update SyncState set lastCompletedAt = ${now}, lastError = null
-                where id = 1
-                returning lastError, lastCompletedAt
-              `,
-            );
-          },
-        ),
-
         setSyncError: Effect.fn("OrderRepository.setSyncError")(function* ({
           error,
         }: {
@@ -1473,10 +1452,16 @@ export class OrderRepository extends Context.Service<
             yield* sql`
               update SyncState set lastError = ${error}
               where id = 1
-              returning lastError, lastCompletedAt
+              returning lastError
             `,
           );
         }),
+
+        setSyncErrorIfEmpty: Effect.fn("OrderRepository.setSyncErrorIfEmpty")(
+          function* ({ error }: { readonly error: string }) {
+            yield* sql`update SyncState set lastError = ${error} where id = 1 and lastError is null`;
+          },
+        ),
 
         clearSyncError: Effect.fn("OrderRepository.clearSyncError")(
           function* () {
@@ -1485,6 +1470,17 @@ export class OrderRepository extends Context.Service<
         ),
 
         getUsage: readUsage,
+
+        usageAtCycle: Effect.fn("OrderRepository.usageAtCycle")(function* (
+          now: number,
+        ) {
+          return yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* currentCycle(now);
+              return yield* readUsage();
+            }),
+          );
+        }),
 
         setBillingCycle: Effect.fn("OrderRepository.setBillingCycle")(
           function* (input: Domain.BillingCycleInput) {

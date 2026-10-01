@@ -938,3 +938,16 @@ describe("Domain.TeamName", () => {
     strictEqual(decode("a".repeat(33))._tag, "Failure");
   });
 });
+
+describe("the orders index's sync state", () => {
+  it("no sync count reaches a screen: the orders index carries whether one runs and the last error", () => {
+    deepStrictEqual(Object.keys(Domain.OrdersSyncStatus.fields).toSorted(), [
+      "inFlight",
+      "lastError",
+    ]);
+    strictEqual(
+      Domain.OrdersIndexData.fields.syncState,
+      Domain.OrdersSyncStatus,
+    );
+  });
+});

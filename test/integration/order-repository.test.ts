@@ -14,6 +14,8 @@ import {
   ShopifyAppEventsError,
 } from "@/lib/ShopifyAppEvents";
 
+import { withMaxOrdersPerCycle } from "./order-ceiling.ts";
+
 const runInRepository = <A, E>(
   program: Effect.Effect<A, E, OrderRepository | SqlClient.SqlClient>,
 ): Promise<A> =>
@@ -235,6 +237,49 @@ describe("OrderRepository.upsertOrder", () => {
     strictEqual(order.name, "#TIE");
     strictEqual(lineItems.length, 1);
     strictEqual(lineItems[0]?.id, lineItemId(2));
+  });
+});
+
+describe("OrderRepository.upsertOrder columns", () => {
+  it("a sync rewrites every column but countedAt", async () => {
+    const changed = anOrder({
+      legacyId: "2",
+      name: "#2002",
+      processedAt: 1500,
+      updatedAt: 2000,
+      cancelledAt: 1800,
+      fulfillmentStatus: "PARTIALLY_FULFILLED",
+      fullyPaid: true,
+      note: "Rush",
+      lineItemsTruncated: true,
+      syncedAt: 3000,
+    });
+    const row = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        yield* upsert(repository, anOrder(), [aLineItem(1)]);
+        yield* repository.countOrder(orderId(1), 1200);
+        yield* upsert(repository, changed, [aLineItem(1)]);
+        const sql = yield* SqlClient.SqlClient;
+        const [stored] =
+          yield* sql`select * from ShopOrder where id = ${orderId(1)}`;
+        return stored;
+      }),
+    );
+    deepStrictEqual(row, {
+      id: changed.id,
+      legacyId: changed.legacyId,
+      name: changed.name,
+      processedAt: changed.processedAt,
+      updatedAt: changed.updatedAt,
+      cancelledAt: changed.cancelledAt,
+      fulfillmentStatus: changed.fulfillmentStatus,
+      fullyPaid: 1,
+      note: changed.note,
+      lineItemsTruncated: 1,
+      syncedAt: changed.syncedAt,
+      countedAt: 1200,
+    });
   });
 });
 
@@ -1491,10 +1536,7 @@ describe("OrderRepository usage", () => {
   });
 
   it("the ceiling counts orders work started on, not orders stored: a new order is refused at it and a stored one still updates", async () => {
-    const limits = Domain.ShopLimits as { maxOrdersPerCycle: number };
-    const original = limits.maxOrdersPerCycle;
-    limits.maxOrdersPerCycle = 1;
-    try {
+    await withMaxOrdersPerCycle(1, async () => {
       const { first, uncounted, second, third, usage } = await runInRepository(
         Effect.gen(function* () {
           const repository = yield* OrderRepository;
@@ -1546,9 +1588,7 @@ describe("OrderRepository usage", () => {
       });
       strictEqual(usage.ordersThisCycle, 1);
       strictEqual(usage.ordersLimitedAt !== null, true);
-    } finally {
-      limits.maxOrdersPerCycle = original;
-    }
+    });
   });
 
   it("the retention sweep deletes expired usage events older than 60 days and keeps younger ones", async () => {
@@ -2091,28 +2131,19 @@ describe("OrderRepository retention", () => {
 });
 
 describe("OrderRepository sync state", () => {
-  it("records the last completed sync and the last error", async () => {
-    const { idle, failed, completed } = await runInRepository(
+  it("records the last error and nothing else", async () => {
+    const { idle, failed } = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* OrderRepository;
         const idle = yield* repository.getSyncState();
         const failed = yield* repository.setSyncError({
           error: "bulk submit failed",
         });
-        return {
-          idle,
-          failed,
-          completed: yield* repository.setLastCompletedAt({ now: 5000 }),
-        };
+        return { idle, failed };
       }),
     );
-    strictEqual(idle.lastError, null);
-    strictEqual(idle.lastCompletedAt, null);
-    strictEqual(failed.lastError, "bulk submit failed");
-    strictEqual(failed.lastCompletedAt, null);
-    strictEqual(completed.lastCompletedAt, 5000);
-    // A completed sync answers the banner the failed one raised.
-    strictEqual(completed.lastError, null);
+    deepStrictEqual(idle, { lastError: null });
+    deepStrictEqual(failed, { lastError: "bulk submit failed" });
   });
 
   it("clears the error the next sync is about to supersede", async () => {

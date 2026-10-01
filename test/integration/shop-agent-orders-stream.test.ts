@@ -2,7 +2,7 @@ import { SqliteClient } from "@effect/sql-sqlite-do";
 import { strictEqual } from "@effect/vitest/utils";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { Effect, Layer, Option, Schema } from "effect";
+import { Clock, Effect, Layer, Option, Schema } from "effect";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { describe, it } from "vitest";
 
@@ -189,6 +189,84 @@ describe("runShopAgentOrdersStream", () => {
    * land a fresher view of an order while the file is still being read, and the
    * file's older line must not undo it.
    */
+  it("a stream that fails partway keeps the orders it wrote", async () => {
+    const { failed, first, second } = await runInDo(
+      fixture,
+      Effect.gen(function* () {
+        let writes = 0;
+        const failed = yield* runShopAgentOrdersStream({
+          url: BULK_URL,
+          afterWrite: () => {
+            writes += 1;
+            return writes === 2
+              ? Effect.fail("reconcile failed" as const)
+              : Effect.succeed({ ceilingReleased: false });
+          },
+        }).pipe(Effect.flip);
+        const repository = yield* OrderRepository;
+        return {
+          failed,
+          first: yield* repository.getOrder(orderGid(1)),
+          second: yield* repository.getOrder(orderGid(2)),
+        };
+      }),
+    );
+    strictEqual(failed, "reconcile failed");
+    strictEqual(Option.getOrThrow(first).lineItems.length, 2);
+    // The failing order's own transaction rolled back (rule 6); the one
+    // before it stays (rule 9).
+    strictEqual(Option.isNone(second), true);
+  });
+
+  it("every streamed order carries one syncedAt, read before the file is fetched", async () => {
+    let now = Date.UTC(2026, 9, 1);
+    const tick = () => {
+      now += 1000;
+      return now;
+    };
+    const stepped: Clock.Clock = {
+      currentTimeMillisUnsafe: tick,
+      currentTimeMillis: Effect.sync(tick),
+      currentTimeNanosUnsafe: () => BigInt(tick()) * 1_000_000n,
+      currentTimeNanos: Effect.sync(() => BigInt(tick()) * 1_000_000n),
+      monotonicTimeNanosUnsafe: () => BigInt(tick()) * 1_000_000n,
+      monotonicTimeNanos: Effect.sync(() => BigInt(tick()) * 1_000_000n),
+      sleep: () => Effect.void,
+    };
+    let clockAtGet = 0;
+    const observed = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.sync(() => {
+          clockAtGet = now;
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(fixture, { status: 200 }),
+          );
+        }),
+      ),
+    );
+    const synced = await runInDo(
+      fixture,
+      Effect.gen(function* () {
+        yield* runShopAgentOrdersStream({ url: BULK_URL }).pipe(
+          Effect.provide(observed),
+          Effect.provideService(Clock.Clock, stepped),
+        );
+        const repository = yield* OrderRepository;
+        return [
+          Option.getOrThrow(yield* repository.getOrder(orderGid(1))).order
+            .syncedAt,
+          Option.getOrThrow(yield* repository.getOrder(orderGid(2))).order
+            .syncedAt,
+        ];
+      }),
+    );
+    strictEqual(synced[0], synced[1]);
+    // Read before the GET: the stepped clock ticked at least once in between.
+    strictEqual((synced[0] ?? Infinity) < clockAtGet, true);
+  });
+
   it("leaves a fresher webhook row untouched", async () => {
     const { counts, detail } = await runInDo(
       fixture,
@@ -269,7 +347,7 @@ describe("runShopAgentOrdersStream with afterWrite", () => {
         ),
     );
 
-  it("creates runs on every streamed open order that matches, however old; a re-stream creates none", async () => {
+  it("creates runs on every streamed open order that matches, however old, and a re-stream creates none", async () => {
     const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     const body = ndjson(
       orderLine(1, "2026-08-01T10:00:00Z"),
