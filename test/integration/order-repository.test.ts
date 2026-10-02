@@ -558,7 +558,13 @@ describe("OrderRepository.listOrders multi-match", () => {
         });
         return {
           sqlCount: page.orders[0]?.multiMatchItems,
-          tsCount: Domain.multiMatchItems(lineItems, [], details, teams),
+          tsCount: Domain.multiMatchItems(
+            { fullyPaid: true, cancelledAt: null },
+            lineItems,
+            [],
+            details,
+            teams,
+          ).length,
         };
       }),
     );
@@ -2076,6 +2082,42 @@ describe("OrderRepository.sweepExpiredOrders", () => {
     deepStrictEqual(orders, [orderId(3), orderId(4)]);
     deepStrictEqual(runs, []);
     strictEqual(usage.lastSweepAt, NOW);
+  });
+});
+
+describe("OrderRepository.sweepExpiredOrders, the retention sweep", () => {
+  it("the retention sweep deletes an order with its open runs and records no close", async () => {
+    const { swept, runs, tasks } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        const sql = yield* SqlClient.SqlClient;
+        yield* upsert(
+          repository,
+          anOrder({ id: orderId(1), processedAt: EXPIRED }),
+          [],
+        );
+        yield* runWith(orderId(1), "open", EXPIRED)(sql);
+        yield* sql`
+          insert into RunTask (id, runId, position, step, name, teamName)
+          values ('task-1', ${`run-${orderId(1)}-open`}, 1, 1, 'Cut', 'Team')
+        `;
+        const swept = yield* repository.sweepExpiredOrders({ now: NOW });
+        const count = (table: string) =>
+          sql`select count(*) from ${sql(table)}`.values.pipe(
+            Effect.map((rows) => Number(rows[0]?.[0] ?? 0)),
+          );
+        return {
+          swept,
+          runs: yield* count("Run"),
+          tasks: yield* count("RunTask"),
+        };
+      }),
+    );
+    strictEqual(swept.runs, 1);
+    strictEqual(runs, 0);
+    // Deleted, not closed: no row is left to carry a reason, and no
+    // closed run reaches a member's Done or closed view.
+    strictEqual(tasks, 0);
   });
 });
 

@@ -3,7 +3,7 @@ import { deepStrictEqual, strictEqual } from "@effect/vitest/utils";
 import { getAgentByName } from "agents";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { Effect, Layer, Result, Schema } from "effect";
+import { Effect, Layer, Match, Result, Schema } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { D1Primary } from "@/lib/D1Primary";
@@ -302,11 +302,147 @@ describe("Domain.reconcileItem actions", () => {
         if (action._tag === "nothing")
           strictEqual(
             action.declined,
-            row.matches === "1, at the ceiling",
+            row.action.note.startsWith("declined"),
             where,
           );
       }
     });
+});
+
+type PostFixture = ActionTable.ReconcileFixture;
+type FixtureRun = ActionTable.ReconcileFixtureRun | null;
+
+const POST_MATCHED = ["w1", "w2"].map((id) =>
+  Schema.decodeUnknownSync(Domain.WorkflowId)(id),
+);
+
+const plan = (fixture: PostFixture, run: FixtureRun, units: number) =>
+  Domain.reconcileItem({
+    order: fixture.order,
+    item: { currentQuantity: units },
+    run:
+      run === null
+        ? null
+        : {
+            run: { state: run.state, quantity: run.quantity },
+            tasks: [{ startedAt: run.started ? 1 : null, doneAt: null }],
+          },
+    matched: POST_MATCHED.slice(0, fixture.matched),
+    atCeiling: fixture.atCeiling,
+  });
+
+/** The run an action leaves on the item; `units` is what a create copies. */
+const apply = (
+  run: FixtureRun,
+  action: Domain.ReconcileAction,
+  units: number,
+): FixtureRun =>
+  Match.value(action).pipe(
+    Match.tagsExhaustive({
+      create: (): FixtureRun => ({
+        state: "open",
+        started: false,
+        quantity: units,
+      }),
+      close: (): FixtureRun =>
+        run === null ? null : { ...run, state: "closed" },
+      resize: ({ units: resized }): FixtureRun =>
+        run === null ? null : { ...run, quantity: resized },
+      nothing: (): FixtureRun => run,
+    }),
+  );
+
+const stopped = (fixture: PostFixture) =>
+  Domain.orderIsCancelled(fixture.order) ||
+  Domain.orderIsFulfilled(fixture.order);
+
+const same = (a: FixtureRun, b: FixtureRun) =>
+  JSON.stringify(a) === JSON.stringify(b);
+
+/** The five clauses of the post-condition, each over the fixture (before) and the run a pass left. */
+const CLAUSES = {
+  stop: (fixture: PostFixture, after: FixtureRun) =>
+    !stopped(fixture) || after === null || after.state !== "open",
+  fit: (fixture: PostFixture, after: FixtureRun) =>
+    stopped(fixture) ||
+    fixture.run?.state !== "open" ||
+    (fixture.units === 0
+      ? after?.state === "closed"
+      : after?.state === "open" && after.quantity === fixture.units),
+  record: (fixture: PostFixture, after: FixtureRun) =>
+    fixture.run === null ||
+    fixture.run.state === "open" ||
+    same(after, fixture.run),
+  create: (fixture: PostFixture, after: FixtureRun) =>
+    stopped(fixture) ||
+    fixture.run !== null ||
+    (after !== null) ===
+      (Domain.orderCanCreateRuns(fixture.order) &&
+        fixture.units > 0 &&
+        fixture.matched === 1 &&
+        !fixture.atCeiling),
+};
+
+/**
+ * A pass over a stored run whose item is not stored: read as an item at
+ * zero units with no match, unless the order's items were truncated, when
+ * no pass reads it (`RunRepository.reconcileOrder`).
+ */
+const orphanPass = (
+  fixture: PostFixture,
+  run: FixtureRun,
+  truncated: boolean,
+): Domain.ReconcileAction =>
+  truncated
+    ? { _tag: "nothing", declined: false }
+    : plan({ ...fixture, matched: 0 }, run, 0);
+
+const orphan = (before: FixtureRun, after: FixtureRun, truncated: boolean) =>
+  truncated
+    ? same(after, before)
+    : before?.state !== "open" || after?.state === "closed";
+
+/**
+ * The post-condition on `Domain.reconcileItem` ("What a pass guarantees"),
+ * checked on every fixture the actions table can name rather than on the
+ * rows: each clause is a predicate over the state before and after one
+ * pass, so a failure names the clause, and a second pass over the state the
+ * first left must write nothing.
+ */
+describe("Domain.reconcileItem post-condition", () => {
+  it("a pass guarantees stop, fit, record, create and orphan, and a second pass writes nothing", () => {
+    const universe = ActionTable.reconcileActionUniverse();
+    expect(universe.length).toBeGreaterThan(0);
+    for (const fixture of universe) {
+      const where = JSON.stringify(fixture);
+      const first = plan(fixture, fixture.run, fixture.units);
+      const after = apply(fixture.run, first, fixture.units);
+      for (const [clause, holds] of Object.entries(CLAUSES))
+        strictEqual(holds(fixture, after), true, `${clause}: ${where}`);
+      deepStrictEqual(
+        plan(fixture, after, fixture.units),
+        {
+          _tag: "nothing",
+          declined: first._tag === "nothing" && first.declined,
+        },
+        `second pass: ${where}`,
+      );
+      for (const truncated of fixture.run === null ? [] : [false, true]) {
+        const action = orphanPass(fixture, fixture.run, truncated);
+        const left = apply(fixture.run, action, 0);
+        strictEqual(
+          orphan(fixture.run, left, truncated),
+          true,
+          `orphan (truncated ${String(truncated)}): ${where}`,
+        );
+        deepStrictEqual(
+          orphanPass(fixture, left, truncated),
+          { _tag: "nothing", declined: false },
+          `orphan second pass (truncated ${String(truncated)}): ${where}`,
+        );
+      }
+    }
+  });
 });
 
 describe("Domain.syncOrder actions", () => {

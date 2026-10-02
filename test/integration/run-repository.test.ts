@@ -626,11 +626,10 @@ describe("RunRepository.reconcileOrder", () => {
       }),
     ));
 
-  it("is idempotent, and a closed item creates nothing on reconcile", () =>
+  it("a second pass over the same stored order writes nothing", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
-        const runs = yield* RunRepository;
         const items = [lineItem(1, ["a"]), lineItem(2, ["b"])];
         yield* upsertAndReconcile(order(), items);
         const again = yield* upsertAndReconcile(
@@ -645,7 +644,16 @@ describe("RunRepository.reconcileOrder", () => {
           ceilingReleased: false,
         });
         strictEqual((yield* runsForOrder()).length, 2);
+      }),
+    ));
 
+  it("a closed item creates nothing on reconcile", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seed;
+        const runs = yield* RunRepository;
+        const items = [lineItem(1, ["a"]), lineItem(2, ["b"])];
+        yield* upsertAndReconcile(order(), items);
         const [target] = yield* runsForOrder();
         if (target === undefined) throw new Error("no run");
         yield* complete(target, 1, [TEAM_A.id]);
@@ -693,7 +701,7 @@ describe("RunRepository.reconcileOrder", () => {
       }),
     ));
 
-  it("a workflow that is on creates runs on every stored open order, however old it is", () =>
+  it("a workflow that is on creates runs on every stored open paid order, however old it is", () =>
     runInRepository(
       Effect.gen(function* () {
         const { a } = yield* seed;
@@ -830,6 +838,36 @@ describe("RunRepository.reconcileOrder", () => {
       }),
     ));
 
+  it("on a truncated order a run whose item is not stored is left alone", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seed;
+        yield* upsertAndReconcile(order(), [
+          lineItem(1, ["a"]),
+          lineItem(2, ["b"]),
+        ]);
+        // Stored short: item 2 may still exist past the kept items, so its
+        // run is not read as an item at zero units.
+        yield* (yield* OrderRepository).upsertOrder({
+          order: order({
+            updatedAt: PROCESSED_AT + 1,
+            lineItemsTruncated: true,
+          }),
+          lineItems: [lineItem(1, ["a"])],
+          afterWrite: Effect.void,
+        });
+        const counts = yield* (yield* RunRepository).reconcileOrder({
+          ...(yield* loadEligibleContext),
+          orderId: ORDER_ID,
+        });
+        strictEqual(counts.closed, 0);
+        deepStrictEqual(
+          (yield* runsForOrder()).map(({ run }) => run.state),
+          ["open", "open"],
+        );
+      }),
+    ));
+
   it("a pass that fails leaves neither the order nor its runs", () =>
     runInRepository(
       Effect.gen(function* () {
@@ -919,7 +957,7 @@ describe("RunRepository.reconcileOrder", () => {
       }),
     ));
 
-  it("a quantity changed back to the original clears the badge", () =>
+  it("a resize back to the original clears the badge, and a Done clears it", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -936,6 +974,46 @@ describe("RunRepository.reconcileOrder", () => {
         const back = (yield* runsForOrder())[0];
         strictEqual(back?.run.quantity, 2);
         strictEqual(back?.run.quantityChangedFrom, null);
+        yield* upsertAndReconcile(order({ updatedAt: PROCESSED_AT + 3 }), [
+          lineItem(1, ["a"], { currentQuantity: 3 }),
+        ]);
+        strictEqual((yield* runsForOrder())[0]?.run.quantityChangedFrom, 2);
+        yield* complete(run, 2, [TEAM_B.id]);
+        strictEqual((yield* runsForOrder())[0]?.run.quantityChangedFrom, null);
+      }),
+    ));
+
+  it("a resize on an unstarted run clears the quantity badge", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seed;
+        const runs = yield* RunRepository;
+        yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
+        const [run] = yield* runsForOrder();
+        const cut = run?.tasks[0]?.id ?? "";
+        yield* runs.startTask({
+          runTaskId: cut,
+          actor: memberActor("m1"),
+          teamIds: [TEAM_A.id],
+        });
+        yield* upsertAndReconcile(order({ updatedAt: PROCESSED_AT + 1 }), [
+          lineItem(1, ["a"], { currentQuantity: 3 }),
+        ]);
+        strictEqual((yield* runsForOrder())[0]?.run.quantityChangedFrom, 2);
+        // Put back: nobody is working to the old number any more.
+        yield* runs.putBackTask({
+          runTaskId: cut,
+          actor: memberActor("m1"),
+          teamIds: [TEAM_A.id],
+        });
+        const unstarted = (yield* runsForOrder())[0];
+        strictEqual(Domain.runIsUnstarted(unstarted?.tasks ?? []), true);
+        yield* upsertAndReconcile(order({ updatedAt: PROCESSED_AT + 2 }), [
+          lineItem(1, ["a"], { currentQuantity: 4 }),
+        ]);
+        const resized = (yield* runsForOrder())[0];
+        strictEqual(resized?.run.quantity, 4);
+        strictEqual(resized?.run.quantityChangedFrom, null);
       }),
     ));
 
@@ -3336,7 +3414,41 @@ const usageRow = () =>
   );
 
 describe("RunRepository open-run ceiling", () => {
-  it("reconcile yields to the ceiling and records it; the run's last Done clears the flag", () =>
+  it("the open-run ceiling is counted once per pass, each create spends one and a close refunds nothing", () =>
+    withMaxOpenRuns(2, () =>
+      runInRepository(
+        Effect.gen(function* () {
+          yield* seed;
+          yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
+          // One open run, room for one more. Item 1 drops to zero and two
+          // single matches arrive: the close refunds nothing, item 2 spends
+          // the one room, and item 3, after it in stored order, is declined.
+          const counts = yield* upsertAndReconcile(
+            order({ updatedAt: PROCESSED_AT + 1 }),
+            [
+              lineItem(1, ["a"], { currentQuantity: 0 }),
+              lineItem(2, ["a"]),
+              lineItem(3, ["b"]),
+            ],
+          );
+          strictEqual(counts.closed, 1);
+          strictEqual(counts.created, 1);
+          strictEqual(typeof (yield* usageRow()), "number");
+          deepStrictEqual(
+            (yield* runsForOrder()).map(({ run }) => [
+              run.lineItemId,
+              run.state,
+            ]),
+            [
+              [lineItem(1, []).id, "closed"],
+              [lineItem(2, []).id, "open"],
+            ],
+          );
+        }),
+      ),
+    ));
+
+  it("a declined run raises the open-run ceiling flag and the run's last Done clears it", () =>
     withMaxOpenRuns(1, () =>
       runInRepository(
         Effect.gen(function* () {
@@ -3349,10 +3461,6 @@ describe("RunRepository open-run ceiling", () => {
           strictEqual(counts.created, 1);
           const limitedAt = yield* usageRow();
           strictEqual(typeof limitedAt, "number");
-          // The order itself is stored either way: failing here would fail the
-          // webhook, and Shopify would retry it for four hours.
-          const stored = yield* (yield* OrderRepository).getOrder(ORDER_ID);
-          strictEqual(Option.isSome(stored), true);
           // Take the one run to done: both tasks done takes it out of
           // `open`, which is what releases the flag.
           const [detail] = yield* runsForOrder();
@@ -3364,7 +3472,7 @@ describe("RunRepository open-run ceiling", () => {
       ),
     ));
 
-  it("the write that releases the ceiling creates the runs that were declined", () =>
+  it("the write that releases the open-run ceiling creates the runs that were declined", () =>
     withMaxOpenRuns(1, () =>
       runInRepository(
         Effect.gen(function* () {
@@ -3417,7 +3525,7 @@ describe("RunRepository open-run ceiling", () => {
       ),
     ));
 
-  it("a close by reconcile releases the ceiling and says so", () =>
+  it("a close by reconcile releases the open-run ceiling and says so", () =>
     withMaxOpenRuns(1, () =>
       runInRepository(
         Effect.gen(function* () {

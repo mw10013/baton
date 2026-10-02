@@ -204,6 +204,27 @@ describe("action table parser", () => {
     ).toEqual([[14, 15]]);
   });
 
+  it("a fixture no row covers is a gap", () => {
+    const rows = rowsOf(
+      sourceOf("| open | open | no | ready | - | m | M m | | | M |"),
+    );
+    const gaps = ActionTable.gaps("taskActions", rows);
+    expect(gaps.length).toBeGreaterThan(0);
+    expect(gaps).toContainEqual(
+      expect.objectContaining({
+        run: { state: "closed", blockedAt: null },
+      }),
+    );
+  });
+
+  it("the real runActions and taskActions tables are total", () => {
+    for (const name of ["runActions", "taskActions"] as const) {
+      const rows = Result.getOrThrow(ActionTable.parse(shopWorkSource, name));
+      expect(ActionTable.gaps(name, rows), name).toEqual([]);
+      expect(ActionTable.overlaps(name, rows), name).toEqual([]);
+    }
+  });
+
   it("a vocabulary word absent from the rest of the file is reported", () => {
     const source = [
       "/**",
@@ -314,8 +335,8 @@ describe("action table parser", () => {
 
     it("a hyphenated word finds its snake-case literal key", () => {
       const doctored = shopWorkSource.replace(
-        "on an order that can create runs | Multiple workflows match |",
-        "on an order that can create runs | Two workflows match      |",
+        "({@link multiMatchItems}) | Multiple workflows match |",
+        "({@link multiMatchItems}) | Two workflows match      |",
       );
       expect(doctored).not.toBe(shopWorkSource);
       expect(ActionTable.checkScreenColumns(doctored, labels)).toEqual([
@@ -757,6 +778,32 @@ describe("reconcile triggers table parser", () => {
 });
 
 describe("reconcile actions table parser", () => {
+  it("a fixture no row covers is a gap, and two rows that share one are an overlap", () => {
+    const rows = Result.getOrThrow(
+      ActionTable.parseReconcileActions(
+        reconcileTablesOf(TRIGGER_ROW, ACTION_ROW),
+      ),
+    );
+    const gaps = ActionTable.reconcileActionGaps(rows);
+    expect(gaps).toHaveLength(
+      ActionTable.reconcileActionUniverse().length -
+        rows.flatMap(ActionTable.expandReconcileAction).length,
+    );
+    expect(gaps).toContainEqual(
+      expect.objectContaining({ run: null, matched: 2, atCeiling: false }),
+    );
+    const twice = [...rows, ...rows];
+    expect(ActionTable.reconcileActionOverlaps(twice)).toHaveLength(1);
+  });
+
+  it("the real actions table on reconcileItem is total", () => {
+    const rows = Result.getOrThrow(
+      ActionTable.parseReconcileActions(shopWorkSource),
+    );
+    expect(ActionTable.reconcileActionGaps(rows)).toEqual([]);
+    expect(ActionTable.reconcileActionOverlaps(rows)).toEqual([]);
+  });
+
   it("the real table parses, after the triggers table", () => {
     const rows = Result.getOrThrow(
       ActionTable.parseReconcileActions(shopWorkSource),
@@ -781,7 +828,8 @@ describe("reconcile actions table parser", () => {
       note: "Shopify ended it",
     });
     expect(row && ActionTable.expandReconcileAction(row)).toHaveLength(
-      2 * 3 * 2 * 3,
+      // paid, units, run, and matches with the open-run ceiling as its fourth value.
+      2 * 3 * 2 * 4,
     );
   });
 
@@ -1038,7 +1086,7 @@ describe("reconcile effects table parser", () => {
     const rows = Result.getOrThrow(
       ActionTable.parseReconcileEffects(shopWorkSource),
     );
-    expect(rows.map((row) => row.action)).toEqual(
+    expect([...new Set(rows.map((row) => row.action))]).toEqual(
       ActionTable.RECONCILE_EFFECT_WORDS.action,
     );
     expect(
@@ -1062,7 +1110,7 @@ describe("reconcile effects table parser", () => {
       reconcileError(
         ActionTable.parseReconcileEffects,
         shopWorkWith(/^ \* \| action +\| run row .*$/mu, (line) =>
-          line.replace("ceiling flag", "flag        "),
+          line.replace("open-run ceiling flag", "flag                 "),
         ),
       ),
     ).toMatch(/header is action, run row, counted order, queue, flag/u);

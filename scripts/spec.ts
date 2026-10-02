@@ -146,11 +146,15 @@ const checkCommand = Command.make(
       ...NAMES.flatMap((name) =>
         Result.match(ActionTable.parse(contexts.ShopWork, name), {
           onFailure: (error) => [error.message],
-          onSuccess: (rows) =>
-            ActionTable.overlaps(name, rows).map(
+          onSuccess: (rows) => [
+            ...ActionTable.overlaps(name, rows).map(
               ([a, b]) =>
                 `${name}, lines ${String(a.line)} and ${String(b.line)}: rows share a fixture`,
             ),
+            ...ActionTable.gaps(name, rows).map(
+              (fixture) => `${name}: no row covers ${JSON.stringify(fixture)}`,
+            ),
+          ],
         }),
       ),
       ...[
@@ -190,7 +194,16 @@ const checkCommand = Command.make(
       }),
       ...Result.match(ActionTable.parseReconcileActions(contexts.ShopWork), {
         onFailure: (error) => [error.message],
-        onSuccess: () => [],
+        onSuccess: (rows) => [
+          ...ActionTable.reconcileActionOverlaps(rows).map(
+            ([a, b]) =>
+              `reconcileItem actions, lines ${String(a.line)} and ${String(b.line)}: rows share a fixture`,
+          ),
+          ...ActionTable.reconcileActionGaps(rows).map(
+            (fixture) =>
+              `reconcileItem actions: no row covers ${JSON.stringify(fixture)}`,
+          ),
+        ],
       }),
       ...Result.match(ActionTable.parseSyncActions(contexts.Orders), {
         onFailure: (error) => [error.message],

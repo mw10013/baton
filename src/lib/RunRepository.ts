@@ -226,6 +226,23 @@ export class RunRepository extends Context.Service<
       SqlError.SqlError | RunRepositoryError
     >;
     /**
+     * Clears the banner once the shop is back under the open-run ceiling, and
+     * says whether it did: `true` means reconcile declined runs while the
+     * shop was at the ceiling and there is now room, so the caller runs a
+     * reconcile all to create them. Called after each write that lowers the
+     * open-run count (pass rule 11 on {@link Domain.reconcileItem}): a run's
+     * last Done ({@link markTaskDone}), Cancel workflow ({@link cancelRun}),
+     * a close by reconcile ({@link reconcileOrder}), and the retention sweep
+     * (`OrderRepository.sweepExpiredOrders`), whose caller asks after a sweep
+     * that deleted runs. The column is read first so the common case — never
+     * limited — is one row read and no count, which matters because this
+     * runs on transitions as ordinary as marking a task done.
+     */
+    readonly releaseOpenRunLimit: () => Effect.Effect<
+      boolean,
+      SqlError.SqlError
+    >;
+    /**
      * Manual attach, read as **set this item's workflow**. An item holds at
      * most one run (the data model on `initializeSchema`,
      * `ShopAgentSchema.ts`), so this is a replace, done in one transaction:
@@ -958,18 +975,7 @@ export class RunRepository extends Context.Service<
         },
       );
 
-      /**
-       * Clears the banner once the shop is back under the ceiling, and says
-       * whether it did: `true` means reconcile declined runs while the shop
-       * was at the ceiling and there is now room, so the caller runs a
-       * reconcile all to create them. Called after each write that can lower
-       * the open-run count, and only those: a run's last Done
-       * ({@link markTaskDone}), Cancel workflow ({@link cancelRun}) and a
-       * close by reconcile ({@link reconcileOrder}). The column is read
-       * first so the common case — never limited — is one row read and no
-       * count, which matters because this runs on transitions as ordinary as
-       * marking a task done.
-       */
+      /** The rule is on the interface's `releaseOpenRunLimit`. */
       const releaseOpenRunLimit = Effect.fn(
         "RunRepository.releaseOpenRunLimit",
       )(function* () {
@@ -1091,9 +1097,8 @@ export class RunRepository extends Context.Service<
        * the cause, and a close by this pass releases it
        * ({@link releaseOpenRunLimit}).
        *
-       * `ReconcileCounts.multiMatch` counts a multi-match item only when the
-       * order can create runs ({@link Domain.orderCanCreateRuns}), the same
-       * rule as the `multi_match` issue.
+       * `ReconcileCounts.multiMatch` is {@link Domain.multiMatchItems}, the
+       * same rule as the `multi_match` issue.
        */
       const reconcileOrder = Effect.fn("RunRepository.reconcileOrder")(
         function* ({
@@ -1141,7 +1146,9 @@ export class RunRepository extends Context.Service<
                 null,
               matched: Domain.matchedWorkflows(lineItem, workflows, teams),
             })),
-            ...details
+            // Pass rule 1 on `Domain.reconcileItem`: on a truncated order the
+            // item may still exist past the kept 250, so its run is left alone.
+            ...(order.lineItemsTruncated ? [] : details)
               .filter(({ run }) => !stored.has(run.lineItemId))
               .map((detail) => ({
                 lineItem: Option.none<Domain.OrderLineItem>(),
@@ -1209,9 +1216,10 @@ export class RunRepository extends Context.Service<
                     : closeOpenRuns(sql`id = ${run.run.id}`, reason, now),
                 resize: ({ units, badge }) => {
                   if (run === null) return Effect.succeed(0);
+                  // The badge rule is on `Domain.Run` `quantityChangedFrom`.
                   const original = badge
                     ? (run.run.quantityChangedFrom ?? run.run.quantity)
-                    : run.run.quantityChangedFrom;
+                    : null;
                   const from = original === units ? null : original;
                   return sql`
                     update Run
@@ -1257,16 +1265,16 @@ export class RunRepository extends Context.Service<
               }),
             );
           }
-          const multiMatch = Domain.orderCanCreateRuns(order)
-            ? entries.flatMap(({ lineItem, run, matched }) =>
-                Option.isSome(lineItem) &&
-                run === null &&
-                Domain.unitsToMake(lineItem.value) > 0 &&
-                matched.length >= 2
-                  ? [{ lineItemId: lineItem.value.id, matched: matched.length }]
-                  : [],
-              )
-            : [];
+          const multiMatch = Domain.multiMatchItems(
+            order,
+            lineItems,
+            runs,
+            workflows,
+            teams,
+          ).map((lineItem) => ({
+            lineItemId: lineItem.id,
+            matched: Domain.matchedWorkflows(lineItem, workflows, teams).length,
+          }));
           yield* Effect.forEach(
             multiMatch,
             ({ lineItemId, matched }) =>
@@ -1302,6 +1310,7 @@ export class RunRepository extends Context.Service<
 
       return RunRepository.of({
         reconcileOrder,
+        releaseOpenRunLimit,
 
         reconcileAll: Effect.fn("RunRepository.reconcileAll")(function* (
           context: Domain.EligibleContext,

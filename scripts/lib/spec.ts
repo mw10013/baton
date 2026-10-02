@@ -50,7 +50,7 @@ export class ParseError extends Data.TaggedError("ParseError")<{
 const OrderWord = Schema.Literals(["open", "closed"]);
 const RunWord = Schema.Literals(["open", "done", "closed", "open or done"]);
 const BlockedWord = Schema.Literals(["yes", "no", "any"]);
-const UnitsWord = Schema.Literals(["some", "none"]);
+const UnitsWord = Schema.Literals(["some", "none", "any"]);
 const TaskWord = Schema.Literals([
   "ready",
   "started",
@@ -103,6 +103,7 @@ const BLOCKED: Record<typeof BlockedWord.Type, readonly (number | null)[]> = {
 const UNITS: Record<typeof UnitsWord.Type, readonly number[]> = {
   some: [1],
   none: [0],
+  any: [1, 0],
 };
 const TASKS: Record<typeof TaskWord.Type, readonly TaskState[]> = {
   ready: [READY],
@@ -148,6 +149,7 @@ export interface Fixture<TeamId, Blocker> {
  * | blocked    | yes / no     | `blockedAt` 1 / null                                                                 |
  * | blocked    | any          | both on an open run; null on a done run                                              |
  * | units      | some / none  | `currentQuantity` 1 / 0 (runActions only)                                            |
+ * | units      | any          | 1; 0                                                                                 |
  * | task       | ready        | `current: true, startedAt: null, doneAt: null`                                       |
  * | task       | started      | `current: true, startedAt: 1, doneAt: null`                                          |
  * | task       | waiting      | `current: false, startedAt: null, doneAt: null`                                      |
@@ -407,6 +409,74 @@ export const overlaps = (
         [...(keys[i] ?? [])].some((key) => keys[i + 1 + offset]?.has(key)),
       )
       .map((other) => [row, other] as const),
+  );
+};
+
+/**
+ * Whether a fixture is a state the object can hold. Two `taskActions`
+ * combinations are not: a `done` run whose task is not done (a run is done
+ * when its last task is), and a downstream blocker on a task Reopen cannot
+ * be offered on. `-` under `downstream` is the second: Reopen is asked only
+ * of a done task on an open order's open or done run, so everywhere else
+ * the blocker is not computed and the fixture holds `null`.
+ */
+const reachable = (fixture: Fixture<string, string>): boolean => {
+  const { order, run, task } = fixture;
+  const done = task.doneAt !== null;
+  const orderOpen =
+    order.cancelledAt === null && order.fulfillmentStatus !== "FULFILLED";
+  return (
+    (run.state !== "done" || done) &&
+    (task.reopenBlockedBy === null ||
+      (done && orderOpen && run.state !== "closed"))
+  );
+};
+
+/**
+ * Every fixture a table's state columns can name: the cross product of each
+ * column's words, each expanded by {@link expand}, kept to the states the
+ * object can hold ({@link reachable}). Deduplicated, so a word that is the
+ * union of others (`any`, `any open`) adds nothing.
+ */
+export const universe = (
+  name: TableName,
+): readonly Fixture<string, string>[] => {
+  const columns = TABLES[name].state;
+  const states = columns.reduce<readonly Readonly<Record<string, string>>[]>(
+    (acc, column) =>
+      acc.flatMap((state) =>
+        WORDS[column].literals.map((word) => ({ ...state, [column]: word })),
+      ),
+    [{}],
+  );
+  const fixtures = new Map(
+    states.flatMap((state) =>
+      expand(name, { line: 0, state, cells: {} }, { teamId: "t", blocker: "b" })
+        .filter(reachable)
+        .map((fixture) => [JSON.stringify(fixture), fixture] as const),
+    ),
+  );
+  return [...fixtures.values()];
+};
+
+/**
+ * The fixtures of {@link universe} no row expands to. With {@link overlaps}
+ * it holds a table total: every state is a row exactly once, so a reader
+ * never meets a state the table is silent on.
+ */
+export const gaps = (
+  name: TableName,
+  rows: readonly Row[],
+): readonly Fixture<string, string>[] => {
+  const covered = new Set(
+    rows.flatMap((row) =>
+      expand(name, row, { teamId: "t", blocker: "b" }).map((fixture) =>
+        JSON.stringify(fixture),
+      ),
+    ),
+  );
+  return universe(name).filter(
+    (fixture) => !covered.has(JSON.stringify(fixture)),
   );
 };
 
@@ -1405,7 +1475,7 @@ export interface ReconcileFixture {
   readonly atCeiling: boolean;
 }
 
-/** The quantity every fixture run carries; `changed` units are one more, `same` are equal, `some` are this. */
+/** The quantity every fixture run carries; `changed` units are one more, `same` are equal, `some` are both. */
 const RUN_QUANTITY = 2;
 
 /**
@@ -1432,7 +1502,9 @@ export const expandReconcileAction = (
     "0": [0],
     changed: [RUN_QUANTITY + 1],
     same: [RUN_QUANTITY],
-    some: [RUN_QUANTITY],
+    // Above zero: with no run there is no quantity to equal, so `some`
+    // covers both values `any` reaches above zero.
+    some: [RUN_QUANTITY, RUN_QUANTITY + 1],
     any: [0, RUN_QUANTITY, RUN_QUANTITY + 1],
   }[row.units];
   const run = (state: RunState, started: boolean): ReconcileFixtureRun => ({
@@ -1452,7 +1524,10 @@ export const expandReconcileAction = (
     "1": [{ matched: 1, atCeiling: false }],
     "2+": [{ matched: 2, atCeiling: false }],
     "1, at the ceiling": [{ matched: 1, atCeiling: true }],
-    any: [0, 1, 2].map((matched) => ({ matched, atCeiling: false })),
+    any: [
+      ...[0, 1, 2].map((matched) => ({ matched, atCeiling: false })),
+      { matched: 1, atCeiling: true },
+    ],
   }[row.matches];
   return orders.flatMap((order) =>
     paid.flatMap((fullyPaid) =>
@@ -1467,6 +1542,74 @@ export const expandReconcileAction = (
         ),
       ),
     ),
+  );
+};
+
+/**
+ * Every fixture the actions table on `reconcileItem` can name: the cross
+ * product of each column's words, each expanded by
+ * {@link expandReconcileAction}, deduplicated.
+ */
+export const reconcileActionUniverse = (): readonly ReconcileFixture[] => {
+  const words = RECONCILE_ACTION_WORDS;
+  const rows = words.order.flatMap((order) =>
+    words.paid.flatMap((paid) =>
+      words.units.flatMap((units) =>
+        words.run.flatMap((run) =>
+          words.matches.map((matches): ReconcileActionRow => ({
+            line: 0,
+            order,
+            paid,
+            units,
+            run,
+            matches,
+            action: { tag: "nothing", note: "" },
+            text: "",
+          })),
+        ),
+      ),
+    ),
+  );
+  return [
+    ...new Map(
+      rows
+        .flatMap(expandReconcileAction)
+        .map((fixture) => [JSON.stringify(fixture), fixture] as const),
+    ).values(),
+  ];
+};
+
+/** The fixtures of {@link reconcileActionUniverse} no row of the actions table on `reconcileItem` expands to. */
+export const reconcileActionGaps = (
+  rows: readonly ReconcileActionRow[],
+): readonly ReconcileFixture[] => {
+  const covered = new Set(
+    rows
+      .flatMap(expandReconcileAction)
+      .map((fixture) => JSON.stringify(fixture)),
+  );
+  return reconcileActionUniverse().filter(
+    (fixture) => !covered.has(JSON.stringify(fixture)),
+  );
+};
+
+/** {@link overlaps} for the actions table on `reconcileItem`: no two rows expand to a common fixture. */
+export const reconcileActionOverlaps = (
+  rows: readonly ReconcileActionRow[],
+): readonly (readonly [ReconcileActionRow, ReconcileActionRow])[] => {
+  const keys = rows.map(
+    (row) =>
+      new Set(
+        expandReconcileAction(row).map((fixture) => JSON.stringify(fixture)),
+      ),
+  );
+  return rows.flatMap((row, i) =>
+    rows
+      .slice(i + 1)
+      .filter((_, offset) =>
+        [...(keys[i] ?? [])].some((key) => keys[i + 1 + offset]?.has(key)),
+      )
+      .map((other) => [row, other] as const),
   );
 };
 
@@ -1651,10 +1794,11 @@ export interface ReconcileEffectRow {
 /**
  * Read the effects table, the third table in the JSDoc on `reconcileItem`
  * in `source`. The header is `action | run row | counted order | queue |
- * ceiling flag | pinned by`; every cell but `pinned by` is one of its list in
+ * open-run ceiling flag | pinned by`; every cell but `pinned by` is one of its list in
  * {@link RECONCILE_EFFECT_WORDS}, and each action is a row exactly once;
- * `pinned by` is a test title or {@link NONE_YET}. Fails with a message
- * naming the line and the offending cell.
+ * `pinned by` is one or more test titles separated by `; `
+ * ({@link pinnedTitles}), or {@link NONE_YET}, and a row is yielded per
+ * title. Fails with a message naming the line and the offending cell.
  */
 export const parseReconcileEffects = (
   source: string,
@@ -1668,7 +1812,7 @@ export const parseReconcileEffects = (
         "run row",
         "counted order",
         "queue",
-        "ceiling flag",
+        "open-run ceiling flag",
         "pinned by",
       ],
       2,
@@ -1677,7 +1821,10 @@ export const parseReconcileEffects = (
       Result.flatMap(
         Result.all(
           body.map(
-            ({ line, text }): Result.Result<ReconcileEffectRow, ParseError> => {
+            ({
+              line,
+              text,
+            }): Result.Result<readonly ReconcileEffectRow[], ParseError> => {
               const fail = (message: string) =>
                 Result.fail(
                   new ParseError({
@@ -1730,15 +1877,23 @@ export const parseReconcileEffects = (
                     ceilingFlag,
                   ),
                 }),
-                (words) => ({ line, ...words, pinnedBy }),
+                (words) =>
+                  pinnedTitles(pinnedBy).map((title) => ({
+                    line,
+                    ...words,
+                    pinnedBy: title,
+                  })),
               );
             },
           ),
         ),
-        (rows) => {
+        (perLine) => {
+          const rows = perLine.flat();
           const missing = RECONCILE_EFFECT_WORDS.action.filter(
             (action) =>
-              rows.filter((row) => row.action === action).length !== 1,
+              new Set(
+                rows.filter((row) => row.action === action).map((r) => r.line),
+              ).size !== 1,
           );
           return missing.length === 0
             ? Result.succeed(rows)
@@ -1751,7 +1906,7 @@ export const parseReconcileEffects = (
       ),
   );
 
-/** One parsed row of the pass rules table on `reconcileItem`. */
+/** One parsed row of the pass rules table on `reconcileItem`, per title of its `pinned by`. */
 export interface ReconcilePassRuleRow {
   readonly line: number;
   readonly rule: string;
@@ -1766,8 +1921,9 @@ const SYMBOLS = /^`[\w.]+`(?:, `[\w.]+`)*$/u;
  * Read the pass rules table, the fourth table in the JSDoc on
  * `reconcileItem` in `source`. The header is `rule | where | pinned by`;
  * `rule` is non-empty; `where` is one or more backticked symbols, comma
- * separated; `pinned by` is a test title or {@link NONE_YET}. Fails with a
- * message naming the line and the offending cell.
+ * separated; `pinned by` is one or more test titles separated by `; `
+ * ({@link pinnedTitles}), or {@link NONE_YET}, and a row is yielded per
+ * title. Fails with a message naming the line and the offending cell.
  */
 export const parseReconcilePassRules = (
   source: string,
@@ -1775,41 +1931,50 @@ export const parseReconcilePassRules = (
   Result.flatMap(
     nthTable(source, "reconcileItem", ["rule", "where", "pinned by"], 3),
     ({ body }) =>
-      Result.all(
-        body.map(
-          ({ line, text }): Result.Result<ReconcilePassRuleRow, ParseError> => {
-            const fail = (message: string) =>
-              Result.fail(
-                new ParseError({
-                  message: `reconcileItem pass rules, line ${String(line)}: ${message}`,
-                }),
-              );
-            const values = cellsOf(text);
-            if (values.length !== 3)
-              return fail(
-                `${String(values.length)} cells, expected 3: ${text}`,
-              );
-            const [rule = "", where = "", pinnedBy = ""] = values;
-            if (rule === "") return fail("empty rule");
-            if (!SYMBOLS.test(where))
-              return fail(
-                `where "${where}" is not one or more backticked symbols`,
-              );
-            if (pinnedBy === "") return fail("empty pinned by");
-            return Result.succeed({
+      Result.map(
+        Result.all(
+          body.map(
+            ({
               line,
-              rule,
-              where: where.split(", ").map((symbol) => symbol.slice(1, -1)),
-              pinnedBy,
-            });
-          },
+              text,
+            }): Result.Result<readonly ReconcilePassRuleRow[], ParseError> => {
+              const fail = (message: string) =>
+                Result.fail(
+                  new ParseError({
+                    message: `reconcileItem pass rules, line ${String(line)}: ${message}`,
+                  }),
+                );
+              const values = cellsOf(text);
+              if (values.length !== 3)
+                return fail(
+                  `${String(values.length)} cells, expected 3: ${text}`,
+                );
+              const [rule = "", where = "", pinnedBy = ""] = values;
+              if (rule === "") return fail("empty rule");
+              if (!SYMBOLS.test(where))
+                return fail(
+                  `where "${where}" is not one or more backticked symbols`,
+                );
+              if (pinnedBy === "") return fail("empty pinned by");
+              return Result.succeed(
+                pinnedTitles(pinnedBy).map((title) => ({
+                  line,
+                  rule,
+                  where: where.split(", ").map((symbol) => symbol.slice(1, -1)),
+                  pinnedBy: title,
+                })),
+              );
+            },
+          ),
         ),
+        (rows) => rows.flat(),
       ),
   );
 
 /**
- * A `pinned by` cell of a sync table: one or more test titles separated by
- * `; `, or {@link NONE_YET}. No sync title may itself contain `; `.
+ * A `pinned by` cell of a sync table or of the effects or pass rules
+ * tables on `reconcileItem`: one or more test titles separated by `; `, or
+ * {@link NONE_YET}. No such title may itself contain `; `.
  */
 const pinnedTitles = (cell: string): readonly string[] =>
   cell === NONE_YET ? [NONE_YET] : cell.split("; ");

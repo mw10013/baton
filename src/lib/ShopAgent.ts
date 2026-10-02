@@ -947,10 +947,6 @@ export class ShopAgent extends Agent {
             url,
             afterWrite: yield* reconciler,
           }).pipe(Effect.ensuring(flushUsageEvents));
-          // After the stream, once: the orders the stream declined at the
-          // ceiling are created by this pass, not by one pass per order.
-          if (counts.ceilingReleased)
-            yield* (yield* ShopWorkAgent).afterCeilingReleased(url);
           if (counts.ordersRefused > 0)
             yield* Effect.logError(
               `ShopAgent.onOrdersStream: shop=${shop} status=order-ceiling ordersRefused=${String(counts.ordersRefused)} limit=${String(Domain.ShopLimits.maxOrdersPerCycle)}`,
@@ -971,6 +967,18 @@ export class ShopAgent extends Agent {
           const swept = yield* (yield* OrderRepository).sweepExpiredOrders({
             now: yield* Clock.currentTimeMillis,
           });
+          // After the stream and its sweep, once: the orders the stream
+          // declined at the open-run ceiling are created by this pass, not by
+          // one pass per order, and a sweep that made room folds into the
+          // same pass (pass rule 11 on `Domain.reconcileItem`).
+          const shopWork = yield* ShopWorkAgent;
+          // Asked even when the stream released: a later streamed order may
+          // have raised the flag again, and this is the write that clears it.
+          const sweepReleased = yield* shopWork.sweepReleasedCeiling(
+            swept.runs,
+          );
+          if (counts.ceilingReleased || sweepReleased)
+            yield* shopWork.afterCeilingReleased(url);
           const size = databaseSize();
           yield* Effect.logInfo(
             `ShopAgent.onOrdersStream: shop=${shop} ordersSeen=${String(counts.ordersSeen)} ordersUpserted=${String(counts.ordersUpserted)} ordersInserted=${String(counts.ordersInserted)} ordersRefused=${String(counts.ordersRefused)} lineItemsUpserted=${String(counts.lineItemsUpserted)} ordersTruncated=${String(counts.ordersTruncated)} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)} sweptUsageEvents=${String(swept.usageEvents)} databaseSize=${String(size)}`,
@@ -1211,6 +1219,8 @@ export class ShopAgent extends Agent {
             now - usage.lastSweepAt >= Domain.ShopLimits.sweepIntervalMs
           ) {
             const swept = yield* repository.sweepExpiredOrders({ now });
+            if (yield* shopWork.sweepReleasedCeiling(swept.runs))
+              yield* shopWork.afterCeilingReleased("sweep");
             if (swept.orders > 0 || swept.runs > 0 || swept.usageEvents > 0)
               yield* Effect.logInfo(
                 `ShopAgent.syncOrderWebhook: shop=${shop} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)} sweptUsageEvents=${String(swept.usageEvents)}`,

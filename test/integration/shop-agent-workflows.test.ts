@@ -932,6 +932,42 @@ describe("ShopAgent workflow run callables", () => {
     expect(runs.map((d) => d.run.workflowId)).toEqual([keeper.id]);
   });
 
+  it("deleting a workflow leaves its runs to carry on", async () => {
+    const shop = "wf-delete-own-runs.myshopify.com";
+    const team = await seedTeam(shop, "Engraving");
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const created = await agent.createWorkflow({
+      name: "Engraving",
+      tag: "engraved",
+    });
+    if (created._tag !== "Ok") throw new Error(created._tag);
+    await agent.addStep({
+      workflowId: created.workflow.id,
+      name: "Do it",
+      teamId: team.id,
+    });
+    await goLive(agent, created.workflow.id);
+    await seedOrder(shop, Date.now(), ["engraved"]);
+    await agent.setWorkflowOn({ workflowId: created.workflow.id, on: true });
+    const [before] = await agent.merchantListRunsForOrder({
+      orderId: "gid://shopify/Order/1",
+    });
+    expect(before?.run.state).toBe("open");
+
+    expect(
+      await agent.removeWorkflow({ workflowId: created.workflow.id }),
+    ).toEqual({ _tag: "Deleted" });
+    const [after] = await agent.merchantListRunsForOrder({
+      orderId: "gid://shopify/Order/1",
+    });
+    // The run copied its definition: it keeps its state, its tasks and the
+    // workflow's name, with no workflow left to read them from.
+    expect(after?.run.id).toBe(before?.run.id);
+    expect(after?.run.state).toBe("open");
+    expect(after?.run.workflowName).toBe("Engraving");
+    expect(after?.tasks.map((task) => task.name)).toEqual(["Do it"]);
+  });
+
   it("every order in a pass sees the same eligible snapshot", async () => {
     const shop = "wf-snapshot.myshopify.com";
     const team = await seedTeam(shop, "Engraving");
@@ -1134,7 +1170,7 @@ describe("ShopAgent workflow run callables", () => {
       expect(second.map((d) => d.run.state)).toEqual(["open"]);
     }));
 
-  it("a reconcile all whose own closes release the ceiling runs once more", () =>
+  it("a reconcile all whose own closes release the open-run ceiling runs once more", () =>
     withMaxOpenRuns(1, async () => {
       const shop = "wf-ceiling-again.myshopify.com";
       const team = await seedTeam(shop, "Engraving");

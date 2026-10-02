@@ -442,6 +442,19 @@ const countTasksByTeam = () =>
     Effect.flatMap((repository) => repository.countTasksByTeam()),
   );
 
+/**
+ * Whether a retention sweep that deleted `runs` runs released the open-run
+ * ceiling ({@link RunRepository}'s `releaseOpenRunLimit`): pass rule 11 on
+ * {@link Domain.reconcileItem}. The sweep runs in `OrderRepository`, which
+ * cannot reach the run repository, so its caller asks here and runs
+ * `afterCeilingReleased` on `true`.
+ */
+const sweepReleasedCeiling = (runs: number) =>
+  Effect.gen(function* () {
+    if (runs === 0) return false;
+    return yield* (yield* RunRepository).releaseOpenRunLimit();
+  });
+
 const make = Effect.gen(function* () {
   const host = yield* ShopAgentHost;
   const env = yield* CloudflareEnv;
@@ -830,7 +843,7 @@ const make = Effect.gen(function* () {
   };
 
   /**
-   * Reconcile every stored open order once against the workflows that are on *now*,
+   * Reconcile every stored open paid order once against the workflows that are on *now*,
    * so anything that now qualifies starts at this moment rather than at
    * whatever moment Shopify next edits it. Reconcile is an idempotent state
    * check, so running it over every order is safe. Not the write's
@@ -886,8 +899,8 @@ const make = Effect.gen(function* () {
   };
 
   /**
-   * The open-run ceiling released: a Done, a Cancel workflow or a close by
-   * reconcile brought the shop back under `ShopLimits.maxOpenRuns` while
+   * The open-run ceiling released: a Done, a Cancel workflow, a close by
+   * reconcile or the retention sweep brought the shop back under `ShopLimits.maxOpenRuns` while
    * reconcile had declined runs ({@link RunRepository}'s
    * `releaseOpenRunLimit`). Reconciles every stored order once, outside the
    * write's transaction, so the declined runs are created now rather than at
@@ -2249,6 +2262,8 @@ const make = Effect.gen(function* () {
     reconciler,
     /** For the class's sync wiring, when the store's `afterWrite` says the reconcile released the open-run ceiling. */
     afterCeilingReleased,
+    /** For the class's retention sweeps: whether the sweep's deletes released the open-run ceiling. */
+    sweepReleasedCeiling,
     /** The teams with an open task on the target, for the class's webhook publish. */
     orderTeamIds,
   };

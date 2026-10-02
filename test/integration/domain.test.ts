@@ -266,6 +266,8 @@ const runOn = (lineItemId: string, state: Domain.RunState): Domain.Run => ({
   lineItemId,
 });
 
+const PAID = { fullyPaid: true, cancelledAt: null };
+
 describe("Domain.multiMatchItems", () => {
   /**
    * The same three conditions `OrderRepository`'s `MULTI_MATCH_ITEM` spells out
@@ -279,7 +281,7 @@ describe("Domain.multiMatchItems", () => {
     const multiMatchItems = (
       lineItems: readonly Domain.OrderLineItem[],
       runs: readonly Domain.Run[],
-    ) => Domain.multiMatchItems(lineItems, runs, DETAILS, TEAMS);
+    ) => Domain.multiMatchItems(PAID, lineItems, runs, DETAILS, TEAMS).length;
     strictEqual(
       multiMatchItems([lineItem("a", ["w1", "w2"])], []),
       1,
@@ -323,11 +325,12 @@ describe("Domain.multiMatchItems", () => {
     ];
     strictEqual(
       Domain.multiMatchItems(
+        PAID,
         [lineItem("a", ["w1", "w2", "w3"])],
         [],
         details,
         TEAMS,
-      ),
+      ).length,
       0,
     );
     deepStrictEqual(
@@ -335,6 +338,26 @@ describe("Domain.multiMatchItems", () => {
         ({ workflow }) => workflow.tag,
       ),
       ["w1"],
+    );
+  });
+
+  it("multi-match counts only on an order that can create runs", () => {
+    const items = [lineItem("a", ["w1", "w2"])];
+    strictEqual(
+      Domain.multiMatchItems(PAID, items, [], DETAILS, TEAMS).length,
+      1,
+      "paid",
+    );
+    strictEqual(
+      Domain.multiMatchItems(
+        { fullyPaid: false, cancelledAt: null },
+        items,
+        [],
+        DETAILS,
+        TEAMS,
+      ).length,
+      0,
+      "unpaid: not choosing until it pays",
     );
   });
 });
