@@ -2835,11 +2835,10 @@ export type RunListState = typeof RunListState.Type;
  * filter, two symbols for two things. One read returns every value's count
  * and one value's rows.
  *
- * Drawn as one row of buttons with a gap, not tabs and not a segmented
- * control: the Polaris web components have no tab component, and "tab" in
- * this codebase means a browser tab (one socket per tab), a meaning the
- * socket reasoning needs; why the five are not joined into one outline is
- * on `.run-state-row` in `styles.css`.
+ * Drawn as the strip, one cell per value with its count, not tabs and not a
+ * segmented control: the Polaris web components have no tab component, and
+ * "tab" in this codebase means a browser tab (one socket per tab), a meaning
+ * the socket reasoning needs.
  */
 export const WorkflowsListState = Schema.Literals([
   "started_by_you",
@@ -3069,7 +3068,7 @@ export const clampRunLimit = (value: number) =>
  * error. The screen resolves a URL's team against the teams before it gets
  * here (`shop.$shop.workflows.index.tsx`), so that empty list is reserved for a caller
  * that ignored the teams. The counts of every state come back regardless of
- * `state` and `q`, so the state row is always current.
+ * `state` and `q`, so the strip is always current.
  *
  * **Search ignores the filters.** When `q` is not null, `state` and `team`
  * are not applied: the rows are every match on the member's teams, open ones
@@ -3094,18 +3093,10 @@ export const sameRunQuery = (a: RunQuery, b: RunQuery) =>
   a.limit === b.limit &&
   a.q === b.q;
 
-export const RunListTeamCount = Schema.Struct({
-  teamId: TeamId,
-  count: Schema.Number,
-});
-export type RunListTeamCount = typeof RunListTeamCount.Type;
-
 /**
- * The state row's counts, keyed by {@link WorkflowsListState}: the counts of
+ * The strip's counts, keyed by {@link WorkflowsListState}: the counts of
  * the five states **after** `query.team` narrows them and never the search, because they
- * describe the lists the member can switch to. `total` and `teamCounts` are
- * over every team on the connection regardless of `query.team`, so the team
- * select does not move under the finger.
+ * describe the lists the member can switch to.
  */
 export const RunListCounts = Schema.Struct({
   started_by_you: Schema.Number,
@@ -3113,8 +3104,6 @@ export const RunListCounts = Schema.Struct({
   ready: Schema.Number,
   blocked: Schema.Number,
   done: Schema.Number,
-  total: Schema.Number,
-  teamCounts: Schema.Array(RunListTeamCount),
 });
 export type RunListCounts = typeof RunListCounts.Type;
 
@@ -3127,7 +3116,7 @@ export type RunListCounts = typeof RunListCounts.Type;
  * matches whatever their state and `recent` the Done or closed matches, so a
  * member who marked the wrong thing done can find it by number. One value rather
  * than two reads so the loader and the socket paint the same snapshot and the
- * state row never disagrees with the list under it. The suffix is `Data` for
+ * strip never disagrees with the list under it. The suffix is `Data` for
  * the reason on {@link OrdersIndexData}.
  */
 export const WorkflowsListData = Schema.Struct({

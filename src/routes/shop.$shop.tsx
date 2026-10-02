@@ -41,7 +41,7 @@ import { ShopAgentSocketProvider } from "@/lib/ShopAgentSocketHost";
  * out-of-range `limit` clamps ({@link Domain.clampRunLimit}) and an unreadable
  * one becomes a page, and `team` is carried as plain text, because which ids
  * mean anything is the teams' answer and not this schema's — the screen
- * resolves it and reads an id the member is not on as All teams
+ * resolves it and reads an id the member is not on as Any team
  * (`shop.$shop.workflows.index.tsx`). Failing any of them would put the router's error
  * boundary over the whole member area, workflow page included, for a typo.
  *
@@ -49,7 +49,11 @@ import { ShopAgentSocketProvider } from "@/lib/ShopAgentSocketHost";
  * `Option.none` from `catchDecoding` reads as "no such key", and the router
  * then hands the route the raw text that failed — so a bad `?state=` would
  * arrive at the loader as the string a member typed. Every recovery here
- * answers with the default instead.
+ * answers with the default instead. For `team` and `q` the default is
+ * `undefined` ({@link lenientSearchKey}), which the router writes as no key:
+ * choosing Any team navigates with `team: undefined`, and recovering that to
+ * `""` would leave a `?team=` in the URL that reads as Any team but is not
+ * the canonical address of it.
  *
  * `stripSearchParams` keeps the defaults out of the URL, so
  * `/shop/$shop/workflows` with no search stays the canonical way home. An old
@@ -64,7 +68,7 @@ const MemberSearch = Schema.Struct({
       ),
     ),
   ),
-  team: Schema.optionalKey(
+  team: lenientSearchKey(
     Schema.String.pipe(
       Schema.decode({
         decode: SchemaGetter.transform((team: string) =>
@@ -72,7 +76,6 @@ const MemberSearch = Schema.Struct({
         ),
         encode: SchemaGetter.transform((team: string) => team),
       }),
-      Schema.catchDecoding(() => Effect.succeedSome("")),
     ),
   ),
   limit: Schema.optionalKey(

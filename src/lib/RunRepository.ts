@@ -342,10 +342,8 @@ export class RunRepository extends Context.Service<
      * current tasks, so a closed or done run is never listed
      * ({@link Domain.RunState}).
      *
-     * `teamCounts` and `total` are over all of `teamIds` whatever `query.team`
-     * narrows to, so the team select does not move under the finger, while the
-     * four state counts are after the narrowing, because they describe the
-     * lists the member can switch to.
+     * The four state counts are after `query.team` narrows, because they
+     * describe the lists the member can switch to.
      *
      * Both statements still read every row of `teamIds`: the rows are not the
      * cost, the bytes leaving the Durable Object are, so the bound is on what
@@ -372,12 +370,12 @@ export class RunRepository extends Context.Service<
      * as readily as its author, and a closed run is news to everyone who
      * could see it.
      *
-     * `total` is the count inside the window, because the state row says it
+     * `total` is the count inside the window, because the strip says it
      * even while another state is showing; `limit: 0` returns the count alone,
      * reading no rows. `q` narrows the rows and `total` alike, so under a
      * search `total` is how many of the window match before the cut
      * ({@link Domain.WorkflowsListData} `matches`); the Done or closed count
-     * the state row shows ({@link Domain.RunListCounts}) is read with `q: null`.
+     * the strip shows ({@link Domain.RunListCounts}) is read with `q: null`.
      */
     readonly listRecent: (input: {
       readonly teamIds: readonly string[];
@@ -1468,15 +1466,9 @@ export class RunRepository extends Context.Service<
           readonly query: Domain.RunQuery;
         }) {
           const items = yield* runListItems(teamIds);
-          const teamCounts = teamIds.map((teamId) => ({
-            teamId,
-            count: items.filter((item) =>
-              item.tasks.some((task) => task.teamId === teamId),
-            ).length,
-          }));
           // A team the member is not on narrows to nothing rather than
           // failing: `items` only ever holds their own teams' tasks, so the
-          // filter empties itself and the counts beside it still stand.
+          // filter empties itself and every state counts zero.
           const narrowed =
             query.team === null
               ? items
@@ -1533,8 +1525,6 @@ export class RunRepository extends Context.Service<
               started_by_others: inState("started_by_others").length,
               ready: inState("ready").length,
               blocked: inState("blocked").length,
-              total: items.length,
-              teamCounts,
             },
             items: selected,
             matches: query.q === null ? null : wanted.length,
@@ -1605,7 +1595,7 @@ export class RunRepository extends Context.Service<
           const total =
             Number(countedTasks[0]?.[0] ?? 0) +
             Number(countedClosed[0]?.[0] ?? 0);
-          // Collapsed: the state row still counts the day, so the counts are read
+          // Collapsed: the strip still counts the day, so the counts are read
           // and the rows are not.
           if (limit === 0) return { items: [], total };
           const done = yield* decodeTasks(

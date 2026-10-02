@@ -5,6 +5,7 @@ import type { SeedConfig } from "./seed";
 import { expect, test } from "@playwright/test";
 
 import * as Domain from "@/lib/Domain";
+import { ANY_OPTION_VALUE } from "@/lib/Screen";
 
 import { awaitEnabled, clickWhenEnabled, gotoMember, signIn } from "./member";
 import { seedConfig, seedMembers } from "./seed";
@@ -88,7 +89,7 @@ const ORDER_LINK = /^Open .+ on #94\d\d$/u;
 const BULK_COUNT = 25;
 const BULK_FIRST = 9410;
 
-/** State labels, as `STATE_LABEL` writes them on the state row. */
+/** State labels, as `STATE_LABEL` writes them on the strip. */
 const STARTED_BY_YOU = "Started by you";
 const READY = "Ready";
 const STARTED_BY_OTHERS = "Started by others";
@@ -269,23 +270,51 @@ const openRuns = async (
 };
 
 /**
- * A state's button on the state row, by label and whatever count it is carrying. The
- * count is part of the accessible name, so a test that wants to assert the
- * number names it in full instead.
+ * A state's cell on the strip, by label and whatever count it is carrying.
+ * The cell is an `s-clickable` with no `href`, so its shadow root holds a
+ * native `button`, and its accessible name is "<label>, <count>", with
+ * ", selected" on the chosen cell.
  */
-const stateButton = (page: Page, label: string) =>
+const stateCell = (page: Page, label: string) =>
   page.getByRole("button", {
-    name: new RegExp(`^${label} · \\d+$`, "u"),
+    name: new RegExp(`^${label}, [\\d,]+(, selected)?$`, "u"),
   });
+
+/** A state's cell carrying exactly `count`, chosen or not. */
+const stateCount = (page: Page, label: string, count: number) =>
+  page.getByRole("button", {
+    name: new RegExp(`^${label}, ${String(count)}(, selected)?$`, "u"),
+  });
+
+/** The chosen state's cell: its name ends in ", selected". */
+const chosenState = (page: Page, label: string) =>
+  page.getByRole("button", {
+    name: new RegExp(`^${label}, [\\d,]+, selected$`, "u"),
+  });
+
+/** The workflows list's Team select, rendered for a member on more than one team. */
+const teamSelect = (page: Page) => page.getByRole("combobox", { name: "Team" });
+
+/** The Team select's chosen team, by its option's text. */
+const chosenTeam = (page: Page) => teamSelect(page).locator("option:checked");
+
+/**
+ * The Team select reads Any team by its value, `ANY_OPTION_VALUE`
+ * (`Screen.ts`), not by the checked option's text: an option with an empty
+ * value would show the same text through the browser's first-option
+ * fallback, which is the construction the value exists to rule out.
+ */
+const expectAnyTeam = (page: Page) =>
+  expect(teamSelect(page)).toHaveValue(ANY_OPTION_VALUE);
 
 /** The landing state, `Domain.DEFAULT_WORKFLOWS_LIST_STATE`, which the URL never spells out. */
 const DEFAULT_STATE = "started_by_you";
 
 /**
- * Switch states and wait for the switch to land: the URL first, then
- * `aria-pressed` on the state. A state is an `s-press-button`, which puts
- * `aria-pressed` on the native button in its shadow root, and that native
- * button is what `getByRole` resolves to, so the attribute is not ambiguous.
+ * Switch states and wait for the switch to land: the URL first, then the
+ * cell's name ending in ", selected". `aria-current` would not do:
+ * `s-clickable` leaves it on the host, so the native button `getByRole`
+ * resolves to never carries it.
  *
  * The default state is the absence of the key: `stripSearchParams` keeps it out
  * of the URL so `/shop/$shop/workflows` with no search stays the canonical way home
@@ -296,14 +325,11 @@ const selectState = async (
   name: string,
   label: string,
 ): Promise<void> => {
-  await stateButton(page, label).click();
+  await stateCell(page, label).click();
   await expect(page).toHaveURL(
     (url) => (url.searchParams.get("state") ?? DEFAULT_STATE) === name,
   );
-  await expect(stateButton(page, label)).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await expect(chosenState(page, label)).toBeVisible();
 };
 
 /**
@@ -432,15 +458,11 @@ test("a member starts and completes their team's current task over the socket", 
 
   await rowAction(page, RING_ORDER, "Start");
   /* Starting moves the row off the state it was started from: Ready is what
-     nobody has in hand, and the state row says where it went. That the counts
+     nobody has in hand, and the strip says where it went. That the counts
      moved at all is the page's own state following the object's — proof the
      answer was applied, not just accepted. */
-  await expect(
-    page.getByRole("button", { name: `${STARTED_BY_YOU} · 1` }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: `${READY} · 0` }),
-  ).toBeVisible();
+  await expect(stateCount(page, STARTED_BY_YOU, 1)).toBeVisible();
+  await expect(stateCount(page, READY, 0)).toBeVisible();
   await expect(rowLink(page, RING_ORDER)).toBeHidden();
 
   await selectState(page, "started_by_you", STARTED_BY_YOU);
@@ -489,11 +511,9 @@ test("a run's row opens the workflow page and its menu does not", async ({
   await expect(card(page, RING_ORDER)).toBeVisible();
   const runsUrl = page.url();
   await rowAction(page, RING_ORDER, "Start");
-  /* The write landed and the reader stayed put: the state row renumbered and the
+  /* The write landed and the reader stayed put: the strip renumbered and the
      address bar still says the workflows list. */
-  await expect(
-    page.getByRole("button", { name: `${STARTED_BY_YOU} · 1` }),
-  ).toBeVisible();
+  await expect(stateCount(page, STARTED_BY_YOU, 1)).toBeVisible();
   await expect(page).toHaveURL(runsUrl);
 });
 
@@ -529,14 +549,10 @@ test("a task one member marks done lands on another member's workflows list with
   await expect(maker.getByText("Pack")).toBeHidden();
 
   await rowAction(maker, RING_ORDER, "Start");
-  /* The push reaches the mate whatever state they are on: the state row renumbers
+  /* The push reaches the mate whatever state they are on: the strip renumbers
      under them while they are still reading Ready. */
-  await expect(
-    mate.getByRole("button", { name: `${STARTED_BY_OTHERS} · 1` }),
-  ).toBeVisible();
-  await expect(
-    mate.getByRole("button", { name: `${READY} · 1` }),
-  ).toBeVisible();
+  await expect(stateCount(mate, STARTED_BY_OTHERS, 1)).toBeVisible();
+  await expect(stateCount(mate, READY, 1)).toBeVisible();
 
   /* The mate's row says who has it; the start time is on the workflow page the
      row links to, which is one tap away and not on the list. */
@@ -550,12 +566,8 @@ test("a task one member marks done lands on another member's workflows list with
   await expect(rowLink(mate, RING_ORDER)).toBeHidden();
   /* The mate's other team is untouched by the ring order's fan-out, so the
      refetch must not have emptied the page wholesale. */
-  await expect(
-    mate.getByRole("button", { name: `${READY} · 1` }),
-  ).toBeVisible();
-  await expect(
-    mate.getByRole("button", { name: `${DONE_OR_CLOSED} · 1` }),
-  ).toBeVisible();
+  await expect(stateCount(mate, READY, 1)).toBeVisible();
+  await expect(stateCount(mate, DONE_OR_CLOSED, 1)).toBeVisible();
   await expectSameDocument(mate);
 });
 
@@ -592,10 +604,10 @@ test("removing a member from a team empties their open workflows list", async ({
 });
 
 /**
- * The state row, driven by the two real actors rather than the seed: untouched
+ * The strip, driven by the two real actors rather than the seed: untouched
  * work is counted under "Ready"; the maker's own Start moves the card to
  * "Started by you" on their page and to "Started by others" — naming them — on the mate's,
- * which arrives by push. The counts on the state row are the shape of the day,
+ * which arrives by push. The counts on the strip are the shape of the day,
  * and every state stays on it whatever its count, so nothing reflows when a
  * number crosses zero.
  */
@@ -605,37 +617,25 @@ test("a started card moves to Started by you for the starter and Started by othe
   const config = seedConfig();
   await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
   const mate = await openRuns(browser, config, mateState, "ready");
-  await expect(
-    mate.getByRole("button", { name: `${READY} · 2` }),
-  ).toBeVisible();
+  await expect(stateCount(mate, READY, 2)).toBeVisible();
   await awaitEnabled(rowMenu(mate, RING_ORDER));
 
   const maker = await openRuns(browser, config, makerState, "ready");
-  await expect(
-    maker.getByRole("button", { name: `${READY} · 1` }),
-  ).toBeVisible();
+  await expect(stateCount(maker, READY, 1)).toBeVisible();
   await rowAction(maker, RING_ORDER, "Start");
-  await expect(
-    maker.getByRole("button", { name: `${STARTED_BY_YOU} · 1` }),
-  ).toBeVisible();
-  /* The emptied state keeps its place on the state row rather than disappearing. */
-  await expect(
-    maker.getByRole("button", { name: `${READY} · 0` }),
-  ).toBeVisible();
+  await expect(stateCount(maker, STARTED_BY_YOU, 1)).toBeVisible();
+  /* The emptied state keeps its place on the strip rather than disappearing. */
+  await expect(stateCount(maker, READY, 0)).toBeVisible();
 
   await selectState(maker, "started_by_you", STARTED_BY_YOU);
-  /* The state is said by the state row and by nothing on the card: the card that
-     moved to "Started by you · 1" carries no badge repeating it. */
+  /* The state is said by the strip and by nothing on the card: the card that
+     moved to Started by you carries no badge repeating it. */
   await expect(card(maker, RING_ORDER).getByText(STARTED_BY_YOU)).toHaveCount(
     0,
   );
 
-  await expect(
-    mate.getByRole("button", { name: `${STARTED_BY_OTHERS} · 1` }),
-  ).toBeVisible();
-  await expect(
-    mate.getByRole("button", { name: `${READY} · 1` }),
-  ).toBeVisible();
+  await expect(stateCount(mate, STARTED_BY_OTHERS, 1)).toBeVisible();
+  await expect(stateCount(mate, READY, 1)).toBeVisible();
   await selectState(mate, "started_by_others", STARTED_BY_OTHERS);
   await expect(
     mate.getByText(`${Domain.TASK_STATE_LABEL.started} · ${MAKER}`),
@@ -649,10 +649,10 @@ test("a started card moves to Started by you for the starter and Started by othe
 });
 
 /**
- * The one place in the member area where the number on the state row is not the
+ * The one place in the member area where the number on the strip is not the
  * number of rows under it. Ready is cut to `Domain.RUN_PAGE` (25) and the
- * state row still counts the whole state, which is the promise being tested: a
- * member who reads "Ready · 27" above twenty-five rows must be able to reach
+ * strip still counts the whole state, which is the promise being tested: a
+ * member who reads Ready, 27 above twenty-five rows must be able to reach
  * the other two — and the button that does it asks the object for a deeper
  * read rather than revealing rows the page was already holding. A member who
  * then narrows to one team must not be shown a stale expansion from the wider
@@ -670,9 +670,7 @@ test("Ready cuts at a page, pages on Show more, and re-cuts when the team change
   });
   const page = await openRuns(browser, config, mateState, "ready");
 
-  await expect(
-    page.getByRole("button", { name: `${READY} · 27` }),
-  ).toBeVisible();
+  await expect(stateCount(page, READY, 27)).toBeVisible();
   await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(25);
 
   await page.getByRole("button", { name: "Show 2 more of 2" }).click();
@@ -681,18 +679,10 @@ test("Ready cuts at a page, pages on Show more, and re-cuts when the team change
     page.getByRole("button", { name: /^Show \d+ more/u }),
   ).toHaveCount(0);
 
-  /* The team counts are over every team whatever is selected, so the option
-     names the same 26 before and after it is chosen. The button beside them
-     carries no count at all: the state counts are team-narrowed and this one is
-     not, so on one row they would be counting different things. */
-  await page.getByRole("button", { name: "All teams", exact: true }).click();
-  await page.getByRole("menuitem", { name: `${CUT_TEAM} · 26` }).click();
-  await expect(
-    page.getByRole("button", { name: CUT_TEAM, exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: `${READY} · 26` }),
-  ).toBeVisible();
+  /* The Team select names teams only; the strip beside it is what counts. */
+  await teamSelect(page).selectOption({ label: CUT_TEAM });
+  await expect(chosenTeam(page)).toHaveText(CUT_TEAM);
+  await expect(stateCount(page, READY, 26)).toBeVisible();
   await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(25);
   await expect(
     page.getByRole("button", { name: "Show 1 more of 1" }),
@@ -700,19 +690,14 @@ test("Ready cuts at a page, pages on Show more, and re-cuts when the team change
 });
 
 /**
- * Five states are wider than a phone. They are a grid rather than a scroller:
- * `auto-fit` breaks the row on the container's width alone, so a count going
- * from 9 to 10 changes a label and never the layout, and a row that never
- * overflows has no scrollbar to appear over the states — which hiding one was
- * only ever a patch for.
- *
- * The team filter is not on the state row. A team name is merchant-typed and
- * unbounded, so there it would decide how many states a screen has room for; it
- * sits in the member bar instead, beside the shop, rather than taking a line
- * of its own above the fold. The mate drives this because the filter only
- * renders for a member on more than one team.
+ * The strip is a three-column grid of five cells, two lines at every width,
+ * and never a scroller, so a count crossing a digit changes a cell and never
+ * the layout. The search and the Team select sit in the section under it,
+ * not in the member bar, which holds the shop and the session on every
+ * screen. The mate drives this because the Team select only renders for a
+ * member on more than one team.
  */
-test("the states are a grid that never scrolls and the team filter sits in the member bar", async ({
+test("the strip never scrolls and the search and team sit in the section", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -720,32 +705,30 @@ test("the states are a grid that never scrolls and the team filter sits in the m
   const page = await openRuns(browser, config, mateState, "ready");
   await page.setViewportSize({ width: 375, height: 800 });
 
-  const stateRow = page.locator(".run-state-row");
-  const metrics = await stateRow.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return {
-      display: style.display,
-      overflows: element.scrollWidth > element.clientWidth,
-      holdsTeamFilter:
-        element.querySelector('[commandfor="run-team-menu"]') !== null,
-    };
-  });
-  expect(metrics).toEqual({
-    display: "grid",
-    overflows: false,
-    holdsTeamFilter: false,
-  });
+  const section = page.locator('s-section[accessibilityLabel="Workflows"]');
+  /* `s-section`'s host has no box of its own, so the page's width is the
+     bound: a cell past it is a strip that scrolls. */
+  for (const label of [
+    STARTED_BY_YOU,
+    STARTED_BY_OTHERS,
+    READY,
+    BLOCKED,
+    DONE_OR_CLOSED,
+  ]) {
+    const box = await stateCell(page, label).boundingBox();
+    if (box === null) throw new Error(`no box for ${label}`);
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(375);
+  }
 
-  await expect(
-    page.locator('.member-bar [commandfor="run-team-menu"]'),
-  ).toBeVisible();
+  await expect(section.locator('s-select[label="Team"]')).toHaveCount(1);
+  await expect(section.locator("s-search-field")).toHaveCount(1);
+  await expect(page.locator(".member-bar s-select")).toHaveCount(0);
+  await expect(page.locator(".member-bar s-search-field")).toHaveCount(0);
 
-  /* One team, no filter: the bar holds the shop and the session and nothing
-     else, rather than a control with nothing to choose between. */
+  /* One team, no select: there is nothing to choose between. */
   const maker = await openRuns(browser, config, makerState, "ready");
-  await expect(
-    maker.getByRole("button", { name: "All teams", exact: true }),
-  ).toHaveCount(0);
+  await expect(teamSelect(maker)).toHaveCount(0);
 });
 
 /**
@@ -764,11 +747,8 @@ test("a row names its team only for a member on several teams looking at all of 
   const mate = await openRuns(browser, config, mateState, "ready");
   await expect(card(mate, RING_ORDER).getByText(CUT_TEAM)).toHaveCount(1);
 
-  await mate.getByRole("button", { name: "All teams", exact: true }).click();
-  await mate.getByRole("menuitem", { name: `${CUT_TEAM} · 1` }).click();
-  await expect(
-    mate.getByRole("button", { name: CUT_TEAM, exact: true }),
-  ).toBeVisible();
+  await teamSelect(mate).selectOption({ label: CUT_TEAM });
+  await expect(mate).toHaveURL((url) => url.searchParams.has("team"));
   await expect(card(mate, RING_ORDER).getByText(CUT_TEAM)).toHaveCount(0);
 
   const maker = await openRuns(browser, config, makerState, "ready");
@@ -794,10 +774,10 @@ test("line one shows the variant title", async ({ browser }) => {
 });
 
 /**
- * The search in the member bar ignores the state and the team
+ * The search ignores the state and the team
  * (`Domain.RunQuery`): typed under Blocked, which holds nothing, it finds the
- * ready ring by its order number, the state row gives way to the match line,
- * the team menu is disabled, and Clear search brings the row back with
+ * ready ring by its order number, the strip gives way to the match line,
+ * the Team select is disabled, and Clear search brings the row back with
  * Blocked still chosen.
  */
 test("search by order number finds the item whatever state is chosen", async ({
@@ -816,10 +796,8 @@ test("search by order number finds the item whatever state is chosen", async ({
   await expect(
     mate.getByText(`1 workflow matches ${RING_ORDER}`, { exact: true }),
   ).toBeVisible();
-  await expect(mate.locator(".run-state-row")).toHaveCount(0);
-  await expect(
-    mate.getByRole("button", { name: "All teams", exact: true }),
-  ).toBeDisabled();
+  await expect(stateCell(mate, BLOCKED)).toHaveCount(0);
+  await expect(teamSelect(mate)).toBeDisabled();
 
   /* A word finds the box by its variant. */
   await search.fill(BOX_VARIANT.toLowerCase());
@@ -835,10 +813,7 @@ test("search by order number finds the item whatever state is chosen", async ({
 
   await mate.getByRole("button", { name: "Clear search" }).click();
   await expect(search).toHaveValue("");
-  await expect(stateButton(mate, BLOCKED)).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await expect(chosenState(mate, BLOCKED)).toBeVisible();
   await expect(mate).toHaveURL((url) => !url.searchParams.has("q"));
 });
 
@@ -885,10 +860,7 @@ test("a search cuts at a page, counts every match, and pages on Show more", asyn
   ).toHaveCount(0);
 
   await mate.getByRole("button", { name: "Clear search" }).click();
-  await expect(stateButton(mate, BLOCKED)).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await expect(chosenState(mate, BLOCKED)).toBeVisible();
 });
 
 /**
@@ -954,8 +926,7 @@ test("the team is in the URL and switching teams replaces it", async ({
   const page = await openRuns(browser, config, mateState);
   await gotoMember(page, `/shop/${config.shop}/workflows?state=ready`);
 
-  await page.getByRole("button", { name: "All teams", exact: true }).click();
-  await page.getByRole("menuitem", { name: `${CUT_TEAM} · 1` }).click();
+  await teamSelect(page).selectOption({ label: CUT_TEAM });
   await expect(page).toHaveURL(/[?&]team=/u);
   const team = teamParam(page);
   expect(team).not.toBeNull();
@@ -974,15 +945,19 @@ test("the team is in the URL and switching teams replaces it", async ({
   const narrowed = `/shop/${config.shop}/workflows?state=ready&team=${String(team)}`;
   expect(await serverRows(page, narrowed)).toBe(1);
   await gotoMember(page, narrowed);
-  await expect(
-    page.getByRole("button", { name: `${READY} · 1` }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: CUT_TEAM, exact: true }),
-  ).toBeVisible();
+  await expect(stateCount(page, READY, 1)).toBeVisible();
+  await expect(chosenTeam(page)).toHaveText(CUT_TEAM);
   await expect(rowLink(page, BOX_ORDER)).toHaveCount(0);
   /* Narrowed, every row is that team, so no row names it. */
   await expect(card(page, RING_ORDER).getByText(CUT_TEAM)).toHaveCount(0);
+
+  /* Back to Any team drops the key rather than leaving `?team=`: the
+     canonical address of every team is no team in the URL (`MemberSearch` in
+     `shop.$shop.tsx`). */
+  await teamSelect(page).selectOption({ label: "Any team" });
+  await expect(page).toHaveURL((url) => !url.searchParams.has("team"));
+  await expectAnyTeam(page);
+  await expect(stateCount(page, READY, 2)).toBeVisible();
 });
 
 /**
@@ -1035,9 +1010,7 @@ test("depth is in the URL and a return lands on the same depth", async ({
     `/shop/${config.shop}/workflows?state=ready&limit=1000`,
   );
   await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(27);
-  await expect(
-    page.getByRole("button", { name: `${READY} · 27` }),
-  ).toBeVisible();
+  await expect(stateCount(page, READY, 27)).toBeVisible();
 });
 
 /**
@@ -1057,8 +1030,7 @@ test("the bar's mark returns to the screen the member left", async ({
   const config = seedConfig();
   await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
   const page = await openRuns(browser, config, mateState, "ready");
-  await page.getByRole("button", { name: "All teams", exact: true }).click();
-  await page.getByRole("menuitem", { name: `${CUT_TEAM} · 1` }).click();
+  await teamSelect(page).selectOption({ label: CUT_TEAM });
   const team = teamParam(page);
 
   await rowLink(page, RING_ORDER).click();
@@ -1074,12 +1046,8 @@ test("the bar's mark returns to the screen the member left", async ({
     ).toBeVisible();
     await expect(page).toHaveURL(/[?&]state=ready(?:&|$)/u);
     expect(teamParam(page)).toBe(team);
-    await expect(
-      page.getByRole("button", { name: `${READY} · 1` }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: CUT_TEAM, exact: true }),
-    ).toBeVisible();
+    await expect(stateCount(page, READY, 1)).toBeVisible();
+    await expect(chosenTeam(page)).toHaveText(CUT_TEAM);
   };
 
   await homeLink(page).click();
@@ -1095,11 +1063,11 @@ test("the bar's mark returns to the screen the member left", async ({
  * A `team` in the URL is a shape, not a membership: the schema cannot know the
  * member's teams, and a member taken off a team keeps the id in every link they had
  * open. The screen resolves it against the teams `requireMember` returned and
- * reads an id that is not among them as All teams — the button already says
- * so, and the alternative is an empty list for a reason nothing on screen
+ * reads an id that is not among them as Any team — the Team select has no
+ * option for any other id, and the alternative is an empty list for a reason nothing on screen
  * states.
  */
-test("a team the member is no longer on reads as all teams", async ({
+test("a team the member is no longer on reads as any team", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -1110,12 +1078,8 @@ test("a team the member is no longer on reads as all teams", async ({
     `/shop/${config.shop}/workflows?state=ready&team=not-a-team-of-theirs`,
   );
 
-  await expect(
-    page.getByRole("button", { name: "All teams", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: `${READY} · 2` }),
-  ).toBeVisible();
+  await expectAnyTeam(page);
+  await expect(stateCount(page, READY, 2)).toBeVisible();
   await expect(rowLink(page, RING_ORDER)).toBeVisible();
   await expect(rowLink(page, BOX_ORDER)).toBeVisible();
 });
@@ -1153,12 +1117,8 @@ test("a value the search schema cannot read falls back to the default", async ({
   await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(25);
 
   await gotoMember(page, `/shop/${config.shop}/workflows?state=ready&team=`);
-  await expect(
-    page.getByRole("button", { name: "All teams", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: `${READY} · 27` }),
-  ).toBeVisible();
+  await expectAnyTeam(page);
+  await expect(stateCount(page, READY, 27)).toBeVisible();
 });
 
 /**
@@ -1171,17 +1131,13 @@ test("undo puts a done task back to Ready", async ({ browser }) => {
   const config = seedConfig();
   await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
   const page = await openRuns(browser, config, makerState, "ready");
-  await expect(
-    page.getByRole("button", { name: `${DONE_OR_CLOSED} · 0` }),
-  ).toBeVisible();
+  await expect(stateCount(page, DONE_OR_CLOSED, 0)).toBeVisible();
 
   await rowAction(page, RING_ORDER, "Start");
   await selectState(page, "started_by_you", STARTED_BY_YOU);
   await rowAction(page, RING_ORDER, "Done");
   await expect(page.getByText(EMPTY_MINE)).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: `${DONE_OR_CLOSED} · 1` }),
-  ).toBeVisible();
+  await expect(stateCount(page, DONE_OR_CLOSED, 1)).toBeVisible();
   /* Unopened, the state is a count and nothing else: its rows are a different
      read, so the Undo below is only reachable once the state is chosen. The
      entry says "by you" rather than the reader's own address, which on this
@@ -1191,18 +1147,8 @@ test("undo puts a done task back to Ready", async ({ browser }) => {
 
   await rowAction(page, RING_ORDER, "Undo");
   await expect(page.getByText(EMPTY_DONE)).toBeVisible();
-  await expect(
-    page.getByRole("button", {
-      name: `${STARTED_BY_YOU} · 0`,
-      exact: true,
-    }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", {
-      name: `${READY} · 1`,
-      exact: true,
-    }),
-  ).toBeVisible();
+  await expect(stateCount(page, STARTED_BY_YOU, 0)).toBeVisible();
+  await expect(stateCount(page, READY, 1)).toBeVisible();
   await selectState(page, "ready", READY);
   await expect(rowLink(page, RING_ORDER)).toBeVisible();
 });
@@ -1225,40 +1171,15 @@ test("put back returns a started task to Ready for everyone", async ({
   /* The mate is on Cut and Pack: the box order stays in their Ready, the
      ring order is a teammate's while the maker has it. */
   const mate = await openRuns(browser, config, mateState, "ready");
-  await expect(
-    mate.getByRole("button", {
-      name: `${READY} · 1`,
-      exact: true,
-    }),
-  ).toBeVisible();
-  await expect(
-    mate.getByRole("button", {
-      name: `${STARTED_BY_OTHERS} · 1`,
-      exact: true,
-    }),
-  ).toBeVisible();
+  await expect(stateCount(mate, READY, 1)).toBeVisible();
+  await expect(stateCount(mate, STARTED_BY_OTHERS, 1)).toBeVisible();
 
   await rowAction(maker, RING_ORDER, "Put back");
   await expect(maker.getByText(EMPTY_MINE)).toBeVisible();
-  await expect(
-    maker.getByRole("button", {
-      name: `${READY} · 1`,
-      exact: true,
-    }),
-  ).toBeVisible();
+  await expect(stateCount(maker, READY, 1)).toBeVisible();
 
-  await expect(
-    mate.getByRole("button", {
-      name: `${READY} · 2`,
-      exact: true,
-    }),
-  ).toBeVisible();
-  await expect(
-    mate.getByRole("button", {
-      name: `${STARTED_BY_OTHERS} · 0`,
-      exact: true,
-    }),
-  ).toBeVisible();
+  await expect(stateCount(mate, READY, 2)).toBeVisible();
+  await expect(stateCount(mate, STARTED_BY_OTHERS, 0)).toBeVisible();
   await expect(rowLink(mate, RING_ORDER)).toBeVisible();
 });
 
@@ -1338,9 +1259,7 @@ test("a blocked undo offers nothing and explains nothing, on the row or the work
   await rowAction(maker, BAND_ORDER, "Start");
   await selectState(maker, "started_by_you", STARTED_BY_YOU);
   await rowAction(maker, BAND_ORDER, "Done");
-  await expect(
-    maker.getByRole("button", { name: `${DONE_OR_CLOSED} · 1` }),
-  ).toBeVisible();
+  await expect(stateCount(maker, DONE_OR_CLOSED, 1)).toBeVisible();
   await selectState(maker, "done", DONE_OR_CLOSED);
   await awaitEnabled(rowMenu(maker, BAND_ORDER));
 
@@ -1526,7 +1445,7 @@ test("the workflow page shows the task history and takes a note, a block, and Do
     page.locator('s-section[accessibilityLabel="Workflows"]'),
   ).toBeVisible();
   /* The mark lands back on Ready, the state this test came from; the held run
-     is on Blocked, which the state row counts from wherever the reader is. */
+     is on Blocked, which the strip counts from wherever the reader is. */
   await expect(page).toHaveURL(/[?&]state=ready(?:&|$)/u);
   await selectState(page, "blocked", BLOCKED);
   const blocked = card(page, BAND_ORDER);
@@ -1560,9 +1479,7 @@ test("the workflow page shows the task history and takes a note, a block, and Do
   ).toBeVisible();
   /* Cut is done and Polish is the packer's, so the run is no card of the
      maker's any more; what remains of it on this page is the Done entry. */
-  await expect(
-    page.getByRole("button", { name: `${DONE_OR_CLOSED} · 1` }),
-  ).toBeVisible();
+  await expect(stateCount(page, DONE_OR_CLOSED, 1)).toBeVisible();
 });
 
 /**
@@ -1609,18 +1526,10 @@ test("closed runs leave Started by you, Started by others, Ready and Blocked and
     { keepIdentities: true },
   );
   const page = await openRuns(browser, config, makerState);
-  await expect(
-    page.getByRole("button", { name: `${STARTED_BY_YOU} · 0` }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: `${READY} · 0` }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: `${BLOCKED} · 0` }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: `${DONE_OR_CLOSED} · 2` }),
-  ).toBeVisible();
+  await expect(stateCount(page, STARTED_BY_YOU, 0)).toBeVisible();
+  await expect(stateCount(page, READY, 0)).toBeVisible();
+  await expect(stateCount(page, BLOCKED, 0)).toBeVisible();
+  await expect(stateCount(page, DONE_OR_CLOSED, 2)).toBeVisible();
 
   await selectState(page, "done", DONE_OR_CLOSED);
   await expect(
@@ -1777,9 +1686,7 @@ test("a merchant's completion reads as Merchant on the workflows list and the wo
   });
   const page = await openRuns(browser, config, makerState);
 
-  await expect(
-    page.getByRole("button", { name: `${DONE_OR_CLOSED} · 1` }),
-  ).toBeVisible();
+  await expect(stateCount(page, DONE_OR_CLOSED, 1)).toBeVisible();
   await selectState(page, "done", DONE_OR_CLOSED);
   await expect(page.getByText("by Merchant at")).toBeVisible();
 

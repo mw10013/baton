@@ -109,6 +109,7 @@ export type CopySlot = typeof CopySlot.Type;
  * | a field that refuses a value                                                      | the field's own error, on submit                                                                                  | a banner; a toast                                            |
  * | leaving for another screen from body copy                                         | a link whose text is the screen's heading, only when the act is not on this screen                                | "here"; a link inside an empty sentence for an on-screen act |
  * | a verb that replaces a run with a record on it (started, done, blocked, or a note) | the verb's modal carries the consequence as its `confirm` slot: what is lost; nothing when the run is untouched   | a second modal; a warning on an untouched run                |
+ * | a filter that can be off                                                          | a select whose first option is "Any <noun>" with {@link ANY_OPTION_VALUE} as its value                            | an option with an empty value                                |
  */
 export const Control = Schema.Literals([
   "button",
@@ -122,3 +123,15 @@ export const Control = Schema.Literals([
   "link",
 ]);
 export type Control = typeof Control.Type;
+
+/**
+ * The value of a select's "Any <noun>" option, the one that turns the filter
+ * off. Not `""`: an `s-option` with an empty value reports its label as its
+ * value, as a native option does, so a select whose `value` is `""` matches
+ * no option and shows the first one only by the browser's fallback. With a
+ * value every option can be matched, the chosen option is the select's
+ * answer rather than the browser's, and a test reads the value instead of
+ * the checked option's text. The screen maps it to `null` on change and back
+ * on render; it never reaches a URL or a read.
+ */
+export const ANY_OPTION_VALUE = "any";

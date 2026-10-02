@@ -1311,10 +1311,10 @@ const make = Effect.gen(function* () {
    * No D1 read: `startedByEmail` is a snapshot on the row, so the list reads
    * the same after the member is deleted. Every half of `Domain.WorkflowsListData`
    * comes from one call so the loader and the socket paint one snapshot: the
-   * state row and the list under it are never two reads that can disagree.
+   * strip and the list under it are never two reads that can disagree.
    *
    * The Done or closed count is read on every state (`listRecent` with `limit: 0`
-   * counts without reading rows) because the state row shows it whatever is
+   * counts without reading rows) because the strip shows it whatever is
    * chosen; its rows are read only when `query.state` is "done", or under a
    * search, when both halves come back: the open matches and the Done or
    * closed matches, each cut to `query.limit` ({@link Domain.WorkflowsListData}).

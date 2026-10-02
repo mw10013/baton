@@ -78,7 +78,7 @@ const RUN_STATES = [
 ] as const satisfies readonly Domain.WorkflowsListState[];
 
 /**
- * The rows `listRuns` returns, flattened back into one list in state-row order,
+ * The rows `listRuns` returns, flattened back into one list in strip order,
  * so a test that only cares about *which* runs are listed reads the same as it
  * did before the read became one state at a time. `state` names the single state
  * where that is what the test is about; tests about the states themselves call
@@ -1721,7 +1721,13 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
             q: null,
           },
         });
-        strictEqual(counts.total, 1);
+        strictEqual(
+          counts.started_by_you +
+            counts.started_by_others +
+            counts.ready +
+            counts.blocked,
+          1,
+        );
         strictEqual(counts.blocked, 0);
         // The order closing takes the last one off too.
         yield* upsertAndReconcile(
@@ -1866,7 +1872,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
       }),
     ));
 
-  it("listRuns counts the whole state and returns only the limit; the team counts ignore the narrowing", () =>
+  it("listRuns counts the whole state and returns only the limit", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -1887,15 +1893,6 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         const capped = yield* read(10);
         strictEqual(capped.items.length, 10);
         strictEqual(capped.counts.ready, 12);
-        strictEqual(capped.counts.total, 12);
-        deepStrictEqual(
-          capped.counts.teamCounts.map(({ teamId, count }) => [teamId, count]),
-          [
-            [TEAM_A.id, 12],
-            // Finish is step 2 and nothing is done, so B owns no current task.
-            [TEAM_B.id, 0],
-          ],
-        );
 
         const deeper = yield* read(20);
         strictEqual(deeper.items.length, 12);
@@ -1915,11 +1912,10 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           memberEmail: VIEWER,
           query: { team: null, state: "done", limit: Domain.RUN_PAGE, q: null },
         });
-        // Done or closed's rows are `listRecent`'s; the state row above them is still
+        // Done or closed's rows are `listRecent`'s; the strip above them is still
         // this read's, which is why the counts do not depend on the state.
         strictEqual(done.items.length, 0);
         strictEqual(done.counts.ready, 1);
-        strictEqual(done.counts.total, 1);
       }),
     ));
 
@@ -2055,7 +2051,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
               memberEmail: VIEWER,
               query: { team: null, state: "ready", limit: 25, q },
             });
-            // The state row's Done or closed count is `listRecent` with no
+            // The strip's Done or closed count is `listRecent` with no
             // term, as `readRuns` reads it; with the term `total` is the
             // search's own count.
             const { total } = yield* runs.listRecent({
@@ -2099,28 +2095,13 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           onlyA.items.map((item) => item.tasks.map((task) => task.name)),
           [[taskName("Artwork")]],
         );
-        // The team counts are over every team on the connection, so choosing
-        // one does not move the numbers in the select beside it.
-        deepStrictEqual(
-          onlyA.counts.teamCounts.map(({ teamId, count }) => [teamId, count]),
-          [
-            [TEAM_A.id, 1],
-            [TEAM_B.id, 1],
-          ],
-        );
-        strictEqual(onlyA.counts.total, 1);
         strictEqual(onlyA.counts.ready, 1);
 
         const foreign = yield* read(TEAM_C.id);
         strictEqual(foreign.items.length, 0);
-        // The state counts are after the narrowing — they describe the lists the
-        // member can switch to — while `total` and `teamCounts` are not.
+        // The state counts are after the narrowing: they describe the lists
+        // the member can switch to.
         strictEqual(foreign.counts.ready, 0);
-        strictEqual(foreign.counts.total, 1);
-        deepStrictEqual(
-          foreign.counts.teamCounts.map(({ count }) => count),
-          [1, 1],
-        );
       }),
     ));
 

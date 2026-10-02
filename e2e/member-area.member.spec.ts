@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { ANY_OPTION_VALUE } from "@/lib/Screen";
+
 import { followMagicLink, gotoMember, requestMagicLink } from "./member";
 import { seedConfig, seedMembers } from "./seed";
 
@@ -148,15 +150,15 @@ test("a member sees the teams they are on, and only those", async ({
     page.locator('s-section[accessibilityLabel="Workflows"]'),
   ).toBeVisible();
 
-  /* The filter is a button naming the chosen team with the list behind it;
-     the counts live in the menu, where they are what is being chosen
-     between. */
-  await page.getByRole("button", { name: "All teams", exact: true }).click();
-  await expect(page.getByRole("menuitem", { name: `${TEAM} · 0` })).toHaveCount(
-    1,
-  );
+  /* The Team select names the member's teams and no others; the strip beside
+     it is what counts. */
+  const teamSelect = page.getByRole("combobox", { name: "Team" });
+  await expect(teamSelect).toHaveValue(ANY_OPTION_VALUE);
   await expect(
-    page.getByRole("menuitem", { name: `${SECOND_TEAM} · 0` }),
+    teamSelect.getByRole("option", { name: TEAM, exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    teamSelect.getByRole("option", { name: SECOND_TEAM, exact: true }),
   ).toHaveCount(1);
   await expect(page.getByText(OTHER_TEAM)).toBeHidden();
   await expect(page.getByText(TEAMLESS_STATE)).toBeHidden();

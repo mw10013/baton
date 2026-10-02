@@ -152,33 +152,6 @@ details[open] > .live-value-summary .live-value-preview {
 }
 
 /*
- * The bar's start: the link home, then the screen's controls (the workflows
- * list's team menu and search). A wrapping flex row rather than an inline
- * `s-stack`, so on a phone the controls drop under the shop name instead of
- * squeezing it. It grows into the bar's free width, which is what lets the
- * search stay on the shop's line on a desktop. `0.375rem` is Polaris's
- * `small-300`.
- */
-.member-bar-start {
-  display: flex;
-  flex: 1 1 auto;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.375rem;
-}
-
-/*
- * The list's search beside the team menu: a basis, so it sits on the shop's
- * line where there is room and drops under it on a phone, and a cap, so on a
- * desktop it does not push the session half off the bar. A wrapping div,
- * because the cap does not take on the `s-search-field` host.
- */
-.member-bar-search {
-  flex: 1 1 14rem;
-  max-inline-size: 22rem;
-}
-
-/*
  * The bar's link home (`MemberBar.tsx`). It wraps the mark and the shop
  * domain for the touch target, but only the mark answers: a ring on the mark
  * on hover and focus, the domain left as plain text beside it. `outline` on
@@ -243,70 +216,6 @@ details[open] > .live-value-summary .live-value-preview {
  * the clamp needs three declarations React's `style` types deprecate, and
  * because the file already owns the member area's other plain-element rules.
  */
-
-/*
- * The state row travels with the list: a member scrolling Ready switches
- * states without scrolling back to the top. `s-box` has no `position`, so the sticky
- * wrapper is a plain div. The surface colour is repeated because a
- * transparent sticky element would let rows scroll through it.
- */
-.run-state-row-sticky {
-  position: sticky;
-  inset-block-start: 0;
-  z-index: 1;
-  padding-block: 0.25rem;
-  background: var(--s-color-bg-surface, #fff);
-}
-
-/*
- * Five states are wider than a phone. They are a grid rather than a scroller:
- * it wraps three and two, or two, two and one, and it breaks on the viewport's
- * width alone — so a count going from 9 to 10 changes a label and never the
- * layout, which is the reflow that ruled out `flex-wrap`. A row that never
- * overflows also has no scrollbar to appear over the states, in any browser or
- * under any scrollbar setting, and no state is ever cut in half at the edge.
- * Two columns put the two Started states side by side, and Ready beside
- * Blocked.
- *
- * `1fr` is `minmax(auto, 1fr)`, so a cell will not shrink under its own
- * button's width, and a row that spills is the scrollbar this layout exists
- * to remove. The widest label is "Started by others · 128": 130px of 12px
- * Inter plus 24px of padding, so 154px a cell. Three columns need a 474px
- * row, which the page's 80px of gutters leave at a 554px viewport, so two
- * below 36rem. Two need 314px, which a phone's 48px of gutters leave at 362px,
- * so one below 23rem (320px phones, and 360px Android phones once a count
- * reaches three digits). Measured at 320, 360, 375, 430, 500, 540, 576 and
- * 600.
- *
- * A plain div and not `s-grid`: that component's `gridTemplateColumns` takes
- * track sizing values or a Polaris responsive-value string, and a media query
- * is neither. `0.375rem` is Polaris's `small-300`, the gap the row
- * had while it was a stack.
- *
- * The gap stays rather than joining the five into one segmented outline.
- * Polaris's segmented control (`s-button-group gap="none"`) is one line that
- * cannot wrap, and outside it the button's radius is reachable only through
- * a build-hashed private custom property; joined in a wrapping grid, the
- * last line's empty cell leaves a hole in the outline and neighbours double
- * their borders. The pressed fill already marks the chosen state.
- */
-.run-state-row {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.375rem;
-}
-
-@media (max-width: 36rem) {
-  .run-state-row {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-@media (max-width: 23rem) {
-  .run-state-row {
-    grid-template-columns: 1fr;
-  }
-}
 
 /*
  * Line two of a run row, cut to two lines with an ellipsis: a blocked reason

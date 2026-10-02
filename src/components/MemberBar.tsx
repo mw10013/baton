@@ -1,5 +1,3 @@
-import type * as React from "react";
-
 import { useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
@@ -35,23 +33,16 @@ import { signOutFn } from "@/lib/memberSignOut";
  * of them. A shared bench tablet is the case that needs it: the person who
  * picks it up has to know whose session they are about to press Done in.
  *
- * `filter` is a slot beside the shop for controls that belong to the screen
- * below rather than to the bar. The workflows list passes its team filter and
- * its search there and every other member screen passes nothing, so the bar
- * does change shape by route — that is the price of keeping the workflows
- * list's controls off a line of their own on the screen with least room for
- * them. The shop's half wraps, so on a phone the controls drop under the shop
- * name. Nothing the bar owns moves
- * either way, which is what the "where am I, who am I" job actually needs.
+ * The bar holds nothing that belongs to the screen below it, so it is the
+ * same shape on every member screen; the workflows list's filters are in its
+ * own section.
  */
 export function MemberBar({
   shop,
   email,
-  filter,
 }: {
   readonly shop: string;
   readonly email?: string;
-  readonly filter?: React.ReactNode;
 }) {
   const signOut = useServerFn(signOutFn);
   const signOutMutation = useMutation({ mutationFn: () => signOut({}) });
@@ -63,19 +54,16 @@ export function MemberBar({
         alignItems="center"
         justifyContent="space-between"
       >
-        <div className="member-bar-start">
-          <Link
-            to="/shop/$shop/workflows"
-            params={{ shop }}
-            className="member-bar-home"
-          >
-            <s-stack direction="inline" gap="small-300" alignItems="center">
-              <BatonMark />
-              <s-text type="strong">{shop}</s-text>
-            </s-stack>
-          </Link>
-          {filter}
-        </div>
+        <Link
+          to="/shop/$shop/workflows"
+          params={{ shop }}
+          className="member-bar-home"
+        >
+          <s-stack direction="inline" gap="small-300" alignItems="center">
+            <BatonMark />
+            <s-text type="strong">{shop}</s-text>
+          </s-stack>
+        </Link>
         <s-stack direction="inline" gap="small-300" alignItems="center">
           {email !== undefined && <s-text color="subdued">{email}</s-text>}
           <s-button

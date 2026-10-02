@@ -14,6 +14,7 @@ import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
 import { requireMember } from "@/lib/MemberAccess";
 import { memberServerFnMiddleware } from "@/lib/MemberServerFnMiddleware";
+import { ANY_OPTION_VALUE } from "@/lib/Screen";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { SocketBanner } from "@/lib/SocketBanner";
 import { useMemberRunActions } from "@/lib/useMemberRunActions";
@@ -75,8 +76,8 @@ interface RunListLoaderData {
  * serve as the socket query's `initialData` ({@link Domain.sameRunQuery}).
  *
  * `team` is resolved against the shop's live teams here, not trusted: a member taken
- * off a team keeps the id in their URL, and this is where it becomes "All
- * teams" rather than a read that returns nothing.
+ * off a team keeps the id in their URL, and this is where it becomes "Any
+ * team" rather than a read that returns nothing.
  */
 const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(LoaderInput))
@@ -208,9 +209,9 @@ function RouteComponent() {
    * read. All four are part of the query key, because every one of them is a
    * different read of the object.
    *
-   * A `team` the member is no longer on is read as All teams, the same
+   * A `team` the member is no longer on is read as Any team, the same
    * resolution the loader makes: the teams are what say which ids mean
-   * something, the button above already falls back to that label, and the
+   * something, the Team select has no option for any other id, and the
    * alternative is a list that is empty for a reason nothing on screen states.
    */
   const {
@@ -244,11 +245,11 @@ function RouteComponent() {
       : undefined,
   });
   /**
-   * `total` and the team counts are the same for every query (they are over
-   * every team), so the loader's stand in while a new key is in flight. The
-   * rows are not: for a query the loader never read and with no previous rows
-   * to keep, the page says it is loading rather than paint the unnarrowed
-   * loader rows under a chosen state.
+   * The loader's list stands in while a new key is in flight, so the strip
+   * keeps its five cells rather than blinking out. The rows do not: for a
+   * query the loader never read and with no previous rows to keep, the page
+   * says it is loading rather than paint the unnarrowed loader rows under a
+   * chosen state.
    */
   const list = data ?? loaderList;
   const loading = data === undefined;
@@ -709,109 +710,132 @@ function RouteComponent() {
     </s-box>
   );
 
-  const teamCount = (teamId: string) =>
-    list.counts.teamCounts.find((count) => count.teamId === teamId)?.count ?? 0;
-
   /**
-   * A button naming the chosen team, with the list behind it, rather than a
-   * full-width select: the filter only exists for a member on more than one
-   * team, and as a select it was the widest and so the loudest control on a
-   * screen whose subject is the list below it.
+   * The team filter, a select rather than buttons because the team list is
+   * unbounded, as on the orders index. Its options are names only: the strip
+   * beside it counts the chosen team's states, so a count in the closed select
+   * would be a number over a different set of rows from the numbers next to
+   * it. The first option is Any team, valued `ANY_OPTION_VALUE` (`Screen.ts`
+   * says why not `""`). An id the member is not on is already
+   * read as Any team (`team` above), so unlike the orders index there is no
+   * Deleted team option: the list under Any team really is every team.
    *
-   * It is rendered into `MemberBar`, beside the shop. On the workflows list it had a
-   * line of its own above the states — it cannot share the state row, where a
-   * merchant-typed team name would decide how many states a phone has room for
-   * — and a whole line above the fold is what a bench tablet has least of.
-   * The bar already holds the two answers a member needs on every screen, and
-   * a set-once filter is at home beside them.
-   *
-   * The button carries no count. The state counts beside it are narrowed to the
-   * chosen team while `counts.total` is over every team, so two numbers on
-   * one row would be counting different things. Inside the menu the counts
-   * stay, because there they are what is being chosen between — and they are
-   * over every team whatever is selected, so the option just chosen does not
-   * renumber itself.
-   *
+   * Rendered only for a member on more than one team: with one team there is
+   * no choice to make, whereas a merchant on the orders index always has one.
    * Disabled under a search, which ignores the team (`Domain.RunQuery`): a
    * filter that looks set but does nothing is the controls table's "never"
-   * (`Control` in `Screen.ts`).
+   * (`Control` in `Screen.ts`). It keeps its value, so Clear search restores
+   * the list it describes.
    */
-  const teamMenuId = "run-team-menu";
-  const teamMenu =
+  const teamSelect =
     teams.length > 1 ? (
-      <div>
-        <s-button
-          variant="secondary"
-          commandFor={teamMenuId}
-          disabled={q !== null}
-        >
-          {team === null
-            ? "All teams"
-            : (teams.find(({ id }) => id === team)?.name ?? "All teams")}
-        </s-button>
-        <s-menu id={teamMenuId} accessibilityLabel="Team">
-          <s-button
-            onClick={() => {
-              selectTeam(null);
-            }}
-          >
-            {`All teams · ${String(list.counts.total)}`}
-          </s-button>
-          {teams.map((each) => (
-            <s-button
-              key={each.id}
-              onClick={() => {
-                selectTeam(each.id);
-              }}
-            >
-              {`${each.name} · ${String(teamCount(each.id))}`}
-            </s-button>
-          ))}
-        </s-menu>
-      </div>
+      <s-select
+        label="Team"
+        value={team ?? ANY_OPTION_VALUE}
+        disabled={q !== null}
+        onChange={(event) => {
+          const value = event.currentTarget.value;
+          selectTeam(teams.find(({ id }) => id === value)?.id ?? null);
+        }}
+      >
+        <s-option value={ANY_OPTION_VALUE}>Any team</s-option>
+        {teams.map(({ id, name }) => (
+          <s-option key={id} value={id}>
+            {name}
+          </s-option>
+        ))}
+      </s-select>
     ) : null;
 
   /**
-   * The state row is the heading — literally, now that the page has none:
-   * every state with its count, the chosen one pressed. A zero-count state
-   * stays — the row must not reflow when a count crosses zero — and stays
-   * enabled, because an empty list with its empty state is a valid screen to
-   * land on, a disabled button leaves the tab order altogether, and the count
-   * already says zero.
+   * One cell of the strip, the metrics-card composition
+   * (`refs/shopify-docs/docs/api/app-home/latest/patterns/compositions/metrics-card.md`)
+   * as on the orders index: the state's name over its count, the whole cell a
+   * one-click filter. The strip is the heading, now that the page has none:
+   * every state with its count, the chosen one filled.
    *
-   * Five states and nothing else; the team filter and the search are in the
-   * member bar. Polaris has no segmented control, so a state here is an
-   * `s-press-button`: `pressed` reaches the native button as `aria-pressed`,
-   * and `onClick` first puts `pressed` back to what React rendered, because
-   * the element flips it on every click and pressing the pressed state
-   * re-renders nothing. Blocked has no colour: `s-press-button` takes only
-   * `tone="neutral"`, and a member is not usually the one who clears a block.
-   * Five in a grid so they never wrap; `inlineSize="fill"` is what makes each
-   * one its grid cell's width, so five buttons read as one row with one
-   * value pressed. They keep a gap rather than joining into one outline;
-   * `.run-state-row` in `styles.css` says why.
+   * The strip is the state filter and the only one: every state is on it,
+   * so there is no State select and no chips, which on the orders index name
+   * filters its strip cannot show. The chosen cell is filled
+   * (`background="subdued"`). Not `aria-current`: `s-clickable` leaves it on
+   * the host, and the native button in its shadow root, which is what a
+   * screen reader reads, never gets it; the accessibility label says
+   * "selected" instead, since that label does reach the button.
+   *
+   * A count always renders, at zero if need be, so nothing on the strip
+   * appears or disappears with the data, and a zero-count state stays
+   * enabled, because an empty list with its empty state is a valid screen to
+   * land on and the count already says zero. Done or closed is a cell like
+   * the others, history and all: it is the member's undo, and its count is
+   * bounded to the last day. No cell is red: a member is not usually the one
+   * who clears a block.
+   *
+   * On a phone the three-word labels wrap and "Ready" does not, so the cell
+   * fills its grid track and the count sits at the cell's foot: the counts
+   * on a line share a baseline and the chosen cell's fill is the line's full
+   * height, whatever each label did.
    */
-  const stateRow = (
-    /* Not `s-button-group`, which renders only its named action slots so
-       buttons in its default slot never reach the page; and not `s-stack`,
-       which wraps when it is inline. `.run-state-row` in `styles.css` is
-       the grid, and says why it is not a scroller. */
-    <div className="run-state-row">
-      {STATES.map((each) => (
-        <s-press-button
-          key={each}
-          pressed={each === state}
-          inlineSize="fill"
-          onClick={(event) => {
-            event.currentTarget.pressed = each === state;
-            selectState(each);
-          }}
-        >
-          {`${STATE_LABEL[each]} · ${String(list.counts[each])}`}
-        </s-press-button>
-      ))}
-    </div>
+  const stripCell = (each: Domain.WorkflowsListState) => {
+    const chosen = each === state;
+    const n = list.counts[each];
+    return (
+      <s-clickable
+        key={each}
+        paddingBlock="small-400"
+        paddingInline="small-100"
+        borderRadius="base"
+        blockSize="100%"
+        background={chosen ? "subdued" : "transparent"}
+        accessibilityLabel={`${STATE_LABEL[each]}, ${formatNumber(n)}${chosen ? ", selected" : ""}`}
+        onClick={() => {
+          selectState(each);
+        }}
+      >
+        <s-grid gap="small-300" blockSize="100%" alignContent="space-between">
+          <s-heading>{STATE_LABEL[each]}</s-heading>
+          <s-text>{formatNumber(n)}</s-text>
+        </s-grid>
+      </s-clickable>
+    );
+  };
+
+  /**
+   * Three columns at every width, so the strip is always two lines: the three
+   * states with work in hand, then Blocked and Done or closed. Not five where
+   * there is room, as on the orders index: the page is `inlineSize="small"`,
+   * so the section is under 600px wide at every viewport, and five cells in
+   * it wrap "Started by you" and "Done or closed" onto two lines while Ready
+   * and Blocked keep one, which leaves the counts at two heights. In three
+   * columns every label is one line from a 600px viewport up. A grid rather
+   * than a scroller or a wrapping row, so a count crossing a digit changes a
+   * cell and never the layout. Not sticky: it scrolls away with the page.
+   */
+  const strip = (
+    <s-grid gridTemplateColumns="1fr 1fr 1fr" gap="small">
+      {STATES.map(stripCell)}
+    </s-grid>
   );
+
+  /**
+   * The filter row under the strip: the search, then the Team select. It
+   * renders under a search too, so the field stays where the member typed.
+   * With one team the search is alone and full width.
+   */
+  const filterRow =
+    teamSelect === null ? (
+      <ListSearchField value={q} onSubmit={setSearch} />
+    ) : (
+      <s-query-container>
+        <s-grid
+          gridTemplateColumns="@container (inline-size > 480px) 1fr 12rem, 1fr"
+          gap="small-300"
+          alignItems="end"
+        >
+          <ListSearchField value={q} onSubmit={setSearch} />
+          {teamSelect}
+        </s-grid>
+      </s-query-container>
+    );
 
   /** The search as the screen prints it (`Domain.searchTermText`): `#1001`, or the typed words. */
   const term = q === null ? null : Domain.searchTermText(Domain.searchTerm(q));
@@ -827,7 +851,7 @@ function RouteComponent() {
   /**
    * The way out of an empty state; `null` when there is nowhere worth sending
    * the reader. "Go to" rather than the bare label so the button cannot be
-   * confused with the state-row button above it that carries the same count.
+   * confused with the strip cell above it that carries the same count.
    */
   const goTo = STATE_EMPTY[state].goTo;
   const renderEmpty = () => (
@@ -855,7 +879,7 @@ function RouteComponent() {
   );
   /**
    * Under a search (`Domain.RunQuery`, which ignores the state and the team):
-   * the state row gives way to one line, how many rows match and Clear search
+   * the strip gives way to one line, how many rows match and Clear search
    * (`Control` in `Screen.ts`, "a search is on"); the rows are the open
    * matches, then the Done or closed matches under a divider, so a member who
    * marked the wrong thing done finds it by number. N is every match before
@@ -916,34 +940,19 @@ function RouteComponent() {
           You&rsquo;re not on a team yet. Ask the merchant to add you to a team.
         </s-paragraph>
       );
-    if (term !== null) return renderSearch(term);
     return (
       <>
-        {/* `.run-state-row-sticky` in `styles.css` keeps it on screen. */}
-        <div className="run-state-row-sticky">{stateRow}</div>
-        {renderRuns()}
+        {term === null && strip}
+        {filterRow}
+        {term === null ? renderRuns() : renderSearch(term)}
       </>
     );
   };
 
   return (
     <>
-      <MemberBar
-        shop={shop}
-        email={memberEmail}
-        filter={
-          teams.length === 0 ? null : (
-            <>
-              {teamMenu}
-              {/* `.member-bar-search` in `styles.css` sizes it. */}
-              <div className="member-bar-search">
-                <ListSearchField value={q} onSubmit={setSearch} />
-              </div>
-            </>
-          )
-        }
-      />
-      {/* No `heading`: the state row below says the same word and says more with
+      <MemberBar shop={shop} email={memberEmail} />
+      {/* No `heading`: the strip below says the same word and says more with
           it, and a heading block above the fold is what a bench tablet has
           least of. "Workflows", the rows' noun, is in the document title and
           the section's accessibility label: the browser tab and the

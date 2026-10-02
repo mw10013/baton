@@ -147,7 +147,7 @@
  *
  * The orders index's strip and Status select speak the two order tables plus
  * Open, Issues and All (`ORDERS_FILTER_LABEL` in ShopWork); the member's
- * workflows list's state row reads its labels from `workflowsListStates.ts`.
+ * workflows list's strip reads its labels from `workflowsListStates.ts`.
  */
 export * from "./domain/Platform.ts";
 export * from "./domain/Orders.ts";

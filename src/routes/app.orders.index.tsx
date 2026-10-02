@@ -17,6 +17,7 @@ import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
 import { adminOrderUrl, useResourceLinkTarget } from "@/lib/orderLinks";
 import { ORDER_SYNC_WINDOW_DAYS } from "@/lib/orderSyncConstants";
+import { ANY_OPTION_VALUE } from "@/lib/Screen";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
@@ -573,7 +574,7 @@ function RouteComponent() {
           </s-select>
           <s-select
             label="Team"
-            value={team ?? ""}
+            value={team ?? ANY_OPTION_VALUE}
             disabled={q !== null}
             onChange={(event) => {
               const value = event.currentTarget.value;
@@ -582,7 +583,7 @@ function RouteComponent() {
               });
             }}
           >
-            <s-option value="">Any team</s-option>
+            <s-option value={ANY_OPTION_VALUE}>Any team</s-option>
             {data?.teams.map(({ id, name }) => (
               <s-option key={id} value={id}>
                 {name}

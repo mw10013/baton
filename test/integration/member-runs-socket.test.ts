@@ -247,7 +247,6 @@ describe("member workflows list socket", () => {
     });
     expect(ready.items).toHaveLength(1);
     expect(ready.counts.ready).toBe(1);
-    expect(ready.counts.total).toBe(1);
 
     const done = await subscribeList(worker.socket, "sub-alice", {
       ...READY,
