@@ -13,8 +13,8 @@
 // tables on `initializeSchema` in src/lib/ShopAgentSchema.ts (the object) and
 // on `D1_TABLES` in src/lib/D1Schema.ts (D1).
 //
-//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the vocabulary, its contexts, its screen columns, its stored cells against the DDL and its Screens table, parse the triggers table, the four reconcile tables, the four sync tables on syncOrder (refusing overlapping actions rows), the sync pipeline table and both data-model tables and refuse a pinned title no test carries, parse the copy and controls tables in src/lib/Screen.ts and refuse an example no screen shows (exit 1 on any failure)
-//   node scripts/spec.ts print   render the parsed rows and how many fixtures each expands to, then the triggers rows, then the reconcile rows and how many are pinned by (none yet), then the four sync tables, the actions' fixture counts and the count of rows pinned by (none yet), then the sync pipeline rows, then the data-model rows
+//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the vocabulary, its contexts, its screen columns, its stored cells against the DDL and its Screens table, parse the triggers table, the four reconcile tables, the four sync tables on syncOrder (refusing overlapping actions rows), the sync pipeline table and both data-model tables and refuse a pinned title no test carries and a data-model row pinned by (none yet), parse the copy and controls tables in src/lib/Screen.ts and refuse an example no screen shows (exit 1 on any failure)
+//   node scripts/spec.ts print   render the parsed rows and how many fixtures each expands to, then the triggers rows, then the reconcile rows and how many are pinned by (none yet), then the four sync tables, the actions' fixture counts and the count of rows pinned by (none yet), then the sync pipeline rows, then the data-model rows and how many are pinned by (none yet)
 
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import { Console, Effect, Result } from "effect";
@@ -241,8 +241,10 @@ const checkCommand = Command.make(
       ...dataModels.flatMap(({ source, options }) =>
         Result.match(ActionTable.parseDataModel(source, options), {
           onFailure: (error) => [error.message],
-          onSuccess: (rows) =>
-            ActionTable.checkPinned(rows, testSources, options.symbol),
+          onSuccess: (rows) => [
+            ...ActionTable.checkPinned(rows, testSources, options.symbol),
+            ...ActionTable.checkDataModelUnpinned(rows, options.symbol),
+          ],
         }),
       ),
       ...Result.match(
@@ -267,7 +269,7 @@ const checkCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Parse the action tables and the four reconcile tables (triggers, actions, effects, pass rules) in domain/ShopWork.ts, the four sync tables on syncOrder in domain/Orders.ts and the sync pipeline table in agent/Host.ts, check the vocabulary in Domain.ts and domain/ and its stored cells against the DDL in ShopAgentSchema.ts, check the triggers table on ShopUsage in domain/Billing.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts, and check the copy and controls tables in Screen.ts; exit 1 on any failure",
+    "Parse the action tables and the four reconcile tables (triggers, actions, effects, pass rules) in domain/ShopWork.ts, the four sync tables on syncOrder in domain/Orders.ts and the sync pipeline table in agent/Host.ts, check the vocabulary in Domain.ts and domain/ and its stored cells against the DDL in ShopAgentSchema.ts, check the triggers table on ShopUsage in domain/Billing.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts (none pinned by (none yet)), and check the copy and controls tables in Screen.ts; exit 1 on any failure",
   ),
 );
 
@@ -473,11 +475,24 @@ const printCommand = Command.make(
         },
       );
       for (const line of rows) yield* Console.log(`  ${line}`);
+      const unpinned = Result.match(
+        ActionTable.parseDataModel(dataModel, options),
+        {
+          onFailure: () => 0,
+          onSuccess: (rows) =>
+            rows.filter((row) =>
+              row.pinnedBy.split("; ").includes(ActionTable.NONE_YET),
+            ).length,
+        },
+      );
+      yield* Console.log(
+        `${options.symbol}: ${String(unpinned)} rows pinned by ${ActionTable.NONE_YET}, at most ${String(ActionTable.DATA_MODEL_NONE_YET_MAX)}`,
+      );
     }
   }),
 ).pipe(
   Command.withDescription(
-    "Render the parsed action tables and their fixture counts, then the triggers rows, then the reconcile rows, the actions' fixture counts and the count of rows pinned by (none yet), then the four sync tables, the actions' fixture counts and the count of rows pinned by (none yet), then the sync pipeline rows, then the data-model rows",
+    "Render the parsed action tables and their fixture counts, then the triggers rows, then the reconcile rows, the actions' fixture counts and the count of rows pinned by (none yet), then the four sync tables, the actions' fixture counts and the count of rows pinned by (none yet), then the sync pipeline rows, then the data-model rows and how many are pinned by (none yet)",
   ),
 );
 

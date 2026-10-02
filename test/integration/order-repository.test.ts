@@ -973,8 +973,11 @@ describe("OrderRepository.listOrders team issues", () => {
           doneAt: number | null,
         ) => sql`
           insert into RunTask
-            (id, runId, position, step, name, teamId, teamName, doneAt)
-          values (${id}, ${runId}, ${step}, ${step}, 'Task', ${teamId}, 'Team', ${doneAt})
+            (id, runId, position, step, name, teamId, teamName, doneAt,
+             doneByRole, startedAt, startedByRole)
+          values (${id}, ${runId}, ${step}, ${step}, 'Task', ${teamId}, 'Team', ${doneAt},
+            ${doneAt === null ? null : "merchant"}, ${doneAt},
+            ${doneAt === null ? null : "merchant"})
         `;
         yield* task("s1", "run-1-0", 1, "team-gone", 1);
         yield* task("s8", "run-8-0", 1, "team-cut", 1);
@@ -1071,8 +1074,11 @@ describe("OrderRepository.listOrders waitingOn", () => {
       position += 1;
       return sql`
         insert into RunTask
-          (id, runId, position, step, name, teamId, teamName, doneAt)
-        values (${id}, ${runId}, ${position}, ${step}, 'Task', ${team}, 'Team', ${doneAt})
+          (id, runId, position, step, name, teamId, teamName, doneAt,
+           doneByRole, startedAt, startedByRole)
+        values (${id}, ${runId}, ${position}, ${step}, 'Task', ${team}, 'Team', ${doneAt},
+          ${doneAt === null ? null : "merchant"}, ${doneAt},
+          ${doneAt === null ? null : "merchant"})
       `;
     };
     /* #1003: two open item runs both current on Cut, so the id is distinct

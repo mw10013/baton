@@ -660,6 +660,44 @@ describe("action table parser", () => {
       ).toEqual([`D1_TABLES, line 1: no test titled "pinned by nothing"`]);
     });
 
+    it("a pinned cell holds when its parts group, in order, into titles a test carries, a title with `; ` in it included", () => {
+      const row = { line: 1, about: "member", rule: "a rule", holdsBy: "app" };
+      const sources = {
+        "a.test.ts": `it("one; two", () => {});\nit("three", () => {});`,
+      };
+      expect(
+        ActionTable.checkPinned(
+          [
+            { ...row, pinnedBy: "one; two; three" },
+            { ...row, pinnedBy: "three; one; two" },
+            { ...row, pinnedBy: "one; three" },
+          ],
+          sources,
+          "D1_TABLES",
+        ),
+      ).toEqual([`D1_TABLES, line 1: no test titled "one; three"`]);
+    });
+
+    it("a data-model row pinned by (none yet) is refused", () => {
+      expect(
+        ActionTable.checkDataModelUnpinned(
+          [
+            { line: 1, pinnedBy: "a title" },
+            { line: 2, pinnedBy: ActionTable.NONE_YET },
+            { line: 3, pinnedBy: `a title; ${ActionTable.NONE_YET}` },
+          ],
+          "initializeSchema",
+        ),
+      ).toEqual([
+        expect.stringMatching(
+          /^initializeSchema, line 2: pinned by \(none yet\)/u,
+        ),
+        expect.stringMatching(
+          /^initializeSchema, line 3: pinned by \(none yet\)/u,
+        ),
+      ]);
+    });
+
     it("the D1 table parses and every pinned title is carried by a test", () => {
       const rows = Result.getOrThrow(ActionTable.parseDataModel(d1Source, D1));
       expect(rows.map((row) => row.about)).toEqual(

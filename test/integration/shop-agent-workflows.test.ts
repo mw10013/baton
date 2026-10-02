@@ -203,6 +203,34 @@ describe("ShopAgent workflow callables", () => {
     ]);
   });
 
+  it("the next team delete nulls pointers to a team that is already gone", async () => {
+    const shop = "wf-delete-team-repair.myshopify.com";
+    const a = await seedTeam(shop, "A");
+    const b = await seedTeam(shop, "B");
+    const c = await seedTeam(shop, "C");
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const created = await agent.createWorkflow({ name: "W", tag: "w" });
+    if (created._tag !== "Ok") throw new Error(created._tag);
+    const workflowId = created.workflow.id;
+    await agent.addStep({ workflowId, name: "S", teamId: a.id });
+    await agent.addStep({ workflowId, name: "T", teamId: b.id });
+    await agent.addStep({ workflowId, name: "U", teamId: c.id });
+    await goLive(agent, workflowId);
+    await agent.createDraft({ workflowId });
+    // A's delete went half way: its row is gone and its pointers are not.
+    await deleteTeamRowOnly(shop, a.id);
+    expect(await agent.deleteTeam({ teamId: b.id })).toEqual({
+      _tag: "Deleted",
+    });
+    const detail = await agent.getWorkflowDetail({ workflowId });
+    expect(detail?.tasks.map((s) => s.teamId)).toEqual([null, null, c.id]);
+    expect(detail?.draft?.tasks.map((s) => s.teamId)).toEqual([
+      null,
+      null,
+      c.id,
+    ]);
+  });
+
   it("deleteTeam nulls every task pointer, D1 first; a dangling id reads as unassigned and a retry repairs it", async () => {
     const shop = "wf-delete-team.myshopify.com";
     const a = await seedTeam(shop, "A");

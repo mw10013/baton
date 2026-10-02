@@ -11,7 +11,7 @@ import * as ShopifyApi from "@shopify/shopify-api";
 import { runInDurableObject } from "cloudflare:test";
 import { exports as workerExports } from "cloudflare:workers";
 import { env as workerEnv } from "cloudflare:workers";
-import { Effect, Layer, Option, Schema } from "effect";
+import { Effect, Layer, Option, Schedule, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 
 import { CurrentRequest } from "@/lib/CurrentRequest";
@@ -398,6 +398,55 @@ const readOrder = () =>
       ),
     ),
   );
+
+describe("uninstall", () => {
+  it.live(
+    "uninstall deletes the shop row, its members and teams, and destroys the object",
+    () =>
+      Effect.gen(function* () {
+        const shopify = yield* Shopify;
+        yield* shopify.storeShopSession(makeSession(), shopGid);
+        yield* Effect.promise(() =>
+          workerEnv.D1.batch([
+            workerEnv.D1.prepare(
+              "insert into Member (id, shop, email, createdAt) values ('m-1', ?1, 'a@x.com', 0)",
+            ).bind(SHOP),
+            workerEnv.D1.prepare(
+              "insert into Team (id, shop, name, createdAt) values ('t-1', ?1, 'Cut', 0)",
+            ).bind(SHOP),
+          ]),
+        );
+        yield* seedOrder(1);
+        strictEqual(Option.isSome(yield* readOrder()), true);
+        const response = yield* fetchWebhook(
+          yield* webhookRequest({
+            path: "/webhooks/app/uninstalled",
+            topic: "app/uninstalled",
+            webhookId: "wh-uninstall",
+            payload: { id: 1 },
+          }),
+        );
+        strictEqual(response.status, 200);
+        assertNone(yield* shopify.loadShopSession(shop));
+        const left = yield* Effect.promise(() =>
+          workerEnv.D1.prepare(
+            "select (select count(*) from Member where shop = ?1) + (select count(*) from Team where shop = ?1) as n",
+          )
+            .bind(SHOP)
+            .first<{ n: number }>(),
+        );
+        strictEqual(left?.n, 0);
+        // Addressing the object again starts a new one with empty storage:
+        // the order written above went with the destroy. The first address
+        // can still reach the aborted instance, which answers "destroyed".
+        const after = yield* readOrder().pipe(
+          Effect.catchDefect(() => Effect.fail("destroyed" as const)),
+          Effect.retry({ times: 10, schedule: Schedule.spaced("20 millis") }),
+        );
+        assertNone(after);
+      }).pipe(Effect.provide(shopifyTestLayer())),
+  );
+});
 
 const orderWebhookRequest = ({
   topic,

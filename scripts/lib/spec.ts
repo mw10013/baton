@@ -2359,9 +2359,12 @@ export const parseSyncPipeline = (
  * `it.<name>(` in some test source followed, after optional whitespace, by
  * the title as a whole quoted string. A string search, not a TypeScript
  * parse: the titles are plain strings. The rows are any table's with a
- * `pinned by` column: the data-model tables and the triggers table.
- * `testSources` maps each test file to its text; `symbol` names the table in
- * the messages. Reports each missing title.
+ * `pinned by` column: the data-model tables and the triggers table. A
+ * data-model cell may join several titles with `; `, and a title may itself
+ * contain `; `, so the cell holds when its `; `-separated parts group, in
+ * order, into titles a test carries. `testSources` maps each test file to
+ * its text; `symbol` names the table in the messages. Reports each cell
+ * that does not hold.
  */
 export const checkPinned = (
   rows: readonly { readonly line: number; readonly pinnedBy: string }[],
@@ -2369,20 +2372,55 @@ export const checkPinned = (
   symbol: string,
 ): readonly string[] => {
   const texts = Object.values(testSources);
+  const carried = (title: string) => {
+    const pattern = new RegExp(
+      `\\bit(?:\\.\\w+)?\\(\\s*(["'\`])${escapeRegExp(title)}\\1`,
+      "u",
+    );
+    return texts.some((text) => pattern.test(text));
+  };
+  /** Whether the parts group, in order, into carried titles. */
+  const holds = (cell: string) => {
+    const parts = cell.split("; ");
+    const reachable = [true];
+    for (let end = 1; end <= parts.length; end++)
+      reachable[end] = parts
+        .slice(0, end)
+        .some(
+          (_, start) =>
+            reachable[start] && carried(parts.slice(start, end).join("; ")),
+        );
+    return reachable[parts.length];
+  };
   return rows
     .filter((row) => row.pinnedBy !== NONE_YET)
-    .filter((row) => {
-      const title = new RegExp(
-        `\\bit(?:\\.\\w+)?\\(\\s*(["'\`])${escapeRegExp(row.pinnedBy)}\\1`,
-        "u",
-      );
-      return !texts.some((text) => title.test(text));
-    })
+    .filter((row) => !holds(row.pinnedBy))
     .map(
       (row) =>
         `${symbol}, line ${String(row.line)}: no test titled "${row.pinnedBy}"`,
     );
 };
+
+/**
+ * How many data-model rows may say {@link NONE_YET}: none. Every row of the
+ * tables on `initializeSchema` and `D1_TABLES` is a rule some test holds, so
+ * a new row arrives with its test. The reconcile, sync and triggers tables
+ * keep their own rule.
+ */
+export const DATA_MODEL_NONE_YET_MAX = 0;
+
+/** The rows of one data-model table pinned by {@link NONE_YET}, past {@link DATA_MODEL_NONE_YET_MAX}. */
+export const checkDataModelUnpinned = (
+  rows: readonly { readonly line: number; readonly pinnedBy: string }[],
+  symbol: string,
+): readonly string[] =>
+  rows
+    .filter((row) => row.pinnedBy.split("; ").includes(NONE_YET))
+    .slice(DATA_MODEL_NONE_YET_MAX)
+    .map(
+      (row) =>
+        `${symbol}, line ${String(row.line)}: pinned by ${NONE_YET}; a data-model row is pinned by a test`,
+    );
 
 /** One parsed row of the copy table on `CopySlot` in `src/lib/Screen.ts`. */
 export interface CopyRow {

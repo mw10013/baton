@@ -223,6 +223,39 @@ describe("ShopAgent one-order sync", () => {
     strictEqual(await runCount(agent), 1);
   });
 
+  it("an item's product tags are rewritten by the next sync and a run created from the old tags is not revisited", async () => {
+    const shop = "sync-order-retag-run.myshopify.com";
+    const team = await seedShop(shop);
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    await turnOnEngraving(agent, team.id);
+    await agent.syncOrder({ orderId: ORDER_ID });
+    const [created] = await agent.merchantListRunsForOrder({
+      orderId: ORDER_ID,
+    });
+    strictEqual(created?.run.state, "open");
+    productTags = ["plain"];
+    await agent.syncOrder({ orderId: ORDER_ID });
+    const tags = await runInDurableObject(
+      env.SHOP_AGENT.getByName(shop),
+      (instance) =>
+        (instance as unknown as { ctx: DurableObjectState }).ctx.storage.sql
+          .exec(
+            "select productTags from OrderLineItem where orderId = ?",
+            ORDER_ID,
+          )
+          .one().productTags,
+    );
+    deepStrictEqual(JSON.parse(typeof tags === "string" ? tags : "null"), [
+      "plain",
+    ]);
+    // The item no longer carries the workflow's tag; its run stays, open.
+    const runs = await agent.merchantListRunsForOrder({ orderId: ORDER_ID });
+    deepStrictEqual(
+      runs.map(({ run }) => [run.id, run.state]),
+      [[created?.run.id, "open"]],
+    );
+  });
+
   it("the retention sweep releases the open-run ceiling when its deletes make room", async () => {
     const shop = "sync-order-sweep-release.myshopify.com";
     const team = await seedShop(shop);

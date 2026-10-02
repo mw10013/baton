@@ -1804,7 +1804,11 @@ const make = Effect.gen(function* () {
    * failing after the D1 row is gone; every read already treats an id no
    * team carries as unassigned, so that state is self-healing, and a retry
    * of this call (which reports `NotFound` for the row but still runs the
-   * nulling) repairs it. Nothing is refused for being in use: the confirm
+   * nulling) repairs it. So does the next delete of any team in the shop:
+   * it also nulls every pointer to a team gone from D1. The object's ids in
+   * use are read before the shop's teams, so a team created between the
+   * two reads, and a task pointed at it, is not among the candidates and
+   * is never nulled. Nothing is refused for being in use: the confirm
    * dialog states the counts and the merchant decides.
    *
    * Reconciles every stored order afterwards ({@link reconcileAllNow}): a
@@ -1834,7 +1838,18 @@ const make = Effect.gen(function* () {
           }),
         ),
       );
-      yield* (yield* WorkflowRepository).unassignTeam({ teamId });
+      const workflows = yield* WorkflowRepository;
+      const inUse = yield* workflows.teamIdsInUse();
+      const live = new Set<string>((yield* teams()).map((team) => team.id));
+      const gone = new Set([
+        teamId,
+        ...inUse.filter((candidate) => !live.has(candidate)),
+      ]);
+      yield* Effect.forEach(
+        gone,
+        (goneId) => workflows.unassignTeam({ teamId: goneId }),
+        { discard: true },
+      );
       yield* reconcileAllNow("deleteTeam", teamId);
       // The team was on every one of these members' connections; the
       // Worker cannot do this itself because `Repository.deleteTeam` runs

@@ -2,7 +2,7 @@ import { SqliteClient } from "@effect/sql-sqlite-do";
 import { deepStrictEqual, strictEqual } from "@effect/vitest/utils";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Layer, Option, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { describe, it } from "vitest";
 
@@ -138,6 +138,83 @@ const insertRun = (id: string) =>
       `,
     ),
   );
+
+/** Rewrites the order with `items` under a newer `updatedAt` and reconciles it, as a sync does. */
+const resync = (items: readonly Domain.OrderLineItem[], bump: number) =>
+  Effect.gen(function* () {
+    const workflows = yield* WorkflowRepository;
+    const runs = yield* RunRepository;
+    const context = {
+      workflows: yield* workflows.listOnWorkflowDetails(),
+      teams: [TEAM],
+    };
+    yield* (yield* OrderRepository).upsertOrder({
+      order: { ...order, updatedAt: PROCESSED_AT + bump },
+      lineItems: items,
+      afterWrite: runs
+        .reconcileOrder({ ...context, orderId: ORDER_ID })
+        .pipe(Effect.asVoid),
+    });
+  });
+
+/** The item's run row, read straight from the store. */
+const runRow = SqlClient.SqlClient.pipe(
+  Effect.flatMap(
+    (sql) => sql<{
+      readonly id: string;
+      readonly state: string;
+      readonly quantity: number;
+      readonly quantityChangedFrom: number | null;
+      readonly closedReason: string | null;
+    }>`
+      select id, state, quantity, quantityChangedFrom, closedReason from Run
+      where lineItemId = ${LINE_ITEM_ID}
+    `,
+  ),
+  Effect.map(([row]) => row),
+);
+
+/** The actor columns of one run task, read straight from the store. */
+const actorRow = (taskId: string) =>
+  SqlClient.SqlClient.pipe(
+    Effect.flatMap(
+      (sql) => sql<{
+        readonly startedAt: number | null;
+        readonly startedByRole: string | null;
+        readonly startedByEmail: string | null;
+        readonly doneAt: number | null;
+        readonly doneByRole: string | null;
+        readonly doneByEmail: string | null;
+        readonly reopenedAt: number | null;
+        readonly reopenedByRole: string | null;
+        readonly reopenedByEmail: string | null;
+      }>`
+        select startedAt, startedByRole, startedByEmail, doneAt, doneByRole,
+          doneByEmail, reopenedAt, reopenedByRole, reopenedByEmail
+        from RunTask where id = ${taskId}
+      `,
+    ),
+    Effect.map(([row]) => row),
+  );
+
+/** The one task of the seeded run. */
+const taskOf = (runId: string) =>
+  SqlClient.SqlClient.pipe(
+    Effect.flatMap(
+      (sql) =>
+        sql<{
+          readonly id: string;
+        }>`select id from RunTask where runId = ${runId}`,
+    ),
+    Effect.map(([row]) => row?.id ?? ""),
+  );
+
+const MEMBER = {
+  role: "member",
+  memberId: Schema.decodeUnknownSync(Domain.MemberId)("member-1"),
+  email: Schema.decodeUnknownSync(Domain.Email)("maker@example.com"),
+} satisfies Domain.MemberActor;
+const MERCHANT = { role: "merchant" } satisfies Domain.Actor;
 
 const count = (table: string) =>
   SqlClient.SqlClient.pipe(
@@ -337,6 +414,335 @@ describe("data model", () => {
           where id = 'done'
         `);
         strictEqual(blockDone._tag, "SqlError");
+      }),
+    ));
+
+  it("a workflow's tag matches an item's tag regardless of case and surrounding space", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const workflows = yield* WorkflowRepository;
+        // The tag is decoded trimmed and lowercased, so a second workflow
+        // under a case variant is the same tag and is refused.
+        const workflow = yield* workflows.createWorkflow({
+          name: Schema.decodeUnknownSync(Domain.WorkflowName)("Mugs"),
+          tag: Schema.decodeUnknownSync(Domain.WorkflowTag)(" Mug "),
+        });
+        strictEqual(workflow.tag, "mug");
+        const variant = yield* Effect.flip(
+          workflows.createWorkflow({
+            name: Schema.decodeUnknownSync(Domain.WorkflowName)("Cups"),
+            tag: Schema.decodeUnknownSync(Domain.WorkflowTag)("MUG"),
+          }),
+        );
+        strictEqual(variant._tag, "WorkflowTagTakenError");
+        yield* workflows.addStep({
+          workflowId: workflow.id,
+          name: Schema.decodeUnknownSync(Domain.TaskName)("Glaze"),
+          teamId: TEAM.id,
+        });
+        yield* workflows.applyDraft({ workflowId: workflow.id, teams: [TEAM] });
+        yield* workflows.setWorkflowOn({
+          workflowId: workflow.id,
+          on: true,
+          teams: [TEAM],
+        });
+        yield* resync([{ ...lineItem, productTags: [" MUG "] }], 0);
+        strictEqual((yield* runRow)?.state, "open");
+      }),
+    ));
+
+  it("turning a workflow off leaves its open runs open and deletes nothing", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const workflows = yield* WorkflowRepository;
+        const runs = yield* RunRepository;
+        const { workflowId, runId } = yield* seedRun;
+        yield* runs.startTask({
+          runTaskId: yield* taskOf(runId),
+          actor: MEMBER,
+        });
+        const before = {
+          runs: yield* count("Run"),
+          runTasks: yield* count("RunTask"),
+          workflowTasks: yield* count("WorkflowTask"),
+        };
+        yield* workflows.setWorkflowOn({
+          workflowId,
+          on: false,
+          teams: [TEAM],
+        });
+        yield* runs.reconcileAll({
+          workflows: yield* workflows.listOnWorkflowDetails(),
+          teams: [TEAM],
+        });
+        deepStrictEqual(
+          {
+            runs: yield* count("Run"),
+            runTasks: yield* count("RunTask"),
+            workflowTasks: yield* count("WorkflowTask"),
+          },
+          before,
+        );
+        strictEqual((yield* runRow)?.state, "open");
+        strictEqual(
+          (yield* actorRow(yield* taskOf(runId)))?.startedByRole,
+          "member",
+        );
+      }),
+    ));
+
+  it("an open run's quantity follows its item, and a done or closed run's quantity is frozen", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const runs = yield* RunRepository;
+        const workflows = yield* WorkflowRepository;
+        const { workflowId, runId } = yield* seedRun;
+        yield* resync([{ ...lineItem, currentQuantity: 3 }], 1);
+        strictEqual((yield* runRow)?.quantity, 3);
+        yield* runs.cancelRun({ runId });
+        yield* resync([{ ...lineItem, currentQuantity: 4 }], 2);
+        deepStrictEqual(
+          [(yield* runRow)?.state, (yield* runRow)?.quantity],
+          ["closed", 3],
+        );
+        // A person replaces the closed run; the new one is done, then frozen.
+        const { workflow, tasks } = Option.getOrThrow(
+          yield* workflows.getWorkflow({ workflowId }),
+        );
+        const set = Option.getOrThrow(
+          yield* runs.setRun({
+            workflow: { workflow, tasks },
+            teams: [TEAM],
+            order,
+            lineItem: { ...lineItem, currentQuantity: 4 },
+          }),
+        );
+        yield* runs.markTaskDone({
+          runTaskId: yield* taskOf(set.run.id),
+          actor: MERCHANT,
+        });
+        yield* resync([{ ...lineItem, currentQuantity: 5 }], 3);
+        deepStrictEqual(
+          [(yield* runRow)?.state, (yield* runRow)?.quantity],
+          ["done", 4],
+        );
+      }),
+    ));
+
+  it("a run is deleted only by its order's retention or by a person replacing it, and a replaced run leaves no history", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const runs = yield* RunRepository;
+        const workflows = yield* WorkflowRepository;
+        const { workflowId, runId } = yield* seedRun;
+        const runIds = () =>
+          sql<{ readonly id: string }>`select id from Run`.pipe(
+            Effect.map((rows) => rows.map((row) => row.id)),
+          );
+        yield* runs.cancelRun({ runId });
+        deepStrictEqual(yield* runIds(), [runId]);
+        const { workflow, tasks } = Option.getOrThrow(
+          yield* workflows.getWorkflow({ workflowId }),
+        );
+        const set = Option.getOrThrow(
+          yield* runs.setRun({
+            workflow: { workflow, tasks },
+            teams: [TEAM],
+            order,
+            lineItem,
+          }),
+        );
+        // Replaced: the old run and its tasks are gone, and nothing records it.
+        deepStrictEqual(yield* runIds(), [set.run.id]);
+        const [oldTasks] =
+          yield* sql`select count(*) as n from RunTask where runId = ${runId}`
+            .values;
+        strictEqual(Number(oldTasks?.[0]), 0);
+        // Nothing else deletes it: a workflow delete, its item at zero units,
+        // a team delete's nulling.
+        yield* workflows.deleteWorkflow({ workflowId });
+        yield* resync([{ ...lineItem, currentQuantity: 0 }], 1);
+        strictEqual((yield* runRow)?.closedReason, "item_removed");
+        yield* workflows.unassignTeam({ teamId: TEAM.id });
+        deepStrictEqual(yield* runIds(), [set.run.id]);
+        // The order's retention does.
+        const day = 24 * 60 * 60 * 1000;
+        yield* (yield* OrderRepository).sweepExpiredOrders({
+          now: PROCESSED_AT + (Domain.ShopLimits.orderRetentionDays + 1) * day,
+        });
+        deepStrictEqual(yield* runIds(), []);
+        strictEqual(yield* count("RunTask"), 0);
+      }),
+    ));
+
+  it("a run's state is recomputed by every task write in the same transaction, and closed is written, never derived", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const runs = yield* RunRepository;
+        const { runId } = yield* seedRun;
+        const runTaskId = yield* taskOf(runId);
+        const state = () => runRow.pipe(Effect.map((row) => row?.state));
+        yield* runs.startTask({ runTaskId, actor: MEMBER });
+        strictEqual(yield* state(), "open");
+        yield* runs.markTaskDone({ runTaskId, actor: MEMBER });
+        strictEqual(yield* state(), "done");
+        yield* runs.reopenTask({ runTaskId, actor: MERCHANT });
+        strictEqual(yield* state(), "open");
+        yield* runs.markTaskDone({ runTaskId, actor: MERCHANT });
+        yield* runs.reopenTask({ runTaskId, actor: MERCHANT });
+        yield* runs.cancelRun({ runId });
+        strictEqual(yield* state(), "closed");
+        // Closed is not read off the tasks: a pass over the order leaves it.
+        yield* resync([lineItem], 1);
+        strictEqual(yield* state(), "closed");
+      }),
+    ));
+
+  it("a run task's started, done and reopened times move with their roles, a member's email beside the role, and done implies started", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const runs = yield* RunRepository;
+        const { runId } = yield* seedRun;
+        const runTaskId = yield* taskOf(runId);
+        // Underneath the repositories: each write breaks one pair.
+        const refused = [
+          sql`update RunTask set startedAt = 1 where id = ${runTaskId}`,
+          sql`update RunTask set startedByRole = 'merchant' where id = ${runTaskId}`,
+          sql`update RunTask set startedAt = 1, startedByRole = 'member' where id = ${runTaskId}`,
+          sql`update RunTask set startedAt = 1, startedByRole = 'merchant', startedByEmail = 'a@x.com' where id = ${runTaskId}`,
+          sql`update RunTask set startedByEmail = 'a@x.com' where id = ${runTaskId}`,
+          sql`update RunTask set doneAt = 1, doneByRole = 'merchant' where id = ${runTaskId}`,
+          sql`update RunTask set startedAt = 1, startedByRole = 'merchant', doneAt = 1 where id = ${runTaskId}`,
+          sql`update RunTask set startedAt = 1, startedByRole = 'merchant', doneAt = 1, doneByRole = 'member' where id = ${runTaskId}`,
+          sql`update RunTask set reopenedAt = 1, reopenedByRole = 'member' where id = ${runTaskId}`,
+        ];
+        for (const write of refused)
+          strictEqual((yield* Effect.flip(write))._tag, "SqlError");
+        // Through the write paths: Start, Put back, a Done with no Start.
+        yield* runs.startTask({ runTaskId, actor: MEMBER });
+        deepStrictEqual(
+          yield* actorRow(runTaskId).pipe(
+            Effect.map((row) => [row?.startedByRole, row?.startedByEmail]),
+          ),
+          ["member", MEMBER.email],
+        );
+        yield* runs.putBackTask({ runTaskId, actor: MERCHANT });
+        deepStrictEqual(
+          yield* actorRow(runTaskId).pipe(
+            Effect.map((row) => [
+              row?.startedAt,
+              row?.startedByRole,
+              row?.startedByEmail,
+            ]),
+          ),
+          [null, null, null],
+        );
+        yield* runs.markTaskDone({ runTaskId, actor: MERCHANT });
+        const done = yield* actorRow(runTaskId);
+        strictEqual(typeof done?.doneAt, "number");
+        strictEqual(done?.startedAt, done?.doneAt);
+        deepStrictEqual(
+          [
+            done?.startedByRole,
+            done?.startedByEmail,
+            done?.doneByRole,
+            done?.doneByEmail,
+          ],
+          ["merchant", null, "merchant", null],
+        );
+        // Reopen clears both pairs together.
+        yield* runs.reopenTask({ runTaskId, actor: MEMBER });
+        const reopened = yield* actorRow(runTaskId);
+        deepStrictEqual(
+          [
+            reopened?.startedAt,
+            reopened?.startedByRole,
+            reopened?.doneAt,
+            reopened?.doneByRole,
+          ],
+          [null, null, null, null],
+        );
+      }),
+    ));
+
+  it("reopen is latest only: a later Done clears reopenedAt, reopenedByRole and reopenedByEmail", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const runs = yield* RunRepository;
+        const { runId } = yield* seedRun;
+        const runTaskId = yield* taskOf(runId);
+        const refused = [
+          sql`update RunTask set reopenedAt = 1 where id = ${runTaskId}`,
+          sql`update RunTask set reopenedByRole = 'merchant' where id = ${runTaskId}`,
+          sql`update RunTask set reopenedByEmail = 'a@x.com' where id = ${runTaskId}`,
+        ];
+        for (const write of refused)
+          strictEqual((yield* Effect.flip(write))._tag, "SqlError");
+        const reopened = () =>
+          actorRow(runTaskId).pipe(
+            Effect.map((row) => [
+              row?.reopenedByRole,
+              row?.reopenedByEmail,
+              typeof row?.reopenedAt,
+            ]),
+          );
+        yield* runs.markTaskDone({ runTaskId, actor: MEMBER });
+        yield* runs.reopenTask({ runTaskId, actor: MERCHANT });
+        deepStrictEqual(yield* reopened(), ["merchant", null, "number"]);
+        yield* runs.markTaskDone({ runTaskId, actor: MERCHANT });
+        yield* runs.reopenTask({ runTaskId, actor: MEMBER });
+        // Latest only: the member's reopen replaced the merchant's.
+        deepStrictEqual(yield* reopened(), ["member", MEMBER.email, "number"]);
+        yield* runs.markTaskDone({ runTaskId, actor: MEMBER });
+        deepStrictEqual(yield* reopened(), [null, null, "object"]);
+      }),
+    ));
+
+  it("a merchant act is recorded on the task with the role and no email, and no member row stands for the merchant", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const runs = yield* RunRepository;
+        const { runId } = yield* seedRun;
+        const runTaskId = yield* taskOf(runId);
+        yield* runs.markTaskDone({ runTaskId, actor: MERCHANT });
+        deepStrictEqual(
+          yield* actorRow(runTaskId).pipe(
+            Effect.map((row) => [row?.doneByRole, row?.doneByEmail]),
+          ),
+          ["merchant", null],
+        );
+        // An actor is a role and, for a member, an email: no column on a run
+        // task names a member or a user, so nothing could point at a merchant.
+        const columns = yield* sql<{
+          readonly name: string;
+        }>`select name from pragma_table_info('RunTask')`;
+        deepStrictEqual(
+          columns
+            .map((column) => column.name)
+            .filter((name) => /member|user|ById$/iu.test(name)),
+          [],
+        );
+        const withEmail = yield* Effect.flip(sql`
+          update RunTask set doneByEmail = 'owner@example.com' where id = ${runTaskId}
+        `);
+        strictEqual(withEmail._tag, "SqlError");
+      }),
+    ));
+
+  it("a webhook delivery is one row per delivery id", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const insert = sql`
+          insert into WebhookDelivery (webhookId, receivedAt) values ('wh-1', 0)
+        `;
+        yield* insert;
+        strictEqual((yield* Effect.flip(insert))._tag, "SqlError");
+        strictEqual(yield* count("WebhookDelivery"), 1);
       }),
     ));
 

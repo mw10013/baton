@@ -68,6 +68,7 @@ const insertTeamMember = (teamId: string, memberId: string) =>
 const rejects = (write: Promise<unknown>) => expect(write).rejects.toThrow();
 
 afterEach(async () => {
+  await env.D1.exec("delete from User");
   await env.D1.exec("delete from TeamMember");
   await env.D1.exec("delete from Team");
   await env.D1.exec("delete from Member");
@@ -144,6 +145,49 @@ describe("D1 data model", () => {
       }),
     );
     expect(references.flat()).toEqual(["TeamMember.memberId"]);
+  });
+
+  it("a member is matched to a user by email at sign-in and nothing points between them", async () => {
+    await insertShop("a.myshopify.com");
+    await insertShop("b.myshopify.com");
+    await insertMember("m1", "a.myshopify.com", "a@x.com");
+    await insertMember("m2", "b.myshopify.com", "a@x.com");
+    await env.D1.prepare(
+      "insert into User (id, name, email, createdAt, updatedAt) values ('u1', 'A', 'a@x.com', '', '')",
+    ).run();
+    // One person on two shops is one user and two members, joined by the
+    // email the sign-in path reads and by nothing stored.
+    const shops = await Effect.runPromise(
+      Effect.gen(function* () {
+        return yield* (yield* Repository).listMemberShops(
+          Schema.decodeUnknownSync(Domain.Email)("a@x.com"),
+        );
+      }).pipe(Effect.provide(layer)),
+    );
+    expect(shops.toSorted()).toEqual(["a.myshopify.com", "b.myshopify.com"]);
+    const pointers = await Promise.all(
+      ["Member", "User"].map(async (table) => {
+        const keys = await env.D1.prepare(
+          `select "table" as target from pragma_foreign_key_list('${table}')`,
+        ).all<{ target: string }>();
+        return keys.results.map((key) => `${table} -> ${key.target}`);
+      }),
+    );
+    expect(pointers.flat()).toEqual([
+      "Member -> ShopSession",
+      "User -> UserRole",
+    ]);
+    const memberColumns = await env.D1.prepare(
+      "select name from pragma_table_info('Member')",
+    ).all<{ name: string }>();
+    expect(
+      memberColumns.results.filter((column) => /user/iu.test(column.name)),
+    ).toEqual([]);
+    await env.D1.prepare("delete from User where id = 'u1'").run();
+    const members = await env.D1.prepare(
+      "select count(*) as n from Member",
+    ).first<{ n: number }>();
+    expect(members?.n).toBe(2);
   });
 
   it("a team is identified by its name within a shop, compared exactly; the name is trimmed and non-empty", async () => {

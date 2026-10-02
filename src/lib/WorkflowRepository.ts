@@ -492,6 +492,15 @@ export class WorkflowRepository extends Context.Service<
     readonly unassignTeam: (input: {
       readonly teamId: string;
     }) => Effect.Effect<void, SqlError.SqlError>;
+    /**
+     * Every team id a workflow task, draft task or run task points to, each
+     * once. A team delete reads it to find pointers to teams already gone
+     * from D1, the repair half of the team-delete row on `D1_TABLES`.
+     */
+    readonly teamIdsInUse: () => Effect.Effect<
+      readonly string[],
+      SqlError.SqlError
+    >;
   }
 >()("WorkflowRepository") {
   static readonly layer: Layer.Layer<
@@ -1726,6 +1735,19 @@ export class WorkflowRepository extends Context.Service<
             }),
           );
         }),
+
+        teamIdsInUse: Effect.fn("WorkflowRepository.teamIdsInUse")(
+          function* () {
+            const rows = yield* sql<{ readonly teamId: string }>`
+              select teamId from WorkflowTask where teamId is not null
+              union
+              select teamId from WorkflowDraftTask where teamId is not null
+              union
+              select teamId from RunTask where teamId is not null
+            `;
+            return rows.map((row) => row.teamId);
+          },
+        ),
       });
     }),
   );
